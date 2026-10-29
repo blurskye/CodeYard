@@ -32,6 +32,29 @@ fn validate_cluster_encryptor(
     Ok(())
 }
 
+/// Holds the state directory for this server until the returned file is dropped. A second
+/// server started on it by mistake would otherwise recover the first one's merges as abandoned.
+fn lock_state_dir(state_dir: &Path) -> Result<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    std::fs::create_dir_all(state_dir)?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(state_dir.join("serve.lock"))?;
+    // SAFETY: `file` owns the descriptor and flock keeps no pointers.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        let error = std::io::Error::last_os_error();
+        anyhow::ensure!(
+            error.kind() != std::io::ErrorKind::WouldBlock,
+            "another codeyard server is using the state directory {}",
+            state_dir.display()
+        );
+        return Err(error.into());
+    }
+    Ok(file)
+}
+
 fn prepare_repository_root(path: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(path)?;
     #[cfg(unix)]
@@ -86,7 +109,16 @@ async fn prepare_application(
         None
     };
     let storage = Arc::new(ObjectStore::open(state_dir, s3).await?);
-    storage.prepare().await?;
+    // Only web nodes take uploads, so an object storage outage does not keep a Git-only
+    // node from starting.
+    if serves_web {
+        storage.prepare().await?;
+    }
+    crate::backend::repositories::pull_requests::async_merge::recover(
+        &pool,
+        cluster.as_ref().map(|n| n.node_id),
+    )
+    .await?;
     Ok(AppState::new(
         pool,
         repos_path,
@@ -118,11 +150,14 @@ async fn shutdown_signal() -> Result<()> {
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Runs the expiry sweeps every few minutes: pending uploads whose window passed,
-/// old transfer accounting, expired identity rows and staged uploads a crash left
-/// behind. Safe to run on several nodes at once: each row is removed by only one.
+/// old transfer accounting, expired identity rows, staged uploads a crash left
+/// behind and, on a node that stores repositories, deleted repositories kept past the
+/// restore window. Safe to run on several nodes at once: each row is removed by only one.
 async fn remove_expired_rows(
     pool: DbPool,
     storage: std::sync::Arc<crate::backend::storage::ObjectStore>,
+    web: bool,
+    repos_path: Option<PathBuf>,
     mut stop: tokio::sync::watch::Receiver<bool>,
 ) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
@@ -133,32 +168,68 @@ async fn remove_expired_rows(
             _ = stop.changed() => break,
             _ = interval.tick() => {}
         }
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(12),
-            crate::backend::files::remove_expired_uploads(&pool, &storage),
-        )
-        .await
-        {
-            Ok(Ok(0)) => {}
-            Ok(Ok(removed)) => info!(removed, "removed expired uploads"),
-            Ok(Err(error)) => warn!(%error, "could not remove expired uploads"),
-            Err(_) => warn!("upload cleanup budget exhausted; remaining work stays queued"),
+        // Uploads and account rows belong to web nodes; deleted repositories to the node holding them.
+        if web {
+            remove_expired_web_rows(&pool, &storage).await;
         }
-        match crate::backend::db::files::remove_expired_transfer_rows(&pool).await {
-            Ok(0) => {}
-            Ok(removed) => info!(removed, "removed expired transfer accounting"),
-            Err(_) => warn!("could not remove expired transfer accounting"),
+        if let Some(root) = repos_path.clone() {
+            let window = std::time::Duration::from_secs(
+                crate::backend::db::files::RESTORE_WINDOW_SECONDS as u64,
+            );
+            let sweep = tokio::task::spawn_blocking(move || {
+                crate::backend::git::mirror::remove_expired_deleted(&root, window)
+            });
+            match sweep.await {
+                Ok(Ok(0)) => {}
+                Ok(Ok(removed)) => info!(
+                    removed,
+                    "removed deleted repositories past the restore window"
+                ),
+                Ok(Err(error)) => warn!(%error, "could not remove old deleted repositories"),
+                Err(error) => warn!(%error, "deleted repository cleanup stopped"),
+            }
         }
-        match crate::backend::db::users::sessions::remove_expired_identity_rows(&pool).await {
-            Ok(0) => {}
-            Ok(changed) => info!(changed, "cleaned up expired identity rows"),
-            Err(_) => warn!("could not clean up expired identity rows"),
-        }
-        match storage.remove_stale_staging().await {
-            Ok(0) => {}
-            Ok(removed) => info!(removed, "removed stale upload staging files"),
-            Err(error) => warn!(%error, "could not remove stale upload staging files"),
-        }
+    }
+}
+
+async fn remove_expired_web_rows(pool: &DbPool, storage: &crate::backend::storage::ObjectStore) {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        crate::backend::files::remove_expired_uploads(pool, storage),
+    )
+    .await
+    {
+        Ok(Ok(0)) => {}
+        Ok(Ok(removed)) => info!(removed, "removed expired uploads"),
+        Ok(Err(error)) => warn!(%error, "could not remove expired uploads"),
+        Err(_) => warn!("upload cleanup budget exhausted; remaining work stays queued"),
+    }
+    match crate::backend::db::files::remove_expired_transfer_rows(pool).await {
+        Ok(0) => {}
+        Ok(removed) => info!(removed, "removed expired transfer accounting"),
+        Err(_) => warn!("could not remove expired transfer accounting"),
+    }
+    match crate::backend::db::users::sessions::remove_expired_identity_rows(pool).await {
+        Ok(0) => {}
+        Ok(changed) => info!(changed, "cleaned up expired identity rows"),
+        Err(_) => warn!("could not clean up expired identity rows"),
+    }
+    if let Err(error) = crate::backend::db::pull_requests::async_merge::prune(pool).await {
+        warn!(%error,"could not prune asynchronous merge results");
+    }
+    if let Err(error) = crate::backend::db::events::prune_events(pool).await {
+        warn!(%error,"could not prune old repository activity");
+    }
+    if let Err(error) = crate::backend::db::webhooks::prune_expired_deliveries(pool).await {
+        warn!(%error, "could not prune expired webhook deliveries");
+    }
+    if let Err(error) = crate::backend::db::dependency_graph::prune_expired_reports(pool).await {
+        warn!(%error, "could not prune expired SBOM reports");
+    }
+    match storage.remove_stale_staging().await {
+        Ok(0) => {}
+        Ok(removed) => info!(removed, "removed stale upload staging files"),
+        Err(error) => warn!(%error, "could not remove stale upload staging files"),
     }
 }
 
@@ -190,7 +261,7 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
             .filter(|value| !value.trim().is_empty())
             .or_else(|| (key == "IROH_BIND").then(|| "127.0.0.1:0".into()))
     })?
-    .context("actions-worker needs cluster settings")?;
+    .context("runner needs cluster settings")?;
     let signal = shutdown_signal();
     tokio::pin!(signal);
     // Polling the signal first installs its handlers before anything else runs; the worker
@@ -212,7 +283,7 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
         state_dir,
     );
     workers.startup().await?;
-    info!("database-free actions-worker ready; no web, SSH or cluster listener");
+    info!("database-free runner ready; no web, SSH or cluster listener");
     let result = signal.await;
     info!("shutting down");
     let stopped = workers.shutdown().await;
@@ -223,9 +294,20 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
 pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let signal = shutdown_signal();
     tokio::pin!(signal);
+    if !config.roles.single_node() && !crate::backend::db::cluster::cluster_enabled(&pool).await? {
+        pool.close().await;
+        anyhow::bail!(super::SINGLE_NODE_ROLES);
+    }
     let repos_path = prepare_repository_root(&config.repos_path)?;
-    // Cluster mode is opt-in. Without cluster settings no cluster socket is opened
-    // and this node behaves as a single machine.
+    let _state_dir_lock = match lock_state_dir(&config.state_dir) {
+        Ok(lock) => lock,
+        Err(error) => {
+            pool.close().await;
+            return Err(error);
+        }
+    };
+    // The cluster transport is opt-in. Without cluster settings no cluster socket is
+    // opened. With them, single-node mode still admits only runners.
     let member = match cluster::Settings::from_env()? {
         Some(settings) => Some(tokio::select! {
             biased;
@@ -234,6 +316,12 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         }),
         None => None,
     };
+    if member.is_none() && crate::backend::db::cluster::cluster_enabled(&pool).await? {
+        pool.close().await;
+        anyhow::bail!(
+            "this database is in cluster mode; set the CLUSTER_* settings so this node can serve it"
+        );
+    }
     let prepared = async {
         anyhow::ensure!(
         config.roles.faces_users() || member.is_some(),
@@ -289,7 +377,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             notifications: notifications.clone(),
         },
         ci_runs.config.clone(),
-        config.roles.contains(NodeRole::ActionsWorker),
+        config.roles.contains(NodeRole::Runner),
         ci_runs.queued.clone(),
         &config.state_dir,
     );
@@ -319,21 +407,72 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         pool.close().await;
         return started.map(|_| ()).and(stopped);
     }
-    let (stop_expiry, expiry_stop) = tokio::sync::watch::channel(false);
-    let expiry = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(remove_expired_rows(
-            pool.clone(),
-            state.storage.clone(),
-            expiry_stop,
+    let (stop_vulnerabilities, vulnerabilities_stop) = tokio::sync::watch::channel(false);
+    let vulnerabilities = config.roles.contains(NodeRole::Web).then(|| {
+        tokio::spawn(crate::backend::vulnerabilities::run(
+            Arc::new(state.clone()),
+            vulnerabilities_stop,
         ))
     });
+    let (stop_scanning, scanning_stop) = tokio::sync::watch::channel(false);
+    let scanning = config.roles.contains(NodeRole::Web).then(|| {
+        tokio::spawn(crate::backend::code_scanning::run(
+            pool.clone(),
+            scanning_stop,
+        ))
+    });
+    let (stop_schedules, schedules_stop) = tokio::sync::watch::channel(false);
+    let schedules = config.roles.contains(NodeRole::Web).then(|| {
+        tokio::spawn(crate::backend::ci::schedule::run(
+            ci_runs.clone(),
+            schedules_stop,
+        ))
+    });
+    let (stop_expiry, expiry_stop) = tokio::sync::watch::channel(false);
+    let expiry = (config.roles.contains(NodeRole::Web) || config.roles.contains(NodeRole::Storage))
+        .then(|| {
+            tokio::spawn(remove_expired_rows(
+                pool.clone(),
+                state.storage.clone(),
+                config.roles.contains(NodeRole::Web),
+                config
+                    .roles
+                    .contains(NodeRole::Storage)
+                    .then(|| repos_path.clone()),
+                expiry_stop,
+            ))
+        });
     // Every web node sends queued email; each claims its own messages.
+    let (stop_secret_scanning, secret_scanning_stop) = tokio::sync::watch::channel(false);
+    let secret_scanning = config.roles.contains(NodeRole::Web).then(|| {
+        tokio::spawn(crate::backend::repositories::secret_scanning::jobs::run(
+            Arc::new(state.clone()),
+            secret_scanning_stop,
+        ))
+    });
+    let (stop_auto_merge, auto_merge_stop) = tokio::sync::watch::channel(false);
+    let auto_merge = config.roles.contains(NodeRole::Web).then(|| {
+        tokio::spawn(
+            crate::backend::repositories::pull_requests::auto_merge::run(
+                Arc::new(state.clone()),
+                auto_merge_stop,
+            ),
+        )
+    });
     let (stop_email, email_stop) = tokio::sync::watch::channel(false);
     let email = config.roles.contains(NodeRole::Web).then(|| {
         tokio::spawn(crate::backend::email::outbox::run(
             pool.clone(),
             state.secret_encryptor.clone(),
             email_stop,
+        ))
+    });
+    // Durable inventory jobs are claimed transactionally; every web node may drain the queue.
+    let (stop_metadata, metadata_stop) = tokio::sync::watch::channel(false);
+    let metadata = config.roles.contains(NodeRole::Web).then(|| {
+        tokio::spawn(crate::backend::artifact_metadata::run(
+            pool.clone(),
+            metadata_stop,
         ))
     });
     // Storage nodes keep the replica copies of their repositories current.
@@ -395,8 +534,14 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     if signalled {
         stop_listeners.send_replace(true);
     }
+    stop_vulnerabilities.send_replace(true);
+    stop_scanning.send_replace(true);
+    stop_schedules.send_replace(true);
     stop_expiry.send_replace(true);
     stop_email.send_replace(true);
+    stop_metadata.send_replace(true);
+    stop_secret_scanning.send_replace(true);
+    stop_auto_merge.send_replace(true);
     stop_replicas.send_replace(true);
     workers.request_stop();
     // Stop being a placement target before the node drains its work. The withdrawal is
@@ -424,6 +569,30 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     if let Some(member) = &member {
         let _ = tokio::time::timeout_at(deadline, member.drain_sessions()).await;
     }
+    if let Some(mut task) = vulnerabilities {
+        if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
+            task.abort();
+            let _ = task.await;
+        }
+    }
+    if let Some(mut scanning) = scanning {
+        if tokio::time::timeout_at(deadline, &mut scanning)
+            .await
+            .is_err()
+        {
+            scanning.abort();
+            let _ = scanning.await;
+        }
+    }
+    if let Some(mut schedules) = schedules {
+        if tokio::time::timeout_at(deadline, &mut schedules)
+            .await
+            .is_err()
+        {
+            schedules.abort();
+            let _ = schedules.await;
+        }
+    }
     if let Some(mut expiry) = expiry {
         let finished = tokio::time::timeout_at(deadline, &mut expiry).await;
         if finished.is_err() {
@@ -438,6 +607,31 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             let _ = email.await;
         }
     }
+    if let Some(mut metadata) = metadata {
+        let finished = tokio::time::timeout_at(deadline, &mut metadata).await;
+        if finished.is_err() {
+            metadata.abort();
+            let _ = metadata.await;
+        }
+    }
+    if let Some(mut scanning) = secret_scanning {
+        if tokio::time::timeout_at(deadline, &mut scanning)
+            .await
+            .is_err()
+        {
+            scanning.abort();
+            let _ = scanning.await;
+        }
+    }
+    if let Some(mut auto_merge) = auto_merge {
+        if tokio::time::timeout_at(deadline, &mut auto_merge)
+            .await
+            .is_err()
+        {
+            auto_merge.abort();
+            let _ = auto_merge.await;
+        }
+    }
     if let Some(mut replicas) = replicas {
         let finished = tokio::time::timeout_at(deadline, &mut replicas).await;
         if finished.is_err() {
@@ -445,6 +639,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             let _ = replicas.await;
         }
     }
+    crate::backend::organizations::shutdown(deadline).await;
     crate::backend::webhooks::shutdown(deadline).await;
     let stopped = workers.shutdown().await;
     if let Some(member) = &member {
@@ -486,7 +681,13 @@ mod tests {
         let storage = Arc::new(ObjectStore::open(directory.path(), None).await.unwrap());
         storage.prepare().await.unwrap();
         let (stop, receiver) = tokio::sync::watch::channel(false);
-        let sweep = tokio::spawn(remove_expired_rows(pool.clone(), storage, receiver));
+        let sweep = tokio::spawn(remove_expired_rows(
+            pool.clone(),
+            storage,
+            true,
+            None,
+            receiver,
+        ));
         let removed = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM upload_rate_limit")

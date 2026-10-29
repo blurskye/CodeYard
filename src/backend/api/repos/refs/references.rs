@@ -9,6 +9,15 @@ use crate::backend::repositories::access::can_read;
 use crate::webui::components::references::{self, References};
 use axum::response::Response;
 
+pub(crate) fn autolink(row: db::repositories::autolinks::Autolink) -> references::Autolink {
+    references::Autolink {
+        id: row.id,
+        key_prefix: row.key_prefix,
+        url_template: row.url_template,
+        is_alphanumeric: row.is_alphanumeric,
+    }
+}
+
 /// The references `texts` make, as the viewer of `repository`, named `owner/name`, may link them.
 /// `document` is the mode the page renders the texts with: a repository file is a document, and
 /// anything else is a comment.
@@ -58,6 +67,13 @@ pub(crate) async fn resolve_references(
         repo: name.to_owned(),
         last_number: last_number(repository.id),
         users: Vec::new(),
+        autolinks: db::repositories::autolinks::for_rendering(pool, repository.id)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(autolink)
+            .collect::<Vec<_>>()
+            .into(),
         repositories: others
             .into_iter()
             .map(|(id, owner, name)| references::Repository {

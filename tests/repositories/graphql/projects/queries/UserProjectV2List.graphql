@@ -1,0 +1,8 @@
+query UserProjectV2List($endCursor: String, $query: String!) {
+  viewer {
+    projectsV2(first: 100, orderBy: {field: TITLE, direction: ASC}, after: $endCursor, query: $query) {
+      nodes { id title number resourcePath closed url }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}

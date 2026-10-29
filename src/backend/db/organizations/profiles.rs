@@ -19,6 +19,8 @@ native_operation!(crate::backend::db::postgres::organizations::profiles::get_org
 // Public pages need no actor. A missing or governance-suspended organization is `None`.
 native_operation!(crate::backend::db::postgres::organizations::profiles::get_public_organization, crate::backend::db::sqlite::organizations::profiles::get_public_organization,
     fn get_public_organization(pool: &DbPool, name: &str) -> Result<Option<crate::backend::db::models::Organization>>);
+native_operation!(crate::backend::db::postgres::organizations::profiles::get_public_organization_by_id, crate::backend::db::sqlite::organizations::profiles::get_public_organization_by_id,
+    fn get_public_organization_by_id(pool: &DbPool, id: i64) -> Result<Option<crate::backend::db::models::Organization>>);
 native_operation!(crate::backend::db::postgres::organizations::profiles::get_organization_metadata, crate::backend::db::sqlite::organizations::profiles::get_organization_metadata,
     fn get_organization_metadata(pool: &DbPool, actor: i64, org: i64) -> Result<OrganizationOutcome<OrganizationMetadata>>);
 native_operation!(crate::backend::db::postgres::organizations::profiles::list_actor_organizations, crate::backend::db::sqlite::organizations::profiles::list_actor_organizations,

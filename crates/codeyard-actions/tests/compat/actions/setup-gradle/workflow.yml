@@ -1,0 +1,20 @@
+# https://github.com/gradle/actions/tree/ed408507eac070d1f99cc633dbcf757c94c7933a
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - id: action
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          gradle-version: "8.12"
+          cache-disabled: "true"
+      - name: Assert documented effect
+        run: |
+          gradle --version | grep 'Gradle 8\.12'
+          echo compat:ok

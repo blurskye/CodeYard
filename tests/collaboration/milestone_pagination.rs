@@ -60,6 +60,8 @@ async fn milestone_items_have_reachable_continuation_pages(pg: bool) {
                 base_branch: "main",
                 base_sha: &"b".repeat(40),
                 is_draft: false,
+                maintainer_can_modify: false,
+                issue: None,
             },
         )
         .await

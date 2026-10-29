@@ -1,0 +1,16 @@
+# https://github.com/mamba-org/setup-micromamba/tree/add3a49764cedee8ee24e82dfde87f5bc2914462
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: mamba-org/setup-micromamba@add3a49764cedee8ee24e82dfde87f5bc2914462 # v2
+        with:
+          environment-name: "compat"
+          create-args: "python=3.12"
+      - name: Assert documented effect
+        run: |
+          micromamba --version
+          echo compat:ok

@@ -1,0 +1,16 @@
+# https://github.com/erlef/setup-beam/tree/54075bcc5e249e4758d363f27d099f55d843f124
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.18"
+      - name: Assert documented effect
+        run: |
+          elixir --version | grep 'Elixir 1\.18'
+          echo compat:ok

@@ -36,6 +36,7 @@ pub(super) enum PageLoad {
 pub(super) async fn load_page(
     target: &str,
     signal: &web_sys::AbortSignal,
+    navigation: bool,
 ) -> Result<PageLoad, LoadError> {
     if !crate::webui::navigation::safe_page_target(target) {
         return Err(LoadError::InvalidTarget);
@@ -53,6 +54,12 @@ pub(super) async fn load_page(
         .headers()
         .set("Accept", crate::webui::bootstrap::MODEL_CONTENT_TYPE)
         .map_err(|_| LoadError::Transport("The page request headers could not be prepared."))?;
+    if navigation {
+        request
+            .headers()
+            .set("X-Codeyard-Navigation", "navigate")
+            .map_err(|_| LoadError::Transport("The navigation header could not be prepared."))?;
+    }
     let response = gloo_net::http::Request::from(request)
         .send()
         .await

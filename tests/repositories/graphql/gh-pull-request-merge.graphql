@@ -1,0 +1,5 @@
+# cli/cli 5056c0a8ef34512be1d5b4120d4e4b30412ada8b
+# pkg/cmd/pr/merge/http.go mergePullRequest's githubv4 mutation.
+mutation PullRequestMerge($input: MergePullRequestInput!) {
+  mergePullRequest(input: $input) { clientMutationId }
+}

@@ -1,0 +1,169 @@
+//! Docker exchanges login credentials for short-lived, repository-scoped bearer tokens.
+use super::{Error, Result};
+use crate::backend::{
+    api::github::auth::Authentication, app::AppState, db, identity::tokens::token_hash,
+};
+use axum::{
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde_json::json;
+use std::collections::{BTreeMap, BTreeSet};
+
+pub(super) async fn authenticate(
+    state: &AppState,
+    headers: &HeaderMap,
+    resource: &str,
+    write: bool,
+) -> Result<Option<Authentication>> {
+    let value = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split_once(' '))
+        .filter(|(scheme, value)| {
+            scheme.eq_ignore_ascii_case("bearer") && value.starts_with("cyp_registry_")
+        })
+        .map(|(_, value)| value);
+    let Some(value) = value else {
+        return super::authenticate(state, headers, write).await;
+    };
+    if headers.get_all(header::AUTHORIZATION).iter().count() != 1 {
+        return Err(Error(
+            StatusCode::UNAUTHORIZED,
+            "UNAUTHORIZED",
+            "Invalid registry credentials",
+        ));
+    }
+    let grant = db::packages::registry_token(&state.pool, &token_hash(value))
+        .await
+        .map_err(Error::db)?
+        .ok_or(Error(
+            StatusCode::UNAUTHORIZED,
+            "UNAUTHORIZED",
+            "Registry token expired or revoked",
+        ))?;
+    let resources: BTreeMap<String, BTreeSet<String>> =
+        serde_json::from_str(&grant.resources).map_err(|error| Error::db(error.into()))?;
+    let granted = if resource.is_empty() {
+        !write
+    } else {
+        resources
+            .get(resource)
+            .ok_or_else(Error::missing)?
+            .contains(if write { "push" } else { "pull" })
+    };
+    if !granted || (write && !grant.write) {
+        return Err(Error(
+            StatusCode::FORBIDDEN,
+            "DENIED",
+            if write {
+                "Registry token is read-only"
+            } else {
+                "Registry token does not allow pulls"
+            },
+        ));
+    }
+    let Some(id) = grant.token_id else {
+        return super::authenticate(state, &HeaderMap::new(), write).await;
+    };
+    let configured = db::node_config::get_node_configuration(&state.pool)
+        .await
+        .map_err(Error::db)?
+        .is_some_and(|config| config.setup_completed);
+    if !configured {
+        return Err(Error::missing());
+    }
+    let user = db::users::tokens::token_user(&state.pool, id, write)
+        .await
+        .map_err(Error::db)?
+        .ok_or(Error(
+            StatusCode::UNAUTHORIZED,
+            "UNAUTHORIZED",
+            "Registry credentials revoked",
+        ))?;
+    let token = db::packages::registry_source(&state.pool, id)
+        .await
+        .map_err(Error::db)?
+        .ok_or(Error(
+            StatusCode::UNAUTHORIZED,
+            "UNAUTHORIZED",
+            "Registry credentials revoked",
+        ))?;
+    Ok(Some(Authentication { token, user }))
+}
+
+pub(super) async fn exchange(
+    state: &AppState,
+    headers: &HeaderMap,
+    query: &str,
+) -> Result<Response> {
+    let auth = super::authenticate(state, headers, false).await?;
+    let mut resources = BTreeMap::new();
+    let mut count = 0;
+    for (_, value) in
+        url::form_urlencoded::parse(query.as_bytes()).filter(|(key, _)| key == "scope")
+    {
+        for scope in value.split_ascii_whitespace() {
+            count += 1;
+            if count > 64 {
+                return Err(Error::invalid());
+            }
+            let mut parts = scope.split(':');
+            if parts.next() != Some("repository") {
+                return Err(Error::invalid());
+            }
+            let resource = parts
+                .next()
+                .filter(|name| name.len() <= 512)
+                .ok_or_else(Error::invalid)?;
+            let (owner, name) = resource.split_once('/').ok_or_else(Error::invalid)?;
+            if !crate::backend::packages::valid_name(owner)
+                || owner.contains('/')
+                || !crate::backend::packages::valid_name(name)
+            {
+                return Err(Error::invalid());
+            }
+            let actions: Vec<_> = parts
+                .next()
+                .ok_or_else(Error::invalid)?
+                .split(',')
+                .collect();
+            if actions.is_empty()
+                || actions
+                    .iter()
+                    .any(|action| !matches!(*action, "pull" | "push"))
+                || parts.next().is_some()
+            {
+                return Err(Error::invalid());
+            }
+            if auth.is_none() {
+                let owner = super::owner(state, owner).await?;
+                super::package(state, &owner, "container", name, None, false).await?;
+            }
+            // Anonymous tokens can only pull.
+            let granted: &mut BTreeSet<String> = resources.entry(resource.to_owned()).or_default();
+            for action in actions {
+                if action == "pull" || auth.is_some() {
+                    granted.insert(action.to_owned());
+                }
+            }
+        }
+    }
+    let write = resources.values().any(|actions| actions.contains("push"));
+    let resources = serde_json::to_string(&resources).map_err(|error| Error::db(error.into()))?;
+    let value = format!(
+        "cyp_registry_{}",
+        crate::backend::api::http::session::generate_session_id()
+    );
+    db::packages::issue_registry_token(
+        &state.pool,
+        &token_hash(&value),
+        auth.as_ref().map(|auth| auth.token.id),
+        &resources,
+        write,
+    )
+    .await
+    .map_err(Error::db)?;
+    Ok(Json(json!({"token":value,"access_token":value,"expires_in":300,"issued_at":chrono::Utc::now().to_rfc3339()})).into_response())
+}

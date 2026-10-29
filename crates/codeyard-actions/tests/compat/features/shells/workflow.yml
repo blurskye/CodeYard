@@ -1,0 +1,20 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - shell: bash
+        id: pipe
+        continue-on-error: true
+        run: false | true
+      - env:
+          RESULT: ${{ steps.pipe.outcome }}
+        shell: sh
+        run: test "$RESULT" = failure
+      - shell: bash --noprofile --norc {0}
+        run: |
+          false
+          echo compat:custom-shell
+      - run: echo compat:ok

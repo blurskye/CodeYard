@@ -290,6 +290,7 @@ impl Cluster {
             self.storage_path.as_deref(),
         )
         .await?;
+        self.events.start_claiming();
         let heartbeat = tokio::spawn(heartbeat(
             self.pool.clone(),
             self.public_key(),
@@ -480,6 +481,8 @@ pub async fn start(
         ),
     };
     let events = ci::CiHandler::new(context.clone(), queue);
+    // Claims wait until publish has recorded this node's address; see `Cluster::publish`.
+    events.stop_claiming();
     // One pairing handler serves both listeners, so they share its slots.
     let pairing = PairingHandler::new(pool.clone());
     let router = match endpoint {
@@ -531,6 +534,10 @@ pub async fn client_context(
     repos_path: &Path,
 ) -> Result<Option<NodeContext>> {
     let Some(settings) = Settings::from_env()? else {
+        ensure!(
+            !db::cluster::cluster_enabled(pool).await?,
+            "this database is in cluster mode; set the CLUSTER_* settings to run repository commands"
+        );
         return Ok(None);
     };
     require_postgres(pool)?;

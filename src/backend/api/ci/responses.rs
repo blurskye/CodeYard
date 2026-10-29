@@ -85,8 +85,16 @@ pub(crate) fn map_run(
         })
         .to_owned();
     view_actions::Run {
+        approval_required: run.approval_required,
+        approval_pull: None,
+        concurrency_groups: Vec::new(),
+        waiting_for_concurrency: false,
+        artifacts: Vec::new(),
+        engine: run.engine.clone(),
         commit_status_context: run.commit_status_context(),
         id: run.run_id.to_string(),
+        api_id: run.workflow_run_id.unwrap_or(run.id),
+        api_attempt: run.workflow_run_attempt.unwrap_or(1),
         repository: repository.name.clone(),
         status: run.status,
         workflow_path: run.workflow_path,
@@ -144,22 +152,49 @@ fn workflow_input_view(
     }
 }
 
+const WORKFLOW_INPUTS_WARNING: &str =
+    "Some workflow inputs exceed the page size limit. Use the API to dispatch those workflows.";
+
+/// Clears the inputs of the workflows past the 2 MiB budget, which then dispatch through the API.
+fn bound_workflow_inputs(
+    workflows: &mut [view_actions::Workflow],
+) -> Result<bool, serde_json::Error> {
+    let mut bytes = 0usize;
+    let mut trimmed = false;
+    for workflow in workflows {
+        let size = serde_json::to_vec(workflow)?.len();
+        if bytes.saturating_add(size) > 2 * 1024 * 1024 {
+            workflow.inputs.clear();
+            workflow.dispatchable = false;
+            trimmed = true;
+            bytes += serde_json::to_vec(workflow)?.len();
+        } else {
+            bytes += size;
+        }
+    }
+    Ok(trimmed)
+}
+
 pub(crate) fn bound_log_projection(
     envelope: &mut crate::webui::app::PageEnvelope,
 ) -> Result<(), serde_json::Error> {
-    if let crate::webui::app::Page::Actions(view::Page::Actions(model)) = &mut envelope.page {
-        let mut bytes = 0usize;
-        for workflow in &mut model.workflows {
-            let size = serde_json::to_vec(workflow)?.len();
-            if bytes.saturating_add(size) > 2 * 1024 * 1024 {
-                workflow.inputs.clear();
-                workflow.dispatchable = false;
-                model.workflow_warning = Some("Some workflow inputs exceed the page size limit. Use the API to dispatch those workflows.".into());
-                bytes += serde_json::to_vec(workflow)?.len();
-            } else {
-                bytes += size;
+    match &mut envelope.page {
+        crate::webui::app::Page::Actions(view::Page::Actions(model)) => {
+            if bound_workflow_inputs(&mut model.workflows)? {
+                model.workflow_warning = Some(WORKFLOW_INPUTS_WARNING.into());
             }
         }
+        crate::webui::app::Page::Actions(view::Page::DispatchRecovery {
+            workflows,
+            message,
+            ..
+        }) => {
+            if bound_workflow_inputs(workflows)? {
+                message.push(' ');
+                message.push_str(WORKFLOW_INPUTS_WARNING);
+            }
+        }
+        _ => {}
     }
     let Some(selected) = selected_run_mut(envelope) else {
         return Ok(());

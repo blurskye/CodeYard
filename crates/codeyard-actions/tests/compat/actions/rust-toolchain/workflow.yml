@@ -1,0 +1,13 @@
+# https://github.com/dtolnay/rust-toolchain/tree/cfcaf53ba4c621917ec7f78a66bff7a8848ddad4
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: dtolnay/rust-toolchain@cfcaf53ba4c621917ec7f78a66bff7a8848ddad4 # 1.85.0
+      - name: Assert documented effect
+        run: |
+          rustc --version | grep '^rustc 1\.85\.0'
+          echo compat:ok

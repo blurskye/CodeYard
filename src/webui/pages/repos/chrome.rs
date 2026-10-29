@@ -18,7 +18,13 @@ pub struct RepoChrome {
     pub topics: Vec<String>,
     pub is_private: bool,
     pub is_archived: bool,
+    #[serde(default)]
+    pub is_template: bool,
+    #[serde(default)]
+    pub can_manage_invitations: bool,
     pub can_write: bool,
+    #[serde(default)]
+    pub can_view_traffic: bool,
     pub can_admin: bool,
     pub is_owner: bool,
     /// Only personal owners manage collaborators; organization repositories have no such form.
@@ -40,6 +46,8 @@ pub struct RepoChrome {
     /// Open issues and open pull requests, for the tab counts.
     pub open_issues: i64,
     pub open_pulls: i64,
+    #[serde(default)]
+    pub packages: i64,
     pub fork_url: Option<String>,
     pub parent_name: Option<String>,
     pub parent_url: Option<String>,
@@ -48,11 +56,7 @@ pub struct RepoChrome {
 }
 impl RepoChrome {
     pub fn base(&self) -> String {
-        format!(
-            "/{}/{}",
-            crate::webui::encode_component(&self.owner),
-            crate::webui::encode_component(&self.name)
-        )
+        crate::webui::repository_path(&self.owner, &self.name)
     }
     pub fn action(&self, action: &str) -> String {
         format!("{}/_forms/{action}", self.base())
@@ -84,8 +88,10 @@ const PRIMARY_TABS: [(&str, &str, &str); 3] = [
 ];
 
 /// Tabs that move behind the More menu on a phone. Settings is listed only for administrators.
-const SECONDARY_TABS: [(&str, &str, &str); 3] = [
+const SECONDARY_TABS: [(&str, &str, &str); 5] = [
     ("actions", "Actions", "/actions"),
+    ("packages", "Packages", "/packages"),
+    ("security", "Security", "/security"),
     ("insights", "Insights", "/insights"),
     ("settings", "Settings", "/settings"),
 ];
@@ -97,16 +103,32 @@ pub fn repo_tabs(repo: &RepoChrome) -> Element {
     let base = repo.base();
     let secondary: Vec<(&str, &str, &str)> = SECONDARY_TABS
         .into_iter()
-        .filter(|(id, _, _)| *id != "settings" || repo.can_admin)
+        .filter(|(id, _, _)| {
+            // Security stays for readers: it holds their private reports and published advisories.
+            (*id != "settings" || repo.can_admin) && (*id != "packages" || repo.packages > 0)
+        })
         .collect();
     let more_current = secondary
         .iter()
         .any(|(_, _, suffix)| active_tab(&base, &repo.current_path, suffix));
     // Counts of three digits or more need room the tab widths do not leave.
-    let wide_counts = repo.open_issues >= 100 || repo.open_pulls >= 100;
+    let wide_counts = repo.open_issues >= 100 || repo.open_pulls >= 100 || repo.packages >= 100;
+    let strip_class = format!(
+        "repo-tab-strip{}{}",
+        if wide_counts {
+            " repo-tab-strip-wide"
+        } else {
+            ""
+        },
+        if repo.packages > 0 {
+            " repo-tab-strip-packages"
+        } else {
+            ""
+        }
+    );
     rsx! {
         div { class: "repo-tab-bar",
-            div { class: if wide_counts { "repo-tab-strip repo-tab-strip-wide" } else { "repo-tab-strip" },
+            div { class: strip_class,
                 nav { class: "repo-tabs", "aria-label": "Repository",
                     for (id, label, suffix) in PRIMARY_TABS {
                         {repo_tab(repo, &base, id, label, suffix)}
@@ -127,6 +149,7 @@ pub fn repo_tabs(repo: &RepoChrome) -> Element {
                             for (id, label, suffix) in secondary.iter().copied() {
                                 NavLink { key: "{id}", href: format!("{base}{suffix}"), class: if active_tab(&base, &repo.current_path, suffix) { "site-menu-link repo-more-active".to_owned() } else { "site-menu-link".to_owned() },
                                     {icon(id)} span { "{label}" }
+                                    if let Some(count) = tab_count(repo,id) { span { class: "repo-tab-count", "{count}" } }
                                 }
                             }
                             // A phone has no room for these in the strip.
@@ -210,6 +233,7 @@ fn tab_count(repo: &RepoChrome, id: &str) -> Option<String> {
     let count = match id {
         "issues" => repo.open_issues,
         "pulls" => repo.open_pulls,
+        "packages" => repo.packages,
         _ => return None,
     };
     Some(if count >= 1000 {
@@ -233,9 +257,16 @@ pub fn active_tab(base: &str, path: &str, suffix: &str) -> bool {
             ]
             .iter()
             .any(|prefix| tail.starts_with(prefix))
-            || ["/commits", "/commit", "/branches", "/tags", "/releases"]
-                .iter()
-                .any(|page| tail == *page || tail.starts_with(&format!("{page}/")))
+            || [
+                "/commits",
+                "/commit",
+                "/branches",
+                "/tags",
+                "/releases",
+                "/merge",
+            ]
+            .iter()
+            .any(|page| tail == *page || tail.starts_with(&format!("{page}/")))
     } else if suffix == "/pulls" && (tail == "/compare" || tail.starts_with("/compare/")) {
         // Comparing branches is part of the pull request workflow.
         true
@@ -285,13 +316,16 @@ pub fn repo_engagement(repo: &RepoChrome, class: &str) -> Element {
                     {engagement_content("watch", "Watch", repo.watchers)}
                 }
             }
+            if repo.is_template {
+                NavLink {class:"repo-engagement-button".to_owned(),href:format!("/new?source={}",crate::webui::encode_component(&format!("{}/{}",repo.owner,repo.name))),"Use this template"}
+            }
             if let Some(url) = &repo.fork_url {
                 NavLink { class: "repo-engagement-button".to_owned(), href: url.clone(),
                     {engagement_content("fork", "Forked", repo.forks)}
                 }
             } else if repo.signed_in {
                 if let Some(reason) = &repo.fork_refusal {
-                    // A refusal, such as forking your own or an archived repository, keeps a
+                    // A refusal, such as forking into your own personal namespace, keeps a
                     // disabled control that says why.
                     button { class: "repo-engagement-button", r#type: "button", disabled: true, title: reason.clone(),
                         {engagement_content("fork", "Fork", repo.forks)}
@@ -456,6 +490,8 @@ pub(crate) fn icon(kind: &str) -> Element {
                 "issues" => rsx! { circle { cx: "12", cy: "12", r: "10" } circle { cx: "12", cy: "12", r: "1" } },
                 "pulls" => rsx! { circle { cx: "18", cy: "18", r: "3" } circle { cx: "6", cy: "6", r: "3" } path { d: "M13 6h3a2 2 0 0 1 2 2v7M6 9v12" } },
                 "actions" => rsx! { circle { cx: "12", cy: "12", r: "9" } path { d: "m10 8 6 4-6 4z" } },
+                "security" => rsx! { path { d: "M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7z M9 12l2 2 4-4" } },
+                "packages" => rsx! { path { d: "m12 3 9 5v8l-9 5-9-5V8z M3 8l9 5 9-5 M12 13v8 M7.5 5.5l9 5" } },
                 "insights" => rsx! { path { d: "M3 3v16a2 2 0 0 0 2 2h16M7 16v-4M12 16V8M17 16v-7" } },
                 "commits" => rsx! { path { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5M12 7v5l4 2" } },
                 "branches" => rsx! { path { d: "M6 3v12M18 9a9 9 0 0 1-9 9" } circle { cx: "18", cy: "6", r: "3" } circle { cx: "6", cy: "18", r: "3" } },

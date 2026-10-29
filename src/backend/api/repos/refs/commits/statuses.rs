@@ -39,10 +39,6 @@ pub struct CreateCommitStatusRequest {
     pub target_url: Option<String>,
 }
 
-fn is_valid_commit_status_state(state: &str) -> bool {
-    matches!(state, "pending" | "success" | "failure" | "error")
-}
-
 pub async fn list_commit_statuses(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, sha)): Path<(String, String, String)>,
@@ -68,6 +64,7 @@ pub async fn list_commit_statuses(
         &sha,
         offset as i64,
         limit as i64,
+        false,
     )
     .await
     .map_err(|_| repository_unavailable())?;
@@ -131,7 +128,7 @@ pub async fn create_commit_status(
     let sha = sha.to_ascii_lowercase();
 
     let state_value = req.state.trim().to_lowercase();
-    if !is_valid_commit_status_state(&state_value) {
+    if !db::repositories::protection::valid_commit_status_state(&state_value) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(

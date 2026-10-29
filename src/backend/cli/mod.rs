@@ -58,6 +58,15 @@ fn database_url_from_env() -> Result<Option<String>> {
 }
 
 fn cluster_join_ticket_from_env() -> Result<String> {
+    if let Some(config) = crate::backend::ci::runner_credentials::jit_from_env()? {
+        anyhow::ensure!(
+            std::env::var("CLUSTER_JOIN_TOKEN")
+                .ok()
+                .is_none_or(|v| v.trim().is_empty()),
+            "Supply CLUSTER_JOIN_TOKEN or CODEYARD_RUNNER_JIT_CONFIG, not both"
+        );
+        return Ok(config.ticket);
+    }
     match std::env::var("CLUSTER_JOIN_TOKEN") {
         Ok(value) => Ok(value),
         Err(std::env::VarError::NotPresent) => Ok(String::new()),
@@ -182,6 +191,7 @@ pub fn run() -> Result<()> {
     drop(early_cli);
     set_private_umask();
     load_dotenv()?;
+    crate::backend::git::objects::flush_writes_to_disk();
     let runtime = tokio::runtime::Runtime::new()?;
     let result = runtime.block_on(run_application(arguments));
     // Blocking tasks such as workspace removal cannot be cancelled; do not wait for them past the shutdown grace.
@@ -235,7 +245,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
         }
         if configured_database_url.is_none() {
             anyhow::ensure!(roles == &node::NodeRoles::default() && cluster_runtime::Settings::from_env()?.is_none(),
-                "web, SSH and storage roles require DATABASE_URL (PostgreSQL for a cluster, sqlite://... for a single node); only actions-worker can run without a database");
+                "a server and the cluster roles require DATABASE_URL (PostgreSQL for a cluster, sqlite://... for a single node); only a runner can run without a database");
         }
     }
     prepare_state_directory(&cli.state_dir)?;
@@ -248,6 +258,17 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
             format!("sqlite://{}?mode=rwc", file_url.path())
         }
     };
+    // A restore fills an empty database itself, before anything migrates it.
+    if let Commands::Restore { dir } = &cli.command {
+        let places = crate::backend::backups::Places {
+            database_url: &database_url,
+            state_dir: &cli.state_dir,
+            repos_path: &cli.repos_path,
+        };
+        let pool = crate::backend::backups::restore(&places, dir).await?;
+        pool.close().await;
+        return Ok(());
+    }
     let pool = db::init_db(&database_url)
         .await
         .map_err(|_| anyhow::anyhow!("could not open the configured application database"))?;
@@ -268,8 +289,22 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                 unreachable!("database copy runs before the application database opens")
             }
 
+            Commands::Restore { .. } => {
+                unreachable!("restore runs before the application database opens")
+            }
+
+            Commands::Backup { dir } => {
+                let places = crate::backend::backups::Places {
+                    database_url: &database_url,
+                    state_dir: &cli.state_dir,
+                    repos_path: &cli.repos_path,
+                };
+                crate::backend::backups::backup(&pool, &places, &dir).await?;
+            }
+
             Commands::Serve {
                 roles,
+                cluster,
                 ssh_mode,
                 ssh_socket,
                 ssh_git_user,
@@ -278,6 +313,12 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                 http_addr,
                 host_key,
             } => {
+                if cluster {
+                    cluster_runtime::require_postgres(&pool)?;
+                    if crate::backend::db::cluster::enable_cluster(&pool).await? {
+                        info!("cluster mode is on");
+                    }
+                }
                 node::serve(
                     pool.clone(),
                     node::ServeConfig {
@@ -360,6 +401,15 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                 RepoAction::Info { owner, name } => {
                     self::repo_info_cmd(&pool, &cli.state_dir, &cli.repos_path, &owner, &name)
                         .await?;
+                }
+                RepoAction::Verify { repair } => {
+                    let problems = crate::backend::backups::verify(&pool, repair).await?;
+                    if problems > 0 {
+                        bail!("{problems} problems found");
+                    }
+                }
+                RepoAction::Rebuild => {
+                    crate::backend::backups::rebuild(&pool).await?;
                 }
                 RepoAction::Grant {
                     owner,

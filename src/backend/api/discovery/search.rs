@@ -1,10 +1,8 @@
 use super::{
-    content_search, database_error, missing_owner, owner_name, page_number, repository_cards,
-    unavailable, DiscoveryReadError,
+    content_search, owner_name, page_number, repository_cards, unavailable, DiscoveryReadError,
 };
 use crate::backend::{
     api::http::context::PageContext,
-    api::http::session::get_optional_user,
     app::AppState,
     db,
     db::repositories::{discovery::ItemSort, records::RepositorySort},
@@ -20,13 +18,6 @@ use axum::{
     response::Response,
 };
 use std::{collections::HashMap, sync::Arc};
-
-use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::responses::RepoResponse;
-use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
-
-use axum::{extract::Query, Json};
-use serde::{Deserialize, Serialize};
 
 /// Results per page of every search tab: repositories, issues, pull requests, people, code and
 /// commits.
@@ -59,192 +50,6 @@ fn badge_count(
             Ok(0)
         }
     }
-}
-
-#[derive(Deserialize)]
-pub struct SearchQuery {
-    pub q: String,
-    #[serde(rename = "type")]
-    pub search_type: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct SearchIssueResponse {
-    pub id: i64,
-    pub repo_id: i64,
-    pub repo_name: Option<String>,
-    pub repo_owner: Option<String>,
-    pub number: i32,
-    pub title: String,
-    pub state: String,
-    pub author: Option<UserResponse>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Serialize)]
-pub struct SearchResponse {
-    pub repos: Vec<RepoResponse>,
-    pub issues: Vec<SearchIssueResponse>,
-    pub users: Vec<UserResponse>,
-    pub repos_count: usize,
-    pub issues_count: usize,
-    pub users_count: usize,
-}
-
-/// The JSON search returns the first page of each type it asks for, most relevant first.
-pub async fn search(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(query): Query<SearchQuery>,
-) -> Result<Json<SearchResponse>, (StatusCode, Json<ApiError>)> {
-    let q = query.q.trim();
-    if !bounded_search_text(q) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiError::new(
-                "validation_error",
-                "Search text must be at most 256 bytes.",
-            )),
-        ));
-    }
-
-    if q.is_empty() {
-        return Ok(Json(SearchResponse {
-            repos: vec![],
-            issues: vec![],
-            users: vec![],
-            repos_count: 0,
-            issues_count: 0,
-            users_count: 0,
-        }));
-    }
-
-    let _permit = admit_search().await.map_err(|_| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(ApiError::new(
-                "unavailable",
-                "Search is busy. Try again shortly.",
-            )),
-        )
-    })?;
-    let viewer = get_optional_user(&state.pool, &headers)
-        .await?
-        .map(|user| user.id);
-    let limit = 50i64;
-    let search_type = query.search_type.as_deref();
-
-    // A missing or unknown type searches all three.
-    let wants = |kind: &str| {
-        search_type == Some(kind) || !matches!(search_type, Some("repos" | "issues" | "users"))
-    };
-    let repos = if wants("repos") {
-        db::repositories::discovery::search_repositories(
-            &state.pool,
-            viewer,
-            q,
-            RepositorySort::Stars,
-            0,
-            limit,
-        )
-        .await
-        .map_err(database_error)?
-    } else {
-        vec![]
-    };
-    let issues = if wants("issues") {
-        db::repositories::discovery::search_issues(
-            &state.pool,
-            viewer,
-            q,
-            ItemSort::Updated,
-            0,
-            limit,
-        )
-        .await
-        .map_err(database_error)?
-    } else {
-        vec![]
-    };
-    let users = if wants("users") {
-        db::repositories::discovery::search_users(&state.pool, q, 0, limit)
-            .await
-            .map_err(database_error)?
-    } else {
-        vec![]
-    };
-
-    let ids = issues.iter().map(|issue| issue.repo_id).collect::<Vec<_>>();
-    let issue_repos = db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
-        .await
-        .map_err(database_error)?
-        .into_iter()
-        .map(|repo| (repo.id, repo))
-        .collect::<HashMap<_, _>>();
-    let ids = repos
-        .iter()
-        .map(|repo| repo.id)
-        .chain(issue_repos.keys().copied())
-        .collect::<Vec<_>>();
-    let owners = db::repositories::records::repository_owner_names(&state.pool, &ids)
-        .await
-        .map_err(database_error)?;
-    let mut topics = db::repositories::topics::repository_topics(&state.pool, &ids)
-        .await
-        .map_err(database_error)?;
-    let mut repo_responses = Vec::with_capacity(repos.len());
-    for repo in repos {
-        let owner = owner_name(&repo, &owners).map_err(|_| missing_owner())?;
-        repo_responses.push(RepoResponse::new(
-            &repo,
-            &owner,
-            topics.remove(&repo.id).unwrap_or_default(),
-            None,
-        ));
-    }
-
-    let author_ids = issues
-        .iter()
-        .map(|issue| issue.author_id)
-        .collect::<Vec<_>>();
-    let authors = db::users::accounts::get_users_by_ids(&state.pool, &author_ids)
-        .await
-        .map_err(database_error)?
-        .into_iter()
-        .map(|user| (user.id, UserResponse::from(user)))
-        .collect::<HashMap<_, _>>();
-    let mut issue_responses = Vec::with_capacity(issues.len());
-    for issue in issues {
-        let Some(repo) = issue_repos.get(&issue.repo_id) else {
-            continue;
-        };
-        let repo_owner = owner_name(repo, &owners).map_err(|_| missing_owner())?;
-        let author = authors.get(&issue.author_id).cloned();
-        issue_responses.push(SearchIssueResponse {
-            id: issue.id,
-            repo_id: issue.repo_id,
-            repo_name: Some(repo.name.clone()),
-            repo_owner: Some(repo_owner),
-            number: issue.number,
-            title: issue.title,
-            state: issue.state,
-            author,
-            created_at: issue.created_at.to_rfc3339(),
-            updated_at: issue.updated_at.to_rfc3339(),
-        });
-    }
-
-    let user_responses: Vec<UserResponse> = users.into_iter().map(UserResponse::from).collect();
-
-    Ok(Json(SearchResponse {
-        repos_count: repo_responses.len(),
-        issues_count: issue_responses.len(),
-        users_count: user_responses.len(),
-        repos: repo_responses,
-        issues: issue_responses,
-        users: user_responses,
-    }))
 }
 
 /// What a search page asks for: the text, the result type named by `type` (none when the address

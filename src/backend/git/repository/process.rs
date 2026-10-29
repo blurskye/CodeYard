@@ -111,6 +111,8 @@ pub(crate) fn std_command(executable: &Path) -> std::process::Command {
             "-c",
             "core.fsmonitor=false",
             "-c",
+            "transfer.hideRefs=refs/codeyard/",
+            "-c",
             "commit.gpgSign=false",
             "-c",
             "receive.autogc=false",
@@ -118,10 +120,17 @@ pub(crate) fn std_command(executable: &Path) -> std::process::Command {
             "gc.auto=0",
             "-c",
             "maintenance.auto=false",
+            // An acknowledged push survives a crash or power loss: objects, packs and refs
+            // reach the disk before Git reports success, in one flush per batch.
+            "-c",
+            "core.fsync=all",
+            "-c",
+            "core.fsyncMethod=batch",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    super::locks::inherit_publication(&mut command);
     command
 }
 
@@ -153,12 +162,22 @@ pub(crate) fn limit_memory(command: &mut Command) {
     if bytes == 0 {
         return;
     }
-    // SAFETY: pre_exec only makes the async-signal-safe setrlimit syscall.
+    // SAFETY: pre_exec only makes the async-signal-safe getrlimit and setrlimit syscalls.
     unsafe {
         command.pre_exec(move || {
+            // An unprivileged process cannot raise the hard limit it inherited, so the
+            // limit only ever lowers it.
+            let mut inherited = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if libc::getrlimit(libc::RLIMIT_AS, &mut inherited) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let cap = (bytes as libc::rlim_t).min(inherited.rlim_max);
             let limit = libc::rlimit {
-                rlim_cur: bytes as libc::rlim_t,
-                rlim_max: bytes as libc::rlim_t,
+                rlim_cur: cap,
+                rlim_max: cap,
             };
             if libc::setrlimit(libc::RLIMIT_AS, &limit) != 0 {
                 return Err(std::io::Error::last_os_error());

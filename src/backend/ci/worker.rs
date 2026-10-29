@@ -1,10 +1,10 @@
 //! A CI worker: claims queued runs and executes their workflows with `act`.
 use super::config::{podman_socket_path, CiExecutionMode};
 use super::process::{self, Stopped};
-use super::queue::{ClaimedRun, LogLine, RunQueue};
+use super::queue::{ClaimedRun, CoreRefusal, LogLine, RunQueue};
 use super::runner_labels::labels_from_value;
 use super::workers::CiWorkers;
-use crate::backend::db::{self, models::CiRun, DbPool};
+use crate::backend::db::{self, models::CiRun};
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value};
@@ -74,6 +74,12 @@ fn act_workflow_name(definition: &Value, workflow: &str) -> String {
 
 const IDLE_POLL: Duration = Duration::from_secs(3);
 const HEARTBEAT: Duration = Duration::from_secs(10);
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Without an acknowledged heartbeat for this long, a run is cancelled before the core's stale
+/// cutoff. The margin covers claim preparation before the first heartbeat, and cleanup.
+const LOST_HEARTBEAT_CANCEL: Duration = Duration::from_secs(45);
+/// How long a progress or completion update may keep retrying before its workflow fails.
+const DELIVERY_RETRY: Duration = Duration::from_secs(60);
 const RUN_LABEL_KEY: &str = "com.codeyard.ci.run";
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
 const CLEANUP_RETRY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -98,10 +104,15 @@ const LOG_BATCH_INTERVAL: Duration = Duration::from_millis(250);
 const LOG_QUEUE_LINES: usize = 256;
 const LOG_FLUSH_GRACE: Duration = Duration::from_secs(1);
 
-/// Claims and executes runs until `stop` is set.
-pub(super) async fn run(service: CiWorkers, worker: String, mut stop: watch::Receiver<bool>) {
+/// Claims and executes runs until `stop` is set. With `recover`, abandoned containers are
+/// removed before the first claim.
+pub(super) async fn run(
+    service: CiWorkers,
+    worker: String,
+    mut stop: watch::Receiver<bool>,
+    mut recover: bool,
+) {
     let mut backoff = IDLE_POLL;
-    let mut recover = false;
     while !*stop.borrow() {
         if recover {
             let recovered =
@@ -129,7 +140,7 @@ pub(super) async fn run(service: CiWorkers, worker: String, mut stop: watch::Rec
         // The claim waits on its own receiver, so the waits below still see the stop signal.
         let mut stopping = stop.clone();
         let mut claim_stop = stop.clone();
-        // A database worker claims only while its node is an active actions-worker with its own
+        // A database worker claims only while its node is an active runner with its own
         // key. A revoked or re-keyed node must not take runs it cannot finish.
         let claim = async {
             if let RunQueue::Database {
@@ -144,9 +155,9 @@ pub(super) async fn run(service: CiWorkers, worker: String, mut stop: watch::Rec
                         .is_some_and(|node| {
                             node.public_key == context.key.public_hex()
                                 && node.status == "active"
-                                && node.roles.iter().any(|role| role == "actions-worker")
+                                && node.roles.iter().any(|role| role == "runner")
                         }),
-                    "not an active actions-worker"
+                    "not an active runner"
                 );
             }
             service
@@ -203,15 +214,10 @@ pub(super) async fn run(service: CiWorkers, worker: String, mut stop: watch::Rec
 }
 
 /// Marks runs failed whose worker (on any node) stopped sending heartbeats.
-pub(super) async fn fail_stale_runs(
-    pool: DbPool,
-    notifications: Arc<crate::backend::notifications::NotificationBroadcaster>,
-    mut stop: watch::Receiver<bool>,
-) {
+pub(super) async fn fail_stale_runs(queue: RunQueue, mut stop: watch::Receiver<bool>) {
     while !*stop.borrow() {
-        match db::ci::fail_stale_ci_runs(&pool, STALE_AFTER_SECONDS).await {
-            Ok((_, created)) => notifications.send_created(&created).await,
-            Err(error) => warn!(%error, "could not check for abandoned CI runs"),
+        if let Err(error) = queue.fail_stale(STALE_AFTER_SECONDS).await {
+            warn!(%error, "could not check for abandoned CI runs");
         }
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(30)) => {}
@@ -254,27 +260,52 @@ async fn execute(
     // A run handed back by a retried claim may have been cancelled since the first claim.
     let (cancel_tx, cancel) = watch::channel(run.cancel_requested || *stop.borrow());
     let mut heartbeat_stop = stop.clone();
+    // Set when the core stopped acknowledging heartbeats, so the run ends as failed, not cancelled.
+    let lost = AtomicBool::new(false);
     let heartbeat = async {
         let mut shutdown = false;
+        // The claim refreshed the lease just before; the first heartbeat goes out at once.
+        let mut wait = Duration::ZERO;
+        let mut last_ack = Instant::now();
         loop {
+            // The core marks the run stale after STALE_AFTER_SECONDS without a heartbeat. Stop the
+            // work before then, however long failed attempts take, so another run cannot take its
+            // concurrency group while this one still runs.
+            let lease = tokio::time::sleep_until((last_ack + LOST_HEARTBEAT_CANCEL).into());
             tokio::select! {
-                _ = tokio::time::sleep(HEARTBEAT) => {}
+                _ = tokio::time::sleep(wait) => {}
                 _ = heartbeat_stop.changed(), if !shutdown => {
                     shutdown = true;
                     let _ = cancel_tx.send(true);
                     continue;
                 }
+                _ = lease, if !lost.load(Ordering::Relaxed) => {
+                    lost.store(true, Ordering::Relaxed);
+                    warn!("CI heartbeat unacknowledged; cancelling the run");
+                    let _ = cancel_tx.send(true);
+                    continue;
+                }
             }
+            wait = HEARTBEAT;
+            let lease = tokio::time::sleep_until((last_ack + LOST_HEARTBEAT_CANCEL).into());
             let reply = tokio::select! {
-                reply = service.queue.heartbeat(worker, run.id) => reply,
+                reply = tokio::time::timeout(HEARTBEAT_TIMEOUT, service.queue.heartbeat(worker, run.id)) => {
+                    reply.unwrap_or_else(|_| Err(anyhow::anyhow!("heartbeat timed out")))
+                }
                 _ = heartbeat_stop.changed(), if !shutdown => {
                     shutdown = true;
+                    let _ = cancel_tx.send(true);
+                    continue;
+                }
+                _ = lease, if !lost.load(Ordering::Relaxed) => {
+                    lost.store(true, Ordering::Relaxed);
+                    warn!("CI heartbeat unacknowledged; cancelling the run");
                     let _ = cancel_tx.send(true);
                     continue;
                 }
             };
             match reply {
-                Ok(Some(false)) => {}
+                Ok(Some(false)) => last_ack = Instant::now(),
                 Ok(Some(true)) | Ok(None) => {
                     let _ = cancel_tx.send(true);
                 }
@@ -295,6 +326,10 @@ async fn execute(
                     "failed",
                     Some("The CI worker shut down during the run".to_owned()),
                 ),
+                Some(Stopped::Cancelled) if lost.load(Ordering::Relaxed) => (
+                    "failed",
+                    Some("The CI worker lost contact with the server".to_owned()),
+                ),
                 Some(Stopped::Cancelled) => ("cancelled", Some("Cancelled".to_owned())),
                 Some(Stopped::TimedOut) => {
                     ("failed", Some("The run exceeded its time limit".to_owned()))
@@ -311,6 +346,7 @@ async fn execute(
                             stage: "setup".into(),
                             line: message.clone(),
                             level: "error".into(),
+                            ..Default::default()
                         }],
                     )
                     .await;
@@ -409,6 +445,31 @@ async fn record_result(
     }
 }
 
+/// Retries a progress or completion update that failed in transit. The output callback waits for
+/// each update in order, so a brief core outage does not fail a workflow that is still running.
+/// A refusal from the core is final. A retried annotation whose reply was lost is not stored twice.
+async fn deliver<T, Fut>(mut send: impl FnMut() -> Fut) -> Result<T>
+where
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let deadline = tokio::time::Instant::now() + DELIVERY_RETRY;
+    let mut backoff = Duration::from_millis(250);
+    loop {
+        match send().await {
+            Ok(value) => return Ok(value),
+            Err(error)
+                if !error.is::<CoreRefusal>()
+                    && tokio::time::Instant::now() + backoff < deadline =>
+            {
+                warn!(%error, "CI update delivery failed; retrying");
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(Duration::from_secs(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 /// Clones the repository at the run's commit and runs each workflow in turn.
 /// Returns whether every workflow succeeded.
 async fn run_workflows(
@@ -437,12 +498,32 @@ async fn run_workflows(
             return Err(Stopped::TimedOut.into());
         }
     };
-    let secret_file = workspace.write_secrets(&claim.secrets)?;
+    let native = run.engine.as_deref() == Some("codeyard-actions");
+    ensure!(
+        claim.replay.is_none() || native,
+        "Partial re-runs require the codeyard-actions engine"
+    );
+    let secret_file = if native {
+        workspace.write_secrets_for(&claim.secrets, false)?
+    } else {
+        workspace.write_github_secrets(&claim.secrets, &claim.github_tokens.act)?
+    };
+    db::variables::validate_workflow_variables(&claim.variables)?;
+    let variable_file = workspace.write_values("variables.env", &claim.variables, !native)?;
     workspace.write_event(claim)?;
+    if !native && claim.github_tokens.act_limited {
+        send_log_lines(service, worker, run, &[LogLine { stage: "setup".into(), line: "act runs give every job the same token; use the codeyard-actions engine for per-job permissions".into(), level: "warn".into(), ..Default::default() }]).await?;
+    }
     let podman_label =
         (service.config.mode == CiExecutionMode::Podman).then(|| run_container_label(run.run_id));
     let mut log_open = true;
-    for workflow in run.workflow_path.split(',').filter(|path| !path.is_empty()) {
+    let mut all_labels = BTreeSet::new();
+    for workflow in run
+        .workflow_blobs
+        .as_object()
+        .context("run has no workflow files")?
+        .keys()
+    {
         let definition = workspace.definition(workflow);
         let preparing = async {
             let permit = super::workflows::PARSING_SLOTS.acquire().await?;
@@ -453,7 +534,7 @@ async fn run_workflows(
             let run_id = run.run_id;
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
-                prepare_workflow(&path, &workflow, &config, &names, run_id)
+                prepare_workflow_for_engine(&path, &workflow, &config, &names, run_id, native)
             })
             .await?
         };
@@ -463,15 +544,72 @@ async fn run_workflows(
             _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => return Err(Stopped::TimedOut.into()),
         };
         names.extend(name);
-        let command = act_command(
+        all_labels.extend(labels);
+        if super::reusable::content(&run.workflow_blobs[workflow]).is_some() {
+            let target = workspace.checkout().join(workflow);
+            // Replace a tracked file rather than following a repository-controlled symlink.
+            match tokio::fs::remove_file(&target).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            tokio::fs::create_dir_all(target.parent().context("invalid workflow path")?).await?;
+            tokio::fs::copy(&definition, target).await?;
+        }
+    }
+    for workflow in run.workflow_path.split(',').filter(|path| !path.is_empty()) {
+        let definition = workspace.definition(workflow);
+        let mut command = act_command(
             service,
             claim,
             &workspace,
             &definition,
-            &labels,
+            &all_labels,
             secret_file.as_deref(),
             podman_label.as_deref(),
         );
+        if let Some(file) = &variable_file {
+            command.arg("--var-file").arg(file);
+        }
+        if let Some(path) =
+            workspace.write_environment_values(workflow, &claim.environment_values, run.is_fork)?
+        {
+            command.arg("--environment-values-file").arg(path);
+        }
+        let mut concurrency_dir = None;
+        if native {
+            if let Some(replay) = &claim.replay {
+                ensure!(
+                    !run.workflow_path.contains(','),
+                    "partial replay requires one workflow"
+                );
+                command
+                    .arg("--replay-file")
+                    .arg(workspace.write_replay(workflow, replay)?);
+            }
+            if let Some(tokens) = claim.github_tokens.workflows.get(workflow) {
+                let path = workspace.write_job_tokens(workflow, tokens, &claim.github_tokens)?;
+                command
+                    .arg("--job-token-file")
+                    .arg(path)
+                    .arg("--job-state-file")
+                    .arg(workspace.job_state_path(workflow));
+                let directory = workspace.concurrency_dir(workflow)?;
+                command.arg("--concurrency-dir").arg(&directory);
+                concurrency_dir = Some(directory);
+            }
+        }
+        let completion_prefix = format!(
+            "::codeyard-job-completed::{}:",
+            claim.github_tokens.completion_secret
+        );
+        let progress_prefix = format!(
+            "::codeyard-progress::{}:",
+            claim.github_tokens.completion_secret
+        );
+        let generation = super::runtime::token_hash(&claim.runtime.token);
+        let records = Arc::new(Mutex::new(BTreeMap::<(String, u32), i64>::new()));
+        let admissions = Arc::new(Mutex::new(BTreeMap::<(String, u32), i64>::new()));
         let remaining = deadline.saturating_duration_since(Instant::now());
         ensure!(!remaining.is_zero(), Stopped::TimedOut);
         let stage = workflow.to_owned();
@@ -480,18 +618,127 @@ async fn run_workflows(
         let remote = matches!(&service.queue, RunQueue::Remote { .. });
         let (output_done, output_ended) = oneshot::channel();
         let running = async {
-            let status = process::run(command, remaining, cancel.clone(), |line, stderr| {
+            let admitting = async {
+                match &concurrency_dir {
+                    Some(directory) => {
+                        answer_admissions(
+                            service,
+                            worker,
+                            run.id,
+                            &generation,
+                            workflow,
+                            &admissions,
+                            directory,
+                        )
+                        .await
+                    }
+                    None => std::future::pending().await,
+                }
+            };
+            let output = process::run(command, remaining, cancel.clone(), |line, stderr| {
+                let completed = if native && !claim.github_tokens.completion_secret.is_empty() {
+                    line.strip_prefix(&completion_prefix)
+                        .map(|job| format!("{workflow}:{job}"))
+                } else {
+                    None
+                };
+                let progress = if native && !claim.github_tokens.completion_secret.is_empty() {
+                    line.strip_prefix(&progress_prefix)
+                        .map(serde_json::from_str::<codeyard_actions::progress::Event>)
+                } else {
+                    None
+                };
                 let level = if stderr { log_level(&line) } else { "info" };
-                let line = LogLine {
+                let mut line = LogLine {
                     stage: stage.clone(),
-                    line,
+                    line: mask_credentials(line, claim),
                     level: level.to_owned(),
+                    ..Default::default()
                 };
                 let lines_tx = lines_tx.clone();
                 let stalled = stalled.clone();
-                async move { enqueue_log_line(&lines_tx, line, remote, &stalled).await }
-            })
-            .await;
+                let records = records.clone();
+                let admissions = admissions.clone();
+                let generation = generation.clone();
+                let stage = stage.clone();
+                async move {
+                    if let Some(job) = completed {
+                        let prefix = format!("{job}/");
+                        if let Some(tokens) = claim.github_tokens.workflows.get(workflow) {
+                            for child in tokens
+                                .keys()
+                                .map(|id| format!("{workflow}:{id}"))
+                                .filter(|id| id.starts_with(&prefix))
+                            {
+                                deliver(|| service.queue.finish_job(worker, run.id, &child))
+                                    .await?;
+                            }
+                        }
+                        return deliver(|| service.queue.finish_job(worker, run.id, &job)).await;
+                    }
+                    if let Some(event) = progress {
+                        let event = event.context("invalid authenticated runner progress")?;
+                        let key = (event.job.clone(), event.variant);
+                        if let codeyard_actions::progress::Update::Log { step, text } =
+                            &event.update
+                        {
+                            let id = records
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner())
+                                .get(&key)
+                                .copied()
+                                .context("output precedes its job observation")?;
+                            line.line = mask_credentials(text.clone(), claim);
+                            line.job_id = Some(id);
+                            line.step_number = step.map(i32::try_from).transpose()?;
+                        } else {
+                            let id = deliver(|| {
+                                service
+                                    .queue
+                                    .progress(worker, run.id, &generation, &stage, &event)
+                            })
+                            .await?;
+                            if matches!(
+                                event.update,
+                                codeyard_actions::progress::Update::Concurrency { .. }
+                            ) {
+                                admissions
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .insert(key.clone(), id);
+                            }
+                            records
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner())
+                                .insert(key, id);
+                            return Ok(());
+                        }
+                    }
+                    enqueue_log_line(&lines_tx, line, remote, &stalled).await
+                }
+            });
+            let status = tokio::select! {
+                status = output => status,
+                never = admitting => match never {},
+            };
+            if native {
+                if let Some(mut state) = workspace.read_job_state(workflow).await? {
+                    for result in state.jobs.values_mut().chain(
+                        state
+                            .variants
+                            .values_mut()
+                            .flat_map(|variants| variants.values_mut()),
+                    ) {
+                        result
+                            .outputs
+                            .retain(|_, value| mask_credentials(value.clone(), claim) == *value);
+                    }
+                    service
+                        .queue
+                        .job_state(worker, run.id, &generation, workflow, &state)
+                        .await?;
+                }
+            }
             // The batches end once the last sender is gone, which is when the output ends.
             drop(lines_tx);
             let _ = output_done.send(());
@@ -517,6 +764,69 @@ async fn run_workflows(
     Ok(true)
 }
 
+const ADMISSION_POLL: Duration = Duration::from_secs(1);
+
+/// Answers the runner's job concurrency requests until the runner exits. A waiting job learns
+/// when it holds its group, and a running one when a newer job in the group cancels it. The
+/// answers are files in a private directory the runner polls.
+async fn answer_admissions(
+    service: &CiWorkers,
+    worker: &str,
+    run: i64,
+    generation: &str,
+    workflow: &str,
+    jobs: &Mutex<BTreeMap<(String, u32), i64>>,
+    directory: &Path,
+) -> std::convert::Infallible {
+    let mut answered = BTreeMap::<i64, bool>::new();
+    loop {
+        tokio::time::sleep(ADMISSION_POLL).await;
+        let waiting: Vec<_> = jobs
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .filter(|(_, id)| answered.get(*id) != Some(&false))
+            .map(|(key, id)| (key.clone(), *id))
+            .collect();
+        for ((job, variant), id) in waiting {
+            let answer = match service
+                .queue
+                .admit_job(worker, run, generation, workflow, id)
+                .await
+            {
+                Ok(Some(answer)) => answer,
+                Ok(None) => continue,
+                Err(error) => {
+                    tracing::debug!(%error, "job concurrency check failed");
+                    continue;
+                }
+            };
+            if answered.get(&id) == Some(&answer) {
+                continue;
+            }
+            match write_admission(directory, &job, variant, answer) {
+                Ok(()) => {
+                    answered.insert(id, answer);
+                }
+                Err(error) => tracing::warn!(%error, "could not answer a job concurrency request"),
+            }
+        }
+    }
+}
+
+/// Replaces the answer atomically, so the runner never reads half a file.
+fn write_admission(directory: &Path, job: &str, variant: u32, granted: bool) -> Result<()> {
+    ensure!(
+        !job.is_empty() && !job.starts_with('.') && !job.contains(['/', '\\']),
+        "invalid job id"
+    );
+    let mut file = tempfile::NamedTempFile::new_in(directory)?;
+    let answer = if granted { "granted" } else { "cancelled" };
+    std::io::Write::write_all(file.as_file_mut(), answer.as_bytes())?;
+    file.persist(directory.join(format!("{job}.{variant}")))?;
+    Ok(())
+}
+
 /// The ref GitHub reports for a run. The checkout is detached and a database-free worker has
 /// no branches in it, so act cannot find the ref itself and would guess `refs/heads/master`.
 fn github_ref(claim: &ClaimedRun) -> Option<String> {
@@ -527,11 +837,13 @@ fn github_ref(claim: &ClaimedRun) -> Option<String> {
             .as_ref()
             .map(|pull| format!("refs/pull/{}/merge", pull.number));
     }
-    Some(if run.branch.starts_with("refs/") {
-        run.branch.clone()
-    } else {
-        format!("refs/heads/{}", run.branch)
-    })
+    Some(
+        if run.branch.starts_with("refs/") && run.event != "pull_request_target" {
+            run.branch.clone()
+        } else {
+            format!("refs/heads/{}", run.branch)
+        },
+    )
 }
 
 fn act_command(
@@ -545,15 +857,22 @@ fn act_command(
 ) -> tokio::process::Command {
     let config = &service.config;
     let run = &claim.run;
+    let native = run.engine.as_deref() == Some("codeyard-actions");
     let home = workspace.root().join("home");
-    let mut command = process::command(&config.act_binary);
+    let mut command = process::command(if native {
+        &config.actions_binary
+    } else {
+        &config.act_binary
+    });
     #[cfg(target_os = "linux")]
     {
         let parent = std::process::id();
-        // A dead server must not leave act submitting new containers during recovery.
+        // A dead server must not leave act submitting new containers during recovery. The
+        // native runner gets SIGTERM instead, so its cancellation stops the job's commands.
+        let death = if native { libc::SIGTERM } else { libc::SIGKILL };
         unsafe {
             command.pre_exec(move || {
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, death) != 0 {
                     return Err(std::io::Error::last_os_error());
                 }
                 if libc::getppid() as u32 != parent {
@@ -581,6 +900,58 @@ fn act_command(
         .env("GITSERV_REPO_NAME", &claim.repository_name)
         .env("GITSERV_BRANCH", &run.branch)
         .env("GITSERV_HEAD_SHA", run.head_sha.as_deref().unwrap_or(""));
+    if !native && claim.github_tokens.oidc_jobs.contains("act") {
+        for (name, value) in [
+            (
+                "ACTIONS_ID_TOKEN_REQUEST_URL",
+                &claim.github_tokens.oidc_url,
+            ),
+            ("ACTIONS_ID_TOKEN_REQUEST_TOKEN", &claim.github_tokens.act),
+        ] {
+            command.arg("--env").arg(format!("{name}={value}"));
+        }
+    }
+    if !claim.runtime.token.is_empty() {
+        // act derives RESULTS_URL from its parent's RUNTIME_URL after loading --env.
+        command
+            .env("ACTIONS_RUNTIME_URL", &claim.runtime.results_url)
+            .env("ACTIONS_RUNTIME_TOKEN", &claim.runtime.token);
+        for (name, value) in [
+            ("ACTIONS_RUNTIME_TOKEN", claim.runtime.token.as_str()),
+            ("ACTIONS_RESULTS_URL", claim.runtime.results_url.as_str()),
+            ("ACTIONS_CACHE_URL", claim.runtime.results_url.as_str()),
+            ("ACTIONS_CACHE_SERVICE_V2", "True"),
+        ] {
+            command.arg("--env").arg(format!("{name}={value}"));
+        }
+    }
+    // Workflow URLs come from the core, so a runner without PUBLIC_URL still names the forge.
+    let origin = if claim.forge_origin.is_empty() {
+        crate::backend::api::http::config::link_origin()
+    } else {
+        claim.forge_origin.clone()
+    };
+    for (name, value) in [
+        ("GITHUB_SERVER_URL", origin.clone()),
+        ("GITHUB_API_URL", format!("{origin}/api/v3")),
+        ("GITHUB_GRAPHQL_URL", format!("{origin}/api/graphql")),
+        ("GITHUB_SHA", run.head_sha.clone().unwrap_or_default()),
+        ("SHA_REF", run.head_sha.clone().unwrap_or_default()),
+        (
+            "GITHUB_RUN_ID",
+            run.workflow_run_id.unwrap_or(run.id).to_string(),
+        ),
+        (
+            "GITHUB_RUN_ATTEMPT",
+            run.workflow_run_attempt.unwrap_or(1).to_string(),
+        ),
+        (
+            "GITHUB_RUN_NUMBER",
+            run.workflow_run_number.unwrap_or(run.id).to_string(),
+        ),
+    ] {
+        command.arg("--env").arg(format!("{name}={value}"));
+    }
     if let Some(environment) = &run.environment {
         command.env("GITSERV_ENVIRONMENT", environment);
     }
@@ -589,10 +960,38 @@ fn act_command(
         "GITHUB_REPOSITORY={}/{}",
         claim.owner, claim.repository_name
     ));
-    if !claim.actor.is_empty() {
-        command.arg("--actor").arg(&claim.actor);
+    let actor = claim
+        .original_actor
+        .as_ref()
+        .map(|actor| actor.login.as_str())
+        .unwrap_or(&claim.actor);
+    if !actor.is_empty() {
+        command.arg("--actor").arg(actor);
     }
-    if claim.pull_request.is_some() || claim.run.event == "workflow_dispatch" {
+    if !claim.actor.is_empty() {
+        command
+            .arg("--env")
+            .arg(format!("GITHUB_TRIGGERING_ACTOR={}", claim.actor));
+    }
+    if let Some(actor) = &claim.original_actor {
+        command
+            .arg("--env")
+            .arg(format!("GITHUB_ACTOR_ID={}", actor.id));
+    }
+    if claim.debug {
+        command.arg(if native { "--debug" } else { "--verbose" });
+        for (key, value) in [
+            ("ACTIONS_RUNNER_DEBUG", "true"),
+            ("ACTIONS_STEP_DEBUG", "true"),
+            ("RUNNER_DEBUG", "1"),
+        ] {
+            command.arg("--env").arg(format!("{key}={value}"));
+        }
+    }
+    if claim.run.event_payload.is_some()
+        || claim.pull_request.is_some()
+        || claim.run.event == "workflow_dispatch"
+    {
         command.arg("--eventpath").arg(workspace.event_path());
     }
     if let Some(reference) = github_ref(claim) {
@@ -659,12 +1058,24 @@ fn container_filters(label: &str) -> String {
         .expect("the static container filter is serializable")
 }
 
+#[cfg(test)]
 fn prepare_workflow(
     path: &Path,
     workflow: &str,
     config: &super::config::CiConfig,
     names: &WorkflowNames,
     run_id: uuid::Uuid,
+) -> Result<(BTreeSet<String>, Option<WorkflowName>)> {
+    prepare_workflow_for_engine(path, workflow, config, names, run_id, false)
+}
+
+fn prepare_workflow_for_engine(
+    path: &Path,
+    workflow: &str,
+    config: &super::config::CiConfig,
+    names: &WorkflowNames,
+    run_id: uuid::Uuid,
+    native: bool,
 ) -> Result<(BTreeSet<String>, Option<WorkflowName>)> {
     let mut value = super::workflows::parse_yaml(&std::fs::read(path)?)?;
     let labels = labels_from_value(&value, config.mode == CiExecutionMode::Local)?;
@@ -677,17 +1088,21 @@ fn prepare_workflow(
     {
         bail!("no runner image for `runs-on: {label}`; add it to CI_ACT_PLATFORM_MAP");
     }
-    let unique = names.take(&act_workflow_name(&value, workflow), run_id);
-    value
-        .as_mapping_mut()
-        .context("workflow must be a mapping")?
-        .insert(
-            Value::String("name".into()),
-            Value::String(unique.name.clone()),
-        );
+    // Native containers already have per-job random names. Only act needs its workflow
+    // title rewritten to isolate container names; that private suffix is not native metadata.
+    let unique = (!native).then(|| names.take(&act_workflow_name(&value, workflow), run_id));
+    if let Some(unique) = &unique {
+        value
+            .as_mapping_mut()
+            .context("workflow must be a mapping")?
+            .insert(
+                Value::String("name".into()),
+                Value::String(unique.name.clone()),
+            );
+    }
     add_container_label(&mut value, &run_container_label(run_id))?;
     std::fs::write(path, serde_yaml::to_string(&value)?)?;
-    Ok((labels, Some(unique)))
+    Ok((labels, unique))
 }
 
 fn add_container_label(workflow: &mut Value, label: &str) -> Result<()> {
@@ -700,32 +1115,32 @@ fn add_container_label(workflow: &mut Value, label: &str) -> Result<()> {
             continue;
         };
         if let Some(container) = job.get_mut(Value::String("container".into())) {
-            append_container_option(container, &option, true)?;
+            append_container_option(container, &option)?;
         }
         if let Some(services) = job
             .get_mut(Value::String("services".into()))
             .and_then(Value::as_mapping_mut)
         {
+            // The parser accepts the image shorthand for services too; an empty image there
+            // disables the service, and the runner leaves it out.
             for service in services.values_mut() {
-                append_container_option(service, &option, false)?;
+                append_container_option(service, &option)?;
             }
         }
     }
     Ok(())
 }
 
-fn append_container_option(spec: &mut Value, option: &str, image_shorthand: bool) -> Result<()> {
-    if image_shorthand {
-        if let Value::String(image) = spec {
-            let mut expanded = Mapping::new();
-            expanded.insert(Value::String("image".into()), Value::String(image.clone()));
-            expanded.insert(
-                Value::String("options".into()),
-                Value::String(option.to_owned()),
-            );
-            *spec = Value::Mapping(expanded);
-            return Ok(());
-        }
+fn append_container_option(spec: &mut Value, option: &str) -> Result<()> {
+    if let Value::String(image) = spec {
+        let mut expanded = Mapping::new();
+        expanded.insert(Value::String("image".into()), Value::String(image.clone()));
+        expanded.insert(
+            Value::String("options".into()),
+            Value::String(option.to_owned()),
+        );
+        *spec = Value::Mapping(expanded);
+        return Ok(());
     }
     let Some(mapping) = spec.as_mapping_mut() else {
         bail!("workflow container configuration must be a mapping");
@@ -895,7 +1310,7 @@ pub(super) async fn recover_containers(directory: PathBuf, mut stop: watch::Rece
 }
 
 #[derive(Deserialize)]
-struct ContainerSummary {
+struct ResourceId {
     #[serde(rename = "Id")]
     id: String,
 }
@@ -907,7 +1322,7 @@ async fn remove_run_containers(socket: &str, label: &str) -> Result<()> {
         .timeout(CLEANUP_TIMEOUT)
         .build()?;
     let filters = container_filters(label);
-    let containers: Vec<ContainerSummary> = client
+    let containers: Vec<ResourceId> = client
         .get("http://localhost/v1.40/containers/json")
         .query(&[("all", "true"), ("filters", filters.as_str())])
         .send()
@@ -916,18 +1331,58 @@ async fn remove_run_containers(socket: &str, label: &str) -> Result<()> {
         .json()
         .await?;
     for container in containers {
-        let response = client
-            .delete(format!(
-                "http://localhost/v1.40/containers/{}",
-                container.id
-            ))
-            // Anonymous volumes, which images such as postgres declare, go with the container.
-            .query(&[("force", "true"), ("v", "true")])
-            .send()
-            .await?;
-        if response.status() != reqwest::StatusCode::NOT_FOUND {
-            response.error_for_status()?;
-        }
+        // Anonymous volumes, which images such as postgres declare, go with the container.
+        remove_resource(
+            &client,
+            &format!("containers/{}", container.id),
+            &[("force", "true"), ("v", "true")],
+        )
+        .await?;
+    }
+    // Networks and built images carry the run's label as well, so a crash leaves none behind.
+    let networks: Vec<ResourceId> = client
+        .get("http://localhost/v1.40/networks")
+        .query(&[("filters", filters.as_str())])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    for network in networks {
+        remove_resource(&client, &format!("networks/{}", network.id), &[]).await?;
+    }
+    let images: Vec<ResourceId> = client
+        .get("http://localhost/v1.40/images/json")
+        .query(&[("filters", filters.as_str())])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    for image in images {
+        remove_resource(
+            &client,
+            &format!("images/{}", image.id),
+            &[("force", "true")],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Deletes one Podman resource. A resource that is already gone is not an error.
+async fn remove_resource(
+    client: &reqwest::Client,
+    path: &str,
+    query: &[(&str, &str)],
+) -> Result<()> {
+    let response = client
+        .delete(format!("http://localhost/v1.40/{path}"))
+        .query(query)
+        .send()
+        .await?;
+    if response.status() != reqwest::StatusCode::NOT_FOUND {
+        response.error_for_status()?;
     }
     Ok(())
 }
@@ -1015,6 +1470,36 @@ async fn send_log_batches(
     Ok(())
 }
 
+fn mask_credentials(mut line: String, claim: &ClaimedRun) -> String {
+    let mut values: Vec<_> = std::iter::once(&claim.runtime.token)
+        .chain(std::iter::once(&claim.github_tokens.act))
+        .chain(std::iter::once(&claim.github_tokens.completion_secret))
+        .chain(
+            claim
+                .github_tokens
+                .workflows
+                .values()
+                .flat_map(|jobs| jobs.values()),
+        )
+        .chain(claim.secrets.iter().map(|(_, value)| value))
+        .chain(
+            claim
+                .environment_values
+                .environments
+                .values()
+                .flat_map(|scope| scope.secrets.values()),
+        )
+        .filter(|value| !value.is_empty())
+        .collect();
+    values.sort_unstable_by_key(|value| std::cmp::Reverse(value.len()));
+    for value in values {
+        if line.contains(value.as_str()) {
+            line = line.replace(value.as_str(), "***");
+        }
+    }
+    line
+}
+
 fn log_level(line: &str) -> &'static str {
     let lower = line.to_ascii_lowercase();
     if lower.contains("error") {
@@ -1088,10 +1573,46 @@ impl Workspace {
             .workflow_blobs
             .as_object()
             .context("the run has no workflow files")?;
+        let mut definitions = BTreeMap::new();
         for (path, id) in blobs {
-            let id = id.as_str().context("bad workflow blob id")?;
-            let content = store.blob_by_id(id).await?;
-            tokio::fs::write(workspace.definition(path), content).await?;
+            let content = if let Some(content) = super::reusable::content(id) {
+                ensure!(
+                    super::admission::is_safe_workflow_path(path),
+                    "invalid workflow path"
+                );
+                content.as_bytes().to_vec()
+            } else {
+                store
+                    .blob_by_id(id.as_str().context("bad workflow blob id")?)
+                    .await?
+            };
+            definitions.insert(path.clone(), content);
+        }
+        if run.engine.as_deref() == Some("act")
+            && blobs
+                .values()
+                .any(|value| super::reusable::content(value).is_some())
+        {
+            let roots = run
+                .workflow_path
+                .split(',')
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let secrets = claim
+                .secrets
+                .iter()
+                .map(|(name, _)| name.clone())
+                .chain(std::iter::once("GITHUB_TOKEN".into()))
+                .collect();
+            let permit = super::workflows::PARSING_SLOTS.acquire().await?;
+            definitions = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                super::reusable::act_secrets(definitions, &roots, secrets)
+            })
+            .await??;
+        }
+        for (path, content) in definitions {
+            tokio::fs::write(workspace.definition(&path), content).await?;
         }
         Ok(workspace)
     }
@@ -1108,13 +1629,52 @@ impl Workspace {
         self.root().join("definitions").join(file_name(workflow))
     }
 
+    /// The private directory where the worker answers a workflow's job concurrency requests.
+    fn concurrency_dir(&self, workflow: &str) -> Result<PathBuf> {
+        let path = self
+            .root()
+            .join(format!("{}.concurrency", file_name(workflow)));
+        std::fs::create_dir_all(&path)?;
+        Ok(path)
+    }
+
+    fn job_state_path(&self, workflow: &str) -> PathBuf {
+        self.root()
+            .join(format!("{}.state.json", file_name(workflow)))
+    }
+
+    async fn read_job_state(
+        &self,
+        workflow: &str,
+    ) -> Result<Option<codeyard_actions::progress::State>> {
+        use tokio::io::AsyncReadExt;
+        let file = match tokio::fs::File::open(self.job_state_path(workflow)).await {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let mut body = Vec::new();
+        file.take(8 * 1024 * 1024 + 1)
+            .read_to_end(&mut body)
+            .await?;
+        ensure!(
+            body.len() <= 8 * 1024 * 1024,
+            "job state exceeds the native limit"
+        );
+        Ok(Some(
+            serde_json::from_slice(&body).context("invalid private job state")?,
+        ))
+    }
+
     fn event_path(&self) -> PathBuf {
         self.root().join("event.json")
     }
 
-    /// Writes `github.event` for act's `--eventpath`: the pull request, or the manual inputs.
+    /// Old runs retain their compact pull request context; new runs use the webhook document.
     fn write_event(&self, claim: &ClaimedRun) -> Result<()> {
-        let event = if let Some(pull) = &claim.pull_request {
+        let event = if let Some(payload) = &claim.run.event_payload {
+            payload.clone()
+        } else if let Some(pull) = &claim.pull_request {
             let head_sha = claim
                 .run
                 .head_sha
@@ -1145,27 +1705,195 @@ impl Workspace {
         Ok(())
     }
 
-    /// Writes repository secrets in act's `--secret-file` (dotenv) format.
-    fn write_secrets(&self, secrets: &[(String, String)]) -> Result<Option<PathBuf>> {
-        if secrets.is_empty() {
-            return Ok(None);
-        }
-        // Remote claims are untrusted input here. Validate the whole set before the file exists.
-        db::secrets::validate_repository_secrets(secrets)?;
-
+    fn write_github_secrets(
+        &self,
+        secrets: &[(String, String)],
+        token: &str,
+    ) -> Result<Option<PathBuf>> {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
-        let path = self.root().join("secrets.env");
+        let path = self.write_secrets(secrets)?;
+        if token.is_empty() {
+            return Ok(path);
+        }
+        let path = path.unwrap_or_else(|| self.root().join("secrets.env"));
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&path)?;
+        writeln!(file, "GITHUB_TOKEN={}", dotenv_value(token))?;
+        Ok(Some(path))
+    }
+
+    fn write_environment_values(
+        &self,
+        workflow: &str,
+        values: &super::environment_values::EnvironmentValues,
+        fork: bool,
+    ) -> Result<Option<PathBuf>> {
+        use std::{io::Write, os::unix::fs::OpenOptionsExt};
+        let Some(jobs) = values
+            .workflows
+            .get(workflow)
+            .filter(|jobs| !jobs.is_empty())
+        else {
+            return Ok(None);
+        };
+        let mut environments = BTreeMap::new();
+        for key in jobs.values() {
+            let scope = values
+                .environments
+                .get(key)
+                .context("Invalid environment value binding")?;
+            ensure!(
+                !fork || scope.secrets.is_empty(),
+                "Fork claims cannot contain environment secrets"
+            );
+            let secrets: Vec<_> = scope
+                .secrets
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect();
+            db::secrets::validate_repository_secrets(&secrets)?;
+            ensure!(
+                scope.variables.len() <= 100,
+                "Too many environment variables"
+            );
+            let variables: Vec<_> = scope
+                .variables
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect();
+            db::variables::validate_all(&variables)?;
+            environments.insert(key, scope);
+        }
+        let bytes =
+            serde_json::to_vec(&serde_json::json!({"jobs":jobs,"environments":environments}))?;
+        ensure!(
+            bytes.len() <= 16 * 1024 * 1024,
+            "Environment values file is too large"
+        );
+        let path = self
+            .root()
+            .join(format!("{}.environments.json", file_name(workflow)));
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&path)?;
-        for (name, value) in secrets {
-            writeln!(file, "{name}={}", dotenv_value(value))?;
+        file.write_all(&bytes)?;
+        Ok(Some(path))
+    }
+
+    fn write_replay(
+        &self,
+        workflow: &str,
+        replay: &codeyard_actions::progress::Replay,
+    ) -> Result<PathBuf> {
+        use std::os::unix::fs::OpenOptionsExt;
+        let path = self
+            .root()
+            .join(format!(".replay-{}.json", file_name(workflow)));
+        let file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path)?;
+        serde_json::to_writer(file, replay)?;
+        Ok(path)
+    }
+
+    fn write_job_tokens(
+        &self,
+        workflow: &str,
+        tokens: &BTreeMap<String, String>,
+        credentials: &super::tokens::GithubTokens,
+    ) -> Result<PathBuf> {
+        use std::os::unix::fs::OpenOptionsExt;
+        let path = self
+            .root()
+            .join(format!("{}.tokens.json", file_name(workflow)));
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?;
+        serde_json::to_writer(
+            file,
+            &serde_json::json!({"tokens": tokens, "completion_secret": credentials.completion_secret,
+                "oidc_url": credentials.oidc_url,
+                "oidc_jobs": tokens.keys().filter(|job| credentials.oidc_jobs.contains(&format!("{workflow}:{job}"))).collect::<Vec<_>>()
+            }),
+        )?;
+        Ok(path)
+    }
+
+    /// act's dotenv parser needs different escaping from the in-house runner's parser.
+    fn write_secrets(&self, secrets: &[(String, String)]) -> Result<Option<PathBuf>> {
+        self.write_secrets_for(secrets, true)
+    }
+
+    fn write_secrets_for(
+        &self,
+        secrets: &[(String, String)],
+        act: bool,
+    ) -> Result<Option<PathBuf>> {
+        if secrets.is_empty() {
+            return Ok(None);
+        }
+        // Remote claims are untrusted input here. Validate the whole set before the file exists.
+        db::secrets::validate_workflow_secrets(secrets)?;
+
+        self.write_values("secrets.env", secrets, act)
+    }
+
+    fn write_values(
+        &self,
+        filename: &str,
+        values: &[(String, String)],
+        act: bool,
+    ) -> Result<Option<PathBuf>> {
+        if values.is_empty() {
+            return Ok(None);
+        }
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let path = self.root().join(filename);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?;
+        for (name, value) in values {
+            writeln!(
+                file,
+                "{name}={}",
+                if act {
+                    dotenv_value(value)
+                } else {
+                    native_dotenv_value(value)
+                }
+            )?;
         }
         Ok(Some(path))
     }
+}
+
+fn native_dotenv_value(value: &str) -> String {
+    let mut encoded = String::from("\"");
+    for character in value.chars() {
+        match character {
+            '\\' => encoded.push_str("\\\\"),
+            '\n' => encoded.push_str("\\n"),
+            '\r' => encoded.push_str("\\r"),
+            '"' => encoded.push_str("\\\""),
+            '$' => encoded.push_str("\\$"),
+            _ => encoded.push(character),
+        }
+    }
+    encoded.push('"');
+    encoded
 }
 
 fn dotenv_value(value: &str) -> String {
@@ -1201,7 +1929,7 @@ fn file_name(workflow: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::{ci::CiConfig, repositories::store::RepoStore};
+    use crate::backend::{ci::CiConfig, db::DbPool, repositories::store::RepoStore};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
@@ -1224,6 +1952,23 @@ mod tests {
             Some(name.as_ref().unwrap().name.as_str())
         );
         assert!(value["jobs"]["build"]["container"]["options"]
+            .as_str()
+            .unwrap()
+            .contains(&run_container_label(run_id)));
+        std::fs::write(&path, source).unwrap();
+        let (_, name) = prepare_workflow_for_engine(
+            &path,
+            "ci.yml",
+            &config,
+            &WorkflowNames::default(),
+            run_id,
+            true,
+        )
+        .unwrap();
+        assert!(name.is_none());
+        let native = super::super::workflows::parse_yaml(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(native["name"].as_str(), Some("Test"));
+        assert!(native["jobs"]["build"]["container"]["options"]
             .as_str()
             .unwrap()
             .contains(&run_container_label(run_id)));
@@ -1332,6 +2077,7 @@ mod tests {
                     stage: "ci".into(),
                     line: "output".into(),
                     level: "info".into(),
+                    ..Default::default()
                 })
                 .await
                 .unwrap();
@@ -1357,6 +2103,7 @@ mod tests {
                     stage: "ci".into(),
                     line: "discarded".into(),
                     level: "info".into(),
+                    ..Default::default()
                 })
                 .await
                 .unwrap();
@@ -1395,11 +2142,19 @@ mod tests {
             repository_name: "project".into(),
             owner: "worker_owner".into(),
             actor: "worker_owner".into(),
+            original_actor: None,
+            forge_origin: String::new(),
+            replay: None,
+            debug: false,
             secrets: vec![],
+            variables: Vec::new(),
+            environment_values: Default::default(),
+            github_tokens: Default::default(),
             pull_request: None,
             storage_peer: None,
             storage_replicas: Vec::new(),
             limits: Default::default(),
+            runtime: Default::default(),
             store: None,
         };
         let (stop, receiver) = watch::channel(false);
@@ -1512,6 +2267,96 @@ mod tests {
         // Retain and drain the same owner used by the worker.
         let mut tasks = std::mem::take(&mut *cleanups.lock().unwrap());
         while tasks.join_next().await.is_some() {}
+    }
+
+    #[tokio::test]
+    async fn environment_values_files_are_private_and_bound_to_one_workflow() {
+        let workspace = secret_workspace();
+        let mut values = super::super::environment_values::EnvironmentValues::default();
+        for (key, secret) in [("prod", "production-secret"), ("other", "other-secret")] {
+            values.environments.insert(
+                key.into(),
+                db::environment_values::WorkflowValues {
+                    secrets: BTreeMap::from([("TOKEN".into(), secret.into())]),
+                    variables: BTreeMap::from([("COLOR".into(), "visible-variable".into())]),
+                },
+            );
+        }
+        values.workflows.insert(
+            "ci.yml".into(),
+            BTreeMap::from([("deploy".into(), "prod".into())]),
+        );
+        values.workflows.insert(
+            "other.yml".into(),
+            BTreeMap::from([("deploy".into(), "other".into())]),
+        );
+        let path = workspace
+            .write_environment_values("ci.yml", &values, false)
+            .unwrap()
+            .unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(body["jobs"]["deploy"], "prod");
+        assert_eq!(body["environments"].as_object().unwrap().len(), 1);
+        assert_eq!(
+            body["environments"]["prod"]["variables"]["COLOR"],
+            "visible-variable"
+        );
+        assert!(!path.starts_with(workspace.checkout()));
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let fork = secret_workspace();
+        assert!(fork
+            .write_environment_values("ci.yml", &values, true)
+            .is_err());
+        assert_eq!(std::fs::read_dir(fork.root()).unwrap().count(), 0);
+        assert!(workspace
+            .write_environment_values("missing.yml", &values, false)
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn environment_values_masking_retains_shadowed_secrets_but_not_variables() {
+        let root = tempfile::tempdir().unwrap();
+        let (_, run) = queued_fixture(root.path()).await;
+        let mut environment_values = super::super::environment_values::EnvironmentValues::default();
+        environment_values.environments.insert(
+            "prod".into(),
+            db::environment_values::WorkflowValues {
+                secrets: BTreeMap::from([("TOKEN".into(), "shared-secret".into())]),
+                variables: BTreeMap::from([("COLOR".into(), "visible-variable".into())]),
+            },
+        );
+        let claim = ClaimedRun {
+            run,
+            storage_node_id: None,
+            repository: uuid::Uuid::new_v4(),
+            repository_name: "project".into(),
+            owner: "worker_owner".into(),
+            actor: "worker_owner".into(),
+            original_actor: None,
+            forge_origin: String::new(),
+            replay: None,
+            debug: false,
+            secrets: vec![("TOKEN".into(), "shared".into())],
+            variables: Vec::new(),
+            environment_values,
+            github_tokens: Default::default(),
+            pull_request: None,
+            storage_peer: None,
+            storage_replicas: Vec::new(),
+            limits: Default::default(),
+            runtime: Default::default(),
+            store: None,
+        };
+        assert_eq!(
+            mask_credentials("shared-secret shared visible-variable".into(), &claim),
+            "*** *** visible-variable"
+        );
     }
 
     fn complex_secret_value() -> String {
@@ -1765,6 +2610,91 @@ mod tests {
         url.query_pairs().into_owned().collect()
     }
 
+    #[tokio::test]
+    async fn results_and_oidc_credentials_reach_act_and_its_job_environment() {
+        let root = tempfile::tempdir().unwrap();
+        let (service, mut run) = queued_fixture(root.path()).await;
+        run.engine = Some("act".into());
+        let mut claim = ClaimedRun {
+            run,
+            storage_node_id: None,
+            repository: uuid::Uuid::new_v4(),
+            repository_name: "project".into(),
+            owner: "worker_owner".into(),
+            actor: "worker_owner".into(),
+            original_actor: None,
+            forge_origin: String::new(),
+            replay: None,
+            debug: false,
+            secrets: Vec::new(),
+            variables: Vec::new(),
+            environment_values: Default::default(),
+            pull_request: None,
+            storage_peer: None,
+            storage_replicas: Vec::new(),
+            limits: Default::default(),
+            github_tokens: Default::default(),
+            runtime: super::super::runtime::RuntimeCredentials {
+                token: "runtime-test-token".into(),
+                results_url: "https://results.example".into(),
+            },
+            store: None,
+        };
+        claim.github_tokens.act = "oidc-test-token".into();
+        claim.github_tokens.oidc_url = "https://issuer.example/api/ci/oidc/token?".into();
+        claim.github_tokens.oidc_jobs.insert("act".into());
+        let command = act_command(
+            &service,
+            &claim,
+            &secret_workspace(),
+            Path::new("workflow.yml"),
+            &BTreeSet::new(),
+            None,
+            None,
+        );
+        let args = command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        for value in [
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN=oidc-test-token",
+            "ACTIONS_ID_TOKEN_REQUEST_URL=https://issuer.example/api/ci/oidc/token?",
+            "ACTIONS_RUNTIME_TOKEN=runtime-test-token",
+            "ACTIONS_RESULTS_URL=https://results.example",
+            "ACTIONS_CACHE_SERVICE_V2=True",
+        ] {
+            assert!(args.windows(2).any(|pair| pair == ["--env", value]));
+        }
+        let env = command
+            .as_std()
+            .get_envs()
+            .filter_map(|(key, value)| {
+                value.map(|value| {
+                    (
+                        key.to_string_lossy().into_owned(),
+                        value.to_string_lossy().into_owned(),
+                    )
+                })
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(env["ACTIONS_RUNTIME_TOKEN"], "runtime-test-token");
+        assert_eq!(env["ACTIONS_RUNTIME_URL"], "https://results.example");
+        claim.github_tokens.oidc_jobs.clear();
+        let command = act_command(
+            &service,
+            &claim,
+            &secret_workspace(),
+            Path::new("workflow.yml"),
+            &BTreeSet::new(),
+            None,
+            None,
+        );
+        assert!(!command.as_std().get_args().any(|arg| arg
+            .to_string_lossy()
+            .starts_with("ACTIONS_ID_TOKEN_REQUEST_")));
+    }
+
     #[test]
     fn run_labels_filters_and_workflow_options_are_exact() {
         let run_id = uuid::Uuid::parse_str("01234567-89ab-cdef-0123-456789abcdef").unwrap();
@@ -1844,6 +2774,9 @@ jobs:
             response(200, list_body(&["workflow", "service"])),
             response(204, Vec::new()),
             response(204, Vec::new()),
+            // Networks, then built images, carry the same run label.
+            response(200, list_body(&[])),
+            response(200, list_body(&[])),
         ])
         .await;
         let live = uuid::Uuid::new_v4();
@@ -1928,6 +2861,7 @@ jobs:
             stage: "ci".into(),
             line: "output".into(),
             level: "info".into(),
+            ..Default::default()
         };
         let stalled = AtomicBool::new(false);
         enqueue_log_line(&sender, line(), true, &stalled)
@@ -1955,10 +2889,14 @@ jobs:
         let first = "a".repeat(64);
         let second = "b".repeat(64);
         let label = "com.codeyard.ci.run=01234567-89ab-cdef-0123-456789abcdef";
+        let network = "c".repeat(64);
         let (_directory, socket, mut requests, server) = fake_podman(vec![
             response(200, list_body(&[&first, &second])),
             response(204, Vec::new()),
             response(404, Vec::new()),
+            response(200, list_body(&[&network])),
+            response(204, Vec::new()),
+            response(200, list_body(&[])),
         ])
         .await;
 
@@ -1981,6 +2919,19 @@ jobs:
             assert_eq!(query.get("force").map(String::as_str), Some("true"));
             assert_eq!(query.get("v").map(String::as_str), Some("true"));
         }
+        let (method, target) = requests.recv().await.unwrap();
+        assert_eq!(method, "GET");
+        assert!(target.starts_with("/v1.40/networks?"));
+        assert_eq!(
+            decoded_query(&target).get("filters").map(String::as_str),
+            Some(container_filters(label).as_str())
+        );
+        let (method, target) = requests.recv().await.unwrap();
+        assert_eq!(method, "DELETE");
+        assert!(target.starts_with(&format!("/v1.40/networks/{network}")));
+        let (method, target) = requests.recv().await.unwrap();
+        assert_eq!(method, "GET");
+        assert!(target.starts_with("/v1.40/images/json?"));
 
         let (_directory, socket, _requests, server) =
             fake_podman(vec![response(503, Vec::new())]).await;
@@ -2082,11 +3033,19 @@ jobs:
             repository_name: "test".into(),
             owner: "test".into(),
             actor: "test".into(),
+            original_actor: None,
+            forge_origin: String::new(),
+            replay: None,
+            debug: false,
             secrets: Vec::new(),
+            variables: Vec::new(),
+            environment_values: Default::default(),
             pull_request: None,
             storage_peer: None,
             storage_replicas: Vec::new(),
             limits: Default::default(),
+            runtime: Default::default(),
+            github_tokens: Default::default(),
             store: Some(store),
         };
         let workspace = Workspace::prepare(
@@ -2159,11 +3118,19 @@ jobs:
             repository_name: "repo".to_owned(),
             owner: "alice".to_owned(),
             actor: String::new(),
+            original_actor: None,
+            forge_origin: String::new(),
+            replay: None,
+            debug: false,
             secrets: Vec::new(),
+            variables: Vec::new(),
+            environment_values: Default::default(),
+            github_tokens: Default::default(),
             pull_request: None,
             storage_peer: None,
             storage_replicas: Vec::new(),
             limits: Default::default(),
+            runtime: Default::default(),
             store: None,
         };
         let workspace = secret_workspace();
@@ -2210,7 +3177,14 @@ jobs:
             repository_name: "repo".to_owned(),
             owner: "alice".to_owned(),
             actor: String::new(),
+            original_actor: None,
+            forge_origin: String::new(),
+            replay: None,
+            debug: false,
             secrets: Vec::new(),
+            variables: Vec::new(),
+            environment_values: Default::default(),
+            github_tokens: Default::default(),
             pull_request: Some(crate::backend::ci::queue::PullRequestEvent {
                 number: 7,
                 title: "Add a feature".to_owned(),
@@ -2221,6 +3195,7 @@ jobs:
             storage_peer: None,
             storage_replicas: Vec::new(),
             limits: Default::default(),
+            runtime: Default::default(),
             store: None,
         };
         let workspace = secret_workspace();
@@ -2233,6 +3208,14 @@ jobs:
         assert_eq!(event["pull_request"]["head"]["sha"], head);
         assert_eq!(event["pull_request"]["base"]["ref"], "main");
         assert_eq!(github_ref(&claim).as_deref(), Some("refs/pull/7/merge"));
+        // pull_request_target stores the base branch's short name, even one that looks like a ref.
+        let mut target = claim;
+        target.run.event = "pull_request_target".to_owned();
+        target.run.branch = "refs/heads/main".to_owned();
+        assert_eq!(
+            github_ref(&target).as_deref(),
+            Some("refs/heads/refs/heads/main")
+        );
     }
 
     #[tokio::test]

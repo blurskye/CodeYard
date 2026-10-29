@@ -9,6 +9,8 @@ mod fixture;
 mod provenance;
 use crate::support::http_client as pulls;
 mod session_inbox;
+mod threads;
+mod token_inbox;
 
 use axum::{
     body::{to_bytes, Body},
@@ -725,6 +727,8 @@ async fn idempotent_relationship_notifications(pg: bool) {
             base_branch: "main",
             base_sha: "2222222222222222222222222222222222222222",
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await

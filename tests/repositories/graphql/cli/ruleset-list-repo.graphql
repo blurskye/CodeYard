@@ -1,0 +1,25 @@
+
+query RepoRulesetList($limit: Int!, $endCursor: String, $includeParents: Boolean, $owner: String!, $repo: String!) {
+	level: repository(owner: $owner, name: $repo) {
+
+rulesets(first: $limit, after: $endCursor, includeParents: $includeParents) {
+	totalCount
+	nodes {
+		databaseId
+		name
+		target
+		enforcement
+		source {
+			__typename
+			... on Repository { owner: nameWithOwner }
+			... on Organization { owner: login }
+		}
+		rules {
+			totalCount
+		}
+	}
+	pageInfo {
+		hasNextPage
+		endCursor
+	}
+}}}

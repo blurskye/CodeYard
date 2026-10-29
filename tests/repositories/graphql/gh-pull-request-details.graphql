@@ -1,0 +1,41 @@
+# cli/cli 5056c0a8ef34512be1d5b4120d4e4b30412ada8b
+# api/queries_pr.go PullRequestByNumber, substituting api/query_builder.go
+# prFiles, prCommits and StatusCheckRollupGraphQLWithoutCountByState fragments.
+query PullRequestByNumber($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id additions deletions changedFiles reviewDecision mergeable mergeStateStatus
+      reviews(first: 100) { totalCount nodes { id state body author { login } authorAssociation submittedAt commit { oid } reactionGroups { content users { totalCount } } } pageInfo { hasNextPage endCursor } }
+      latestReviews(first: 100) { totalCount nodes { id state body author { login } submittedAt } }
+      reviewRequests(first: 100) { totalCount nodes { requestedReviewer { ... on User { login } } } }
+      baseRefOid headRefOid isCrossRepository
+      headRepository { id name nameWithOwner }
+      files(first: 100) { nodes { additions deletions path changeType } }
+      commits(first: 100) {
+        totalCount
+        nodes {
+          commit {
+            authors(first: 100) { nodes { name email user { id login } } }
+            messageHeadline messageBody oid committedDate authoredDate
+          }
+        }
+      }
+      statusCheckRollup: commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              contexts(first: 100) {
+                nodes {
+                  __typename
+                  ... on StatusContext { context state targetUrl createdAt description }
+                  ... on CheckRun { name status conclusion startedAt completedAt detailsUrl }
+                }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

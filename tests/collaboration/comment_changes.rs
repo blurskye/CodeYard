@@ -189,6 +189,10 @@ async fn edit_and_delete_rules(pg: bool) {
 
     // A locked thread refuses both changes, for everyone.
     let locked = comment(bob, "issues/1", "Before the lock").await;
+    // A stale form retains its target identities; locked pages no longer offer a composer.
+    let before_lock = bob.page_ok(issue).await;
+    let repository_id = pulls::hidden_value(&before_lock, "repository_id");
+    let issue_id = pulls::hidden_value(&before_lock, "issue_id");
     database
         .execute("UPDATE issues SET locked=TRUE WHERE number=1", &[])
         .await;
@@ -209,7 +213,11 @@ async fn edit_and_delete_rules(pg: bool) {
     refused(
         bob,
         &format!("{issue}/comments"),
-        &[("body", "After lock")],
+        &[
+            ("body", "After lock"),
+            ("repository_id", &repository_id),
+            ("issue_id", &issue_id),
+        ],
         "This conversation is locked.",
     )
     .await;

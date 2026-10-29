@@ -106,6 +106,7 @@ pub fn stylesheets() -> &'static [Stylesheet] {
             ("actions.css", include_str!("assets/actions.css")),
             ("native.css", include_str!("components/native.css")),
             ("account.css", include_str!("pages/account.css")),
+            ("gists.css", include_str!("pages/gists/style.css")),
             (
                 "organization.css",
                 include_str!("pages/orgs/organization.css"),

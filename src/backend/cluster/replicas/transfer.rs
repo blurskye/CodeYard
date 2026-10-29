@@ -117,7 +117,7 @@ async fn fetch(
         }
         store.initialize(None, "main").await?;
     }
-    store.index_pack(pack.path()).await?;
+    store.index_pack(pack.path(), false).await?;
     store.set_refs(&listing.refs).await?;
     if let Some(head) = listing.head {
         store.set_head_target(&head).await?;

@@ -1,0 +1,7 @@
+# cli/cli 5056c0a8ef34512be1d5b4120d4e4b30412ada8b
+# api/queries_pr.go CreatePullRequest.
+mutation PullRequestCreate($input: CreatePullRequestInput!) {
+  createPullRequest(input: $input) {
+    pullRequest { id url }
+  }
+}

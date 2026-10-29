@@ -1,7 +1,9 @@
 //! Releases: the list and pages of a repository's releases, their native forms, asset uploads and
 //! downloads, and the JSON API. The domain module owns the rules; these adapters map them.
+mod attestation;
 mod json;
 mod pages;
+mod reactions;
 
 use crate::backend::app::AppState;
 use axum::{
@@ -47,6 +49,15 @@ pub fn page_router() -> Router<Arc<AppState>> {
             get(pages::edit_page).post(pages::update),
         )
         .route("/:owner/:repo/releases/:id/delete", post(pages::delete))
+        .route("/:owner/:repo/releases/:id/react", post(reactions::react))
+        .route(
+            "/:owner/:repo/releases/:id/attestation",
+            get(attestation::download),
+        )
+        .route(
+            "/:owner/:repo/releases/:id/assets/:asset/edit",
+            post(pages::update_asset),
+        )
         .route(
             "/:owner/:repo/releases/:id/assets/:asset/delete",
             post(pages::delete_asset),

@@ -1,0 +1,21 @@
+name: Greeter
+description: Demonstrates composite inputs, defaults, outputs and action_path.
+inputs:
+  who:
+    description: Person to greet
+    default: World
+outputs:
+  greeting:
+    description: Greeting
+    value: ${{ steps.greet.outputs.greeting }}
+runs:
+  using: composite
+  steps:
+    - id: greet
+      shell: bash
+      env:
+        WHO: ${{ inputs.who }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        test -f "$ACTION_PATH/action.yml"
+        echo "greeting=Hello $WHO" >> "$GITHUB_OUTPUT"

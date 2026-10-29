@@ -447,12 +447,6 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
         Denied
     ));
     assert!(matches!(
-        remove_organization_member(&database.pool, admin, org.id, admin)
-            .await
-            .unwrap(),
-        Denied
-    ));
-    assert!(matches!(
         remove_organization_member(&database.pool, admin, org.id, owner)
             .await
             .unwrap(),
@@ -531,6 +525,19 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
             .unwrap()
     )
     .is_empty());
+    // A plain member may leave without administering the organization.
+    applied(
+        remove_organization_member(&database.pool, member, org.id, member)
+            .await
+            .unwrap(),
+    );
+    assert!(!applied(
+        list_actor_organizations(&database.pool, member, page())
+            .await
+            .unwrap()
+    )
+    .iter()
+    .any(|row| row.id == org.id));
 }
 
 async fn concurrent_last_owner_mutations(database: &Database) {

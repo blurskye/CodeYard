@@ -74,6 +74,8 @@ pub(crate) async fn native_merge(
     // A refused merge shows the form again, so it keeps the method that was submitted.
     let draft = DetailDraft {
         merge_method: field(&form, "merge_method"),
+        commit_title: field(&form, "commit_title"),
+        commit_message: field(&form, "commit_message"),
         ..DetailDraft::default()
     };
     if let Err(message) = expected(&form, &value) {
@@ -149,6 +151,15 @@ pub(crate) async fn native_merge(
             expected_base_branch: form.get("expected_base_branch").cloned(),
             expected_target: form.get("expected_target").cloned(),
             merge_method,
+            author_email: None,
+            commit_title: form
+                .get("commit_title")
+                .filter(|value| !value.is_empty())
+                .cloned(),
+            commit_message: form
+                .get("commit_message")
+                .filter(|value| !value.is_empty())
+                .cloned(),
         },
     )
     .await

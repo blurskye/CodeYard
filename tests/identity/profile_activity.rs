@@ -11,6 +11,18 @@ use database::Database;
 use pulls::Client;
 use serde_json::Value;
 
+async fn activity_model(client: &Client, page: i64) -> (StatusCode, Value) {
+    let (status, page) = client.model(&format!("/alice?page={page}")).await;
+    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Profile {
+        activity,
+        ..
+    }) = page
+    else {
+        panic!("profile activity")
+    };
+    (status, serde_json::to_value(activity).unwrap())
+}
+
 async fn contract(pg: bool) {
     let mut f = Database::new(pg).await;
     f.complete_setup().await;
@@ -101,12 +113,12 @@ async fn contract(pg: bool) {
 
     // Toggling a follow does not create another notice within the durable cooldown.
     for _ in 0..3 {
-        outsider
-            .api("PUT", "/api/users/alice/follow", Value::Null)
-            .await;
-        outsider
-            .api("DELETE", "/api/users/alice/follow", Value::Null)
-            .await;
+        for action in ["follow", "unfollow"] {
+            let reply = outsider
+                .form_reply("/alice/_forms/follow", &[("action", action)])
+                .await;
+            assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
+        }
     }
     let notices = db::notifications::records::list_notifications_for_user(&pool, alice, 100, false)
         .await
@@ -120,16 +132,12 @@ async fn contract(pg: bool) {
     );
 
     // Visible to others: the public push, the public repository, and 32 issues.
-    let (status, first) = anonymous
-        .api("GET", "/api/users/alice/activity?page=1", Value::Null)
-        .await;
+    let (status, first) = activity_model(&anonymous, 1).await;
     assert_eq!(status, StatusCode::OK, "{first}");
     let items = first["items"].as_array().unwrap();
     assert_eq!(items.len(), 30);
     assert_eq!(first["next_page"], 2);
-    let (status, second) = anonymous
-        .api("GET", "/api/users/alice/activity?page=2", Value::Null)
-        .await;
+    let (status, second) = activity_model(&anonymous, 2).await;
     assert_eq!(status, StatusCode::OK);
     let rest = second["items"].as_array().unwrap();
     assert_eq!(rest.len(), 5);
@@ -156,16 +164,12 @@ async fn contract(pg: bool) {
 
     assert!(everything.iter().all(|item| item["branch"] != "existing"));
     // A signed-in user without access sees the same list.
-    let (status, value) = outsider
-        .api("GET", "/api/users/alice/activity?page=1", Value::Null)
-        .await;
+    let (status, value) = activity_model(&outsider, 1).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(value["items"].as_array().unwrap().len(), 30);
 
     // The owner sees the private repository's items as well.
-    let (status, value) = owner
-        .api("GET", "/api/users/alice/activity?page=2", Value::Null)
-        .await;
+    let (status, value) = activity_model(&owner, 2).await;
     assert_eq!(status, StatusCode::OK);
     let owner_items = value["items"].as_array().unwrap();
     assert!(owner_items
@@ -308,9 +312,7 @@ async fn scan_stops_at_the_row_bound(pg: bool) {
     let root = tempfile::tempdir().unwrap();
     let router = crate::support::database::router(&pool, root.path()).await;
     let anonymous = Client::anonymous(&router);
-    let (status, page) = anonymous
-        .api("GET", "/api/users/alice/activity?page=1", Value::Null)
-        .await;
+    let (status, page) = activity_model(&anonymous, 1).await;
     assert_eq!(status, StatusCode::OK, "{page}");
     let items = page["items"].as_array().unwrap();
     assert_eq!(items.len(), 1, "{page}");

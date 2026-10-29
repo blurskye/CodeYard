@@ -8,6 +8,30 @@ use codeyard::backend::{
 };
 use uuid::Uuid;
 
+fn prepared(sha: &str) -> codeyard::backend::repositories::store::PreparedFile {
+    use codeyard::backend::repositories::store::{CommitInfo, PreparedFile};
+    PreparedFile {
+        branch: "main".into(),
+        reference: "refs/heads/main".into(),
+        expected: Some(sha.into()),
+        web_commit: false,
+        new_branch: false,
+        commit: CommitInfo {
+            sha: sha.into(),
+            tree_sha: sha.into(),
+            message: "fixture".into(),
+            author_name: "Tester".into(),
+            author_email: "tester@example.invalid".into(),
+            committer_name: "Tester".into(),
+            committer_email: "tester@example.invalid".into(),
+            timestamp: 0,
+            committer_timestamp: 0,
+            parents: vec![sha.into()],
+            signature: None,
+            signature_payload: None,
+        },
+    }
+}
 pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
     vec![
         (
@@ -17,7 +41,83 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             },
             false,
         ),
+        (
+            Operation::InitializeCopy {
+                source: Uuid::nil(),
+                default_branch: "main".into(),
+                template: true,
+                default_branch_only: true,
+            },
+            false,
+        ),
         (Operation::Remove, false),
+        (Operation::GistSnapshot { revision: None }, false),
+        (
+            Operation::GistHistory {
+                revision: None,
+                offset: 0,
+                limit: 1,
+            },
+            false,
+        ),
+        (
+            Operation::GistWrite {
+                credential: codeyard::backend::repositories::store::GistCredential::Token(1),
+            },
+            false,
+        ),
+        (
+            Operation::PatchRepository {
+                default_branch: "main".into(),
+                changes: Default::default(),
+            },
+            false,
+        ),
+        (
+            Operation::TransferRepository {
+                new_owner: "destination".into(),
+            },
+            false,
+        ),
+        (
+            serde_json::from_value(serde_json::json!({"MutateRelease":{"mutation":{"Update":{"id":1,"changes":{}}},"attestation":null}})).unwrap(),
+            false,
+        ),
+        (
+            Operation::ConfigureDependencySecurity {
+                feature: codeyard::backend::db::repositories::dependencies::Feature::Alerts,
+                enabled: true,
+                private_consent: false,
+            },
+            false,
+        ),
+        (
+            Operation::PublishDependencyUpdate {
+                prepared: prepared(sha),
+                publication: Box::new(
+                    codeyard::backend::db::repositories::dependencies::Publication {
+                        job: codeyard::backend::db::repositories::dependencies::Job {
+                            repo_id: 1,
+                            generation: 1,
+                            nonce: Uuid::new_v4().to_string(),
+                            actor_id: 1,
+                            updates_actor_id: Some(1),
+                        },
+                        key: "0".repeat(64),
+                        update: codeyard::backend::db::repositories::dependencies::Update {
+                            branch: "main".into(),
+                            base_sha: sha.into(),
+                            commit_sha: sha.into(),
+                            old_version: "1.0.0".into(),
+                            fixed_version: "1.0.1".into(),
+                            requested_by: 1,
+                            pull_request_id: None,
+                        },
+                    },
+                ),
+            },
+            false,
+        ),
         (
             Operation::FetchPullHead {
                 source: Uuid::nil(),
@@ -31,8 +131,38 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (Operation::SizeBytes, false),
         (Operation::Refs, false),
         (Operation::PrimaryRefs, false),
+        (
+            Operation::BranchPublication {
+                repository_id: 1,
+                reference: "refs/heads/main".into(),
+            },
+            false,
+        ),
         (Operation::Info, false),
         (Operation::CommitCount, false),
+        (
+            Operation::GitTree {
+                revision: sha.into(),
+                recursive: true,
+            },
+            false,
+        ),
+        (Operation::GitTag { sha: sha.into() }, false),
+        (Operation::GitObjectKind { sha: sha.into() }, false),
+        (
+            Operation::WriteGitObject {
+                input: codeyard::backend::git::objects::ObjectWrite::Blob,
+            },
+            false,
+        ),
+        (
+            Operation::UpdateReference {
+                reference: "refs/heads/main".into(),
+                sha: sha.into(),
+                force: false,
+            },
+            false,
+        ),
         (
             Operation::Tree {
                 metadata_only: false,
@@ -76,6 +206,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 limit: 10,
                 filter: Default::default(),
                 walk_millis: None,
+                raw_json: false,
             },
             false,
         ),
@@ -86,6 +217,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 limit: 10,
                 filter: Default::default(),
                 walk_millis: None,
+                raw_json: false,
             },
             false,
         ),
@@ -96,6 +228,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 offset: 0,
                 limit: 10,
                 filter: Default::default(),
+                raw_json: false,
             },
             false,
         ),
@@ -105,6 +238,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 head_ref: "main".into(),
                 limit: 10,
                 raw_json: false,
+                pull_request: false,
             },
             false,
         ),
@@ -130,6 +264,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::Diff {
                 base_ref: "main".into(),
                 head_ref: "main".into(),
+                stats: false,
             },
             false,
         ),
@@ -147,6 +282,17 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 source: Uuid::nil(),
                 base_ref: sha.into(),
                 head_ref: sha.into(),
+            },
+            false,
+        ),
+        (
+            Operation::ComparisonFrom {
+                source: Uuid::nil(),
+                base_ref: sha.into(),
+                head_ref: sha.into(),
+                offset: 0,
+                limit: 1,
+                raw_json: false,
             },
             false,
         ),
@@ -181,6 +327,12 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             false,
         ),
         (Operation::Contributors, false),
+        (
+            Operation::CommitStatistics {
+                branch: "main".into(),
+            },
+            false,
+        ),
         (
             Operation::IsAncestor {
                 ancestor: sha.into(),
@@ -253,8 +405,11 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                     branch: "main".into(),
                     reference: "refs/heads/main".into(),
                     expected: Some(sha.into()),
+                    web_commit: false,
+                    new_branch: false,
                     commit: codeyard::backend::repositories::store::CommitInfo {
                         sha: sha.into(),
+                        tree_sha: sha.into(),
                         message: "fixture".into(),
                         author_name: "Tester".into(),
                         author_email: "tester@example.invalid".into(),
@@ -263,6 +418,8 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                         timestamp: 0,
                         committer_timestamp: 0,
                         parents: vec![sha.into()],
+                        signature: None,
+                        signature_payload: None,
                     },
                 },
             },
@@ -291,6 +448,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                     head: sha.into(),
                     base: sha.into(),
                     message: "Merge from worker".into(),
+                    squash_body: None,
                     name: "Tester".into(),
                     email: "tester@example.invalid".into(),
                     method: MergeMethod::Merge,
@@ -308,11 +466,42 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                     head: sha.into(),
                     base: sha.into(),
                     message: "Prepare from worker".into(),
+                    squash_body: None,
                     name: "Tester".into(),
                     email: "tester@example.invalid".into(),
                     method: MergeMethod::Merge,
                     author_name: None,
                     author_email: None,
+                },
+            },
+            false,
+        ),
+        (
+            Operation::UpdatePullBranch {
+                source: Uuid::nil(),
+                request: codeyard::backend::repositories::store::PullBranchUpdate {
+                    pull_request_id: 1,
+                    base_branch: "main".into(),
+                    branch: "feature".into(),
+                    head: sha.into(),
+                    base: sha.into(),
+                    name: "Tester".into(),
+                    email: "tester@example.invalid".into(),
+                },
+            },
+            false,
+        ),
+        (
+            Operation::PublishAsyncMerge {
+                request: codeyard::backend::repositories::store::AsyncMergePublication {
+                    uuid: uuid::Uuid::nil().to_string(),
+                    token_id: 1,
+                    pull_request_id: 1,
+                    heads: vec![("main".into(), sha.into())],
+                    base_branch: "main".into(),
+                    base: sha.into(),
+                    result: sha.into(),
+                    method: MergeMethod::Merge,
                 },
             },
             false,
@@ -325,6 +514,18 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 base: sha.into(),
                 result: sha.into(),
                 method: MergeMethod::Merge,
+            },
+            false,
+        ),
+        (
+            Operation::PublishBranchMerge {
+                publication: codeyard::backend::repositories::store::BranchMergePublication {
+                    base_branch: "main".into(),
+                    base: sha.into(),
+                    head_branch: Some("topic".into()),
+                    head: sha.into(),
+                    result: sha.into(),
+                },
             },
             false,
         ),

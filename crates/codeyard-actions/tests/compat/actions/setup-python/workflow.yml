@@ -1,0 +1,26 @@
+# https://github.com/actions/setup-python/tree/a26af69be951a213d495a4c3e4e4022e16d87065
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cache the test shell Python on unsupported installer platforms
+        run: |
+          if command -v python3.12 >/dev/null; then
+            version=$(python3.12 -c 'import platform; print(platform.python_version())')
+            mkdir -p "$RUNNER_TOOL_CACHE/Python/$version"
+            ln -s "$(dirname "$(dirname "$(command -v python3.12)")")" "$RUNNER_TOOL_CACHE/Python/$version/x64"
+            touch "$RUNNER_TOOL_CACHE/Python/$version/x64.complete"
+          fi
+      - id: action
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Assert documented effect
+        run: |
+          python --version | grep '^Python 3\.12\.'
+          touch compat.py
+          echo '  File "compat.py", line 3, in example'
+          echo "    raise Exception('matcher diagnostic')"
+          echo compat:ok

@@ -6,7 +6,7 @@ use crate::backend::db::notifications::records::NotificationInbox;
 use crate::backend::db::notifications::records::NotificationInboxAction;
 #[derive(Debug, thiserror::Error)]
 pub enum InboxError {
-    #[error("A current notification session is required")]
+    #[error("A current notification credential is required")]
     Denied,
     #[error("Notification storage is temporarily unavailable")]
     Unavailable,
@@ -20,6 +20,40 @@ pub async fn inbox(
     user_id: i64,
     action: NotificationInboxAction,
 ) -> Result<NotificationInbox, InboxError> {
+    with_credential(
+        pool,
+        broadcaster,
+        records::NotificationCredential::Session(session_id),
+        user_id,
+        action,
+    )
+    .await
+}
+
+/// Personal-token access uses the same native transaction, not a browser session.
+pub async fn token_inbox(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    token_id: i64,
+    user_id: i64,
+    action: NotificationInboxAction,
+) -> Result<NotificationInbox, InboxError> {
+    with_credential(
+        pool,
+        broadcaster,
+        records::NotificationCredential::Token(token_id),
+        user_id,
+        action,
+    )
+    .await
+}
+async fn with_credential(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    credential: records::NotificationCredential<'_>,
+    user_id: i64,
+    action: NotificationInboxAction,
+) -> Result<NotificationInbox, InboxError> {
     let read = match &action {
         NotificationInboxAction::Read { notification_id } => Some(Some(*notification_id)),
         NotificationInboxAction::ReadAll => Some(None),
@@ -27,10 +61,17 @@ pub async fn inbox(
     };
     // Marking done takes a notification out of the unread count, so it is announced too.
     let marks_done = matches!(
-        action,
+        &action,
         NotificationInboxAction::Done { .. } | NotificationInboxAction::DoneAll { .. }
+    ) || matches!(
+        &action,
+        NotificationInboxAction::Threads(
+            db::notifications::threads::ThreadAction::Read(_)
+                | db::notifications::threads::ThreadAction::Done(_)
+                | db::notifications::threads::ThreadAction::ReadAll { .. }
+        )
     );
-    let result = records::notification_inbox(pool, session_id, user_id, action)
+    let result = records::notification_inbox_with_credential(pool, credential, user_id, action)
         .await
         .map_err(|_| InboxError::Unavailable)?
         .ok_or(InboxError::Denied)?;

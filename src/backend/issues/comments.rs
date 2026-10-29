@@ -121,53 +121,53 @@ pub async fn create_issue_comment(
         .await
         .map_err(super::write_error)?;
 
-    let notifies_author = issue.author_id != user.id;
-    if notifies_author || mentions_anyone(&req.body) {
-        let base = format!("/{}/{}/issues/{}", owner, repo, issue.number);
-        let link = format!("{base}?comment={}#comment-{}", comment.id, comment.id);
-        if notifies_author {
-            let title = format!("{} commented on issue #{}", user.username, issue.number);
-            let _ = create_and_broadcast_notification(
-                pool,
-                broadcaster,
-                NotificationRequest {
-                    user_id: issue.author_id,
-                    actor_id: Some(user.id),
-                    repo_id: Some(repository.id),
-                    kind: "issue_comment",
-                    title: &title,
-                    body: Some(&req.body),
-                    link: Some(&link),
-                    metadata: json!({
-                        "repo_owner": owner,
-                        "repo_name": repo,
-                        "issue_number": issue.number,
-                        "subject": issue.title,
-                        "comment_id": comment.id,
-                    }),
-                },
-            )
-            .await;
-        }
-        notify_mentions(
-            pool,
-            broadcaster,
-            MentionSource {
-                actor: &user,
-                repository: &repository,
-                owner: &owner,
-                repo: &repo,
-                number: issue.number,
-                subject: &issue.title,
-                link: &link,
-                comment_id: Some(MentionComment::Issue(comment.id)),
-                old_text: None,
-                text: &req.body,
-                notified: &[issue.author_id],
-            },
-        )
-        .await;
+    let base = format!("/{}/{}/issues/{}", owner, repo, issue.number);
+    let link = format!("{base}?comment={}#comment-{}", comment.id, comment.id);
+    let title = format!("{} commented on issue #{}", user.username, issue.number);
+    let notice = NotificationRequest {
+        user_id: issue.author_id,
+        actor_id: Some(user.id),
+        repo_id: Some(repository.id),
+        kind: "issue_comment",
+        title: &title,
+        body: Some(&req.body),
+        link: Some(&link),
+        metadata: json!({"repo_owner":owner,"repo_name":repo,"issue_number":issue.number,"subject":issue.title,"comment_id":comment.id}),
+    };
+    let mut notified = Vec::new();
+    if issue.author_id != user.id
+        && create_and_broadcast_notification(pool, broadcaster, notice.clone())
+            .await
+            .is_ok()
+    {
+        notified.push(issue.author_id);
     }
+    let subscribers = crate::backend::notifications::create::notify_subscribers(
+        pool,
+        broadcaster,
+        notice,
+        &notified,
+    )
+    .await;
+    notified.extend(subscribers);
+    notify_mentions(
+        pool,
+        broadcaster,
+        MentionSource {
+            actor: &user,
+            repository: &repository,
+            owner: &owner,
+            repo: &repo,
+            number: issue.number,
+            subject: &issue.title,
+            link: &link,
+            comment_id: Some(MentionComment::Issue(comment.id)),
+            old_text: None,
+            text: &req.body,
+            notified: &notified,
+        },
+    )
+    .await;
 
     let (issue_for_hook, comment_for_hook) = (issue.clone(), comment.clone());
     let repository_for_hook = repository.clone();
@@ -197,7 +197,8 @@ pub async fn create_issue_comment(
                 },
             )
         },
-    );
+    )
+    .await;
     Ok(comment)
 }
 
@@ -315,7 +316,8 @@ pub async fn edit_issue_comment(
                 },
             )
         },
-    );
+    )
+    .await;
     Ok(comment)
 }
 
@@ -371,7 +373,8 @@ pub async fn delete_issue_comment(
                     },
                 )
             },
-        );
+        )
+        .await;
         Ok(())
     } else {
         Err(OperationError::Denied {

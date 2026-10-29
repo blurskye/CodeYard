@@ -370,6 +370,17 @@ impl Client {
             }
         }
         let path_only = path.split('?').next().unwrap();
+        // Review forms carry the repository identity rendered on the Files changed page.
+        if path_only.contains("/pulls/")
+            && path_only.ends_with("/reviews")
+            && !pairs.iter().any(|(key, _)| *key == "repository_id")
+        {
+            let page_path = format!("{}/diff", path_only.strip_suffix("/reviews").unwrap());
+            let (_, page) = self.page(&page_path).await;
+            if let Some(value) = field_value(&page, "repository_id") {
+                body.append_pair("repository_id", &value);
+            }
+        }
         if path_only.ends_with("/milestones/new")
             || (path_only.contains("/issues/") && path_only.ends_with("/comments"))
         {

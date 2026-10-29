@@ -18,6 +18,7 @@ pub const REASONS: [(&str, &str, &[&str]); 13] = [
             "issue_comment",
             "pull_request_comment",
             "pull_request_comment_reply",
+            "commit_comment",
         ],
     ),
     ("issue_opened", "Issue opened", &["issue_opened"]),

@@ -1,6 +1,10 @@
 //! Releases: a named, optionally annotated tag with notes and uploaded assets. Readers see the
 //! published releases of a repository they can read; writers also see drafts and make changes.
-//! The tag is created with the release when it does not exist yet.
+//! A tag that does not exist yet is created when the release is published, so a draft never
+//! publishes its tag.
+pub(crate) mod immutable;
+pub(crate) mod integrity;
+mod notes;
 use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
 use crate::backend::{
     ci::CiRuns,
@@ -20,7 +24,9 @@ use crate::backend::{
     storage::ObjectStore,
 };
 use anyhow::Error;
+pub use notes::{generate_notes, NotesInput, ReleaseNotes};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 pub use crate::backend::db::releases::{ReleaseChanges, ReleaseFields, ReleaseRefusal};
@@ -68,6 +74,16 @@ impl From<AccessError> for ReleaseError {
         Self::Access(error)
     }
 }
+impl From<RefError> for ReleaseError {
+    fn from(error: RefError) -> Self {
+        match error {
+            RefError::Protected(message) if message == immutable::TAG_PROTECTED => {
+                Self::Invalid(message)
+            }
+            error => Self::Ref(error),
+        }
+    }
+}
 
 /// What a writer sends to publish a release. The tag and the target only matter when the tag
 /// does not exist yet: then it is created at `target`, a branch or commit.
@@ -77,6 +93,9 @@ pub struct ReleaseInput {
     pub tag: String,
     pub target: String,
     pub fields: ReleaseFields,
+    /// Set when the caller may not create tags, as a token without the workflow grant may not.
+    /// A release that needs a new tag is then refused where the tag would be created.
+    pub new_tag_denied: bool,
 }
 
 pub struct ReleasesPage {
@@ -159,9 +178,38 @@ fn write_error(error: Error) -> ReleaseError {
         Some(ReleaseRefusal::NotFound) => ReleaseError::NotFound,
         Some(ReleaseRefusal::TagTaken) => ReleaseError::TagTaken,
         Some(ReleaseRefusal::AssetNameTaken) => ReleaseError::AssetNameTaken,
+        Some(ReleaseRefusal::Immutable) => {
+            ReleaseError::Invalid("An immutable release cannot change assets or return to a draft")
+        }
+        Some(ReleaseRefusal::TagReserved) => {
+            ReleaseError::Invalid("The tag name is reserved by an immutable release")
+        }
         Some(ReleaseRefusal::Conflict) => ReleaseError::Conflict,
+        Some(ReleaseRefusal::TooManyAssets) => {
+            ReleaseError::Invalid("A release can contain at most 1000 assets")
+        }
         None => ReleaseError::Unavailable,
     }
+}
+
+fn mutation_error(error: RepoError) -> ReleaseError {
+    if error.is_write_denied() {
+        return ReleaseError::Access(AccessError::WriteDenied);
+    }
+    if error.kind == crate::backend::repositories::store::ErrorKind::NotFound {
+        return ReleaseError::NotFound;
+    }
+    if error.kind == crate::backend::repositories::store::ErrorKind::Conflict
+        && error.message == ReleaseRefusal::Conflict.to_string()
+    {
+        return ReleaseError::Conflict;
+    }
+    if error.kind == crate::backend::repositories::store::ErrorKind::Invalid
+        && error.message == ReleaseRefusal::TagTaken.to_string()
+    {
+        return ReleaseError::TagTaken;
+    }
+    ReleaseError::Git(error)
 }
 
 fn validate_fields(fields: &ReleaseFields) -> Result<(), ReleaseError> {
@@ -379,32 +427,30 @@ pub async fn create(
         return Err(ReleaseError::TagTaken);
     }
     let store = repo_store(&repository, cluster);
-    let existing = store
-        .refs_from_primary()
-        .await
-        .map_err(ReleaseError::Git)?
-        .remove(&format!("refs/tags/{}", input.tag));
-    let target = match existing {
-        Some(_) => {
-            store
-                .commit_from_primary(&format!("refs/tags/{}", input.tag))
-                .await
-                .map_err(ReleaseError::Git)?
-                .sha
+    let mut refs = store.refs_from_primary().await.map_err(ReleaseError::Git)?;
+    let existing = refs.remove(&format!("refs/tags/{}", input.tag));
+    let mut draft_target = None;
+    if existing.is_none() {
+        if input.target.trim().is_empty() {
+            return Err(ReleaseError::TargetRequired);
         }
-        None => {
-            if input.target.trim().is_empty() {
-                return Err(ReleaseError::TargetRequired);
+        if input.target.trim().len() > 255 {
+            return Err(ReleaseError::Invalid(
+                "Release targets are limited to 255 bytes",
+            ));
+        }
+        let commit = store
+            .commit_from_primary(&target_revision(&refs, input.target.trim()))
+            .await
+            .map_err(ReleaseError::Git)?;
+        // A draft gets its tag when it is published. Creating the tag now would make it
+        // fetchable and start its tag workflows before the release is ready.
+        if !input.fields.is_draft {
+            if input.new_tag_denied {
+                return Err(ReleaseError::Ref(RefError::Access(
+                    AccessError::WriteDenied,
+                )));
             }
-            if input.target.trim().len() > 255 {
-                return Err(ReleaseError::Invalid(
-                    "Release targets are limited to 255 bytes",
-                ));
-            }
-            let commit = store
-                .commit_from_primary(input.target.trim())
-                .await
-                .map_err(ReleaseError::Git)?;
             refs::create_tag(
                 pool,
                 cluster,
@@ -417,20 +463,34 @@ pub async fn create(
                 None,
             )
             .await
-            .map_err(ReleaseError::Ref)?;
-            commit.sha
+            .map_err(ReleaseError::from)?;
+        } else {
+            draft_target = Some(commit.sha);
         }
-    };
-    let release = db::releases::create_release(
+    }
+    let attestation = immutable::candidate(
         pool,
-        actor,
-        repository.id,
+        cluster,
+        &repository,
         &input.tag,
-        &target,
-        &input.fields,
+        None,
+        !input.fields.is_draft,
     )
-    .await
-    .map_err(write_error)?;
+    .await?;
+    let (release, _) = store
+        .mutate_release_as(
+            pool,
+            repository.id,
+            actor,
+            immutable::Mutation::Create {
+                tag: input.tag.clone(),
+                fields: input.fields.clone(),
+                draft_target,
+            },
+            attestation,
+        )
+        .await
+        .map_err(mutation_error)?;
     if !release.is_draft {
         notify_published(pool, broadcaster, &user, &repository, owner, name, &release).await;
     }
@@ -439,18 +499,31 @@ pub async fn create(
     } else {
         "published"
     };
-    emit_release(pool, &repository, &release, actor, action);
+    emit_release(pool, &repository, &release, actor, action, None).await;
 
     Ok(release)
 }
 
+/// A target that names an existing branch resolves to that branch, even when the branch name
+/// starts with `refs/`, unless the target is itself an existing full ref. Any other target
+/// resolves as an ordinary revision.
+fn target_revision(refs: &HashMap<String, String>, target: &str) -> String {
+    let branch = format!("refs/heads/{target}");
+    if !refs.contains_key(target) && refs.contains_key(&branch) {
+        branch
+    } else {
+        target.to_owned()
+    }
+}
+
 /// Tells the repository's release webhooks what `actor` did to `release`.
-fn emit_release(
+async fn emit_release(
     pool: &db::DbPool,
     repository: &Repository,
     release: &Release,
     actor: i64,
     action: &'static str,
+    assets: Option<Vec<serde_json::Value>>,
 ) {
     let (release, repository_for_hook) = (release.clone(), repository.clone());
     let author_id = release.author_id;
@@ -461,7 +534,7 @@ fn emit_release(
         vec![author_id, actor],
         move |owner, people| {
             let (author, sender) = (people.get(author_id), people.get(actor));
-            payloads::release(
+            let mut payload = payloads::release(
                 action,
                 &release,
                 &author,
@@ -470,15 +543,26 @@ fn emit_release(
                     owner,
                     sender: &sender,
                 },
-            )
+            );
+            if let Some(assets) = assets {
+                payload["release"]["assets"] = assets.into();
+            }
+            payload
         },
-    );
+    )
+    .await;
 }
 
 /// Changes a release's notes, title, flags and latest mark. A draft that is published now
 /// notifies the watchers, as a release published at once does.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Explicit actor and resources keep operations HTTP-free."
+)]
 pub async fn update(
     pool: &db::DbPool,
+    cluster: Option<&NodeContext>,
+    ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     actor: i64,
     owner: &str,
@@ -492,15 +576,69 @@ pub async fn update(
         body: fields.body.clone().flatten(),
         ..Default::default()
     })?;
-    let (release, published) =
-        db::releases::update_release(pool, actor, repository.id, release_id, fields)
+    let current = db::releases::get_release(pool, repository.id, release_id)
+        .await
+        .map_err(unavailable)?
+        .ok_or(ReleaseError::NotFound)?
+        .release;
+    let publishing = current.is_draft && fields.is_draft == Some(false);
+    let store = repo_store(&repository, cluster);
+    if publishing {
+        // A draft that was saved without its tag, or whose tag was deleted, gets it now.
+        let refs = store.refs_from_primary().await.map_err(ReleaseError::Git)?;
+        let reference = format!("refs/tags/{}", current.tag_name);
+        if !refs.contains_key(&reference) {
+            if fields.new_tag_denied {
+                return Err(ReleaseError::Ref(RefError::Access(
+                    AccessError::WriteDenied,
+                )));
+            }
+            let commit = store
+                .commit_from_primary(&target_revision(&refs, &current.target_commitish))
+                .await
+                .map_err(ReleaseError::Git)?;
+            refs::create_tag(
+                pool,
+                cluster,
+                ci,
+                actor,
+                owner,
+                repository.id,
+                &current.tag_name,
+                &commit.sha,
+                None,
+            )
             .await
-            .map_err(write_error)?;
+            .map_err(ReleaseError::from)?;
+        }
+    }
+    let attestation = immutable::candidate(
+        pool,
+        cluster,
+        &repository,
+        &current.tag_name,
+        Some(release_id),
+        publishing,
+    )
+    .await?;
+    let (release, published) = store
+        .mutate_release_as(
+            pool,
+            repository.id,
+            actor,
+            immutable::Mutation::Update {
+                id: release_id,
+                changes: fields.clone(),
+            },
+            attestation,
+        )
+        .await
+        .map_err(mutation_error)?;
     if published {
         notify_published(pool, broadcaster, &user, &repository, owner, name, &release).await;
     }
     let action = if published { "published" } else { "edited" };
-    emit_release(pool, &repository, &release, actor, action);
+    emit_release(pool, &repository, &release, actor, action, None).await;
 
     Ok(release)
 }
@@ -519,13 +657,26 @@ pub async fn delete(
         .await
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
+    // The deletion event still lists the assets, which are gone once the release is.
+    let assets = webhooks::documents::release_assets(pool, &repository, owner, &deleted.release)
+        .await
+        .inspect_err(|error| tracing::warn!(release_id, %error, "release assets could not be read"))
+        .ok();
     let files = db::releases::delete_release(pool, actor, repository.id, release_id)
         .await
         .map_err(write_error)?;
     for file in files {
         discard_object(store, &file).await;
     }
-    emit_release(pool, &repository, &deleted.release, actor, "deleted");
+    emit_release(
+        pool,
+        &repository,
+        &deleted.release,
+        actor,
+        "deleted",
+        assets,
+    )
+    .await;
     Ok(())
 }
 
@@ -546,35 +697,76 @@ pub async fn add_asset(
     label: Option<&str>,
     bytes: Vec<u8>,
 ) -> Result<ReleaseAsset, ReleaseError> {
+    upload_asset(
+        pool,
+        store,
+        actor,
+        owner,
+        name,
+        release_id,
+        AssetUpload {
+            name: filename,
+            label,
+            content_type: "application/octet-stream",
+            bytes,
+        },
+    )
+    .await
+}
+
+pub struct AssetUpload<'a> {
+    pub name: &'a str,
+    pub label: Option<&'a str>,
+    pub content_type: &'a str,
+    pub bytes: Vec<u8>,
+}
+
+pub async fn upload_asset(
+    pool: &db::DbPool,
+    store: &ObjectStore,
+    actor: i64,
+    owner: &str,
+    name: &str,
+    release_id: i64,
+    input: AssetUpload<'_>,
+) -> Result<ReleaseAsset, ReleaseError> {
+    let AssetUpload {
+        name: filename,
+        label,
+        content_type,
+        bytes,
+    } = input;
     let (repository, _) = writable(pool, actor, owner, name).await?;
-    if filename.is_empty()
-        || filename.len() > 255
-        || matches!(filename, "." | "..")
-        || filename.contains(['/', '\\'])
-        || filename.chars().any(char::is_control)
-    {
-        return Err(ReleaseError::Invalid("Asset file name is not valid"));
-    }
-    if label.is_some_and(|label| label.contains('\0')) {
-        return Err(ReleaseError::Invalid(
-            "Asset labels cannot contain NUL characters",
-        ));
-    }
-    if label.is_some_and(|label| label.len() > 255) {
-        return Err(ReleaseError::Invalid(
-            "Asset labels are limited to 255 bytes",
-        ));
-    }
+    validate_asset_fields(filename, label)?;
     if bytes.is_empty() || bytes.len() > MAX_ASSET_BYTES {
         return Err(ReleaseError::Invalid("Assets are 1 byte to 100 MiB"));
     }
-    db::releases::get_release(pool, repository.id, release_id)
+    let media_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let content_type = media_type.as_str();
+    if content_type.len() > 100
+        || !content_type.split_once('/').is_some_and(|(kind, subtype)| {
+            !kind.is_empty() && !subtype.is_empty() && !subtype.contains('/')
+        })
+        || !content_type
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/-+.".contains(&byte))
+    {
+        return Err(ReleaseError::Invalid("Invalid asset content type"));
+    }
+    let release = db::releases::get_release(pool, repository.id, release_id)
         .await
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
+    if release.release.is_immutable {
+        return Err(ReleaseError::Invalid("The release's assets are immutable"));
+    }
     let size = bytes.len() as i64;
     let checksum = hex::encode(Sha256::digest(&bytes));
-    let content_type = "application/octet-stream";
     let file_id = files::store_upload(
         pool,
         store,
@@ -613,6 +805,46 @@ pub async fn add_asset(
             Err(error)
         }
     }
+}
+
+fn validate_asset_fields(filename: &str, label: Option<&str>) -> Result<(), ReleaseError> {
+    if filename.is_empty()
+        || filename.len() > 255
+        || matches!(filename, "." | "..")
+        || filename.contains(['/', '\\'])
+        || filename.chars().any(char::is_control)
+    {
+        return Err(ReleaseError::Invalid("Asset file name is not valid"));
+    }
+    if label.is_some_and(|label| label.contains('\0')) {
+        return Err(ReleaseError::Invalid(
+            "Asset labels cannot contain NUL characters",
+        ));
+    }
+    if label.is_some_and(|label| label.len() > 255) {
+        return Err(ReleaseError::Invalid(
+            "Asset labels are limited to 255 bytes",
+        ));
+    }
+    Ok(())
+}
+
+pub async fn update_asset(
+    pool: &db::DbPool,
+    actor: i64,
+    owner: &str,
+    name: &str,
+    asset_id: i64,
+    changes: &db::releases::AssetChanges,
+) -> Result<ReleaseAsset, ReleaseError> {
+    let (repository, _) = writable(pool, actor, owner, name).await?;
+    validate_asset_fields(
+        changes.name.as_deref().unwrap_or("asset"),
+        changes.label.as_ref().and_then(|label| label.as_deref()),
+    )?;
+    db::releases::update_release_asset(pool, actor, repository.id, asset_id, changes)
+        .await
+        .map_err(write_error)
 }
 
 /// Detaches an asset from its release and removes its file.
@@ -663,11 +895,46 @@ pub async fn download(
         .await
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
-    let file = db::files::get_file_by_id(pool, asset.file_id)
+    open_asset(pool, store, asset, count).await
+}
+
+/// Opens the asset with this id, which a later rename cannot point at another file.
+pub async fn download_by_id(
+    pool: &db::DbPool,
+    store: &ObjectStore,
+    viewer: Option<i64>,
+    owner: &str,
+    name: &str,
+    asset_id: i64,
+    count: bool,
+) -> Result<files::AssetDownload, ReleaseError> {
+    let repository = readable(pool, viewer, owner, name).await?;
+    let asset = db::releases::get_repository_release_asset(pool, repository.id, asset_id)
+        .await
+        .map_err(unavailable)?
+        .ok_or(ReleaseError::NotFound)?;
+    let release = db::releases::get_release(pool, repository.id, asset.release_id)
+        .await
+        .map_err(unavailable)?
+        .ok_or(ReleaseError::NotFound)?;
+    if release.release.is_draft && !can_write(pool, viewer, repository.id).await? {
+        return Err(ReleaseError::NotFound);
+    }
+    open_asset(pool, store, asset, count).await
+}
+
+async fn open_asset(
+    pool: &db::DbPool,
+    store: &ObjectStore,
+    asset: ReleaseAsset,
+    count: bool,
+) -> Result<files::AssetDownload, ReleaseError> {
+    let mut file = db::files::get_file_by_id(pool, asset.file_id)
         .await
         .map_err(unavailable)?
         .filter(|file| file.is_active)
         .ok_or(ReleaseError::NotFound)?;
+    file.original_name = asset.name;
     let opened = files::open_file(store, file)
         .await
         .map_err(ReleaseError::Download)?;

@@ -51,12 +51,29 @@ async fn lock_discussion_authority(
     if authority.organization && !authority.organization_usable {
         return Ok(None);
     }
+    if !authority.is_admin
+        && super::users::blocks::repository_interaction_blocked(tx, actor_id, repo_id).await?
+    {
+        return Ok(None);
+    }
     Ok(Some(DiscussionAuthority {
         access: authority.access,
         personal_override: !authority.organization && authority.is_admin,
         personal_owner: !authority.organization && authority.owner_user_id == Some(actor_id),
         organization: authority.organization,
     }))
+}
+
+pub(crate) async fn lock_triage_authority(
+    tx: &mut Transaction<'_, Postgres>,
+    actor_id: i64,
+    repo_id: i64,
+) -> Result<bool> {
+    Ok(
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared)
+            .await?
+            .is_some_and(|a| a.access >= AccessLevel::Triage || a.personal_override),
+    )
 }
 
 pub(crate) async fn lock_write_authority(
@@ -134,19 +151,58 @@ pub(crate) async fn lock_archive_authority(
     actor_id: i64,
     repo_id: i64,
 ) -> Result<bool> {
+    lock_policy_authority_with(tx, actor_id, repo_id, RepositoryLock::Exclusive, false).await
+}
+
+/// Reading repository settings. Administrators may read them on archived repositories too;
+/// with `admin` false, anyone who may take part in the repository may also read them.
+pub(crate) async fn lock_settings_read_authority(
+    tx: &mut Transaction<'_, Postgres>,
+    actor_id: i64,
+    repo_id: i64,
+    admin: bool,
+) -> Result<bool> {
+    if !admin && lock_contribution_authority(tx, actor_id, repo_id).await? {
+        return Ok(true);
+    }
+    lock_policy_authority(tx, actor_id, repo_id, false).await
+}
+
+/// Settings and bypass administration remain available after archival.
+pub(crate) async fn lock_policy_authority(
+    tx: &mut Transaction<'_, Postgres>,
+    actor_id: i64,
+    repo_id: i64,
+    maintain: bool,
+) -> Result<bool> {
+    lock_policy_authority_with(tx, actor_id, repo_id, RepositoryLock::Shared, maintain).await
+}
+async fn lock_policy_authority_with(
+    tx: &mut Transaction<'_, Postgres>,
+    actor_id: i64,
+    repo_id: i64,
+    lock: RepositoryLock,
+    maintain: bool,
+) -> Result<bool> {
     let authority = super::repositories::access::lock_user_repo_access_in_transaction(
-        tx,
-        actor_id,
-        repo_id,
-        RepositoryLock::Exclusive,
-        true,
+        tx, actor_id, repo_id, lock, true,
     )
     .await?;
-    Ok(authority.is_some_and(|a| {
-        (!a.organization || a.organization_usable)
-            && (a.access.can_admin()
-                || (!a.organization && (a.is_admin || a.owner_user_id == Some(actor_id))))
-    }))
+    let locked: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=$1)",
+    )
+    .bind(repo_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(!locked
+        && authority.is_some_and(|a| {
+            (!a.organization || a.organization_usable)
+                && ((if maintain {
+                    a.access.can_maintain()
+                } else {
+                    a.access.can_admin()
+                }) || (!a.organization && (a.is_admin || a.owner_user_id == Some(actor_id))))
+        }))
 }
 
 async fn lock_contribution_authority_with(
@@ -155,11 +211,32 @@ async fn lock_contribution_authority_with(
     repo_id: i64,
     repository_lock: RepositoryLock,
 ) -> Result<bool> {
-    Ok(
-        lock_discussion_authority(tx, actor_id, repo_id, repository_lock)
-            .await?
-            .is_some_and(|a| a.access.can_read() || a.personal_override),
+    let authority = lock_discussion_authority(tx, actor_id, repo_id, repository_lock).await?;
+    let Some(authority) = authority else {
+        return Ok(false);
+    };
+    if !(authority.access.can_read() || authority.personal_override)
+        || super::users::blocks::repository_interaction_blocked(tx, actor_id, repo_id).await?
+    {
+        return Ok(false);
+    }
+    super::interactions::allows_contribution(
+        tx,
+        actor_id,
+        repo_id,
+        authority.access.can_write() || authority.personal_override,
     )
+    .await
+}
+
+/// `lock_contribution_authority` with an exclusive repository lock, for admission that
+/// takes its repository lock before any pull request or workflow row, like ordinary CI admission.
+pub(crate) async fn lock_contribution_authority_exclusive(
+    tx: &mut Transaction<'_, Postgres>,
+    actor_id: i64,
+    repo_id: i64,
+) -> Result<bool> {
+    lock_contribution_authority_with(tx, actor_id, repo_id, RepositoryLock::Exclusive).await
 }
 
 /// Whether the actor may still take part in the repository (read access is enough).
@@ -194,6 +271,45 @@ pub(crate) async fn require_exclusive_contribution_authority(
         lock_contribution_authority_with(tx, actor_id, repo_id, RepositoryLock::Exclusive).await?,
         AUTHORITY_DENIED
     );
+    Ok(())
+}
+
+pub async fn set_lock(
+    pool: &sqlx::PgPool,
+    actor_id: i64,
+    repo_id: i64,
+    item: crate::backend::db::assignees::AssignedItem,
+    locked: bool,
+    reason: Option<&str>,
+) -> Result<()> {
+    use crate::backend::db::{assignees::AssignedItem, discussions::LockRefusal};
+    anyhow::ensure!(
+        crate::backend::db::discussions::valid_lock_reason(reason),
+        LockRefusal::InvalidReason
+    );
+    let reason = if locked { reason } else { None };
+    let (table, subject, id) = match item {
+        AssignedItem::Issue(id) => ("issues", "issue", id),
+        AssignedItem::PullRequest(id) => ("pull_requests", "pull_request", id),
+    };
+    let mut tx = pool.begin().await?;
+    anyhow::ensure!(
+        lock_write_authority(&mut tx, actor_id, repo_id).await?,
+        LockRefusal::Denied
+    );
+    let (previous, previous_reason): (bool, Option<String>) = sqlx::query_as(&format!(
+        "SELECT locked,lock_reason FROM {table} WHERE id=$1 AND repo_id=$2 FOR UPDATE"
+    ))
+    .bind(id)
+    .bind(repo_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(LockRefusal::Missing)?;
+    if previous != locked || previous_reason.as_deref() != reason {
+        sqlx::query(&format!("UPDATE {table} SET locked=$2,lock_reason=$3,updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")).bind(id).bind(locked).bind(reason).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind,detail) VALUES ($1,$2,$3,$4,$5,$6)").bind(repo_id).bind(subject).bind(id).bind(actor_id).bind(if locked {"locked"} else {"unlocked"}).bind(reason.unwrap_or("")).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -233,13 +349,18 @@ pub(crate) async fn lock_pull_request_contribution(
         .await?;
     let repo = repo.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     require_contribution_authority(tx, actor_id, repo).await?;
-    let present: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM pull_requests WHERE id=$1 AND repo_id=$2 FOR UPDATE")
-            .bind(pr_id)
-            .bind(repo)
-            .fetch_optional(&mut **tx)
-            .await?;
-    anyhow::ensure!(present.is_some(), AUTHORITY_DENIED);
+    let locked: Option<bool> = sqlx::query_scalar(
+        "SELECT locked FROM pull_requests WHERE id=$1 AND repo_id=$2 FOR UPDATE",
+    )
+    .bind(pr_id)
+    .bind(repo)
+    .fetch_optional(&mut **tx)
+    .await?;
+    anyhow::ensure!(locked.is_some(), AUTHORITY_DENIED);
+    anyhow::ensure!(
+        locked == Some(false),
+        crate::backend::db::discussions::DiscussionWriteRefusal::Locked
+    );
     Ok(())
 }
 
@@ -257,6 +378,7 @@ pub(crate) async fn lock_pull_request_review_authority(
         lock_write_authority(tx, actor_id, repo).await?,
         AUTHORITY_DENIED
     );
+    lock_pull_request_contribution(tx, actor_id, pr_id).await?;
     read_pull_request_review_state(tx, pr_id).await
 }
 

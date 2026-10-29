@@ -1,0 +1,16 @@
+# https://github.com/actions-rust-lang/setup-rust-toolchain/tree/166cdcfd11aee3cb47222f9ddb555ce30ddb9659
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          toolchain: "1.85.0"
+          cache: "false"
+      - name: Assert documented effect
+        run: |
+          rustc --version | grep '^rustc 1\.85\.0'
+          echo compat:ok

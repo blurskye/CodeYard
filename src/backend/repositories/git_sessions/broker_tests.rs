@@ -552,6 +552,20 @@ async fn host_openssh_deploy_keys_clone_push_and_keep_repository_scope() {
         .await;
         assert!(!outside.status.success());
     }
+    let observed = crate::backend::repositories::traffic::summary(
+        &database.pool,
+        Some(&owner),
+        &repo,
+        crate::backend::repositories::traffic::Kind::Clones,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        observed.totals.count, 1,
+        "Only the nonempty host OpenSSH clone transfers objects"
+    );
+    assert_eq!(observed.totals.uniques, 1);
     assert!(bare.find_reference("refs/heads/main").is_ok());
     broker.no_hooks_left().await;
     broker.stop().await;
@@ -1986,6 +2000,8 @@ async fn pushes_move_the_open_pull_requests_that_use_the_branch() {
             base_branch: "main",
             base_sha: &first,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await

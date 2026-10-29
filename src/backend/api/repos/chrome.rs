@@ -125,15 +125,35 @@ pub(crate) async fn load_database(
         topics,
         is_private: repository.is_private,
         is_archived: repository.is_archived,
+        is_template: repository.is_template,
         stars: repository.stars_count,
         watchers: repository.watchers_count,
         forks: repository.forks_count,
         csrf_token: ctx.csrf_token.clone(),
-        current_path: ctx.path.clone(),
+        current_path: if owner.eq_ignore_ascii_case("gists")
+            && !ctx.path.starts_with("/gists/@repos/")
+        {
+            format!("/gists/@repos{}", ctx.path)
+        } else {
+            ctx.path.clone()
+        },
         signed_in: ctx.user.is_some(),
         viewer_id: ctx.user.as_ref().map_or(0, |user| user.id),
         ..RepoChrome::default()
     };
+    let package_session = ctx
+        .user
+        .as_ref()
+        .and_then(|_| crate::backend::api::http::session::extract_session_id(&ctx.headers));
+    chrome.packages = db::packages::count_linked(
+        &ctx.state.pool,
+        package_session
+            .as_deref()
+            .map(db::packages::Credential::Session),
+        repository.id,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?;
     // The Issues and Pull requests tabs show open counts, and every reader of the repository sees them.
     chrome.open_issues =
         db::issues::count_repo_issues(&ctx.state.pool, repository.id, &Default::default())
@@ -163,12 +183,13 @@ pub(crate) async fn load_database(
             .map_err(|_| unavailable(ctx))?
             .is_owner();
         }
-        chrome.can_write = access::can_write(&ctx.state.pool, user, &repository)
+        let effective_access = access::user_access(&ctx.state.pool, user, &repository)
             .await
             .map_err(|_| unavailable(ctx))?;
-        chrome.can_admin = access::can_admin(&ctx.state.pool, user, &repository)
-            .await
-            .map_err(|_| unavailable(ctx))?;
+        chrome.can_write = !repository.is_archived && effective_access.can_write();
+        chrome.can_admin = effective_access.can_admin();
+        chrome.can_view_traffic = effective_access.can_write();
+        chrome.can_manage_invitations = chrome.can_admin;
         chrome.starred =
             db::repositories::engagement::is_repo_starred(&ctx.state.pool, user.id, repository.id)
                 .await

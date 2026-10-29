@@ -52,7 +52,11 @@ impl OrgRole {
 pub struct OrgInvitation {
     pub id: i64,
     pub org_id: i64,
-    pub user_id: i64,
+    pub user_id: Option<i64>,
+    pub email: Option<String>,
+    pub expires_at: DateTime<Utc>,
+    pub failed_at: Option<DateTime<Utc>>,
+    pub failed_reason: Option<String>,
     pub role: String,
     pub invited_by_id: Option<i64>,
     pub created_at: DateTime<Utc>,
@@ -86,6 +90,9 @@ pub struct Team {
     pub slug: String,
     pub description: Option<String>,
     pub privacy: String,
+    pub default_permission: i16,
+    pub notifications_enabled: bool,
+    pub parent_team_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -5,7 +5,7 @@ use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     sync::{LazyLock, Mutex},
     time::Duration,
 };
@@ -33,6 +33,10 @@ static WORKFLOW_CACHE: LazyLock<Mutex<VecDeque<CachedWorkflows>>> =
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkflowEventFilter {
+    #[serde(default)]
+    pub types: Vec<String>,
+    #[serde(default)]
+    pub workflows: Vec<String>,
     pub branches: Vec<String>,
     pub branches_ignore: Vec<String>,
     pub tags: Vec<String>,
@@ -45,7 +49,13 @@ pub struct WorkflowEventFilter {
 pub struct WorkflowTriggers {
     pub push: Option<WorkflowEventFilter>,
     pub pull_request: Option<WorkflowEventFilter>,
+    #[serde(default)]
+    pub pull_request_target: Option<WorkflowEventFilter>,
     pub workflow_dispatch: bool,
+    #[serde(default)]
+    pub events: BTreeMap<String, WorkflowEventFilter>,
+    #[serde(default)]
+    pub schedules: Vec<String>,
     /// The `inputs` of `on.workflow_dispatch`, in the order the file declares them.
     #[serde(default)]
     pub dispatch_inputs: Vec<DispatchInput>,
@@ -119,6 +129,63 @@ impl Default for WorkflowMatchBudget {
 }
 
 impl WorkflowDefinition {
+    pub fn pull_request_filter(&self, event: &str) -> Option<&WorkflowEventFilter> {
+        match event {
+            "pull_request" => self.triggers.pull_request.as_ref(),
+            "pull_request_target" => self.triggers.pull_request_target.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn matches_activity(&self, event: &str, activity: &str) -> bool {
+        self.pull_request_filter(event)
+            .or_else(|| self.triggers.events.get(event))
+            .is_some_and(|filter| {
+                if !filter.types.is_empty() {
+                    return filter.types.iter().any(|kind| kind == activity);
+                }
+                match event {
+                    // Drafts queue no pull_request workflows, so readying one runs what
+                    // opening it would have run.
+                    "pull_request" => matches!(
+                        activity,
+                        "opened" | "synchronize" | "reopened" | "ready_for_review"
+                    ),
+                    "pull_request_target" => {
+                        matches!(activity, "opened" | "synchronize" | "reopened")
+                    }
+                    "pull_request_review" => activity == "submitted",
+                    "check_suite" => activity == "completed",
+                    _ => true,
+                }
+            })
+    }
+
+    pub fn matches_payload(&self, event: &str, payload: &serde_json::Value) -> bool {
+        if event == "schedule" {
+            return payload["schedule"].as_str().is_some_and(|cron| {
+                self.triggers
+                    .schedules
+                    .iter()
+                    .any(|schedule| schedule == cron)
+            });
+        }
+        if self.pull_request_filter(event).is_none() && !self.triggers.events.contains_key(event) {
+            return true;
+        }
+        if !self.matches_activity(event, payload["action"].as_str().unwrap_or_default()) {
+            return false;
+        }
+        let Some(filter) = self.triggers.events.get(event) else {
+            return true;
+        };
+        event != "workflow_run"
+            || filter.workflows.is_empty()
+            || payload["workflow_run"]["name"]
+                .as_str()
+                .is_some_and(|name| filter.workflows.iter().any(|workflow| workflow == name))
+    }
+
     pub fn matches_event(&self, event: &str, branch: &str) -> bool {
         // Manual trigger validation uses this. It checks only the event and ref filters, not
         // changed paths or skip messages.
@@ -134,11 +201,12 @@ impl WorkflowDefinition {
     ) -> std::result::Result<bool, WorkflowMatchLimit> {
         match event {
             "workflow_dispatch" => Ok(self.triggers.workflow_dispatch),
+            "schedule" => Ok(!self.triggers.schedules.is_empty()),
             "push" => match self.triggers.push.as_ref() {
                 Some(filter) => ref_matches_filter(filter, branch, budget),
                 None => Ok(false),
             },
-            "pull_request" => match self.triggers.pull_request.as_ref() {
+            "pull_request" | "pull_request_target" => match self.pull_request_filter(event) {
                 Some(filter) => named_ref_matches_patterns(
                     branch,
                     &filter.branches,
@@ -147,7 +215,16 @@ impl WorkflowDefinition {
                 ),
                 None => Ok(false),
             },
-            _ => Ok(false),
+            _ => match self.triggers.events.get(event) {
+                Some(filter) if event == "workflow_run" => named_ref_matches_patterns(
+                    branch,
+                    &filter.branches,
+                    &filter.branches_ignore,
+                    budget,
+                ),
+                Some(_) => Ok(true),
+                None => Ok(false),
+            },
         }
     }
 
@@ -170,13 +247,13 @@ impl WorkflowDefinition {
         let filter = match event {
             "workflow_dispatch" => return Ok(self.triggers.workflow_dispatch),
             "push" => self.triggers.push.as_ref(),
-            "pull_request" => self.triggers.pull_request.as_ref(),
+            "pull_request" | "pull_request_target" => self.pull_request_filter(event),
             _ => return Ok(false),
         };
         let Some(filter) = filter else {
             return Ok(false);
         };
-        let ref_matches = if event == "pull_request" {
+        let ref_matches = if matches!(event, "pull_request" | "pull_request_target") {
             named_ref_matches_patterns(git_ref, &filter.branches, &filter.branches_ignore, budget)?
         } else {
             ref_matches_filter(filter, git_ref, budget)?
@@ -203,9 +280,29 @@ pub fn should_skip_run_from_message(message: &str) -> bool {
         return true;
     }
 
-    message
-        .lines()
-        .any(|line| line.trim().eq_ignore_ascii_case("skip-checks: true"))
+    has_skip_checks_trailer(message)
+}
+
+/// The final paragraph is a trailer block only when every line is a `key: value` trailer, so a
+/// quoted `skip-checks: true` in prose does not count.
+fn has_skip_checks_trailer(message: &str) -> bool {
+    let message = message.trim_end().replace("\r\n", "\n");
+    let Some((_, trailers)) = message.rsplit_once("\n\n") else {
+        return false;
+    };
+    let mut skip = false;
+    for line in trailers.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            return false;
+        };
+        let key = key.trim();
+        if key.is_empty() || key.contains(char::is_whitespace) {
+            return false;
+        }
+        skip |=
+            key.eq_ignore_ascii_case("skip-checks") && value.trim().eq_ignore_ascii_case("true");
+    }
+    skip
 }
 
 pub async fn commit_message_for_ref(store: &RepoStore, commitish: &str) -> Option<String> {
@@ -519,6 +616,11 @@ fn workflow_name(yaml: &Value, path: &str) -> Result<String> {
         name.len() <= MAX_WORKFLOW_NAME_BYTES,
         "workflow name too long"
     );
+    // PostgreSQL text cannot hold NUL, so such a name fails only its own file.
+    ensure!(
+        !name.contains('\0'),
+        "workflow name contains a NUL character"
+    );
     Ok(name)
 }
 
@@ -591,9 +693,28 @@ fn apply_event_trigger(
     match event_name.to_ascii_lowercase().as_str() {
         "push" => triggers.push = Some(parse_event_filter(config)?),
         "pull_request" => triggers.pull_request = Some(parse_event_filter(config)?),
+        "pull_request_target" => triggers.pull_request_target = Some(parse_event_filter(config)?),
+        "schedule" => {
+            let schedules = config
+                .as_sequence()
+                .context("workflow schedules must be a list")?;
+            ensure!(schedules.len() <= 32, "too many workflow schedules");
+            for value in schedules {
+                let cron = field(value, "cron")
+                    .and_then(Value::as_str)
+                    .context("workflow schedule requires cron")?;
+                super::schedule::parse(cron)?;
+                triggers.schedules.push(cron.to_owned());
+            }
+        }
         "workflow_dispatch" => {
             triggers.workflow_dispatch = true;
             triggers.dispatch_inputs = parse_dispatch_inputs(config)?;
+        }
+        event if super::events::is_repository_event(event) => {
+            triggers
+                .events
+                .insert(event.to_owned(), parse_event_filter(config)?);
         }
         _ => {}
     }
@@ -676,6 +797,8 @@ fn parse_event_filter(config: &Value) -> Result<WorkflowEventFilter> {
 
     for (key, value) in mapping {
         match yaml_key_to_string(key).as_deref() {
+            Some("types") => filter.types = parse_pattern_list(value)?,
+            Some("workflows") => filter.workflows = parse_pattern_list(value)?,
             Some("branches") => filter.branches = parse_pattern_list(value)?,
             Some("branches-ignore") => filter.branches_ignore = parse_pattern_list(value)?,
             Some("tags") => filter.tags = parse_pattern_list(value)?,
@@ -1175,16 +1298,19 @@ mod tests {
     }
 
     #[test]
-    fn discovery_and_admission_reject_the_same_workflow_paths() {
+    fn discovery_and_admission_accept_the_same_workflow_paths() {
         for path in [
             ".github/workflows/build linux.yml",
             ".github/workflows/雪.yaml",
-            &format!(".github/workflows/{}.yml", "x".repeat(238)),
         ] {
-            assert!(!super::super::admission::is_safe_workflow_path(path));
-            assert!(parse_workflow_definition(path, "on: workflow_dispatch").is_err());
-            assert!(parse_push_workflow(path, "on: push").is_err());
+            assert!(super::super::admission::is_safe_workflow_path(path));
+            assert!(parse_workflow_definition(path, "on: workflow_dispatch").is_ok());
+            assert!(parse_push_workflow(path, "on: push").is_ok());
         }
+        let path = format!(".github/workflows/{}.yml", "x".repeat(238));
+        assert!(!super::super::admission::is_safe_workflow_path(&path));
+        assert!(parse_workflow_definition(&path, "on: workflow_dispatch").is_err());
+        assert!(parse_push_workflow(&path, "on: push").is_err());
         let path = format!(".github/workflows/{}.yml", "x".repeat(233));
         assert_eq!(path.len(), 255);
         assert!(parse_workflow_definition(&path, "on: workflow_dispatch").is_ok());
@@ -1404,6 +1530,17 @@ on: [push, pull_request]
     }
 
     #[test]
+    fn skip_checks_must_be_in_the_final_trailer_block() {
+        assert!(should_skip_run_from_message(
+            "feat: add\n\nBody.\n\nskip-checks: true"
+        ));
+        assert!(!should_skip_run_from_message(
+            "feat: add\n\nskip-checks: true\n\nThis prose follows the quote."
+        ));
+        assert!(!should_skip_run_from_message("skip-checks: true"));
+    }
+
+    #[test]
     fn github_style_globs_match_expected_branches() {
         for (pattern, value, expected) in [
             ("main", "main", true),
@@ -1598,6 +1735,8 @@ on: [push, pull_request]
                 ("Alpha", ".github/workflows/z.yml"),
                 ("Limit", ".github/workflows/limit.yml"),
                 ("Zebra", ".github/workflows/a.yaml"),
+                ("build linux", ".github/workflows/build linux.yml"),
+                ("雪", ".github/workflows/雪.yaml"),
             ]
         );
         let sha = store.commit("main").await.unwrap().sha;

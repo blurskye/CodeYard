@@ -1,13 +1,15 @@
 use crate::backend::db::models::{OrgRole, Webhook, WebhookDelivery};
 use crate::backend::db::organizations::OrganizationOutcome;
-use crate::backend::db::sqlite::discussions::lock_admin_authority;
+use crate::backend::db::sqlite::discussions::lock_policy_authority;
 use crate::backend::db::sqlite::organizations::authority::authority;
-use crate::backend::db::webhooks::{HookOwner, NewDelivery, SealedSecret, WebhookFields};
+use crate::backend::db::webhooks::{
+    HookOwner, NewDelivery, SealedSecret, WebhookFields, WebhookPatch,
+};
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
-const COLUMNS: &str = "id, repo_id, org_id, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, created_at, updated_at";
-const DELIVERY_COLUMNS: &str = "id, webhook_id, guid, event, action, status_code, duration_ms, error, request_headers, request_body, response_headers, response_body, delivered_at";
+const COLUMNS: &str = "id, repo_id, org_id, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, created_at, updated_at, username, encrypted_password, password_nonce";
+const DELIVERY_COLUMNS: &str = "id, webhook_id, guid, event, action, status_code, duration_ms, error, request_headers, request_body, response_headers, response_body, delivered_at, redelivery";
 
 pub async fn read_settings(
     pool: &SqlitePool,
@@ -16,6 +18,7 @@ pub async fn read_settings(
     hook: Option<i64>,
     delivery: Option<i64>,
     after: i64,
+    full_deliveries: bool,
 ) -> Result<Option<crate::backend::db::webhooks::HookSettings>> {
     // A read only needs one snapshot, so it does not take the write lock.
     let mut tx = pool.begin().await?;
@@ -31,7 +34,11 @@ pub async fn read_settings(
     if let Some(id) = hook {
         settings.hook = get_webhook(&mut *tx, owner, id).await?;
         if let Some(row) = &settings.hook {
-            settings.deliveries = list_delivery_summaries(&mut *tx, row.id).await?;
+            settings.deliveries = if full_deliveries {
+                list_deliveries(&mut *tx, row.id).await?
+            } else {
+                list_delivery_summaries(&mut *tx, row.id).await?
+            };
             if let Some(id) = delivery {
                 settings.delivery = get_delivery(&mut *tx, row.id, id).await?;
             }
@@ -39,6 +46,31 @@ pub async fn read_settings(
     }
     tx.commit().await?;
     Ok(Some(settings))
+}
+
+pub async fn list_managed_webhooks(
+    pool: &SqlitePool,
+    owner: HookOwner,
+    actor: i64,
+    offset: i64,
+    limit: i64,
+) -> Result<Option<Vec<Webhook>>> {
+    let mut tx = pool.begin().await?;
+    if !may_manage_hooks(&mut tx, owner, actor).await? {
+        return Ok(None);
+    }
+    let sql = format!(
+        "SELECT {COLUMNS} FROM webhooks WHERE {}=?1 ORDER BY id LIMIT ?2 OFFSET ?3",
+        owner.column()
+    );
+    let rows = sqlx::query_as(&sql)
+        .bind(owner.id())
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Some(rows))
 }
 
 pub async fn list_webhooks<'e>(
@@ -75,7 +107,7 @@ pub async fn list_webhook_summaries<'e>(
 }
 
 pub async fn webhook_secret_sample(pool: &SqlitePool) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
-    Ok(sqlx::query_as("SELECT encrypted_secret, secret_nonce FROM webhooks WHERE encrypted_secret IS NOT NULL LIMIT 1").fetch_optional(pool).await?)
+    Ok(sqlx::query_as("SELECT COALESCE(encrypted_secret,encrypted_password), CASE WHEN encrypted_secret IS NOT NULL THEN secret_nonce ELSE password_nonce END FROM webhooks WHERE encrypted_secret IS NOT NULL OR encrypted_password IS NOT NULL UNION ALL SELECT encrypted_secret, secret_nonce FROM github_app_hooks WHERE encrypted_secret IS NOT NULL LIMIT 1").fetch_optional(pool).await?)
 }
 
 pub async fn get_webhook<'e>(
@@ -103,7 +135,8 @@ async fn may_manage_hooks(
     actor_id: i64,
 ) -> Result<bool> {
     match owner {
-        HookOwner::Repository(repo_id) => lock_admin_authority(tx, actor_id, repo_id).await,
+        // Hooks stay manageable on archived repositories, like other settings.
+        HookOwner::Repository(repo_id) => lock_policy_authority(tx, actor_id, repo_id, false).await,
         HookOwner::Organization(org) => Ok(matches!(
             authority(tx, actor_id, org).await?,
             OrganizationOutcome::Applied(OrgRole::Owner)
@@ -124,7 +157,7 @@ pub async fn insert_webhook(
         return Ok(None);
     }
     let sql = format!(
-        "INSERT INTO webhooks ({}, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) RETURNING id",
+        "INSERT INTO webhooks ({}, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, username, encrypted_password, password_nonce) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) RETURNING id",
         owner.column()
     );
     let id = sqlx::query_scalar(&sql)
@@ -137,6 +170,9 @@ pub async fn insert_webhook(
         .bind(fields.active)
         .bind(fields.ssl_verify)
         .bind(actor_id)
+        .bind(&fields.username)
+        .bind(fields.password.as_ref().map(|s| s.ciphertext.as_slice()))
+        .bind(fields.password.as_ref().map(|s| s.nonce.as_slice()))
         .fetch_one(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -153,13 +189,34 @@ pub async fn update_webhook(
     fields: &WebhookFields,
     secret: Option<&SealedSecret>,
 ) -> Result<Option<bool>> {
+    patch_webhook(
+        pool,
+        owner,
+        actor_id,
+        id,
+        &WebhookPatch::from(fields),
+        secret,
+    )
+    .await
+}
+
+pub async fn patch_webhook(
+    pool: &SqlitePool,
+    owner: HookOwner,
+    actor_id: i64,
+    id: i64,
+    fields: &WebhookPatch,
+    secret: Option<&SealedSecret>,
+) -> Result<Option<bool>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !may_manage_hooks(&mut tx, owner, actor_id).await? {
         return Ok(None);
     }
     let sql = format!(
-        "UPDATE webhooks SET payload_url = ?3, content_type = ?4, events = ?5, active = ?6, ssl_verify = ?7, \
-         encrypted_secret = COALESCE(?8, encrypted_secret), secret_nonce = COALESCE(?9, secret_nonce), \
+        "UPDATE webhooks SET payload_url = COALESCE(?3,payload_url), content_type = COALESCE(?4,content_type), events = COALESCE(?5,events), active = COALESCE(?6,active), ssl_verify = COALESCE(?7,ssl_verify), \
+         encrypted_secret = CASE WHEN ?10 THEN NULL ELSE COALESCE(?8,encrypted_secret) END, secret_nonce = CASE WHEN ?10 THEN NULL ELSE COALESCE(?9,secret_nonce) END, \
+         username = CASE WHEN ?14 THEN NULL ELSE COALESCE(?11,username,CASE WHEN ?12 IS NOT NULL THEN '' END) END, \
+         encrypted_password = CASE WHEN ?14 THEN NULL ELSE COALESCE(?12,encrypted_password) END, password_nonce = CASE WHEN ?14 THEN NULL ELSE COALESCE(?13,password_nonce) END, \
          updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = ?1 AND {} = ?2",
         owner.column()
     );
@@ -173,6 +230,11 @@ pub async fn update_webhook(
         .bind(fields.ssl_verify)
         .bind(secret.map(|s| s.ciphertext.as_slice()))
         .bind(secret.map(|s| s.nonce.as_slice()))
+        .bind(fields.clear_secret)
+        .bind(&fields.username)
+        .bind(fields.password.as_ref().map(|s| s.ciphertext.as_slice()))
+        .bind(fields.password.as_ref().map(|s| s.nonce.as_slice()))
+        .bind(fields.clear_password)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -204,6 +266,18 @@ pub async fn delete_webhook(
     Ok(Some(result.rows_affected() > 0))
 }
 
+// Deliveries expire by age even when their hook is idle; inserts only trim the newest 100.
+pub async fn prune_expired_deliveries(pool: &SqlitePool) -> Result<u64> {
+    let hooks = sqlx::query("DELETE FROM webhook_deliveries WHERE delivered_at < strftime('%Y-%m-%dT%H:%M:%f000Z','now','-30 days')")
+        .execute(pool)
+        .await?
+        .rows_affected();
+    let apps = sqlx::query("DELETE FROM github_app_deliveries WHERE delivered_at < strftime('%Y-%m-%dT%H:%M:%f000Z','now','-30 days')")
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(hooks + apps)
+}
 pub async fn insert_delivery(
     pool: &SqlitePool,
     webhook_id: i64,
@@ -211,8 +285,8 @@ pub async fn insert_delivery(
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     sqlx::query(
-        "INSERT INTO webhook_deliveries (webhook_id, guid, event, action, status_code, duration_ms, error, request_headers, request_body, response_headers, response_body) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO webhook_deliveries (webhook_id, guid, event, action, status_code, duration_ms, error, request_headers, request_body, response_headers, response_body, redelivery) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
     )
     .bind(webhook_id)
     .bind(&delivery.guid)
@@ -225,6 +299,7 @@ pub async fn insert_delivery(
     .bind(&delivery.request_body)
     .bind(&delivery.response_headers)
     .bind(&delivery.response_body)
+    .bind(delivery.redelivery)
     .execute(&mut *tx)
     .await?;
     sqlx::query(
@@ -238,7 +313,10 @@ pub async fn insert_delivery(
     Ok(())
 }
 
-pub async fn list_deliveries(pool: &SqlitePool, webhook_id: i64) -> Result<Vec<WebhookDelivery>> {
+pub async fn list_deliveries<'e>(
+    pool: impl sqlx::Executor<'e, Database = Sqlite>,
+    webhook_id: i64,
+) -> Result<Vec<WebhookDelivery>> {
     let sql = format!(
         "SELECT {DELIVERY_COLUMNS} FROM webhook_deliveries WHERE webhook_id = ?1 ORDER BY id DESC LIMIT 100"
     );
@@ -266,7 +344,7 @@ pub async fn list_delivery_summaries<'e>(
 ) -> Result<Vec<WebhookDelivery>> {
     Ok(sqlx::query_as(
         "SELECT id,webhook_id,guid,event,action,status_code,duration_ms,error,
-         '' AS request_headers,'' AS request_body,NULL AS response_headers,NULL AS response_body,delivered_at
+         '' AS request_headers,'' AS request_body,NULL AS response_headers,NULL AS response_body,delivered_at,redelivery
          FROM webhook_deliveries WHERE webhook_id=?1 ORDER BY id DESC LIMIT 100",
     ).bind(webhook_id).fetch_all(pool).await?)
 }

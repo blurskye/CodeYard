@@ -24,7 +24,7 @@ fn ref_kind(reference: &str) -> Option<(&'static str, &str)> {
 }
 
 /// Sends the events for the accepted ref moves of one push, after Git has updated the refs.
-pub fn emit_ref_moves(
+pub async fn emit_ref_moves(
     pool: &DbPool,
     repo: &Repository,
     pusher_id: i64,
@@ -39,9 +39,9 @@ pub fn emit_ref_moves(
         let name = name.to_owned();
         let path = path.to_owned();
         if is_zero(&old) {
-            emit_ref_change(pool, repo, events::CREATE, ref_type, name, pusher_id);
+            emit_ref_change(pool, repo, events::CREATE, ref_type, name, pusher_id).await;
         } else if is_zero(&new) {
-            emit_ref_change(pool, repo, events::DELETE, ref_type, name, pusher_id);
+            emit_ref_change(pool, repo, events::DELETE, ref_type, name, pusher_id).await;
         }
         let repo_for_hook = repo.clone();
         emit(
@@ -67,11 +67,12 @@ pub fn emit_ref_moves(
                     &sender,
                 )
             },
-        );
+        )
+        .await;
     }
 }
 
-fn emit_ref_change(
+async fn emit_ref_change(
     pool: &DbPool,
     repo: &Repository,
     event: &'static str,
@@ -91,5 +92,6 @@ fn emit_ref_change(
                 sender: &sender,
             },
         )
-    });
+    })
+    .await;
 }

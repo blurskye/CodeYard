@@ -12,6 +12,8 @@ async fn insert_hook(database: &Database, url: &str) -> db::models::Webhook {
         owner,
         repo.owner_user_id.unwrap(),
         &WebhookFields {
+            username: None,
+            password: None,
             payload_url: url.into(),
             content_type: "application/json".into(),
             events: "push".into(),
@@ -36,6 +38,7 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
         hooks.push(insert_hook(&database, "https://hooks.example/push").await);
     }
     let mut record = db::webhooks::NewDelivery {
+        redelivery: false,
         guid: uuid::Uuid::new_v4().to_string(),
         event: "push".into(),
         action: None,

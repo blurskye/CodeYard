@@ -8,7 +8,7 @@ use crate::backend::{
     ci::{self, CiRunRequest},
     db::{
         self,
-        models::{AccessLevel, Repository},
+        models::{AccessLevel, Repository, User},
     },
     git::{branches_and_tags_in_use, ref_listing_bytes, RefsInUse},
     repositories::{
@@ -132,7 +132,9 @@ fn admit_updates(
         .any(|update| update.old == ZERO_SHA && update.reference.starts_with("refs/heads/"))
     {
         state.previous_refs = crate::backend::git::list_mirror_refs(path)?
-            .into_values()
+            .into_iter()
+            .filter(|(name, _)| !name.starts_with("refs/codeyard/"))
+            .map(|(_, oid)| oid)
             .collect();
     }
     state.proposed = Some(updates.to_vec());
@@ -167,6 +169,57 @@ impl Gateway {
         Ok((repo, path))
     }
 
+    async fn check_publication_branches(
+        &self,
+        repo: &Repository,
+        identity: &User,
+        updates: &[RefUpdate],
+        history: &History<'_>,
+        via: WriteVia,
+    ) -> Result<()> {
+        let branches = updates
+            .iter()
+            .filter_map(|update| {
+                update
+                    .reference
+                    .strip_prefix("refs/heads/")
+                    .map(|branch| (update, branch))
+            })
+            .collect::<Vec<_>>();
+        if branches.is_empty() {
+            return Ok(());
+        }
+        let rules = load_rules(&self.pool, repo)
+            .await
+            .map_err(|_| anyhow::anyhow!("branch protection could not be checked"))?;
+        let mut budget = WorkflowMatchBudget::new();
+        for (update, branch) in branches {
+            let write = BranchWrite {
+                branch,
+                old: (update.old != ZERO_SHA).then_some(update.old.as_str()),
+                new: (update.new != ZERO_SHA).then_some(update.new.as_str()),
+                via,
+            };
+            check_branch_write_with(
+                &self.pool,
+                &rules,
+                repo,
+                identity,
+                &write,
+                history,
+                &mut budget,
+            )
+            .await
+            .map_err(|refusal| match refusal {
+                Refusal::Blocked(reason) => {
+                    anyhow::Error::from(RepoError::new(ErrorKind::Invalid, reason))
+                }
+                Refusal::Unavailable => anyhow::anyhow!("branch protection could not be checked"),
+            })?;
+        }
+        Ok(())
+    }
+
     /// Judges a push before Git accepts it and keeps the repository lock until it is published.
     async fn pre_receive(
         self: &Arc<Self>,
@@ -174,65 +227,87 @@ impl Gateway {
         updates: &[RefUpdate],
         quarantine: Option<&str>,
     ) -> Result<()> {
-        // All transports and server-side ref mutations use this same repository lock.
-        let publication = crate::backend::git::locks::lock(&operation.path).await;
+        // Lock the same open description the receive child inherited before negotiation.
+        // If this backend dies after admission, the child still owns the publication lock.
+        let publication = operation
+            .publication_lease
+            .as_ref()
+            .context("receive publication lease missing")?
+            .acquire(&operation.path)
+            .await?;
         let (repo, path) = self.operation_repository(operation).await?;
         let (identity, _) = operation
             .credential
             .authorize(&self.pool, &repo, true)
             .await?;
         ensure!(identity.id == operation.actor_id, "identity changed");
+        crate::backend::repositories::releases::immutable::check_current_tag_updates(
+            &self.pool, &repo, updates,
+        )
+        .await?;
         let quarantine = match quarantine {
             Some(claimed) => quarantine_directory(&path, claimed).await,
             None => None,
         };
+        let heads: Vec<_> = updates
+            .iter()
+            .filter(|update| update.new != ZERO_SHA)
+            .map(|update| update.new.clone())
+            .collect();
+        let bypasses =
+            crate::backend::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+                &self.pool,
+                &repo,
+                identity.id,
+                &path,
+                quarantine.as_deref(),
+                &heads,
+            )
+            .await?;
+        operation
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+            .secret_bypasses = bypasses;
+        if repo.is_gist {
+            ensure!(
+                updates.len() == 1
+                    && updates[0].reference == "refs/heads/main"
+                    && updates[0].new != ZERO_SHA,
+                "A gist has one nonempty main branch"
+            );
+            let path = path.clone();
+            let quarantine = quarantine.clone();
+            let revision = updates[0].new.clone();
+            let old = updates[0].old.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::backend::git::gists::validate_push(
+                    &path,
+                    quarantine.as_deref(),
+                    &old,
+                    &revision,
+                )
+            })
+            .await??;
+        }
         let history = History::Push {
             repository: &path,
             quarantine: quarantine.as_deref(),
         };
-        // Every branch of the push is judged against one read of the rules and one budget.
-        let branch_updates: Vec<(&RefUpdate, &str)> = updates
-            .iter()
-            .filter_map(|update| {
-                let branch = update.reference.strip_prefix("refs/heads/")?;
-                Some((update, branch))
-            })
-            .collect();
-        if !branch_updates.is_empty() {
-            let rules = load_rules(&self.pool, &repo)
-                .await
-                .map_err(|_| anyhow::anyhow!("branch protection could not be checked"))?;
-            let mut protection_budget = WorkflowMatchBudget::new();
-            for (update, branch) in branch_updates {
-                let write = BranchWrite {
-                    branch,
-                    old: (update.old != ZERO_SHA).then_some(update.old.as_str()),
-                    new: (update.new != ZERO_SHA).then_some(update.new.as_str()),
-                    via: if matches!(operation.credential, ReceiveCredential::DeployKey(_)) {
-                        WriteVia::DeployKey
-                    } else {
-                        WriteVia::Direct
-                    },
-                };
-                check_branch_write_with(
-                    &self.pool,
-                    &rules,
-                    &repo,
-                    &identity,
-                    &write,
-                    &history,
-                    &mut protection_budget,
-                )
-                .await
-                .map_err(|refusal| match refusal {
-                    Refusal::Blocked(reason) => {
-                        anyhow::Error::from(RepoError::new(ErrorKind::Invalid, reason))
-                    }
-                    Refusal::Unavailable => {
-                        anyhow::anyhow!("branch protection could not be checked")
-                    }
-                })?;
-            }
+        let via = if matches!(operation.credential, ReceiveCredential::DeployKey(_)) {
+            WriteVia::DeployKey
+        } else {
+            WriteVia::Direct
+        };
+        self.check_publication_branches(&repo, &identity, updates, &history, via)
+            .await?;
+        // Evaluate-mode rulesets only report; a suite that cannot be recorded is not a refusal.
+        if let Err(error) = crate::backend::repositories::rule_suites::record_push(
+            &self.pool, &repo, &identity, updates, &history,
+        )
+        .await
+        {
+            tracing::warn!(%error, "could not record a rule suite");
         }
         // The stored default can lag behind Git, so the default that Git advertises is
         // protected as well.
@@ -252,10 +327,28 @@ impl Gateway {
             )
             .into());
         }
+        let check_workflows = if let ReceiveCredential::Token(id) = operation.credential {
+            !crate::backend::identity::oauth_apps::allows_workflows(&self.pool, id).await?
+        } else {
+            false
+        };
         let gateway = self.clone();
         let (admitted, admitted_path, admitted_updates) =
             (operation.clone(), path.clone(), updates.to_vec());
+        let admitted_quarantine = quarantine.clone();
+        let held = publication.clone();
         tokio::task::spawn_blocking(move || {
+            let _held = held;
+            if check_workflows {
+                crate::backend::git::oauth::check_workflows(
+                    &admitted_path,
+                    admitted_quarantine.as_deref(),
+                    &admitted_updates
+                        .iter()
+                        .map(|update| (update.old.clone(), update.new.clone()))
+                        .collect::<Vec<_>>(),
+                )?;
+            }
             let tags: Vec<_> = admitted_updates
                 .iter()
                 .filter(|update| update.reference.starts_with("refs/tags/"))
@@ -264,7 +357,7 @@ impl Gateway {
             if !tags.is_empty() {
                 crate::backend::git::check_tag_budget(
                     &admitted_path,
-                    quarantine.as_deref(),
+                    admitted_quarantine.as_deref(),
                     &tags,
                 )?;
             }
@@ -273,9 +366,45 @@ impl Gateway {
                 &admitted,
                 &admitted_path,
                 &admitted_updates,
+            )?;
+            let publications = admitted_updates
+                .iter()
+                .filter(|update| update.reference.starts_with("refs/heads/"))
+                .map(|update| crate::backend::git::PublicationUpdate {
+                    reference: update.reference.clone(),
+                    old: (update.old != ZERO_SHA).then(|| update.old.clone()),
+                    new: (update.new != ZERO_SHA).then(|| update.new.clone()),
+                })
+                .collect::<Vec<_>>();
+            let actor = match admitted.credential {
+                ReceiveCredential::DeployKey(id) => {
+                    crate::backend::git::PublicationActor::DeployKey(id)
+                }
+                ReceiveCredential::SshKey(_) | ReceiveCredential::Token(_) => {
+                    crate::backend::git::PublicationActor::User(admitted.actor_id)
+                }
+            };
+            crate::backend::git::prepare_branch_publications(
+                &admitted_path,
+                repo.id,
+                actor,
+                &identity.username,
+                &publications,
             )
         })
         .await??;
+        // An intent written before a slow batch is not authority to publish after revocation.
+        let (current, _) = self.operation_repository(operation).await?;
+        let (identity, _) = operation
+            .credential
+            .authorize(&self.pool, &current, true)
+            .await?;
+        ensure!(identity.id == operation.actor_id, "identity changed");
+        self.check_publication_branches(&current, &identity, updates, &history, via)
+            .await?;
+        // A failed creation deletes its repository only while no write has reached it, so the
+        // version moves before Git takes the push.
+        db::repositories::records::advance_contribution_version(&self.pool, current.id).await?;
         operation
             .state
             .lock()
@@ -287,6 +416,25 @@ impl Gateway {
     /// Follow-up after Git accepted the push: metadata, events, pull requests and CI.
     async fn post_receive(&self, operation: &Arc<Operation>, updates: &[RefUpdate]) -> Result<()> {
         let (repo, path) = self.operation_repository(operation).await?;
+        // Proofs made while this push was in flight saw the old history under the new version.
+        // This comes first, so no later bookkeeping failure can leave them current.
+        db::repositories::records::advance_contribution_version(&self.pool, repo.id).await?;
+        let bypasses = operation
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+            .secret_bypasses
+            .clone();
+        for hash in bypasses {
+            db::secret_scanning::use_bypass(
+                &self.pool,
+                repo.id,
+                operation.actor_id,
+                &hash,
+                chrono::Utc::now(),
+            )
+            .await?;
+        }
         // This control request runs in the persistent backend. Disconnecting a
         // helper does not move scheduled CI into a short-lived CLI runtime.
         let mut failed = false;
@@ -302,6 +450,32 @@ impl Gateway {
             failed = true;
         }
         crate::backend::git::maintenance::after_push(repo.id, path.clone());
+        for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
+            if db::secret_scanning::enqueue(&self.pool, repo.id, &update.new, operation.actor_id)
+                .await
+                .is_err()
+            {
+                tracing::warn!(
+                    repo_id = repo.id,
+                    "could not queue secret scanning after a push"
+                );
+                failed = true;
+            }
+        }
+        if repo.is_gist {
+            if crate::backend::db::gists::pushed(&self.pool, repo.id, Some(repo.storage_node_id))
+                .await
+                .is_err()
+            {
+                failed = true;
+                tracing::error!(repo_id = repo.id, "could not update gist after push");
+            }
+            return if failed {
+                Err(super::PostReceiveFailed.into())
+            } else {
+                Ok(())
+            };
+        }
         // Accepted-write bookkeeping uses the admitted actor, not credential liveness. CI keeps
         // the actor's live access, and a credential revoked since the push gets no access.
         let actor_id = operation.actor_id;
@@ -327,7 +501,16 @@ impl Gateway {
                 )
             })
             .collect();
-        ref_changes::emit_ref_moves(&self.pool, &repo, actor_id, &path, &moves);
+        if let Err(error) = crate::backend::repositories::activity::record_moves(
+            &self.pool, repo.id, actor_id, &path, &moves,
+        )
+        .await
+        {
+            tracing::warn!(repo_id=repo.id,%error,"could not record accepted Git ref activity");
+            failed = true;
+        }
+        crate::backend::repositories::dependencies::observe_refs(&self.pool, &repo, &moves).await;
+        ref_changes::emit_ref_moves(&self.pool, &repo, actor_id, &path, &moves).await;
         // Open pull requests follow the branches this push created, moved or deleted.
         let branches: Vec<&str> = updates
             .iter()
@@ -489,14 +672,15 @@ impl Gateway {
                 &commit_sha,
             )
             .await;
+            let ref_update = ci::RefUpdate {
+                reference: update.reference.clone(),
+                old: (update.old != ZERO_SHA).then(|| update.old.clone()),
+                new: commit_sha.clone(),
+                changed_paths: None,
+            };
             let matched = ci::push::matching_push_workflows(
                 &repo_store(&repo, self.ci.cluster.as_ref()),
-                &ci::RefUpdate {
-                    reference: update.reference.clone(),
-                    old: (update.old != ZERO_SHA).then(|| update.old.clone()),
-                    new: commit_sha.clone(),
-                    changed_paths: None,
-                },
+                &ref_update,
                 workflows,
                 message.as_deref(),
                 &mut match_budget,
@@ -508,6 +692,27 @@ impl Gateway {
                     tracing::warn!(repo_id = repo.id, %error, "push workflow matching failed");
                     failed = true;
                     break 'updates;
+                }
+            };
+            if matched.is_empty() {
+                continue;
+            }
+            // A run's github.event is the push document the webhook sends.
+            let event = match ci::push::push_document(
+                &self.pool,
+                &repo_store(&repo, self.ci.cluster.as_ref()),
+                &repo,
+                &operation.owner,
+                actor_id,
+                &ref_update,
+            )
+            .await
+            {
+                Ok(event) => event,
+                Err(error) => {
+                    tracing::warn!(repo_id = repo.id, %error, "push document unavailable");
+                    failed = true;
+                    continue;
                 }
             };
             for workflow in matched {
@@ -533,7 +738,7 @@ impl Gateway {
                 );
                 let result = self
                     .ci
-                    .trigger_run_with_access(
+                    .trigger_event_run(
                         CiRunRequest {
                             repo_id: repo.id,
                             repo_owner: operation.owner.clone(),
@@ -550,8 +755,12 @@ impl Gateway {
                             manual: false,
                         },
                         access,
+                        event.clone(),
                     )
                     .await;
+                if matches!(result, Err(ci::admission::AdmissionError::WorkflowDisabled)) {
+                    continue;
+                }
                 if let Err(error) = result {
                     tracing::warn!(repo_id = repo.id, %error, "push CI dispatch failed");
                     failed = true;
@@ -572,8 +781,6 @@ impl Gateway {
         updates: &[RefUpdate],
         operation: Arc<Operation>,
     ) -> Result<()> {
-        // HEAD selection and its database default must belong to the same push.
-        let _lock = crate::backend::git::locks::lock(path).await;
         let path = path.to_owned();
         let fallback = repo.default_branch.clone();
         let created: Vec<String> = updates
@@ -582,29 +789,44 @@ impl Gateway {
             .filter_map(|update| update.reference.strip_prefix("refs/heads/"))
             .map(str::to_owned)
             .collect();
-        let (branch, size) = tokio::task::spawn_blocking(move || {
-            let _operation = operation;
-            let repository = git2::Repository::open_bare(&path)?;
-            let head = repository.find_reference("HEAD")?;
-            let mut branch = head
-                .symbolic_target()
-                .and_then(|name| name.strip_prefix("refs/heads/"))
-                .map(str::to_owned)
-                .unwrap_or(fallback);
-            // A first push can create only a branch other than the initial HEAD. Git
-            // leaves HEAD unborn, so the first pushed branch becomes the default.
-            if repository.head().is_err() {
-                if let Some(first) = reads::preferred_branch(created.iter().map(String::as_str)) {
-                    repository.set_head(&format!("refs/heads/{first}"))?;
-                    branch = first.to_owned();
+        // HEAD selection and its database default must belong to the same push, so only those
+        // steps hold the repository lock. The storage walk below runs after it is released.
+        {
+            let _lock = crate::backend::git::locks::lock(&path).await;
+            let head_path = path.clone();
+            let branch = tokio::task::spawn_blocking(move || {
+                let _operation = operation;
+                let repository = git2::Repository::open_bare(&head_path)?;
+                let head = repository.find_reference("HEAD")?;
+                let mut branch = head
+                    .symbolic_target()
+                    .and_then(|name| name.strip_prefix("refs/heads/"))
+                    .map(str::to_owned)
+                    .unwrap_or(fallback);
+                // A first push can create only a branch other than the initial HEAD. Git
+                // leaves HEAD unborn, so the first pushed branch becomes the default.
+                if repository.head().is_err() {
+                    if let Some(first) = reads::preferred_branch(created.iter().map(String::as_str))
+                    {
+                        repository.set_head(&format!("refs/heads/{first}"))?;
+                        branch = first.to_owned();
+                    }
                 }
-            }
-            let size = crate::backend::git::stats::directory_size(&path)?;
-            Ok::<_, anyhow::Error>((branch, size.min(i64::MAX as u64) as i64))
-        })
-        .await??;
-        db::repositories::records::update_repo_default_branch(&self.pool, repo.id, &branch).await?;
-        db::repositories::records::update_repo_size(&self.pool, repo.id, size).await?;
+                Ok::<_, anyhow::Error>(branch)
+            })
+            .await??;
+            db::repositories::records::update_repo_default_branch(&self.pool, repo.id, &branch)
+                .await?;
+        }
+        let size =
+            tokio::task::spawn_blocking(move || crate::backend::git::stats::directory_size(&path))
+                .await??;
+        db::repositories::records::update_repo_size(
+            &self.pool,
+            repo.id,
+            size.min(i64::MAX as u64) as i64,
+        )
+        .await?;
         Ok(())
     }
 }
@@ -631,6 +853,7 @@ mod tests {
             repo_id,
             owner: "owner".to_owned(),
             path: PathBuf::new(),
+            publication_lease: None,
             hooks: tempfile::tempdir().unwrap(),
             state: Mutex::new(HookState::default()),
         })

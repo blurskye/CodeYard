@@ -23,61 +23,18 @@ use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Accounts per page on the users page.
 const USERS_PER_PAGE: usize = 25;
 
-#[derive(Debug, Deserialize)]
-pub struct CreateManagedUserRequest {
-    pub username: String,
-    pub email: Option<String>,
-    pub password: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ManagedUserResponse {
-    pub id: i64,
-    pub username: String,
-    pub email: Option<String>,
-    pub must_change_password: bool,
-}
-
-pub async fn admin_create_user(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<CreateManagedUserRequest>,
-) -> Result<(StatusCode, Json<ManagedUserResponse>), (StatusCode, Json<ApiError>)> {
-    let session_id = session::extract_session_id(&headers);
-    let user = identity::accounts::create_managed_account(
-        &state.pool,
-        session_id.as_deref(),
-        PasswordAccount {
-            username: &req.username,
-            email: req.email.as_deref(),
-            password: &req.password,
-        },
-        false,
-    )
-    .await
-    .map_err(errors::managed_account_failure)?;
-    Ok((
-        StatusCode::CREATED,
-        Json(ManagedUserResponse {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            must_change_password: user.must_change_password,
-        }),
-    ))
-}
-
-/// The users page's search, role filter and page position, read from a query string or a form.
+/// The users page's search, role filter and page positions, read from a query string or a form.
 struct Listing<'a> {
     search: &'a str,
     role: &'static str,
     page: usize,
+    /// The page of pending signup requests.
+    requests_page: usize,
 }
 
 /// The role filter: `admins`, `banned`, or empty for every account.
@@ -89,14 +46,18 @@ fn role_filter(value: &str) -> &'static str {
     }
 }
 
-fn listing_from_query(ctx: &PageContext) -> (String, &'static str, usize) {
+fn listing_from_query(ctx: &PageContext) -> (String, &'static str, usize, usize) {
+    let number = |name: &str| {
+        ctx.query
+            .get(name)
+            .and_then(|page| page.parse().ok())
+            .unwrap_or(1)
+    };
     (
         ctx.query.get("q").cloned().unwrap_or_default(),
         role_filter(ctx.query.get("role").map_or("", String::as_str)),
-        ctx.query
-            .get("page")
-            .and_then(|page| page.parse().ok())
-            .unwrap_or(1),
+        number("page"),
+        number("request_page"),
     )
 }
 
@@ -111,6 +72,9 @@ fn users_path(listing: &Listing, saved: &str) -> String {
     }
     if listing.page > 1 {
         query.append_pair("page", &listing.page.to_string());
+    }
+    if listing.requests_page > 1 {
+        query.append_pair("request_page", &listing.requests_page.to_string());
     }
     if !saved.is_empty() {
         query.append_pair("saved", saved);
@@ -177,7 +141,7 @@ async fn load_users(ctx: &PageContext, listing: &Listing<'_>) -> Result<AdminUse
         })?
         .is_some_and(|config| config.is_private());
     let (requests, requests_count, requests_page) = if managed_accounts {
-        load_requests(ctx).await?
+        load_requests(ctx, listing.requests_page).await?
     } else {
         (Vec::new(), 0, 1)
     };
@@ -227,6 +191,7 @@ fn listing_from_form(form: &Fields) -> Listing<'_> {
         search: field(form, "q"),
         role: role_filter(field(form, "role")),
         page: field(form, "page").parse().unwrap_or(1),
+        requests_page: field(form, "request_page").parse().unwrap_or(1),
     }
 }
 
@@ -239,7 +204,7 @@ pub(crate) async fn users_get(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let (search, role, page) = listing_from_query(&ctx);
+    let (search, role, page, requests_page) = listing_from_query(&ctx);
     let message = match ctx.query.get("saved").map(String::as_str) {
         Some("ban") => Some("Account ban status updated."),
         Some("role") => Some("Administrator role updated."),
@@ -254,6 +219,7 @@ pub(crate) async fn users_get(
             search: &search,
             role,
             page,
+            requests_page,
         },
         StatusCode::OK,
         message,

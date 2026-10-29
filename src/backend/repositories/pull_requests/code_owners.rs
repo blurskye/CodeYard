@@ -13,6 +13,8 @@ use crate::backend::repositories::store::repo_store;
 struct OwnedFile {
     owners: Vec<String>,
     writers: Vec<i64>,
+    individual_writers: Vec<i64>,
+    teams: Vec<String>,
 }
 
 async fn owned_files(
@@ -35,22 +37,50 @@ async fn owned_files(
         .iter()
         .flat_map(|(_, owners)| owners.iter().map(String::as_str))
         .collect();
+    let eligible_team_owners: std::collections::HashSet<String> = if names
+        .iter()
+        .any(|owner| owner.starts_with('@') && owner.contains('/'))
+    {
+        db::pull_requests::team_reviewers::list(pool, repository.id, None, None)
+            .await?
+            .into_iter()
+            .map(|row| format!("@{}/{}", row.org_slug, row.team.slug))
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
     let resolved = resolve_owners(pool, repository, names).await?;
     Ok(paths
         .into_iter()
         .filter_map(|(_, owners)| {
             let mut named = Vec::new();
             let mut writers = Vec::new();
+            let mut individual_writers = Vec::new();
+            let mut teams = Vec::new();
             for owner in owners {
                 let ids: Vec<i64> = resolved.get(owner).into_iter().flatten().copied().collect();
-                if !ids.is_empty() || !owner.starts_with('@') {
+                // A real eligible team still owns its files when it temporarily has no members.
+                if !ids.is_empty()
+                    || !owner.starts_with('@')
+                    || eligible_team_owners.contains(owner)
+                {
                     named.push(owner.clone());
+                    if let Some((_, slug)) = owner
+                        .strip_prefix('@')
+                        .and_then(|name| name.split_once('/'))
+                    {
+                        teams.push(slug.to_owned());
+                    } else {
+                        individual_writers.extend(ids.iter().copied());
+                    }
                     writers.extend(ids);
                 }
             }
             (!named.is_empty()).then_some(OwnedFile {
                 owners: named,
                 writers,
+                individual_writers,
+                teams,
             })
         })
         .collect())
@@ -83,9 +113,48 @@ pub async fn request_code_owner_reviews(
             return;
         }
     };
+    let requester = match db::users::accounts::get_user_by_id(pool, actor_id).await {
+        Ok(Some(requester)) => requester,
+        _ => return,
+    };
+    let mut teams: Vec<_> = files
+        .iter()
+        .flat_map(|file| file.teams.iter().cloned())
+        .collect();
+    teams.sort();
+    teams.dedup();
+    for slugs in teams.chunks(100) {
+        match db::pull_requests::team_reviewers::change(
+            pool,
+            actor_id,
+            pull.id,
+            slugs,
+            db::pull_requests::team_reviewers::ReviewTeamAction::Request,
+            Some(pull),
+        )
+        .await
+        {
+            Ok(added) => {
+                for team in added {
+                    super::team_reviewers::notify(
+                        pool,
+                        ci.notifications(),
+                        &requester,
+                        repository,
+                        pull,
+                        &team,
+                    )
+                    .await;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(pull_request_id=pull.id, %error, "Could not request code owner teams")
+            }
+        }
+    }
     let mut wanted: Vec<i64> = files
         .iter()
-        .flat_map(|file| file.writers.iter().copied())
+        .flat_map(|file| file.individual_writers.iter().copied())
         .filter(|id| *id != pull.author_id)
         .collect();
     wanted.sort_unstable();
@@ -122,10 +191,6 @@ pub async fn request_code_owner_reviews(
     }
     let owner = match db::ci::ci_repository_owner(pool, repository.id).await {
         Ok(Some(owner)) => owner,
-        _ => return,
-    };
-    let requester = match db::users::accounts::get_user_by_id(pool, actor_id).await {
-        Ok(Some(requester)) => requester,
         _ => return,
     };
     let targets = match db::pull_requests::reviews::request_code_owner_reviews(

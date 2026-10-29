@@ -1,0 +1,16 @@
+# https://github.com/r-lib/actions/tree/f9a764fea8d5c63df6ef9a5c7795bf7deb5d7e05
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: r-lib/actions/setup-r@f9a764fea8d5c63df6ef9a5c7795bf7deb5d7e05 # v2
+        with:
+          r-version: "4.4.2"
+          use-public-rspm: "true"
+      - name: Assert documented effect
+        run: |
+          R --version | grep '4\.4\.2'
+          echo compat:ok

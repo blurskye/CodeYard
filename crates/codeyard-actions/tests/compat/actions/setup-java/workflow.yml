@@ -1,0 +1,16 @@
+# https://github.com/actions/setup-java/tree/cf277c60eb25467037889841efdb72551f06f6c3
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+      - name: Assert documented effect
+        run: |
+          java -version 2>&1 | grep '21\.'
+          echo compat:ok

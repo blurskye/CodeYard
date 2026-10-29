@@ -117,6 +117,73 @@ async fn populate(source: &NativeDatabase) -> Seed {
     .await
     .unwrap();
 
+    // Tenant-scoped typed metadata must survive both copy directions unchanged.
+    let org = match db::organizations::create_organization(
+        pool,
+        alice.id,
+        &db::organizations::NewOrganization::new(
+            "metadata-owner",
+            db::organizations::OrganizationProfile::new(None, None).unwrap(),
+        )
+        .unwrap(),
+    )
+    .await
+    .unwrap()
+    {
+        db::organizations::OrganizationOutcome::Applied(org) => org,
+        other => panic!("organization fixture: {other:?}"),
+    };
+    let settings=db::organizations::settings::Changes::parse(&serde_json::json!({"company":"Metadata café 名前","email":"public@example.test","billing_email":"private@example.test","location":"Montréal","blog":"https://example.test/metadata","default_repository_permission":"write","members_can_create_private_repositories":true,"members_can_fork_private_repositories":false,"has_organization_projects":false,"web_commit_signoff_required":true,"deploy_keys_enabled_for_repositories":false})).unwrap();
+    assert!(matches!(
+        db::organizations::settings::change(pool, alice.id, org.id, &settings)
+            .await
+            .unwrap(),
+        db::organizations::OrganizationOutcome::Applied(_)
+    ));
+    let metadata_repo = db::repositories::creation::insert_repository(
+        pool,
+        db::repositories::creation::NewRepository {
+            owner: db::repositories::creation::RepositoryCreationOwner {
+                actor_id: alice.id,
+                target: db::repositories::creation::RepositoryTarget::Organization(org.id),
+            },
+            name: "metadata",
+            description: None,
+            is_private: true,
+            disk_path: "metadata/repository.git",
+            storage_node_id: None,
+            source_id: None,
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let definition=serde_json::from_value(serde_json::json!({"property_name":"traits","value_type":"multi_select","required":true,"default_value":["ci","café"],"allowed_values":["ci","café","名前"],"description":"Unicode metadata ✓","values_editable_by":"org_and_repo_actors"})).unwrap();
+    assert!(matches!(
+        db::organizations::properties::define(pool, alice.id, org.id, &[definition])
+            .await
+            .unwrap(),
+        db::organizations::OrganizationOutcome::Applied(_)
+    ));
+    assert!(matches!(
+        db::organizations::properties::set_values(
+            pool,
+            alice.id,
+            org.id,
+            &["metadata".into()],
+            &[db::organizations::properties::ValueInput {
+                property_name: "traits".into(),
+                value: Some(db::organizations::properties::PropertyValue::Strings(vec![
+                    "名前".into()
+                ]))
+            }]
+        )
+        .await
+        .unwrap(),
+        db::organizations::OrganizationOutcome::Applied(())
+    ));
+    assert!(metadata_repo.id > repo.id);
+
     let raw = &source.raw;
     let file_id = *Uuid::new_v4().as_bytes();
     sqlx::query(
@@ -147,6 +214,57 @@ async fn populate(source: &NativeDatabase) -> Seed {
         .unwrap();
     sqlx::query("INSERT INTO file_reason_limits (reason, max_file_size_bytes, max_uploads_per_hour, max_bytes_per_hour, max_uploads_per_day, max_bytes_per_day, allowed_content_types, requires_auth, description) VALUES ('video_test', 9007199254740993, 1, 1, 1, 9007199254740993, '[\"video/mp4\",\"video/webm\"]', 0, 'Vidéo ✓ 名前')")
         .execute(raw)
+        .await
+        .unwrap();
+
+    // Copy nonempty shared provenance, inventory and a durable pending job, not just their schemas.
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use serde_json::json;
+    let org: i64 = sqlx::query_scalar(
+        "INSERT INTO organizations(name) VALUES('copied-provenance') RETURNING id",
+    )
+    .fetch_one(raw)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO org_memberships(org_id,user_id,role) VALUES(?1,?2,'owner')")
+        .bind(org)
+        .bind(alice.id)
+        .execute(raw)
+        .await
+        .unwrap();
+    let provenance_repo: i64 = sqlx::query_scalar("INSERT INTO repositories(owner_kind,owner_org_id,name,disk_path) VALUES('org',?1,'inventory','copied-provenance/inventory.git') RETURNING id").bind(org).fetch_one(raw).await.unwrap();
+    let hash = "d".repeat(64);
+    let digest = format!("sha256:{hash}");
+    let statement = json!({"_type":"https://in-toto.io/Statement/v1","subject":[{"name":"Copied 🦀","digest":{"sha256":hash}}],"predicateType":"https://slsa.dev/provenance/v1","predicate":{}});
+    let bundle = db::attestation_validation::PreparedBundle::new(&json!({"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","verificationMaterial":{"publicKey":{"hint":"copy fixture"}},"dsseEnvelope":{"payloadType":"application/vnd.in-toto+json","payload":STANDARD.encode(statement.to_string()),"signatures":[{"sig":STANDARD.encode("unverified copy fixture")}]}})).unwrap();
+    for id in [repo.id, provenance_repo] {
+        db::attestation_validation::create(pool, alice.id, id, &bundle)
+            .await
+            .unwrap();
+    }
+    let write = db::users::tokens::create_token(
+        pool,
+        alice.id,
+        &session,
+        "inventory-copy",
+        &"e".repeat(64),
+        "write",
+        None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let actor = db::artifact_metadata::Actor {
+        user: alice.id,
+        token: write.id,
+        repo: None,
+    };
+    let input = serde_json::from_value(json!({"name":"Copied artifact 🦀","digest":digest,"version":"1.0+копия","registry_url":"https://registry.example.test/","path":"copied/名前"})).unwrap();
+    db::artifact_metadata::storage(pool, actor, org, &input)
+        .await
+        .unwrap();
+    let input = serde_json::from_value(json!({"logical_environment":"production","deployments":[{"name":"Copied artifact 🦀","digest":digest,"deployment_name":"copied-pod"}]})).unwrap();
+    db::artifact_metadata::enqueue(pool, actor, org, "copied-cluster", &input)
         .await
         .unwrap();
 
@@ -429,7 +547,7 @@ async fn non_empty_destination_is_refused_and_left_untouched() {
 async fn missing_baseline_history_is_refused() {
     let _turn = TURNS.lock().await;
     let source = NativeDatabase::new().await;
-    // With one baseline, dropping its version leaves an empty history, which only the version check refuses.
+    // Removing the latest version leaves a valid prefix, which only the version check refuses.
     sqlx::query("DELETE FROM _gitserv_sqlite_migrations WHERE version = (SELECT max(version) FROM _gitserv_sqlite_migrations)")
         .execute(&source.raw)
         .await
@@ -596,7 +714,13 @@ async fn failed_copy_leaves_destination_empty() {
 
     let target_pool = &target.raw;
     for table in sqlite_tables(&source.raw).await {
-        let expected = if table == "file_reason_limits" { 8 } else { 0 };
+        // Only the rows the migrations seed remain.
+        let expected = match table.as_str() {
+            "file_reason_limits" => 8,
+            "issue_attribute_guard" | "issue_relation_guard" | "vulnerability_settings" => 1,
+            "organization_roles" => 6,
+            _ => 0,
+        };
         assert_eq!(
             postgres_count(target_pool, &table).await,
             expected,

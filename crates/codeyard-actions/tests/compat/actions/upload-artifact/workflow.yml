@@ -1,0 +1,21 @@
+# https://github.com/actions/upload-artifact/tree/ea165f8d65b6e75b540449e92b4886f43607fa02
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo payload > artifact.txt
+      - id: action
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: "compat-artifact"
+          path: "artifact.txt"
+          if-no-files-found: "error"
+      - name: Assert documented effect
+        env:
+          ARTIFACT_ID: ${{ steps.action.outputs.artifact-id }}
+        run: |
+          test -n "$ARTIFACT_ID"
+          echo compat:ok

@@ -5,8 +5,8 @@ use crate::backend::api::auth::session::LoginSessionRequest;
 use crate::backend::api::http::render::public_error;
 use crate::backend::api::http::session;
 use crate::backend::app::AppState;
-use crate::backend::identity::oauth;
 use crate::backend::identity::oauth::{providers, OAuthError};
+use crate::backend::identity::{admission, oauth};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -103,6 +103,7 @@ pub async fn oauth_redirect(
     State(state): State<Arc<AppState>>,
     Path(provider): Path<String>,
     Query(query): Query<std::collections::HashMap<String, String>>,
+    headers: HeaderMap,
 ) -> Response {
     if providers::provider_meta(&provider).is_none() {
         return failure(OAuthError::UnknownProvider, &provider);
@@ -116,6 +117,15 @@ pub async fn oauth_redirect(
             "Configure PUBLIC_URL with the public OAuth origin.",
         );
     };
+    match admission::admit_oauth_start(&state.pool, session::client_address(&headers)).await {
+        Ok(_) => {}
+        Err(admission::AdmissionError::Limited) => {
+            return public_error(StatusCode::TOO_MANY_REQUESTS, "Too many sign-in attempts")
+        }
+        Err(admission::AdmissionError::Unavailable) => {
+            return public_error(StatusCode::SERVICE_UNAVAILABLE, "Sign-in unavailable")
+        }
+    }
     // Always replace the browser nonce; only the latest flow in this browser completes.
     let nonce = session::generate_session_id();
     let token = session::generate_session_id();
@@ -124,7 +134,7 @@ pub async fn oauth_redirect(
     } else {
         String::new()
     };
-    let redirect = format!("{origin}/api/auth/oauth/{provider}/callback");
+    let redirect = format!("{origin}/login/oauth/{provider}/callback");
     let return_to = local_return_to(query.get("redirect").map(String::as_str).unwrap_or("/"));
     match oauth::begin(
         &state.pool,
@@ -192,7 +202,7 @@ pub async fn oauth_callback(
             "Configure PUBLIC_URL with the public OAuth origin.",
         );
     };
-    let redirect = format!("{origin}/api/auth/oauth/{provider}/callback");
+    let redirect = format!("{origin}/login/oauth/{provider}/callback");
     let initiating = LoginSessionRequest::from_headers(&headers);
     match oauth::complete(
         &state.pool,
@@ -207,20 +217,23 @@ pub async fn oauth_callback(
     )
     .await
     {
-        Ok((authenticated, return_to)) => (
-            StatusCode::FOUND,
-            [
-                (
-                    header::SET_COOKIE,
-                    session::build_session_cookie(
-                        &authenticated.session_id,
-                        session::session_duration_days(),
+        Ok((authenticated, return_to)) => {
+            admission::forgive_oauth_start(&state.pool, session::client_address(&headers)).await;
+            (
+                StatusCode::FOUND,
+                [
+                    (
+                        header::SET_COOKIE,
+                        session::build_session_cookie(
+                            &authenticated.session_id,
+                            session::session_duration_days(),
+                        ),
                     ),
-                ),
-                (header::LOCATION, local_return_to(&return_to).to_owned()),
-            ],
-        )
-            .into_response(),
+                    (header::LOCATION, local_return_to(&return_to).to_owned()),
+                ],
+            )
+                .into_response()
+        }
         Err(error) => failure(error, &provider),
     }
 }

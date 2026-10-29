@@ -1,0 +1,31 @@
+name: compat
+on: workflow_dispatch
+env:
+  CALLER_ONLY: must-not-propagate
+jobs:
+  explicit:
+    name: Explicit
+    uses: ./.github/workflows/outer.yml
+    with:
+      message: hello
+      enabled: true
+      count: 7
+    secrets:
+      credential: ${{ secrets.PASSWORD }}
+  inherited:
+    strategy:
+      max-parallel: 1
+      matrix:
+        value: [one, two]
+    uses: ./.github/workflows/inherited.yml
+    with:
+      message: ${{ matrix.value }}
+    secrets: inherit
+  verify:
+    needs: [explicit, inherited]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          test '${{ needs.explicit.outputs.message }}' = hello
+          test '${{ needs.inherited.outputs.message }}' = two
+          echo reusable-outputs-ok

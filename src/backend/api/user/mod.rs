@@ -1,8 +1,11 @@
-//! Signed-in account resources, with JSON and native forms kept distinct.
+//! Signed-in account settings and native forms.
 
 mod appearance;
 pub mod avatar;
+mod blocks;
 pub mod email;
+mod gpg;
+pub(crate) mod interactions;
 pub mod keys;
 pub mod profile;
 pub mod responses;
@@ -21,38 +24,22 @@ fn back_to_settings(
 }
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
-    use crate::backend::api::{auth::change_password, http::csrf, http::middleware};
+    use crate::backend::api::auth::change_password;
     use axum::{
         extract::DefaultBodyLimit,
-        middleware::from_fn,
-        routing::{delete, get, patch, post, put},
+        routing::{get, post},
         Router,
     };
     Router::new()
+        // A 64 KiB armored key grows when its form is percent-encoded, so this form has room
+        // for it at three times its size; the key itself is still checked against 64 KiB.
         .merge(
             Router::new()
-                .route("/api/user", patch(profile::update_user_profile))
                 .route(
-                    "/api/user/avatar",
-                    put(avatar::set_avatar).delete(avatar::remove_avatar),
+                    "/settings/gpg-keys",
+                    back_to_settings("keys").post(gpg::add_post),
                 )
-                .route(
-                    "/api/user/keys",
-                    get(keys::list_ssh_keys).post(keys::add_ssh_key),
-                )
-                .route("/api/user/keys/:key_id", delete(keys::delete_ssh_key))
-                .merge(
-                    Router::new()
-                        .route(
-                            "/api/user/tokens",
-                            get(tokens::list_tokens).post(tokens::create_token),
-                        )
-                        .route("/api/user/tokens/:token_id", delete(tokens::delete_token))
-                        .layer(from_fn(middleware::private_sensitive_response)),
-                )
-                .route_layer(from_fn(middleware::require_node_access))
-                .route_layer(from_fn(csrf::cookie_api_submission))
-                .layer(from_fn(middleware::private_api_response)),
+                .layer(DefaultBodyLimit::max(3 * 64 * 1024)),
         )
         .merge(
             Router::new()
@@ -64,8 +51,32 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
                     back_to_settings("profile").post(profile::profile_post),
                 )
                 .route(
+                    "/settings/social-accounts",
+                    back_to_settings("profile").post(profile::social_accounts_post),
+                )
+                .route(
                     "/settings/password",
                     back_to_settings("password").post(change_password::password_post),
+                )
+                .route(
+                    "/settings/gpg-keys/:id/delete",
+                    back_to_settings("keys").post(gpg::delete_post),
+                )
+                .route(
+                    "/settings/pull-request-cap",
+                    back_to_settings("blocked").post(interactions::post_cap),
+                )
+                .route(
+                    "/settings/pull-request-bypass",
+                    back_to_settings("blocked").post(interactions::post_bypass),
+                )
+                .route(
+                    "/settings/interaction-limits",
+                    back_to_settings("blocked").post(interactions::post),
+                )
+                .route(
+                    "/settings/blocks",
+                    back_to_settings("blocked").post(blocks::blocks_post),
                 )
                 .route(
                     "/settings/email",
@@ -78,6 +89,18 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
                 .route(
                     "/settings/email-verification/code",
                     back_to_settings("email").post(email::verification_code_post),
+                )
+                .route(
+                    "/settings/secondary-emails",
+                    back_to_settings("email").post(email::secondary_post),
+                )
+                .route(
+                    "/settings/secondary-emails/verify",
+                    back_to_settings("email").post(email::secondary_verification_post),
+                )
+                .route(
+                    "/settings/email-visibility",
+                    back_to_settings("email").post(email::visibility_post),
                 )
                 .route(
                     "/settings/email-notifications",
@@ -110,6 +133,14 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
                 .route(
                     "/settings/keys",
                     back_to_settings("keys").post(keys::key_add_post),
+                )
+                .route(
+                    "/settings/signing-keys",
+                    back_to_settings("keys").post(keys::signing_key_add_post),
+                )
+                .route(
+                    "/settings/signing-keys/:key_id/delete",
+                    back_to_settings("keys").post(keys::signing_key_delete_post),
                 )
                 .route(
                     "/settings/keys/:key_id/delete",

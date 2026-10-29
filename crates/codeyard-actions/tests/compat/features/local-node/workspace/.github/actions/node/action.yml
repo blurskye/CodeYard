@@ -1,0 +1,11 @@
+name: Local Node
+description: Node pre, main, post and GITHUB_STATE
+inputs:
+  message:
+    description: Message
+    default: missing
+runs:
+  using: node20
+  pre: pre.js
+  main: main.js
+  post: post.js

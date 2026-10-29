@@ -1,0 +1,11 @@
+mutation UpdateProjectV2Items(
+  $input_000: AddProjectV2ItemByIdInput!
+  $input_001: AddProjectV2ItemByIdInput!
+  $input_002: DeleteProjectV2ItemInput!
+  $input_003: DeleteProjectV2ItemInput!
+) {
+  add_000: addProjectV2ItemById(input: $input_000) { item { id } }
+  add_001: addProjectV2ItemById(input: $input_001) { item { id } }
+  delete_002: deleteProjectV2Item(input: $input_002) { deletedItemId }
+  delete_003: deleteProjectV2Item(input: $input_003) { deletedItemId }
+}

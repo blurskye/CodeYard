@@ -1,0 +1,27 @@
+on:
+  workflow_call:
+    inputs:
+      message: {type: string, required: true}
+      enabled: {type: boolean, required: true}
+      count: {type: number, required: true}
+    outputs:
+      message:
+        value: ${{ jobs.test.outputs.message }}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    outputs:
+      message: ${{ steps.output.outputs.message }}
+    steps:
+      - id: output
+        env:
+          PASSWORD: ${{ secrets.credential }}
+        run: |
+          test "$PASSWORD" = reusable-password-value
+          test -z '${{ secrets.UNPASSED }}'
+          test -z "$CALLER_ONLY"
+          test '${{ inputs.enabled }}' = true
+          test '${{ inputs.count }}' = 7
+          test '${{ github.workflow }}' = compat
+          echo 'message=${{ inputs.message }}' >> "$GITHUB_OUTPUT"
+          echo typed-call-ok

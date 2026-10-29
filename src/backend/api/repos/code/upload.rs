@@ -10,7 +10,7 @@ use crate::backend::repositories::store::{
     UploadFile, UploadWrite, MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
 };
 use crate::webui::pages::repos as view;
-use crate::webui::pages::repos::ref_path::{compare_url, file_url};
+use crate::webui::pages::repos::ref_path::{branch_url, compare_url};
 use axum::{
     extract::{
         multipart::{Multipart, MultipartError, MultipartRejection},
@@ -306,6 +306,18 @@ pub(in crate::backend::api::repos) async fn post(
             "This repository was replaced after the upload form opened. Nothing was uploaded.",
         );
     }
+    // The action path splits into a branch and a directory by the current refs, which can change.
+    // A form rendered before this field existed has no branch to compare.
+    let opened = field(&parts.fields, "branch");
+    if !opened.is_empty() && opened != form.branch {
+        return refusal(
+            &ctx,
+            &loaded,
+            form,
+            StatusCode::CONFLICT,
+            "The branch changed after the upload form opened. Nothing was uploaded.",
+        );
+    }
     // The choice of a protected branch: the files land on a new branch, which starts there.
     let new_branch =
         (field(&parts.fields, "commit_target") == "new_branch").then(|| form.new_branch.clone());
@@ -362,8 +374,8 @@ pub(in crate::backend::api::repos) async fn post(
             Some(name) if form.expected_revision != "unborn" => {
                 compare_url(&loaded.chrome.base(), &form.branch, name)
             }
-            Some(name) => file_url(&loaded.chrome.base(), "tree", name, &form.directory),
-            None => file_url(&loaded.chrome.base(), "tree", &form.branch, &form.directory),
+            Some(name) => branch_url(&loaded.chrome.base(), "tree", name, &form.directory),
+            None => branch_url(&loaded.chrome.base(), "tree", &form.branch, &form.directory),
         }),
         Err(error) => {
             form.saved = error.kind == files::WriteFailure::SavedFollowupFailed;

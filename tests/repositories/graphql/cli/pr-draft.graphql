@@ -1,0 +1,1 @@
+mutation ConvertPullRequestToDraft($input:ConvertPullRequestToDraftInput!){convertPullRequestToDraft(input: $input){pullRequest{id}}}

@@ -1,0 +1,16 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/node
+        id: node
+        with:
+          message: hello
+      - env:
+          ANSWER: ${{ steps.node.outputs.answer }}
+        run: |
+          test "$ANSWER" = 42
+          echo compat:ok

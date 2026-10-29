@@ -63,6 +63,9 @@ async fn contract(pg: bool) {
             expected_base_branch: None,
             expected_target: None,
             merge_method: Default::default(),
+            commit_title: None,
+            commit_message: None,
+            author_email: None,
         },
     )
     .await

@@ -1,0 +1,15 @@
+# https://github.com/extractions/setup-just/tree/dd310ad5a97d8e7b41793f8ef055398d51ad4de6
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
+        with:
+          just-version: "1.40.0"
+      - name: Assert documented effect
+        run: |
+          just --version | grep 'just 1\.40\.0'
+          echo compat:ok

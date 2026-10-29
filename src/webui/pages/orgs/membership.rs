@@ -43,10 +43,21 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                     p { "People with access to this organization." }
                 }
             }
+            if !suspended {
+                form { method: "post", action: target.to_owned(), class: "org-inline-form", aria_label: "Your membership visibility",
+                    {select("Your membership visibility", "visibility", if page.membership_public { "public".into() } else { "private".into() }, vec![SelectOption::new("private", "Private"), SelectOption::new("public", "Public")])}
+                    {controls(page, "membership-visibility", "Save visibility")}
+                }
+            }
             if page.can_manage && !suspended {
                 form { method: "post", action: target.to_owned(), class: "org-inline-form org-add-member", aria_label: "Invite a member",
-                    {input(page, "add-member", "username", "Username")}
+                    {input(page, "add-member", "username", "Username or email address")}
                     {select("Role", "role", field_value(page, "add-member", "role"), role_options())}
+                    label { class: "org-check-label",
+                        input { r#type: "checkbox", name: "reinstate", value: "yes", checked: field_value(page, "add-member", "reinstate") == "yes" }
+                        " Restore the previous role instead"
+                    }
+                    {input(page, "add-member", "team_slugs", "Initial teams (optional)")}
                     {controls(page, "add-member", "Send invitation")}
                 }
             }
@@ -57,12 +68,24 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                 for member in &page.members {
                     li { key: "{member.user_id}", class: "org-row", aria_label: format!("{}: {}", member.username, member.role),
                         div { class: "org-row-main",
-                            h3 { NavLink { href: format!("/{}", crate::webui::encode_component(&member.username)), class: "org-row-link org-row-name", Avatar { name: member.username.clone(), size: 24 } "{member.username}" } }
+                            h3 { NavLink { href: crate::webui::profile_path(&member.username), class: "org-row-link org-row-name", Avatar { name: member.username.clone(), size: 24 } "{member.username}" } }
                         }
                         div { class: "org-row-actions",
                             // A manageable row shows its role in the select below, so the badge is only for read-only rows.
                             if !manageable(member) {
                                 span { class: "org-label", "{member.role}" }
+                            }
+                            // Any member may leave; owners leave through their Remove control.
+                            if !manageable(member) && member.user_id == page.viewer_id && !suspended {
+                                a { class: "btn btn-danger", href: "#remove-member-{member.user_id}", "Leave" }
+                                {confirm_dialog(Some(format!("remove-member-{}", member.user_id)).as_deref(), "Leave the organization", target, target, rsx! {
+                                    div { class: "org-form",
+                                        strong { "Leave this organization?" }
+                                        input { r#type: "hidden", name: "user_id", value: "{member.user_id}" }
+                                        {fields::removal_confirm(&member.username)}
+                                        {fields::hidden_controls(page, "remove-member")}
+                                    }
+                                }, "Leave")}
                             }
                             if manageable(member) {
                                 form { method: "post", action: target.to_owned(), class: "org-inline-form",
@@ -72,6 +95,7 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                                     }
                                     {controls_as(page, "member-role", "Update", "btn")}
                                 }
+                                {super::collaborators::conversion(page, member, target)}
                                 a { class: "btn btn-danger", href: "#remove-member-{member.user_id}", "Remove" span { class: "site-sr-only", " {member.username}" } }
                                 {confirm_dialog(Some(format!("remove-member-{}", member.user_id)).as_deref(), &format!("Remove {} from the organization", member.username), target, target, rsx! {
                                     div { class: "org-form",
@@ -86,22 +110,31 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                     }
                 }
             }
-            if page.can_manage && !page.pending_invitations.is_empty() {
-                section { class: "org-subsection", aria_labelledby: "organization-pending-title",
-                    h3 { id: "organization-pending-title", "Pending invitations" }
+            for (title, invitations, next) in [
+                ("Pending invitations", &page.pending_invitations, &page.pending_invitations_next),
+                ("Failed invitations", &page.failed_invitations, &page.failed_invitations_next),
+            ] {
+                if page.can_manage && !invitations.is_empty() {
+                section { class: "org-subsection", aria_label: title,
+                    h3 { "{title}" }
                     ul { class: "org-list",
-                        for invite in &page.pending_invitations {
-                            li { key: "pending-{invite.user_id}", class: "org-row",
+                        for invite in invitations {
+                            li { key: "pending-{invite.id}", class: "org-row",
                                 div { class: "org-row-main",
                                     h3 { "{invite.username}" }
-                                    p { "Invited as {invite.role}. Joins when they accept." }
+                                    if let Some(reason) = &invite.failed_reason {
+                                        p { "Invited as {invite.role}. Cancel this offer or send a new invitation." }
+                                        p { class: "repo-alert repo-alert-error", "{reason}" }
+                                    } else {
+                                        p { "Invited as {invite.role}. Joins when they accept." }
+                                    }
                                 }
                                 div { class: "org-row-actions",
-                                    a { class: "btn btn-danger", href: "#cancel-invitation-{invite.user_id}", "Cancel invitation" }
-                                    {confirm_dialog(Some(format!("cancel-invitation-{}", invite.user_id)).as_deref(), &format!("Cancel the invitation to {}", invite.username), target, target, rsx! {
+                                    a { class: "btn btn-danger", href: "#cancel-invitation-{invite.id}", "Cancel invitation" }
+                                    {confirm_dialog(Some(format!("cancel-invitation-{}", invite.id)).as_deref(), &format!("Cancel the invitation to {}", invite.username), target, target, rsx! {
                                         div { class: "org-form",
                                             strong { "Cancel the invitation to {invite.username}?" }
-                                            input { r#type: "hidden", name: "user_id", value: "{invite.user_id}" }
+                                            input { r#type: "hidden", name: "invitation_id", value: "{invite.id}" }
                                             {fields::hidden_controls(page, "cancel-invitation")}
                                         }
                                     }, "Cancel invitation")}
@@ -110,10 +143,15 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                         }
                     }
                 }
+                }
+                if page.can_manage {
+                    if let Some(href) = next {
+                        NavLink { href: href.clone(), class: "org-pagination", "Next {title}" }
+                    }
+                }
             }
-            if let Some(href) = &page.pending_invitations_next {
-                NavLink { href: href.clone(), class: "org-pagination", "Next pending invitations" }
-            }
+            {super::collaborators::panel(page, target)}
+            {super::blocks::panel(page, target)}
             if page.more_members { NavLink { href: teams::navigation(page, page.members_after, page.teams_cursor, page.selected_team.as_ref().map(|detail| (detail.team.id, detail.members_cursor, detail.repositories_cursor))), class: "org-pagination", "Next members" } }
         }
     }

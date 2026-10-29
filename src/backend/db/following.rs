@@ -1,5 +1,9 @@
-use crate::backend::db::DbPool;
+use crate::backend::db::{models::User, DbPool};
 use anyhow::Result;
+
+native_operation!(crate::backend::db::postgres::following::list_connections,
+    crate::backend::db::sqlite::following::list_connections,
+    fn list_connections(pool: &DbPool, user_id: i64, followers: bool, limit: i64, offset: i64) -> Result<Vec<User>>);
 
 #[derive(Debug, thiserror::Error)]
 #[error("An unrestricted account is required")]

@@ -58,6 +58,7 @@ struct Lines<'a> {
     /// The review a new line comment may start or join: None on a closed pull request, otherwise
     /// whether the viewer already has a pending review to add to.
     review: Option<bool>,
+    code_scanning: &'a [repos::security::Check],
 }
 
 impl Lines<'_> {
@@ -72,6 +73,22 @@ impl Lines<'_> {
             self.references,
             self.split,
         )
+    }
+
+    fn annotations_below(&self, path: &str, line: Option<u32>) -> Element {
+        rsx! {
+            for annotation in self.code_scanning.iter().flat_map(|check|&check.annotations).filter(|annotation|annotation.path==path && line.is_some_and(|line|i64::from(line)==annotation.line)) {
+                {repos::security::annotation_block(annotation)}
+            }
+        }
+    }
+
+    fn annotations_above(&self, file: &DiffFile, rows: &[PatchRow<'_>]) -> Element {
+        rsx! {
+            for annotation in self.code_scanning.iter().flat_map(|check|&check.annotations).filter(|annotation|annotation.path==file.filename && i32::try_from(annotation.line).ok().and_then(|line|row_index(rows,"RIGHT",line)).is_none()) {
+                {repos::security::annotation_block(annotation)}
+            }
+        }
     }
 
     /// The composer for a new line comment.
@@ -125,7 +142,10 @@ fn above_file(
     composer: Option<&LineComment>,
 ) -> Element {
     let (on_file, draft) = file_conversations(file, threads, composer);
-    lines.above_patch(&on_file, composer, draft)
+    rsx! {
+        {lines.annotations_above(file,&[])}
+        {lines.above_patch(&on_file, composer, draft)}
+    }
 }
 
 #[expect(
@@ -141,9 +161,11 @@ pub fn diff_page(
     composer: Option<&LineComment>,
     review: Option<&ReviewDraft>,
     pending_comments: usize,
+    pending_review: Option<i64>,
     error: Option<&str>,
     references: &References,
     split: bool,
+    code_scanning: &[repos::security::Check],
 ) -> Element {
     let url = format!("{}/{}", repo.family_url(Kind::Pull), item.number);
     let head = item
@@ -163,6 +185,7 @@ pub fn diff_page(
         references,
         split,
         review: open.then_some(pending_comments > 0),
+        code_scanning,
     };
     // Approving and requesting changes need a vote, and the author of a pull request cannot cast one
     // on it. The menu closes with the pull request, but keeps Discard review while comments wait.
@@ -194,6 +217,9 @@ pub fn diff_page(
                 if truncated {
                     p { class: "collaboration-panel collaboration-muted collaboration-diff-notice", "This pull request has more inline comments than the diff shows. The Discussion tab lists every comment." }
                 }
+                if code_scanning.iter().any(|check|check.truncated) {
+                    p { class:"collaboration-diff-notice", "Some code scanning annotations are omitted. See the Checks tab and Security page for details." }
+                }
                 if let Some(draft) = loose_composer {
                     {lines.composer(draft)}
                 }
@@ -203,7 +229,7 @@ pub fn diff_page(
                 div { class: "collaboration-diff-toolbar",
                     {view_toggle(&format!("{url}/diff"), split)}
                     if repo.signed_in && (open || pending_comments > 0) {
-                        {review::review_changes(repo, &url, head, open, author, vote, review, pending_comments, references, split)}
+                        {review::review_changes(repo, &url, head, open, author, vote, review, pending_comments, pending_review, references, split)}
                     }
                 }
                 // A review refused after the pull request closed has no form to return to, so its text
@@ -445,6 +471,11 @@ fn ViewedBox(
 ) -> Element {
     let mut marked = use_signal(|| viewed);
     let mut pending = use_signal(|| false);
+    // A refreshed diff, or another file reusing this position, starts from the server's mark.
+    use_effect(use_reactive(
+        (&viewed, &path, &head, &base),
+        move |(viewed, _, _, _)| marked.set(viewed),
+    ));
     rsx! {
         button { r#type: "submit", class: "collaboration-viewed", role: "checkbox", form: form_id,
             disabled: pending(),
@@ -604,6 +635,7 @@ fn file_body(
     let digits = patch_gutter_digits(&rows);
     rsx! {
         if let Some(lines) = lines {
+            {lines.annotations_above(file,&rows)}
             {lines.above_patch(&top, composer, composer_top)}
         }
         pre { class: "collaboration-diff-patch",
@@ -689,6 +721,7 @@ fn patch_row(
             span { class: row.class, "{row.text}" }
         }
         if let Some(lines) = lines {
+            {lines.annotations_below(path,row.new)}
             {lines.above_patch(threads, reply, line_draft)}
         }
     }
@@ -764,12 +797,14 @@ fn split_file_body(
     let composer_pair = composer_row.map(|row| pair_of[row]);
     rsx! {
         if let Some(lines) = lines {
+            {lines.annotations_above(file,&rows)}
             {lines.above_patch(&top, composer, composer_top)}
         }
         div { class: "collaboration-split patch-lines",
             for (index, pair) in pairs.iter().enumerate() {
                 {split_row(lines, &file.filename, &rows, *pair)}
                 if let Some(lines) = lines {
+                    {lines.annotations_below(&file.filename,pair.1.and_then(|index|rows[index].new))}
                     {lines.above_patch(&under[index], composer, here.filter(|_| composer_pair == Some(index)))}
                 }
             }
@@ -889,6 +924,8 @@ mod tests {
             },
         );
         dom.rebuild_in_place();
+        // A browser runs the mount effects before anyone can click.
+        dom.render_immediate_to_vec();
         let click = dom
             .get_scope(ScopeId::APP)
             .unwrap()

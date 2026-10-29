@@ -1,0 +1,11 @@
+{
+  "exit_code": 0,
+  "jobs": {
+    "test": "success"
+  },
+  "contains": [
+    "compat:ok",
+    "Cache saved"
+  ],
+  "timeout_seconds": 900
+}

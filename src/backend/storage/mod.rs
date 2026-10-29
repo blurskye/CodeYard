@@ -236,6 +236,32 @@ impl ObjectStore {
         }
     }
 
+    /// Reads a bounded range for the Actions block-blob adapter without buffering an archive.
+    pub async fn read_range(
+        &self,
+        key: &str,
+        offset: u64,
+        length: usize,
+    ) -> Result<Vec<u8>, StorageError> {
+        if !valid_key(key) || length > 1024 * 1024 {
+            return Err(StorageError::Invalid);
+        }
+        match &self.backend {
+            Backend::Local(store) => {
+                use tokio::io::{AsyncReadExt, AsyncSeekExt};
+                let (mut file, _) = store.open_file(key).await?;
+                file.seek(std::io::SeekFrom::Start(offset)).await?;
+                let mut bytes = vec![0; length];
+                file.read_exact(&mut bytes).await?;
+                Ok(bytes)
+            }
+            Backend::S3(store) => store
+                .read_range(key, offset, length)
+                .await
+                .map_err(|_| StorageError::Unavailable),
+        }
+    }
+
     /// Deletes an object without waiting for a slot: when every storage slot is busy
     /// the delete is refused, like a download, and the persisted cleanup retries it.
     pub async fn delete(&self, key: &str) -> Result<(), StorageError> {

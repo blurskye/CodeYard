@@ -8,12 +8,24 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::ops::Range;
 
+/// The longest URL an autolink may expand to. Browsers and servers refuse much longer ones.
+const MAX_AUTOLINK_URL_BYTES: usize = 8 * 1024;
+
 /// Distinct usernames a page resolves. Later names stay plain text.
 pub const MAX_USERS: usize = 50;
 /// Distinct other repositories a page resolves. Later ones stay plain text.
 pub const MAX_REPOSITORIES: usize = 10;
 /// Longest owner or repository name. Usernames are bounded in bytes by the account rules.
 const MAX_NAME_BYTES: usize = 1024;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Autolink {
+    #[serde(default)]
+    pub id: i64,
+    pub key_prefix: String,
+    pub url_template: String,
+    pub is_alphanumeric: bool,
+}
 
 /// What the handler resolved for one page. The vectors are sorted, so every rendering of the
 /// same page model produces the same links.
@@ -30,6 +42,10 @@ pub struct References {
     /// Other repositories the viewer can read. A repository that is missing or unreadable is
     /// absent, so its references stay plain text.
     pub repositories: Vec<Repository>,
+    /// Longest prefixes first; configuration is resolved only for this repository.
+    #[serde(default)]
+    // Reused by every Markdown preview and comment on the page.
+    pub autolinks: std::sync::Arc<Vec<Autolink>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -70,6 +86,127 @@ const REFERENCE: &str = "markdown-reference";
 const COMMIT: &str = "markdown-reference markdown-commit";
 
 impl References {
+    /// Merge configured references into gaps between built-in links, without growing past the
+    /// renderer's remaining link budget. Existing links and code never call this scanner.
+    pub(super) fn scan_links(
+        &self,
+        text: &str,
+        range: Range<usize>,
+        opaque: &[Range<usize>],
+        budget: usize,
+        mut visit: impl FnMut(Range<usize>, Link),
+    ) {
+        let mut remaining = budget;
+        let mut done = range.start;
+        scan_tokens(text, range.clone(), opaque, |span, token| {
+            if remaining == 0 {
+                return;
+            }
+            if let Some(link) = self.link(&token) {
+                self.scan_autolinks(text, done..span.start, opaque, &mut remaining, &mut visit);
+                if remaining > 0 {
+                    visit(span.clone(), link);
+                    remaining -= 1;
+                }
+                done = span.end;
+            }
+        });
+        self.scan_autolinks(text, done..range.end, opaque, &mut remaining, &mut visit);
+    }
+
+    fn scan_autolinks(
+        &self,
+        text: &str,
+        range: Range<usize>,
+        opaque: &[Range<usize>],
+        remaining: &mut usize,
+        visit: &mut impl FnMut(Range<usize>, Link),
+    ) {
+        if self.autolinks.is_empty() {
+            return;
+        }
+        let mut at = range.start;
+        while at < range.end && *remaining > 0 {
+            let next = text[at..]
+                .chars()
+                .next()
+                .expect("position is a character boundary");
+            if text[..at].chars().next_back().is_some_and(is_word) {
+                at += next.len_utf8();
+                continue;
+            }
+            let mut matched = None;
+            for definition in self.autolinks.iter() {
+                if definition.key_prefix.is_empty() {
+                    continue;
+                }
+                let begin = at + definition.key_prefix.len();
+                let Some(prefix) = text.get(at..begin).filter(|_| begin <= range.end) else {
+                    continue;
+                };
+                if if definition.is_alphanumeric {
+                    !prefix.eq_ignore_ascii_case(&definition.key_prefix)
+                } else {
+                    prefix != definition.key_prefix
+                } {
+                    continue;
+                }
+                let length = text[begin..range.end]
+                    .bytes()
+                    .take_while(|byte| {
+                        if definition.is_alphanumeric {
+                            byte.is_ascii_alphanumeric()
+                        } else {
+                            byte.is_ascii_digit()
+                        }
+                    })
+                    .count();
+                let end = begin + length;
+                if length == 0
+                    || length > 1024
+                    || text[end..range.end]
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                {
+                    continue;
+                }
+                let cursor = opaque.partition_point(|span| span.end <= at);
+                if opaque.get(cursor).is_some_and(|span| span.start < end) {
+                    continue;
+                }
+                // A long template filled with a long identifier is skipped before it is built,
+                // so the links a page buffers stay within the Markdown output budget.
+                let size = definition.url_template.len()
+                    + definition.url_template.matches("<num>").count() * length;
+                if size > MAX_AUTOLINK_URL_BYTES {
+                    continue;
+                }
+                let url = definition.url_template.replace("<num>", &text[begin..end]);
+                let Some(href) = super::markdown::link_href(&url) else {
+                    continue;
+                };
+                matched = Some((
+                    end,
+                    Link {
+                        href,
+                        class: REFERENCE,
+                        title: None,
+                        text: text[at..end].to_owned(),
+                    },
+                ));
+                break;
+            }
+            if let Some((end, link)) = matched {
+                visit(at..end, link);
+                *remaining -= 1;
+                at = end;
+            } else {
+                at += next.len_utf8();
+            }
+        }
+    }
+
     /// The link `token` makes on this page, or `None` when it stays plain text. The default
     /// value names no repository and links nothing.
     pub fn link(&self, token: &Token<'_>) -> Option<Link> {
@@ -90,7 +227,7 @@ impl References {
                 .binary_search_by(|user| user.as_str().cmp(name))
                 .ok()
                 .map(|_| Link {
-                    href: format!("/{name}"),
+                    href: crate::webui::profile_path(name),
                     class: REFERENCE,
                     title: None,
                     text: format!("@{name}"),
@@ -474,6 +611,7 @@ mod tests {
             repo: "demo".into(),
             last_number: 5,
             users: vec!["alice".into(), "bob".into()],
+            autolinks: Default::default(),
             repositories: vec![Repository {
                 owner: "carol".into(),
                 name: "other".into(),
@@ -558,6 +696,7 @@ mod tests {
             last_number: 0,
             users: vec!["bob".into()],
             repositories: Vec::new(),
+            autolinks: Default::default(),
         }
     }
 
@@ -685,6 +824,7 @@ mod tests {
             last_number: 0,
             users: found.users,
             repositories: Vec::new(),
+            autolinks: Default::default(),
         };
         let html = super::super::markdown::parse_markdown(&source, &resolved);
         assert!(html.contains("href=\"/user0\""), "{html}");

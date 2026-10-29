@@ -67,7 +67,7 @@ pub async fn list_keys(
 pub async fn add_key(
     pool: &db::DbPool,
     actor: &User,
-    session: &str,
+    credential: impl Into<db::deploy_keys::Credential>,
     repo: &Repository,
     title: &str,
     public_key: &str,
@@ -87,7 +87,7 @@ pub async fn add_key(
         can_write,
         created_by_id: actor.id,
     };
-    db::deploy_keys::insert_deploy_key(pool, &key, session)
+    db::deploy_keys::insert_deploy_key(pool, &key, credential)
         .await
         .map_err(refusal)
 }
@@ -95,12 +95,12 @@ pub async fn add_key(
 pub async fn remove_key(
     pool: &db::DbPool,
     actor: &User,
-    session: &str,
+    credential: impl Into<db::deploy_keys::Credential>,
     repo: &Repository,
     key_id: i64,
 ) -> Result<(), DeployKeyError> {
     require_admin(pool, actor, repo).await?;
-    let deleted = db::deploy_keys::delete_deploy_key(pool, repo.id, key_id, actor.id, session)
+    let deleted = db::deploy_keys::delete_deploy_key(pool, repo.id, key_id, actor.id, credential)
         .await
         .map_err(refusal)?;
     if deleted {
@@ -178,7 +178,7 @@ pub async fn authorize(
     repo: &Repository,
     write: bool,
 ) -> Result<(User, AccessLevel)> {
-    let key = db::deploy_keys::get_deploy_key(pool, key_id)
+    let key = db::deploy_keys::usable_deploy_key(pool, key_id)
         .await?
         .context("deploy key unavailable")?;
     ensure!(

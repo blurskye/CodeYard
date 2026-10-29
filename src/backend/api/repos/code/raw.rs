@@ -55,7 +55,7 @@ pub fn raw_content_type(path: &str, is_binary: bool) -> &'static str {
     }
 }
 
-fn requested_range(headers: &HeaderMap) -> Result<(BlobRange, bool), ()> {
+pub(crate) fn requested_range(headers: &HeaderMap) -> Result<(BlobRange, bool), ()> {
     let mut values = headers.get_all(header::RANGE).iter();
     let Some(value) = values.next() else {
         return Ok((BlobRange::Full, false));

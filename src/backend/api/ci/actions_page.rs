@@ -451,8 +451,77 @@ async fn actions(
             )
             .await
         };
+        let artifacts = match db::action_objects::list_artifacts(&ctx.state.pool, run.id).await {
+            Ok(artifacts) => artifacts
+                .into_iter()
+                .map(|artifact| view_actions::Artifact {
+                    can_delete: !user.is_banned
+                        && !user.must_change_password
+                        && (personal_admin || access.can_write()),
+                    id: artifact.id,
+                    name: artifact.name,
+                    size: artifact.size,
+                })
+                .collect(),
+            Err(_) => return unavailable(&ctx),
+        };
+        let groups = match db::action_concurrency::groups(
+            &ctx.state.pool,
+            run.repo_id,
+            Some(run.workflow_run_id.unwrap_or(run.id)),
+        )
+        .await
+        {
+            Ok(groups) => groups,
+            Err(_) => return unavailable(&ctx),
+        };
+        let mut waiting_for_concurrency = false;
+        for group in &groups {
+            let members =
+                match db::action_concurrency::members(&ctx.state.pool, run.repo_id, &group.name)
+                    .await
+                {
+                    Ok(members) => members,
+                    Err(_) => return unavailable(&ctx),
+                };
+            waiting_for_concurrency |= members
+                .iter()
+                .any(|member| member.run.id == run.id && !member.holding);
+        }
+        let approval_pull = if run.approval_required {
+            if let Some(id) = run.pull_request_id {
+                let pull =
+                    match db::pull_requests::records::get_pull_request_by_id(&ctx.state.pool, id)
+                        .await
+                    {
+                        Ok(pull) => pull,
+                        Err(_) => return unavailable(&ctx),
+                    };
+                let owner = match db::ci::ci_repository_owner(&ctx.state.pool, run.repo_id).await {
+                    Ok(Some(owner)) => owner,
+                    _ => return unavailable(&ctx),
+                };
+                pull.map(|pull| {
+                    format!(
+                        "/{}/{}/pulls/{}",
+                        crate::webui::encode_component(&owner),
+                        crate::webui::encode_component(&run_repository.name),
+                        pull.number
+                    )
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let mut run_view = map_run(run, &run_repository);
+        run_view.approval_pull = approval_pull;
+        run_view.concurrency_groups = groups.into_iter().map(|group| group.name).collect();
+        run_view.waiting_for_concurrency = waiting_for_concurrency;
+        run_view.artifacts = artifacts;
         Some(view_actions::SelectedRun {
-            run: map_run(run, &run_repository),
+            run: run_view,
             logs,
             deployment,
             fetched_lines,

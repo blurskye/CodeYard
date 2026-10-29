@@ -78,7 +78,7 @@ fn archive_error(error: RepoError) -> (StatusCode, Json<ApiError>) {
     }
 }
 
-fn archive_response(
+pub(crate) fn archive_response(
     archive_bytes: Vec<u8>,
     filename: &str,
     format: ArchiveFormat,
@@ -183,7 +183,7 @@ pub(in crate::backend::api::repos) async fn page(
 }
 
 /// Leave room for the extension below common filesystems' 255-byte component limit.
-fn archive_prefix(repo: &str, reference: &str) -> String {
+pub(crate) fn archive_prefix(repo: &str, reference: &str) -> String {
     use sha2::{Digest, Sha256};
     let short = reference.strip_prefix("refs/tags/").unwrap_or(reference);
     let original = format!("{repo}-{}", short.replace('/', "-"));

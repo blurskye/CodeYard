@@ -15,7 +15,7 @@ pub const MAX_TEMPLATES: usize = 20;
 
 const ISSUE_TEMPLATE_DIRECTORY: &str = ".github/ISSUE_TEMPLATE";
 const ISSUE_TEMPLATE_FILE: &str = ".github/ISSUE_TEMPLATE.md";
-const PULL_REQUEST_TEMPLATE_PATHS: [&str; 4] = [
+pub const PULL_REQUEST_TEMPLATE_PATHS: [&str; 4] = [
     ".github/pull_request_template.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
     "PULL_REQUEST_TEMPLATE.md",
@@ -189,7 +189,7 @@ fn is_missing(error: &RepoError) -> bool {
 
 /// `blank_issues_enabled: false` in the template directory's `config.yml`.
 pub fn blank_issues_allowed(config: &str) -> bool {
-    let setting = serde_yaml::from_str::<serde_yaml::Value>(config)
+    let setting = parse_yaml(config)
         .ok()
         .and_then(|root| root.get("blank_issues_enabled").cloned());
     !match setting {
@@ -483,6 +483,7 @@ mod tests {
     fn template_reads_are_bounded_even_when_candidates_are_rejected() {
         let entries = (0..1000)
             .map(|i| super::super::store::TreeEntry {
+                sha: "a".repeat(40),
                 name: format!("{i:04}.md"),
                 path: format!("{i:04}.md"),
                 entry_type: "file".into(),
@@ -544,6 +545,18 @@ mod tests {
         assert!(!blank_issues_allowed(
             "contact_links: []\nblank_issues_enabled: 'false'\n"
         ));
+    }
+
+    #[test]
+    fn a_config_alias_bomb_is_refused_instead_of_expanded() {
+        let bomb = format!(
+            "blank_issues_enabled: &off false\nname: &large {}\nbody: [{}]\n",
+            "x".repeat(16_384),
+            vec!["*large"; 5000].join(", ")
+        );
+        assert!(bomb.len() < MAX_TEMPLATE_BYTES as usize);
+        assert!(parse_yaml(&bomb).is_err());
+        assert!(blank_issues_allowed(&bomb));
     }
 
     const FORM: &str = "name: Bug report\ndescription: Something breaks\ntitle: \"[Bug] \"\nlabels: [bug, triage]\nbody:\n  - type: markdown\n    attributes:\n      value: Thanks for the report.\n  - type: input\n    attributes:\n      label: Version\n    validations:\n      required: true\n  - type: textarea\n    attributes:\n      label: Log\n      render: shell\n  - type: dropdown\n    attributes:\n      label: Area\n      options: [Web, Git]\n  - type: checkboxes\n    attributes:\n      label: Checks\n      options:\n        - label: I searched first\n          required: true\n        - label: I can help\n";

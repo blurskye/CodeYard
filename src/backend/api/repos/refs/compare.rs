@@ -7,7 +7,7 @@ use crate::backend::{
     },
     app::AppState,
     db,
-    repositories::store::repo_store,
+    repositories::{reads::same_fork_network, store::repo_store},
 };
 use crate::webui::pages::repos::ref_path::compare_url;
 use crate::webui::pages::repos::{
@@ -61,6 +61,40 @@ pub(crate) async fn comparison(
     Ok(diff_model(value, None))
 }
 
+async fn comparison_side(
+    ctx: &PageContext,
+    repo: &RepositoryData,
+    owner: &str,
+    reference: &str,
+) -> Result<(db::models::Repository, String), Response> {
+    let (source_owner, reference) = reference.split_once(':').unwrap_or((owner, reference));
+    // Owner names are exact, as in the repository lookup: alice and Alice are two accounts.
+    let source = if source_owner == owner {
+        repo.record.clone()
+    } else {
+        repository(ctx, source_owner, &repo.record.name)
+            .await?
+            .record
+    };
+    let related = same_fork_network(&ctx.state.pool, &repo.record, &source)
+        .await
+        .map_err(|_| {
+            ctx.repo_error(
+                &repo.view.chrome,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Comparison is unavailable.",
+            )
+        })?;
+    if !related {
+        return Err(ctx.repo_error(
+            &repo.view.chrome,
+            StatusCode::NOT_FOUND,
+            "Comparison not found.",
+        ));
+    }
+    Ok((source, reference.to_owned()))
+}
+
 /// `/:owner/:repo/compare/BASE...HEAD`. The bare address compares the default branch with itself.
 /// Its form sends `?base=&head=`, which redirects to the address that names both branches.
 pub(crate) async fn native_compare_page(
@@ -102,26 +136,57 @@ pub(crate) async fn native_compare_page(
     } else {
         (default.clone(), default.clone())
     };
-    let (names, refs) = branches(&ctx, &repo.record).await?;
-    if !names.contains(&base) || !names.contains(&head) {
-        return Err(ctx.repo_error(
-            &repo.view.chrome,
-            StatusCode::NOT_FOUND,
-            "Branch not found.",
-        ));
+    let (names, _) = branches(&ctx, &repo.record).await?;
+    let (base_repo, base_ref) = comparison_side(&ctx, &repo, &params["owner"], &base).await?;
+    let (head_repo, head_ref) = comparison_side(&ctx, &repo, &params["owner"], &head).await?;
+    // A branch of either side is named in full, so one called `refs/topic` is not read as the
+    // exact ref `refs/topic`.
+    let mut sides = Vec::with_capacity(2);
+    for (side, name) in [(&base_repo, base_ref), (&head_repo, head_ref)] {
+        let branch = if side.id == repo.record.id {
+            names.contains(&name)
+        } else {
+            branches(&ctx, side).await?.0.contains(&name)
+        };
+        sides.push(if branch {
+            format!("refs/heads/{name}")
+        } else {
+            name
+        });
     }
-    let diff = if base == head {
+    let (base_ref, head_ref) = (sides.remove(0), sides.remove(0));
+    let base_store = repo_store(&base_repo, ctx.state.cluster.as_ref());
+    let head_store = repo_store(&head_repo, ctx.state.cluster.as_ref());
+    let storage_error = |error| {
+        crate::backend::api::repos::chrome::store_error(&ctx, Some(&repo.view.chrome), error)
+    };
+    let base_sha = base_store
+        .commit(&base_ref)
+        .await
+        .map_err(storage_error)?
+        .sha;
+    let head_sha = head_store
+        .commit(&head_ref)
+        .await
+        .map_err(storage_error)?
+        .sha;
+    let diff = if base == head && base_repo.id == head_repo.id {
         None
     } else {
-        let draft = NewDraft {
-            base: base.clone(),
-            head: head.clone(),
-            ..NewDraft::default()
-        };
-        Some(comparison(&ctx, &repo, &repo.record, &refs, &draft).await?)
+        Some(diff_model(
+            base_store
+                .diff_from(&head_store, &base_sha, &head_sha)
+                .await
+                .map_err(storage_error)?,
+            None,
+        ))
     };
-    // An open pull request for this pair is linked to in place of a new one.
-    let open_pull = if base == head {
+    // Only branch pairs of this repository have the native new-pull form as their target.
+    let branch_pair = base_repo.id == repo.record.id
+        && head_repo.id == repo.record.id
+        && names.contains(&base)
+        && names.contains(&head);
+    let open_pull = if !branch_pair || base == head {
         None
     } else {
         db::pull_requests::records::find_open_pull_request_from_branches(

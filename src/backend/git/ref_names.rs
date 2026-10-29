@@ -13,12 +13,9 @@ pub(crate) fn is_canonical_ref(reference: &str) -> bool {
         })
         && !reference.contains("..")
         && !reference.contains("@{")
-        && reference.split('/').all(|part| {
-            !part.is_empty()
-                && !part.starts_with('.')
-                && !part.ends_with('.')
-                && !part.ends_with(".lock")
-        })
+        && reference
+            .split('/')
+            .all(|part| !part.is_empty() && !part.starts_with('.') && !part.ends_with(".lock"))
         && git2::Reference::is_valid_name(reference)
 }
 
@@ -56,6 +53,7 @@ mod tests {
         for reference in [
             "refs/heads/main",
             "refs/heads/release/stable",
+            "refs/heads/release./stable",
             "refs/heads/équipe/功能",
             "refs/tags/v1",
             "refs/tags/版本-β",

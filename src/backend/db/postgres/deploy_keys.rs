@@ -20,6 +20,13 @@ pub async fn get_deploy_key(pool: &PgPool, key_id: i64) -> Result<Option<DeployK
         .await?)
 }
 
+pub async fn usable_deploy_key(pool: &PgPool, key_id: i64) -> Result<Option<DeployKey>> {
+    let sql=format!("SELECT {COLUMNS} FROM deploy_keys WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM repositories r JOIN organization_settings s ON s.org_id=r.owner_org_id WHERE r.id=deploy_keys.repo_id AND r.owner_kind='org' AND r.owner_user_id IS NULL AND NOT s.deploy_keys_enabled_for_repositories) AND NOT EXISTS(SELECT 1 FROM ssh_keys k WHERE k.fingerprint=deploy_keys.fingerprint)");
+    Ok(sqlx::query_as(&sql)
+        .bind(key_id)
+        .fetch_optional(pool)
+        .await?)
+}
 pub async fn get_deploy_key_by_fingerprint(
     pool: &PgPool,
     fingerprint: &str,
@@ -35,17 +42,28 @@ async fn require_admin(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     actor: i64,
     repo: i64,
-    session: &str,
+    credential: crate::backend::db::deploy_keys::Credential,
 ) -> Result<()> {
     use super::repositories::access::{lock_user_repo_access_in_transaction, RepositoryRowLock};
     let access =
         lock_user_repo_access_in_transaction(tx, actor, repo, RepositoryRowLock::Shared, true)
             .await?;
-    let allowed = access.is_some_and(|access| {
-        access.access.can_admin() || (!access.organization && access.is_admin)
-    });
+    let locked: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=$1)",
+    )
+    .bind(repo)
+    .fetch_one(&mut **tx)
+    .await?;
+    let allowed = !locked
+        && access.is_some_and(|access| {
+            access.access.can_admin() || (!access.organization && access.is_admin)
+        });
+    let live = match credential {
+        crate::backend::db::deploy_keys::Credential::Session(session) => super::users::transitions::live_session(tx, actor, &session).await?,
+        crate::backend::db::deploy_keys::Credential::Token(id) => sqlx::query_scalar::<_, i64>("SELECT id FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR expires_at>NOW()) FOR SHARE").bind(id).bind(actor).fetch_optional(&mut **tx).await?.is_some(),
+    };
     anyhow::ensure!(
-        allowed && super::users::transitions::live_session(tx, actor, session).await?,
+        allowed && live,
         crate::backend::repositories::deploy_keys::DeployKeyError::Denied
     );
     Ok(())
@@ -54,10 +72,16 @@ async fn require_admin(
 pub async fn insert_deploy_key(
     pool: &PgPool,
     key: &NewDeployKey,
-    session: &str,
+    credential: impl Into<crate::backend::db::deploy_keys::Credential>,
 ) -> Result<DeployKey> {
     let mut tx = pool.begin().await?;
-    require_admin(&mut tx, key.created_by_id, key.repo_id, session).await?;
+    require_admin(&mut tx, key.created_by_id, key.repo_id, credential.into()).await?;
+    let enabled:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM repositories r JOIN organization_settings s ON s.org_id=r.owner_org_id WHERE r.id=$1 AND r.owner_kind='org' AND r.owner_user_id IS NULL AND NOT s.deploy_keys_enabled_for_repositories)").bind(key.repo_id).fetch_one(&mut *tx).await?;
+    anyhow::ensure!(
+        enabled,
+        crate::backend::repositories::deploy_keys::DeployKeyError::Denied
+    );
+
     // The same advisory lock as account-key enrollment, so one fingerprint is checked once.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 37000003))")
         .bind(&key.fingerprint)
@@ -91,10 +115,10 @@ pub async fn delete_deploy_key(
     repo_id: i64,
     key_id: i64,
     actor: i64,
-    session: &str,
+    credential: impl Into<crate::backend::db::deploy_keys::Credential>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    require_admin(&mut tx, actor, repo_id, session).await?;
+    require_admin(&mut tx, actor, repo_id, credential.into()).await?;
     let result = sqlx::query("DELETE FROM deploy_keys WHERE id = $1 AND repo_id = $2")
         .bind(key_id)
         .bind(repo_id)

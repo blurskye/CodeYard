@@ -9,7 +9,7 @@ use crate::backend::repositories::files;
 use crate::backend::repositories::store::{repo_store, FileWrite, MAX_EDITOR_BYTES};
 use crate::webui::components::references::References;
 use crate::webui::pages::repos as view;
-use crate::webui::pages::repos::ref_path::{compare_url, file_url, is_markdown_path};
+use crate::webui::pages::repos::ref_path::{branch_url, compare_url, is_markdown_path};
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
@@ -102,7 +102,7 @@ async fn write_file(
     creating: bool,
 ) -> Result<files::FileSave, Failure> {
     let actor = crate::backend::api::http::session::get_current_user(&state.pool, headers).await?;
-    files::ensure_readable(&state.pool, &actor, &owner, &repo)
+    let repository_id = files::ensure_readable(&state.pool, &actor, &owner, &repo)
         .await
         .map_err(|error| failure(write_status(&error), "file_write_rejected", &error.message))?;
     let content = decode_content(&req.content)?;
@@ -112,7 +112,7 @@ async fn write_file(
         &state.ci_runs,
         actor.id,
         &owner,
-        &repo,
+        repository_id,
         FileWrite {
             branch: req.branch,
             path,
@@ -365,7 +365,7 @@ async fn refuses_direct_commit(
 // A form is POST-only, so the appearance switch on an editor page returns to the editor's
 // own GET page instead.
 fn return_to_editor(ctx: &mut PageContext, loaded: &Loaded, editor: &view::editor::Editor) {
-    ctx.return_to = Some(file_url(
+    ctx.return_to = Some(branch_url(
         &loaded.chrome.base(),
         if editor.creating { "new" } else { "edit" },
         &editor.branch,
@@ -438,8 +438,8 @@ pub(in crate::backend::api::repos) async fn write_form(
             Some(name) if editor.expected_revision != "unborn" => {
                 compare_url(&loaded.chrome.base(), &editor.branch, name)
             }
-            Some(name) => file_url(&loaded.chrome.base(), "blob", name, &editor.path),
-            None => file_url(&loaded.chrome.base(), "blob", &editor.branch, &editor.path),
+            Some(name) => branch_url(&loaded.chrome.base(), "blob", name, &editor.path),
+            None => branch_url(&loaded.chrome.base(), "blob", &editor.branch, &editor.path),
         }),
         Err(error) => {
             let status = write_status(&error);
@@ -538,7 +538,7 @@ pub(in crate::backend::api::repos) async fn delete_form(
 ) -> Response {
     let branch = field(form, "branch");
     let path = field(form, "path");
-    ctx.return_to = Some(file_url(&loaded.chrome.base(), "delete", &branch, &path));
+    ctx.return_to = Some(branch_url(&loaded.chrome.base(), "delete", &branch, &path));
     if !loaded.chrome.can_write {
         return ctx.error(StatusCode::FORBIDDEN, "Write access is required.");
     }
@@ -564,7 +564,7 @@ pub(in crate::backend::api::repos) async fn delete_form(
         creating: false,
         deleting: true,
     };
-    match files::delete_file(
+    match files::delete_file_web(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
@@ -581,7 +581,7 @@ pub(in crate::backend::api::repos) async fn delete_form(
     {
         Ok(_) => ctx.redirect(&match &new_branch {
             Some(name) => compare_url(&loaded.chrome.base(), &branch, name),
-            None => file_url(&loaded.chrome.base(), "tree", &branch, ""),
+            None => branch_url(&loaded.chrome.base(), "tree", &branch, ""),
         }),
         Err(error) => {
             let status = write_status(&error);

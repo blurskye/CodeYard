@@ -2,6 +2,7 @@ use crate::backend::app::AppState;
 use axum::{routing::get, Router};
 use std::sync::Arc;
 pub mod collection;
+mod comments;
 pub mod commit;
 pub mod status;
 pub mod statuses;
@@ -48,4 +49,22 @@ fn page_router() -> Router<Arc<AppState>> {
             get(collection::ref_redirect),
         )
         .route("/:owner/:repo/commit/:sha", get(commit::page))
+        .route(
+            "/:owner/:repo/commit/:sha/comments",
+            axum::routing::post(comments::submit),
+        )
+        .route(
+            "/:owner/:repo/commit/:sha/comments/:id/react",
+            axum::routing::post(comments::react),
+        )
+        .route(
+            "/:owner/:repo/commit/:sha/comments/:id/edit",
+            axum::routing::post(comments::submit),
+        )
+        .route(
+            "/:owner/:repo/commit/:sha/comments/:id/delete",
+            axum::routing::post(comments::submit),
+        )
+        // A maximally percent-encoded 65,536-scalar comment still fits.
+        .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
 }

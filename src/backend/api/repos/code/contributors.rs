@@ -54,6 +54,24 @@ pub(crate) async fn contributor_accounts(
             .into_iter()
             .map(|user| (user.noreply_email(), user)),
     );
+    // A verified secondary address also names its account.
+    let unmatched: Vec<String> = emails
+        .iter()
+        .filter(|email| !users_by_email.contains_key(*email))
+        .cloned()
+        .collect();
+    let owners = db::users::accounts::get_verified_email_owners(pool, &unmatched).await?;
+    let ids: Vec<i64> = owners.iter().map(|(_, id)| *id).collect();
+    let accounts: HashMap<i64, User> = db::users::accounts::get_users_by_ids(pool, &ids)
+        .await?
+        .into_iter()
+        .map(|user| (user.id, user))
+        .collect();
+    for (email, id) in owners {
+        if let Some(user) = accounts.get(&id) {
+            users_by_email.entry(email).or_insert_with(|| user.clone());
+        }
+    }
     Ok(users_by_email)
 }
 

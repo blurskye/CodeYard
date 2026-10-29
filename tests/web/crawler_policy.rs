@@ -1,5 +1,5 @@
 //! robots.txt, ai.txt and X-Robots-Tag follow the administrator's AI crawler setting.
-//! Block is the default; the administrator can allow crawlers in the admin page or the admin API.
+//! Block is the default; the administrator can allow crawlers in the admin page.
 //! The same page switches sign-up between open and by approval.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 
@@ -14,7 +14,6 @@ use axum::{
 use codeyard::backend::db;
 use database::Database;
 use pulls::Client;
-use serde_json::{json, Value};
 use tower::ServiceExt;
 
 const ALLOW_ALL: &str = "User-agent: *\nDisallow:\n";
@@ -104,28 +103,26 @@ async fn contract(pg: bool) {
     assert_eq!(headers["content-type"], "text/html; charset=utf-8");
     assert!(!headers.contains_key("x-robots-tag"));
 
-    // The admin API reads and writes the same value.
-    let (status, value) = admin
-        .api("GET", "/api/auth/admin/ai-crawlers", Value::Null)
-        .await;
+    // Hydrated reads use the same stored value as the ordinary form.
+    let (status, page) = admin.model("/admin/settings").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(value, json!({"ai_crawlers": "allow"}));
-    let (status, _) = admin
-        .api(
-            "PUT",
-            "/api/auth/admin/ai-crawlers",
-            json!({"ai_crawlers": "maybe"}),
-        )
+    let codeyard::webui::app::Page::Identity(
+        codeyard::webui::pages::account::Page::AdminSettings { model, .. },
+    ) = page
+    else {
+        panic!("site settings")
+    };
+    assert_eq!(model.ai_crawlers, "allow");
+    let reply = admin
+        .form_reply("/admin/settings", &[("ai_crawlers", "maybe")])
         .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, _) = admin
-        .api(
-            "PUT",
-            "/api/auth/admin/ai-crawlers",
-            json!({"ai_crawlers": "block"}),
-        )
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST);
+    let (_, _, robots) = fetch(&router, "/robots.txt").await;
+    assert_eq!(robots, ALLOW_ALL);
+    let reply = admin
+        .form_reply("/admin/settings", &[("ai_crawlers", "block")])
         .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
     let (_, _, robots) = fetch(&router, "/robots.txt").await;
     assert_blocked_robots(&robots);
     let (_, headers, _) = fetch(&router, "/login").await;
@@ -133,14 +130,10 @@ async fn contract(pg: bool) {
 
     // Only administrators change the setting; the form refuses a bad value.
     let member = Client::login(&router, f.pool(), member_id).await;
-    let (status, _) = member
-        .api(
-            "PUT",
-            "/api/auth/admin/ai-crawlers",
-            json!({"ai_crawlers": "block"}),
-        )
+    let reply = member
+        .form_reply("/admin/settings", &[("ai_crawlers", "block")])
         .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
     let reply = member
         .form_reply("/admin/settings", &[("ai_crawlers", "allow")])
         .await;

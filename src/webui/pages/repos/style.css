@@ -409,9 +409,10 @@
   .collaboration-compare-row > .btn { align-self: flex-start; }
 }
 /* Token colors remain readable in both themes without changing the escaped code helper. */
-.repo-content { --repo-code-comment: #8b949e; --repo-code-string: #a5d6ff; --repo-code-constant: #79c0ff; --repo-code-keyword: #ff7b72; --repo-code-function: #d2a8ff; --repo-code-variable: #ffa657; --repo-code-tag: #7ee787; --repo-code-text: #c9d1d9; }
-.light .repo-content { --repo-code-comment: #6e7781; --repo-code-string: #0a3069; --repo-code-constant: #0550ae; --repo-code-keyword: #cf222e; --repo-code-function: #8250df; --repo-code-variable: #953800; --repo-code-tag: #116329; --repo-code-text: #24292f; }
-@media (prefers-color-scheme: light) { .system .repo-content { --repo-code-comment: #6e7781; --repo-code-string: #0a3069; --repo-code-constant: #0550ae; --repo-code-keyword: #cf222e; --repo-code-function: #8250df; --repo-code-variable: #953800; --repo-code-tag: #116329; --repo-code-text: #24292f; } }
+/* Gists use the same highlighter outside a repository page. */
+.repo-content, .gists-page { --repo-code-comment: #8b949e; --repo-code-string: #a5d6ff; --repo-code-constant: #79c0ff; --repo-code-keyword: #ff7b72; --repo-code-function: #d2a8ff; --repo-code-variable: #ffa657; --repo-code-tag: #7ee787; --repo-code-text: #c9d1d9; }
+.light .repo-content, .light .gists-page { --repo-code-comment: #6e7781; --repo-code-string: #0a3069; --repo-code-constant: #0550ae; --repo-code-keyword: #cf222e; --repo-code-function: #8250df; --repo-code-variable: #953800; --repo-code-tag: #116329; --repo-code-text: #24292f; }
+@media (prefers-color-scheme: light) { .system .repo-content, .system .gists-page { --repo-code-comment: #6e7781; --repo-code-string: #0a3069; --repo-code-constant: #0550ae; --repo-code-keyword: #cf222e; --repo-code-function: #8250df; --repo-code-variable: #953800; --repo-code-tag: #116329; --repo-code-text: #24292f; } }
 @media (max-width: 1023px) {
   .repo-latest-commit { gap: 12px; }
 }
@@ -983,6 +984,9 @@ span.collaboration-reaction { cursor: default; }
 .releases-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .releases-tag-fixed { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
 .releases-upload { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.releases-asset-edit { flex-basis: 100%; min-width: 0; }
+.releases-asset-edit .releases-upload { margin-top: 8px; }
+.releases-asset-edit .collaboration-input { flex: 1 1 12rem; min-width: 0; max-width: 100%; }
 .repo-about-releases { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .repo-about-releases .repo-about-heading { display: flex; align-items: center; gap: 6px; }
 .repo-about-heading-link { display: inline-flex; align-items: center; gap: 6px; color: inherit; text-decoration: none; }
@@ -1006,6 +1010,13 @@ span.collaboration-reaction { cursor: default; }
 /* Repository insights: the settings page's section list, a heading with the timeframe beside it,
    then charts or one list. Each list row wraps on a phone instead of cutting its numbers off. */
 .repo-insights-content { display: grid; gap: 16px; min-width: 0; }
+.repo-traffic > section { min-width: 0; }
+.repo-traffic-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.repo-traffic-filter label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.repo-traffic-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
+.repo-traffic-table th, .repo-traffic-table td { padding: 8px 4px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.repo-traffic-table th:first-child { width: 54%; }
+.repo-traffic-table code { display: block; white-space: normal; overflow-wrap: anywhere; color: var(--muted-foreground); font-size: 12px; }
 .repo-insights-heading { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
 .repo-insights-heading h2 { margin: 0; font-size: 20px; font-weight: 600; }
 .repo-insights-heading p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 14px; }
@@ -1022,4 +1033,24 @@ span.collaboration-reaction { cursor: default; }
 .repo-insights-note { margin: 0; }
 .repo-insights-list > .repo-insights-fork { display: grid; gap: 4px; }
 .repo-insights-fork .repo-insights-stats { margin-left: 0; }
+.repo-insights-dependency { overflow-wrap: anywhere; }
+.repo-insights-dependency p { flex-basis: 100%; margin: 0; color: var(--muted-foreground); }
 .repo-insights-description { margin: 0; color: var(--muted-foreground); font-size: 13px; overflow-wrap: anywhere; }
+.repo-security { min-width: 0; overflow-wrap: anywhere; }
+.repo-security-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 16px 0; }
+.repo-security-filters label { flex: 1 1 140px; min-width: 0; }
+.repo-security label { display: grid; gap: 6px; }
+.repo-security input, .repo-security select, .repo-security textarea { box-sizing: border-box; width: 100%; min-width: 0; }
+.repo-security-alert { padding: 16px; border: 1px solid var(--border); border-radius: 6px; margin: 12px 0; }
+.repo-security-alert h3, .repo-security-alert p { margin: 0 0 8px; }
+.repo-security-alert small { color: var(--muted-foreground); }
+.repo-security-snippet { max-width: 100%; overflow-x: auto; padding: 16px; background: var(--muted); border: 1px solid var(--border); border-radius: 6px; }
+.repo-security-dismiss { display: grid; gap: 12px; max-width: 480px; margin-top: 24px; }
+.repo-security-check { padding: 12px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.repo-security-annotation { display: block; padding: 12px 16px; border-left: 3px solid var(--border); background: var(--muted); white-space: normal; overflow-wrap: anywhere; }
+.repo-security-annotation p { margin: 6px 0; }
+
+.check-run, .check-run > *, .check-run article { min-width: 0; overflow-wrap: anywhere; }
+.check-run header { flex-wrap: wrap; }
+.check-run pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.check-run-message { white-space: pre-wrap; }

@@ -550,9 +550,9 @@ pub async fn stale_settings_forms(f: &Fixture) {
         assert_eq!(page.status, StatusCode::OK, "{tab}: {}", page.body);
         shown += page.body.matches(hidden.as_str()).count();
     }
-    // The danger zone also carries the archive form. The header's star and watch forms carry the
-    // ID on every tab.
-    assert_eq!(shown, 9 + 2 * 5);
+    // The danger zone carries archive and private-reporting forms; general settings also
+    // include template status. Header star/watch forms carry the ID on every tab.
+    assert_eq!(shown, 11 + 2 * 5);
     let rename = [
         ("repository_id", id.as_str()),
         ("name", "settings_new"),
@@ -877,16 +877,21 @@ pub async fn repository_pages(f: &Fixture) {
     let fork_git = git2::Repository::open_bare(&fork.disk_path).unwrap();
     assert!(fork_git.find_reference("refs/heads/main").is_ok());
 
-    // An archived source offers no Fork action, and the refusal holds for a site admin too.
+    // Archiving prevents writes to the source, not creating an independent writable fork.
     let archive = "UPDATE repositories SET is_archived=TRUE WHERE id=$1";
     f.database.execute(archive, &[source.id]).await;
     let staff = f.get(&f.staff, issues, false).await;
     let staff_area = action_area(&staff.body);
-    let staff_title = "title=\"Archived repositories cannot be forked\"";
-    assert!(!staff_area.contains("/_forms/fork"), "{staff_area}");
-    assert!(staff_area.contains(staff_title), "{staff_area}");
-    let refused = f.form(&f.staff, fork_path, &[], false).await;
-    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+    assert!(staff_area.contains(fork_form), "{staff_area}");
+    let forked = f.form(&f.staff, fork_path, &[], false).await;
+    forked.redirect("/siteadmin_only/fork_private");
+    let staff_fork =
+        db::repositories::records::get_repository(pool, "siteadmin_only", "fork_private")
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(staff_fork.forked_from_id, Some(source.id));
+    assert!(!staff_fork.is_archived);
 
     // Collaborator controls exist for personal repositories only. An organization owner who
     // submits the collaborator form directly is still refused.

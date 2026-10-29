@@ -25,18 +25,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-s3() { curl -sS -f --aws-sigv4 "aws:amz:us-east-1:s3" --user "$access:$secret" "$@"; }
+s3() { curl -sS -f --connect-timeout 10 --max-time 120 --aws-sigv4 "aws:amz:us-east-1:s3" --user "$access:$secret" "$@"; }
 
 mkdir "$work/data"
 RUSTFS_ACCESS_KEY=$access RUSTFS_SECRET_KEY=$secret RUSTFS_OBS_LOG_DIRECTORY=$work/logs \
     "$RUSTFS_BIN" server --address "127.0.0.1:$port" "$work/data" >"$work/rustfs.log" 2>&1 &
 rustfs_pid=$!
 # RustFS answers 503 while it initializes; it is ready once it refuses an unsigned request.
+ready=
 for _ in $(seq 1 120); do
-    [[ $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/") == 403 ]] && break
+    [[ $(curl -s -o /dev/null --connect-timeout 2 --max-time 5 -w '%{http_code}' "http://127.0.0.1:$port/") == 403 ]] && { ready=1; break; }
     kill -0 "$rustfs_pid" 2>/dev/null || { cat "$work/rustfs.log" >&2; exit 1; }
     sleep 0.5
 done
+[[ -n $ready ]] || { cat "$work/rustfs.log" >&2; echo "RustFS did not become ready" >&2; exit 1; }
 
 printf 'production-storage-v1:%s' "$bucket" >"$work/marker"
 for attempt in 1 2 3 4 5 6 7 8 9 10; do

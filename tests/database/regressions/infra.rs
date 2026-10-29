@@ -27,6 +27,11 @@ async fn codeowners_does_not_expand_secret_teams_even_for_repository_writers() {
         db::repositories::access::grant_repo_access(f.pool(), member, r.id, AccessLevel::Write)
             .await
             .unwrap();
+        f.execute(
+            "INSERT INTO team_repo_access(team_id,repo_id,permission) VALUES(10001,$1,3)",
+            &[r.id],
+        )
+        .await;
         let resolve = || {
             codeyard::backend::repositories::code_owners::resolve_owners(
                 f.pool(),
@@ -74,6 +79,8 @@ async fn retargeting_a_pull_request_excludes_checks_for_its_previous_target() {
                 base_branch: "main",
                 base_sha: &"b".repeat(40),
                 is_draft: false,
+                maintainer_can_modify: false,
+                issue: None,
             },
         )
         .await
@@ -265,6 +272,8 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                 scope,
                 owner,
                 &WebhookFields {
+                    username: None,
+                    password: None,
                     payload_url: "https://example.com/hook".into(),
                     content_type: "application/json".into(),
                     events: "push".into(),
@@ -280,6 +289,7 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                 f.pool(),
                 hook,
                 &webhooks::NewDelivery {
+                    redelivery: false,
                     guid: uuid::Uuid::new_v4().to_string(),
                     event: "push".into(),
                     action: None,
@@ -295,10 +305,11 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
             .await
             .unwrap();
             let id = webhooks::list_deliveries(f.pool(), hook).await.unwrap()[0].id;
-            let snapshot = webhooks::read_settings(f.pool(), scope, admin, Some(hook), Some(id), 0)
-                .await
-                .unwrap()
-                .unwrap();
+            let snapshot =
+                webhooks::read_settings(f.pool(), scope, admin, Some(hook), Some(id), 0, false)
+                    .await
+                    .unwrap()
+                    .unwrap();
             assert_eq!(
                 snapshot.delivery.as_ref().unwrap().request_body,
                 "private payload"
@@ -321,12 +332,18 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                     .await
                 }
             }
-            assert!(
-                webhooks::read_settings(f.pool(), scope, admin, Some(hook), Some(id), 0)
-                    .await
-                    .unwrap()
-                    .is_none()
-            );
+            assert!(webhooks::read_settings(
+                f.pool(),
+                scope,
+                admin,
+                Some(hook),
+                Some(id),
+                0,
+                false
+            )
+            .await
+            .unwrap()
+            .is_none());
         }
         f.finish().await;
     }

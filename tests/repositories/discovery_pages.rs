@@ -248,15 +248,13 @@ async fn search_contract(pg: bool) {
             .any(|title| title.contains("secret")));
     }
 
-    // The counts at the search API are the lengths of the lists.
-    let (status, counts) = alice.api("GET", "/api/search?q=rust", Value::Null).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(counts["repos_count"], json!(3));
-    assert_eq!(counts["issues_count"], json!(3));
-    assert_eq!(counts["users_count"], json!(0));
-    assert_eq!(counts["repos"].as_array().unwrap().len(), 3);
-    assert_eq!(counts["issues"].as_array().unwrap().len(), 3);
-    assert_eq!(counts["users"].as_array().unwrap().len(), 0);
+    // Badges count every result type even though only the selected tab is loaded.
+    assert_eq!(everything.counts.repositories, 3);
+    assert_eq!(everything.counts.issues, 3);
+    assert_eq!(everything.counts.users, 0);
+    assert_eq!(everything.repositories.len(), 3);
+    assert_eq!(issues.issues.len(), 3);
+    assert!(everything.users.is_empty());
 
     // Without a type the page opens on the first kind with results; a named type opens that one.
     assert_eq!(search(&alice, "/search?q=zebra").await.tab, "users");

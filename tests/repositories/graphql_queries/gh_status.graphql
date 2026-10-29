@@ -1,0 +1,32 @@
+
+fragment issue on Issue {
+	__typename
+	updatedAt
+	title
+	number
+	repository {
+		nameWithOwner
+	}
+}
+fragment pr on PullRequest {
+	__typename
+	updatedAt
+	title
+	number
+	repository {
+		nameWithOwner
+	}
+}
+query AssignedSearch($searchAssigns: String!, $searchReviews: String!, $limit: Int = 25) {
+	assignments: search(first: $limit, type: ISSUE, query: $searchAssigns) {
+		nodes {
+			...issue
+			...pr
+		}
+	}
+	reviewRequested: search(first: $limit, type: ISSUE, query: $searchReviews) {
+		nodes {
+			...pr
+		}
+	}
+}

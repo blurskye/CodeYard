@@ -1,104 +1,9 @@
-use crate::backend::api::admin::accounts::require_admin_user;
-use crate::backend::api::auth::errors;
-use crate::backend::api::auth::errors::database_failure;
-use crate::backend::api::auth::setup::node_setup_status;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session;
-use crate::backend::api::user::responses::{
-    require_account, AuthResponse, AuthUserResponse as UserResponse,
-};
-use crate::backend::app::AppState;
-use crate::backend::identity::accounts::SignupReviewOutcome;
+use crate::backend::api::user::responses::require_account;
 use crate::backend::{db, identity};
 use crate::webui::pages::admin::{Signup, SIGNUP_REQUESTS_PER_PAGE};
-use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::Response;
-use axum::Json;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-
-#[derive(Debug, Serialize)]
-pub struct SignupRequestResponse {
-    pub id: i64,
-    pub username: String,
-    pub email: Option<String>,
-    pub status: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ResolveSignupRequest {
-    pub request_id: i64,
-    pub action: String,
-}
-
-#[derive(Default, Deserialize)]
-pub struct SignupQuery {
-    page: Option<usize>,
-    after: Option<i64>,
-}
-
-pub async fn admin_list_signup_requests(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(query): Query<SignupQuery>,
-) -> Result<Json<Vec<SignupRequestResponse>>, (StatusCode, Json<ApiError>)> {
-    let _admin = require_admin_user(&state, &headers).await?;
-    let setup = node_setup_status(&state.pool).await?;
-    if !setup.setup_completed || setup.node_mode != "private" {
-        return Ok(Json(vec![]));
-    }
-    let requests = crate::backend::db::users::signup_requests::list_signup_requests(
-        &state.pool,
-        "pending",
-        SIGNUP_REQUESTS_PER_PAGE as i64,
-        request_offset(query.page.unwrap_or(1)),
-        query.after.unwrap_or(0),
-    )
-    .await
-    .map_err(|_| database_failure())?;
-    Ok(Json(
-        requests
-            .into_iter()
-            .map(|request| SignupRequestResponse {
-                id: request.id,
-                username: request.username,
-                email: request.email,
-                status: request.status,
-                created_at: request.created_at.to_rfc3339(),
-            })
-            .collect(),
-    ))
-}
-
-pub async fn admin_resolve_signup_request(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<ResolveSignupRequest>,
-) -> Result<Json<AuthResponse>, (StatusCode, Json<ApiError>)> {
-    let session_id = session::extract_session_id(&headers);
-    let outcome = identity::accounts::review_signup(
-        &state.pool,
-        session_id.as_deref(),
-        req.request_id,
-        signup_decision(&req.action),
-    )
-    .await
-    .map_err(errors::signup_review_failure)?;
-    let (user, message) = match outcome {
-        SignupReviewOutcome::Approved(user) => {
-            (Some(UserResponse::from(*user)), "Signup request approved")
-        }
-        SignupReviewOutcome::Rejected => (None, "Signup request rejected"),
-    };
-    Ok(Json(AuthResponse {
-        success: true,
-        user,
-        message: Some(message.to_owned()),
-    }))
-}
 
 pub(crate) fn signup_decision(action: &str) -> Option<identity::accounts::SignupDecision> {
     match action.trim().to_ascii_lowercase().as_str() {
@@ -119,6 +24,7 @@ fn request_offset(page: usize) -> i64 {
 /// One page of pending requests, the total, and the page number. `per_page` must not be zero.
 pub(crate) async fn load_requests(
     ctx: &PageContext,
+    page: usize,
 ) -> Result<(Vec<Signup>, usize, usize), Response> {
     // Callers must pass the admin + private-node guard before reading identities.
     require_account(ctx, true)?;
@@ -130,12 +36,7 @@ pub(crate) async fn load_requests(
                 "Unable to count signup requests.",
             )
         })? as usize;
-    let page = ctx
-        .query
-        .get("request_page")
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(1)
-        .clamp(1, total.div_ceil(SIGNUP_REQUESTS_PER_PAGE).max(1));
+    let page = page.clamp(1, total.div_ceil(SIGNUP_REQUESTS_PER_PAGE).max(1));
     let requests = db::users::signup_requests::list_signup_requests(
         &ctx.state.pool,
         "pending",

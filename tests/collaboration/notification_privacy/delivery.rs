@@ -239,7 +239,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .is_some());
-    f.execute("DROP TABLE notifications", &[]).await;
+    f.drop_notifications().await;
     assert!(
         current_event(pool, &replacement, recipient, &all)
             .await

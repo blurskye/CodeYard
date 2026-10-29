@@ -27,6 +27,8 @@ pub struct Page {
     pub csrf_token: String,
     pub nodes: Vec<Node>,
     pub message: Option<String>,
+    /// Cluster mode is on; otherwise only the server and runners may connect.
+    pub cluster_enabled: bool,
 }
 
 pub fn render(page: Page) -> Element {
@@ -40,21 +42,28 @@ pub fn render(page: Page) -> Element {
         rsx! {
             {notice(page.message.as_deref(), true)}
             section { class: "identity-admin-panel", aria_label: "Cluster nodes",
+                div { class: "identity-admin-box node-setup",
+                    if page.cluster_enabled {
+                        h2 { "Mode: cluster" }
+                        p { class: "identity-admin-hint", "Machines can join with the web, storage, ssh and runner roles (see docs/CLUSTER.md)." }
+                    } else {
+                        h2 { "Mode: single-node" }
+                        p { class: "identity-admin-hint", "This installation is one server. Runners can join from other machines. To run web, storage or ssh on separate machines, turn on cluster mode on this server (it needs PostgreSQL):" }
+                        {command_block("codeyard cluster enable")}
+                    }
+                }
                 if page.nodes.is_empty() {
                     div { class: "identity-admin-box node-setup",
                         h2 { "No nodes have joined." }
-                        p { class: "identity-admin-hint", "Connected nodes will appear here. A cluster needs PostgreSQL and this server running in cluster mode (see docs/CLUSTER.md). Then follow these steps." }
+                        p { class: "identity-admin-hint", "Connected nodes will appear here. Joining needs PostgreSQL and this server running with cluster settings such as IROH_BIND (see docs/CI_LOCAL_RUNNER.md). To add a runner:" }
                         ol { class: "node-setup-steps",
                             li {
-                                p { "On this server, create an invite for a storage node:" }
-                                {command_block("codeyard cluster invite --roles storage")}
+                                p { "On this server, create an invite for a runner:" }
+                                {command_block("codeyard cluster invite --roles runner")}
                             }
                             li {
-                                p { "On the new machine, set " code { "CLUSTER_JOIN_TOKEN" } " to the ticket." }
-                            }
-                            li {
-                                p { "Then join the cluster from the new machine:" }
-                                {command_block("codeyard cluster join --name NAME")}
+                                p { "On the runner machine, set " code { "CLUSTER_JOIN_TOKEN" } " to the ticket and start it:" }
+                                {command_block("codeyard serve --roles runner")}
                             }
                         }
                     }
@@ -130,6 +139,7 @@ mod tests {
                 node("store-3", "revoked", false),
             ],
             message: None,
+            cluster_enabled: true,
         };
         let html = dioxus_ssr::render_element(render(page.clone()));
         assert!(html.contains("/admin/nodes/store-1/revoke"), "{html}");
@@ -148,6 +158,7 @@ mod tests {
             csrf_token: String::new(),
             nodes: vec![],
             message: None,
+            cluster_enabled: true,
         }));
         assert!(html.contains("aria-label=\"Administration\""));
         assert!(html.contains("Cluster nodes"));
@@ -156,14 +167,17 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_cluster_says_so() {
+    fn an_empty_installation_says_so_and_shows_the_runner_pair() {
         let html = dioxus_ssr::render_element(render(Page {
             csrf_token: String::new(),
             nodes: vec![],
             message: None,
+            cluster_enabled: true,
         }));
         assert!(html.contains("No nodes have joined."));
-        assert!(html.contains("codeyard cluster join --name NAME"));
+        assert!(html.contains("Mode: cluster"));
+        assert!(html.contains("codeyard cluster invite --roles runner"));
+        assert!(html.contains("codeyard serve --roles runner"));
         // Two numbered steps carry a command each, and each command has its own copy button.
         assert!(html.contains("<ol"), "{html}");
         assert_eq!(
@@ -171,5 +185,18 @@ mod tests {
             2,
             "{html}"
         );
+    }
+
+    #[test]
+    fn single_node_mode_shows_the_mode_and_the_enable_command() {
+        let html = dioxus_ssr::render_element(render(Page {
+            csrf_token: String::new(),
+            nodes: vec![node("runner-1", "active", false)],
+            message: None,
+            cluster_enabled: false,
+        }));
+        assert!(html.contains("Mode: single-node"), "{html}");
+        assert!(html.contains("codeyard cluster enable"), "{html}");
+        assert!(!html.contains("Mode: cluster"));
     }
 }

@@ -1,4 +1,5 @@
 //! Shared named operation surface; native transactions stay inside db.
+pub mod management;
 use crate::backend::db::discussions::{ListFilter, StateCounts};
 use crate::backend::db::models::{Issue, IssueComment};
 use crate::backend::db::DbPool;
@@ -31,6 +32,32 @@ native_operation!(crate::backend::db::postgres::issues::list_repo_issues,
     limit: i64,
 ) -> Result<Vec<IssueListEntry>>);
 
+#[derive(Default)]
+pub struct RepositoryItemOptions<'a> {
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    pub any_assignee: bool,
+    pub any_milestone: bool,
+    pub issue_type: super::discussions::Pick,
+    pub any_type: bool,
+    pub mentioned: Option<&'a str>,
+}
+
+native_operation!(crate::backend::db::postgres::issues::list_repository_items,
+    crate::backend::db::sqlite::issues::list_repository_items,
+    fn list_repository_items(pool: &DbPool, repo_id: i64, filter: &ListFilter<'_>, options: &RepositoryItemOptions<'_>, limit: i64) -> Result<Vec<(i64, bool)>>);
+
+pub(crate) fn repository_item_order(sort: super::discussions::ListSort) -> &'static str {
+    use super::discussions::ListSort;
+    match sort {
+        ListSort::Newest => "i.created_at DESC",
+        ListSort::Oldest => "i.created_at",
+        ListSort::RecentlyUpdated => "i.updated_at DESC",
+        ListSort::LeastRecentlyUpdated => "i.updated_at",
+        ListSort::MostCommented => "i.comments DESC",
+        ListSort::LeastCommented => "i.comments",
+    }
+}
+
 native_operation!(crate::backend::db::postgres::issues::count_repo_issues,
     crate::backend::db::sqlite::issues::count_repo_issues,
     fn count_repo_issues(pool: &DbPool, repo_id: i64, filter: &ListFilter<'_>) -> Result<StateCounts>);
@@ -42,6 +69,10 @@ native_operation!(crate::backend::db::postgres::issues::update_issue,
     issue_id: i64,
     edit: super::discussions::DiscussionEdit<'_>,
 ) -> Result<Option<Issue>>);
+
+native_operation!(crate::backend::db::postgres::issues::update_issue_with_reason,
+    crate::backend::db::sqlite::issues::update_issue_with_reason,
+    fn update_issue_with_reason(pool: &DbPool, issue_id: i64, edit: super::discussions::DiscussionEdit<'_>, state_reason: Option<&str>) -> Result<Option<Issue>>);
 
 native_operation!(crate::backend::db::postgres::issues::add_issue_comment,
     crate::backend::db::sqlite::issues::add_issue_comment,
@@ -60,6 +91,18 @@ native_operation!(crate::backend::db::postgres::issues::list_issue_comments,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<IssueCommentEntry>>);
+
+pub struct CommentFilter {
+    pub number: Option<i32>,
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    pub sort: super::discussions::ListSort,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+native_operation!(crate::backend::db::postgres::issues::list_repository_comments,
+    crate::backend::db::sqlite::issues::list_repository_comments,
+    fn list_repository_comments(pool: &DbPool, repo_id: i64, filter: &CommentFilter) -> Result<Vec<(i64, bool)>>);
 
 native_operation!(crate::backend::db::postgres::issues::get_issue_comment,
     crate::backend::db::sqlite::issues::get_issue_comment,

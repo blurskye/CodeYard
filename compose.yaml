@@ -64,7 +64,7 @@ services:
       # Set GITSERV_STATE_DIR=/data to place gitserv.db directly in the volume root.
       GITSERV_STATE_DIR: ${GITSERV_STATE_DIR:-/data/state}
       REPOS_PATH: /data/repos
-      GITSERV_NODE_ROLES: ${GITSERV_NODE_ROLES:-web,storage,ssh,actions-worker}
+      GITSERV_NODE_ROLES: ${GITSERV_NODE_ROLES:-server,runner}
       HOST_KEY_PATH: /data/host_key
       HTTP_ADDR: 0.0.0.0:3000
       # Container namespaces cannot autodetect the host's sshd. Explicit standalone default.
@@ -107,6 +107,14 @@ services:
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       BITBUCKET_CLIENT_ID: ${BITBUCKET_CLIENT_ID:-}
       BITBUCKET_CLIENT_SECRET: ${BITBUCKET_CLIENT_SECRET:-}
+      # Mail settings from .env. Compose reads .env only for substitution, so each one is forwarded.
+      CODEYARD_SMTP_HOST: ${CODEYARD_SMTP_HOST:-}
+      CODEYARD_SMTP_PORT: ${CODEYARD_SMTP_PORT:-}
+      CODEYARD_SMTP_SECURITY: ${CODEYARD_SMTP_SECURITY:-}
+      CODEYARD_SMTP_USERNAME: ${CODEYARD_SMTP_USERNAME:-}
+      CODEYARD_SMTP_PASSWORD: ${CODEYARD_SMTP_PASSWORD:-}
+      CODEYARD_SMTP_FROM: ${CODEYARD_SMTP_FROM:-}
+      CODEYARD_SMTP_REPLY_TO: ${CODEYARD_SMTP_REPLY_TO:-}
       # Cluster mode (PostgreSQL only); empty = single node. See .env.example.
       NODE_NAME: ${NODE_NAME:-}
       NODE_KEY: ${NODE_KEY:-}

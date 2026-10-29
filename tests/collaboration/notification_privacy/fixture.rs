@@ -24,7 +24,24 @@ impl Fixture {
         }
         repo
     }
+    /// Notifications are only created for readers. A recipient without a grant gets Read
+    /// for the creation and loses it again, like a reader whose access was removed later.
     pub async fn notify(&self, recipient: i64, repo: Option<i64>, title: &str) -> i64 {
+        let lent = match repo {
+            Some(repo) => {
+                let grants = "SELECT COUNT(*) FROM repo_access WHERE user_id=$1 AND repo_id=$2";
+                let lent = self.scalar(grants, &[recipient, repo]).await == 0;
+                if lent {
+                    self.execute(
+                        "INSERT INTO repo_access(user_id,repo_id,access_level) VALUES($1,$2,1)",
+                        &[recipient, repo],
+                    )
+                    .await;
+                }
+                lent.then_some(repo)
+            }
+            None => None,
+        };
         let id = db::notifications::records::create_notification(
             self.pool(),
             db::notifications::records::NewNotification {
@@ -41,6 +58,13 @@ impl Fixture {
         .await
         .unwrap()
         .id;
+        if let Some(repo) = lent {
+            self.execute(
+                "DELETE FROM repo_access WHERE user_id=$1 AND repo_id=$2",
+                &[recipient, repo],
+            )
+            .await;
+        }
         // Equal persisted timestamps exercise stable id ordering across pages.
         self.execute(
             "UPDATE notifications SET created_at='2026-01-01T00:00:00.000000Z' WHERE id=$1",
@@ -48,6 +72,15 @@ impl Fixture {
         )
         .await;
         id
+    }
+    /// Drops the notifications table to stand for a database failure. PostgreSQL needs
+    /// CASCADE because the email outbox refers to notifications.
+    pub async fn drop_notifications(&self) {
+        let sql = match self {
+            Self::Postgres(_) => "DROP TABLE notifications CASCADE",
+            Self::Sqlite(_) => "DROP TABLE notifications",
+        };
+        self.execute(sql, &[]).await;
     }
     pub async fn history(&self, recipient: i64) -> Vec<Value> {
         type Stored = (

@@ -1,0 +1,20 @@
+# https://github.com/fjogeleit/yaml-update-action/tree/04ff6ec06568fd21197db746472e36cc425de850
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo 'version: 1' > config.yml
+      - id: action
+        uses: fjogeleit/yaml-update-action@04ff6ec06568fd21197db746472e36cc425de850 # v0.16.1
+        with:
+          valueFile: "config.yml"
+          propertyPath: "version"
+          value: "2"
+          commitChange: "false"
+      - name: Assert documented effect
+        run: |
+          grep -q 'version:.*2' config.yml
+          echo compat:ok

@@ -1,0 +1,19 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CONTAINS: ${{ contains(fromJSON('["push","pull_request"]'), 'push') }}
+          START: ${{ startsWith('Hello world', 'HELLO') }}
+          END: ${{ endsWith('Hello world', 'WORLD') }}
+          FORMAT: ${{ format('{{{0}}}', 'hello') }}
+          JOIN: ${{ join(fromJSON('["a","b"]'), ',') }}
+          ROUNDTRIP: ${{ fromJSON(toJSON(fromJSON('{"answer":42}'))).answer }}
+          FILTER: ${{ join(fromJSON('[{"name":"a"},{"name":"b"}]').*.name, ',') }}
+        run: |
+          test "$CONTAINS/$START/$END" = true/true/true
+          test "$FORMAT/$JOIN/$ROUNDTRIP/$FILTER" = '{hello}/a,b/42/a,b'
+          echo compat:ok

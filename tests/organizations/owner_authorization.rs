@@ -920,6 +920,29 @@ async fn organization_engagement_forks_and_pulls_never_notify_same_numbered_user
             .0,
         StatusCode::CREATED
     );
+    {
+        // A pull request needs a commit that the base lacks.
+        let git = git2::Repository::open_bare(&fixture.public.disk_path).unwrap();
+        let parent = git
+            .find_reference("refs/heads/topic")
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        let blob = git.blob(b"topic\n").unwrap();
+        let mut tree = git.treebuilder(None).unwrap();
+        tree.insert("topic.txt", blob, 0o100644).unwrap();
+        let tree = git.find_tree(tree.write().unwrap()).unwrap();
+        let signature = git2::Signature::now("Fixture", "fixture@example.test").unwrap();
+        git.commit(
+            Some("refs/heads/topic"),
+            &signature,
+            &signature,
+            "topic",
+            &tree,
+            &[&parent],
+        )
+        .unwrap();
+    }
     let request = json!({"title":"Fixture draft", "head_branch":"topic", "base_branch":"main", "is_draft":true});
     // A public read floor is not contribution authority under suspended governance.
     assert_eq!(

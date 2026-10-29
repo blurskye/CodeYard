@@ -1,8 +1,12 @@
 //! JSON and browser CI resources retain their distinct authentication and response layers.
 pub mod actions_page;
 pub mod jobs;
+pub(crate) mod oidc;
+pub mod repository_events;
 pub mod responses;
+pub(crate) mod results;
 pub mod run_forms;
+mod runners;
 pub mod trigger;
 pub mod workflows;
 
@@ -30,7 +34,16 @@ pub fn router() -> Router<Arc<AppState>> {
         .route_layer(from_fn(middleware::require_node_access))
         .layer(from_fn(middleware::private_sensitive_response));
     Router::new()
+        .route(
+            "/:owner/:repo/actions/runs/:run_id/artifacts/:artifact/download",
+            get(run_forms::download_artifact),
+        )
+        .route(
+            "/:owner/:repo/actions/runs/:run_id/artifacts/:artifact/delete",
+            post(run_forms::delete_artifact),
+        )
         .merge(json)
+        .merge(runners::router())
         .route("/ci", get(actions_page::global_actions))
         .route("/ci/dispatch", post(trigger::global_dispatch))
         .route(
@@ -40,6 +53,12 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/:owner/:repo/actions/dispatch",
             post(trigger::repository_dispatch),
+        )
+        .route(
+            "/:owner/:repo/actions/dispatch-event",
+            get(repository_events::form)
+                .post(repository_events::send)
+                .layer(axum::extract::DefaultBodyLimit::max(256 * 1024)),
         )
         .route(
             "/:owner/:repo/actions/runs/:run_id/cancel",
@@ -55,7 +74,7 @@ pub(super) fn admission_error(error: AdmissionError) -> (StatusCode, Json<ApiErr
     let status = match &error {
         AdmissionError::Missing(_) => StatusCode::NOT_FOUND,
         AdmissionError::Denied(_) => StatusCode::FORBIDDEN,
-        AdmissionError::Conflict(_) => StatusCode::CONFLICT,
+        AdmissionError::Conflict(_) | AdmissionError::WorkflowDisabled => StatusCode::CONFLICT,
         AdmissionError::Invalid(_) | AdmissionError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
         AdmissionError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
     };

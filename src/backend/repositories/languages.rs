@@ -153,8 +153,21 @@ async fn compute_local(
     };
     // Do not publish a scan if this copy moved while it was running. Its push queued a refresh.
     if git::branch_tip(path, branch)?.unwrap_or_default() == tip {
-        if let Err(error) = store_rows(pool, source, &tip, &languages).await {
-            tracing::warn!(repo_id = source.repo_id, %error, "could not store repository languages");
+        match store_rows(pool, source, &tip, &languages).await {
+            Ok(true) => {}
+            // A push that moved the version during this scan also lost the store. Scanning the
+            // default branch again uses a fresh source, so the stored rows are not left stale.
+            Ok(false) => refresh_default_branch(
+                pool.clone(),
+                source.repo_id,
+                path.to_owned(),
+                source.default_branch.clone(),
+                // The retry keeps this copy's placement, so a promotion meanwhile refuses it.
+                Some(source.storage_node_id),
+            ),
+            Err(error) => {
+                tracing::warn!(repo_id = source.repo_id, %error, "could not store repository languages");
+            }
         }
     }
     Ok(languages)
@@ -165,7 +178,7 @@ async fn store_rows(
     source: &LanguageSource,
     revision: &str,
     languages: &[LanguageStat],
-) -> Result<()> {
+) -> Result<bool> {
     let rows: Vec<_> = languages
         .iter()
         .map(|language| {
@@ -177,8 +190,8 @@ async fn store_rows(
             )
         })
         .collect();
-    db::repository_stats::upsert_repo_languages(pool, source, revision, &rows).await?;
-    Ok(())
+    // False when the version check lost to a newer write, and nothing was stored.
+    db::repository_stats::upsert_repo_languages(pool, source, revision, &rows).await
 }
 
 #[cfg(test)]

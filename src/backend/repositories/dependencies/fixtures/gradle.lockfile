@@ -1,0 +1,3 @@
+# This is a Gradle generated file for dependency locking.
+org.example:core:1.0=runtimeClasspath
+empty=

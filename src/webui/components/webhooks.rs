@@ -47,6 +47,11 @@ pub struct HookDraft {
     pub active: bool,
     pub ssl_verify: bool,
     pub has_secret: bool,
+    pub username: String,
+    pub has_password: bool,
+    /// Removals the form asked for. A refused save keeps them so the form shows them again.
+    pub clear_secret: bool,
+    pub clear_password: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -83,22 +88,39 @@ pub struct DeliveryDetail {
     pub response_body: String,
 }
 
-/// The events a form offers, with their labels.
-pub const EVENT_OPTIONS: [(&str, &str); 11] = [
+/// Every event a hook can subscribe to, with its label, in display order. Subscriptions are
+/// checked against this list, so the form always shows each stored event.
+pub const EVENT_OPTIONS: [(&str, &str); 24] = [
+    ("repository", "Repository changes"),
     ("push", "Pushes"),
     ("create", "Branch or tag created"),
     ("delete", "Branch or tag deleted"),
     ("fork", "Forks"),
     ("star", "Stars"),
     ("release", "Releases"),
+    ("deployment", "Deployments"),
+    ("deployment_status", "Deployment statuses"),
+    ("deployment_protection_rule", "Deployment protection rules"),
     ("issues", "Issues"),
     ("issue_comment", "Issue comments"),
+    ("commit_comment", "Commit comments"),
+    ("code_scanning_alert", "Code scanning alerts"),
+    ("secret_scanning_alert", "Secret scanning alerts"),
+    (
+        "secret_scanning_alert_location",
+        "Secret scanning alert locations",
+    ),
     ("pull_request", "Pull requests"),
     ("pull_request_review", "Pull request reviews"),
     (
         "pull_request_review_comment",
         "Pull request review comments",
     ),
+    ("check_run", "Check runs"),
+    ("check_suite", "Check suites"),
+    ("repository_dispatch", "Repository dispatches"),
+    ("workflow_run", "Workflow runs"),
+    ("workflow_job", "Workflow jobs"),
 ];
 
 impl WebhookPanel {
@@ -213,6 +235,30 @@ fn HookEditor(panel: WebhookPanel, draft: HookDraft) -> Element {
                 span { "Secret" }
                 input { r#type: "password", name: "secret", autocomplete: "new-password", maxlength: "1024", placeholder: if draft.has_secret { "Leave blank to keep the saved secret" } else { "Optional" } }
                 small { if draft.has_secret { "A secret is saved and never shown again. Enter a new one to replace it." } else { "Used to sign each request with X-Hub-Signature-256." } }
+            }
+            if draft.has_secret {
+                label { class: "repo-check-label",
+                    input { r#type: "checkbox", name: "clear_secret", value: "yes", checked: draft.clear_secret }
+                    " Remove the saved secret"
+                }
+            }
+            fieldset { class: "collaboration-option-group",
+                legend { "HTTP authentication (optional)" }
+                label { class: "repo-field",
+                    span { "Username" }
+                    input { name: "username", autocomplete: "off", maxlength: "1024", value: draft.username.clone() }
+                }
+                label { class: "repo-field",
+                    span { "Password" }
+                    input { r#type: "password", name: "password", autocomplete: "new-password", maxlength: "1024", placeholder: if draft.has_password { "Leave blank to keep the saved password" } else { "Optional" } }
+                    small { "The password is encrypted and never shown again." }
+                }
+                if draft.has_password {
+                    label { class: "repo-check-label",
+                        input { r#type: "checkbox", name: "clear_password", value: "yes", checked: draft.clear_password }
+                        " Remove HTTP authentication"
+                    }
+                }
             }
             fieldset { class: "collaboration-option-group",
                 legend { "Which events" }
@@ -349,6 +395,10 @@ mod tests {
             active: true,
             ssl_verify: false,
             has_secret: true,
+            username: "receiver".into(),
+            has_password: true,
+            clear_secret: false,
+            clear_password: false,
         });
         let html = crate::webui::tests::in_scope(|| {
             dioxus_ssr::render_element(rsx! { WebhookSection { panel: panel.clone() } })
@@ -356,6 +406,8 @@ mod tests {
         assert!(html.contains("Leave blank to keep the saved secret"));
         assert!(html.contains("name=\"secret\""));
         assert!(!html.contains("name=\"secret\" value="));
+        assert!(!html.contains("name=\"password\" value="));
+        assert!(html.contains("name=\"clear_password\""));
         assert!(html.contains("value=\"*\""));
         assert!(html.contains("name=\"ssl_verify\""));
     }

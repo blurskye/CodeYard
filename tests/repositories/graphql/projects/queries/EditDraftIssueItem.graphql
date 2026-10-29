@@ -1,0 +1,1 @@
+mutation EditDraftIssueItem($input:UpdateProjectV2DraftIssueInput!){updateProjectV2DraftIssue(input:$input){draftIssue{id,body,title}}}

@@ -266,7 +266,7 @@ async fn contract(pg: bool) {
     denied(&f, &original, user, account).await;
     visible(&f, &replacement, user, &[account]).await;
     // SQL failures remain unavailable, never valid empty/zero success.
-    f.execute("DROP TABLE notifications", &[]).await;
+    f.drop_notifications().await;
     for action in actions(account) {
         let error =
             db::notifications::records::notification_inbox(f.pool(), &replacement, user, action)

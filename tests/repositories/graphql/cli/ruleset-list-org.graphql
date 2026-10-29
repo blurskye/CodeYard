@@ -1,0 +1,25 @@
+
+query OrgRulesetList($limit: Int!, $endCursor: String, $includeParents: Boolean, $login: String!) {
+	level: organization(login: $login) {
+
+rulesets(first: $limit, after: $endCursor, includeParents: $includeParents) {
+	totalCount
+	nodes {
+		databaseId
+		name
+		target
+		enforcement
+		source {
+			__typename
+			... on Repository { owner: nameWithOwner }
+			... on Organization { owner: login }
+		}
+		rules {
+			totalCount
+		}
+	}
+	pageInfo {
+		hasNextPage
+		endCursor
+	}
+}}}

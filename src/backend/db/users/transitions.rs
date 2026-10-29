@@ -131,6 +131,12 @@ native_operation!(crate::backend::db::postgres::users::transitions::enroll_oauth
     subject: &str,
 ) -> Result<bool>);
 
+native_operation!(crate::backend::db::postgres::users::transitions::reset_password_with_link,
+    crate::backend::db::sqlite::users::transitions::reset_password_with_link,
+    /// Uses a reset link and sets the password it was sent for, ending the account's sessions and
+    /// tokens. Returns the account, or None when the link is no longer usable.
+    fn reset_password_with_link(pool: &DbPool, token_hash: &str, replacement: &str) -> Result<Option<i64>>);
+
 native_operation!(crate::backend::db::postgres::users::transitions::compare_exchange_password,
     crate::backend::db::sqlite::users::transitions::compare_exchange_password,
     fn compare_exchange_password(

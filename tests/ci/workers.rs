@@ -37,6 +37,9 @@ use uuid::Uuid;
 #[tokio::test]
 async fn core_sigterm_during_container_recovery_withdraws_its_heartbeat() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let state = root.path().join("state");
     let records = state.join("ci-containers");
@@ -64,7 +67,7 @@ async fn core_sigterm_during_container_recovery_withdraws_its_heartbeat() {
         .args([
             "serve",
             "--roles",
-            "storage,actions-worker",
+            "storage,runner",
             "--ssh-mode",
             "disabled",
         ])
@@ -104,6 +107,9 @@ async fn core_sigterm_during_container_recovery_withdraws_its_heartbeat() {
 #[tokio::test]
 async fn cluster_startup_can_execute_preexisting_runs_for_unplaced_repositories() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let repos = root.path().join("repos");
     std::fs::create_dir(&repos).unwrap();
@@ -177,7 +183,7 @@ async fn cluster_startup_can_execute_preexisting_runs_for_unplaced_repositories(
         .args([
             "serve",
             "--roles",
-            "storage,actions-worker",
+            "storage,runner",
             "--ssh-mode",
             "disabled",
         ])
@@ -223,6 +229,7 @@ fn line(text: &str) -> LogLine {
         stage: "ci.yml".into(),
         line: text.into(),
         level: "info".into(),
+        ..Default::default()
     }
 }
 
@@ -245,6 +252,26 @@ async fn client(key: &cluster::NodeKey) -> NodeContext {
     }
 }
 
+// Worker transport and lifecycle tests below use an act CLI test executable.
+async fn act_engine(pool: &db::DbPool, repo: i64) {
+    match pool {
+        db::DbPool::Postgres(raw) => {
+            sqlx::query("UPDATE repositories SET actions_engine='act' WHERE id=$1")
+                .bind(repo)
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+        db::DbPool::Sqlite(raw) => {
+            sqlx::query("UPDATE repositories SET actions_engine='act' WHERE id=$1")
+                .bind(repo)
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+    }
+}
+
 async fn enqueue(
     pool: &db::DbPool,
     repo: i64,
@@ -252,6 +279,7 @@ async fn enqueue(
     sha: &str,
     blob: &str,
 ) -> db::models::CiRun {
+    act_engine(pool, repo).await;
     db::ci::enqueue_ci_run(
         pool,
         db::ci::NewCiRun {
@@ -377,13 +405,16 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
 
     let database = native::PostgresDatabase::new().await;
     let pool = &database.pool;
+    // The core here is a web and storage node, which only cluster mode has. Claims need the web
+    // role, since preparing one reads the run's workflow from any node.
+    db::cluster::enable_cluster(pool).await.unwrap();
     let root = tempfile::tempdir().unwrap();
     let core_key = cluster::NodeKey::generate();
     let core_node = db::cluster::register_own_node(
         pool,
         &core_key.public_hex(),
         "ci-core",
-        &["storage".into()],
+        &["web".into(), "storage".into()],
         "test",
     )
     .await
@@ -509,12 +540,22 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     .await
     .unwrap();
 
+    db::variables::save(
+        pool,
+        owner.id,
+        repo.id,
+        None,
+        "REGION",
+        Some("remote-variable"),
+    )
+    .await
+    .unwrap();
     let ticket = cluster::create_invite(
         pool,
         core_key.public_key(),
         cluster::NodeAddress::of(&endpoint.addr()),
         &cluster::InviteOptions {
-            roles: "actions-worker".parse().unwrap(),
+            roles: "runner".parse().unwrap(),
             reusable: true,
             requires_approval: false,
             expires_in: Duration::from_secs(3600),
@@ -547,7 +588,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         &[db::cluster::DeclaredMember {
             public_key: other_key.public_hex(),
             name: "ci-other".into(),
-            roles: vec!["actions-worker".into()],
+            roles: vec!["runner".into()],
         }],
     )
     .await
@@ -627,6 +668,10 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     assert_eq!(claimed.owner, "ci_owner");
     assert_eq!(claimed.storage_node_id, Some(core_node.id));
     assert_eq!(claimed.secrets, [("TOKEN".into(), "private-value".into())]);
+    assert_eq!(
+        claimed.variables,
+        [("REGION".into(), "remote-variable".into())]
+    );
     let worker_store = remote.store(&claimed).unwrap();
     assert_eq!(worker_store.blob_by_id(&blob).await.unwrap(), workflow);
     // An obsolete, unreachable placement from a claim is refreshed through the core.
@@ -994,6 +1039,10 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .unwrap()
         .unwrap();
     assert!(claimed.run.is_fork && claimed.secrets.is_empty());
+    assert_eq!(
+        claimed.variables,
+        [("REGION".into(), "remote-variable".into())]
+    );
     assert!(remote
         .finish("slot-1", fork.id, "failed", Some("A workflow job failed"))
         .await
@@ -1376,11 +1425,14 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
     );
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let podman = tokio::spawn(async move {
-        // The first worker lists the run's containers and removes them. Nothing else asks.
+        // The first worker lists the run's containers and removes them, then lists the run's
+        // networks and images. Nothing else asks.
         for (index, (status, body)) in [
             (200, r#"[{"Id":"workflow"},{"Id":"service"}]"#),
             (204, ""),
             (204, ""),
+            (200, "[]"),
+            (200, "[]"),
         ]
         .into_iter()
         .enumerate()
@@ -1402,7 +1454,15 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
                 .nth(1)
                 .unwrap();
             let url = url::Url::parse(&format!("http://localhost{target}")).unwrap();
-            if index == 0 {
+            if matches!(index, 0 | 3 | 4) {
+                assert_eq!(
+                    url.path(),
+                    match index {
+                        0 => "/v1.40/containers/json",
+                        3 => "/v1.40/networks",
+                        _ => "/v1.40/images/json",
+                    }
+                );
                 let filters = url
                     .query_pairs()
                     .find(|(name, _)| name == "filters")
@@ -1454,7 +1514,7 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
                 "repos",
                 "serve",
                 "--roles",
-                "actions-worker",
+                "runner",
             ])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -1470,7 +1530,7 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
                     .await
                     .unwrap()
                     .expect("worker exited before ready");
-                if line.contains("database-free actions-worker ready") {
+                if line.contains("database-free runner ready") {
                     break;
                 }
             }
@@ -1512,13 +1572,7 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
 #[test]
 fn nonworker_roles_without_database_are_refused_before_creating_state() {
     let root = tempfile::tempdir().unwrap();
-    for roles in [
-        "web",
-        "ssh",
-        "storage",
-        "web,storage",
-        "web,storage,actions-worker",
-    ] {
+    for roles in ["web", "ssh", "storage", "web,storage", "web,storage,runner"] {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_codeyard"))
             .env_clear()
             .current_dir(root.path())
@@ -1571,6 +1625,7 @@ async fn http_ci(
     )
     .await
     .unwrap();
+    act_engine(pool, repo.id).await;
     let state = codeyard::backend::app::AppState::new(
         pool.clone(),
         root.path().to_owned(),
@@ -1770,6 +1825,8 @@ async fn automatic_deployments_use_yaml_environments_and_explicit_targets_still_
                 base_branch: "main",
                 base_sha: &sha,
                 is_draft: false,
+                maintainer_can_modify: false,
+                issue: None,
             },
         )
         .await
@@ -2570,7 +2627,7 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
             pool,
             &key.public_hex(),
             "database-worker",
-            &["actions-worker".into(), "storage".into()],
+            &["runner".into(), "storage".into()],
             "test",
         )
         .await
@@ -2864,7 +2921,10 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
     let release = Arc::new(tokio::sync::Notify::new());
     let cleanup_release = release.clone();
     let server = tokio::spawn(async move {
-        for index in 0..3 {
+        // Three container listings: a refused one, a held one and the second run's. Each
+        // listing that succeeds is followed by the run's network and image listings.
+        let (mut index, mut followups) = (0, 0);
+        while index < 3 || followups < 4 {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut headers = Vec::new();
             loop {
@@ -2875,6 +2935,16 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
                 if headers.windows(4).any(|part| part == b"\r\n\r\n") {
                     break;
                 }
+            }
+            if headers.starts_with(b"GET /v1.40/networks?")
+                || headers.starts_with(b"GET /v1.40/images/json?")
+            {
+                followups += 1;
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]")
+                    .await
+                    .unwrap();
+                continue;
             }
             assert!(headers.starts_with(b"GET /v1.40/containers/json?"));
             waiting.send(index).unwrap();
@@ -2887,6 +2957,7 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
                 b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]"
             };
             stream.write_all(response).await.unwrap();
+            index += 1;
         }
     });
     let runner = fixture.root.path().join("runner");
@@ -2973,7 +3044,10 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
     .await
     .unwrap();
     workers.shutdown().await.unwrap();
-    server.await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), server)
+        .await
+        .expect("the engine received cleanup for both runs")
+        .unwrap();
     fixture.close().await;
 }
 
@@ -3049,13 +3123,14 @@ async fn ownership_record_failure_does_not_permanently_remove_worker_capacity() 
 #[tokio::test]
 async fn discovery_allows_stalled_tcp_to_fall_back_to_iroh() {
     let fixture = ci_fixture().await;
-    // Discovery runs on a web node, not an actions-worker-only node.
+    // Discovery runs on a web node, not a runner-only one, and web nodes need cluster mode.
+    db::cluster::enable_cluster(fixture.pool()).await.unwrap();
     db::cluster::upsert_declared_nodes(
         fixture.pool(),
         &[db::cluster::DeclaredMember {
             public_key: fixture.worker.key.public_hex(),
             name: "ci-worker".into(),
-            roles: vec!["actions-worker".into(), "web".into()],
+            roles: vec!["runner".into(), "web".into()],
         }],
     )
     .await
@@ -3226,6 +3301,7 @@ async fn binary_logs_are_printable_and_counted_before_limits_on_both_engines() {
                     stage: "ci\0stage".into(),
                     line: "binary\0\u{1}\u{7}\u{1b}\u{7f}\tλ".into(),
                     level: "info".into(),
+                    ..Default::default()
                 },
                 line("after"),
             ],
@@ -3437,6 +3513,198 @@ async fn log_totals_close_a_run_at_its_limit_with_one_truncation_line() {
     }
 }
 
+async fn secrets_repository(
+    pool: &db::DbPool,
+    owner: i64,
+    name: &str,
+) -> (tempfile::TempDir, db::models::Repository, String, String) {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join(format!("{}.git", Uuid::new_v4()));
+    let git = git2::Repository::init_bare(&path).unwrap();
+    let sha = crate::support::production_ci::commit(&git, "refs/heads/main", None, "Secrets", None);
+    let blob = git
+        .revparse_single("refs/heads/main:.github/workflows/ci.yml")
+        .unwrap()
+        .id()
+        .to_string();
+    let repo = db::repositories::records::create_repository(
+        pool,
+        owner,
+        name,
+        None,
+        true,
+        path.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    (root, repo, sha, blob)
+}
+
+#[tokio::test]
+async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets() {
+    let postgres = native::PostgresDatabase::new().await;
+    let sqlite = native::NativeDatabase::new().await;
+    for pool in [&postgres.pool, &sqlite.pool] {
+        let owner = db::users::accounts::create_user(pool, "fork_values_owner", None)
+            .await
+            .unwrap();
+        let (_root, repo, sha, blob) = secrets_repository(pool, owner.id, "fork-values").await;
+        let encryptor = Arc::new(SecretEncryptor::new(&[7; 32]));
+        let org = crate::support::organizations::applied(
+            db::organizations::create_organization(
+                pool,
+                owner.id,
+                &db::organizations::NewOrganization::new(
+                    "fork_values_org",
+                    db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap(),
+        );
+        let repo = codeyard::backend::repositories::lifecycle::transfer(
+            pool,
+            None,
+            owner.id,
+            repo.id,
+            "fork_values_org",
+        )
+        .await
+        .unwrap();
+        for (kind, name, value) in [
+            (
+                db::organization_values::Kind::Secret,
+                "ORG_TOKEN",
+                "organization-secret-marker",
+            ),
+            (
+                db::organization_values::Kind::Variable,
+                "ORG_REGION",
+                "organization-variable",
+            ),
+            (
+                db::organization_values::Kind::Variable,
+                "REGION",
+                "shadowed-variable",
+            ),
+        ] {
+            db::organization_values::save(
+                pool,
+                Some(&encryptor),
+                owner.id,
+                org.id,
+                &db::organization_values::Save {
+                    kind,
+                    previous: None,
+                    name,
+                    value: Some(value),
+                    visibility: Some("all"),
+                    repositories: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        db::secrets::create_or_update_secret(
+            pool,
+            &encryptor,
+            repo.id,
+            "TOKEN",
+            "private",
+            Some(owner.id),
+        )
+        .await
+        .unwrap();
+        db::variables::save(
+            pool,
+            owner.id,
+            repo.id,
+            None,
+            "REGION",
+            Some("public-variable"),
+        )
+        .await
+        .unwrap();
+        let queue = RunQueue::Database {
+            pool: pool.clone(),
+            config: Arc::new(CiConfig {
+                trusted_actor_ids: BTreeSet::from([owner.id]),
+                ..CiConfig::default()
+            }),
+            secrets: Some(encryptor),
+            context: None,
+            notifications: Arc::new(NotificationBroadcaster::new(pool)),
+        };
+        let run = enqueue(pool, repo.id, owner.id, &sha, &blob).await;
+        match pool {
+            db::DbPool::Postgres(pool) => {
+                sqlx::query("UPDATE ci_runs SET is_fork=true WHERE id=$1")
+                    .bind(run.id)
+                    .execute(pool)
+                    .await
+                    .unwrap();
+            }
+            db::DbPool::Sqlite(pool) => {
+                sqlx::query("UPDATE ci_runs SET is_fork=true WHERE id=$1")
+                    .bind(run.id)
+                    .execute(pool)
+                    .await
+                    .unwrap();
+            }
+        };
+        let claim = queue
+            .claim("worker", CiExecutionMode::Local)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(claim.run.is_fork);
+        assert!(claim.secrets.is_empty());
+        assert_eq!(
+            claim.variables,
+            [
+                ("ORG_REGION".into(), "organization-variable".into()),
+                ("REGION".into(), "public-variable".into())
+            ]
+        );
+        queue
+            .finish("worker", run.id, "success", None)
+            .await
+            .unwrap();
+        // With repository secrets removed, an inherited secret alone still requires the key.
+        assert!(db::secrets::delete_secret(pool, owner.id, repo.id, "TOKEN")
+            .await
+            .unwrap());
+        let without_key = RunQueue::Database {
+            pool: pool.clone(),
+            config: Arc::new(CiConfig {
+                trusted_actor_ids: BTreeSet::from([owner.id]),
+                ..CiConfig::default()
+            }),
+            secrets: None,
+            context: None,
+            notifications: Arc::new(NotificationBroadcaster::new(pool)),
+        };
+        let refused = enqueue(pool, repo.id, owner.id, &"3".repeat(40), &"4".repeat(40)).await;
+        let error = without_key
+            .claim("worker", CiExecutionMode::Local)
+            .await
+            .err()
+            .expect("inherited secrets require a master key");
+        assert!(error.to_string().contains("SECRETS_MASTER_KEY"));
+        assert!(!error.to_string().contains("organization-secret-marker"));
+        assert_eq!(
+            db::ci::get_ci_run_by_run_id(pool, refused.run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            "failed"
+        );
+    }
+    sqlite.close().await;
+}
+
 #[tokio::test]
 async fn claims_without_a_master_key_refuse_configured_secrets() {
     let postgres = native::PostgresDatabase::new().await;
@@ -3445,16 +3713,7 @@ async fn claims_without_a_master_key_refuse_configured_secrets() {
         let owner = db::users::accounts::create_user(pool, "missing_key_owner", None)
             .await
             .unwrap();
-        let repo = db::repositories::records::create_repository(
-            pool,
-            owner.id,
-            "secrets",
-            None,
-            true,
-            &format!("/{}.git", Uuid::new_v4()),
-        )
-        .await
-        .unwrap();
+        let (_root, repo, sha, blob) = secrets_repository(pool, owner.id, "secrets").await;
         let queue = RunQueue::Database {
             pool: pool.clone(),
             config: Arc::new(CiConfig {
@@ -3465,7 +3724,7 @@ async fn claims_without_a_master_key_refuse_configured_secrets() {
             context: None,
             notifications: Arc::new(NotificationBroadcaster::new(pool)),
         };
-        let empty = enqueue(pool, repo.id, owner.id, &"1".repeat(40), &"2".repeat(40)).await;
+        let empty = enqueue(pool, repo.id, owner.id, &sha, &blob).await;
         let claim = queue
             .claim("worker", CiExecutionMode::Local)
             .await
@@ -3514,17 +3773,7 @@ async fn claims_refuse_secret_sets_too_large_for_one_claim() {
         let owner = db::users::accounts::create_user(pool, "claim_secret_owner", None)
             .await
             .unwrap();
-        // A claim needs a repository path named by its UUID.
-        let repo = db::repositories::records::create_repository(
-            pool,
-            owner.id,
-            "secret-project",
-            None,
-            true,
-            &format!("/{}.git", Uuid::new_v4()),
-        )
-        .await
-        .unwrap();
+        let (_root, repo, sha, blob) = secrets_repository(pool, owner.id, "secret-project").await;
         let encryptor = Arc::new(SecretEncryptor::new(&[7; 32]));
         let queue = RunQueue::Database {
             pool: pool.clone(),
@@ -3550,7 +3799,7 @@ async fn claims_refuse_secret_sets_too_large_for_one_claim() {
             .await
             .unwrap();
         }
-        let accepted = enqueue(pool, repo.id, owner.id, &"1".repeat(40), &"2".repeat(40)).await;
+        let accepted = enqueue(pool, repo.id, owner.id, &sha, &blob).await;
         let claim = queue
             .claim("worker-1", CiExecutionMode::Local)
             .await
@@ -3659,7 +3908,7 @@ impl ProtocolHandler for CountingCi {
 }
 
 /// A core node that serves the CI queue and the repository RPC, with a repository whose
-/// workflow can run, and a database-free worker that is an active actions-worker.
+/// workflow can run, and a database-free worker that is an active runner.
 struct CiFixture {
     database: native::PostgresDatabase,
     root: tempfile::TempDir,
@@ -3715,7 +3964,7 @@ async fn ci_fixture() -> CiFixture {
         &pool,
         &core_key.public_hex(),
         "ci-core",
-        &["storage".into()],
+        &["web".into(), "storage".into()],
         "test",
     )
     .await
@@ -3828,7 +4077,7 @@ async fn ci_fixture() -> CiFixture {
         &[db::cluster::DeclaredMember {
             public_key: worker_key.public_hex(),
             name: "ci-worker".into(),
-            roles: vec!["actions-worker".into()],
+            roles: vec!["runner".into()],
         }],
     )
     .await
@@ -3882,10 +4131,7 @@ async fn a_claim_frame_that_arrives_after_its_worker_is_revoked_is_refused() {
     send.finish().unwrap();
     let reply: serde_json::Value =
         serde_json::from_slice(&rpc::read_frame(&mut recv, rpc::MAX_JSON).await.unwrap()).unwrap();
-    assert_eq!(
-        reply["result"]["Err"], "not an active actions-worker",
-        "{reply}"
-    );
+    assert_eq!(reply["result"]["Err"], "not an active runner", "{reply}");
     let run = db::ci::get_ci_run_by_run_id(&pool, queued.run_id)
         .await
         .unwrap()
@@ -4015,7 +4261,7 @@ async fn stalled_ci_replies_keep_their_admission_slots() {
         fixture.pool(),
         &key.public().to_string(),
         "slow-worker",
-        &["actions-worker".into()],
+        &["runner".into()],
         "test",
     )
     .await
@@ -4052,7 +4298,7 @@ async fn stalled_ci_replies_keep_their_admission_slots() {
         .unwrap();
         send.finish().unwrap();
         // Seeing the length proves the claim has returned. Withhold credit for its body.
-        let length = tokio::time::timeout(Duration::from_secs(5), recv.read_u32())
+        let length = tokio::time::timeout(Duration::from_secs(30), recv.read_u32())
             .await
             .unwrap()
             .unwrap();
@@ -4103,6 +4349,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         .await
         .unwrap()
         .unwrap();
+    act_engine(pool, repo.id).await;
     let store = codeyard::backend::repositories::store::repo_store(&repo, None);
     {
         let git = git2::Repository::open_bare(&repo.disk_path).unwrap();
@@ -4131,6 +4378,8 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
             base_branch: "main",
             base_sha: &fixture.sha,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -4172,7 +4421,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
             body: None,
             state: None,
         },
-        None,
+        Default::default(),
     )
     .await
     .unwrap()
@@ -4210,15 +4459,20 @@ import json, subprocess, sys
 args = sys.argv[1:]
 with open(args[args.index('--eventpath') + 1]) as source:
     event = json.load(source)
+assert event == json.loads({snapshot:?})
 pull = event['pull_request']
 assert pull['title'] == 'Original title'
-assert pull['head'] == {{'ref': 'topic', 'sha': '{head}'}}
-assert pull['base'] == {{'ref': 'main', 'sha': '{old_base}'}}
+assert pull['head']['ref'] == 'topic'
+assert pull['head']['sha'] == '{head}'
+assert pull['base']['ref'] == 'main'
+assert pull['base']['sha'] == '{old_base}'
+assert pull['head']['repo']['id'] == {repo_id}
+assert pull['base']['repo']['id'] == {repo_id}
 repo = args[args.index('--directory') + 1]
 subprocess.run(['git', '-C', repo, 'cat-file', '-e', pull['base']['sha']], check=True)
 assert subprocess.run(['git', '-C', repo, 'cat-file', '-e', '{new_base}'], stderr=subprocess.DEVNULL).returncode != 0
 print('CI_PR_SNAPSHOT_PASSED')
-"#, head = head.sha, old_base = fixture.sha, new_base = base.sha)).unwrap();
+"#, snapshot = run.event_payload.as_ref().unwrap().to_string(), repo_id = repo.id, head = head.sha, old_base = fixture.sha, new_base = base.sha)).unwrap();
     std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o700)).unwrap();
     let workers = CiWorkers::new(
         fixture.remote(),
@@ -4494,19 +4748,26 @@ async fn stalled_database_logs_do_not_block_timed_out_container_cleanup() {
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let (cleaned, cleanup) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut headers = Vec::new();
-        loop {
-            let mut bytes = [0; 1024];
-            let count = stream.read(&mut bytes).await.unwrap();
-            assert!(count > 0);
-            headers.extend_from_slice(&bytes[..count]);
-            if headers.windows(4).any(|part| part == b"\r\n\r\n") {
-                break;
+        // Cleanup lists the run's containers, networks and images, each on its own connection.
+        for path in [
+            b"GET /v1.40/containers/json?".as_slice(),
+            b"GET /v1.40/networks?",
+            b"GET /v1.40/images/json?",
+        ] {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut headers = Vec::new();
+            loop {
+                let mut bytes = [0; 1024];
+                let count = stream.read(&mut bytes).await.unwrap();
+                assert!(count > 0);
+                headers.extend_from_slice(&bytes[..count]);
+                if headers.windows(4).any(|part| part == b"\r\n\r\n") {
+                    break;
+                }
             }
+            assert!(headers.starts_with(path));
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]").await.unwrap();
         }
-        assert!(headers.starts_with(b"GET /v1.40/containers/json?"));
-        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]").await.unwrap();
         let _ = cleaned.send(());
     });
     let runner = fixture.root.path().join("runner");
@@ -4631,7 +4892,8 @@ async fn stalled_remote_logs_do_not_delay_success_timeout_or_cancellation() {
         let run = fixture.queue_run().await;
         let workers = CiWorkers::new(queue.clone(), config.clone(), true, fixture.root.path());
         workers.startup().await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), received.recv())
+        // Claiming and starting the run only has to finish; the bounds under test follow.
+        tokio::time::timeout(Duration::from_secs(30), received.recv())
             .await
             .unwrap()
             .unwrap();

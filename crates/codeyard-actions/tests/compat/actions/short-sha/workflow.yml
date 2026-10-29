@@ -1,0 +1,17 @@
+# https://github.com/benjlevesque/short-sha/tree/599815c8ee942a9616c92bcfb4f947a3b670ab0b
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: benjlevesque/short-sha@599815c8ee942a9616c92bcfb4f947a3b670ab0b # v3.0
+        with:
+          length: "7"
+      - name: Assert documented effect
+        env:
+          SHORT_SHA: ${{ steps.action.outputs.sha }}
+        run: |
+          test "${#SHORT_SHA}" = 7; test "$SHORT_SHA" = "$(git rev-parse --short=7 HEAD)"
+          echo compat:ok

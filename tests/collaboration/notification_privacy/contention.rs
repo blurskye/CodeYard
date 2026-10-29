@@ -347,7 +347,7 @@ async fn missing_table_is_error(pg: bool) {
     )
     .await
     .unwrap();
-    fixture.execute("DROP TABLE notifications", &[]).await;
+    fixture.drop_notifications().await;
     for op in OPERATIONS {
         let error = invisible(fixture.pool(), recipient, notice, op)
             .await

@@ -1,0 +1,16 @@
+# https://github.com/subosito/flutter-action/tree/1a449444c387b1966244ae4d4f8c696479add0b2
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: "3.29.0"
+          channel: "stable"
+      - name: Assert documented effect
+        run: |
+          flutter --version | grep 'Flutter 3\.29\.0'
+          echo compat:ok

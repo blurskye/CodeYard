@@ -15,7 +15,7 @@ use codeyard::backend::{
         rpc::{self, Failure, Operation, Reply, Request},
         NodeContext,
     },
-    db,
+    db, git,
     repositories::store::{
         repo_store, BlobRange, ErrorKind, FileWrite, GitService, GitSession, GitStreams,
         MergeMethod, MergeRequest, PreparedFile, RepoStore, MAX_ARCHIVE_RESPONSE_BYTES,
@@ -29,6 +29,10 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::{path::Path, sync::Arc, time::Duration};
 use uuid::Uuid;
+
+mod associations;
+mod imports;
+mod publications;
 
 /// The Git session cap is process-wide, as it is in production where one process is one node.
 /// These tests share a process, so the one that fills the cap and the one that needs a session
@@ -54,6 +58,7 @@ fn merge_request(head: &str, base: &str, message: &str, name: &str, email: &str)
         head: head.into(),
         base: base.into(),
         message: message.into(),
+        squash_body: None,
         name: name.into(),
         email: email.into(),
         method: MergeMethod::Merge,
@@ -123,6 +128,9 @@ fn commit_workflow_entries(
 #[tokio::test]
 async fn remote_first_reader_persists_languages() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let web = cluster::start(
         &database.pool,
@@ -199,6 +207,117 @@ async fn remote_first_reader_persists_languages() {
     database.pool.close().await;
 }
 
+async fn direct_branch_merges(
+    remote: &RepoStore,
+    local: &RepoStore,
+    scope: (&db::DbPool, i64, i64, i64),
+    head: &str,
+    base: &str,
+) {
+    let (pool, repo, actor, outsider) = scope;
+    for (branch, sha) in [("direct-base", base), ("direct-head", head)] {
+        remote
+            .create_branch_as(pool, repo, actor, branch, sha)
+            .await
+            .unwrap();
+    }
+    let result = remote
+        .prepare_merge(&merge_request(
+            head,
+            base,
+            "Direct branch merge",
+            "Tester",
+            "tester@example.invalid",
+        ))
+        .await
+        .unwrap();
+    let publication = codeyard::backend::repositories::store::BranchMergePublication {
+        base_branch: "direct-base".into(),
+        base: base.into(),
+        head_branch: Some("direct-head".into()),
+        head: head.into(),
+        result: result.clone(),
+    };
+    db::repositories::protection::upsert_branch_protection_rule(
+        pool,
+        db::repositories::protection::BranchProtectionRuleUpsert {
+            actor_id: actor,
+            repo_id: repo,
+            pattern: "direct-base",
+            require_pull_request: true,
+            enforce_admins: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let refused = remote
+        .publish_branch_merge_as(pool, repo, actor, &publication)
+        .await
+        .unwrap_err();
+    assert!(refused.is_protected_branch(), "{refused:?}");
+    assert_eq!(
+        refused,
+        local
+            .publish_branch_merge_as(pool, repo, actor, &publication)
+            .await
+            .unwrap_err()
+    );
+    assert_eq!(local.commit("direct-base").await.unwrap().sha, base);
+    db::repositories::protection::delete_branch_protection_rule(pool, actor, repo, "direct-base")
+        .await
+        .unwrap();
+    assert!(remote
+        .publish_branch_merge_as(pool, repo, outsider, &publication)
+        .await
+        .unwrap_err()
+        .is_write_denied());
+    remote
+        .update_reference_as(pool, repo, actor, "refs/heads/direct-head", &result, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        remote
+            .publish_branch_merge_as(pool, repo, actor, &publication)
+            .await
+            .unwrap_err()
+            .kind,
+        ErrorKind::Conflict
+    );
+    assert_eq!(local.commit("direct-base").await.unwrap().sha, base);
+    remote
+        .update_reference_as(pool, repo, actor, "refs/heads/direct-head", head, true)
+        .await
+        .unwrap();
+    remote
+        .update_reference_as(pool, repo, actor, "refs/heads/direct-base", head, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        remote
+            .publish_branch_merge_as(pool, repo, actor, &publication)
+            .await
+            .unwrap_err()
+            .kind,
+        ErrorKind::Conflict
+    );
+    remote
+        .update_reference_as(pool, repo, actor, "refs/heads/direct-base", base, true)
+        .await
+        .unwrap();
+    remote
+        .publish_branch_merge_as(pool, repo, actor, &publication)
+        .await
+        .unwrap();
+    assert_eq!(local.commit("direct-base").await.unwrap().sha, result);
+    for branch in ["direct-base", "direct-head"] {
+        remote
+            .delete_branch_as(pool, repo, actor, branch)
+            .await
+            .unwrap();
+    }
+}
+
 async fn compare_reads(remote: &RepoStore, local: &RepoStore, sha: &str) {
     equal(remote.exists().await, local.exists().await);
     equal(
@@ -206,6 +325,14 @@ async fn compare_reads(remote: &RepoStore, local: &RepoStore, sha: &str) {
         local.size_bytes().await.unwrap(),
     );
     equal(remote.info().await.unwrap(), local.info().await.unwrap());
+    equal(
+        remote.git_tree("main", true).await.unwrap(),
+        local.git_tree("main", true).await.unwrap(),
+    );
+    equal(
+        remote.git_object_kind(sha).await.unwrap(),
+        local.git_object_kind(sha).await.unwrap(),
+    );
     equal(
         remote.commit_count().await.unwrap(),
         local.commit_count().await.unwrap(),
@@ -249,6 +376,15 @@ async fn compare_reads(remote: &RepoStore, local: &RepoStore, sha: &str) {
     equal(
         remote.commit_diff(sha).await.unwrap(),
         local.commit_diff(sha).await.unwrap(),
+    );
+    let parent = local.commit(sha).await.unwrap().parents[0].clone();
+    let (count, commits) = remote.pull_request_commits(&parent, sha).await.unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0].sha, sha);
+    equal(
+        (count, commits),
+        local.pull_request_commits(&parent, sha).await.unwrap(),
     );
     equal(
         remote.diff(sha, "main").await.unwrap(),
@@ -524,6 +660,9 @@ async fn open_git_session(
 async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
     let _session_cap = lock_git_session_cap().await;
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     db::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
@@ -552,7 +691,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         &database.pool,
         &root.path().join("worker-state"),
         &root.path().join("worker-repos"),
-        &"actions-worker".parse().unwrap(),
+        &"runner".parse().unwrap(),
         settings("admission-worker"),
     )
     .await
@@ -921,6 +1060,9 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
 #[tokio::test]
 async fn control_heavy_blame_uses_the_raw_response_body() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let web = cluster::start(
         &database.pool,
@@ -1010,6 +1152,9 @@ async fn control_heavy_blame_uses_the_raw_response_body() {
 #[tokio::test]
 async fn remote_workflow_discovery_uses_the_bounded_rpc() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     db::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
@@ -1143,11 +1288,11 @@ fn repository_rpc_operation_role_table() {
         for (roles, allowed) in [
             (vec!["web"], true),
             (vec!["ssh"], true),
-            (vec!["actions-worker"], worker_read),
+            (vec!["runner"], worker_read),
             (vec!["storage"], false),
-            (vec!["web", "actions-worker"], true),
+            (vec!["web", "runner"], true),
             (vec!["ssh", "storage"], true),
-            (vec!["storage", "actions-worker"], worker_read),
+            (vec!["storage", "runner"], worker_read),
             (vec![], false),
         ] {
             let roles: Vec<String> = roles.into_iter().map(str::to_owned).collect();
@@ -1230,11 +1375,31 @@ async fn unread_repository_downloads_are_bounded(router: &axum::Router) {
     }
 }
 
-#[tokio::test]
-async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
+#[test]
+fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
+    // This exhaustive contract drives every RPC operation through one deep async state,
+    // which outgrows the default 2 MiB test stack in debug builds.
+    std::thread::Builder::new()
+        .stack_size(32 << 20)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(Box::pin(remote_web_contract()))
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+async fn remote_web_contract() {
     let _session_cap = lock_git_session_cap().await;
     bundle::install();
     let database = native::PostgresDatabase::new().await; // Missing PostgreSQL must fail.
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     db::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
@@ -1342,6 +1507,212 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
         .await
         .unwrap();
     equal(&initial, local.commit(&initial.sha).await.unwrap());
+    let blob = remote
+        .write_git_object_as(
+            &database.pool,
+            repository.id,
+            owner.id,
+            git::objects::ObjectWrite::Blob,
+            b"remote object\0",
+        )
+        .await
+        .unwrap();
+    assert_eq!(local.blob_by_id(&blob).await.unwrap(), b"remote object\0");
+    let large_blob = vec![b'x'; git::objects::MAX_BLOB_WRITE_BYTES];
+    let large_sha = remote
+        .write_git_object_as(
+            &database.pool,
+            repository.id,
+            owner.id,
+            git::objects::ObjectWrite::Blob,
+            &large_blob,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        large_sha,
+        git2::Oid::hash_object(git2::ObjectType::Blob, &large_blob)
+            .unwrap()
+            .to_string()
+    );
+    assert_eq!(local.git_object_kind(&large_sha).await.unwrap(), "blob");
+    assert!(remote
+        .write_git_object_as(
+            &database.pool,
+            repository.id,
+            owner.id,
+            git::objects::ObjectWrite::Blob,
+            &vec![0; git::objects::MAX_BLOB_WRITE_BYTES + 1]
+        )
+        .await
+        .is_err());
+    drop(large_blob);
+    let tree = remote
+        .write_git_object_as(
+            &database.pool,
+            repository.id,
+            owner.id,
+            git::objects::ObjectWrite::Tree {
+                base_tree: Some(initial.tree_sha.clone()),
+                tree: vec![git::objects::TreeChange {
+                    path: "remote-object".into(),
+                    mode: "100644".into(),
+                    kind: "blob".into(),
+                    sha: Some(blob),
+                    content: None,
+                }],
+            },
+            b"",
+        )
+        .await
+        .unwrap();
+    equal(
+        remote.git_tree(&tree, true).await.unwrap(),
+        local.git_tree(&tree, true).await.unwrap(),
+    );
+    let identity = git::objects::Signature {
+        name: "Tester".into(),
+        email: "tester@example.invalid".into(),
+        date: None,
+    };
+    let commit = remote
+        .write_git_object_as(
+            &database.pool,
+            repository.id,
+            owner.id,
+            git::objects::ObjectWrite::Commit {
+                message: "Remote detached commit".into(),
+                tree,
+                parents: vec![initial.sha.clone()],
+                author: identity.clone(),
+                committer: identity.clone(),
+                signature: None,
+            },
+            b"",
+        )
+        .await
+        .unwrap();
+    let tag = remote
+        .write_git_object_as(
+            &database.pool,
+            repository.id,
+            owner.id,
+            git::objects::ObjectWrite::Tag {
+                tag: "detached".into(),
+                message: "Remote tag object".into(),
+                object: commit.clone(),
+                kind: "commit".into(),
+                tagger: identity,
+            },
+            b"",
+        )
+        .await
+        .unwrap();
+    equal(
+        remote.git_tag(&tag).await.unwrap(),
+        local.git_tag(&tag).await.unwrap(),
+    );
+    let unsigned = remote.commit(&commit).await.unwrap();
+    let payload = format!("tree {}\nparent {commit}\nauthor Signer <signer@example.invalid> 946684800 +0000\ncommitter Signer <signer@example.invalid> 946684800 +0000\n\nSigned remote\n", unsigned.tree_sha);
+    let signing_key: ssh_key::PrivateKey =
+        ssh_key::private::Ed25519Keypair::from_seed(&[8; 32]).into();
+    let signature = signing_key
+        .sign("git", ssh_key::HashAlg::Sha512, payload.as_bytes())
+        .unwrap()
+        .to_pem(ssh_key::LineEnding::LF)
+        .unwrap();
+    let signer = git::objects::Signature {
+        name: "Signer".into(),
+        email: "signer@example.invalid".into(),
+        date: Some("2000-01-01T00:00:00Z".parse().unwrap()),
+    };
+    let signed = remote
+        .write_git_object_as(
+            &database.pool,
+            repository.id,
+            owner.id,
+            git::objects::ObjectWrite::Commit {
+                message: "Signed remote\n".into(),
+                tree: unsigned.tree_sha,
+                parents: vec![commit.clone()],
+                author: signer.clone(),
+                committer: signer.clone(),
+                signature: Some(signature.clone()),
+            },
+            b"",
+        )
+        .await
+        .unwrap();
+    let metadata = remote.commit(&signed).await.unwrap();
+    equal(&metadata, local.commit(&signed).await.unwrap());
+    assert_eq!(
+        metadata.signature_payload.as_deref(),
+        Some(payload.as_bytes())
+    );
+    assert_eq!(
+        metadata.signature.as_deref().unwrap().trim_end(),
+        signature.trim_end()
+    );
+    let tag_payload = format!("object {signed}\ntype commit\ntag signed-remote\ntagger Signer <signer@example.invalid> 946684800 +0000\n\nSigned remote tag\n");
+    let signature = signing_key
+        .sign("git", ssh_key::HashAlg::Sha512, tag_payload.as_bytes())
+        .unwrap()
+        .to_pem(ssh_key::LineEnding::LF)
+        .unwrap();
+    let signed_tag = remote
+        .write_git_object_as(
+            &database.pool,
+            repository.id,
+            owner.id,
+            git::objects::ObjectWrite::Tag {
+                tag: "signed-remote".into(),
+                message: format!("Signed remote tag\n{signature}"),
+                object: signed,
+                kind: "commit".into(),
+                tagger: signer,
+            },
+            b"",
+        )
+        .await
+        .unwrap();
+    let metadata = remote.git_tag(&signed_tag).await.unwrap();
+    equal(&metadata, local.git_tag(&signed_tag).await.unwrap());
+    assert_eq!(
+        metadata.signature_payload.as_deref(),
+        Some(tag_payload.as_bytes())
+    );
+    assert_eq!(
+        metadata.signature.as_deref().unwrap().trim_end(),
+        signature.trim_end()
+    );
+    remote
+        .create_branch_as(
+            &database.pool,
+            repository.id,
+            owner.id,
+            "object-rpc",
+            &initial.sha,
+        )
+        .await
+        .unwrap();
+    let (old, new) = remote
+        .update_reference_as(
+            &database.pool,
+            repository.id,
+            owner.id,
+            "refs/heads/object-rpc",
+            &commit,
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(old, initial.sha);
+    assert_eq!(new, commit);
+    assert_eq!(local.refs().await.unwrap()["refs/heads/object-rpc"], commit);
+    remote
+        .delete_branch_as(&database.pool, repository.id, owner.id, "object-rpc")
+        .await
+        .unwrap();
     // Simulate an adopted repository with no language snapshot. Its first web-node
     // reader must populate the shared rows on the storage node, including Explore.
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -1667,6 +2038,29 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
         .await
         .unwrap_err()
         .is_write_denied());
+    assert!(remote
+        .write_git_object_as(
+            &database.pool,
+            repository.id,
+            late_writer.id,
+            git::objects::ObjectWrite::Blob,
+            b"revoked object writer"
+        )
+        .await
+        .unwrap_err()
+        .is_write_denied());
+    assert!(remote
+        .update_reference_as(
+            &database.pool,
+            repository.id,
+            late_writer.id,
+            "refs/heads/main",
+            &workflow.sha,
+            true
+        )
+        .await
+        .unwrap_err()
+        .is_write_denied());
     assert_eq!(remote.commit("main").await.unwrap().sha, workflow.sha);
     assert_eq!(
         remote
@@ -1676,7 +2070,8 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
             .kind,
         ErrorKind::MissingPath
     );
-    compare_reads(&remote, &local, &workflow.sha).await;
+    // Keep the large comparison/merge contracts off this integration future's stack.
+    Box::pin(compare_reads(&remote, &local, &workflow.sha)).await;
     let checkout_root = tempfile::tempdir().unwrap();
     let remote_checkout = checkout_root.path().join("remote");
     let local_checkout = checkout_root.path().join("local");
@@ -1831,6 +2226,14 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
             .unwrap()
             .contains_key(&format!("refs/tags/{name}")));
     }
+    Box::pin(direct_branch_merges(
+        &remote,
+        &local,
+        (&database.pool, repository.id, owner.id, fork_owner.id),
+        &feature.sha,
+        &workflow.sha,
+    ))
+    .await;
     let prepared = remote
         .prepare_merge(&merge_request(
             &feature.sha,
@@ -1931,6 +2334,7 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
         head: next.sha.clone(),
         base: prepared.clone(),
         message: "Merge next".into(),
+        squash_body: None,
         name: "Tester".into(),
         email: "tester@example.invalid".into(),
         method: MergeMethod::Merge,
@@ -2069,6 +2473,116 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
         assert_eq!(remote_error, local_error);
         assert_eq!(remote_error.kind, kind);
     }
+    // Pull branch updates execute on the primary, apply head CAS, and retain direct-push rules.
+    for branch in ["update-base", "update-head"] {
+        remote
+            .create_branch_as(&database.pool, repository.id, owner.id, branch, &merged)
+            .await
+            .unwrap();
+    }
+    let upstream = remote
+        .save_file_as(
+            &database.pool,
+            repository.id,
+            owner.id,
+            &write("update-base", "upstream-update.txt", &merged),
+            b"upstream\n",
+            "Tester",
+            "tester@example.invalid",
+        )
+        .await
+        .unwrap();
+    let update_pull = db::pull_requests::records::create_pull_request(
+        &database.pool,
+        db::pull_requests::records::NewPullRequest {
+            repo_id: repository.id,
+            head_repo_id: Some(repository.id),
+            author_id: owner.id,
+            title: "Update branch",
+            body: "",
+            head_branch: "update-head",
+            head_sha: &merged,
+            base_branch: "update-base",
+            base_sha: &upstream.sha,
+            is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
+        },
+    )
+    .await
+    .unwrap();
+    let mut update_request = codeyard::backend::repositories::store::PullBranchUpdate {
+        pull_request_id: update_pull.id,
+        base_branch: "update-base".into(),
+        branch: "update-head".into(),
+        head: merged.clone(),
+        base: upstream.sha.clone(),
+        name: "Tester".into(),
+        email: "tester@example.invalid".into(),
+    };
+    let updated = remote
+        .update_pull_branch_as(
+            &database.pool,
+            repository.id,
+            owner.id,
+            (repository.id, &remote),
+            &update_request,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        remote.commit(&updated).await.unwrap().parents,
+        vec![merged.clone(), upstream.sha]
+    );
+    assert_eq!(
+        remote.commit_from_primary("update-head").await.unwrap().sha,
+        updated
+    );
+    update_request.head = updated.clone();
+    assert_eq!(
+        remote
+            .update_pull_branch_as(
+                &database.pool,
+                repository.id,
+                owner.id,
+                (repository.id, &remote),
+                &update_request
+            )
+            .await
+            .unwrap(),
+        updated
+    );
+    if let db::DbPool::Postgres(pool) = &database.pool {
+        sqlx::query("UPDATE pull_requests SET state='closed' WHERE id=$1")
+            .bind(update_pull.id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    let refused = remote
+        .update_pull_branch_as(
+            &database.pool,
+            repository.id,
+            owner.id,
+            (repository.id, &remote),
+            &update_request,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refused.kind, ErrorKind::Conflict);
+    assert_eq!(
+        local
+            .update_pull_branch_as(
+                &database.pool,
+                repository.id,
+                owner.id,
+                (repository.id, &local),
+                &update_request
+            )
+            .await
+            .unwrap_err(),
+        refused
+    );
     // Forking stays on the source node and never copies objects onto the web disk.
     let forker = http::Client::login(&router, &database.pool, fork_owner.id).await;
     let fork = forker
@@ -2091,6 +2605,169 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
         repo_store(&fork, Some(&web.context)).refs().await.unwrap(),
         local.refs().await.unwrap(),
     );
+    // The same scoped consent is checked by the owning storage node, not trusted from the web caller.
+    {
+        let fork_store = repo_store(&fork, Some(&web.context));
+        let fork_local = repo_store(&fork, Some(&storage.context));
+        remote
+            .create_branch_as(
+                &database.pool,
+                repository.id,
+                owner.id,
+                "consent-base",
+                &merged,
+            )
+            .await
+            .unwrap();
+        fork_store
+            .create_branch_as(
+                &database.pool,
+                fork.id,
+                fork_owner.id,
+                "consent-head",
+                &merged,
+            )
+            .await
+            .unwrap();
+        let head = fork_store
+            .save_file_as(
+                &database.pool,
+                fork.id,
+                fork_owner.id,
+                &write("consent-head", "consent-feature.txt", &merged),
+                b"feature\n",
+                "Fork owner",
+                "fork@example.invalid",
+            )
+            .await
+            .unwrap();
+        let base = remote
+            .save_file_as(
+                &database.pool,
+                repository.id,
+                owner.id,
+                &write("consent-base", "consent-upstream.txt", &merged),
+                b"upstream\n",
+                "Tester",
+                "tester@example.invalid",
+            )
+            .await
+            .unwrap();
+        let pull = db::pull_requests::records::create_pull_request(
+            &database.pool,
+            db::pull_requests::records::NewPullRequest {
+                repo_id: repository.id,
+                head_repo_id: Some(fork.id),
+                author_id: fork_owner.id,
+                title: "Remote maintainer consent",
+                body: "",
+                head_branch: "consent-head",
+                head_sha: &head.sha,
+                base_branch: "consent-base",
+                base_sha: &base.sha,
+                is_draft: false,
+                maintainer_can_modify: true,
+                issue: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            !codeyard::backend::repositories::access::can_write(&database.pool, &owner, &fork)
+                .await
+                .unwrap()
+        );
+        assert!(fork_store
+            .save_file_as(
+                &database.pool,
+                fork.id,
+                owner.id,
+                &write("consent-head", "unscoped.txt", &head.sha),
+                b"denied",
+                "Tester",
+                "tester@example.invalid"
+            )
+            .await
+            .unwrap_err()
+            .is_write_denied());
+        let mut request = codeyard::backend::repositories::store::PullBranchUpdate {
+            pull_request_id: pull.id,
+            base_branch: "consent-base".into(),
+            branch: "consent-head".into(),
+            head: head.sha.clone(),
+            base: base.sha.clone(),
+            name: "Tester".into(),
+            email: "tester@example.invalid".into(),
+        };
+        let updated = fork_store
+            .update_pull_branch_as(
+                &database.pool,
+                fork.id,
+                owner.id,
+                (repository.id, &remote),
+                &request,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            fork_store.commit(&updated).await.unwrap().parents,
+            vec![head.sha, base.sha]
+        );
+        let current = db::pull_requests::records::get_pull_request_by_id(&database.pool, pull.id)
+            .await
+            .unwrap()
+            .unwrap();
+        db::pull_requests::records::update_pull_request(
+            &database.pool,
+            pull.id,
+            db::discussions::DiscussionEdit {
+                actor_id: fork_owner.id,
+                expected_state: &current.state,
+                expected_updated: current.updated_at,
+                title: None,
+                body: None,
+                state: None,
+            },
+            db::pull_requests::records::PullRequestUpdate {
+                base: None,
+                maintainer_can_modify: Some(false),
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        request.head = updated.clone();
+        assert!(fork_store
+            .update_pull_branch_as(
+                &database.pool,
+                fork.id,
+                owner.id,
+                (repository.id, &remote),
+                &request
+            )
+            .await
+            .unwrap_err()
+            .is_write_denied());
+        assert!(fork_local
+            .update_pull_branch_as(
+                &database.pool,
+                fork.id,
+                owner.id,
+                (repository.id, &local),
+                &request
+            )
+            .await
+            .unwrap_err()
+            .is_write_denied());
+        assert_eq!(
+            fork_store
+                .commit_from_primary("consent-head")
+                .await
+                .unwrap()
+                .sha,
+            updated
+        );
+    }
     if let db::DbPool::Postgres(pool) = &database.pool {
         sqlx::query("UPDATE repositories SET is_private=TRUE WHERE id=$1")
             .bind(fork.id)
@@ -2142,6 +2819,24 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
         &diff,
         local.diff_from(&local_fork, "main", "main").await.unwrap(),
     );
+    let comparison = remote
+        .comparison_from(&remote_fork, "main", "main", 0, 1)
+        .await
+        .unwrap();
+    equal(
+        &comparison,
+        local
+            .comparison_from(&local_fork, "main", "main", 0, 1)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(comparison.ahead_by, 1);
+    assert_eq!(comparison.behind_by, 1);
+    assert_eq!(comparison.base_commit.sha, public_head.sha);
+    assert_eq!(comparison.merge_base_commit.sha, merged);
+    assert_eq!(comparison.head_sha, private_head.sha);
+    assert_eq!(comparison.commits.len(), 1);
+    assert_eq!(comparison.commits[0].sha, private_head.sha);
     assert_eq!(diff.files.len(), 1);
     assert_eq!(diff.files[0].filename, "private.txt");
     assert!(diff.files[0].patch.contains("+remote-private-marker\n"));
@@ -2379,6 +3074,8 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
             base_branch: "main",
             base_sha: &"2".repeat(40),
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await

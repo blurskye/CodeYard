@@ -17,12 +17,13 @@ pub fn DraftInput(
     #[props(default)] maxlength: Option<u32>,
     #[props(default)] pattern: Option<String>,
     #[props(default)] inputmode: Option<String>,
+    #[props(default)] step: Option<String>,
     #[props(default)] aria_label: Option<String>,
     #[props(default)] on_value: EventHandler<String>,
 ) -> Element {
     let mut value = use_signal(move || initial_value);
     rsx! {
-        input { r#type: input_type, name, id, class, placeholder, required, readonly, maxlength, pattern, inputmode, "aria-label": aria_label,
+        input { r#type: input_type, name, id, class, placeholder, required, readonly, maxlength, pattern, inputmode, step, "aria-label": aria_label,
             value: value(),
             oninput: move |event| {
                 let next = event.value();
@@ -108,13 +109,14 @@ pub fn DraftTextarea(
 pub fn DraftCheckbox(
     name: String,
     initial_checked: bool,
+    #[props(default)] required: bool,
     #[props(default)] id: Option<String>,
     #[props(default)] class: String,
     #[props(default = "on".to_string())] submission_value: String,
 ) -> Element {
     let mut checked = use_signal(move || initial_checked);
     rsx! {
-        input { r#type: "checkbox", name, id, class, value: submission_value,
+        input { r#type: "checkbox", name, id, class, required, value: submission_value,
             checked: checked(),
             oninput: move |event| checked.set(event.checked()),
             onmounted: move |event| {

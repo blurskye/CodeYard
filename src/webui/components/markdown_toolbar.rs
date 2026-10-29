@@ -117,13 +117,16 @@ fn tool(target: &str, markup: Markup, disabled: bool) -> Element {
 }
 
 /// Edits the textarea `id` in the browser. The selected text gets the markup, or each selected line
-/// does. The change is sent as an input event, so the draft and the preview follow it.
+/// does. The browser's insertText command makes the change, so it stays in the undo history and
+/// sends the input event the draft and the preview follow.
 #[cfg(target_arch = "wasm32")]
 fn insert_markup(id: &str, markup: Markup) {
     use wasm_bindgen::JsCast;
-    let Some(area) = web_sys::window()
-        .and_then(|window| window.document())
-        .and_then(|document| document.get_element_by_id(id))
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let Some(area) = document
+        .get_element_by_id(id)
         .and_then(|element| element.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
     else {
         return;
@@ -172,20 +175,31 @@ fn insert_markup(id: &str, markup: Markup) {
             .wrap()
             .map(|(before, after, placeholder)| (before.to_owned(), after.to_owned(), placeholder))
     };
-    let (edited, from, to) = match wrap {
+    // `edited` is the whole new text; `replaced` is the old range that `inserted` takes over.
+    let (edited, from, to, replaced, inserted) = match wrap {
         Some((before, after, placeholder)) => {
             let selected = if start == end {
                 placeholder
             } else {
                 &text[start..end]
             };
-            let edited = format!(
-                "{}{before}{selected}{after}{}",
-                &text[..start],
-                &text[end..]
-            );
-            let from = start + before.len();
-            (edited, from, from + selected.len())
+            // Emphasis cannot open or close next to whitespace, so boundary spaces stay outside.
+            // Code keeps its selection as it is, indentation included.
+            let core = match selected.trim() {
+                _ if matches!(markup, Markup::Code) => selected,
+                "" => selected,
+                core => core,
+            };
+            let lead = if core.len() == selected.len() {
+                0
+            } else {
+                selected.len() - selected.trim_start().len()
+            };
+            let (head, tail) = (&selected[..lead], &selected[lead + core.len()..]);
+            let inserted = format!("{head}{before}{core}{after}{tail}");
+            let edited = format!("{}{inserted}{}", &text[..start], &text[end..]);
+            let from = start + head.len() + before.len();
+            (edited, from, from + core.len(), (start, end), inserted)
         }
         None => {
             let prefix = markup.line_prefix();
@@ -203,19 +217,34 @@ fn insert_markup(id: &str, markup: Markup) {
                 .collect::<Vec<_>>()
                 .join("\n");
             let edited = format!("{}{lines}{}", &text[..first], &text[last..]);
-            (edited, first, first + lines.len())
+            (edited, first, first + lines.len(), (first, last), lines)
         }
     };
-    area.set_value(&edited);
-    // The selection is counted in UTF-16 units, as the browser counts text.
-    let unit_at = |at: usize| edited[..at].encode_utf16().count() as u32;
+    // Selections are counted in UTF-16 units, as the browser counts text.
+    let units = |text: &str, at: usize| text[..at].encode_utf16().count() as u32;
     let _ = area.focus();
-    let _ = area.set_selection_range(unit_at(from), unit_at(to));
-    let init = web_sys::EventInit::new();
-    init.set_bubbles(true);
-    if let Ok(event) = web_sys::Event::new_with_event_init_dict("input", &init) {
-        let _ = area.dispatch_event(&event);
+    let by_browser = area
+        .set_selection_range(units(&text, replaced.0), units(&text, replaced.1))
+        .is_ok()
+        && document
+            .dyn_into::<web_sys::HtmlDocument>()
+            .ok()
+            .and_then(|document| {
+                document
+                    .exec_command_with_show_ui_and_value("insertText", false, &inserted)
+                    .ok()
+            })
+            .unwrap_or(false)
+        && area.value() == edited;
+    if !by_browser {
+        area.set_value(&edited);
+        let init = web_sys::EventInit::new();
+        init.set_bubbles(true);
+        if let Ok(event) = web_sys::Event::new_with_event_init_dict("input", &init) {
+            let _ = area.dispatch_event(&event);
+        }
     }
+    let _ = area.set_selection_range(units(&edited, from), units(&edited, to));
 }
 
 /// The byte offset of a UTF-16 offset in `text`.

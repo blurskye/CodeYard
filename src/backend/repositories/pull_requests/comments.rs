@@ -20,12 +20,15 @@ pub struct CreatePullRequestCommentRequest {
     pub path: Option<String>,
     pub line: Option<i32>,
     pub side: Option<String>,
+    pub start_line: Option<i32>,
+    pub start_side: Option<String>,
     pub commit_sha: Option<String>,
     pub base_sha: Option<String>,
     pub in_reply_to_comment_id: Option<i64>,
     /// A new thread on a file goes into the author's pending review instead of being published.
     #[serde(default)]
     pub pending: bool,
+    pub review_id: Option<i64>,
 }
 
 #[cfg(test)]
@@ -159,6 +162,10 @@ pub(super) async fn emit_comment_webhook(
     sender_id: i64,
 ) {
     let on_file = comment.path.is_some();
+    // A pending review hides its comments, with or without a path, until it is submitted.
+    if in_pending_review(pool, comment).await.unwrap_or(true) {
+        return;
+    }
     let event = if on_file {
         events::PULL_REQUEST_REVIEW_COMMENT
     } else {
@@ -212,7 +219,8 @@ pub(super) async fn emit_comment_webhook(
                 )
             }
         },
-    );
+    )
+    .await;
 }
 
 /// The file must be one this pull request changes, and the line must be a line of its diff on the
@@ -224,6 +232,7 @@ async fn check_diff_anchor(
     path: &str,
     line: Option<i32>,
     side: Option<&str>,
+    start: Option<(i32, &str)>,
 ) -> Result<Option<&'static str>, OperationError> {
     let refusal = |message: &str| OperationError::Invalid {
         code: "validation_error",
@@ -269,6 +278,35 @@ async fn check_diff_anchor(
         None => on_left || on_right,
     };
     if found {
+        if let Some((start_line, start_side)) = start {
+            let start_number =
+                u32::try_from(start_line).map_err(|_| refusal("start_line must be positive"))?;
+            let coordinate = |row: &crate::webui::components::PatchRow<'_>, side: &str| {
+                if side == "LEFT" {
+                    row.old
+                } else {
+                    row.new
+                }
+            };
+            let first = rows
+                .iter()
+                .position(|row| coordinate(row, start_side) == Some(start_number))
+                .ok_or_else(|| refusal("start_line is not in the diff on start_side"))?;
+            let end_side = side.unwrap_or(if on_right { "RIGHT" } else { "LEFT" });
+            let last = rows
+                .iter()
+                .position(|row| coordinate(row, end_side) == Some(number))
+                .ok_or_else(|| refusal("line is not in the diff"))?;
+            if first >= last
+                || rows[first..=last]
+                    .iter()
+                    .any(|row| row.header || row.class.contains("patch-hunk"))
+            {
+                return Err(refusal(
+                    "The comment range must run forward within one diff hunk",
+                ));
+            }
+        }
         // Without a side the comment is stored on the side that has the line, so it is shown
         // under that line.
         Ok(match side {
@@ -354,6 +392,11 @@ pub async fn create_pull_request_comment(
     let mut path = req.path.clone();
     let mut line = req.line;
     let mut side = req.side.as_deref().map(|value| value.trim().to_uppercase());
+    let mut start_line = req.start_line;
+    let mut start_side = req
+        .start_side
+        .as_deref()
+        .map(|value| value.trim().to_uppercase());
     let mut commit_sha = req
         .commit_sha
         .as_deref()
@@ -392,6 +435,8 @@ pub async fn create_pull_request_comment(
             .side
             .as_deref()
             .map(|value| value.trim().to_uppercase());
+        start_line = parent_comment.start_line;
+        start_side = parent_comment.start_side;
         commit_sha = parent_comment.commit_sha;
     }
 
@@ -426,6 +471,21 @@ pub async fn create_pull_request_comment(
                 message: "path and line are required when side is provided".to_owned(),
             });
         }
+    }
+
+    if start_line.is_some() != start_side.is_some()
+        || start_line.is_some_and(|line| line <= 0)
+        || start_side
+            .as_deref()
+            .is_some_and(|side| !matches!(side, "LEFT" | "RIGHT"))
+        || (start_line.is_some() && (path.is_none() || line.is_none()))
+    {
+        return Err(OperationError::Invalid {
+            code: "validation_error",
+            message:
+                "A range requires positive start_line and line, path, and LEFT or RIGHT start_side"
+                    .into(),
+        });
     }
 
     if let Some(ref sha) = commit_sha {
@@ -468,6 +528,7 @@ pub async fn create_pull_request_comment(
                 path,
                 line,
                 side.as_deref(),
+                start_line.zip(start_side.as_deref()),
             )
             .await?;
             if let Some(inferred) = inferred {
@@ -492,6 +553,8 @@ pub async fn create_pull_request_comment(
         path: path.as_deref(),
         line,
         side: side.as_deref(),
+        start_line,
+        start_side: start_side.as_deref(),
         commit_sha: commit_sha.as_deref(),
         in_reply_to_comment_id: reply_root,
         expected_revisions: (path.is_some() && req.in_reply_to_comment_id.is_none()).then_some((
@@ -499,7 +562,9 @@ pub async fn create_pull_request_comment(
             pull_request.base_sha.as_str(),
         )),
     };
-    let stored = if pending {
+    let stored = if let Some(review_id) = req.review_id {
+        db::pull_requests::reviews::add_comment_to_pending_review(pool, input, review_id).await
+    } else if pending {
         db::pull_requests::reviews::add_pending_pull_request_comment(pool, input).await
     } else {
         db::pull_requests::reviews::add_pull_request_comment(pool, input).await
@@ -510,93 +575,68 @@ pub async fn create_pull_request_comment(
         return Ok(comment);
     }
 
-    // The users this comment already notifies. A mention of one of them adds nothing.
-    let mut notified = vec![pull_request.author_id];
-    notified.extend(reply_parent.map(|(_, author)| author));
-    let notifies_author = pull_request.author_id != user.id;
-    // The author of the comment that was replied to is notified, even when the reply is
-    // stored under the thread root.
-    let reply_to =
-        reply_parent.filter(|(_, author)| *author != user.id && *author != pull_request.author_id);
-    if notifies_author || reply_to.is_some() || mentions_anyone(&req.body) {
-        // One link serves every notification of this comment.
-        let link = pull_request_comment_link(&owner, &repo, &pull_request, &comment);
-        if notifies_author {
-            let title = format!(
-                "{} commented on pull request #{}",
-                user.username, pull_request.number
-            );
-            let _ = create_and_broadcast_notification(
-                pool,
-                broadcaster,
-                NotificationRequest {
-                    user_id: pull_request.author_id,
-                    actor_id: Some(user.id),
-                    repo_id: Some(repository.id),
-                    kind: "pull_request_comment",
-                    title: &title,
-                    body: Some(&req.body),
-                    link: Some(&link),
-                    metadata: json!({
-                        "repo_owner": owner,
-                        "repo_name": repo,
-                        "pull_number": pull_request.number,
-                        "subject": pull_request.title,
-                        "comment_id": comment.id,
-                        "in_reply_to_comment_id": comment.in_reply_to_comment_id,
-                    }),
-                },
-            )
-            .await;
-        }
-        if let Some((parent_id, parent_author)) = reply_to {
-            let title = format!("{} replied to your pull request comment", user.username);
-            let _ = create_and_broadcast_notification(
-                pool,
-                broadcaster,
-                NotificationRequest {
-                    user_id: parent_author,
-                    actor_id: Some(user.id),
-                    repo_id: Some(repository.id),
-                    kind: "pull_request_comment_reply",
-                    title: &title,
-                    body: Some(&req.body),
-                    link: Some(&link),
-                    metadata: json!({
-                        "repo_owner": owner,
-                        "repo_name": repo,
-                        "pull_number": pull_request.number,
-                        "subject": pull_request.title,
-                        "comment_id": comment.id,
-                        "parent_comment_id": parent_id,
-                    }),
-                },
-            )
-            .await;
-        }
-        notify_mentions(
-            pool,
-            broadcaster,
-            MentionSource {
-                actor: &user,
-                repository: &repository,
-                owner: &owner,
-                repo: &repo,
-                number: pull_request.number,
-                subject: &pull_request.title,
-                link: &link,
-                comment_id: Some(
-                    crate::backend::notifications::mentions::MentionComment::PullRequest(
-                        comment.id,
-                    ),
-                ),
-                old_text: None,
-                text: &req.body,
-                notified: &notified,
-            },
-        )
-        .await;
+    // Public comments notify each real recipient once; pending reviews returned above.
+    let link = pull_request_comment_link(&owner, &repo, &pull_request, &comment);
+    let title = format!(
+        "{} commented on pull request #{}",
+        user.username, pull_request.number
+    );
+    let notice = NotificationRequest {
+        user_id: pull_request.author_id,
+        actor_id: Some(user.id),
+        repo_id: Some(repository.id),
+        kind: "pull_request_comment",
+        title: &title,
+        body: Some(&req.body),
+        link: Some(&link),
+        metadata: json!({"repo_owner":owner,"repo_name":repo,"pull_number":pull_request.number,"subject":pull_request.title,"comment_id":comment.id,"in_reply_to_comment_id":comment.in_reply_to_comment_id}),
+    };
+    let mut notified = Vec::new();
+    if pull_request.author_id != user.id
+        && create_and_broadcast_notification(pool, broadcaster, notice.clone())
+            .await
+            .is_ok()
+    {
+        notified.push(pull_request.author_id);
     }
+    // A direct reply can notify an unsubscribed parent author, but never an ignoring one.
+    if let Some((parent_id, parent_author)) =
+        reply_parent.filter(|(_, author)| *author != user.id && !notified.contains(author))
+    {
+        let title = format!("{} replied to your pull request comment", user.username);
+        if create_and_broadcast_notification(pool,broadcaster,NotificationRequest{
+            user_id:parent_author,actor_id:Some(user.id),repo_id:Some(repository.id),kind:"pull_request_comment_reply",title:&title,body:Some(&req.body),link:Some(&link),
+            metadata:json!({"repo_owner":owner,"repo_name":repo,"pull_number":pull_request.number,"subject":pull_request.title,"comment_id":comment.id,"parent_comment_id":parent_id}),
+        }).await.is_ok() {notified.push(parent_author);}
+    }
+    let subscribers = crate::backend::notifications::create::notify_subscribers(
+        pool,
+        broadcaster,
+        notice,
+        &notified,
+    )
+    .await;
+    notified.extend(subscribers);
+    notify_mentions(
+        pool,
+        broadcaster,
+        MentionSource {
+            actor: &user,
+            repository: &repository,
+            owner: &owner,
+            repo: &repo,
+            number: pull_request.number,
+            subject: &pull_request.title,
+            link: &link,
+            comment_id: Some(
+                crate::backend::notifications::mentions::MentionComment::PullRequest(comment.id),
+            ),
+            old_text: None,
+            text: &req.body,
+            notified: &notified,
+        },
+    )
+    .await;
 
     emit_comment_webhook(
         pool,
@@ -721,11 +761,17 @@ async fn conversation_comment_on_pull(
     let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(pool, comment_id)
         .await
         .map_err(database_error)?
-        .filter(|comment| comment.pull_request_id == pull_request.id && comment.review_id.is_none())
+        .filter(|comment| comment.pull_request_id == pull_request.id)
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Comment not found".to_owned(),
         })?;
+    if in_pending_review(pool, &comment).await? && comment.author_id != user.id {
+        return Err(OperationError::Missing {
+            code: "not_found",
+            message: "Comment not found".into(),
+        });
+    }
     Ok((repository, pull_request, comment))
 }
 
@@ -792,7 +838,7 @@ pub async fn edit_pull_request_comment(
 
     // Only the names the edit adds notify; the others were notified when first written. The
     // author's notice for the comment is not a mention, so the author is not excluded here.
-    if mentions_anyone(&body) {
+    if !in_pending_review(pool, &comment).await? && mentions_anyone(&body) {
         let link = pull_request_comment_link(&owner, &repo, &pull_request, &comment);
         notify_mentions(
             pool,

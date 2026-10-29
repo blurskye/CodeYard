@@ -1,0 +1,12 @@
+
+	mutation RepositoryCreate($input: CreateRepositoryInput!) {
+		createRepository(input: $input) {
+			repository {
+				id
+				name
+				owner { login }
+				url
+			}
+		}
+	}
+	

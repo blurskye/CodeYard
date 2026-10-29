@@ -1,17 +1,19 @@
 //! The local store: the bare repository is a directory on this machine. Each
 //! method runs the matching Git code, moving blocking libgit2 work off the async
 //! threads and turning failures into [`RepoError`]s.
+mod branches;
+mod gists;
 use super::{
-    allowed_merge_methods, editor, BlobBytes, BlobRange, ErrorKind, FileWrite, GitService,
-    MergeMethod, MergeRequest, RepoError, RestackMove, MAX_ARCHIVE_RESPONSE_BYTES,
-    MAX_BLOB_RESPONSE_BYTES,
+    allowed_merge_methods, editor, AsyncMergePublication, BlobBytes, BlobRange, ErrorKind,
+    FileWrite, GitService, MergeMethod, MergeRequest, RepoError, RestackMove,
+    MAX_ARCHIVE_RESPONSE_BYTES, MAX_BLOB_RESPONSE_BYTES,
 };
 use crate::backend::{
     db,
     git::{
         self, repository::process, BlobContent, BranchStatus, CiCommit, CiWorkflowFile,
-        CiWorkflowSource, CommitFilter, CommitInfo, ContributorInfo, DiffInfo, FileBlame, FileList,
-        LanguageStat, RepoInfo, TagInfo, TreeEntry, WeekChanges,
+        CiWorkflowSource, CommitComparison, CommitFilter, CommitInfo, ContributorInfo, DiffInfo,
+        FileBlame, FileList, LanguageStat, RepoInfo, TagInfo, TreeEntry, WeekChanges,
     },
     repositories::{
         access, languages,
@@ -23,10 +25,13 @@ use crate::backend::{
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{LazyLock, Mutex, MutexGuard},
+    sync::{Arc, LazyLock, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
 use uuid::Uuid;
+
+mod exports;
+mod imports;
 
 /// Tries to remove a repository directory this many times. A Git process that is
 /// still writing into it can make the first attempt fail.
@@ -115,7 +120,7 @@ async fn live_read(
                 access::AccessError::Unavailable => RepoError::authority_unavailable(),
                 _ => RepoError::new(ErrorKind::Invalid, "repository read denied"),
             })?;
-    if !access::can_read(pool, Some(&user), &repository)
+    if !access::can_read_git(pool, Some(&user), &repository)
         .await
         .map_err(|_| RepoError::authority_unavailable())?
         || !repository_matches_path(&repository, path, node_id)
@@ -146,8 +151,19 @@ async fn live_write(
     if !repository_matches_path(&repository, path, node_id) {
         return Err(RepoError::write_denied());
     }
+    checked_branch_write(pool, &repository, &user, branch, history).await?;
+    Ok(repository)
+}
+
+async fn checked_branch_write(
+    pool: &db::DbPool,
+    repository: &db::models::Repository,
+    user: &db::models::User,
+    branch: Option<&BranchWrite<'_>>,
+    history: &History<'_>,
+) -> Result<(), RepoError> {
     if let Some(write) = branch {
-        match check_branch_write(pool, &repository, &user, write, history).await {
+        match check_branch_write(pool, repository, user, write, history).await {
             Ok(_) => {}
             Err(Refusal::Blocked(MERGE_COMMIT_BLOCKED)) => {
                 return Err(RepoError::merge_commit_blocked())
@@ -156,7 +172,56 @@ async fn live_write(
             Err(Refusal::Unavailable) => return Err(RepoError::authority_unavailable()),
         }
     }
-    Ok(repository)
+    Ok(())
+}
+
+async fn live_pull_head_write(
+    pool: &db::DbPool,
+    (head_id, base_id, actor): (i64, i64, i64),
+    request: &super::PullBranchUpdate,
+    target: &LocalStore,
+    branch: Option<&BranchWrite<'_>>,
+    history: &History<'_>,
+) -> Result<db::models::Repository, RepoError> {
+    let user = db::users::accounts::get_user_by_id(pool, actor)
+        .await
+        .map_err(|_| RepoError::authority_unavailable())?
+        .ok_or_else(RepoError::write_denied)?;
+    let head = access::current_repository(pool, head_id)
+        .await
+        .map_err(|error| match error {
+            access::AccessError::Unavailable => RepoError::authority_unavailable(),
+            _ => RepoError::write_denied(),
+        })?;
+    let base = access::current_repository(pool, base_id)
+        .await
+        .map_err(|error| match error {
+            access::AccessError::Unavailable => RepoError::authority_unavailable(),
+            _ => RepoError::write_denied(),
+        })?;
+    let pull = db::pull_requests::records::get_pull_request_by_id(pool, request.pull_request_id)
+        .await
+        .map_err(|_| RepoError::authority_unavailable())?
+        .ok_or_else(|| RepoError::new(ErrorKind::Conflict, "Pull request changed"))?;
+    if pull.repo_id != base_id
+        || pull.head_repo_id != Some(head_id)
+        || pull.head_branch != request.branch
+        || pull.base_branch != request.base_branch
+        || pull.state != "open"
+    {
+        return Err(RepoError::new(ErrorKind::Conflict, "Pull request changed"));
+    }
+    if !repository_matches_path(&head, target.path(), target.node_id)
+        || !crate::backend::repositories::pull_requests::maintainer_edit::can_update_head(
+            pool, &user, &base, &head, &pull,
+        )
+        .await
+        .map_err(|_| RepoError::authority_unavailable())?
+    {
+        return Err(RepoError::write_denied());
+    }
+    checked_branch_write(pool, &head, &user, branch, history).await?;
+    Ok(head)
 }
 
 /// Records a branch update made by the web, the API or a merge as profile activity, and
@@ -353,8 +418,8 @@ fn ensure_pull_head_room(held: git::RefsInUse, reference: &str) -> Result<(), Re
         held,
         &[reference],
         "pull request heads",
-        git::MAX_MIRROR_REFS - git::MAX_REPOSITORY_REFS,
-        git::MAX_MIRROR_REF_BYTES - git::MAX_REPOSITORY_REF_BYTES,
+        git::MAX_PULL_HEAD_REFS,
+        git::MAX_PULL_HEAD_REF_BYTES,
     )
 }
 
@@ -409,6 +474,165 @@ impl LocalStore {
         ensure_ref_room(held, &[reference])
     }
 
+    pub(super) async fn branch_publication(
+        &self,
+        repo_id: i64,
+        reference: &str,
+    ) -> Result<Option<git::PublicationRecord>, RepoError> {
+        let _lock = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
+        let reference = reference.to_owned();
+        self.blocking(move |path| {
+            let _held = _lock;
+            git::read_branch_publication(path, repo_id, &reference)
+        })
+        .await
+    }
+
+    async fn begin_branch_change(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        writes: &[&BranchWrite<'_>],
+        publication: &Arc<git::locks::PublicationGuard>,
+        prepared_repository: Option<&Path>,
+    ) -> Result<Arc<RefChange>, RepoError> {
+        let (repository, user) =
+            access::check_write(pool, repo_id, actor)
+                .await
+                .map_err(|error| match error {
+                    access::AccessError::Unavailable => RepoError::authority_unavailable(),
+                    _ => RepoError::write_denied(),
+                })?;
+        if !repository_matches_path(&repository, self.path(), self.node_id) {
+            return Err(RepoError::write_denied());
+        }
+        let updates = writes
+            .iter()
+            .map(|write| {
+                Ok(git::PublicationUpdate {
+                    reference: git::branch_ref(write.branch)
+                        .ok_or_else(|| super::invalid_ref("branch"))?,
+                    old: write.old.map(str::to_owned),
+                    new: write.new.map(str::to_owned),
+                })
+            })
+            .collect::<Result<Vec<_>, RepoError>>()?;
+        let change = Arc::new(begin_ref_change(pool, repo_id, self.path(), self.node_id).await?);
+        if !updates.is_empty() {
+            let held = (publication.clone(), change.clone());
+            self.blocking(move |path| {
+                let _held = held;
+                git::prepare_branch_publications(
+                    path,
+                    repo_id,
+                    git::PublicationActor::User(actor),
+                    &user.username,
+                    &updates,
+                )
+            })
+            .await?;
+        }
+        // Preparing a large push can take time. Its intent is not permission to publish after
+        // access or branch policy changed while the metadata objects were being written.
+        // A cross-repository update's objects remain in its prepared repository until import.
+        let history = History::Stored {
+            repository: prepared_repository.unwrap_or(self.path()),
+        };
+        for write in writes {
+            live_write(
+                pool,
+                repo_id,
+                actor,
+                Some(write),
+                &history,
+                self.path(),
+                self.node_id,
+            )
+            .await?;
+        }
+        Ok(change)
+    }
+
+    pub(super) async fn git_tree(
+        &self,
+        revision: &str,
+        recursive: bool,
+    ) -> Result<git::objects::TreeObject, RepoError> {
+        let revision = revision.to_owned();
+        self.blocking(move |path| git::objects::read_tree(path, &revision, recursive))
+            .await
+    }
+
+    pub(super) async fn git_object_kind(&self, sha: &str) -> Result<String, RepoError> {
+        let sha = sha.to_owned();
+        self.blocking(move |path| git::objects::object_kind(path, &sha))
+            .await
+    }
+
+    pub(super) async fn git_tag(&self, sha: &str) -> Result<git::objects::TagObject, RepoError> {
+        let sha = sha.to_owned();
+        self.blocking(move |path| git::objects::read_tag(path, &sha))
+            .await
+    }
+
+    pub(super) async fn write_git_object(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        input: git::objects::ObjectWrite,
+        bytes: &[u8],
+    ) -> Result<String, RepoError> {
+        let limit = if matches!(input, git::objects::ObjectWrite::Blob) {
+            git::objects::MAX_BLOB_WRITE_BYTES
+        } else {
+            0
+        };
+        if bytes.len() > limit {
+            return Err(RepoError::response_too_large());
+        }
+        let _lock = git::locks::lock(self.path()).await;
+        let repository = live_write(
+            pool,
+            repo_id,
+            actor,
+            None,
+            &History::SingleCommit,
+            self.path(),
+            self.node_id,
+        )
+        .await?;
+        let bytes = bytes.to_vec();
+        let sha = self
+            .blocking(move |path| git::objects::write(path, input, &bytes))
+            .await?;
+        // An object no ref names is not in any replica pack. In a replicated repository a
+        // hidden ref keeps it, and the ref change makes replicas copy it like any other
+        // accepted write. A single server keeps it until Git prunes unreachable objects.
+        let reference = format!("refs/codeyard/objects/{sha}");
+        if repository.storage_node_id.is_some()
+            && !self.mirror_refs().await?.contains_key(&reference)
+        {
+            let held = self.blocking(git::retained_objects_in_use).await?;
+            ensure_room(
+                held,
+                &[&reference],
+                "Git-data objects that no branch or tag names",
+                git::MAX_RETAINED_OBJECT_REFS,
+                git::MAX_RETAINED_OBJECT_REF_BYTES,
+            )?;
+            let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
+            git::publish_ref_create(self.path(), &reference, &sha)
+                .await
+                .map_err(RepoError::from)?;
+        }
+        refresh_storage_size(pool.clone(), repo_id, self.clone());
+        Ok(sha)
+    }
+
     // ----- Opening and lifecycle -----
 
     pub(super) async fn create(
@@ -449,15 +673,16 @@ impl LocalStore {
             .map_err(RepoError::from)
     }
 
-    pub(super) async fn initialize_fork(
+    pub(super) async fn initialize_copy(
         &self,
         pool: &db::DbPool,
         repo_id: i64,
         source_repo_id: i64,
         actor: i64,
         source: &LocalStore,
-        default_branch: &str,
+        options: &super::CopyOptions,
     ) -> Result<(), RepoError> {
+        let default_branch = options.default_branch.as_str();
         // The row is already discoverable. Keep copied objects outside its live path
         // until the source-access check, on the same filesystem for atomic publication.
         let temporary = tempfile::Builder::new()
@@ -468,10 +693,76 @@ impl LocalStore {
                     .ok_or_else(|| unavailable("Invalid storage path"))?,
             )
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
-        git::initialize_repository(temporary.path(), Some(source.path()), default_branch)
+        git::initialize_repository_copy(
+            temporary.path(),
+            Some(source.path()),
+            default_branch,
+            options.default_branch_only,
+        )
+        .await
+        .map_err(RepoError::from)?;
+        if options.template {
+            let user = db::users::accounts::get_user_by_id(pool, actor)
+                .await
+                .map_err(RepoError::from)?
+                .ok_or_else(RepoError::write_denied)?;
+            let email = user
+                .email
+                .unwrap_or_else(|| format!("{}@users.noreply", user.username));
+            git::rewrite_template_history(
+                temporary.path(),
+                default_branch,
+                (&user.username, &email),
+            )
             .await
             .map_err(RepoError::from)?;
+        }
         live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
+        if options.template
+            && !db::repositories::records::get_repository_by_id(pool, source_repo_id)
+                .await
+                .map_err(RepoError::from)?
+                .is_some_and(|repo| repo.is_template)
+        {
+            return Err(RepoError::new(
+                ErrorKind::Invalid,
+                "Source is not a template",
+            ));
+        }
+        let _publication = git::locks::lock(self.path()).await;
+        // The new row is not yet readable to its creator: a gist fork reserves its gist
+        // only after storage exists. Publication only has to match the row still placed here.
+        let destination = access::current_repository(pool, repo_id)
+            .await
+            .map_err(|error| match error {
+                access::AccessError::Unavailable => RepoError::authority_unavailable(),
+                _ => RepoError::write_denied(),
+            })?;
+        if !repository_matches_path(&destination, self.path(), self.node_id) {
+            return Err(RepoError::write_denied());
+        }
+        let copied = Self::new(
+            temporary
+                .path()
+                .to_str()
+                .ok_or_else(|| unavailable("Invalid copy path"))?,
+            None,
+        )
+        .refs()
+        .await?;
+        let owner = db::repositories::records::repository_owner_names(pool, &[repo_id])
+            .await
+            .map_err(RepoError::from)?
+            .remove(&repo_id)
+            .ok_or_else(|| unavailable("Repository owner unavailable"))?;
+        crate::backend::repositories::releases::immutable::check_namespace(
+            pool,
+            &destination,
+            &owner,
+            &destination.name,
+            &copied,
+        )
+        .await?;
         tokio::fs::rename(temporary.path(), self.path())
             .await
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
@@ -507,6 +798,10 @@ impl LocalStore {
             }
         }
         unreachable!("the last attempt returns")
+    }
+
+    pub(super) async fn retire(&self) -> Result<(), RepoError> {
+        self.blocking(git::mirror::retire).await
     }
 
     pub(super) async fn exists(&self) -> bool {
@@ -712,6 +1007,16 @@ impl LocalStore {
             .map_err(RepoError::from)
     }
 
+    pub(super) async fn pull_request_commits(
+        &self,
+        base: &str,
+        head: &str,
+    ) -> Result<(u64, Vec<CommitInfo>), RepoError> {
+        git::pull_request_commits(self.path(), base, head)
+            .await
+            .map_err(RepoError::from)
+    }
+
     pub(super) async fn commits_between(
         &self,
         base_ref: &str,
@@ -719,6 +1024,17 @@ impl LocalStore {
         limit: usize,
     ) -> Result<Vec<CommitInfo>, RepoError> {
         git::list_range_commits(self.path(), base_ref, head_ref, limit)
+            .await
+            .map_err(RepoError::from)
+    }
+
+    pub(super) async fn release_history(
+        &self,
+        head: &str,
+        previous: Option<&str>,
+        exclude_tag: &str,
+    ) -> Result<git::ReleaseHistory, RepoError> {
+        git::release_history(self.path(), head, previous, exclude_tag)
             .await
             .map_err(RepoError::from)
     }
@@ -769,6 +1085,16 @@ impl LocalStore {
             .map_err(RepoError::from)
     }
 
+    pub(super) async fn diff_stats(
+        &self,
+        base_ref: &str,
+        head_ref: &str,
+    ) -> Result<DiffInfo, RepoError> {
+        git::get_diff_stats(self.path(), base_ref, head_ref)
+            .await
+            .map_err(RepoError::from)
+    }
+
     pub(super) async fn diff_file(
         &self,
         base_ref: &str,
@@ -801,6 +1127,26 @@ impl LocalStore {
         git::compare_repositories(self.path(), source.path(), base_ref, head_ref)
             .await
             .map_err(RepoError::from)
+    }
+
+    pub(super) async fn comparison_from(
+        &self,
+        source: &LocalStore,
+        base_ref: &str,
+        head_ref: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<CommitComparison, RepoError> {
+        git::compare_commits(
+            self.path(),
+            source.path(),
+            base_ref,
+            head_ref,
+            offset,
+            limit,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn tags(&self) -> Result<Vec<TagInfo>, RepoError> {
@@ -842,6 +1188,15 @@ impl LocalStore {
 
     pub(super) async fn contributors(&self) -> Result<Vec<ContributorInfo>, RepoError> {
         git::get_contributors(self.path())
+            .await
+            .map_err(RepoError::from)
+    }
+
+    pub(super) async fn commit_statistics(
+        &self,
+        branch: &str,
+    ) -> Result<git::CommitStatistics, RepoError> {
+        git::get_commit_statistics(self.path(), branch)
             .await
             .map_err(RepoError::from)
     }
@@ -1046,7 +1401,9 @@ impl LocalStore {
         name: &str,
         sha: &str,
     ) -> Result<String, RepoError> {
-        let _lock = git::locks::lock(self.path()).await;
+        let publication = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
         let reference = git::branch_ref(name).ok_or_else(|| super::invalid_ref("branch"))?;
         self.ensure_room_for_ref(&reference).await?;
         let (owned_name, owned_sha) = (name.to_owned(), sha.to_owned());
@@ -1073,8 +1430,11 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
-        git::publish_ref_create(self.path(), &reference, &target)
+        let _change = self
+            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
+            .await?;
+        publication
+            .scope(git::publish_ref_create(self.path(), &reference, &target))
             .await
             .map_err(RepoError::from)?;
         let followup = self
@@ -1099,6 +1459,108 @@ impl LocalStore {
         Ok(target)
     }
 
+    pub(super) async fn update_reference(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        reference: &str,
+        sha: &str,
+        force: bool,
+    ) -> Result<(String, String), RepoError> {
+        let publication = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
+        let (owned_reference, owned_sha) = (reference.to_owned(), sha.to_owned());
+        let (old, new, commits) = self
+            .blocking(move |path| git::objects::ref_target(path, &owned_reference, &owned_sha))
+            .await?;
+        if !force
+            && old != new
+            && (!commits
+                || !git::commit_is_ancestor(self.path(), &old, &new)
+                    .await
+                    .map_err(RepoError::from)?)
+        {
+            return Err(RepoError::new(
+                ErrorKind::Invalid,
+                "Update is not a fast forward",
+            ));
+        }
+        let branch = reference.strip_prefix("refs/heads/");
+        let write = branch.map(|branch| BranchWrite {
+            branch,
+            old: Some(&old),
+            new: Some(&new),
+            via: WriteVia::Direct,
+        });
+        let repository = live_write(
+            pool,
+            repo_id,
+            actor,
+            write.as_ref(),
+            &History::Stored {
+                repository: self.path(),
+            },
+            self.path(),
+            self.node_id,
+        )
+        .await?;
+        crate::backend::repositories::releases::immutable::check_current_tag_updates(
+            pool,
+            &repository,
+            &[
+                crate::backend::repositories::git_sessions::validation::RefUpdate {
+                    reference: reference.to_owned(),
+                    old: old.clone(),
+                    new: new.clone(),
+                },
+            ],
+        )
+        .await?;
+        if reference.starts_with("refs/tags/") {
+            let replacement = (reference.to_owned(), new.clone());
+            self.blocking(move |path| git::check_tag_budget(path, None, &[replacement]))
+                .await?;
+        }
+        let writes = write.as_ref().into_iter().collect::<Vec<_>>();
+        let _change = self
+            .begin_branch_change(pool, repo_id, actor, &writes, &publication, None)
+            .await?;
+        publication
+            .scope(git::publish_ref(
+                self.path(),
+                "update reference",
+                reference,
+                Some(&new),
+                &old,
+            ))
+            .await
+            .map_err(RepoError::from)?;
+        let followup = self
+            .after_ref_change(
+                pool,
+                repo_id,
+                actor,
+                &[(reference.to_owned(), old.clone(), new.clone())],
+            )
+            .await;
+        if let Some(branch) = branch {
+            record_branch_update(
+                pool,
+                repo_id,
+                actor,
+                (self.path(), self.node_id),
+                branch,
+                Some(&old),
+                &new,
+            )
+            .await;
+        }
+        followup?;
+        Ok((old, new))
+    }
+
     pub(super) async fn delete_branch(
         &self,
         pool: &db::DbPool,
@@ -1106,7 +1568,9 @@ impl LocalStore {
         actor: i64,
         name: &str,
     ) -> Result<(), RepoError> {
-        let _lock = git::locks::lock(self.path()).await;
+        let publication = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
         if git::repository::default_branch(self.path())
             .await
             .map_err(RepoError::from)?
@@ -1139,8 +1603,11 @@ impl LocalStore {
         )
         .await?;
         let reference = git::branch_ref(name).ok_or_else(|| super::invalid_ref("branch"))?;
-        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
-        git::publish_ref_delete(self.path(), &reference, &old)
+        let _change = self
+            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
+            .await?;
+        publication
+            .scope(git::publish_ref_delete(self.path(), &reference, &old))
             .await
             .map_err(RepoError::from)?;
         self.after_ref_change(
@@ -1191,7 +1658,7 @@ impl LocalStore {
                 )
             })
             .await?;
-        live_write(
+        let repository = live_write(
             pool,
             repo_id,
             actor,
@@ -1199,6 +1666,18 @@ impl LocalStore {
             &History::SingleCommit,
             self.path(),
             self.node_id,
+        )
+        .await?;
+        crate::backend::repositories::releases::immutable::check_current_tag_updates(
+            pool,
+            &repository,
+            &[
+                crate::backend::repositories::git_sessions::validation::RefUpdate {
+                    reference: reference.clone(),
+                    old: editor::ZERO.to_owned(),
+                    new: tag.sha.clone(),
+                },
+            ],
         )
         .await?;
         let replacement = (reference.clone(), tag.sha.clone());
@@ -1230,7 +1709,7 @@ impl LocalStore {
         let old = self
             .blocking(move |repo| git::prepare_delete_tag(repo, &owned_name))
             .await?;
-        live_write(
+        let repository = live_write(
             pool,
             repo_id,
             actor,
@@ -1241,6 +1720,18 @@ impl LocalStore {
         )
         .await?;
         let reference = git::tag_ref(name).ok_or_else(|| super::invalid_ref("tag"))?;
+        crate::backend::repositories::releases::immutable::check_current_tag_updates(
+            pool,
+            &repository,
+            &[
+                crate::backend::repositories::git_sessions::validation::RefUpdate {
+                    reference: reference.clone(),
+                    old: old.clone(),
+                    new: editor::ZERO.to_owned(),
+                },
+            ],
+        )
+        .await?;
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::publish_ref_delete(self.path(), &reference, &old)
             .await
@@ -1280,8 +1771,11 @@ impl LocalStore {
         repo_id: i64,
         actor: i64,
         prepared: &editor::PreparedFile,
+        dependency_publication: Option<&db::repositories::dependencies::Publication>,
     ) -> Result<CommitInfo, RepoError> {
-        let _lock = git::locks::lock(self.path()).await;
+        let publication = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
         if prepared.expected.is_none() {
             // The save creates the branch.
             self.ensure_room_for_ref(&prepared.reference).await?;
@@ -1292,20 +1786,88 @@ impl LocalStore {
             new: Some(prepared.commit.sha.as_str()),
             via: WriteVia::Direct,
         };
-        // The editor's commit has the expected tip as its only parent, or none, so it adds no
-        // merge commit.
-        live_write(
+        // An update adds one prepared commit. A new branch must also satisfy rules for
+        // the source history that it brings into the destination.
+        let history = if prepared.new_branch {
+            History::Stored {
+                repository: self.path(),
+            }
+        } else {
+            History::SingleCommit
+        };
+        let repository = live_write(
             pool,
             repo_id,
             actor,
             Some(&write),
-            &History::SingleCommit,
+            &history,
             self.path(),
             self.node_id,
         )
         .await?;
-        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
-        let commit = editor::publish(self.path(), prepared).await?;
+        if prepared.web_commit {
+            let settings =
+                db::organizations::settings::repository_requires_web_signoff(pool, repo_id)
+                    .await
+                    .map_err(|_| RepoError::authority_unavailable())?
+                    .ok_or_else(RepoError::write_denied)?;
+            if settings
+                && !db::organizations::settings::has_signoff(
+                    &prepared.commit.message,
+                    &prepared.commit.author_name,
+                    &prepared.commit.author_email,
+                )
+            {
+                return Err(RepoError::new(
+                    ErrorKind::Invalid,
+                    db::organizations::settings::required_signoff_message(
+                        &prepared.commit.author_name,
+                        &prepared.commit.author_email,
+                    ),
+                ));
+            }
+        }
+        if let Some(update) = dependency_publication {
+            crate::backend::repositories::dependencies::check_publication(
+                actor,
+                &repository,
+                prepared,
+                update,
+                &self.refs().await?,
+            )?;
+            db::repositories::dependencies::plan_update(
+                pool,
+                &update.job,
+                &update.key,
+                &update.update,
+            )
+            .await
+            .map_err(crate::backend::repositories::dependencies::store_error)?;
+        }
+        // A saved file is scanned like a push. It must not carry a secret that push protection
+        // blocks, even though it never goes through receive-pack.
+        let bypasses =
+            crate::backend::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+                pool,
+                &repository,
+                actor,
+                self.path(),
+                None,
+                std::slice::from_ref(&prepared.commit.sha),
+            )
+            .await
+            .map_err(RepoError::from)?;
+        let _change = self
+            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
+            .await?;
+        let commit = publication
+            .scope(editor::publish(self.path(), prepared))
+            .await?;
+        for hash in bypasses {
+            db::secret_scanning::use_bypass(pool, repo_id, actor, &hash, chrono::Utc::now())
+                .await
+                .map_err(RepoError::from)?;
+        }
         let followup = self
             .after_ref_change(
                 pool,
@@ -1343,14 +1905,31 @@ impl LocalStore {
         actor: i64,
         moves: &[crate::backend::webhooks::ref_changes::RefMove],
     ) -> Result<(), RepoError> {
+        let activity = crate::backend::repositories::activity::record_moves(
+            pool,
+            repo_id,
+            actor,
+            self.path(),
+            moves,
+        )
+        .await
+        .map_err(|error| {
+            tracing::error!(repo_id,%error,"could not record accepted ref activity");
+            RepoError::applied_followup_failed()
+        });
         let metadata = self.synchronize_default_branch(pool, repo_id).await;
         refresh_storage_size(pool.clone(), repo_id, self.clone());
         let repository = db::repositories::records::get_repository_by_id(pool, repo_id)
             .await
             .map_err(|_| RepoError::applied_followup_failed())?
             .ok_or_else(RepoError::applied_followup_failed)?;
+        crate::backend::repositories::dependencies::observe_refs(pool, &repository, moves).await;
         let accepted = async {
             for (reference, _, new) in moves.iter().filter(|(_, _, new)| new != editor::ZERO) {
+                // Web and API saves get the same incremental secret scan that a push gets.
+                db::secret_scanning::enqueue(pool, repo_id, new, actor)
+                    .await
+                    .map_err(|_| RepoError::applied_followup_failed())?;
                 match self.commit(new).await {
                     Ok(commit) => db::ci::record_ci_accepted_push(
                         pool,
@@ -1375,9 +1954,10 @@ impl LocalStore {
             actor,
             self.path(),
             moves,
-        );
+        )
+        .await;
         git::maintenance::after_push(repo_id, self.path().to_owned());
-        accepted.and(metadata)
+        accepted.and(metadata).and(activity)
     }
 
     /// Git has already published the branch. A metadata failure must not imply rollback.
@@ -1416,11 +1996,175 @@ impl LocalStore {
         })
     }
 
+    pub(super) async fn update_pull_branch(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        source: (i64, &LocalStore),
+        request: &super::PullBranchUpdate,
+    ) -> Result<String, RepoError> {
+        live_read(pool, source.0, actor, source.1.path(), source.1.node_id).await?;
+        live_pull_head_write(
+            pool,
+            (repo_id, source.0, actor),
+            request,
+            self,
+            None,
+            &History::SingleCommit,
+        )
+        .await?;
+        let committer = git::Person {
+            name: &request.name,
+            email: &request.email,
+            date: None,
+        };
+        let prepared = git::repository::prepare_pull_branch_update(
+            self.path(),
+            source.1.path(),
+            &request.head,
+            &request.base,
+            &committer,
+        )
+        .await
+        .map_err(RepoError::from)?;
+        let publication = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
+        live_read(pool, source.0, actor, source.1.path(), source.1.node_id).await?;
+        live_pull_head_write(
+            pool,
+            (repo_id, source.0, actor),
+            request,
+            self,
+            None,
+            &History::SingleCommit,
+        )
+        .await?;
+        let current = git::repository::current_branch_head(self.path(), &request.branch)
+            .await
+            .map_err(RepoError::from)?;
+        if current.as_deref() == Some(prepared.head()) {
+            return Ok(prepared.head().to_owned());
+        }
+        if current.as_deref() != Some(request.head.as_str()) {
+            return Err(RepoError::from(anyhow::Error::new(
+                git::repository::PullHeadConflict,
+            )));
+        }
+        let write = BranchWrite {
+            branch: &request.branch,
+            old: Some(&request.head),
+            new: Some(prepared.head()),
+            via: WriteVia::Direct,
+        };
+        live_pull_head_write(
+            pool,
+            (repo_id, source.0, actor),
+            request,
+            self,
+            Some(&write),
+            &History::Stored {
+                repository: prepared.path(),
+            },
+        )
+        .await?;
+        // This PR-scoped consent is deliberately not general repository write access.
+        let user = db::users::accounts::get_user_by_id(pool, actor)
+            .await
+            .map_err(|_| RepoError::authority_unavailable())?
+            .ok_or_else(RepoError::write_denied)?;
+        let _change = Arc::new(begin_ref_change(pool, repo_id, self.path(), self.node_id).await?);
+        let updates = vec![git::PublicationUpdate {
+            reference: git::branch_ref(&request.branch)
+                .ok_or_else(|| super::invalid_ref("branch"))?,
+            old: Some(request.head.clone()),
+            new: Some(prepared.head().to_owned()),
+        }];
+        let held = (publication.clone(), _change.clone());
+        self.blocking(move |path| {
+            let _held = held;
+            git::prepare_branch_publications(
+                path,
+                repo_id,
+                git::PublicationActor::User(actor),
+                &user.username,
+                &updates,
+            )
+        })
+        .await?;
+        // Recheck the exact pull grant and branch policy after preparing publication evidence.
+        live_pull_head_write(
+            pool,
+            (repo_id, source.0, actor),
+            request,
+            self,
+            Some(&write),
+            &History::Stored {
+                repository: prepared.path(),
+            },
+        )
+        .await?;
+        live_read(pool, source.0, actor, source.1.path(), source.1.node_id).await?;
+        publication
+            .scope(git::repository::publish_pull_branch_update(
+                self.path(),
+                &request.branch,
+                &request.head,
+                &prepared,
+            ))
+            .await
+            .map_err(RepoError::from)?;
+        let followup = self
+            .after_ref_change(
+                pool,
+                repo_id,
+                actor,
+                &[(
+                    format!("refs/heads/{}", request.branch),
+                    request.head.clone(),
+                    prepared.head().to_owned(),
+                )],
+            )
+            .await;
+        record_branch_update(
+            pool,
+            repo_id,
+            actor,
+            (self.path(), self.node_id),
+            &request.branch,
+            Some(&request.head),
+            prepared.head(),
+        )
+        .await;
+        followup?;
+        Ok(prepared.head().to_owned())
+    }
+
+    pub(super) async fn prepare_revert(
+        &self,
+        request: &super::RevertRequest,
+    ) -> Result<String, RepoError> {
+        let path = self.path();
+        git::prepare_revert(
+            path,
+            (&request.current, &request.merged, &request.before),
+            (&request.message, &request.name, &request.email),
+        )
+        .await
+        .map_err(RepoError::from)
+    }
+
     pub(super) async fn prepare_merge(&self, request: &MergeRequest) -> Result<String, RepoError> {
         let path = self.path();
         let committer = git::Person {
             name: &request.name,
             email: &request.email,
+            date: None,
+        };
+        let author = git::Person {
+            name: request.author_name.as_deref().unwrap_or(&request.name),
+            email: request.author_email.as_deref().unwrap_or(&request.email),
             date: None,
         };
         let merged = match request.method {
@@ -1430,28 +2174,18 @@ impl LocalStore {
                     &request.head,
                     &request.base,
                     &request.message,
+                    &author,
                     &committer,
                 )
                 .await
             }
             MergeMethod::Squash => {
-                let author = match (&request.author_name, &request.author_email) {
-                    (Some(name), Some(email)) => git::Person {
-                        name: name.as_str(),
-                        email: email.as_str(),
-                        date: None,
-                    },
-                    _ => git::Person {
-                        name: &request.name,
-                        email: &request.email,
-                        date: None,
-                    },
-                };
                 git::prepare_squash(
                     path,
                     &request.head,
                     &request.base,
                     &request.message,
+                    request.squash_body.as_deref(),
                     &author,
                     &committer,
                 )
@@ -1492,13 +2226,73 @@ impl LocalStore {
         base: &str,
         result: &str,
         method: MergeMethod,
+        via: WriteVia,
     ) -> Result<(), RepoError> {
-        let _lock = git::locks::lock(self.path()).await;
+        self.publish_merge_authorized(
+            pool,
+            repo_id,
+            actor,
+            heads,
+            base_branch,
+            base,
+            result,
+            method,
+            via,
+            None,
+        )
+        .await
+    }
+    pub(super) async fn publish_async_merge(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        request: &AsyncMergePublication,
+    ) -> Result<(), RepoError> {
+        let heads: Vec<_> = request
+            .heads
+            .iter()
+            .map(|(name, sha)| (name.as_str(), sha.as_str()))
+            .collect();
+        self.publish_merge_authorized(
+            pool,
+            repo_id,
+            actor,
+            &heads,
+            &request.base_branch,
+            &request.base,
+            &request.result,
+            request.method,
+            WriteVia::Merge,
+            Some(request),
+        )
+        .await
+    }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Publication holds explicit authority, branch CAS inputs, and the optional durable request."
+    )]
+    async fn publish_merge_authorized(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        heads: &[(&str, &str)],
+        base_branch: &str,
+        base: &str,
+        result: &str,
+        method: MergeMethod,
+        via: WriteVia,
+        authority: Option<&AsyncMergePublication>,
+    ) -> Result<(), RepoError> {
+        let publication = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
         let write = BranchWrite {
             branch: base_branch,
             old: Some(base),
             new: Some(result),
-            via: WriteVia::Merge,
+            via,
         };
         let repository = live_write(
             pool,
@@ -1514,11 +2308,52 @@ impl LocalStore {
         .await?;
         // The method may have been turned off after the merge was prepared. The record read under
         // the lock decides.
-        if !allowed_merge_methods(&repository).contains(&method) {
+        if via == WriteVia::Merge && !allowed_merge_methods(&repository).contains(&method) {
             return Err(RepoError::merge_method_not_allowed());
         }
-        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
-        git::publish_merge(self.path(), heads, base_branch, base, result)
+        let _change = self
+            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
+            .await?;
+        if let Some(authority) = authority {
+            db::users::tokens::token_user(pool, authority.token_id, true)
+                .await
+                .map_err(|_| RepoError::authority_unavailable())?
+                .filter(|u| u.id == actor)
+                .ok_or_else(RepoError::write_denied)?;
+            let request = db::pull_requests::async_merge::get(
+                pool,
+                repo_id,
+                authority.pull_request_id,
+                &authority.uuid,
+            )
+            .await
+            .map_err(|_| RepoError::authority_unavailable())?
+            .filter(|r| r.status == "pending" && r.token_id == Some(authority.token_id))
+            .ok_or_else(RepoError::write_denied)?;
+            let pull =
+                db::pull_requests::records::get_pull_request_by_id(pool, authority.pull_request_id)
+                    .await
+                    .map_err(|_| RepoError::authority_unavailable())?
+                    .filter(|p| {
+                        p.repo_id == repo_id && p.state == "open" && !p.merged && !p.is_draft
+                    })
+                    .ok_or_else(RepoError::write_denied)?;
+            if request.request["expected_head"].as_str() != Some(pull.head_sha.as_str())
+                || request.request["expected_base"].as_str() != Some(pull.base_sha.as_str())
+                || request.request["expected_base_branch"].as_str()
+                    != Some(pull.base_branch.as_str())
+            {
+                return Err(RepoError::write_denied());
+            }
+        }
+        publication
+            .scope(git::publish_merge(
+                self.path(),
+                heads,
+                base_branch,
+                base,
+                result,
+            ))
             .await
             .map_err(RepoError::from)?;
         let followup = self
@@ -1584,7 +2419,9 @@ impl LocalStore {
         base: &str,
         moves: &[RestackMove],
     ) -> Result<(), RepoError> {
-        let _lock = git::locks::lock(self.path()).await;
+        let publication = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
         live_write(
             pool,
             repo_id,
@@ -1633,8 +2470,46 @@ impl LocalStore {
         if current != versions {
             return Err(RepoError::stack_changed());
         }
-        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
-        git::publish_restack(self.path(), base_branch, base, &ref_moves)
+        // Refuse stale user refs before preparing publication-intent refs. The publication
+        // lock keeps these checks stable until the final atomic ref transaction.
+        if git::repository::current_branch_head(self.path(), base_branch)
+            .await
+            .map_err(RepoError::from)?
+            .as_deref()
+            != Some(base)
+        {
+            return Err(RepoError::new(ErrorKind::Conflict, "Restack base changed"));
+        }
+        for restack in moves {
+            if git::repository::current_branch_head(self.path(), &restack.branch)
+                .await
+                .map_err(RepoError::from)?
+                .as_deref()
+                != Some(restack.old.as_str())
+            {
+                return Err(RepoError::new(ErrorKind::Conflict, "Restack head changed"));
+            }
+        }
+        let writes = moves
+            .iter()
+            .map(|restack| BranchWrite {
+                branch: &restack.branch,
+                old: Some(&restack.old),
+                new: Some(&restack.new),
+                via: WriteVia::Direct,
+            })
+            .collect::<Vec<_>>();
+        let references = writes.iter().collect::<Vec<_>>();
+        let _change = self
+            .begin_branch_change(pool, repo_id, actor, &references, &publication, None)
+            .await?;
+        publication
+            .scope(git::publish_restack(
+                self.path(),
+                base_branch,
+                base,
+                &ref_moves,
+            ))
             .await
             .map_err(RepoError::from)?;
         let updates = moves
@@ -1705,6 +2580,11 @@ impl LocalStore {
         if busy {
             return Err(RepoError::replica_busy());
         }
+        // A cancelled caller's Git child may still own the lease after its in-process
+        // counter disappears. Never advertise a replica snapshot before that child exits.
+        let _publication = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
         Ok((self.mirror_refs().await?, self.head_target().await?))
     }
 
@@ -1741,12 +2621,13 @@ impl LocalStore {
             .arg("--git-dir")
             .arg(self.path())
             .args(["pack-objects", "--revs", "--stdout"]);
+        process::limit_memory(&mut command);
         process::stream(command, &mut input, streams.output, streams.errors, false).await
     }
 
     /// Stores a pack from the primary in this repository. Git reads the whole pack, so a
     /// truncated transfer fails here and leaves the refs alone.
-    pub(super) async fn index_pack(&self, pack: &Path) -> Result<(), RepoError> {
+    pub(super) async fn index_pack(&self, pack: &Path, strict: bool) -> Result<(), RepoError> {
         let mut input = tokio::fs::File::open(pack)
             .await
             .map_err(|_| unavailable("Git could not read the replica pack"))?;
@@ -1755,6 +2636,12 @@ impl LocalStore {
             .arg("--git-dir")
             .arg(self.path())
             .args(["index-pack", "--stdin"]);
+        process::limit_memory(&mut command);
+        if strict {
+            // Imported history must be complete. Strict indexing refuses objects that link to
+            // missing ones, which would otherwise be published as refs.
+            command.arg("--strict");
+        }
         let status = process::stream(
             command,
             &mut input,
@@ -1840,9 +2727,6 @@ impl LocalStore {
         Ok(())
     }
 
-    /// Makes an existing branch the default. The database is updated first, so a refused change
-    /// (no administration right, or an archived repository) leaves HEAD where it was. The actor's
-    /// right is checked after the wait for the repository lock, in the same transaction as the update.
     pub(super) async fn set_default_branch(
         &self,
         pool: &db::DbPool,
@@ -1850,25 +2734,314 @@ impl LocalStore {
         actor: i64,
         name: &str,
     ) -> Result<(), RepoError> {
-        // The database/HEAD update and compensation must finish even if the caller disconnects.
-        let (store, pool, name) = (self.clone(), pool.clone(), name.to_owned());
-        tokio::spawn(async move {
-            store
-                .set_default_branch_owned(&pool, repo_id, actor, &name)
-                .await
-        })
-        .await
-        .map_err(|_| unavailable("Default branch update failed"))?
+        self.patch_repository(pool, repo_id, actor, name, Default::default())
+            .await
+            .map(|_| ())
     }
 
-    async fn set_default_branch_owned(
+    /// HEAD is changed before the single metadata transaction, so a Git failure cannot leave
+    /// partially applied metadata. A refused transaction restores the exact previous HEAD.
+    pub(super) async fn transfer_repository(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        new_owner: &str,
+    ) -> Result<db::models::Repository, RepoError> {
+        let (store, pool, new_owner) = (self.clone(), pool.clone(), new_owner.to_owned());
+        tokio::spawn(async move {
+            let _lock = git::locks::lock(store.path()).await;
+            let repository = access::check_admin(&pool, repo_id, actor)
+                .await
+                .map_err(|error| {
+                    if error == access::AccessError::Unavailable {
+                        RepoError::authority_unavailable()
+                    } else {
+                        RepoError::write_denied()
+                    }
+                })?;
+            if !repository_matches_path(&repository, store.path(), store.node_id) {
+                return Err(RepoError::write_denied());
+            }
+            let (target, owner) =
+                crate::backend::repositories::lifecycle::transfer_target(&pool, &new_owner)
+                    .await
+                    .map_err(|error| RepoError::new(ErrorKind::Invalid, error.message))?;
+            crate::backend::repositories::releases::immutable::check_namespace(
+                &pool,
+                &repository,
+                &owner,
+                &repository.name,
+                &store.refs().await?,
+            )
+            .await?;
+            db::repositories::records::transfer_repository_checked(
+                &pool, actor, repo_id, target, &owner,
+            )
+            .await
+            .map_err(|error| {
+                use crate::backend::repositories::lifecycle::{storage_error, LifecycleFailure};
+                let error = storage_error(error);
+                let kind = match error.kind {
+                    LifecycleFailure::Denied => return RepoError::write_denied(),
+                    LifecycleFailure::Conflict => ErrorKind::Conflict,
+                    LifecycleFailure::Invalid => ErrorKind::Invalid,
+                    _ => ErrorKind::Unavailable,
+                };
+                RepoError::new(kind, error.message)
+            })
+        })
+        .await
+        .map_err(|_| unavailable("Repository transfer failed"))?
+    }
+
+    pub(super) async fn configure_dependency_security(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        feature: db::repositories::dependencies::Feature,
+        enabled: bool,
+        private_consent: bool,
+    ) -> Result<(), RepoError> {
+        let (store, pool) = (self.clone(), pool.clone());
+        tokio::spawn(async move {
+            let _lock = git::locks::lock(store.path()).await;
+            live_write(
+                &pool,
+                repo_id,
+                actor,
+                None,
+                &History::SingleCommit,
+                store.path(),
+                store.node_id,
+            )
+            .await?;
+            db::repositories::dependencies::configure(
+                &pool,
+                actor,
+                repo_id,
+                feature,
+                enabled,
+                private_consent,
+            )
+            .await
+            .map_err(crate::backend::repositories::dependencies::store_error)
+        })
+        .await
+        .map_err(|_| unavailable("Dependency security configuration failed"))?
+    }
+
+    /// The tag has already been created through the normal ref pipeline. Only its
+    /// publication-time proof and release SQL are committed under this Git lease.
+    pub(super) async fn mutate_release(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        mutation: crate::backend::repositories::releases::immutable::Mutation,
+        attestation: Option<crate::backend::repositories::releases::integrity::Attestation>,
+    ) -> Result<(db::models::Release, bool), RepoError> {
+        use crate::backend::repositories::releases::immutable::Mutation;
+        mutation.validate()?;
+        let (store, pool) = (self.clone(), pool.clone());
+        tokio::spawn(async move {
+            let _lock = git::locks::lock(store.path()).await;
+            let repository = live_write(
+                &pool,
+                repo_id,
+                actor,
+                None,
+                &History::SingleCommit,
+                store.path(),
+                store.node_id,
+            )
+            .await?;
+            let tag = match &mutation {
+                Mutation::Create { tag, .. } => tag.clone(),
+                Mutation::Update { id, .. } => {
+                    db::releases::get_release(&pool, repo_id, *id)
+                        .await
+                        .map_err(|_| unavailable("Release storage unavailable"))?
+                        .ok_or_else(|| RepoError::new(ErrorKind::NotFound, "Release not found"))?
+                        .release
+                        .tag_name
+                }
+            };
+            let mut target = String::new();
+            let mut tag_oid = String::new();
+            if matches!(&mutation, Mutation::Create { .. }) || attestation.is_some() {
+                let reference = git::tag_ref(&tag).ok_or_else(|| super::invalid_ref("tag"))?;
+                let draft_target = match &mutation {
+                    Mutation::Create {
+                        fields,
+                        draft_target,
+                        ..
+                    } if fields.is_draft && attestation.is_none() => draft_target.clone(),
+                    _ => None,
+                };
+                match (store.refs().await?.remove(&reference), draft_target) {
+                    (Some(oid), _) => {
+                        target = store.commit(&oid).await?.sha;
+                        tag_oid = oid;
+                    }
+                    // A draft whose tag does not exist yet keeps the commit it was saved for.
+                    (None, Some(commit)) => target = store.commit(&commit).await?.sha,
+                    (None, None) => {
+                        return Err(RepoError::new(
+                            ErrorKind::Conflict,
+                            "The release tag changed; retry publication",
+                        ))
+                    }
+                }
+            }
+            // Accept only the local identity or active configured forge nodes,
+            // independently of the signature's self-declared key.
+            let publication = if let Some(attestation) = &attestation {
+                let key = &attestation
+                    .signatures
+                    .first()
+                    .ok_or_else(|| RepoError::new(ErrorKind::Invalid, "Missing release signature"))?
+                    .keyid;
+                let verified = if db::cluster::is_active_node(&pool, key)
+                    .await
+                    .map_err(|_| RepoError::authority_unavailable())?
+                {
+                    db::repositories::immutable_releases::Publication::verify(attestation, key)
+                        .map_err(|_| {
+                            RepoError::new(ErrorKind::Invalid, "Invalid release attestation")
+                        })?
+                } else if store.node_id.flatten().is_none() {
+                    crate::backend::repositories::releases::immutable::verify_local(
+                        attestation,
+                        store.path(),
+                    )
+                    .await?
+                } else {
+                    return Err(RepoError::new(
+                        ErrorKind::Invalid,
+                        "Untrusted release signer",
+                    ));
+                };
+                let predicate = &verified.statement.predicate;
+                if predicate.repository_id != repository.id
+                    || predicate.tag != tag
+                    || predicate.tag_oid != tag_oid
+                    || predicate.commit_sha != target
+                {
+                    return Err(RepoError::new(
+                        ErrorKind::Conflict,
+                        "The release tag changed; retry publication",
+                    ));
+                }
+                Some(verified)
+            } else {
+                None
+            };
+            let result = match mutation {
+                Mutation::Create { tag, fields, .. } => {
+                    db::releases::create_release_with_publication(
+                        &pool,
+                        actor,
+                        repo_id,
+                        &tag,
+                        &target,
+                        &fields,
+                        publication.as_ref(),
+                    )
+                    .await
+                    .map(|release| {
+                        let published = !release.is_draft;
+                        (release, published)
+                    })
+                }
+                Mutation::Update { id, changes } => {
+                    db::releases::update_release_with_publication(
+                        &pool,
+                        actor,
+                        repo_id,
+                        id,
+                        &changes,
+                        publication.as_ref(),
+                    )
+                    .await
+                }
+            };
+            result.map_err(|error| {
+                use db::releases::ReleaseRefusal;
+                let kind = match error.downcast_ref::<ReleaseRefusal>() {
+                    Some(ReleaseRefusal::Denied) => return RepoError::write_denied(),
+                    Some(ReleaseRefusal::NotFound) => ErrorKind::NotFound,
+                    Some(ReleaseRefusal::Conflict) => ErrorKind::Conflict,
+                    Some(_) => ErrorKind::Invalid,
+                    None => return unavailable("Release storage unavailable"),
+                };
+                RepoError::new(kind, error.to_string())
+            })
+        })
+        .await
+        .map_err(|_| unavailable("Release publication failed"))?
+    }
+
+    pub(super) async fn patch_repository(
         &self,
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
         name: &str,
-    ) -> Result<(), RepoError> {
+        changes: db::repositories::records::RepositoryChanges<String>,
+    ) -> Result<db::models::Repository, RepoError> {
+        // Publication and compensation finish even when the client disconnects.
+        let (store, pool, name) = (self.clone(), pool.clone(), name.to_owned());
+        tokio::spawn(async move {
+            store
+                .patch_repository_owned(&pool, repo_id, actor, &name, &changes)
+                .await
+        })
+        .await
+        .map_err(|_| unavailable("Repository update failed"))?
+    }
+
+    async fn patch_repository_owned(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        name: &str,
+        changes: &db::repositories::records::RepositoryChanges<String>,
+    ) -> Result<db::models::Repository, RepoError> {
         let _lock = git::locks::lock(self.path()).await;
+        let previous =
+            access::check_admin(pool, repo_id, actor)
+                .await
+                .map_err(|error| match error {
+                    access::AccessError::Unavailable => RepoError::authority_unavailable(),
+                    _ => RepoError::write_denied(),
+                })?;
+        if !repository_matches_path(&previous, self.path(), self.node_id) {
+            return Err(RepoError::write_denied());
+        }
+        if previous.is_archived && changes.archived != Some(false) {
+            return Err(RepoError::write_denied());
+        }
+        let checked_owner = if let Some(destination) = changes.name.as_deref() {
+            let owner = db::repositories::records::repository_owner_names(pool, &[repo_id])
+                .await
+                .map_err(RepoError::from)?
+                .remove(&repo_id)
+                .ok_or_else(|| unavailable("Repository owner unavailable"))?;
+            crate::backend::repositories::releases::immutable::check_namespace(
+                pool,
+                &previous,
+                &owner,
+                destination,
+                &self.refs().await?,
+            )
+            .await?;
+            Some(owner)
+        } else {
+            None
+        };
         let reference = git::branch_ref(name).ok_or_else(|| super::invalid_ref("branch"))?;
         let (status, _) = self
             .git(&["show-ref", "--verify", "--quiet", &reference])
@@ -1879,53 +3052,77 @@ impl LocalStore {
                 "That branch does not exist",
             ));
         }
-        // An archived repository refuses the change, so it is not counted as a write.
-        let previous = db::repositories::records::get_repository_by_id(pool, repo_id)
-            .await
-            .map_err(|_| unavailable("Repository storage is unavailable"))?
-            .ok_or_else(RepoError::write_denied)?;
-        if previous.is_archived {
-            return Err(RepoError::new(
-                ErrorKind::Invalid,
-                "This repository is archived and read-only.",
-            ));
-        }
-        // Replicas copy HEAD with the repository, so the change counts as a write. It is counted
-        // before the database names the new default.
+        let previous_head = self.head_target().await?;
+        let previous_oid = if previous_head.is_none() {
+            let (status, bytes) = self.git(&["rev-parse", "--verify", "HEAD"]).await?;
+            if !status.success() {
+                return Err(unavailable("Git could not read HEAD"));
+            }
+            String::from_utf8(bytes)
+                .map_err(|_| unavailable("Git returned an invalid HEAD"))?
+                .trim()
+                .to_owned()
+        } else {
+            String::new()
+        };
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
-        let updated =
-            db::repositories::records::set_repository_default_branch(pool, actor, repo_id, name)
-                .await
-                .map_err(|_| unavailable("Repository storage is unavailable"))?;
-        if !updated {
-            let archived = db::repositories::records::get_repository_by_id(pool, repo_id)
-                .await
-                .map_err(|_| unavailable("Repository storage is unavailable"))?
-                .is_some_and(|repository| repository.is_archived);
-            return Err(if archived {
-                RepoError::new(
-                    ErrorKind::Invalid,
-                    "This repository is archived and read-only.",
-                )
-            } else {
-                RepoError::write_denied()
-            });
-        }
-        if let Err(error) = self.set_head_target(&reference).await {
-            let restored = db::repositories::records::restore_repository_default_branch(
-                pool,
-                repo_id,
-                name,
-                &previous.default_branch,
-            )
-            .await;
-            return Err(if matches!(restored, Ok(true)) {
-                error
-            } else {
-                unavailable("Git could not set HEAD and the database default could not be restored; repository reconciliation is required")
-            });
-        }
-        // The stored languages describe the default branch, so store the new one's.
+        self.set_head_target(&reference).await?;
+        let updated = db::repositories::records::patch_repository_and_default(
+            pool,
+            actor,
+            repo_id,
+            &changes.borrowed(),
+            name,
+            checked_owner.as_deref(),
+        )
+        .await;
+        let repository = match updated {
+            Ok(repository) => repository,
+            Err(error) => {
+                // A failed COMMIT acknowledgement may still have committed. Do not roll HEAD
+                // back when the database already names the requested default.
+                use db::repositories::records::RepositorySettingsRefusal;
+                let must_restore = if error.downcast_ref::<RepositorySettingsRefusal>().is_some()
+                    || previous.default_branch == name
+                {
+                    true
+                } else {
+                    match db::repositories::records::get_repository_by_id(pool, repo_id).await {
+                        Ok(Some(repository)) => repository.default_branch != name,
+                        Ok(None) => true,
+                        Err(_) => return Err(unavailable(
+                            "Repository update could not be confirmed; reconciliation is required",
+                        )),
+                    }
+                };
+                if must_restore {
+                    let restored = match previous_head.as_deref() {
+                        Some(head) => self.set_head_target(head).await,
+                        None => self
+                            .git(&["update-ref", "--no-deref", "HEAD", &previous_oid])
+                            .await
+                            .and_then(|(status, _)| {
+                                if status.success() {
+                                    Ok(())
+                                } else {
+                                    Err(unavailable("Git could not restore HEAD"))
+                                }
+                            }),
+                    };
+                    if restored.is_err() {
+                        return Err(unavailable("Repository update failed and HEAD could not be restored; reconciliation is required"));
+                    }
+                }
+                return Err(match error.downcast_ref::<RepositorySettingsRefusal>() {
+                    Some(
+                        RepositorySettingsRefusal::Denied
+                        | RepositorySettingsRefusal::VisibilityLocked,
+                    ) => RepoError::write_denied(),
+                    Some(_) => RepoError::new(ErrorKind::Invalid, error.to_string()),
+                    None => unavailable("Repository storage is unavailable"),
+                });
+            }
+        };
         languages::refresh_default_branch(
             pool.clone(),
             repo_id,
@@ -1933,7 +3130,7 @@ impl LocalStore {
             name.to_owned(),
             self.node_id,
         );
-        Ok(())
+        Ok(repository)
     }
 
     /// Points HEAD at a branch, such as `refs/heads/main`.

@@ -96,11 +96,26 @@ async fn bounded_administration(pg: bool) {
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("Next SSH keys"));
     assert!(!body.contains(&"x".repeat(1000)));
-    let (_, keys) = client
-        .api("GET", "/api/user/keys", serde_json::Value::Null)
+    let (status, page) = client.model("/settings?tab=keys").await;
+    assert_eq!(status, StatusCode::OK);
+    let Page::Identity(account::Page::Settings { model, .. }) = page else {
+        panic!("settings model")
+    };
+    assert_eq!(model.keys.len(), 100);
+    assert!(!serde_json::to_string(&model.keys)
+        .unwrap()
+        .contains("public_key"));
+    let (status, page) = client
+        .model(&format!(
+            "/settings?tab=keys&keys_after={}",
+            keys.last().unwrap().id
+        ))
         .await;
-    assert_eq!(keys.as_array().unwrap().len(), 100);
-    assert!(!keys.to_string().contains("public_key"));
+    assert_eq!(status, StatusCode::OK);
+    let Page::Identity(account::Page::Settings { model, .. }) = page else {
+        panic!("settings model")
+    };
+    assert_eq!(model.keys.len(), 5);
     f.finish().await;
 }
 

@@ -1,0 +1,22 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          test -z "${NEXT_STEP_ONLY:-}"
+          echo 'NEXT_STEP_ONLY=visible' >> "$GITHUB_ENV"
+          printf 'MULTI<<DELIM\nline one\nline two\nDELIM\n' >> "$GITHUB_ENV"
+          mkdir -p "$GITHUB_WORKSPACE/bin"
+          printf '#!/usr/bin/env bash\necho compat:path\n' > "$GITHUB_WORKSPACE/bin/compat-tool"
+          chmod +x "$GITHUB_WORKSPACE/bin/compat-tool"
+          echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
+          echo '### Summary' >> "$GITHUB_STEP_SUMMARY"
+          test -z "${NEXT_STEP_ONLY:-}"
+      - run: |
+          test "$NEXT_STEP_ONLY" = visible
+          test "$MULTI" = $'line one\nline two'
+          compat-tool
+          echo compat:ok

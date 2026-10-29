@@ -14,23 +14,63 @@ use tracing::warn;
 
 /// Mails a notification to its recipient, if the site has a mail server and the recipient has a
 /// verified address and wants email.
-pub async fn notify_user(
+pub async fn notify_user(pool: &DbPool, notification: &db::models::Notification) {
+    if !config::is_configured(pool).await {
+        return;
+    }
+    match db::email::notification_email_address(pool, notification.user_id).await {
+        Ok(Some(to)) => {
+            let mail = messages::notification(
+                &public_origin(),
+                &notification.title,
+                notification.body.as_deref(),
+                notification.link.as_deref(),
+            );
+            if let Err(error) = db::email::enqueue_notification_email(
+                pool,
+                notification.id,
+                &to,
+                &mail.subject,
+                &mail.body,
+            )
+            .await
+            {
+                warn!(%error, "could not queue an email");
+            }
+        }
+        Ok(None) => {}
+        Err(error) => warn!(%error, "could not look up the address for a notification email"),
+    }
+}
+
+/// Invitation messages are linked to their offer so exhausted SMTP retries can be reported.
+pub async fn organization_invitation(
     pool: &DbPool,
-    user_id: i64,
-    title: &str,
-    body: Option<&str>,
-    link: Option<&str>,
+    invitation: &db::models::OrgInvitation,
+    name: &str,
 ) {
     if !config::is_configured(pool).await {
         return;
     }
-    match db::email::notification_email_address(pool, user_id).await {
-        Ok(Some(to)) => {
-            let mail = messages::notification(&public_origin(), title, body, link);
-            outbox::enqueue(pool, &to, mail).await
-        }
-        Ok(None) => {}
-        Err(error) => warn!(%error, "could not look up the address for a notification email"),
+    let to = match &invitation.email {
+        Some(email) => Some(email.clone()),
+        None => match invitation.user_id {
+            Some(user) => db::email::notification_email_address(pool, user)
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        },
+    };
+    let Some(to) = to else {
+        return;
+    };
+    let title = format!("Invitation to join {name}");
+    let body = format!("You have been invited to join {name}. Sign in, or create an account and verify this email address, to accept the invitation at {}/settings/organizations.\n\nThis invitation expires after seven days.", public_origin());
+    if let Err(error) =
+        db::email::enqueue_invitation_email(pool, invitation.id, &to, &title, &body).await
+    {
+        warn!(%error, "could not queue an organization invitation email");
     }
 }
 
@@ -225,7 +265,23 @@ mod tests {
     #[tokio::test]
     async fn nothing_is_queued_without_a_mail_server() {
         let f = fixture().await;
-        notify_user(&f.pool, f.admin, "Title", None, None).await;
+        static NO_METADATA: serde_json::Value = serde_json::Value::Null;
+        let notification = |body: Option<&'static str>, link: Option<&'static str>| {
+            db::notifications::records::create_notification(
+                &f.pool,
+                db::notifications::records::NewNotification {
+                    user_id: f.admin,
+                    actor_id: None,
+                    repo_id: None,
+                    kind: "mention",
+                    title: "Title",
+                    body,
+                    link,
+                    metadata: &NO_METADATA,
+                },
+            )
+        };
+        notify_user(&f.pool, &notification(None, None).await.unwrap()).await;
         signup_decision(&f.pool, Some("carol@example.com"), "carol", true).await;
         assert!(db::email::claim_due_email(&f.pool, 5, 600)
             .await
@@ -236,7 +292,8 @@ mod tests {
         db::email::save_email_settings(&f.pool, f.admin, "live", &input)
             .await
             .unwrap();
-        notify_user(&f.pool, f.admin, "Title", Some("Body"), Some("/x")).await;
+        let mail = notification(Some("Body"), Some("/x")).await.unwrap();
+        notify_user(&f.pool, &mail).await;
         signup_decision(&f.pool, Some("carol@example.com"), "carol", false).await;
         let first = db::email::claim_due_email(&f.pool, 5, 600)
             .await
@@ -249,6 +306,12 @@ mod tests {
         assert_eq!(
             (first.to_address.as_str(), first.subject.as_str()),
             ("admin@example.com", "Title")
+        );
+        assert_eq!(first.notification_id, Some(mail.id));
+        assert!(
+            db::notifications::records::notification_email_allowed(&f.pool, mail.id)
+                .await
+                .unwrap()
         );
         assert_eq!(second.to_address, "carol@example.com");
     }
@@ -351,5 +414,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(left, ["Two"]);
+
+        // A sender that dies mid-send still uses up the attempts, and the message is given up.
+        db::email::enqueue_email(&f.pool, "d@example.com", "Four", "Body")
+            .await
+            .unwrap();
+        for attempt in 1..=outbox::MAX_ATTEMPTS {
+            let claimed = db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 0)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(claimed.attempts, attempt);
+        }
+        assert!(db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 0)
+            .await
+            .unwrap()
+            .is_none());
+        let (error, body): (String, String) =
+            sqlx::query_as("SELECT last_error, body_text FROM email_outbox WHERE subject='Four'")
+                .fetch_one(raw)
+                .await
+                .unwrap();
+        assert_eq!(
+            (error.as_str(), body.as_str()),
+            ("The send did not finish", "")
+        );
     }
 }

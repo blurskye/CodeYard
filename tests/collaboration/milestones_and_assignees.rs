@@ -244,14 +244,20 @@ async fn contract(pg: bool) {
         .unwrap();
     assert_eq!((progress.open_items, progress.closed_items), (2, 0));
 
-    // Counts come from the issues that name the milestone, so closing one moves it.
+    // Counts come from the issues that name the milestone, so closing one moves it. The
+    // assignment above moved the issue's revision.
+    let revision = db::issues::get_issue_by_id(pool, second.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .updated_at;
     db::issues::update_issue(
         pool,
         second.id,
         DiscussionEdit {
             actor_id: owner,
             expected_state: "open",
-            expected_updated: second.updated_at,
+            expected_updated: revision,
             title: None,
             body: None,
             state: Some("closed"),

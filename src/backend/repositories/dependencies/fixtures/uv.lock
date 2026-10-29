@@ -1,0 +1,6 @@
+version = 1
+requires-python = ">=3.8"
+[[package]]
+name = "django"
+version = "4.2.0"
+source = { registry = "https://pypi.org/simple" }

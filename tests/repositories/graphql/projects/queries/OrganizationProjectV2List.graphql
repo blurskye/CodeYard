@@ -1,0 +1,8 @@
+query OrganizationProjectV2List($endCursor: String, $owner: String!, $query: String!) {
+  organization(login: $owner) {
+    projectsV2(first: 100, orderBy: {field: TITLE, direction: ASC}, after: $endCursor, query: $query) {
+      nodes { id title number resourcePath closed url }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}

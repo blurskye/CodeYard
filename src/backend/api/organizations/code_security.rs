@@ -1,0 +1,196 @@
+use crate::{
+    backend::{
+        api::http::{context::PageContext, render::redirect_response},
+        app::AppState,
+        db::{self, code_security as records},
+    },
+    webui::{app::Page, pages::orgs::code_security as view},
+};
+use axum::{
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode, Uri},
+    response::Response,
+    routing::get,
+    Form, Router,
+};
+use serde_json::json;
+use std::{collections::HashMap, sync::Arc};
+
+pub(super) fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/settings/organizations/:org/security", get(show))
+        .route(
+            "/settings/organizations/:org/security/:action",
+            axum::routing::post(post),
+        )
+        .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
+}
+fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
+    let (status, message) = match error.downcast_ref::<records::Refusal>() {
+        Some(records::Refusal::Missing) => {
+            (StatusCode::NOT_FOUND, "Security configuration not found.")
+        }
+        Some(records::Refusal::Denied) => (
+            StatusCode::FORBIDDEN,
+            "Organization security access is required.",
+        ),
+        Some(records::Refusal::Duplicate) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "A configuration with this name already exists.",
+        ),
+        Some(records::Refusal::Invalid) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Check the configuration name, scope and repository IDs.",
+        ),
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Security configurations are temporarily unavailable.",
+        ),
+    };
+    ctx.error(status, message)
+}
+async fn show(
+    State(state): State<Arc<AppState>>,
+    Path(org): Path<i64>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    let actor = match ctx.require_user() {
+        Ok(user) => user.id,
+        Err(response) => return response,
+    };
+    let rows = match records::list(&ctx.state.pool, actor, org).await {
+        Ok(rows) => rows,
+        Err(error) => return failure(&ctx, error),
+    };
+    let org = match db::organizations::profiles::get_public_organization_by_id(&ctx.state.pool, org)
+        .await
+    {
+        Ok(Some(org)) => org,
+        Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Organization not found."),
+        Err(error) => return failure(&ctx, error),
+    };
+    let mut configurations = Vec::new();
+    for row in rows {
+        let value: serde_json::Value = match serde_json::from_str(&row.settings) {
+            Ok(value) => value,
+            Err(error) => return failure(&ctx, error.into()),
+        };
+        configurations.push(view::Configuration {
+            id: row.id,
+            name: row.name,
+            description: value["description"].as_str().unwrap_or("").to_owned(),
+            settings: view::TOGGLES
+                .iter()
+                .map(|(name, _)| {
+                    (
+                        (*name).to_owned(),
+                        value[*name].as_str().unwrap_or("not_set").to_owned(),
+                    )
+                })
+                .collect(),
+            default_for_new_repos: row.default_for_new_repos,
+        });
+    }
+    ctx.page_model(
+        "Code security configurations",
+        Page::CodeSecurity(view::Page {
+            org_id: org.id,
+            org_name: org.name,
+            csrf_token: ctx.csrf_token.clone(),
+            configurations,
+        }),
+    )
+}
+async fn post(
+    State(state): State<Arc<AppState>>,
+    Path((org, action)): Path<(i64, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(values): Form<HashMap<String, String>>,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    if let Err(response) = ctx.check_csrf(&values) {
+        return response;
+    }
+    let actor = match ctx.require_user() {
+        Ok(user) => user.id,
+        Err(response) => return response,
+    };
+    let id = values
+        .get("configuration_id")
+        .map(|id| id.parse::<i64>())
+        .transpose();
+    let id = match id {
+        Ok(id) => id,
+        Err(_) => {
+            return ctx.error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Invalid configuration ID.",
+            )
+        }
+    };
+    let result = match (action.as_str(), id) {
+        ("save", id) => {
+            let mut patch = json!({"name":values.get("name").map_or("",String::as_str),"description":values.get("description").map_or("",String::as_str)});
+            for (name, _) in view::TOGGLES {
+                patch[name] = json!(values.get(name).map_or("not_set", String::as_str));
+            }
+            records::save(&ctx.state.pool, actor, org, id, &patch)
+                .await
+                .map(|_| ())
+        }
+        ("delete", Some(id)) => records::delete(&ctx.state.pool, actor, org, id).await,
+        ("defaults", Some(id)) => records::set_default(
+            &ctx.state.pool,
+            actor,
+            org,
+            id,
+            values
+                .get("default_for_new_repos")
+                .map_or("", String::as_str),
+        )
+        .await
+        .map(|_| ()),
+        ("attach", Some(id)) => {
+            let selected = values
+                .get("repository_ids")
+                .map_or("", String::as_str)
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::parse::<i64>)
+                .collect::<Result<Vec<_>, _>>();
+            let selected = match selected {
+                Ok(ids) => ids,
+                Err(_) => {
+                    return ctx.error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "Enter comma-separated repository IDs.",
+                    )
+                }
+            };
+            records::attach(
+                &ctx.state.pool,
+                actor,
+                org,
+                Some(id),
+                values.get("scope").map_or("", String::as_str),
+                &selected,
+            )
+            .await
+        }
+        _ => return ctx.error(StatusCode::NOT_FOUND, "Action not found."),
+    };
+    match result {
+        Ok(()) => redirect_response(&format!("/settings/organizations/{org}/security")),
+        Err(error) => failure(&ctx, error),
+    }
+}

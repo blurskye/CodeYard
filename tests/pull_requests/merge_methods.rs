@@ -225,6 +225,8 @@ async fn merge_form(client: &Client, number: i64, method: &str) -> Reply {
                 ("expected_base", text(&pull, "base_sha")),
                 ("confirm", "merge"),
                 ("merge_method", method),
+                ("commit_title", "Custom native merge"),
+                ("commit_message", "Native description"),
             ],
         )
         .await
@@ -489,6 +491,12 @@ async fn native_contract(pg: bool) {
         let tip = git.find_commit(oid(&main_tip(&path))).unwrap();
         let expected_parents = if method == "merge" { 2 } else { 1 };
         assert_eq!(tip.parent_count(), expected_parents, "{method}");
+        if method != "rebase" {
+            assert_eq!(
+                tip.message(),
+                Some("Custom native merge\n\nNative description")
+            );
+        }
         main = main_tip(&path);
     }
     f.finish().await;
@@ -535,6 +543,9 @@ async fn prepared_merge_contract(pg: bool) {
         expected_base_branch: None,
         expected_target: None,
         merge_method: MergeMethod::Squash,
+        commit_title: None,
+        commit_message: None,
+        author_email: None,
     };
 
     // A setting that changes after the merge was prepared is the one that decides.
@@ -630,6 +641,8 @@ async fn retained_history_and_merge_hook_contract(pg: bool) {
         db::webhooks::HookOwner::Repository(app.repository.id),
         app.owner,
         &db::webhooks::WebhookFields {
+            username: None,
+            password: None,
             payload_url: "invalid://test".into(),
             content_type: "application/json".into(),
             events: "pull_request".into(),

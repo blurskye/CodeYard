@@ -28,6 +28,10 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
         }
         Err(_) => return unavailable(ctx),
     };
+    let settings = match organizations::settings::get(pool, org.id).await {
+        Ok(Some(settings)) => settings,
+        _ => return unavailable(ctx),
+    };
     let viewer = ctx.user.as_ref().map(|user| user.id);
     let repository_count =
         match organizations::count_organization_profile_repositories(pool, org.id, viewer).await {
@@ -146,6 +150,17 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
     };
     let title = org.name.clone();
     let page = OrganizationProfile {
+        can_create: manage
+            || (member_count.is_some()
+                && (settings.members_can_create_public_repositories
+                    || settings.members_can_create_private_repositories)),
+        contacts: crate::webui::pages::orgs::ProfileContacts {
+            company: settings.company.unwrap_or_default(),
+            email: settings.email.unwrap_or_default(),
+            twitter_username: settings.twitter_username.unwrap_or_default(),
+            location: settings.location.unwrap_or_default(),
+            blog: settings.blog.unwrap_or_default(),
+        },
         organization: public_view(org),
         repositories,
         repository_count,

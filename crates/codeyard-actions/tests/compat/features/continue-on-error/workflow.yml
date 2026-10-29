@@ -1,0 +1,30 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: tolerated
+        continue-on-error: ${{ true }}
+        run: exit 9
+      - env:
+          OUTCOME: ${{ steps.tolerated.outcome }}
+          CONCLUSION: ${{ steps.tolerated.conclusion }}
+        run: |
+          test "$OUTCOME/$CONCLUSION" = failure/success
+          echo compat:step-continued
+  tolerated:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - run: exit 8
+  verify:
+    needs: tolerated
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULT: ${{ needs.tolerated.result }}
+        run: |
+          test "$RESULT" = success
+          echo compat:ok

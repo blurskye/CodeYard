@@ -529,6 +529,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
                 pipeline: Some("ci".to_owned()),
                 environment: None,
                 inputs: None,
+                repo_id: None,
             },
         )
         .await
@@ -550,6 +551,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
                 pipeline: None,
                 environment: None,
                 inputs: None,
+                repo_id: None,
             },
         )
         .await
@@ -590,6 +592,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
                 pipeline: Some("ci".to_owned()),
                 environment: None,
                 inputs: None,
+                repo_id: None,
             },
         )
         .await

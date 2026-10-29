@@ -28,9 +28,14 @@ use std::collections::HashMap;
 
 pub(crate) type ResultPage<T> = Result<T, Response>;
 pub(crate) use crate::backend::api::http::error::ApiFailure;
-// Handlers are registered only under `/:owner/:repo/issues` and `/:owner/:repo/pulls`.
+// Handlers are registered only under `/:owner/:repo/issues` and `/:owner/:repo/pulls`,
+// also behind the legacy prefix.
 pub(crate) fn kind(uri: &Uri) -> Kind {
-    if uri.path().split('/').nth(3) == Some("pulls") {
+    let path = uri
+        .path()
+        .strip_prefix(super::LEGACY_PREFIX)
+        .unwrap_or(uri.path());
+    if path.split('/').nth(3) == Some("pulls") {
         Kind::Pull
     } else {
         Kind::Issue
@@ -183,11 +188,7 @@ pub(crate) async fn repository(
     })
 }
 
-/// The revision a comment form carries, so a save against a changed comment is refused.
-pub(crate) fn comment_revision(body: &str) -> String {
-    use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(body.as_bytes()))
-}
+pub(crate) use db::discussions::comment_revision;
 
 pub(crate) async fn author(ctx: &PageContext, id: i64) -> ResultPage<String> {
     Ok(db::users::accounts::get_user_by_id(&ctx.state.pool, id)
@@ -204,6 +205,32 @@ pub(crate) fn label(value: db::models::Label) -> view::Label {
         description: value.description.unwrap_or_default(),
     }
 }
+pub(crate) async fn issue_reference(
+    ctx: &PageContext,
+    scope: (&str, &str),
+    reference: &str,
+) -> ResultPage<i64> {
+    crate::backend::issues::references::resolve(
+        &ctx.state.pool,
+        ctx.require_user()?.id,
+        scope,
+        reference,
+    )
+    .await
+    .map(|issue| issue.id)
+    .map_err(|error| {
+        let (status, axum::Json(reason)) = super::issues::operation_error(error);
+        ctx.error(
+            if status == StatusCode::BAD_REQUEST {
+                StatusCode::UNPROCESSABLE_ENTITY
+            } else {
+                status
+            },
+            &reason.message,
+        )
+    })
+}
+
 pub(crate) fn issue_item(
     issue: db::models::Issue,
     author: String,
@@ -234,6 +261,7 @@ pub(crate) fn issue_item(
         review_state: None,
         check_state: None,
         reactions: Vec::new(),
+        projects: Vec::new(),
     }
 }
 /// A pull request's head repository as this viewer may see it. The current name and
@@ -345,7 +373,7 @@ pub(crate) fn pull_item(
     let (head_label, head_url) = match pull.head_repo_id {
         Some(id) if id == repo.record.id => (
             pull.head_branch.clone(),
-            Some(crate::webui::pages::repos::ref_path::file_url(
+            Some(crate::webui::pages::repos::ref_path::branch_url(
                 &repo.view.url(),
                 "tree",
                 &pull.head_branch,
@@ -356,7 +384,7 @@ pub(crate) fn pull_item(
             HeadRepository::Readable(head) => {
                 let owner = head.owner_name.ok_or_else(|| Box::new(unavailable(ctx)))?;
                 let label = format!("{owner}/{}:{}", head.name, pull.head_branch);
-                let url = crate::webui::pages::repos::ref_path::file_url(
+                let url = crate::webui::pages::repos::ref_path::branch_url(
                     &view::repo_url(&owner, &head.name),
                     "tree",
                     &pull.head_branch,
@@ -411,6 +439,7 @@ pub(crate) fn pull_item(
         review_state: None,
         check_state: None,
         reactions: Vec::new(),
+        projects: Vec::new(),
         comparison: Some(view::Comparison {
             head_label,
             head_url,
@@ -736,6 +765,8 @@ pub(crate) async fn discussion(
     let mut comments = Vec::new();
     let mut reviews = Vec::new();
     let has_more: bool;
+    let locked: bool;
+    let lock_reason: Option<String>;
     // The item and the span of time this page covers, for the events that fall in it.
     let subject: (db::timeline::Subject, i64);
     let span: (Option<DateTime<Utc>>, Option<DateTime<Utc>>);
@@ -748,7 +779,9 @@ pub(crate) async fn discussion(
             let rows = db::issues::list_issue_comments(&ctx.state.pool, issue.id, fetch, offset)
                 .await
                 .map_err(|_| unavailable(ctx))?;
-            let rights = CommentRights::load(ctx, repo, !issue.locked).await?;
+            locked = issue.locked;
+            lock_reason = issue.lock_reason;
+            let rights = CommentRights::load(ctx, repo, !locked).await?;
             has_more = paging::has_next_page(page, rows.len(), COMMENTS_PER_PAGE, MAX_COMMENT_PAGE);
             subject = (db::timeline::Subject::Issue, issue.id);
             span = (
@@ -811,7 +844,9 @@ pub(crate) async fn discussion(
             );
             subject = (db::timeline::Subject::PullRequest, pull.id);
             let mut page_reviews = Vec::new();
-            let rights = CommentRights::load(ctx, repo, true).await?;
+            locked = pull.locked;
+            lock_reason = pull.lock_reason.clone();
+            let rights = CommentRights::load(ctx, repo, !locked).await?;
             for row in rows.into_iter().take(COMMENTS_PER_PAGE) {
                 match row {
                     DiscussionItem::Comment(entry) => {
@@ -827,7 +862,7 @@ pub(crate) async fn discussion(
                     DiscussionItem::Review(entry) => page_reviews.push(entry),
                 }
             }
-            reviews = review_forms::page_reviews(ctx, repo, &pull, page_reviews).await?;
+            reviews = review_forms::page_reviews(ctx, repo, &pull, page_reviews, &rights).await?;
         }
     }
     let max_event_page = (i64::MAX / db::timeline::EVENT_LIMIT) as usize;
@@ -862,7 +897,52 @@ pub(crate) async fn discussion(
             created: event.created_at.to_rfc3339(),
         })
         .collect();
+    let item = match kind {
+        Kind::Issue => db::assignees::AssignedItem::Issue(subject.1),
+        Kind::Pull => db::assignees::AssignedItem::PullRequest(subject.1),
+    };
+    let pinned = super::issues::pins::pinned_comment(ctx, repo, kind, number, item).await?;
+    let relationships = if kind == Kind::Issue {
+        super::issues::relationships::load(ctx, subject.1).await?
+    } else {
+        Vec::new()
+    };
+    let attributes = if kind == Kind::Issue {
+        Some(
+            super::issues::attributes::load(
+                ctx,
+                repo.record.id,
+                subject.1,
+                repo.record.owner_kind == "org",
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let suggestions = if kind == Kind::Issue {
+        super::issues::suggestions::load(ctx, &repo.record, subject.1, locked, repo.view.can_admin)
+            .await?
+    } else {
+        None
+    };
+    let issue_management = if kind == Kind::Issue {
+        let issue = db::issues::get_issue_by_id(&ctx.state.pool, subject.1)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .ok_or_else(|| unavailable(ctx))?;
+        Some(super::issues::management::load(ctx, repo, &issue).await?)
+    } else {
+        None
+    };
     Ok(view::CommentPage {
+        issue_management,
+        suggestions,
+        attributes,
+        relationships,
+        pinned,
+        locked,
+        lock_reason,
         comments,
         reviews,
         page,
@@ -881,6 +961,9 @@ pub(crate) async fn render_detail(
     status: StatusCode,
 ) -> ResultPage<Response> {
     let mut value = shown.clone();
+    value.projects = crate::backend::api::projects::sidebar(ctx, repo.record.id, kind, shown.id)
+        .await
+        .map_err(|_| unavailable(ctx))?;
     fill_merge_blockers(ctx, repo, kind, draft, &mut value).await;
     let edit_page = match draft.editing {
         Some(id) => {
@@ -915,9 +998,16 @@ pub(crate) async fn render_detail(
     let mut comments = discussion(ctx, repo, kind, value.number, edit_page).await?;
     // A comment whose edit was previewed or refused keeps the text the author typed.
     if let Some(id) = draft.editing {
+        // The comment may be a top-level one or one filed in a submitted review.
         if let Some(comment) = comments
             .comments
             .iter_mut()
+            .chain(
+                comments
+                    .reviews
+                    .iter_mut()
+                    .flat_map(|review| review.comments.iter_mut()),
+            )
             .find(|comment| comment.id == id)
         {
             comment.edit = Some(view::CommentEdit {
@@ -1002,7 +1092,7 @@ pub(crate) async fn render_detail(
         "",
     ));
     let ctx = &ctx;
-    let reviewer_choices = if kind == Kind::Pull && repo.view.can_write {
+    let mut reviewer_choices: Vec<String> = if kind == Kind::Pull && repo.view.can_write {
         db::repositories::access::list_write_access_users(&ctx.state.pool, repo.record.id, -1)
             .await
             .map_err(|_| unavailable(ctx))?
@@ -1012,6 +1102,26 @@ pub(crate) async fn render_detail(
     } else {
         Vec::new()
     };
+    if kind == Kind::Pull && repo.view.can_write {
+        let teams = db::pull_requests::team_reviewers::list(
+            &ctx.state.pool,
+            repo.record.id,
+            None,
+            ctx.user.as_ref().map(|user| user.id),
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?;
+        if let Some(owner) = db::ci::ci_repository_owner(&ctx.state.pool, repo.record.id)
+            .await
+            .map_err(|_| unavailable(ctx))?
+        {
+            reviewer_choices.extend(
+                teams
+                    .into_iter()
+                    .map(|team| format!("@{owner}/{}", team.team.slug)),
+            );
+        }
+    }
     let reviewers = match &value.comparison {
         Some(compare) if kind == Kind::Pull => {
             review_forms::reviewers(ctx, repo, value.id, (&compare.base_sha, &compare.head_sha))

@@ -39,7 +39,8 @@ pub(super) async fn home(
         .get("page")
         .and_then(|page| page.parse::<usize>().ok())
         .unwrap_or(1)
-        .max(1);
+        // The browser model holds a 32-bit page, so keep the 10,000-page limit pages use.
+        .clamp(1, 10_000);
     let offset = i64::try_from(page.saturating_sub(1).saturating_mul(PAGE_SIZE as usize))
         .unwrap_or(i64::MAX);
     let (own, repository_count) = match db::repositories::records::list_user_repository_page(

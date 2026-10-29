@@ -1,0 +1,180 @@
+//! Durable asynchronous requests, executed by the server's bounded, shutdown-drained Git tasks.
+use super::{database_error, merge, OperationError};
+use crate::backend::{
+    app::AppState,
+    ci::CiRuns,
+    db::{self, pull_requests::async_merge as records},
+    notifications::NotificationBroadcaster,
+};
+use serde_json::{json, Value};
+
+pub struct Job {
+    pub repo_id: i64,
+    pub pull_request_id: i64,
+    pub token_id: i64,
+    pub owner: String,
+    pub name: String,
+    pub number: i32,
+    pub merge: merge::MergeRequest,
+    pub action: String,
+}
+fn denied() -> OperationError {
+    OperationError::Denied {
+        code: "token_revoked",
+        message: "The merge token expired, was revoked, or no longer permits writes".into(),
+    }
+}
+async fn execute(
+    pool: &db::DbPool,
+    ci: &CiRuns,
+    broadcaster: &NotificationBroadcaster,
+    uuid: &str,
+    job: Job,
+) -> Result<merge::MergeResponse, OperationError> {
+    let actor = db::users::tokens::token_user(pool, job.token_id, true)
+        .await
+        .map_err(database_error)?
+        .ok_or_else(denied)?;
+    let repo = db::repositories::records::get_repository_by_id(pool, job.repo_id)
+        .await
+        .map_err(database_error)?
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Repository not found".into(),
+        })?;
+    let owner = db::repositories::records::repository_owner_names(pool, &[repo.id])
+        .await
+        .map_err(database_error)?
+        .remove(&repo.id)
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Repository owner not found".into(),
+        })?;
+    let mut prepared = merge::prepare_pull_request_merge(
+        pool,
+        ci,
+        actor.id,
+        (owner, repo.name, job.number),
+        job.merge,
+    )
+    .await?;
+    if !prepared.matches_request(job.repo_id, job.pull_request_id) {
+        return Err(OperationError::Conflict {
+            code: "revision_conflict",
+            message: "The pull request's repository changed".into(),
+        });
+    }
+    prepared.bind_async_request(uuid, job.token_id);
+    // Preparation can wait on Git. Recheck the original credential immediately before publication.
+    db::users::tokens::token_user(pool, job.token_id, true)
+        .await
+        .map_err(database_error)?
+        .filter(|u| u.id == actor.id)
+        .ok_or_else(denied)?;
+    let row = records::get(pool, job.repo_id, job.pull_request_id, uuid)
+        .await
+        .map_err(database_error)?
+        .filter(|row| row.status == "pending")
+        .ok_or_else(|| OperationError::Conflict {
+            code: "merge_cancelled",
+            message: "The merge request is no longer pending".into(),
+        })?;
+    if row.token_id != Some(job.token_id) {
+        return Err(denied());
+    }
+    merge::publish_prepared_merge(pool, ci, broadcaster, prepared).await
+}
+pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> {
+    if !matches!(job.action.as_str(), "default" | "direct_merge") {
+        return Err(OperationError::Invalid {
+            code: "merge_action",
+            message: "Merge queues are not available".into(),
+        });
+    }
+    let actor = db::users::tokens::token_user(&state.pool, job.token_id, true)
+        .await
+        .map_err(database_error)?
+        .ok_or_else(denied)?;
+    let repo = db::repositories::records::get_repository_by_id(&state.pool, job.repo_id)
+        .await
+        .map_err(database_error)?
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Repository not found".into(),
+        })?;
+    super::require_write(&state.pool, &actor, &repo).await?;
+    let pull = db::pull_requests::records::get_pull_request_by_id(&state.pool, job.pull_request_id)
+        .await
+        .map_err(database_error)?
+        .filter(|p| p.repo_id == job.repo_id && p.number == job.number)
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Pull request not found".into(),
+        })?;
+    if pull.state != "open" || pull.merged || pull.is_draft {
+        return Err(OperationError::Invalid {
+            code: "invalid_state",
+            message: "Only an open, non-draft pull request can be merged".into(),
+        });
+    }
+    if pull.head_sha != job.merge.expected_head || pull.base_sha != job.merge.expected_base {
+        return Err(OperationError::Conflict {
+            code: "revision_conflict",
+            message: "The pull request branches changed".into(),
+        });
+    }
+    let uuid = uuid::Uuid::new_v4().to_string();
+    let details = json!({"message":"Merge request accepted","uuid":uuid,"merge_method":job.merge.merge_method.as_str(),"merge_action":job.action,"expected_head_sha":job.merge.expected_head,"bypass_rules":false});
+    let request = serde_json::to_value(&job.merge).map_err(database_error)?;
+    if !records::insert(
+        &state.pool,
+        records::NewAsyncMerge {
+            uuid: &uuid,
+            repo_id: job.repo_id,
+            pull_request_id: job.pull_request_id,
+            token_id: job.token_id,
+            worker_node_id: state.cluster.as_ref().map(|n| n.node_id),
+            owner: &job.owner,
+            name: &job.name,
+            number: job.number,
+            request: &request,
+            details: &details,
+        },
+    )
+    .await
+    .map_err(database_error)?
+    {
+        return Err(OperationError::Conflict {
+            code: "merge_pending",
+            message: "A merge request is already pending for this pull request".into(),
+        });
+    }
+    let (pool, ci, broadcaster) = (
+        state.pool.clone(),
+        state.ci_runs.clone(),
+        state.notification_broadcaster.clone(),
+    );
+    let task_uuid = uuid.clone();
+    if !state.git_tasks.spawn(async move {
+        let (status,details)=match execute(&pool,&ci,&broadcaster,&task_uuid,job).await {
+            Ok(result) if result.merged=>("merged",json!({"message":result.message,"sha":result.sha})),
+            Ok(result)=>("failed",json!({"message":result.message})),
+            Err(OperationError::BranchMerged{sha})=>("merged",json!({"message":"The branch merged, but pull request bookkeeping failed","sha":sha})),
+            Err(error)=>("failed",json!({"message":error.to_string()})),
+        };
+        if let Err(error)=records::finish(&pool,&task_uuid,status,&details).await {tracing::error!(%error,uuid=%task_uuid,"could not persist asynchronous merge result");}
+    }) {
+        records::finish(&state.pool,&uuid,"failed",&json!({"message":"The merge worker is unavailable"})).await.map_err(database_error)?;
+        return Err(OperationError::Unavailable{code:"merge_worker_unavailable",message:"The merge worker is unavailable".into()});
+    }
+    Ok(json!({"status":"pending","details":details}))
+}
+/// Only this node's abandoned requests fail; starting another web node never cancels live work.
+pub async fn recover(pool: &db::DbPool, node_id: Option<i64>) -> anyhow::Result<u64> {
+    records::recover(
+        pool,
+        node_id,
+        &json!({"message":"The server restarted before this merge request completed"}),
+    )
+    .await
+}

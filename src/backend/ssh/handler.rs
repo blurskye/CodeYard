@@ -1,12 +1,15 @@
 use crate::backend::ci::CiRuns;
 use crate::backend::db::models::{AccessLevel, Repository, User};
-use crate::backend::db::repositories::records::get_repository;
+use crate::backend::db::repositories::records::get_git_repository;
 use crate::backend::db::users::ssh_keys::get_user_by_key_fingerprint;
 use crate::backend::db::DbPool;
 use crate::backend::git::repository::process as git_process;
 use crate::backend::repositories::deploy_keys;
 use crate::backend::repositories::git_sessions::{validation, GitTasks, ReceiveCredential};
-use crate::backend::repositories::store::{repo_store, GitService, GitSession, GitStreams};
+use crate::backend::repositories::store::{
+    repo_store, GitService, GitSession, GitStreams, RepoStore,
+};
+use crate::backend::repositories::traffic;
 use crate::backend::ssh::rate_limit::RateLimiter;
 use anyhow::Result;
 use bytes::Bytes;
@@ -19,6 +22,21 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
+
+/// How long the final status and close messages of a Git channel may take to reach the peer.
+const FINAL_MESSAGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Waits for a Git session slot of the backend that `store` names, or for the channel to close.
+async fn wait_for_session_slot(
+    store: &RepoStore,
+    queued: &tokio_util::sync::CancellationToken,
+) -> Result<tokio::sync::OwnedSemaphorePermit> {
+    tokio::select! {
+        biased;
+        _ = queued.cancelled() => Err(anyhow::anyhow!("Git channel closed")),
+        permit = store.session_permit() => permit,
+    }
+}
 
 #[derive(Default)]
 struct ChannelState {
@@ -181,8 +199,12 @@ impl GitSshHandler {
         });
         let access = match current_key {
             Some(identity) => {
-                crate::backend::repositories::access::user_access(&self.pool, &identity.user, repo)
-                    .await?
+                crate::backend::repositories::access::user_git_access(
+                    &self.pool,
+                    &identity.user,
+                    repo,
+                )
+                .await?
             }
             None => AccessLevel::None,
         };
@@ -307,6 +329,26 @@ impl russh::server::Handler for GitSshHandler {
                         user_with_key.user.username, user_with_key.user.id
                     );
                     return self.reject_key().await;
+                }
+                // The OpenSSH path refuses a fingerprint that is also a deploy key, so this does too.
+                match crate::backend::db::deploy_keys::get_deploy_key_by_fingerprint(
+                    &self.pool,
+                    &fingerprint_str,
+                )
+                .await
+                {
+                    Ok(None) => {}
+                    Ok(Some(_)) => {
+                        warn!("Refused ambiguous SSH key fingerprint: {}", fingerprint_str);
+                        return self.reject_key().await;
+                    }
+                    Err(e) => {
+                        error!("Database error during auth: {}", e);
+                        if let Some(signal) = self.authenticated.take() {
+                            let _ = signal.send(AuthOutcome::Unavailable);
+                        }
+                        return Err(e);
+                    }
                 }
 
                 info!(
@@ -514,7 +556,7 @@ impl russh::server::Handler for GitSshHandler {
         );
 
         // Check if repo exists and user has access
-        let repo = match get_repository(&self.pool, &git_cmd.owner, &git_cmd.repo).await? {
+        let repo = match get_git_repository(&self.pool, &git_cmd.owner, &git_cmd.repo).await? {
             Some(r) => r,
             None => {
                 // A deploy key cannot tell a missing repository from one it cannot reach.
@@ -575,56 +617,72 @@ impl russh::server::Handler for GitSshHandler {
             // Waiting in russh's serial callback would stop the active channel from
             // receiving the data and window adjustments it needs to release its slot.
             let result = async {
-                let store = repo_store(&repo, cluster.as_ref());
-                let _permit = tokio::select! {
-                    biased;
-                    _ = queued.cancelled() => return Err(anyhow::anyhow!("Git channel closed")),
-                    permit = store.session_permit() => permit?,
-                };
+                let queued_store = repo_store(&repo, cluster.as_ref());
+                let mut _permit = wait_for_session_slot(&queued_store, &queued).await?;
                 let repo = crate::backend::db::repositories::records::get_repository_by_id(&pool, repo.id)
                     .await?.ok_or_else(|| anyhow::anyhow!("repository unavailable"))?;
-                credential.authorize(&pool, &repo, git_cmd.write).await?;
+                let store = repo_store(&repo, cluster.as_ref());
+                if store.is_local() != queued_store.is_local() {
+                    // The repository moved to the other backend while this task waited, so the
+                    // slot it holds counts the wrong one.
+                    drop(_permit);
+                    _permit = wait_for_session_slot(&store, &queued).await?;
+                }
+                let (actor,_) = credential.authorize(&pool, &repo, git_cmd.write).await?;
+                let visitor=match credential { ReceiveCredential::DeployKey(id)=>traffic::Identity::deploy_key(id), _=>traffic::Identity::account(actor.id) };
                 if let ReceiveCredential::DeployKey(id) = credential {
                     deploy_keys::record_use(&pool, id).await;
                 }
-                repo_store(&repo, cluster.as_ref()).git_session(
+                let observation=traffic::clone::Observation::default();
+                let mut input=observation.input(io.input.as_mut().expect("open input"));
+                let mut output=observation.output(&mut output);
+                let status=store.git_session(
                     options, receive, GitStreams {
-                        input: io.input.as_mut().expect("open input"),
+                        input:&mut input,
                         output: &mut output, errors: &mut errors,
                     },
-                ).await
-            }.await;
-            let status = match result {
-                Ok(status) => status.code().unwrap_or(1).clamp(0, 255) as u32,
-                Err(error) => {
-                    warn!(%error, "Git channel failed or was denied");
-                    let message = if error.is::<git_process::SessionsBusy>()
-                        || error
-                            .downcast_ref::<crate::backend::repositories::store::RepoError>()
-                            .is_some_and(|error| error.is_sessions_busy())
-                    {
-                        "Git sessions busy\n"
-                    } else if error
-                        .is::<crate::backend::repositories::git_sessions::PostReceiveFailed>(
-                    ) {
-                        "ERR Git writes were accepted; post-push bookkeeping or CI dispatch failed.\n"
-                    } else if error
-                        .downcast_ref::<crate::backend::repositories::store::RepoError>()
-                        .is_some_and(|error| error.is_storage_node_unavailable())
-                    {
-                        "ERR storage node unavailable\n"
-                    } else {
-                        "ERR Git operation failed or was denied\n"
-                    };
-                    let _ = handle
-                        .extended_data(channel, 1, Bytes::from(message.to_owned()))
-                        .await;
-                    1
+                ).await?;
+                if !git_cmd.write && status.success() && observation.initial_transfer() {
+                    if let Some(visitor)=visitor {traffic::observe(&pool,repo.id,&visitor,&traffic::Metric::clone_transfer()).await;}
                 }
+                Ok::<_,anyhow::Error>(status)
+            }.await;
+            // The peer may never read these messages. The timeout keeps them from holding the
+            // task slot, which ends with this block either way.
+            let finish = async {
+                let status = match result {
+                    Ok(status) => status.code().unwrap_or(1).clamp(0, 255) as u32,
+                    Err(error) => {
+                        warn!(%error, "Git channel failed or was denied");
+                        let message = if error.is::<git_process::SessionsBusy>()
+                            || error
+                                .downcast_ref::<crate::backend::repositories::store::RepoError>()
+                                .is_some_and(|error| error.is_sessions_busy())
+                        {
+                            "Git sessions busy\n"
+                        } else if error
+                            .is::<crate::backend::repositories::git_sessions::PostReceiveFailed>(
+                        ) {
+                            "ERR Git writes were accepted; post-push bookkeeping or CI dispatch failed.\n"
+                        } else if error
+                            .downcast_ref::<crate::backend::repositories::store::RepoError>()
+                            .is_some_and(|error| error.is_storage_node_unavailable())
+                        {
+                            "ERR storage node unavailable\n"
+                        } else {
+                            "ERR Git operation failed or was denied\n"
+                        };
+                        let _ = handle
+                            .extended_data(channel, 1, Bytes::from(message.to_owned()))
+                            .await;
+                        1
+                    }
+                };
+                let _ = handle.exit_status_request(channel, status).await;
+                let _ = handle.eof(channel).await;
+                let _ = handle.close(channel).await;
             };
-            let _ = handle.exit_status_request(channel, status).await;
-            let _ = handle.eof(channel).await;
-            let _ = handle.close(channel).await;
+            let _ = tokio::time::timeout(FINAL_MESSAGE_TIMEOUT, finish).await;
         }) {
             self.refuse_command(channel, session, "Git server busy or shutting down");
             return Ok(());

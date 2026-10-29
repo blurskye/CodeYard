@@ -7,6 +7,35 @@ use crate::backend::db::{
     DbPool,
 };
 
+pub fn social_account(
+    input: &str,
+) -> Result<crate::backend::db::users::social_accounts::SocialAccount, ProfileError> {
+    let url = url::Url::parse(input.trim()).map_err(|_| ProfileError::Website)?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || input.len() > 255
+        || input.contains(['\0', '\r', '\n'])
+    {
+        return Err(ProfileError::Website);
+    }
+    let host = url.host_str().unwrap().trim_start_matches("www.");
+    let provider = match host {
+        "twitter.com" | "x.com" => "twitter",
+        "facebook.com" => "facebook",
+        "linkedin.com" => "linkedin",
+        "instagram.com" => "instagram",
+        "youtube.com" => "youtube",
+        "twitch.tv" => "twitch",
+        _ => "generic",
+    };
+    Ok(crate::backend::db::users::social_accounts::SocialAccount {
+        provider: provider.into(),
+        url: url.into(),
+    })
+}
+
 pub struct ProfileUpdate<'a> {
     pub display_name: Option<&'a str>,
     pub bio: Option<&'a str>,
@@ -22,6 +51,8 @@ pub enum ProfileError {
     Nul,
     #[error("Website must be a web address starting with http:// or https://")]
     Website,
+    #[error("Only a verified account email can be published")]
+    Email,
     #[error("Profile update requires an unrestricted account and a live session")]
     Denied,
     #[error("Profile storage is temporarily unavailable")]
@@ -99,6 +130,48 @@ pub async fn repository_count_on_profile(
         .await
         .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
     Ok((user, usize::try_from(count).unwrap_or(usize::MAX)))
+}
+
+pub async fn save(
+    pool: &DbPool,
+    actor: i64,
+    credential: &accounts::AccountCredential<'_>,
+    input: &crate::backend::db::users::profiles::ProfilePatch<'_>,
+) -> Result<User, ProfileError> {
+    validate(&ProfileUpdate {
+        display_name: input.display_name,
+        bio: input.bio,
+        location: input.location,
+        website: input.website,
+    })?;
+    for value in [input.company, input.twitter_username, input.email]
+        .into_iter()
+        .flatten()
+    {
+        if value.len() > 255 {
+            return Err(ProfileError::Invalid);
+        }
+        if value.contains('\0') {
+            return Err(ProfileError::Nul);
+        }
+    }
+    if input
+        .primary_visibility
+        .is_some_and(|value| !matches!(value, "private" | "public"))
+    {
+        return Err(ProfileError::Invalid);
+    }
+    crate::backend::db::users::profiles::save_profile(pool, actor, credential, input)
+        .await
+        .map_err(|error| {
+            if error.is::<accounts::AccountRestricted>() {
+                ProfileError::Denied
+            } else if error.is::<crate::backend::db::users::profiles::InvalidPublicEmail>() {
+                ProfileError::Email
+            } else {
+                ProfileError::Unavailable
+            }
+        })
 }
 
 pub async fn update(

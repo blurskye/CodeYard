@@ -590,7 +590,8 @@ mod tests {
         let filter = params.filter();
         assert_eq!(filter.view, NotificationView::Saved);
         assert_eq!(filter.repository_id, Some(7));
-        assert_eq!(filter.kinds.len(), 3);
+        // Issue, pull request, reply and commit comments.
+        assert_eq!(filter.kinds.len(), 4);
         assert_eq!(filter.query.as_deref(), Some("build"));
         assert!(filter.unread_only);
         assert_eq!(

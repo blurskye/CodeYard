@@ -3,6 +3,16 @@ use crate::backend::db::models::{Milestone, MilestoneSummary};
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
+#[derive(Debug, sqlx::FromRow)]
+pub struct MilestoneDocumentFacts {
+    pub creator_id: Option<i64>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+native_operation!(crate::backend::db::postgres::milestones::milestone_document_facts,
+    crate::backend::db::sqlite::milestones::milestone_document_facts,
+    fn milestone_document_facts(pool: &DbPool, repo: i64, id: i64) -> Result<MilestoneDocumentFacts>);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum MilestoneWriteRefusal {
     #[error("Milestone mutation denied")]
@@ -12,6 +22,27 @@ pub enum MilestoneWriteRefusal {
     #[error("A milestone with this title already exists")]
     DuplicateTitle,
 }
+
+pub struct MilestoneInput<'a> {
+    pub title: &'a str,
+    pub description: Option<&'a str>,
+    pub due_on: Option<chrono::DateTime<chrono::Utc>>,
+    pub state: Option<&'a str>,
+}
+
+pub(crate) fn due_on(day: Option<&str>) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+    day.map(|day| {
+        Ok(chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")?
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight")
+            .and_utc())
+    })
+    .transpose()
+}
+
+native_operation!(crate::backend::db::postgres::milestones::save_milestone,
+    crate::backend::db::sqlite::milestones::save_milestone,
+    fn save_milestone(pool: &DbPool, actor_id: i64, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>) -> Result<Milestone>);
 
 native_operation!(crate::backend::db::postgres::milestones::create_milestone,
     crate::backend::db::sqlite::milestones::create_milestone,
@@ -65,6 +96,14 @@ pub const MILESTONES_PER_PAGE: i64 = 30;
 
 pub(crate) fn milestone_order(sort: &str) -> &'static str {
     match sort {
+        "created-asc" => "created_at,number",
+        "created-desc" => "created_at DESC,number DESC",
+        "updated-asc" => "updated_at,number",
+        "updated-desc" => "updated_at DESC,number DESC",
+        "number-asc" => "number",
+        "number-desc" => "number DESC",
+        "due-on-asc" => "due_on IS NULL, due_on, number",
+        "due-on-desc" => "due_on IS NULL, due_on DESC, number",
         "furthest-due" => "due_date IS NULL, due_date DESC, number",
         "most-complete" => {
             "COALESCE(100 * closed_items / NULLIF(open_items + closed_items, 0), 0) DESC, number"
@@ -80,9 +119,20 @@ pub(crate) fn milestone_order(sort: &str) -> &'static str {
     }
 }
 
+pub(crate) fn milestone_search_where(postgres: bool) -> String {
+    let position = if postgres { "STRPOS" } else { "INSTR" };
+    format!("m.repo_id=$1 AND (CAST($2 AS TEXT) IS NULL OR m.state=$2) AND {position}(LOWER(m.title),LOWER($3))>0")
+}
+native_operation!(crate::backend::db::postgres::milestones::search_milestones_page,
+    crate::backend::db::sqlite::milestones::search_milestones_page,
+    fn search_milestones_page(pool:&DbPool,repo_id:i64,state:Option<&str>,query:&str,sort:&str,limit:i64,offset:i64)->Result<Vec<MilestoneSummary>>);
+native_operation!(crate::backend::db::postgres::milestones::count_matching_milestones,
+    crate::backend::db::sqlite::milestones::count_matching_milestones,
+    fn count_matching_milestones(pool:&DbPool,repo_id:i64,state:Option<&str>,query:&str)->Result<i64>);
+
 native_operation!(crate::backend::db::postgres::milestones::list_milestones_page,
     crate::backend::db::sqlite::milestones::list_milestones_page,
-    fn list_milestones_page(pool: &DbPool, repo_id: i64, state: &str, sort: &str, offset: i64) -> Result<Vec<MilestoneSummary>>);
+    fn list_milestones_page(pool: &DbPool, repo_id: i64, state: Option<&str>, sort: &str, limit: i64, offset: i64) -> Result<Vec<MilestoneSummary>>);
 
 native_operation!(crate::backend::db::postgres::milestones::count_milestones,
     crate::backend::db::sqlite::milestones::count_milestones,
@@ -96,6 +146,11 @@ native_operation!(crate::backend::db::postgres::milestones::list_milestone_filte
 native_operation!(crate::backend::db::postgres::milestones::list_milestone_choices,
     crate::backend::db::sqlite::milestones::list_milestone_choices,
     fn list_milestone_choices(pool: &DbPool, repo_id: i64) -> Result<Vec<Milestone>>);
+
+// The milestone titled exactly `title`, for a search qualifier the bounded catalogue misses.
+native_operation!(crate::backend::db::postgres::milestones::milestone_choice_by_title,
+    crate::backend::db::sqlite::milestones::milestone_choice_by_title,
+    fn milestone_choice_by_title(pool: &DbPool, repo_id: i64, title: &str) -> Result<Option<Milestone>>);
 
 native_operation!(crate::backend::db::postgres::milestones::milestone_choices_by_ids,
     crate::backend::db::sqlite::milestones::milestone_choices_by_ids,

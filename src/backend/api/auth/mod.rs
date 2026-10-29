@@ -1,51 +1,35 @@
-//! Authentication endpoints and their browser aliases. Administration has its own router.
+//! Browser sign-in, account creation and native authentication forms.
 
 pub mod change_password;
 pub mod email_links;
 pub(crate) mod errors;
+mod github_apps;
 pub mod login;
 pub mod logout;
-pub mod me;
 pub mod oauth;
-pub mod register;
+mod oauth_apps;
 pub mod session;
-pub mod setup;
 pub(crate) mod two_factor;
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
-    use crate::backend::api::{http::csrf, http::middleware};
-    use axum::{
-        extract::DefaultBodyLimit,
-        middleware::from_fn,
-        routing::{get, post},
-        Router,
-    };
+    use crate::backend::api::http::middleware;
+    use axum::{extract::DefaultBodyLimit, middleware::from_fn, routing::get, Router};
     Router::new()
-        .merge(
-            Router::new()
-                .route("/api/auth/session", post(session::create_session))
-                .route("/api/auth/setup-status", get(setup::setup_status))
-                .route("/api/auth/setup", post(setup::setup))
-                .route("/api/auth/register", post(register::register))
-                .route("/api/auth/login", post(login::login))
-                .route("/api/auth/logout", post(logout::logout))
-                .route("/api/auth/me", get(me::me))
-                .route("/api/auth/oauth/:provider", get(oauth::oauth_redirect))
-                .route(
-                    "/api/auth/oauth/:provider/callback",
-                    get(oauth::oauth_callback),
-                )
-                .route(
-                    "/api/auth/change-password",
-                    post(change_password::change_password),
-                )
-                .route_layer(from_fn(csrf::auth_submission))
-                .layer(from_fn(middleware::private_api_response)),
-        )
+        .merge(oauth_apps::router())
+        .merge(github_apps::router())
         .merge(
             Router::new()
                 .route("/enter", get(login::auth_get).post(login::auth_post))
                 .route("/login", get(login::auth_get).post(login::auth_post))
+                .merge(
+                    Router::new()
+                        .route("/login/oauth/:provider", get(oauth::oauth_redirect))
+                        .route(
+                            "/login/oauth/:provider/callback",
+                            get(oauth::oauth_callback),
+                        )
+                        .layer(from_fn(middleware::private_sensitive_response)),
+                )
                 .route(
                     "/login/two-factor",
                     get(two_factor::sign_in_get).post(two_factor::sign_in_post),

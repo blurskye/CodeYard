@@ -23,8 +23,22 @@ pub(crate) async fn native_commits(
     let Some(compare) = value.comparison.as_ref() else {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Pull request not found."));
     };
+    // A retargeted stack layer lists only its own commits, from its saved fork point.
+    let pull = crate::backend::db::pull_requests::records::get_pull_request(
+        &ctx.state.pool,
+        repo.record.id,
+        number,
+    )
+    .await
+    .map_err(|_| unavailable(&ctx))?
+    .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
+    let base = if pull.diff_base() != pull.base_sha {
+        pull.diff_base()
+    } else {
+        &compare.base_sha
+    };
     let commits = repo_store(&repo.record, ctx.state.cluster.as_ref())
-        .commits_between(&compare.base_sha, &compare.head_sha, MAX_LISTED_COMMITS)
+        .commits_between(base, &compare.head_sha, MAX_LISTED_COMMITS)
         .await
         .map_err(|_| unavailable(&ctx))?
         .into_iter()

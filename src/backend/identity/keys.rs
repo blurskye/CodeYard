@@ -52,18 +52,66 @@ pub async fn enroll(
         )
 }
 
-pub async fn delete(pool: &DbPool, actor: i64, key: i64) -> Result<(), KeyError> {
-    let deleted = ssh_keys::delete_user_ssh_key(pool, actor, key)
+pub async fn delete(
+    pool: &DbPool,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    key: i64,
+) -> Result<(), KeyError> {
+    let deleted = ssh_keys::delete_user_ssh_key(pool, actor, credential, key)
         .await
         .map_err(
             |error| match error.downcast_ref::<ssh_keys::SshKeyWriteRefusal>() {
                 Some(ssh_keys::SshKeyWriteRefusal::AccountRestricted) => {
                     KeyError::AccountRestricted
                 }
+                Some(ssh_keys::SshKeyWriteRefusal::InvalidSession) => KeyError::InvalidSession,
                 _ => KeyError::Unavailable,
             },
         )?;
     if deleted {
+        Ok(())
+    } else {
+        Err(KeyError::Missing)
+    }
+}
+
+fn signing_error(error: anyhow::Error) -> KeyError {
+    if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+        return KeyError::AccountRestricted;
+    }
+    match error.downcast_ref::<ssh_keys::SshKeyWriteRefusal>() {
+        Some(ssh_keys::SshKeyWriteRefusal::InvalidKey) => KeyError::InvalidKey,
+        Some(ssh_keys::SshKeyWriteRefusal::AlreadyUsed) => KeyError::AlreadyUsed,
+        _ => KeyError::Unavailable,
+    }
+}
+
+pub async fn enroll_signing(
+    pool: &DbPool,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    title: &str,
+    public_key: &str,
+) -> Result<crate::backend::db::users::signing_keys::SigningKey, KeyError> {
+    validate_name(title)?;
+    crate::backend::db::users::signing_keys::add_signing_key(
+        pool, actor, credential, title, public_key,
+    )
+    .await
+    .map_err(signing_error)
+}
+
+pub async fn delete_signing(
+    pool: &DbPool,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    id: i64,
+) -> Result<(), KeyError> {
+    if crate::backend::db::users::signing_keys::delete_signing_key(pool, actor, credential, id)
+        .await
+        .map_err(signing_error)?
+    {
         Ok(())
     } else {
         Err(KeyError::Missing)

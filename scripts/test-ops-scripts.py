@@ -161,7 +161,7 @@ with sqlite3.connect(sys.argv[1]) as source:
         (self.work / ".env").write_text("DATABASE_URL=sqlite://" + str(unrelated) + "?mode=rwc\n")
         self.env["TEST_BINARY"] = str(binary)
         self.shell('''RUN=$PWD/fixture; mkdir -p "$RUN"
-DATABASE_URL=; BASE=http://localhost; WEBUI_DIST=unused; ACT=unused
+DATABASE_URL=; BASE=http://localhost; WEBUI_DIST=unused; ACT=unused; ACTIONS_BIN=unused
 declare -A HTTP_PORTS=() SSH_PORTS=() IROH_PORTS=([ci1]=12345)
 get() { echo unused; }
 server_dir()''' + functions + '''
@@ -245,7 +245,7 @@ if must_fail key 'Permission denied' wrong_error; then exit 1; fi
 
     def test_readiness_log_consumers_drain_verbose_output(self):
         source = (ROOT / "scripts/e2e.sh").read_text()
-        for message in ["starting codeyard", "database-free actions-worker ready", "CI worker could not claim a run"]:
+        for message in ["starting codeyard", "database-free runner ready", "CI worker could not claim a run"]:
             line = next(line.strip() for line in source.splitlines() if "tail -n" in line and message in line)
             consumer = line.rsplit("|", 1)[1].split(" &&", 1)[0].removesuffix("; do")
             log = self.work / "server.log"
@@ -271,6 +271,9 @@ esac
 ''')
         for script in ["s3-tests.sh", "e2e.sh"]:
             (self.work / "scripts" / script).write_text("exit 0\n")
+        # ci-local.sh checks the generated API files first; these stubs pass those checks.
+        for generator in ["github-api-routes.py", "github-graphql-types.py"]:
+            (self.work / "scripts" / generator).write_text("")
         self.env.update(CARGO_TARGET_DIR=str(self.work / "target"),
                         PATH=str(self.work / "bin") + ":" + self.env["PATH"])
         self.shell("bash scripts/ci-local.sh")

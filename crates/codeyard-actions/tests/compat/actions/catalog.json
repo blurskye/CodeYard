@@ -1,0 +1,702 @@
+[
+  {
+    "name": "checkout",
+    "action": "actions/checkout",
+    "ref": "v4",
+    "sha": "11d5960a326750d5838078e36cf38b85af677262",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-node",
+    "action": "actions/setup-node",
+    "ref": "v4",
+    "sha": "49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-python",
+    "action": "actions/setup-python",
+    "ref": "v5",
+    "sha": "a26af69be951a213d495a4c3e4e4022e16d87065",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-go",
+    "action": "actions/setup-go",
+    "ref": "v5",
+    "sha": "40f1582b2485089dde7abd97c1529aa768e1baff",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-java",
+    "action": "actions/setup-java",
+    "ref": "v4",
+    "sha": "cf277c60eb25467037889841efdb72551f06f6c3",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-dotnet",
+    "action": "actions/setup-dotnet",
+    "ref": "v4",
+    "sha": "67a3573c9a986a3f9c594539f4ab511d57bb3ce9",
+    "requires": "needs network"
+  },
+  {
+    "name": "github-script",
+    "action": "actions/github-script",
+    "ref": "v7",
+    "sha": "f28e40c7f34bde8b3046d885e986cb6290c5673b",
+    "requires": "needs network"
+  },
+  {
+    "name": "cache",
+    "action": "actions/cache",
+    "ref": "v4",
+    "sha": "0057852bfaa89a56745cba8c7296529d2fc39830",
+    "requires": "needs network"
+  },
+  {
+    "name": "cache-restore",
+    "action": "actions/cache/restore",
+    "ref": "v4",
+    "sha": "0057852bfaa89a56745cba8c7296529d2fc39830",
+    "requires": "needs network"
+  },
+  {
+    "name": "cache-save",
+    "action": "actions/cache/save",
+    "ref": "v4",
+    "sha": "0057852bfaa89a56745cba8c7296529d2fc39830",
+    "requires": "needs network"
+  },
+  {
+    "name": "upload-artifact",
+    "action": "actions/upload-artifact",
+    "ref": "v4",
+    "sha": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+    "requires": "needs network"
+  },
+  {
+    "name": "download-artifact",
+    "action": "actions/download-artifact",
+    "ref": "v4",
+    "sha": "d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-ruby",
+    "action": "ruby/setup-ruby",
+    "ref": "v1",
+    "sha": "e1bd6146574da5e0795075b5319b300edb30c5b0",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-rust",
+    "action": "actions-rust-lang/setup-rust-toolchain",
+    "ref": "v1",
+    "sha": "166cdcfd11aee3cb47222f9ddb555ce30ddb9659",
+    "requires": "needs network"
+  },
+  {
+    "name": "rust-toolchain",
+    "action": "dtolnay/rust-toolchain",
+    "ref": "1.85.0",
+    "sha": "cfcaf53ba4c621917ec7f78a66bff7a8848ddad4",
+    "requires": "needs network"
+  },
+  {
+    "name": "install-action",
+    "action": "taiki-e/install-action",
+    "ref": "v2",
+    "sha": "a4d3f3f761dcd95cce1b72cb61cb6d1963438177",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-bun",
+    "action": "oven-sh/setup-bun",
+    "ref": "v2",
+    "sha": "0c5077e51419868618aeaa5fe8019c62421857d6",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-deno",
+    "action": "denoland/setup-deno",
+    "ref": "v2",
+    "sha": "22d081ff2d3a40755e97629de92e3bcbfa7cf2ed",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-pnpm",
+    "action": "pnpm/action-setup",
+    "ref": "v4",
+    "sha": "b906affcce14559ad1aafd4ab0e942779e9f58b1",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-uv",
+    "action": "astral-sh/setup-uv",
+    "ref": "v5",
+    "sha": "d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-ruff",
+    "action": "astral-sh/ruff-action",
+    "ref": "v3",
+    "sha": "4919ec5cf1f49eff0871dbcea0da843445b837e6",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-poetry",
+    "action": "snok/install-poetry",
+    "ref": "v1",
+    "sha": "a783c322200f0519c7926aa6faa857c4e23e9263",
+    "requires": "needs network"
+  },
+  {
+    "name": "install-poetry",
+    "action": "abatilo/actions-poetry",
+    "ref": "v3",
+    "sha": "fd0e6716a0de25ef6ade151b8b53190b0376acfd",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-pdm",
+    "action": "pdm-project/setup-pdm",
+    "ref": "v4",
+    "sha": "544d7237314ee09c256785bd360f6b30add38b37",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-conda",
+    "action": "conda-incubator/setup-miniconda",
+    "ref": "v3",
+    "sha": "fc2d68f6413eb2d87b895e92f8584b5b94a10167",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-micromamba",
+    "action": "mamba-org/setup-micromamba",
+    "ref": "v2",
+    "sha": "add3a49764cedee8ee24e82dfde87f5bc2914462",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-pixi",
+    "action": "prefix-dev/setup-pixi",
+    "ref": "v0.8.3",
+    "sha": "92815284c57faa15cd896c4d5cfb2d59f32dc43d",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-yarn",
+    "action": "borales/actions-yarn",
+    "ref": "v5",
+    "sha": "3766bb1335b98fb13c60eaf358fe20811b730a88",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-php",
+    "action": "shivammathur/setup-php",
+    "ref": "v2",
+    "sha": "eb7c497e18156a6bbabfef1d3a82760b9eda3962",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-elixir",
+    "action": "erlef/setup-beam",
+    "ref": "v1",
+    "sha": "54075bcc5e249e4758d363f27d099f55d843f124",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-haskell",
+    "action": "haskell-actions/setup",
+    "ref": "v2",
+    "sha": "0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-clojure",
+    "action": "DeLaGuardo/setup-clojure",
+    "ref": "13.2",
+    "sha": "ada62bb3282a01a296659d48378b812b8e097360",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-scala",
+    "action": "coursier/setup-action",
+    "ref": "v1",
+    "sha": "039f736548afa5411c1382f40a5bd9c2d30e0383",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-sbt",
+    "action": "sbt/setup-sbt",
+    "ref": "v1",
+    "sha": "ecad189dd245444b9ae0a0cd5922fd938b88906f",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-gradle",
+    "action": "gradle/actions/setup-gradle",
+    "ref": "v4",
+    "sha": "ed408507eac070d1f99cc633dbcf757c94c7933a",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-maven",
+    "action": "stCarolas/setup-maven",
+    "ref": "v5",
+    "sha": "d6af6abeda15e98926a57b5aa970a96bb37f97d1",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-flutter",
+    "action": "subosito/flutter-action",
+    "ref": "v2",
+    "sha": "1a449444c387b1966244ae4d4f8c696479add0b2",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-dart",
+    "action": "dart-lang/setup-dart",
+    "ref": "v1",
+    "sha": "6afc89df92d6eb3834022f73cd65adc8cdfcb92d",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-julia",
+    "action": "julia-actions/setup-julia",
+    "ref": "v2",
+    "sha": "4c0cb0fce8556fdb04a90347310e5db8b1f98fb9",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-lua",
+    "action": "leafo/gh-actions-lua",
+    "ref": "v11",
+    "sha": "8aace3457a2fcf3f3c4e9007ecc6b869ff6d74d6",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-luarocks",
+    "action": "leafo/gh-actions-luarocks",
+    "ref": "v4",
+    "sha": "e65774a6386cb4f24e293dca7fc4ff89165b64c5",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-zig",
+    "action": "mlugg/setup-zig",
+    "ref": "v1",
+    "sha": "53fc45b17fe98b52f92ee5ea08ff48a85a3e7eb7",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-nim",
+    "action": "jiro4989/setup-nim-action",
+    "ref": "v2",
+    "sha": "189b145833368cc92f1e7b3e166a25a3e057a693",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-ocaml",
+    "action": "ocaml/setup-ocaml",
+    "ref": "v3",
+    "sha": "93303b622b2522e4411e295f9e77411a24912ac7",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-r",
+    "action": "r-lib/actions/setup-r",
+    "ref": "v2",
+    "sha": "f9a764fea8d5c63df6ef9a5c7795bf7deb5d7e05",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-quarto",
+    "action": "quarto-dev/quarto-actions/setup",
+    "ref": "v2",
+    "sha": "8a96df13519ee81fd526f2dfca5962811136661b",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-typst",
+    "action": "typst-community/setup-typst",
+    "ref": "v4",
+    "sha": "48aeee7543d37f01afd1ffb27307dc277387ba13",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-pandoc",
+    "action": "pandoc/actions/setup",
+    "ref": "v1",
+    "sha": "86321b6dd4675f5014c611e05088e10d4939e09e",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-tinytex",
+    "action": "r-lib/actions/setup-tinytex",
+    "ref": "v2",
+    "sha": "f9a764fea8d5c63df6ef9a5c7795bf7deb5d7e05",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-terraform",
+    "action": "hashicorp/setup-terraform",
+    "ref": "v3",
+    "sha": "b9cd54a3c349d3f38e8881555d616ced269862dd",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-opentofu",
+    "action": "opentofu/setup-opentofu",
+    "ref": "v1",
+    "sha": "9d84900f3238fab8cd84ce47d658d25dd008be2f",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-terragrunt",
+    "action": "gruntwork-io/terragrunt-action",
+    "ref": "v2",
+    "sha": "9559e51d05873b0ea467c42bbabcb5c067642ccc",
+    "requires": "needs podman"
+  },
+  {
+    "name": "setup-helm",
+    "action": "azure/setup-helm",
+    "ref": "v4.3.0",
+    "sha": "b9e51907a09c216f16ebe8536097933489208112",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-kubectl",
+    "action": "azure/setup-kubectl",
+    "ref": "v4",
+    "sha": "776406bce94f63e41d621b960d78ee25c8b76ede",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-kustomize",
+    "action": "imranismail/setup-kustomize",
+    "ref": "v2",
+    "sha": "2ba527d4d055ab63514ba50a99456fc35684947f",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-kind",
+    "action": "engineerd/setup-kind",
+    "ref": "v0.6.2",
+    "sha": "ecfad61750951586a9ef973db567df1d28671bdc",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-tflint",
+    "action": "terraform-linters/setup-tflint",
+    "ref": "v4",
+    "sha": "90f302c255ef959cbfb4bd10581afecdb7ece3e6",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-trivy",
+    "action": "aquasecurity/setup-trivy",
+    "ref": "v0.2.6",
+    "sha": "3fb12ec12f41e471780db15c232d5dd185dcb514",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-hugo",
+    "action": "peaceiris/actions-hugo",
+    "ref": "v3",
+    "sha": "2752ce1d29631191ea3f27c23495fa06139a5b78",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-goreleaser",
+    "action": "goreleaser/goreleaser-action",
+    "ref": "v6",
+    "sha": "e435ccd777264be153ace6237001ef4d979d3a7a",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-just",
+    "action": "extractions/setup-just",
+    "ref": "v2",
+    "sha": "dd310ad5a97d8e7b41793f8ef055398d51ad4de6",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-task",
+    "action": "arduino/setup-task",
+    "ref": "v2",
+    "sha": "b91d5d2c96a56797b48ac1e0e89220bf64044611",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-protoc",
+    "action": "arduino/setup-protoc",
+    "ref": "v3",
+    "sha": "c65c819552d16ad3c9b72d9dfd5ba5237b9c906b",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-buf",
+    "action": "bufbuild/buf-setup-action",
+    "ref": "v1",
+    "sha": "a47c93e0b1648d5651a065437926377d060baa99",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-yq",
+    "action": "dcarbone/install-yq-action",
+    "ref": "v1",
+    "sha": "4075b4dca348d74bd83f2bf82d30f25d7c54539b",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-jq",
+    "action": "dcarbone/install-jq-action",
+    "ref": "v3",
+    "sha": "b7ef57d46ece78760b4019dbc4080a1ba2a40b45",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-cmake",
+    "action": "jwlawson/actions-setup-cmake",
+    "ref": "v2",
+    "sha": "0d6a7d60b009d01c9e7523be22153ff8f19460d3",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-ninja",
+    "action": "ashutoshvarma/setup-ninja",
+    "ref": "v1.1",
+    "sha": "93f8b9763516f1fb9b4d9840b12d844bee17791f",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-meson",
+    "action": "BSFishy/meson-build",
+    "ref": "v1.0.3",
+    "sha": "656b2a360964b249ac82905a52018921e01d875b",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-bazel",
+    "action": "bazel-contrib/setup-bazel",
+    "ref": "0.14.0",
+    "sha": "e8776f58fb6a6e9055cbaf1b38c52ccc5247e9c4",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-ccache",
+    "action": "hendrikmuhs/ccache-action",
+    "ref": "v1.2",
+    "sha": "5ebbd400eff9e74630f759d94ddd7b6c26299639",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-sccache",
+    "action": "mozilla-actions/sccache-action",
+    "ref": "v0.0.8",
+    "sha": "65101d47ea8028ed0c98a1cdea8dd9182e9b5133",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-vcpkg",
+    "action": "lukka/run-vcpkg",
+    "ref": "v11",
+    "sha": "b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-nix",
+    "action": "cachix/install-nix-action",
+    "ref": "v31",
+    "sha": "448cde739abec1eaf0646249e3d25bb8d9bc7702",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-nix-determinate",
+    "action": "DeterminateSystems/nix-installer-action",
+    "ref": "v17",
+    "sha": "21a544727d0c62386e78b4befe52d19ad12692e3",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-nix-quick",
+    "action": "nixbuild/nix-quick-install-action",
+    "ref": "v30",
+    "sha": "5bb6a3b3abe66fd09bbf250dce8ada94f856a703",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-doctl",
+    "action": "digitalocean/action-doctl",
+    "ref": "v2",
+    "sha": "3cb3953159719656269e044e0e24ca16dd2a690f",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-gcloud",
+    "action": "google-github-actions/setup-gcloud",
+    "ref": "v2",
+    "sha": "e427ad8a34f8676edf47cf7d7925499adf3eb74f",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-aws-sam",
+    "action": "aws-actions/setup-sam",
+    "ref": "v2",
+    "sha": "f84ec7d548307efafe33230528756de3c5841a17",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-pulumi",
+    "action": "pulumi/setup-pulumi",
+    "ref": "v2",
+    "sha": "b374ceb6168550de27c6eba92e01c1a774040e11",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-flyctl",
+    "action": "superfly/flyctl-actions/setup-flyctl",
+    "ref": "1.5",
+    "sha": "fc53c09e1bc3be6f54706524e3b82c4f462f77be",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-docker-buildx",
+    "action": "docker/setup-buildx-action",
+    "ref": "v3",
+    "sha": "8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+    "requires": "needs podman"
+  },
+  {
+    "name": "setup-docker-qemu",
+    "action": "docker/setup-qemu-action",
+    "ref": "v3",
+    "sha": "c7c53464625b32c7a7e944ae62b3e17d2b600130",
+    "requires": "needs podman"
+  },
+  {
+    "name": "docker-login",
+    "action": "docker/login-action",
+    "ref": "v3",
+    "sha": "c94ce9fb468520275223c153574b00df6fe4bcc9",
+    "requires": "needs podman"
+  },
+  {
+    "name": "docker-build-push",
+    "action": "docker/build-push-action",
+    "ref": "v6",
+    "sha": "10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
+    "requires": "needs podman"
+  },
+  {
+    "name": "docker-metadata",
+    "action": "docker/metadata-action",
+    "ref": "v5",
+    "sha": "c299e40c65443455700f0fdfc63efafe5b349051",
+    "requires": "needs network"
+  },
+  {
+    "name": "docker-bake",
+    "action": "docker/bake-action",
+    "ref": "v6",
+    "sha": "5be5f02ff8819ecd3092ea6b2e6261c31774f2b4",
+    "requires": "needs podman"
+  },
+  {
+    "name": "changed-files",
+    "action": "tj-actions/changed-files",
+    "ref": "v46",
+    "sha": "ed68ef82c095e0d48ec87eccea555d944a631a4c",
+    "requires": "needs network"
+  },
+  {
+    "name": "paths-filter",
+    "action": "dorny/paths-filter",
+    "ref": "v3",
+    "sha": "0e4a8c6effa4802afeda77dc8d303f8176d7dfad",
+    "requires": "needs network"
+  },
+  {
+    "name": "create-json",
+    "action": "jsdaniell/create-json",
+    "ref": "v1.2.3",
+    "sha": "b8e77fa01397ca39cc4a6198cc29a3be5481afef",
+    "requires": "needs network"
+  },
+  {
+    "name": "write-file",
+    "action": "DamianReeves/write-file-action",
+    "ref": "v1.3",
+    "sha": "6929a9a6d1807689191dcc8bbe62b54d70a32b42",
+    "requires": "needs network"
+  },
+  {
+    "name": "read-file",
+    "action": "juliangruber/read-file-action",
+    "ref": "v1",
+    "sha": "271ff311a4947af354c6abcd696a306553b9ec18",
+    "requires": "needs network"
+  },
+  {
+    "name": "find-replace",
+    "action": "jacobtomlinson/gha-find-replace",
+    "ref": "v3",
+    "sha": "2ff30f644d2e0078fc028beb9193f5ff0dcad39e",
+    "requires": "needs podman"
+  },
+  {
+    "name": "yaml-update",
+    "action": "fjogeleit/yaml-update-action",
+    "ref": "v0.16.1",
+    "sha": "04ff6ec06568fd21197db746472e36cc425de850",
+    "requires": "needs network"
+  },
+  {
+    "name": "branch-names",
+    "action": "tj-actions/branch-names",
+    "ref": "v8",
+    "sha": "dde14ac574a8b9b1cedc59a1cf312788af43d8d8",
+    "requires": "needs network"
+  },
+  {
+    "name": "slug",
+    "action": "rlespinasse/github-slug-action",
+    "ref": "v5",
+    "sha": "0e3299190dac9a700da92a90de4556116ea965ed",
+    "requires": "needs network"
+  },
+  {
+    "name": "short-sha",
+    "action": "benjlevesque/short-sha",
+    "ref": "v3.0",
+    "sha": "599815c8ee942a9616c92bcfb4f947a3b670ab0b",
+    "requires": "needs network"
+  },
+  {
+    "name": "semver",
+    "action": "paulhatch/semantic-version",
+    "ref": "v5.4.0",
+    "sha": "a8f8f59fd7f0625188492e945240f12d7ad2dca3",
+    "requires": "needs network"
+  },
+  {
+    "name": "ssh-agent",
+    "action": "webfactory/ssh-agent",
+    "ref": "v0.9.0",
+    "sha": "dc588b651fe13675774614f8e6a936a468676387",
+    "requires": "needs network"
+  },
+  {
+    "name": "setup-ssh",
+    "action": "shimataro/ssh-key-action",
+    "ref": "v2",
+    "sha": "87a8f067114a8ce263df83e9ed5c849953548bc3",
+    "requires": "needs network"
+  }
+]

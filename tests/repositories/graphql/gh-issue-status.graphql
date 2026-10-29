@@ -1,0 +1,17 @@
+# cli/cli 5056c0a8ef34512be1d5b4120d4e4b30412ada8b
+# api/queries_issue.go IssueStatus, with api.IssueGraphQL field substitutions.
+fragment issue on Issue { id number title state author { login ... on User { id name } } }
+query IssueStatus($owner: String!, $repo: String!, $viewer: String!, $per_page: Int = 10) {
+  repository(owner: $owner, name: $repo) {
+    hasIssuesEnabled
+    assigned: issues(filterBy: {assignee: $viewer, states: OPEN}, first: $per_page, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      totalCount nodes { ...issue }
+    }
+    mentioned: issues(filterBy: {mentioned: $viewer, states: OPEN}, first: $per_page, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      totalCount nodes { ...issue }
+    }
+    authored: issues(filterBy: {createdBy: $viewer, states: OPEN}, first: $per_page, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      totalCount nodes { ...issue }
+    }
+  }
+}

@@ -122,6 +122,8 @@ async fn new_pr(pool: &db::DbPool, repo: i64, actor: i64) -> anyhow::Result<Pull
             base_branch: "main",
             base_sha: SHA,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -135,6 +137,8 @@ fn comment(
         pr_id: pr,
         author_id: actor,
         body: "Contribution",
+        start_line: None,
+        start_side: None,
         expected_revisions: None,
         path: None,
         line: None,
@@ -225,38 +229,43 @@ async fn review_denied(
     );
     assert_eq!(d.snapshot(repo, issue, pr).await, before);
 }
-async fn edit_denied(pool: &db::DbPool, actor: i64, issue: &Issue, pr: &PullRequest) {
-    assert!(db::issues::update_issue(
+/// Edits the title and body of `issue` and `pr`, and checks that both edits are `allowed` or both
+/// refused.
+async fn edits(pool: &db::DbPool, actor: i64, issue: &Issue, pr: &PullRequest, allowed: bool) {
+    let issue_edit = db::issues::update_issue(
         pool,
         issue.id,
         DiscussionEdit {
             actor_id: actor,
             expected_state: &issue.state,
             expected_updated: issue.updated_at,
-            title: Some("Denied edit"),
-            body: Some("Denied body"),
+            title: Some("Edited title"),
+            body: Some("Edited body"),
             state: None,
-        }
+        },
     )
     .await
-    .unwrap()
-    .is_none());
-    assert!(db::pull_requests::records::update_pull_request(
+    .unwrap();
+    assert_eq!(issue_edit.is_some(), allowed);
+    let pr_edit = db::pull_requests::records::update_pull_request(
         pool,
         pr.id,
         DiscussionEdit {
             actor_id: actor,
             expected_state: &pr.state,
             expected_updated: pr.updated_at,
-            title: Some("Denied edit"),
-            body: Some("Denied body"),
+            title: Some("Edited title"),
+            body: Some("Edited body"),
             state: None,
         },
-        None,
+        Default::default(),
     )
     .await
-    .unwrap()
-    .is_none());
+    .unwrap();
+    assert_eq!(pr_edit.is_some(), allowed);
+}
+async fn edit_denied(pool: &db::DbPool, actor: i64, issue: &Issue, pr: &PullRequest) {
+    edits(pool, actor, issue, pr, false).await;
 }
 
 async fn contract(pg: bool) {
@@ -557,15 +566,15 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    // Read authorship is not an issue/PR edit permit. Comment self-edit policy is
-    // separate and cannot be tested by weakening this shared merge/write gate.
+    // As on GitHub, a reader may edit the issue and the pull request they opened, and no
+    // others.
     let reader_issue =
         db::issues::create_issue(d.pool(), private.id, reader, "Read author", "Fixture")
             .await
             .unwrap();
     let reader_pr = new_pr(d.pool(), private.id, reader).await.unwrap();
+    edits(d.pool(), reader, &reader_issue, &reader_pr, true).await;
     let before_edits = d.snapshot(private.id, issue.id, pr.id).await;
-    edit_denied(d.pool(), reader, &reader_issue, &reader_pr).await;
     edit_denied(d.pool(), reader, &current_issue, &current_pr).await;
     let imprecise_issue = Issue {
         updated_at: current_issue.updated_at + chrono::Duration::nanoseconds(1),
@@ -601,7 +610,7 @@ async fn contract(pg: bool) {
             body: None,
             state: Some("closed"),
         },
-        None,
+        Default::default(),
     )
     .await
     .unwrap()
@@ -628,7 +637,7 @@ async fn contract(pg: bool) {
             body: None,
             state: Some("open"),
         },
-        None,
+        Default::default(),
     )
     .await
     .unwrap()
@@ -900,6 +909,8 @@ async fn file_comment(pool: &db::DbPool, pr: i64, author: i64) -> i64 {
             pr_id: pr,
             author_id: author,
             body: "Conversation",
+            start_line: None,
+            start_side: None,
             expected_revisions: None,
             path: Some("src/lib.rs"),
             line: Some(1),

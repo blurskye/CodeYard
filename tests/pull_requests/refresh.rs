@@ -602,6 +602,8 @@ async fn concurrent_refresh_converges(pg: bool) {
             base_branch: "main",
             base_sha: &main.sha,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await

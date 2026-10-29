@@ -15,6 +15,8 @@ pub enum Subject {
     PullRequest,
     PullRequestComment,
     PullRequestReview,
+    Release,
+    CommitComment,
 }
 
 impl Subject {
@@ -25,8 +27,15 @@ impl Subject {
             Self::PullRequest => "pull_request",
             Self::PullRequestComment => "pr_comment",
             Self::PullRequestReview => "pr_review",
+            Self::Release => "release",
+            Self::CommitComment => "commit_comment",
         }
     }
+}
+
+pub fn valid_content(subject: Subject, content: &str) -> bool {
+    CONTENTS.contains(&content)
+        && (subject != Subject::Release || !matches!(content, "-1" | "confused"))
 }
 
 /// The reaction has no target: the item is not in the repository, or the comment or review is not on
@@ -36,6 +45,42 @@ pub enum ReactionRefusal {
     #[error("reaction_target_not_found")]
     NotFound,
 }
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Reaction {
+    pub id: i64,
+    pub repo_id: i64,
+    pub user_id: i64,
+    pub subject_kind: String,
+    pub subject_id: i64,
+    pub content: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// The item and subject are checked together before a reaction is changed.
+#[derive(Debug, Clone, Copy)]
+pub struct Target {
+    pub repo_id: i64,
+    pub item_id: i64,
+    pub subject: Subject,
+    pub subject_id: i64,
+}
+
+native_operation!(crate::backend::db::postgres::reactions::create_reaction,
+    crate::backend::db::sqlite::reactions::create_reaction,
+    fn create_reaction(pool: &DbPool, actor_id: i64, target: Target, content: &str) -> Result<(Reaction, bool)>);
+
+native_operation!(crate::backend::db::postgres::reactions::delete_reaction,
+    crate::backend::db::sqlite::reactions::delete_reaction,
+    fn delete_reaction(pool: &DbPool, actor_id: i64, target: Target, reaction_id: i64) -> Result<bool>);
+
+native_operation!(crate::backend::db::postgres::reactions::find_reaction,
+    crate::backend::db::sqlite::reactions::find_reaction,
+    fn find_reaction(pool:&DbPool,actor:i64,target:Target,content:&str)->Result<Option<Reaction>>);
+
+native_operation!(crate::backend::db::postgres::reactions::list_reactions,
+    crate::backend::db::sqlite::reactions::list_reactions,
+    fn list_reactions(pool: &DbPool, target: Target, content: Option<&str>, limit: i64, offset: i64) -> Result<Vec<Reaction>>);
 
 /// One reaction on a subject: how many users gave it, and whether the viewer is one of them.
 #[derive(Debug, Clone, PartialEq, Eq)]

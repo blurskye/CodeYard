@@ -35,6 +35,12 @@ impl Database {
             Self::Sqlite(_) => panic!("this test needs PostgreSQL"),
         }
     }
+    pub fn connection_url(&self) -> String {
+        match self {
+            Self::Postgres(f) => f.connection_url(),
+            Self::Sqlite(f) => f.url.clone(),
+        }
+    }
     /// Runs fixture SQL that is the same on both engines, with numbered id parameters.
     pub async fn execute(&self, sql: &str, ids: &[i64]) {
         match self {
@@ -64,11 +70,16 @@ impl Database {
     pub async fn scalar(&self, sql: &str, ids: &[i64]) -> i64 {
         match self {
             Self::Postgres(f) => {
-                let mut query = sqlx::query_scalar::<_, i64>(sql);
+                use sqlx::Row;
+                let mut query = sqlx::query(sql);
                 for id in ids {
                     query = query.bind(*id);
                 }
-                query.fetch_one(&f.raw).await.expect("owned PG observation")
+                let row = query.fetch_one(&f.raw).await.expect("owned PG observation");
+                row.try_get::<i64, _>(0)
+                    .or_else(|_| row.try_get::<i32, _>(0).map(i64::from))
+                    .or_else(|_| row.try_get::<i16, _>(0).map(i64::from))
+                    .expect("owned PG integer observation")
             }
             Self::Sqlite(f) => {
                 let mut query = sqlx::query_scalar::<_, i64>(sql);

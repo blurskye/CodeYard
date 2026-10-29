@@ -1,0 +1,31 @@
+//! Stable workflow identities and repository execution policy; files still come from Git.
+use super::{models::CiRun, DbPool};
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+
+#[derive(Clone, sqlx::FromRow)]
+pub struct Workflow {
+    pub id: i64,
+    pub repo_id: i64,
+    pub path: String,
+    pub name: String,
+    pub state: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+native_operation!(crate::backend::db::postgres::action_workflows::register_workflow,
+    crate::backend::db::sqlite::action_workflows::register_workflow,
+    fn register_workflow(pool:&DbPool,repo:i64,path:&str,name:&str,refresh:bool) -> Result<Workflow>);
+native_operation!(crate::backend::db::postgres::action_workflows::set_workflow_enabled,
+    crate::backend::db::sqlite::action_workflows::set_workflow_enabled,
+    fn set_workflow_enabled(pool:&DbPool,actor:i64,repo:i64,id:i64,enabled:bool) -> Result<Option<Workflow>>);
+native_operation!(crate::backend::db::postgres::action_workflows::workflow_by_id,
+    crate::backend::db::sqlite::action_workflows::workflow_by_id,
+    fn workflow_by_id(pool: &DbPool, repo: i64, id:i64) -> Result<Option<Workflow>>);
+native_operation!(crate::backend::db::postgres::action_workflows::workflow_for_path,
+    crate::backend::db::sqlite::action_workflows::workflow_for_path,
+    fn workflow_for_path(pool:&DbPool,repo:i64,path:&str) -> Result<Option<Workflow>>);
+native_operation!(crate::backend::db::postgres::action_workflows::latest_workflow_run,
+    crate::backend::db::sqlite::action_workflows::latest_workflow_run,
+    fn latest_workflow_run(pool:&DbPool,repo:i64,path:&str,branch:Option<&str>,event:Option<&str>) -> Result<Option<CiRun>>);

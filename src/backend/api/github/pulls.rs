@@ -1,0 +1,405 @@
+//! Pull requests use the published commits, including a fork's retained pull ref.
+mod async_merge;
+mod comments;
+mod merge;
+mod mutations;
+mod reviews;
+mod stacks;
+mod team_reviewers;
+use super::{
+    contents::{path_url, store_error},
+    pagination::Pagination,
+    repo_url, repository, Error, Result,
+};
+use crate::backend::{
+    app::AppState,
+    db,
+    repositories::{access, store::repo_store},
+    webhooks::payloads,
+};
+use axum::{
+    extract::{OriginalUri, Path, Query, State},
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, MethodRouter},
+    Json,
+};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::sync::Arc;
+
+async fn target(
+    state: &AppState,
+    headers: &HeaderMap,
+    owner: &str,
+    name: &str,
+    number: i32,
+) -> Result<(db::models::Repository, db::models::PullRequest)> {
+    let (repo, _) = repository(state, headers, owner, name, false).await?;
+    let pull = db::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
+    Ok((repo, pull))
+}
+
+async fn person(state: &AppState, id: i64) -> Result<Value> {
+    let user = db::users::accounts::get_user_by_id(&state.pool, id)
+        .await
+        .map_err(Error::unavailable)?;
+    Ok(user.as_ref().map_or(Value::Null, payloads::user))
+}
+
+pub(super) async fn association(
+    pool: &db::DbPool,
+    repo: &db::models::Repository,
+    user_id: i64,
+) -> Result<&'static str> {
+    access::author_association(pool, repo, user_id)
+        .await
+        .map_err(Error::unavailable)
+}
+
+async fn readable_head(
+    state: &AppState,
+    headers: &HeaderMap,
+    pull: &db::models::PullRequest,
+) -> Result<Option<db::models::Repository>> {
+    let head = match pull.head_repo_id {
+        Some(id) => db::repositories::records::get_repository_by_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?,
+        None => None,
+    };
+    let auth = super::auth::authenticate(state, headers, false).await?;
+    match head {
+        Some(head)
+            if access::can_read(&state.pool, auth.as_ref().map(|auth| &auth.user), &head)
+                .await
+                .map_err(Error::unavailable)? =>
+        {
+            Ok(Some(head))
+        }
+        _ => Ok(None),
+    }
+}
+
+pub(super) async fn document(
+    state: &AppState,
+    headers: &HeaderMap,
+    repo: &db::models::Repository,
+    owner: &str,
+    pull: &db::models::PullRequest,
+    detail: bool,
+) -> Result<Value> {
+    let author = db::users::accounts::get_user_by_id(&state.pool, pull.author_id)
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
+    let mut value = payloads::pull_request_json(pull, &payloads::Person::of(&author), repo, owner);
+    value["user"] = payloads::user(&author);
+    value["author_association"] = json!(association(&state.pool, repo, author.id).await?);
+    value["base"] = json!({"label": format!("{owner}:{}", pull.base_branch), "ref": pull.base_branch, "sha": pull.base_sha, "repo": payloads::repository(repo, owner), "user": person(state, repo.owner_id()).await?});
+    if repo.owner_kind == "org" {
+        value["base"]["user"] = value["base"]["repo"]["owner"].clone();
+    }
+    // A hidden fork is still refused. A deleted fork keeps its pull request with a null head
+    // repository, as GitHub reports it.
+    let (head_label, head_user, head_repo) = if pull.head_repo_id.is_some() {
+        let head = readable_head(state, headers, pull)
+            .await?
+            .ok_or_else(Error::missing)?;
+        let head_owner = db::repositories::records::repository_owner_name(&state.pool, head.id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+        let head_value = payloads::repository(&head, &head_owner);
+        (
+            format!("{head_owner}:{}", pull.head_branch),
+            head_value["owner"].clone(),
+            head_value,
+        )
+    } else {
+        (pull.head_branch.clone(), Value::Null, Value::Null)
+    };
+    value["head"] = json!({"label": head_label, "ref": pull.head_branch, "sha": pull.head_sha, "user": head_user, "repo": head_repo});
+    let labels = db::labels::get_pull_request_labels(&state.pool, pull.id)
+        .await
+        .map_err(Error::unavailable)?;
+    value["labels"] = json!(labels
+        .iter()
+        .map(|label| payloads::label(label, owner, &repo.name))
+        .collect::<Vec<_>>());
+    if let Some(id) = pull.milestone_id {
+        let summary = db::milestones::get_milestone_by_id(&state.pool, repo.id, id)
+            .await
+            .map_err(Error::unavailable)?;
+        value["milestone"] = match summary {
+            Some(summary) => {
+                super::milestones::document(&state.pool, &summary, owner, &repo.name).await?
+            }
+            None => Value::Null,
+        };
+    }
+    let names = db::assignees::list_assignees(
+        &state.pool,
+        db::assignees::AssignedItem::PullRequest(pull.id),
+    )
+    .await
+    .map_err(Error::unavailable)?;
+    let mut assignees = Vec::new();
+    for name in names {
+        if let Some(user) = db::users::accounts::get_user_by_username(&state.pool, &name)
+            .await
+            .map_err(Error::unavailable)?
+        {
+            assignees.push(person(state, user.id).await?);
+        }
+    }
+    value["assignee"] = assignees.first().cloned().unwrap_or(Value::Null);
+    value["assignees"] = json!(assignees);
+    let reviewers = db::pull_requests::reviews::list_pull_request_reviewers(&state.pool, pull.id)
+        .await
+        .map_err(Error::unavailable)?;
+    let mut requested = Vec::new();
+    for user in reviewers {
+        requested.push(person(state, user.id).await?);
+    }
+    value["requested_reviewers"] = json!(requested);
+    let viewer = super::auth::authenticate(state, headers, false).await?;
+    value["requested_teams"] = json!(
+        team_reviewers::documents(
+            state,
+            repo.id,
+            pull.id,
+            viewer.as_ref().map(|viewer| viewer.user.id)
+        )
+        .await?
+    );
+    if detail {
+        let store = repo_store(repo, state.cluster.as_ref());
+        let diff = store
+            .diff_stats(pull.diff_base(), &pull.head_sha)
+            .await
+            .map_err(store_error)?;
+        let (commits, _) = store
+            .pull_request_commits(pull.diff_base(), &pull.head_sha)
+            .await
+            .map_err(store_error)?;
+        let (comments, review_comments) =
+            db::pull_requests::reviews::pull_request_comment_counts(&state.pool, pull.id)
+                .await
+                .map_err(Error::unavailable)?;
+        value["comments"] = json!(comments);
+        value["review_comments"] = json!(review_comments);
+        value["commits"] = json!(commits);
+        value["additions"] = json!(diff.additions);
+        value["deletions"] = json!(diff.deletions);
+        value["changed_files"] = json!(diff.changed_files);
+        value["mergeable"] = json!(pull.mergeable);
+        value["mergeable_state"] = json!(if pull.merged { "clean" } else { "unknown" });
+        value["maintainer_can_modify"] = json!(pull.maintainer_can_modify);
+        value["merged_by"] = match pull.merged_by_id {
+            Some(id) => person(state, id).await?,
+            None => Value::Null,
+        };
+    }
+    Ok(value)
+}
+
+#[derive(Deserialize)]
+struct List {
+    page: Option<usize>,
+    per_page: Option<usize>,
+    state: Option<String>,
+    head: Option<String>,
+    base: Option<String>,
+    sort: Option<String>,
+    direction: Option<String>,
+}
+
+async fn list(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    Query(query): Query<List>,
+    OriginalUri(uri): OriginalUri,
+) -> Result<Response> {
+    let (repo, viewer) = repository(&state, &headers, &owner, &name, false).await?;
+    let page = Pagination {
+        page: query.page,
+        per_page: query.per_page,
+    };
+    let (offset, limit) = page.window()?;
+    let state_filter = match query.state.as_deref().unwrap_or("open") {
+        "all" => None,
+        state @ ("open" | "closed") => Some(state),
+        _ => return Err(Error::invalid("Invalid state")),
+    };
+    let sort = query.sort.as_deref().unwrap_or("created");
+    if !matches!(sort, "created" | "updated" | "popularity" | "long-running") {
+        return Err(Error::invalid("Invalid sort"));
+    }
+    let ascending = match query.direction.as_deref() {
+        Some("asc") => true,
+        Some("desc") => false,
+        None => sort != "created",
+        _ => return Err(Error::invalid("Invalid direction")),
+    };
+    let (head_owner, head_branch) = match query.head.as_deref() {
+        Some(head) => {
+            let (owner, branch) = head
+                .split_once(':')
+                .ok_or_else(|| Error::invalid("head must be owner:branch"))?;
+            (Some(owner), Some(branch))
+        }
+        None => (None, None),
+    };
+    let filter = db::pull_requests::records::PullRequestFilter {
+        viewer_id: viewer.as_ref().map(|actor| actor.user.id),
+        state: state_filter,
+        base: query.base.as_deref(),
+        head_owner,
+        head_branch,
+        sort,
+        ascending,
+        month_ago: chrono::Utc::now() - chrono::Duration::days(30),
+    };
+    let rows = db::pull_requests::records::list_filtered_pull_requests(
+        &state.pool,
+        repo.id,
+        &filter,
+        offset as i64,
+        (limit + 1) as i64,
+    )
+    .await
+    .map_err(Error::unavailable)?;
+    let has_next = rows.len() > limit;
+    let mut items = Vec::new();
+    for pull in rows.iter().take(limit) {
+        items.push(document(&state, &headers, &repo, &owner, pull, false).await?);
+    }
+    page.response(&uri, items, has_next)
+}
+
+async fn get_pull(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, name, number)): Path<(String, String, i32)>,
+) -> Result<Response> {
+    let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
+    if let Some(media) = super::diff_media::requested(&headers) {
+        return diff_response(&state, &repo, &pull, media).await;
+    }
+    Ok(Json(document(&state, &headers, &repo, &owner, &pull, true).await?).into_response())
+}
+
+/// The pull request's diff or patch as plain text, for `gh pr diff` and `.diff` links.
+pub(super) async fn diff_response(
+    state: &AppState,
+    repo: &db::models::Repository,
+    pull: &db::models::PullRequest,
+    media: super::diff_media::Media,
+) -> Result<Response> {
+    let store = repo_store(repo, state.cluster.as_ref());
+    if media == super::diff_media::Media::Patch {
+        let (total, commits) = store
+            .pull_request_commits(pull.diff_base(), &pull.head_sha)
+            .await
+            .map_err(store_error)?;
+        let total = usize::try_from(total).unwrap_or(usize::MAX);
+        return super::diff_media::series(&store, &commits, total)
+            .await
+            .map_err(store_error);
+    }
+    let diff = store
+        .diff(pull.diff_base(), &pull.head_sha)
+        .await
+        .map_err(store_error)?;
+    let head = store.commit(&pull.head_sha).await.map_err(store_error)?;
+    Ok(super::diff_media::response(media, &head, &diff.files))
+}
+
+async fn merged(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, name, number)): Path<(String, String, i32)>,
+) -> Result<Response> {
+    let merged = match target(&state, &headers, &owner, &name, number).await {
+        Ok((_, pull)) => pull.merged,
+        Err(Error(StatusCode::NOT_FOUND, _, _)) => false,
+        Err(error) => return Err(error),
+    };
+    let status = if merged {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::NOT_FOUND
+    };
+    Ok((status, [(header::CONTENT_LENGTH, "0")]).into_response())
+}
+
+async fn commits(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, name, number)): Path<(String, String, i32)>,
+    Query(page): Query<Pagination>,
+    OriginalUri(uri): OriginalUri,
+) -> Result<Response> {
+    let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
+    let (offset, limit) = page.window()?;
+    let (_, rows) = repo_store(&repo, state.cluster.as_ref())
+        .pull_request_commits(pull.diff_base(), &pull.head_sha)
+        .await
+        .map_err(store_error)?;
+    let has_next = rows.len() > offset + limit;
+    let rows: Vec<_> = rows.into_iter().skip(offset).take(limit).collect();
+    let items = super::commits::documents(&state, repo.id, &rows, &owner, &name).await?;
+    page.response(&uri, items, has_next)
+}
+
+async fn files(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, name, number)): Path<(String, String, i32)>,
+    Query(page): Query<Pagination>,
+    OriginalUri(uri): OriginalUri,
+) -> Result<Response> {
+    let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
+    let (offset, limit) = page.window()?;
+    let diff = repo_store(&repo, state.cluster.as_ref())
+        .diff(pull.diff_base(), &pull.head_sha)
+        .await
+        .map_err(store_error)?;
+    let has_next = diff.files.len().min(3000) > offset + limit;
+    let items = diff.files.into_iter().take(3000).skip(offset).take(limit).map(|file| {
+        let mut value = json!({
+            "sha": file.blob_sha, "filename": file.filename, "status": file.status, "additions": file.additions, "deletions": file.deletions,
+            "changes": file.additions + file.deletions, "patch": file.patch,
+            "blob_url": format!("{}/{owner}/{name}/blob/{}/{}", crate::backend::api::http::config::link_origin(), pull.head_sha, path_url(&file.filename)),
+            "raw_url": format!("{}/{owner}/{name}/raw/{}/{}", crate::backend::api::http::config::link_origin(), pull.head_sha, path_url(&file.filename)),
+            "contents_url": format!("{}/contents/{}?ref={}", repo_url(&owner, &name), path_url(&file.filename), pull.head_sha),
+        });
+        if let Some(previous) = file.previous_filename {
+            value["previous_filename"] = json!(previous);
+        }
+        value
+    }).collect();
+    page.response(&uri, items, has_next)
+}
+
+pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+    let mut handlers = vec![
+        ("pulls/list", get(list)),
+        ("pulls/get", get(get_pull)),
+        ("pulls/check-if-merged", get(merged)),
+        ("pulls/list-commits", get(commits)),
+        ("pulls/list-files", get(files)),
+    ];
+    handlers.extend(merge::handlers());
+    handlers.extend(async_merge::handlers());
+    handlers.extend(mutations::handlers());
+    handlers.extend(comments::handlers());
+    handlers.extend(stacks::handlers());
+    handlers.extend(reviews::handlers());
+    handlers
+}

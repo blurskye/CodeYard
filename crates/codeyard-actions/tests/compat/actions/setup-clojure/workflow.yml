@@ -1,0 +1,19 @@
+# https://github.com/DeLaGuardo/setup-clojure/tree/ada62bb3282a01a296659d48378b812b8e097360
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - id: action
+        uses: DeLaGuardo/setup-clojure@ada62bb3282a01a296659d48378b812b8e097360 # 13.2
+        with:
+          cli: "1.12.0.1530"
+      - name: Assert documented effect
+        run: |
+          clojure -Sdescribe
+          echo compat:ok

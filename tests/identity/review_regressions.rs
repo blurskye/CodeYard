@@ -12,7 +12,6 @@ use codeyard::backend::{
     db, identity,
     notifications::{NotificationBroadcaster, NotificationEvent},
 };
-use serde_json::json;
 
 async fn session(pool: &db::DbPool, user: i64) -> String {
     let id = token();
@@ -131,23 +130,27 @@ async fn signup_review(pg: bool) {
         ),
         (30, 61, 2)
     );
-    let (status, result) = client
-        .api(
-            "GET",
-            "/api/auth/admin/signup-requests?page=3",
-            serde_json::Value::Null,
-        )
-        .await;
+    let (status, page) = client.model("/admin/users?request_page=3").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(result.as_array().unwrap().len(), 1);
-    let (status, result) = client
-        .api(
-            "POST",
-            "/api/auth/admin/signup-requests/resolve",
-            json!({"request_id":first.id,"action":"approve"}),
+    assert!(!serde_json::to_string(&page)
+        .unwrap()
+        .contains("secret-verifier"));
+    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::AdminUsers {
+        model,
+        ..
+    }) = page
+    else {
+        panic!("users")
+    };
+    assert_eq!(model.requests.len(), 1);
+    assert_eq!(model.requests_page, 3);
+    let reply = client
+        .form_reply(
+            &format!("/admin/users/requests/{}/resolve", first.id),
+            &[("action", "approve")],
         )
         .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{result}");
+    assert_eq!(reply.status, StatusCode::CONFLICT, "{}", reply.text());
     assert_eq!(
         requests::get_pending_signup_request_by_identity(f.pool(), "Älice", None)
             .await

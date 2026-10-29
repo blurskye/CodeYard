@@ -1,0 +1,31 @@
+[package]
+name = "codeyard-actions"
+version.workspace = true
+edition.workspace = true
+description = "Runs GitHub Actions workflows: Codeyard's job runner, also usable on its own"
+repository = "https://github.com/blurskye/CodeYard"
+# Parts are ported from GitHub's actions/runner, which is MIT licensed; see NOTICE.md.
+license = "LGPL-3.0-or-later AND MIT"
+
+[[bin]]
+name = "codeyard-actions"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml = "0.9"
+tokio.workspace = true
+clap.workspace = true
+tempfile = "3"
+libc = "0.2"
+base64 = "=0.22.1"
+dotenvy = "=0.15.7"
+sha2.workspace = true
+regex = "=1.12.2"
+fancy-regex = "=0.16.2"
+
+[dev-dependencies]
+tempfile = "3"

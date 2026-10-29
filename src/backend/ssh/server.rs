@@ -75,12 +75,33 @@ const PROXY_HEADER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 /// overall and per client address until they authenticate.
 const MAX_PREAUTH_CONNECTIONS: usize = 128;
 const MAX_PREAUTH_CONNECTIONS_PER_IP: usize = 16;
+/// Every open connection, authenticated or not, holds sockets and tasks until it ends.
+const MAX_CONNECTIONS: usize = 512;
 /// Time allowed to authenticate. Each rejected key waits `auth_rejection_time` (3 s)
 /// and russh allows `max_auth_attempts` (10) rejections, so a client holding the most
 /// keys still has time to try them all.
 const LOGIN_GRACE_TIME: std::time::Duration = std::time::Duration::from_secs(60);
 /// Pause after a failed accept, such as running out of file descriptors.
 const ACCEPT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// A client of a dual-stack listener can appear as an IPv4-mapped IPv6 address, which must match
+/// the IPv4 address configured for it.
+fn canonical_ip(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(address) => address.to_ipv4_mapped().map_or(ip, IpAddr::V4),
+        IpAddr::V4(_) => ip,
+    }
+}
+
+/// Shuts the socket down when dropped. A cancelled connection drops its russh session task
+/// without ending that task, so this is the handle that closes the connection.
+struct ShutdownOnDrop(std::net::TcpStream);
+
+impl Drop for ShutdownOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.shutdown(std::net::Shutdown::Both);
+    }
+}
 
 fn configured_trusted_proxy_ips() -> Result<HashSet<IpAddr>> {
     let Some(value) = std::env::var_os(TRUSTED_PROXY_IPS_ENV) else {
@@ -95,7 +116,8 @@ fn configured_trusted_proxy_ips() -> Result<HashSet<IpAddr>> {
         .filter(|value| !value.is_empty())
         .map(|value| {
             value
-                .parse()
+                .parse::<IpAddr>()
+                .map(canonical_ip)
                 .with_context(|| format!("Invalid IP address in {TRUSTED_PROXY_IPS_ENV}: {value}"))
         })
         .collect()
@@ -155,8 +177,8 @@ fn proxy_header_source(line: &[u8]) -> Result<Option<SocketAddr>> {
     let protocol = fields
         .next()
         .context("PROXY protocol header has no address family")?;
+    // PROXY v1 says a receiver ignores the rest of an UNKNOWN header.
     if protocol == "UNKNOWN" {
-        anyhow::ensure!(fields.next().is_none(), "Invalid PROXY UNKNOWN header");
         return Ok(None);
     }
     anyhow::ensure!(
@@ -201,7 +223,9 @@ async fn connection_source(
     peer: SocketAddr,
     trusted_proxy_ips: &HashSet<IpAddr>,
 ) -> Result<SocketAddr> {
-    if !trusted_proxy_ips.contains(&peer.ip()) || !starts_with_proxy_header(stream).await? {
+    if !trusted_proxy_ips.contains(&canonical_ip(peer.ip()))
+        || !starts_with_proxy_header(stream).await?
+    {
         return Ok(peer);
     }
 
@@ -352,12 +376,15 @@ async fn serve_connection(
                 return;
             }
         };
-    // The slot and the socket control are released when the client authenticates
-    // or when the session ends first (the handler drops its signal then).
+    // The slot is released when the client authenticates or when the session ends first (the
+    // handler drops its signal then). The socket closes when this function returns, so
+    // cancelling the connection also ends an authenticated session.
+    let control = ShutdownOnDrop(control);
+    let control_ref = &control;
     let login = async move {
         let outcome = tokio::time::timeout_at(deadline, authenticated).await;
         if !matches!(outcome, Ok(Ok(AuthOutcome::Accepted))) {
-            let _ = control.shutdown(std::net::Shutdown::Both);
+            let _ = control_ref.0.shutdown(std::net::Shutdown::Both);
         }
         drop(slot);
         !matches!(
@@ -480,6 +507,11 @@ impl SshServer {
                 Some(_) = connections.join_next(), if !connections.is_empty() => {}
                 accepted = socket.accept() => match accepted {
                     Ok((stream, peer)) => {
+                        // An authenticated session releases its admission slot but stays in
+                        // this set until it ends.
+                        if connections.len() >= MAX_CONNECTIONS {
+                            continue;
+                        }
                         // Delayed PROXY headers must consume the global cap too.
                         let Some(slot) = self.admission.reserve() else { continue; };
                         connections.spawn(serve_connection(

@@ -11,7 +11,7 @@ use codeyard::backend::{
     api::create_router, app::AppState, ci::CiConfig, db, db::models::AccessLevel,
     storage::ObjectStore,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -110,6 +110,7 @@ async fn contract(pg: bool) {
                 stage: "ci.yml".into(),
                 line: (*line).into(),
                 level: "info".into(),
+                ..Default::default()
             })
             .collect::<Vec<_>>(),
     )
@@ -118,12 +119,16 @@ async fn contract(pg: bool) {
     let api = alice
         .expect(
             "GET",
-            &format!("/api/ci/jobs/{}/logs", run.run_id),
+            &format!(
+                "/api/v3/repos/alice/proj/actions/runs/{}/logs?after=0",
+                run.id
+            ),
             serde_json::Value::Null,
             StatusCode::OK,
         )
         .await;
     assert_eq!(api["logs"].as_array().unwrap().len(), output.len());
+    browser_logs(&f, &router, &alice, &dave, &run).await;
     let job = run.run_id.to_string();
     let cancel = format!("/alice/proj/actions/runs/{job}/cancel");
     let rerun = format!("/alice/proj/actions/runs/{job}/rerun");
@@ -142,7 +147,8 @@ async fn contract(pg: bool) {
         .expect(
             "GET",
             &format!(
-                "/api/ci/jobs/{job}/history?after={}",
+                "/api/v3/repos/alice/proj/actions/runs/{}/logs?after={}",
+                run.id,
                 logs.last().unwrap().id
             ),
             serde_json::Value::Null,
@@ -370,6 +376,251 @@ async fn contract(pg: bool) {
     f.finish().await;
 }
 
+async fn browser_logs(
+    f: &Database,
+    router: &axum::Router,
+    alice: &Client,
+    dave: &Client,
+    run: &db::models::CiRun,
+) {
+    use axum::{body::Body, http::Request};
+    use codeyard::backend::identity::tokens::{self, TokenInput};
+    use tower::ServiceExt;
+
+    let path = format!("/api/v3/repos/alice/proj/actions/runs/{}/logs", run.id);
+    let first = alice
+        .expect(
+            "GET",
+            &format!("{path}?after=0&limit=1"),
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(first["logs"].as_array().unwrap().len(), 1);
+    assert_eq!(first["has_more"], true);
+    let cursor = first["next_cursor"].as_i64().unwrap();
+    let second = alice
+        .expect(
+            "GET",
+            &format!("{path}?after={cursor}&limit=1"),
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(second["logs"].as_array().unwrap().len(), 1);
+    assert!(second["logs"][0]["id"].as_i64().unwrap() > cursor);
+    assert_eq!(second["has_more"], false);
+    let pinned = path.replace("/logs", "/attempts/1/logs");
+    let attempt = alice
+        .expect(
+            "GET",
+            &format!("{pinned}?after=0"),
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(attempt["job_id"], run.run_id.to_string());
+    alice
+        .expect(
+            "GET",
+            &format!(
+                "{}?after=0",
+                pinned.replace("/attempts/1/", "/attempts/99/")
+            ),
+            Value::Null,
+            StatusCode::NOT_FOUND,
+        )
+        .await;
+    let ended = Client::login(router, f.pool(), run.triggered_by_id.unwrap()).await;
+    db::users::sessions::delete_session(f.pool(), &ended.session)
+        .await
+        .unwrap();
+    ended
+        .expect(
+            "GET",
+            &format!("{path}?after=0"),
+            Value::Null,
+            StatusCode::UNAUTHORIZED,
+        )
+        .await;
+    alice
+        .expect(
+            "GET",
+            &format!("{path}?after=-1"),
+            Value::Null,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    Client::anonymous(router)
+        .expect(
+            "GET",
+            &format!("{path}?after=0"),
+            Value::Null,
+            StatusCode::UNAUTHORIZED,
+        )
+        .await;
+    alice
+        .expect(
+            "GET",
+            &path.replace(&format!("/runs/{}/", run.id), "/runs/9223372036854775807/"),
+            Value::Null,
+            StatusCode::NOT_FOUND,
+        )
+        .await;
+    alice
+        .expect(
+            "GET",
+            &path.replace("/proj/", "/missing/"),
+            Value::Null,
+            StatusCode::NOT_FOUND,
+        )
+        .await;
+    alice
+        .expect("DELETE", &path, Value::Null, StatusCode::UNAUTHORIZED)
+        .await;
+
+    // Normal browser downloads still follow the standard short-lived ZIP redirect.
+    let download = alice
+        .exchange("GET", &path, "application/json", Vec::new())
+        .await;
+    assert_eq!(download.status, StatusCode::FOUND, "{}", download.text());
+    let location = download.location.unwrap();
+    let location = url::Url::parse(&location)
+        .map(|url| format!("{}?{}", url.path(), url.query().unwrap()))
+        .unwrap_or(location);
+    let archive = Client::anonymous(router)
+        .exchange("GET", &location, "application/zip", Vec::new())
+        .await;
+    assert_eq!(archive.status, StatusCode::OK, "{}", archive.text());
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive.body)).unwrap();
+    let mut text = String::new();
+    for index in 0..zip.len() {
+        use std::io::Read;
+        zip.by_index(index)
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+    }
+    assert!(text.contains("failed to pull act-latest"), "{text}");
+
+    f.execute(
+        "UPDATE repositories SET is_private=TRUE WHERE id=$1",
+        &[run.repo_id],
+    )
+    .await;
+    dave.expect(
+        "GET",
+        &format!("{path}?after=0"),
+        Value::Null,
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+    alice
+        .expect(
+            "GET",
+            &format!("{path}?after=0"),
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    alice
+        .expect(
+            "GET",
+            &format!("/api/v3/repos/alice/proj/actions/runs/{}", run.id),
+            Value::Null,
+            StatusCode::NOT_FOUND,
+        )
+        .await;
+    let reader = tokens::create(
+        f.pool(),
+        run.triggered_by_id.unwrap(),
+        Some(&alice.session),
+        TokenInput {
+            name: "browser log read",
+            scope: "read",
+            expires_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    let outsider = db::users::sessions::get_session_user(f.pool(), &dave.session)
+        .await
+        .unwrap()
+        .unwrap();
+    let outsider = tokens::create(
+        f.pool(),
+        outsider.id,
+        Some(&dave.session),
+        TokenInput {
+            name: "outside log read",
+            scope: "read",
+            expires_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    for (credential, expected) in [
+        ("invalid", StatusCode::UNAUTHORIZED),
+        (outsider.value.as_str(), StatusCode::NOT_FOUND),
+        (reader.value.as_str(), StatusCode::OK),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("{path}?after=0"))
+                    .header("cookie", format!("session_id={}", alice.session))
+                    .header("authorization", format!("Bearer {credential}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+    }
+    f.execute(
+        "UPDATE repositories SET is_private=FALSE WHERE id=$1",
+        &[run.repo_id],
+    )
+    .await;
+    for (column, expected) in [
+        ("is_banned", StatusCode::UNAUTHORIZED),
+        ("must_change_password", StatusCode::PRECONDITION_REQUIRED),
+    ] {
+        f.execute(
+            &format!("UPDATE users SET {column}=TRUE WHERE id=$1"),
+            &[run.triggered_by_id.unwrap()],
+        )
+        .await;
+        alice
+            .expect("GET", &format!("{path}?after=0"), Value::Null, expected)
+            .await;
+        f.execute(
+            &format!("UPDATE users SET {column}=FALSE WHERE id=$1"),
+            &[run.triggered_by_id.unwrap()],
+        )
+        .await;
+    }
+    for suffix in ["logs", "history", "log-download", "deployment", "cancel"] {
+        let method = if suffix == "cancel" { "POST" } else { "GET" };
+        let reply = alice
+            .exchange(
+                method,
+                &format!("/api/ci/jobs/{}/{suffix}", run.run_id),
+                "application/json",
+                Vec::new(),
+            )
+            .await;
+        assert_eq!(
+            reply.status,
+            StatusCode::NOT_FOUND,
+            "{suffix}: {}",
+            reply.text()
+        );
+    }
+}
+
 #[tokio::test]
 async fn postgres_cancel_and_rerun_from_the_run_page() {
     contract(true).await;
@@ -523,6 +774,102 @@ async fn pull_request_run_is_run_again(pg: bool) {
     assert_eq!(again.head_sha, first.head_sha);
     assert_eq!(again.pull_request_id, first.pull_request_id);
     assert_eq!(again.triggered_by_id, Some(bob_id));
+    assert_eq!(first.workflow_run_id, Some(first.id));
+    assert_eq!(again.workflow_run_id, Some(first.id));
+    assert_eq!(first.workflow_run_attempt, Some(1));
+    assert_eq!(again.workflow_run_attempt, Some(2));
+    assert_eq!(again.workflow_run_number, first.workflow_run_number);
+    let latest = db::action_runs::get(f.pool(), repo.id, first.id, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest.id, again.id);
+    assert_eq!(
+        db::action_runs::get(f.pool(), repo.id, first.id, Some(1))
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        first.id
+    );
+    assert_eq!(
+        db::action_runs::get(f.pool(), repo.id, first.id, Some(2))
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        again.id
+    );
+    assert!(db::action_runs::get(f.pool(), repo.id, first.id, Some(3))
+        .await
+        .unwrap()
+        .is_none());
+    let token = super::actions_objects::pat(&f, &router, alice_id, "write").await;
+    let api_base = "/api/v3/repos/alice/proj/actions/runs";
+    let (_, document) = super::actions_workflows::checked(
+        &router,
+        "actions/get-workflow-run",
+        "GET",
+        &format!("{api_base}/{}", first.id),
+        &token,
+        Value::Null,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(document["id"], first.id);
+    assert_eq!(document["run_attempt"], 2);
+    assert_eq!(document["actor"]["login"], "alice");
+    assert_eq!(document["triggering_actor"]["login"], "bob");
+    assert_eq!(document["head_branch"], "topic");
+    assert_eq!(
+        document["pull_requests"][0]["id"],
+        first.pull_request_id.unwrap()
+    );
+    let (_, list) = super::actions_workflows::checked(
+        &router,
+        "actions/list-workflow-runs-for-repo",
+        "GET",
+        &format!("{api_base}?actor=alice"),
+        &token,
+        Value::Null,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(list["total_count"], 2);
+    let (_, list) = super::actions_workflows::checked(
+        &router,
+        "actions/list-workflow-runs-for-repo",
+        "GET",
+        &format!("{api_base}?actor=bob"),
+        &token,
+        Value::Null,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(list["total_count"], 0);
+    super::actions_workflows::checked(
+        &router,
+        "",
+        "GET",
+        &format!("{api_base}/{}", again.id),
+        &token,
+        Value::Null,
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+    // A terminal first attempt cannot be used to delete a live later attempt or its logs.
+    for suffix in ["", "/logs"] {
+        super::actions_workflows::checked(
+            &router,
+            "",
+            "DELETE",
+            &format!("{api_base}/{}{suffix}", first.id),
+            &token,
+            Value::Null,
+            StatusCode::CONFLICT,
+        )
+        .await;
+    }
     let reply = bob.form_reply(&rerun, &[]).await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     assert_eq!(

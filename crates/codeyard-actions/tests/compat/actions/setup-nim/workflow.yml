@@ -1,0 +1,15 @@
+# https://github.com/jiro4989/setup-nim-action/tree/189b145833368cc92f1e7b3e166a25a3e057a693
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: jiro4989/setup-nim-action@189b145833368cc92f1e7b3e166a25a3e057a693 # v2
+        with:
+          nim-version: "2.2.0"
+      - name: Assert documented effect
+        run: |
+          nim --version | grep '2\.2\.0'
+          echo compat:ok

@@ -1,0 +1,23 @@
+# https://github.com/tj-actions/changed-files/tree/ed68ef82c095e0d48ec87eccea555d944a631a4c
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo changed > changed.txt; git add changed.txt; git -c user.name=Compat -c user.email=compat@example.invalid -c commit.gpgsign=false commit -m Change
+          echo "COMPAT_BASE=$(git rev-parse HEAD~1)" >> "$GITHUB_ENV"
+          echo "COMPAT_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - id: action
+        uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46
+        with:
+          files: "**/*.txt"
+          base_sha: "${{ env.COMPAT_BASE }}"
+          sha: "${{ env.COMPAT_HEAD }}"
+      - name: Assert documented effect
+        env:
+          CHANGED: ${{ steps.action.outputs.any_changed }}
+        run: |
+          test "$CHANGED" = true
+          echo compat:ok

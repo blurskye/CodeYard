@@ -9,9 +9,22 @@ use crate::webui::{
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProfileContacts {
+    pub company: String,
+    pub email: String,
+    pub twitter_username: String,
+    pub location: String,
+    pub blog: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OrganizationProfile {
+    #[serde(default)]
+    pub contacts: ProfileContacts,
+    #[serde(default)]
+    pub can_create: bool,
     pub organization: Organization,
     /// Already filtered by the server to the repositories this viewer may see.
     pub repositories: Vec<Repository>,
@@ -37,6 +50,8 @@ pub struct OrganizationProfile {
 
 pub fn profile_page(page: OrganizationProfile) -> Element {
     let OrganizationProfile {
+        contacts,
+        can_create,
         organization: org,
         repositories,
         repository_count,
@@ -54,7 +69,7 @@ pub fn profile_page(page: OrganizationProfile) -> Element {
         .clone()
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| org.name.clone());
-    let path = format!("/{}", crate::webui::encode_component(&org.name));
+    let path = crate::webui::profile_path(&org.name);
     let manage_href = format!("/settings/organizations/{}", org.id);
     let repository_label = count_label(
         repository_count.max(0) as usize,
@@ -69,8 +84,9 @@ pub fn profile_page(page: OrganizationProfile) -> Element {
         ),
         None => format!("{repository_label} · Public organization"),
     };
-    // Owners and admins are the people who may create repositories in the organization.
-    let empty = if manage {
+    // Eligible members can create repositories without gaining governance controls.
+    let can_create = can_create || manage;
+    let empty = if can_create {
         "This organization has no repositories yet."
     } else {
         "No public repositories yet."
@@ -91,6 +107,13 @@ pub fn profile_page(page: OrganizationProfile) -> Element {
                         p { "@{org.name}" }
                         if !org.description.is_empty() { p { class: "identity-profile-bio", "{org.description}" } }
                         p { class: "org-profile-meta", "{meta}" }
+                        if !contacts.company.is_empty() {p {class:"org-profile-meta break-words","{contacts.company}"}}
+                        if !contacts.location.is_empty() {p {class:"org-profile-meta break-words","{contacts.location}"}}
+                        if !contacts.email.is_empty() {p {class:"org-profile-meta break-words",a {href:format!("mailto:{}",contacts.email),"{contacts.email}"}}}
+                        if !contacts.twitter_username.is_empty() {p {class:"org-profile-meta break-words",a {href:format!("https://twitter.com/{}",encode_component(&contacts.twitter_username)),rel:"nofollow noopener noreferrer",target:"_blank","@{contacts.twitter_username}"}}}
+                        if !contacts.blog.is_empty() {p {class:"org-profile-meta break-words",
+                            if url::Url::parse(&contacts.blog).is_ok_and(|url|matches!(url.scheme(),"http"|"https")&&url.host_str().is_some()&&url.username().is_empty()&&url.password().is_none()) {a {href:contacts.blog.clone(),rel:"nofollow noopener noreferrer",target:"_blank","{contacts.blog}"}} else {"{contacts.blog}"}
+                        }}
                     }
                     if manage {
                         NavLink { href: manage_href, class: "identity-profile-button", "Manage organization" }
@@ -98,6 +121,9 @@ pub fn profile_page(page: OrganizationProfile) -> Element {
                 }
                 nav { class: "org-tabs", aria_label: "Organization sections",
                     NavLink { href: format!("{path}?tab=repositories"), aria_current: current(tab == "repositories"), "Repositories" span { class: "count-badge", "{repository_total}" } }
+                    NavLink { href: format!("/orgs/{}/packages",crate::webui::encode_component(&org.name)), "Packages" }
+                    NavLink { href: format!("/orgs/{}/attestations",crate::webui::encode_component(&org.name)), "Attestations" }
+                    NavLink { href: format!("/orgs/{}/projects",crate::webui::encode_component(&org.name)), "Projects" }
                     if members_visible {
                         NavLink { href: format!("{path}?tab=people"), aria_current: current(tab == "people"), "People" span { class: "count-badge", "{member_total}" } }
                         NavLink { href: format!("{path}?tab=teams"), aria_current: current(tab == "teams"), "Teams" span { class: "count-badge", "{team_total}" } }
@@ -112,7 +138,7 @@ pub fn profile_page(page: OrganizationProfile) -> Element {
                                 for member in &people {
                                     li { key: "{member.user_id}", class: "org-row",
                                         div { class: "org-row-main",
-                                            h3 { NavLink { href: format!("/{}", encode_component(&member.username)), class: "org-row-link", Avatar { name: member.username.clone(), size: 24 } "{member.username}" } }
+                                            h3 { NavLink { href: crate::webui::profile_path(&member.username), class: "org-row-link", Avatar { name: member.username.clone(), size: 24 } "{member.username}" } }
                                         }
                                         span { class: "org-label", "{member.role}" }
                                     }
@@ -143,11 +169,11 @@ pub fn profile_page(page: OrganizationProfile) -> Element {
                 } else if repositories.is_empty() {
                     section { id: "profile-repositories", class: "identity-profile-repositories", aria_label: "Repositories",
                         div { class: "identity-profile-empty", {profile_icon(ProfileIcon::Repository)} h3 { "{empty}" }
-                            if manage { NavLink { href: new_href.clone(), class: "identity-profile-button identity-profile-new", "New repository" } }
+                            if can_create { NavLink { href: new_href.clone(), class: "identity-profile-button identity-profile-new", "New repository" } }
                         }
                     }
                 } else {
-                    ProfileRepositories { key: "{path}", path: path.clone(), repositories, own: false, new_href: manage.then(|| new_href.clone()) }
+                    ProfileRepositories { key: "{path}", path: path.clone(), repositories, own: false, new_href: can_create.then(|| new_href.clone()) }
                     if more { NavLink { href: format!("{path}?tab=repositories&after={after}"), class: "org-pagination", "Next" } }
                 }
             }

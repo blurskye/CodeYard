@@ -1,0 +1,22 @@
+# cli/cli 5056c0a8ef34512be1d5b4120d4e4b30412ada8b, api/queries_repo.go:GitHubRepo.
+fragment repo on Repository {
+  id
+  databaseId
+  name
+  owner { login }
+  sshUrl
+  hasIssuesEnabled
+  description
+  hasWikiEnabled
+  viewerPermission
+  defaultBranchRef { name }
+}
+query RepositoryInfo($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    ...repo
+    parent { ...repo }
+    mergeCommitAllowed
+    rebaseMergeAllowed
+    squashMergeAllowed
+  }
+}

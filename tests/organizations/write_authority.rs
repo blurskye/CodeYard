@@ -108,7 +108,7 @@ async fn expect_writes(database: &Database, actor: i64, repo: i64, allowed: bool
             body: None,
             state: None,
         },
-        None,
+        Default::default(),
     )
     .await
     .unwrap();

@@ -35,11 +35,13 @@ async fn writable(
         .map_err(RefError::Access)
 }
 
-fn publication_error(error: RepoError) -> RefError {
+pub(super) fn publication_error(error: RepoError) -> RefError {
     if error.is_applied_followup_failed() {
         RefError::AppliedFollowupFailed
     } else if error.is_protected_branch() {
         RefError::Protected("This branch is protected")
+    } else if error.message == super::releases::immutable::TAG_PROTECTED {
+        RefError::Protected(super::releases::immutable::TAG_PROTECTED)
     } else if error.is_merge_commit_blocked() {
         RefError::Protected(MERGE_COMMIT_BLOCKED)
     } else if error.is_write_denied() {
@@ -56,8 +58,8 @@ fn invalid_ref(kind: &str) -> RefError {
     ))
 }
 
-/// Refuses a branch create or delete that a protection rule forbids. The branch API adds
-/// no commits of its own; the store reads the history of a created branch when it publishes it.
+/// Refuses a branch delete that a protection rule forbids. A delete adds no commits, so the
+/// history check is never needed here.
 async fn allowed(
     pool: &db::DbPool,
     repository: &db::models::Repository,
@@ -85,7 +87,7 @@ pub async fn create_branch(
     branch: &str,
     source: &str,
 ) -> Result<String, RefError> {
-    let (repository, user) = writable(pool, actor, repo_id).await?;
+    let (repository, _) = writable(pool, actor, repo_id).await?;
     if branch.is_empty() {
         return Err(RefError::Invalid("Branch name is required"));
     }
@@ -95,18 +97,8 @@ pub async fn create_branch(
     if git::branch_ref(branch).is_none() {
         return Err(invalid_ref("branch"));
     }
-    allowed(
-        pool,
-        &repository,
-        &user,
-        BranchWrite {
-            branch,
-            old: None,
-            new: Some(source),
-            via: WriteVia::Direct,
-        },
-    )
-    .await?;
+    // The store checks the protection rules for the new branch under the publication lock,
+    // reading the history the branch brings in. That check is the one that can see signatures.
     let sha = repo_store(&repository, cluster)
         .create_branch_as(pool, repository.id, actor, branch, source)
         .await
@@ -128,6 +120,58 @@ pub async fn create_branch(
         RefUpdate {
             reference: format!("refs/heads/{branch}"),
             old: None,
+            new: sha.clone(),
+            changed_paths: None,
+        },
+    )
+    .await;
+    if !refreshed {
+        return Err(RefError::AppliedFollowupFailed);
+    }
+    Ok(sha)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Explicit actor and resources keep operations HTTP-free."
+)]
+pub async fn update_reference(
+    pool: &db::DbPool,
+    cluster: Option<&NodeContext>,
+    ci: &CiRuns,
+    actor: i64,
+    owner: &str,
+    repo_id: i64,
+    reference: &str,
+    sha: &str,
+    force: bool,
+) -> Result<String, RefError> {
+    let (repository, _) = writable(pool, actor, repo_id).await?;
+    let (old, sha) = repo_store(&repository, cluster)
+        .update_reference_as(pool, repo_id, actor, reference, sha, force)
+        .await
+        .map_err(publication_error)?;
+    let refreshed = if let Some(branch) = reference.strip_prefix("refs/heads/") {
+        pull_requests::refresh_open_pull_requests(
+            pool,
+            &repository,
+            Some(&[branch][..]),
+            ci,
+            actor,
+            db::models::AccessLevel::Owner,
+        )
+        .await
+        .is_ok()
+    } else {
+        true
+    };
+    ci.queue_push_runs(
+        &repository,
+        owner,
+        actor,
+        RefUpdate {
+            reference: reference.into(),
+            old: Some(old),
             new: sha.clone(),
             changed_paths: None,
         },

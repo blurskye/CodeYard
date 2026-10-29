@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "jobs": {
+    "test": "success",
+    "tolerated": "success",
+    "verify": "success"
+  },
+  "contains": [
+    "compat:step-continued",
+    "compat:ok"
+  ]
+}

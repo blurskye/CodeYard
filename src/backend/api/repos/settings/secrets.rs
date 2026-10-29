@@ -31,7 +31,7 @@ fn secrets_unavailable() -> (StatusCode, Json<ApiError>) {
     )
 }
 
-fn secret_error(error: db::secrets::SecretsError) -> (StatusCode, Json<ApiError>) {
+pub(crate) fn secret_error(error: db::secrets::SecretsError) -> (StatusCode, Json<ApiError>) {
     match error {
         db::secrets::SecretsError::Denied => (
             StatusCode::FORBIDDEN,
@@ -161,6 +161,57 @@ pub async fn delete_secret(
             StatusCode::NOT_FOUND,
             Json(ApiError::new("not_found", "Secret not found")),
         ))
+    }
+}
+
+pub(crate) async fn form(
+    ctx: &crate::backend::api::http::context::PageContext,
+    loaded: &crate::backend::api::repos::chrome::Loaded,
+    action: &str,
+    form: &std::collections::HashMap<String, String>,
+) -> axum::response::Response {
+    use crate::backend::api::repos::forms::field;
+    let Some(actor) = ctx.user.as_ref() else {
+        return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to manage secrets.");
+    };
+    let (kind, tab) = match field(form, "secret_kind").as_str() {
+        "" | "actions" => (db::secrets::SecretKind::Actions, "secrets"),
+        "dependabot" => (db::secrets::SecretKind::Dependabot, "dependabot-secrets"),
+        _ => return ctx.error(StatusCode::BAD_REQUEST, "Invalid secret kind."),
+    };
+    // Saving stores the name uppercase. Deleting uses the exact stored name the form lists, so
+    // an older lowercase secret never deletes its uppercase neighbour.
+    let name = field(form, "name");
+    let result = if action == "secret-save" {
+        match ctx.state.secret_encryptor.as_deref() {
+            Some(encryptor) => db::secrets::create_or_update_secret_for(
+                &ctx.state.pool,
+                encryptor,
+                (loaded.repository.id, kind),
+                &name,
+                &field(form, "value"),
+                Some(actor.id),
+            )
+            .await
+            .map(|_| ())
+            .map_err(secret_error),
+            None => Err(secrets_unavailable()),
+        }
+    } else {
+        db::secrets::delete_secret_for(&ctx.state.pool, kind, actor.id, loaded.repository.id, &name)
+            .await
+            .map_err(secret_error)
+            .and_then(|deleted| {
+                if deleted {
+                    Ok(())
+                } else {
+                    Err(secret_error(db::secrets::SecretsError::NotFound))
+                }
+            })
+    };
+    match result {
+        Ok(()) => ctx.redirect(&format!("{}/settings?tab={tab}", loaded.chrome.base())),
+        Err((status, Json(error))) => ctx.repo_error(&loaded.chrome, status, &error.message),
     }
 }
 

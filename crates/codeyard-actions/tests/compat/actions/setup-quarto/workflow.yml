@@ -1,0 +1,15 @@
+# https://github.com/quarto-dev/quarto-actions/tree/8a96df13519ee81fd526f2dfca5962811136661b
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: quarto-dev/quarto-actions/setup@8a96df13519ee81fd526f2dfca5962811136661b # v2
+        with:
+          version: "1.6.42"
+      - name: Assert documented effect
+        run: |
+          quarto --version | grep '^1\.6\.42'
+          echo compat:ok

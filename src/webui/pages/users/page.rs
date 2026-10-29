@@ -25,7 +25,7 @@ pub fn profile_page(
     repositories_newer: Option<String>,
     repositories_older: Option<String>,
 ) -> Element {
-    let path = format!("/{}", crate::webui::encode_component(&profile.username));
+    let path = crate::webui::profile_path(&profile.username);
     let login = format!("/login?redirect={}", crate::webui::encode_component(&path));
     let display = if profile.display_name.trim().is_empty() {
         profile.username.clone()
@@ -55,8 +55,16 @@ pub fn profile_page(
                         div { class: "identity-profile-heading",
                             h1 { "{display}" }
                             p { "@{profile.username}" }
+                            if profile.username == "github-actions[bot]" { span { class: "badge", "bot" } }
                         }
                         if !profile.bio.is_empty() { p { class: "identity-profile-bio", "{profile.bio}" } }
+                        if !profile.company.is_empty() { p { class: "identity-profile-bio", "{profile.company}" } }
+                        if profile.hireable { p { class: "identity-profile-bio", "Available for hire" } }
+                        if !profile.public_email.is_empty() { p { class: "identity-profile-bio", "{profile.public_email}" } }
+                        if !profile.twitter_username.is_empty() { p { class: "identity-profile-bio", "Twitter: @{profile.twitter_username}" } }
+                        for (provider, url) in &profile.social_accounts {
+                            p { class: "identity-profile-bio", a { href: url.clone(), rel: "nofollow me", "{provider}: {url}" } }
+                        }
                         div { class: "identity-profile-follow",
                             if own {
                                 NavLink { href: "/settings".to_owned(), class: "identity-profile-button", "Edit profile" }
@@ -66,10 +74,12 @@ pub fn profile_page(
                                     input { r#type: "hidden", name: "action", value: if following { "unfollow" } else { "follow" } }
                                     button { r#type: "submit", class: "identity-profile-button", if following { "Unfollow" } else { "Follow" } }
                                 }
+                                form { method: "post", action: "/settings/blocks", {csrf(token)} input { r#type: "hidden", name: "username", value: profile.username.clone() } button { r#type: "submit", class: "identity-profile-button", "Block user" } }
                             } else {
                                 NavLink { href: login, class: "identity-profile-button", "Sign in to follow" }
                             }
                         }
+                        NavLink {href:if own {"/gists?tab=mine".to_string()} else {format!("/gists?user={}",crate::webui::encode_component(&profile.username))},class:"identity-profile-button","View gists"}
                         p { class: "identity-profile-follow-counts",
                             {profile_icon(ProfileIcon::People)}
                             span { strong { "{followers}" } " {follower_label}" }
@@ -101,6 +111,8 @@ pub fn profile_page(
                                     "Repositories"
                                     span { class: "identity-profile-count", "{repository_count}" }
                                 }
+                                NavLink { href: format!("/users/{}/packages",crate::webui::encode_component(&profile.username)), class: "identity-profile-tab", "Packages" }
+                                a { href: format!("/users/{}/projects",crate::webui::encode_component(&profile.username)), class: "identity-profile-tab", "Projects" }
                                 a { href: format!("{path}?tab=stars"), class: if stars.open { "identity-profile-tab identity-profile-tab-current" } else { "identity-profile-tab" }, "aria-current": if stars.open { "page" } else { "false" }, "aria-label": format!("Stars ({})", stars.count),
                                     {profile_icon(ProfileIcon::Star)}
                                     "Stars"
@@ -177,11 +189,10 @@ fn activity_icon(kind: &str) -> Element {
 
 /// `owner/name` as a link path, with each part encoded the same way as the repository links.
 fn repository_href(repository: &str) -> String {
-    let parts: Vec<String> = repository
-        .split('/')
-        .map(crate::webui::encode_component)
-        .collect();
-    format!("/{}", parts.join("/"))
+    match repository.split_once('/') {
+        Some((owner, name)) => crate::webui::repository_path(owner, name),
+        None => crate::webui::profile_path(repository),
+    }
 }
 
 fn activity_text(item: &ProfileActivityItem) -> String {
@@ -256,6 +267,7 @@ pub fn ProfileRepositories(
     let kind_value = kind();
     let sort_value = sort();
     let rows = profile_repository_rows(&repositories, &query_value, &kind_value, &sort_value);
+    let owner = crate::webui::decode_component(path.rsplit('/').next().unwrap_or_default());
     let filtered = !query_value.trim().is_empty() || kind_value != "all";
     let has_private = repositories.iter().any(|repo| repo.private);
     let has_archived = repositories.iter().any(|repo| repo.archived);
@@ -321,7 +333,7 @@ pub fn ProfileRepositories(
                     for repo in rows {
                         article { key: "{repo.name}", class: "identity-profile-repository-row",
                             h3 {
-                                NavLink { href: format!("{path}/{}", crate::webui::encode_component(&repo.name)), class: "identity-profile-repository-name", "{repo.name}" }
+                                NavLink { href: crate::webui::repository_path(&owner,&repo.name), class: "identity-profile-repository-name", "{repo.name}" }
                                 span { class: "identity-profile-visibility", if repo.private { "Private" } else { "Public" } }
                                 if repo.archived { span { class: "identity-profile-visibility", "Archived" } }
                             }
@@ -522,6 +534,18 @@ pub struct Profile {
     pub website: String,
     pub avatar_url: Option<String>,
     pub joined: String,
+    #[serde(default)]
+    pub social_accounts: Vec<(String, String)>,
+    #[serde(default)]
+    pub company: String,
+    #[serde(default)]
+    pub twitter_username: String,
+    #[serde(default)]
+    pub hireable: bool,
+    #[serde(default)]
+    pub public_email: String,
+    #[serde(default)]
+    pub primary_email_visibility: String,
 }
 /// One item of a profile's recent activity. `url` leads to what it is about.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

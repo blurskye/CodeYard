@@ -14,6 +14,7 @@ pub enum AccountInputError {
     UsernameReserved,
     PasswordBounds,
     EmailBounds,
+    EmailFormat,
 }
 
 pub(crate) fn validate_username(username: &str) -> Result<(), AccountInputError> {
@@ -34,7 +35,8 @@ pub(crate) fn validate_username(username: &str) -> Result<(), AccountInputError>
 pub(crate) fn validate_account(input: &PasswordAccount<'_>) -> Result<(), AccountInputError> {
     validate_username(input.username)?;
     validate_new_password(input.password)?;
-    if let Some(email) = input.email {
+    // A blank optional address means none; the account is saved without one.
+    if let Some(email) = input.email.filter(|email| !email.trim().is_empty()) {
         validate_email(email)?;
     }
     Ok(())
@@ -43,6 +45,10 @@ pub(crate) fn validate_account(input: &PasswordAccount<'_>) -> Result<(), Accoun
 pub(crate) fn validate_email(email: &str) -> Result<(), AccountInputError> {
     if email.len() > 255 || email.contains('\0') {
         return Err(AccountInputError::EmailBounds);
+    }
+    // Mail is sent to this address, so it must parse as one.
+    if email.parse::<lettre::Address>().is_err() {
+        return Err(AccountInputError::EmailFormat);
     }
     Ok(())
 }

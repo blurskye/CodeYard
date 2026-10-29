@@ -238,7 +238,6 @@ pub(crate) fn lifecycle_status(
     match error.kind {
         LifecycleFailure::Invalid | LifecycleFailure::OwnRepositoryFork => StatusCode::BAD_REQUEST,
         LifecycleFailure::Denied => StatusCode::FORBIDDEN,
-        LifecycleFailure::UnsupportedOrganizationFork => StatusCode::UNPROCESSABLE_ENTITY,
         LifecycleFailure::Conflict => StatusCode::CONFLICT,
         _ => StatusCode::SERVICE_UNAVAILABLE,
     }
@@ -272,9 +271,7 @@ pub(crate) fn lifecycle_error(
     use crate::backend::repositories::lifecycle::LifecycleFailure;
     let code = match error.kind {
         LifecycleFailure::Invalid => "validation_error",
-        LifecycleFailure::OwnRepositoryFork | LifecycleFailure::UnsupportedOrganizationFork => {
-            "invalid_operation"
-        }
+        LifecycleFailure::OwnRepositoryFork => "invalid_operation",
         LifecycleFailure::Denied => "forbidden",
         LifecycleFailure::Conflict => "conflict",
         LifecycleFailure::DeletedStorageRemains => "storage_unavailable",

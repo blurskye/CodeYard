@@ -1,6 +1,6 @@
 //! Site settings: who can sign up and the AI crawler policy.
 use super::nav::{admin_layout, Section};
-use crate::webui::components::{DraftSelect, SelectOption};
+use crate::webui::components::{DraftInput, DraftSelect, SelectOption};
 use crate::webui::pages::fields::{csrf, notice};
 use dioxus::prelude::*;
 
@@ -10,6 +10,8 @@ pub struct AdminSettings {
     pub private: bool,
     /// `block` or `allow`.
     pub ai_crawlers: String,
+    pub osv_base_url: String,
+    pub osv_ecosystems: String,
 }
 
 /// One setting: a heading, a select and its own Save button, posting only its field. A
@@ -56,6 +58,16 @@ pub fn admin_settings_page(
         "Who can sign up, and how crawlers treat this site.",
         rsx! {
             {notice(message, error)}
+            section {class:"identity-admin-panel",style:"min-width:0;overflow-wrap:anywhere",
+                h2 {"Dependency vulnerabilities"}
+                form {method:"post",action:"/admin/settings",
+                    {csrf(token)}
+                    label {"OSV mirror base URL" DraftInput {name:"osv_base_url",initial_value:model.osv_base_url,maxlength:Some(2048),required:true}}
+                    label {"Enabled ecosystems (comma-separated)" DraftInput {name:"osv_ecosystems",initial_value:model.osv_ecosystems,maxlength:Some(256)}}
+                    p {"npm, PyPI, crates.io, Go, Maven, RubyGems, Packagist, NuGet, Pub, Hex. Empty disables downloads. Mirrors must provide <ecosystem>/all.zip. Sync runs every six hours."}
+                    button {r#type:"submit",class:"btn","Save vulnerability sources"}
+                }
+            }
             SelectSetting { token: token.to_owned(), name: "node_mode", title: "Sign-up", label: "Who can join",
                 hint: "By approval also asks visitors to sign in before they see anything. Pending requests are under Users.",
                 value: if model.private { "private" } else { "public" },

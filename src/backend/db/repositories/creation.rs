@@ -28,8 +28,6 @@ impl RepositoryCreationOwner {
 pub enum RepositoryStorageRefusal {
     #[error("Repository creation authority is denied")]
     Denied,
-    #[error("Organization forks are not supported")]
-    UnsupportedOrganizationFork,
     #[error("Fork source storage placement changed")]
     StalePlacement,
 }
@@ -44,9 +42,19 @@ pub struct NewRepository<'a> {
     pub source_id: Option<i64>,
 }
 
+native_operation!(crate::backend::db::postgres::repositories::creation::check_creation_authority,
+    crate::backend::db::sqlite::repositories::creation::check_creation_authority,
+    fn check_creation_authority(pool: &DbPool, owner: RepositoryCreationOwner) -> Result<()>);
+
 native_operation!(crate::backend::db::postgres::repositories::creation::insert_repository,
     crate::backend::db::sqlite::repositories::creation::insert_repository,
     fn insert_repository(pool: &DbPool, input: NewRepository<'_>) -> Result<Option<Repository>>);
+
+native_operation!(crate::backend::db::postgres::repositories::creation::insert_repository_with_properties,
+    crate::backend::db::sqlite::repositories::creation::insert_repository_with_properties,
+    fn insert_repository_with_properties(pool: &DbPool, input: NewRepository<'_>, properties: &[crate::backend::db::organizations::properties::ValueInput]) -> Result<Option<Repository>>);
+native_operation!(crate::backend::db::postgres::repositories::creation::insert_gist_repository,crate::backend::db::sqlite::repositories::creation::insert_gist_repository,
+    fn insert_gist_repository(pool: &DbPool,input: NewRepository<'_>) -> Result<Option<Repository>>);
 
 native_operation!(crate::backend::db::postgres::repositories::creation::repository_visibility_locked,
     crate::backend::db::sqlite::repositories::creation::repository_visibility_locked,

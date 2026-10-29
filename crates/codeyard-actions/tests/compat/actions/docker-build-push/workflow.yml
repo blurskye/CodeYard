@@ -1,0 +1,20 @@
+# https://github.com/docker/build-push-action/tree/10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          printf 'FROM alpine:3.21\nCMD ["echo", "compat-image"]\n' > Dockerfile
+      - id: action
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: "."
+          push: "false"
+          load: "true"
+          tags: "compat-image:local"
+      - name: Assert documented effect
+        run: |
+          docker run --rm compat-image:local | grep '^compat-image$'
+          echo compat:ok

@@ -1,57 +1,17 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session::{extract_session_id, get_current_user};
+use crate::backend::api::http::session::extract_session_id;
 use crate::backend::api::user::profile::{settings_response, settings_result};
 use crate::backend::api::user::responses::{field, mutation_guard, within_bounds, Fields};
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::identity::keys;
 use crate::backend::identity::keys::KeyError;
-use axum::extract::{Form, Path, Query, State};
+use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-#[derive(Serialize)]
-pub struct SshKeyResponse {
-    pub id: i64,
-    pub name: String,
-    pub fingerprint: String,
-    pub key_type: String,
-    pub created_at: String,
-}
-
-impl From<db::models::SshKey> for SshKeyResponse {
-    fn from(key: db::models::SshKey) -> Self {
-        Self {
-            id: key.id,
-            name: key.name,
-            fingerprint: key.fingerprint,
-            key_type: key.key_type,
-            created_at: key.created_at.to_rfc3339(),
-        }
-    }
-}
-
-impl From<db::users::ssh_keys::SshKeySummary> for SshKeyResponse {
-    fn from(key: db::users::ssh_keys::SshKeySummary) -> Self {
-        Self {
-            id: key.id,
-            name: key.name,
-            fingerprint: key.fingerprint,
-            key_type: key.key_type,
-            created_at: key.created_at.to_rfc3339(),
-        }
-    }
-}
-
-#[derive(Deserialize)]
-pub struct AddSshKeyRequest {
-    pub name: String,
-    pub public_key: String,
-}
 
 pub(crate) fn key_failure(error: KeyError) -> (StatusCode, Json<ApiError>) {
     let (status, code) = match error {
@@ -84,58 +44,30 @@ fn key_mutation_actor(ctx: &PageContext, form: &Fields) -> Result<i64, Response>
     Ok(user.id)
 }
 
-pub async fn list_ssh_keys(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<std::collections::HashMap<String, String>>,
-    headers: HeaderMap,
-) -> Result<Json<Vec<SshKeyResponse>>, (StatusCode, Json<ApiError>)> {
-    let user = get_current_user(&state.pool, &headers).await?;
-    let rows = db::users::ssh_keys::list_user_key_summaries(
-        &state.pool,
-        user.id,
-        query.get("after").and_then(|v| v.parse().ok()).unwrap_or(0),
-    )
-    .await
-    .map_err(|_| key_failure(KeyError::Unavailable))?;
-    Ok(Json(rows.into_iter().map(SshKeyResponse::from).collect()))
-}
-
-pub async fn add_ssh_key(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<AddSshKeyRequest>,
-) -> Result<(StatusCode, Json<SshKeyResponse>), (StatusCode, Json<ApiError>)> {
-    let user = get_current_user(&state.pool, &headers).await?;
-    let session_id = extract_session_id(&headers);
-    let key = keys::enroll(
-        &state.pool,
-        user.id,
-        session_id.as_deref(),
-        &req.name,
-        &req.public_key,
-    )
-    .await
-    .map_err(key_failure)?;
-    Ok((StatusCode::CREATED, Json(SshKeyResponse::from(key))))
-}
-
-pub async fn delete_ssh_key(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<i64>,
-) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
-    let user = get_current_user(&state.pool, &headers).await?;
-    keys::delete(&state.pool, user.id, id)
-        .await
-        .map_err(key_failure)?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
 pub(crate) async fn key_add_post(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     uri: Uri,
     Form(form): Form<Fields>,
+) -> Response {
+    save_key_form(state, headers, uri, form, false).await
+}
+
+pub(crate) async fn signing_key_add_post(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<Fields>,
+) -> Response {
+    save_key_form(state, headers, uri, form, true).await
+}
+
+async fn save_key_form(
+    state: Arc<AppState>,
+    headers: HeaderMap,
+    uri: Uri,
+    form: Fields,
+    signing: bool,
 ) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
@@ -170,16 +102,65 @@ pub(crate) async fn key_add_post(
         .await;
     }
     let session_id = extract_session_id(&ctx.headers);
-    let result = keys::enroll(
+    let result = if signing {
+        keys::enroll_signing(
+            &ctx.state.pool,
+            actor,
+            &db::users::accounts::AccountCredential::Session(
+                session_id.as_deref().unwrap_or_default(),
+            ),
+            field(&form, "name").trim(),
+            public_key,
+        )
+        .await
+        .map(|_| ())
+    } else {
+        keys::enroll(
+            &ctx.state.pool,
+            actor,
+            session_id.as_deref(),
+            field(&form, "name").trim(),
+            public_key,
+        )
+        .await
+        .map(|_| ())
+    }
+    .map_err(key_failure);
+    settings_result(
+        &ctx,
+        "keys",
+        &form,
+        result,
+        if signing { "signing-key" } else { "key" },
+    )
+    .await
+}
+
+pub(crate) async fn signing_key_delete_post(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Path(id): Path<i64>,
+    Form(form): Form<Fields>,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    let actor = match key_mutation_actor(&ctx, &form) {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    let session = extract_session_id(&ctx.headers).unwrap_or_default();
+    let result = keys::delete_signing(
         &ctx.state.pool,
         actor,
-        session_id.as_deref(),
-        field(&form, "name").trim(),
-        public_key,
+        &db::users::accounts::AccountCredential::Session(&session),
+        id,
     )
     .await
     .map_err(key_failure);
-    settings_result(&ctx, "keys", &form, result, "key").await
+    settings_result(&ctx, "keys", &form, result, "signing-key-deleted").await
 }
 
 pub(crate) async fn key_delete_post(
@@ -197,8 +178,14 @@ pub(crate) async fn key_delete_post(
         Ok(actor) => actor,
         Err(response) => return response,
     };
-    let result = keys::delete(&ctx.state.pool, actor, id)
-        .await
-        .map_err(key_failure);
+    let session = extract_session_id(&ctx.headers).unwrap_or_default();
+    let result = keys::delete(
+        &ctx.state.pool,
+        actor,
+        &db::users::accounts::AccountCredential::Session(&session),
+        id,
+    )
+    .await
+    .map_err(key_failure);
     settings_result(&ctx, "keys", &form, result, "deleted").await
 }

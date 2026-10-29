@@ -53,7 +53,7 @@ pub fn team_page(page: TeamPage) -> Element {
         .clone()
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| org.name.clone());
-    let org_path = format!("/{}", encode_component(&org.name));
+    let org_path = crate::webui::profile_path(&org.name);
     let base = href(&org.name, &team.slug);
     let members_href = format!("{base}?tab=members");
     let repositories_href = format!("{base}?tab=repositories");
@@ -116,7 +116,7 @@ pub fn team_page(page: TeamPage) -> Element {
                         for grant in &repositories {
                             li { key: "{grant.repo_id}", class: "org-row",
                                 div { class: "org-row-main",
-                                    h3 { NavLink { href: format!("/{}/{}", encode_component(&grant.owner), encode_component(&grant.name)), class: "org-row-link", "{grant.owner}/{grant.name}" } }
+                                    h3 { NavLink { href: crate::webui::repository_path(&grant.owner,&grant.name), class: "org-row-link", "{grant.owner}/{grant.name}" } }
                                 }
                                 span { class: "org-label", "{permission_name(grant.permission)}" }
                             }
@@ -128,7 +128,7 @@ pub fn team_page(page: TeamPage) -> Element {
                         for member in &members {
                             li { key: "{member.user_id}", class: "org-row",
                                 div { class: "org-row-main",
-                                    h3 { NavLink { href: format!("/{}", encode_component(&member.username)), class: "org-row-link", Avatar { name: member.username.clone(), size: 24 } "{member.username}" } }
+                                    h3 { NavLink { href: crate::webui::profile_path(&member.username), class: "org-row-link", Avatar { name: member.username.clone(), size: 24 } "{member.username}" } }
                                 }
                                 span { class: "org-label", "{member.role}" }
                             }

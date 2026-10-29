@@ -1,0 +1,15 @@
+# https://github.com/julia-actions/setup-julia/tree/4c0cb0fce8556fdb04a90347310e5db8b1f98fb9
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9 # v2
+        with:
+          version: "1.11"
+      - name: Assert documented effect
+        run: |
+          julia --version | grep '1\.11'
+          echo compat:ok

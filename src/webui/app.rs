@@ -13,9 +13,14 @@ use serde::{Deserialize, Serialize};
 pub enum Page {
     Identity(pages::account::Page),
     Organizations(pages::orgs::Page),
+    CodeSecurity(pages::orgs::code_security::Page),
     OrganizationProfile(pages::orgs::OrganizationProfile),
     OrganizationTeam(pages::orgs::TeamPage),
     Discovery(pages::discovery::Page),
+    Gists(pages::gists::Page),
+    Packages(pages::packages::Page),
+    Attestations(pages::attestations::Page),
+    ArtifactMetadata(pages::artifact_metadata::Page),
     /// `/help`: keyboard shortcuts, the documentation and how to report a problem.
     Help,
     /// `/issues` and `/pulls`: the signed-in user's own lists.
@@ -29,6 +34,8 @@ pub enum Page {
     Notifications(pages::notifications::NotificationsPage),
     Email(pages::admin::email::Page),
     AdminActions(pages::admin::actions::Page),
+    RunnerSettings(pages::runners::Page),
+    Projects(pages::projects::Page),
     Nodes(pages::admin::nodes::Page),
     Storage(pages::admin::storage::Page),
     /// `repo` is set only when the viewer may read that repository.
@@ -42,11 +49,13 @@ pub enum Page {
 
 impl Page {
     /// The repository a page belongs to. The site header draws its tabs from it.
-    fn repo_chrome(&self) -> Option<&pages::repos::chrome::RepoChrome> {
+    pub(crate) fn repo_chrome(&self) -> Option<&pages::repos::chrome::RepoChrome> {
         match self {
             Page::Repositories(page) => Some(page.repo_chrome()),
             Page::Collaboration(page) => Some(page.repo_chrome()),
             Page::Actions(page) => page.repo_chrome(),
+            Page::Packages(page) => page.repo_chrome(),
+            Page::Attestations(page) => page.repo.as_deref(),
             Page::Error { repo, .. } => repo.as_deref(),
             _ => None,
         }
@@ -128,9 +137,14 @@ pub(crate) fn render_body(page: Page) -> Element {
     match page {
         Page::Identity(page) => pages::account::render(page),
         Page::Organizations(page) => pages::orgs::render(page),
+        Page::CodeSecurity(page) => pages::orgs::code_security::render(page),
         Page::OrganizationProfile(page) => pages::orgs::profile_page(page),
         Page::OrganizationTeam(page) => pages::orgs::team_page(page),
         Page::Discovery(page) => pages::discovery::render(page),
+        Page::Gists(page) => pages::gists::render(page),
+        Page::Packages(page) => pages::packages::render(page),
+        Page::Attestations(page) => pages::attestations::render(page),
+        Page::ArtifactMetadata(page) => pages::artifact_metadata::render(page),
         Page::Help => pages::help::help_page(),
         Page::Dashboard(list) => pages::dashboard::render(list),
         Page::IssueRepositories(choices) => pages::dashboard::choose_repository(&choices),
@@ -140,6 +154,8 @@ pub(crate) fn render_body(page: Page) -> Element {
         Page::Notifications(model) => rsx! { pages::notifications::NotificationsView { model } },
         Page::Email(page) => pages::admin::email::render(page),
         Page::AdminActions(page) => pages::admin::actions::render(page),
+        Page::RunnerSettings(page) => pages::runners::render(page),
+        Page::Projects(page) => pages::projects::render(page),
         Page::Nodes(page) => pages::admin::nodes::render(page),
         Page::Storage(page) => pages::admin::storage::render(page),
         Page::Error {

@@ -4,6 +4,23 @@ use crate::backend::db::models::DeployKey;
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
+/// A live browser session or write token, checked with the repository mutation.
+pub enum Credential {
+    Session(String),
+    Token(i64),
+}
+
+impl From<&str> for Credential {
+    fn from(session: &str) -> Self {
+        Self::Session(session.to_owned())
+    }
+}
+impl From<&String> for Credential {
+    fn from(session: &String) -> Self {
+        Self::Session(session.clone())
+    }
+}
+
 /// A deploy key to store. The fingerprint and key type come from the validated public key.
 #[derive(Debug, Clone)]
 pub struct NewDeployKey {
@@ -23,6 +40,12 @@ native_operation!(crate::backend::db::postgres::deploy_keys::get_deploy_key,
     crate::backend::db::sqlite::deploy_keys::get_deploy_key,
     fn get_deploy_key(pool: &DbPool, key_id: i64) -> Result<Option<DeployKey>>);
 
+// Git credential lookup checks the repository's current organization policy, not a cached owner.
+// A fingerprint that is also an account key is ambiguous and authenticates as neither.
+native_operation!(crate::backend::db::postgres::deploy_keys::usable_deploy_key,
+    crate::backend::db::sqlite::deploy_keys::usable_deploy_key,
+    fn usable_deploy_key(pool:&DbPool,key_id:i64)->Result<Option<DeployKey>>);
+
 native_operation!(crate::backend::db::postgres::deploy_keys::get_deploy_key_by_fingerprint,
     crate::backend::db::sqlite::deploy_keys::get_deploy_key_by_fingerprint,
     fn get_deploy_key_by_fingerprint(pool: &DbPool, fingerprint: &str) -> Result<Option<DeployKey>>);
@@ -30,12 +53,12 @@ native_operation!(crate::backend::db::postgres::deploy_keys::get_deploy_key_by_f
 // Refused with `SshKeyWriteRefusal::AlreadyUsed` when the key is an account key or a deploy key.
 native_operation!(crate::backend::db::postgres::deploy_keys::insert_deploy_key,
     crate::backend::db::sqlite::deploy_keys::insert_deploy_key,
-    fn insert_deploy_key(pool: &DbPool, key: &NewDeployKey, session: &str) -> Result<DeployKey>);
+    fn insert_deploy_key(pool: &DbPool, key: &NewDeployKey, credential: impl Into<Credential>) -> Result<DeployKey>);
 
 // Deletes only a key of `repo_id`. Returns false when no such key exists.
 native_operation!(crate::backend::db::postgres::deploy_keys::delete_deploy_key,
     crate::backend::db::sqlite::deploy_keys::delete_deploy_key,
-    fn delete_deploy_key(pool: &DbPool, repo_id: i64, key_id: i64, actor: i64, session: &str) -> Result<bool>);
+    fn delete_deploy_key(pool: &DbPool, repo_id: i64, key_id: i64, actor: i64, credential: impl Into<Credential>) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::deploy_keys::touch_deploy_key,
     crate::backend::db::sqlite::deploy_keys::touch_deploy_key,

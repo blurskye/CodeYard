@@ -191,6 +191,23 @@ native_operation!(crate::backend::db::postgres::cluster::set_replicas,
     /// Stores the replica setting. False if the installation has no configuration row yet.
     fn set_replicas(pool: &DbPool, value: &str) -> Result<bool>);
 
+native_operation!(crate::backend::db::postgres::cluster::cluster_enabled,
+    crate::backend::db::sqlite::cluster::cluster_enabled,
+    /// Whether `codeyard cluster enable` turned on cluster mode. Single-node mode, the
+    /// default, allows only the server and runners.
+    fn cluster_enabled(pool: &DbPool) -> Result<bool>);
+
+native_operation!(crate::backend::db::postgres::cluster::enable_cluster,
+    crate::backend::db::sqlite::cluster::enable_cluster,
+    /// Turns on cluster mode. Returns false when it was already on.
+    fn enable_cluster(pool: &DbPool) -> Result<bool>);
+
+native_operation!(crate::backend::db::postgres::cluster::is_admitted_node,
+    crate::backend::db::sqlite::cluster::is_admitted_node,
+    /// Whether this key may use the cluster transport: an active node whose roles the
+    /// current mode allows. Single-node mode admits only runners.
+    fn is_admitted_node(pool: &DbPool, public_key: &str) -> Result<bool>);
+
 native_operation!(crate::backend::db::postgres::cluster::bump_write_version,
     crate::backend::db::sqlite::cluster::bump_write_version,
     /// Counts one ref change on a repository's primary, if `node_id` holds the repository

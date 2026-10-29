@@ -17,14 +17,14 @@ use crate::backend::repositories::store::ErrorKind;
 use crate::backend::repositories::store::MergeMethod;
 use crate::backend::repositories::store::MergeRequest as StoreMerge;
 use crate::backend::repositories::store::RepoError;
-use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
+use crate::backend::webhooks::{self, events, payloads::Scope};
 use crate::webui::pages::repos::issues::MERGE_COMMIT_REFUSED;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::collections::HashSet;
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MergeRequest {
     pub expected_head: String,
     pub expected_base: String,
@@ -40,6 +40,28 @@ pub struct MergeRequest {
     /// How the commits reach the base branch. Omitted means a merge commit.
     #[serde(default)]
     pub merge_method: MergeMethod,
+    #[serde(default)]
+    pub commit_title: Option<String>,
+    #[serde(default)]
+    pub commit_message: Option<String>,
+    #[serde(default)]
+    pub author_email: Option<String>,
+}
+
+/// The default merge headline and body, also offered to clients editing the message.
+pub fn default_merge_text(pull: &db::models::PullRequest, method: MergeMethod) -> (String, String) {
+    match method {
+        MergeMethod::Merge => (
+            format!(
+                "Merge pull request #{} from {}",
+                pull.number, pull.head_branch
+            ),
+            pull.title.clone(),
+        ),
+        MergeMethod::Squash => (format!("{} (#{})", pull.title, pull.number), String::new()),
+        // Rebase keeps each original commit's message.
+        MergeMethod::Rebase => (String::new(), String::new()),
+    }
 }
 
 #[derive(Serialize)]
@@ -135,17 +157,131 @@ async fn eligible_reviews(
         .collect())
 }
 
+/// For `require_last_push_approval`: someone other than whoever pushed the head approved that
+/// head. A push the server holds no record of counts as the author's, whose reviews never count.
+async fn last_push_approved(
+    pool: &db::DbPool,
+    pull: &db::models::PullRequest,
+    decisions: &[db::pull_requests::reviews::PullRequestReviewDecision],
+) -> anyhow::Result<bool> {
+    let pusher = db::events::push_actor(
+        pool,
+        pull.head_repo_id.unwrap_or(pull.repo_id),
+        &format!("refs/heads/{}", pull.head_branch),
+        &pull.head_sha,
+    )
+    .await?
+    .unwrap_or(pull.author_id);
+    Ok(decisions.iter().any(|decision| {
+        decision.state == "approved"
+            && decision.commit_sha.as_deref() == Some(pull.head_sha.as_str())
+            && decision.author_id != pusher
+    }))
+}
+
+#[derive(Clone, Copy)]
+pub enum ReviewDecision {
+    Approved,
+    ChangesRequested,
+    Required,
+}
+
+/// The same eligible latest decisions, stale-head rule and code owners used by the merge gate.
+pub async fn review_decision(
+    pool: &db::DbPool,
+    ci: &CiRuns,
+    repository: &db::models::Repository,
+    pull: &db::models::PullRequest,
+) -> anyhow::Result<Option<ReviewDecision>> {
+    let rules = crate::backend::repositories::protection::matching_rules(
+        pool,
+        repository,
+        &pull.base_branch,
+    )
+    .await?;
+    let decisions = eligible_reviews(pool, pull, repository).await?;
+    let mut approved = false;
+    for rule in &rules {
+        let (count, changes) =
+            count_effective_approvals(&decisions, &pull.head_sha, rule.dismiss_stale_reviews);
+        if changes {
+            return Ok(Some(ReviewDecision::ChangesRequested));
+        }
+        if count < rule.required_approving_reviews as usize {
+            return Ok(Some(ReviewDecision::Required));
+        }
+        if rule.github_settings.require_last_push_approval
+            && !last_push_approved(pool, pull, &decisions).await?
+        {
+            return Ok(Some(ReviewDecision::Required));
+        }
+        if rule.require_code_owner_review {
+            let approvers = decisions
+                .iter()
+                .filter(|d| {
+                    d.state == "approved"
+                        && (!rule.dismiss_stale_reviews
+                            || d.commit_sha.as_deref() == Some(&pull.head_sha))
+                })
+                .map(|d| d.author_id)
+                .collect::<Vec<_>>();
+            if !code_owners::missing_owner_approvals(
+                pool,
+                ci,
+                repository,
+                &pull.base_sha,
+                pull,
+                &approvers,
+            )
+            .await?
+            .is_empty()
+            {
+                return Ok(Some(ReviewDecision::Required));
+            }
+        }
+        approved |= count > 0;
+    }
+    let (count, changes) = count_effective_approvals(&decisions, &pull.head_sha, false);
+    Ok(if changes {
+        Some(ReviewDecision::ChangesRequested)
+    } else if approved || count > 0 {
+        Some(ReviewDecision::Approved)
+    } else {
+        None
+    })
+}
+
+/// A check run passes when it completed with success, or as neutral or skipped, as on GitHub and
+/// on the Checks tab. Anything else is reported as a failure or as still pending.
+fn check_run_state(run: &db::checks::Run) -> &'static str {
+    match (run.status.as_str(), run.conclusion.as_deref()) {
+        ("completed", Some("success" | "neutral" | "skipped")) => "success",
+        ("completed", _) => "failure",
+        _ => "pending",
+    }
+}
+
 fn required_status_check_failures(
     head_sha: &str,
     required_checks: &[String],
     statuses: &[db::models::CommitStatus],
     ci_runs: &[db::models::CiRun],
+    // The newest check run of each required name, from its bound app when the context has one.
+    check_runs: &[db::checks::Run],
+    // None stands for a bound app that no longer exists, so nothing meets its context.
+    bound_apps: &HashMap<&str, Option<i64>>,
 ) -> Vec<String> {
-    let by_context: HashMap<&str, &str> = statuses
-        .iter()
-        .filter(|status| status.sha == head_sha)
-        .map(|status| (status.context.as_str(), status.state.as_str()))
-        .collect();
+    // Contexts compare without case. Should two stored ones differ only in case, a failing
+    // one wins.
+    let mut by_context: HashMap<String, &str> = HashMap::new();
+    for status in statuses.iter().filter(|status| status.sha == head_sha) {
+        let state = by_context
+            .entry(status.context.to_ascii_lowercase())
+            .or_insert(status.state.as_str());
+        if *state == "success" {
+            *state = status.state.as_str();
+        }
+    }
 
     let mut ci_by_context: HashMap<String, Vec<&db::models::CiRun>> = HashMap::new();
     for run in ci_runs
@@ -181,10 +317,25 @@ fn required_status_check_failures(
             }
             continue;
         }
-        match by_context.get(required.as_str()) {
-            Some(&"success") => {}
-            Some(state) => failures.push(format!("{} ({})", required, state)),
-            None => failures.push(format!("{} (missing)", required)),
+        // A context bound to an app is met only by that app's check run. Otherwise the check
+        // run and the commit status must both pass when both exist.
+        let app = bound_apps.get(required.as_str()).copied();
+        let run = check_runs
+            .iter()
+            .find(|run| run.name == *required && app != Some(None))
+            .map(check_run_state);
+        let status = by_context
+            .get(&required.to_ascii_lowercase())
+            .copied()
+            .filter(|_| app.is_none());
+        if run.is_none() && status.is_none() {
+            failures.push(format!("{required} (missing)"));
+        } else if let Some(state) = [run, status]
+            .into_iter()
+            .flatten()
+            .find(|state| *state != "success")
+        {
+            failures.push(format!("{required} ({state})"));
         }
     }
 
@@ -263,6 +414,18 @@ async fn merge_blockers(
                     },
                     approval_count
                 ),
+            });
+        }
+
+        if rule.github_settings.require_last_push_approval
+            && !last_push_approved(pool, pull_request, decisions)
+                .await
+                .map_err(database_error)?
+        {
+            blockers.push(OperationError::Conflict {
+                code: "branch_protection",
+                message: "The most recent push must be approved by someone other than its pusher"
+                    .to_owned(),
             });
         }
 
@@ -347,11 +510,64 @@ async fn merge_blockers(
                 )
                 .await
                 .map_err(database_error)?;
+                // Protection binds GitHub App ids, but a check suite records the app's OAuth
+                // client row, so each binding is translated to that row.
+                let mut bound_apps: HashMap<&str, Option<i64>> = HashMap::new();
+                for check in &rule.github_settings.checks {
+                    let (Some(context), Some(id)) =
+                        (check["context"].as_str(), check["app_id"].as_i64())
+                    else {
+                        continue;
+                    };
+                    let app = db::github_apps::app(pool, &id.to_string())
+                        .await
+                        .map_err(database_error)?
+                        .filter(|app| app.id == id);
+                    let client = match app {
+                        Some(app) => db::oauth_apps::application(pool, &app.client_id)
+                            .await
+                            .map_err(database_error)?
+                            .map(|client| client.id),
+                        None => None,
+                    };
+                    bound_apps.insert(context, client);
+                }
+                // Only the newest check run of each required name is read, from its bound app
+                // when the context has one, so a long check history is never loaded whole.
+                let mut check_runs = Vec::new();
+                for required in &required_status_checks {
+                    let app_id = match bound_apps.get(required.as_str()) {
+                        Some(None) => continue,
+                        Some(app) => *app,
+                        None => None,
+                    };
+                    if db::repositories::protection::server_owned_status_context(required) {
+                        continue;
+                    }
+                    check_runs.extend(
+                        db::checks::runs(
+                            pool,
+                            repository.id,
+                            &db::checks::Filter {
+                                head_sha: Some(pull_request.head_sha.clone()),
+                                name: Some(required.clone()),
+                                app_id,
+                                ..Default::default()
+                            },
+                            0,
+                            1,
+                        )
+                        .await
+                        .map_err(database_error)?,
+                    );
+                }
                 let failures = required_status_check_failures(
                     &pull_request.head_sha,
                     &required_status_checks,
                     &statuses,
                     &ci_runs,
+                    &check_runs,
+                    &bound_apps,
                 );
                 if !failures.is_empty() {
                     blockers.push(OperationError::Conflict {
@@ -427,7 +643,7 @@ pub async fn page_blockers(
     }
 }
 
-async fn page_blocker_messages(
+pub async fn page_blocker_messages(
     pool: &db::DbPool,
     ci: &CiRuns,
     repository: &db::models::Repository,
@@ -755,6 +971,16 @@ pub struct PreparedMerge {
     layers: Vec<db::models::PullRequest>,
     merge: StoreMerge,
     merge_sha: String,
+    async_request: Option<(String, i64)>,
+}
+
+impl PreparedMerge {
+    pub(super) fn bind_async_request(&mut self, uuid: &str, token_id: i64) {
+        self.async_request = Some((uuid.into(), token_id));
+    }
+    pub(super) fn matches_request(&self, repo_id: i64, pull_id: i64) -> bool {
+        self.repository.id == repo_id && self.pull_request.id == pull_id
+    }
 }
 
 pub async fn prepare_pull_request_merge(
@@ -881,26 +1107,92 @@ pub async fn prepare_pull_request_merge(
     } else {
         None
     };
-    let message = match request.merge_method {
-        MergeMethod::Merge => format!(
-            "Merge pull request #{} from {}\n\n{}",
-            pull_request.number, pull_request.head_branch, pull_request.title
-        ),
-        MergeMethod::Squash => format!("{} (#{})", pull_request.title, pull_request.number),
-        // A rebase keeps the message of each commit it replays.
-        MergeMethod::Rebase => String::new(),
+    for text in [
+        request.commit_title.as_deref(),
+        request.commit_message.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if text.contains('\0') || crate::backend::issues::validate_body(text, false).is_err() {
+            return Err(OperationError::Invalid {
+                code: "validation_error",
+                message: "Invalid merge commit message".into(),
+            });
+        }
+    }
+    if request.author_email.as_deref().is_some_and(|email| {
+        email.is_empty()
+            || email.len() > 255
+            || !email.contains('@')
+            || email
+                .chars()
+                .any(|c| c.is_control() || matches!(c, '<' | '>'))
+    }) {
+        return Err(OperationError::Invalid {
+            code: "validation_error",
+            message: "Invalid merge author email".into(),
+        });
+    }
+    let (title, body) = default_merge_text(&pull_request, request.merge_method);
+    let message = if body.is_empty() {
+        title
+    } else {
+        format!("{title}\n\n{body}")
     };
+    let message = if request.merge_method == MergeMethod::Squash {
+        request.commit_title.clone().unwrap_or(message)
+    } else if request.merge_method != MergeMethod::Rebase
+        && (request.commit_title.is_some() || request.commit_message.is_some())
+    {
+        let (title, body) = message.split_once("\n\n").unwrap_or((&message, ""));
+        let title = request.commit_title.as_deref().unwrap_or(title);
+        let body = request.commit_message.as_deref().unwrap_or(body);
+        if body.is_empty() {
+            title.to_owned()
+        } else {
+            format!("{title}\n\n{body}")
+        }
+    } else {
+        message
+    };
+    let message_len = message.len()
+        + if request.merge_method == MergeMethod::Squash {
+            request.commit_message.as_ref().map_or(0, |body| {
+                if body.is_empty() {
+                    0
+                } else {
+                    body.len() + 2
+                }
+            })
+        } else {
+            0
+        };
+    if request.merge_method != MergeMethod::Rebase
+        && (message.is_empty() || message_len > crate::backend::git::MAX_MERGE_MESSAGE_BYTES)
+    {
+        return Err(OperationError::Invalid {
+            code: "validation_error",
+            message: "Merge commit messages must contain 1 to 8192 bytes".into(),
+        });
+    }
     let merge = StoreMerge {
         head_branch: head_ref(&repository, &pull_request),
         base_branch: trunk.base_branch.clone(),
         head: pull_request.head_sha.clone(),
         base: trunk.base_sha.clone(),
         message,
+        squash_body: request.commit_message.clone(),
         name: user.username.clone(),
         email: user.commit_email(),
         method: request.merge_method,
-        author_name: author.as_ref().map(|author| author.username.clone()),
-        author_email: author.as_ref().map(|author| author.noreply_email()),
+        author_name: author
+            .as_ref()
+            .map(|author| author.username.clone())
+            .or_else(|| request.author_email.as_ref().map(|_| user.username.clone())),
+        author_email: request
+            .author_email
+            .or_else(|| author.as_ref().map(|author| author.noreply_email())),
     };
     let merge_sha = repo_store(&repository, ci.cluster.as_ref())
         .prepare_merge(&merge)
@@ -916,6 +1208,7 @@ pub async fn prepare_pull_request_merge(
         layers,
         merge,
         merge_sha,
+        async_request: None,
     })
 }
 
@@ -967,6 +1260,7 @@ pub async fn publish_prepared_merge(
         layers,
         merge,
         merge_sha,
+        async_request,
     } = prepared;
     let repository = db::repositories::records::get_repository_by_id(pool, repository.id)
         .await
@@ -1005,7 +1299,29 @@ pub async fn publish_prepared_merge(
     check_chain_policy(pool, ci, &repository, &user, &chain, merge.method).await?;
     // A layer that joins between this check and the ref update is retargeted after the merge, as
     // with any other check made here.
-    let published = if let [_] = chain.as_slice() {
+    let published = if let Some((uuid, token_id)) = async_request {
+        let heads = chain
+            .iter()
+            .map(|layer| (head_ref(&repository, layer), layer.head_sha.clone()))
+            .collect();
+        repo_store(&repository, ci.cluster.as_ref())
+            .publish_async_merge_as(
+                pool,
+                repository.id,
+                user.id,
+                &crate::backend::repositories::store::AsyncMergePublication {
+                    uuid,
+                    token_id,
+                    pull_request_id: pull_request.id,
+                    heads,
+                    base_branch: merge.base_branch.clone(),
+                    base: merge.base.clone(),
+                    result: merge_sha.clone(),
+                    method: merge.method,
+                },
+            )
+            .await
+    } else if let [_] = chain.as_slice() {
         repo_store(&repository, ci.cluster.as_ref())
             .publish_merge_as(
                 pool,
@@ -1122,51 +1438,72 @@ pub async fn publish_prepared_merge(
         if let Ok(Some(merged)) =
             db::pull_requests::records::get_pull_request_by_id(pool, layer.id).await
         {
-            let repository_for_hook = repository.clone();
+            let (merged_for_hook, repository_for_hook) = (merged.clone(), repository.clone());
             let (author_id, sender_id) = (merged.author_id, user.id);
-            webhooks::emit(
+            let hook_store = repo_store(&repository, ci.cluster.as_ref());
+            let payload = webhooks::emit(
                 pool,
                 &repository,
                 events::PULL_REQUEST,
                 vec![author_id, sender_id],
                 move |owner, people| {
-                    payloads::pull_request(
+                    super::webhook_payload(
                         "closed",
-                        &merged,
+                        &merged_for_hook,
                         &people.get(author_id),
                         Scope {
                             repo: &repository_for_hook,
                             owner,
                             sender: &people.get(sender_id),
                         },
+                        &hook_store,
                     )
                 },
-            );
-        }
-        if layer.author_id == user.id {
-            continue;
+            )
+            .await;
+            // Workflows that listen for a closed pull request run for the merged one too. A
+            // layer landed on the merge's base, not on the layer below it.
+            let landed = db::models::PullRequest {
+                base_branch: merge.base_branch.clone(),
+                base_sha: merge.base.clone(),
+                ..merged
+            };
+            pull_requests::workflows::queue_pull_request_event_ci(
+                pool,
+                ci,
+                &repository,
+                &landed,
+                user.id,
+                crate::backend::db::models::AccessLevel::Owner,
+                &payload,
+            )
+            .await;
         }
         let title = format!("{} merged pull request #{}", user.username, layer.number);
         let link = format!("/{}/{}/pulls/{}", owner, repo, layer.number);
-        let _ = create_and_broadcast_notification(
+        let notice = NotificationRequest {
+            user_id: layer.author_id,
+            actor_id: Some(user.id),
+            repo_id: Some(repository.id),
+            kind: "pull_request_merged",
+            title: &title,
+            body: Some(&layer.title),
+            link: Some(&link),
+            metadata: json!({"repo_owner":&owner,"repo_name":&repo,"pull_number":layer.number,"subject":layer.title,"merge_sha":merge_sha.as_str()}),
+        };
+        let mut notified = Vec::new();
+        if layer.author_id != user.id
+            && create_and_broadcast_notification(pool, broadcaster, notice.clone())
+                .await
+                .is_ok()
+        {
+            notified.push(layer.author_id);
+        }
+        crate::backend::notifications::create::notify_subscribers(
             pool,
             broadcaster,
-            NotificationRequest {
-                user_id: layer.author_id,
-                actor_id: Some(user.id),
-                repo_id: Some(repository.id),
-                kind: "pull_request_merged",
-                title: &title,
-                body: Some(&layer.title),
-                link: Some(&link),
-                metadata: json!({
-                    "repo_owner": &owner,
-                    "repo_name": &repo,
-                    "pull_number": layer.number,
-                    "subject": layer.title,
-                    "merge_sha": merge_sha.as_str(),
-                }),
-            },
+            notice,
+            &notified,
         )
         .await;
     }
@@ -1331,13 +1668,68 @@ mod tests {
             "H1",
             &required,
             std::slice::from_ref(&status),
-            &[]
+            &[],
+            &[],
+            &HashMap::new()
         )
         .is_empty());
         assert_eq!(
-            required_status_check_failures("H2", &required, &[status], &[]),
+            required_status_check_failures("H2", &required, &[status], &[], &[], &HashMap::new()),
             vec!["ci (missing)"]
         );
         assert!(serde_json::from_value::<MergeRequest>(json!({})).is_err());
+    }
+
+    #[test]
+    fn check_runs_and_statuses_both_decide_their_context() {
+        let run = |status: &str, conclusion: Option<&str>| db::checks::Run {
+            id: 1,
+            suite_id: 1,
+            repo_id: 1,
+            name: "lint".into(),
+            status: status.into(),
+            conclusion: conclusion.map(str::to_owned),
+            data: sqlx::types::Json(db::checks::RunData::default()),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let required = vec!["lint".to_string()];
+        let none = HashMap::new();
+        let failures = |runs: &[db::checks::Run],
+                        statuses: &[db::models::CommitStatus],
+                        bound: &HashMap<&str, Option<i64>>| {
+            required_status_check_failures("H1", &required, statuses, &[], runs, bound)
+        };
+        let passed = [run("completed", Some("success"))];
+        assert!(failures(&passed, &[], &none).is_empty());
+        assert!(failures(&[run("completed", Some("neutral"))], &[], &none).is_empty());
+        assert!(failures(&[run("completed", Some("skipped"))], &[], &none).is_empty());
+        let failed = [run("completed", Some("failure"))];
+        assert_eq!(failures(&failed, &[], &none), vec!["lint (failure)"]);
+        let running = [run("in_progress", None)];
+        assert_eq!(failures(&running, &[], &none), vec!["lint (pending)"]);
+        // A passing check run does not hide a failing status of the same name.
+        let status = db::models::CommitStatus {
+            id: 1,
+            repo_id: 1,
+            sha: "H1".into(),
+            context: "lint".into(),
+            state: "failure".into(),
+            description: None,
+            target_url: None,
+            creator_id: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        assert_eq!(
+            failures(&passed, std::slice::from_ref(&status), &none),
+            vec!["lint (failure)"]
+        );
+        // A context bound to an app counts only that app's run, and no status.
+        let bound = HashMap::from([("lint", Some(7))]);
+        assert!(failures(&passed, std::slice::from_ref(&status), &bound).is_empty());
+        assert_eq!(failures(&[], &[], &bound), vec!["lint (missing)"]);
+        let deleted = HashMap::from([("lint", None)]);
+        assert_eq!(failures(&passed, &[], &deleted), vec!["lint (missing)"]);
     }
 }

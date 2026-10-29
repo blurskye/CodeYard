@@ -52,6 +52,7 @@ impl CiPipelineKind {
 pub struct CiConfig {
     pub mode: CiExecutionMode,
     pub act_binary: String,
+    pub actions_binary: String,
     /// `runs-on` label → container image, for Podman mode.
     pub act_platform_map: BTreeMap<String, String>,
     /// Podman API socket used as `DOCKER_HOST` in Podman mode.
@@ -70,6 +71,12 @@ impl Default for CiConfig {
         Self {
             mode: CiExecutionMode::Podman,
             act_binary: "act".into(),
+            actions_binary: std::env::current_exe()
+                .ok()
+                .and_then(|path| path.parent().map(|parent| parent.join("codeyard-actions")))
+                .filter(|path| path.is_file())
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "codeyard-actions".into()),
             act_platform_map: default_platform_map("ghcr.io/catthehacker/ubuntu:act-latest"),
             podman_socket: default_podman_socket(),
             workflow_ci: ".github/workflows/ci.yml".into(),
@@ -112,6 +119,7 @@ impl CiConfig {
         Ok(Self {
             mode,
             act_binary: var("CI_ACT_BINARY").unwrap_or(defaults.act_binary),
+            actions_binary: var("CI_ACTIONS_BINARY").unwrap_or(defaults.actions_binary),
             act_platform_map,
             podman_socket: podman_socket_path(
                 &var("CI_PODMAN_SOCKET").unwrap_or(defaults.podman_socket),

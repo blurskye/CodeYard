@@ -54,12 +54,23 @@ pub(in crate::webui::pages::repos) fn reaction_bar(
 ) -> Element {
     // An archived repository takes no new reactions.
     let can_react = repo.signed_in && !repo.chrome.is_archived;
+    reaction_form(&repo.csrf, can_react, action, field, reactions, None)
+}
+
+pub(in crate::webui::pages::repos) fn reaction_form(
+    csrf_token: &str,
+    can_react: bool,
+    action: &str,
+    field: Option<(&str, i64)>,
+    reactions: &[Reaction],
+    contents: Option<&[&str]>,
+) -> Element {
     if reactions.is_empty() && !can_react {
         return rsx! {};
     }
     rsx! {
         form { method: "post", action: action.to_owned(), class: "collaboration-reactions", aria_label: "Reactions",
-            {csrf(&repo.csrf)}
+            {csrf(csrf_token)}
             if let Some((name, id)) = field { input { r#type: "hidden", name, value: id.to_string() } }
             for reaction in reactions {
                 {
@@ -82,7 +93,7 @@ pub(in crate::webui::pages::repos) fn reaction_bar(
                 details { class: "native-menu collaboration-reaction-add",
                     summary { class: "collaboration-reaction", title: "Add reaction", "aria-label": "Add reaction", {icon("smile")} }
                     div { class: "native-menu-panel collaboration-reaction-panel",
-                        for (name, face, label) in REACTIONS {
+                        for (name, face, label) in REACTIONS.into_iter().filter(|(name,_,_)|contents.is_none_or(|contents|contents.contains(name))) {
                             button { key: "{name}", r#type: "submit", name: "content", value: name, class: "collaboration-reaction-choice", title: label, "aria-label": label, "{face}" }
                         }
                     }

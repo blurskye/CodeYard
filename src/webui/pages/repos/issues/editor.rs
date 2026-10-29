@@ -19,6 +19,7 @@ pub(in crate::webui::pages::repos) fn MarkdownEditor(
     rows: usize,
     required: bool,
     initial_preview: bool,
+    #[props(default = 65536)] maximum: u32,
     #[props(default)] placeholder: String,
     #[props(default)] references: References,
 ) -> Element {
@@ -45,7 +46,7 @@ pub(in crate::webui::pages::repos) fn MarkdownEditor(
             MarkdownToolbar { target: id.clone() }
             DraftTextarea {
                 id: Some(id), name: "body", initial_value: initial, required,
-                maxlength: Some(65536), rows: rows as u32, placeholder,
+                maxlength: Some(maximum), rows: rows as u32, placeholder,
                 class: "collaboration-textarea",
                 on_value: move |value| text.set(value),
             }

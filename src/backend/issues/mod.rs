@@ -1,7 +1,11 @@
 use crate::backend::db;
 use crate::backend::repositories::access;
+pub mod branches;
+pub mod closing;
 pub mod comments;
 pub mod mutations;
+pub mod references;
+pub mod suggestions;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OperationError {
@@ -219,6 +223,22 @@ pub(super) async fn require_write(
 
 pub(super) fn write_error(error: anyhow::Error) -> OperationError {
     use db::discussions::DiscussionWriteRefusal;
+    if let Some(refusal) = error.downcast_ref::<db::relationships::Refusal>() {
+        return match refusal {
+            db::relationships::Refusal::Denied => OperationError::Denied {
+                code: "forbidden",
+                message: refusal.to_string(),
+            },
+            db::relationships::Refusal::Missing => OperationError::Missing {
+                code: "not_found",
+                message: refusal.to_string(),
+            },
+            _ => OperationError::Invalid {
+                code: "validation_error",
+                message: refusal.to_string(),
+            },
+        };
+    }
     match error.downcast_ref::<DiscussionWriteRefusal>() {
         Some(DiscussionWriteRefusal::Denied) => OperationError::Denied {
             code: "forbidden",

@@ -31,6 +31,7 @@ pub struct BranchProtectionRuleResponse {
     pub allow_deletions: bool,
     pub restrict_pushes: bool,
     pub push_allowances: Vec<String>,
+    pub push_team_allowances: Vec<String>,
     pub force_push_allowances: Vec<String>,
 }
 
@@ -79,6 +80,9 @@ pub struct UpsertBranchProtectionRuleRequest {
     /// Usernames. Each needs write access to the repository.
     #[serde(default)]
     pub push_allowances: Vec<String>,
+    /// Slugs of organization teams with repository write access.
+    #[serde(default)]
+    pub push_team_allowances: Vec<String>,
     /// Usernames, each with write access, who may force push although `allow_force_pushes` is
     /// false.
     #[serde(default)]
@@ -117,11 +121,32 @@ pub(in crate::backend::api::repos) async fn rule_responses(
         .into_iter()
         .map(|user| (user.id, user.username))
         .collect();
+    let mut teams = std::collections::HashMap::new();
+    for rule in &rules {
+        let ids: Vec<_> = rule
+            .push_team_allowances
+            .iter()
+            .filter(|id| !teams.contains_key(&(rule.repo_id, **id)))
+            .copied()
+            .collect();
+        for team in db::repositories::push_teams::by_ids(pool, rule.repo_id, &ids)
+            .await
+            .map_err(|_| storage_unavailable())?
+        {
+            teams.insert((rule.repo_id, team.team.id), team.team.slug);
+        }
+    }
     let names = |ids: &[i64]| ids.iter().filter_map(|id| users.get(id)).cloned().collect();
     Ok(rules
         .into_iter()
         .map(|rule| {
             let push_allowances = names(&rule.push_allowances);
+            let push_team_allowances = rule
+                .push_team_allowances
+                .iter()
+                .filter_map(|id| teams.get(&(rule.repo_id, *id)))
+                .cloned()
+                .collect();
             let force_push_allowances = names(&rule.force_push_allowances);
             BranchProtectionRuleResponse {
                 pattern: rule.pattern,
@@ -139,6 +164,7 @@ pub(in crate::backend::api::repos) async fn rule_responses(
                 allow_deletions: !rule.block_deletions,
                 restrict_pushes: rule.restrict_pushes,
                 push_allowances,
+                push_team_allowances,
                 force_push_allowances,
             }
         })
@@ -260,6 +286,10 @@ pub(in crate::backend::api::repos) async fn save_rule(
         ));
     }
 
+    let push_team_allowances =
+        db::repositories::push_teams::resolve_names(pool, repository.id, &req.push_team_allowances)
+            .await
+            .map_err(protection_write_error)?;
     let [push_allowances, force_push_allowances] = write_user_ids(
         pool,
         repository,
@@ -284,10 +314,12 @@ pub(in crate::backend::api::repos) async fn save_rule(
             block_deletions: !req.allow_deletions,
             restrict_pushes: req.restrict_pushes,
             push_allowances,
+            push_team_allowances,
             force_push_allowances,
             enforce_admins: req.enforce_admins,
             require_conversation_resolution: req.require_conversation_resolution,
             require_code_owner_review: req.require_code_owner_reviews,
+            github_settings: None,
         },
     )
     .await

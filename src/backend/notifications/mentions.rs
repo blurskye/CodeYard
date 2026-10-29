@@ -25,6 +25,7 @@ pub fn mentions_anyone(text: &str) -> bool {
 pub enum MentionComment {
     Issue(i64),
     PullRequest(i64),
+    Commit(i64),
 }
 
 /// One text that may mention users, and the event it belongs to.
@@ -79,10 +80,16 @@ pub async fn notify_mentions(
             return;
         }
     };
-    let title = format!(
-        "{} mentioned you in {}/{}#{}",
-        source.actor.username, source.owner, source.repo, source.number
-    );
+    let title = match source.comment_id {
+        Some(MentionComment::Commit(_)) => format!(
+            "{} mentioned you in {}/{}@{}",
+            source.actor.username, source.owner, source.repo, source.subject
+        ),
+        _ => format!(
+            "{} mentioned you in {}/{}#{}",
+            source.actor.username, source.owner, source.repo, source.number
+        ),
+    };
     let mut sent = 0;
     for name in &names {
         if sent == MAX_NOTIFIED {
@@ -104,6 +111,16 @@ pub async fn notify_mentions(
                 continue;
             }
         }
+        let mut metadata = json!({
+            "repo_owner": source.owner, "repo_name": source.repo, "number": source.number, "subject": source.subject,
+            "comment_id": match source.comment_id { Some(MentionComment::Issue(id)) => Some(id), _ => None },
+            "pull_request_comment_id": match source.comment_id { Some(MentionComment::PullRequest(id)) => Some(id), _ => None },
+        });
+        if let Some(MentionComment::Commit(id)) = source.comment_id {
+            metadata["number"] = serde_json::Value::Null;
+            metadata["commit_comment_id"] = json!(id);
+            metadata["commit_sha"] = json!(source.subject);
+        }
         let created = create_and_broadcast_notification(
             pool,
             broadcaster,
@@ -115,14 +132,7 @@ pub async fn notify_mentions(
                 title: &title,
                 body: Some(source.text),
                 link: Some(source.link),
-                metadata: json!({
-                    "repo_owner": source.owner,
-                    "repo_name": source.repo,
-                    "number": source.number,
-                    "subject": source.subject,
-                    "comment_id": match source.comment_id { Some(MentionComment::Issue(id)) => Some(id), _ => None },
-                    "pull_request_comment_id": match source.comment_id { Some(MentionComment::PullRequest(id)) => Some(id), _ => None },
-                }),
+                metadata,
             },
         )
         .await;

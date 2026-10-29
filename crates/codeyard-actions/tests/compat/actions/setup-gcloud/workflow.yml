@@ -1,0 +1,15 @@
+# https://github.com/google-github-actions/setup-gcloud/tree/e427ad8a34f8676edf47cf7d7925499adf3eb74f
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+        with:
+          version: "510.0.0"
+      - name: Assert documented effect
+        run: |
+          gcloud version | grep 'Google Cloud SDK 510\.0\.0'
+          echo compat:ok

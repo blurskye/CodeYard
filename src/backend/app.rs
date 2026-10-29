@@ -8,6 +8,10 @@ use crate::backend::{
 };
 use std::{path::PathBuf, sync::Arc};
 
+/// Allows the primary and one replica their full transport admission budgets, plus search time.
+const DEFAULT_SEARCH_TIME_BUDGET: std::time::Duration =
+    crate::backend::cluster::DIAL_TIMEOUT.saturating_mul(7);
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: DbPool,
@@ -23,6 +27,9 @@ pub struct AppState {
     /// Upload forms held in memory until their commit lands. Only a few run at once.
     pub upload_reads: Arc<tokio::sync::Semaphore>,
     pub(crate) repository_downloads: Arc<tokio::sync::Semaphore>,
+    /// How long one code or commit search page may walk repositories:
+    /// `SEARCH_TIME_BUDGET_SECONDS`, default 35.
+    pub search_time_budget: std::time::Duration,
 }
 
 impl AppState {
@@ -56,6 +63,11 @@ impl AppState {
             upload_reads: Arc::new(tokio::sync::Semaphore::new(4)),
             // Each buffered raw file or archive is limited to 32 MiB.
             repository_downloads: Arc::new(tokio::sync::Semaphore::new(4)),
+            search_time_budget: std::env::var("SEARCH_TIME_BUDGET_SECONDS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|seconds| *seconds > 0)
+                .map_or(DEFAULT_SEARCH_TIME_BUDGET, std::time::Duration::from_secs),
         }
     }
 }

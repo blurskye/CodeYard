@@ -1,0 +1,1 @@
+query PullRequestMergeText($method:PullRequestMergeMethod!,$prID:ID!){node(id: $prID){...on PullRequest{viewerMergeHeadlineText(mergeType: $method),viewerMergeBodyText(mergeType: $method)}}}

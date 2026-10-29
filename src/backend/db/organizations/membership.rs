@@ -22,6 +22,17 @@ native_operation!(crate::backend::db::postgres::organizations::membership::get_o
 native_operation!(crate::backend::db::postgres::organizations::membership::count_organization_members, crate::backend::db::sqlite::organizations::membership::count_organization_members,
     fn count_organization_members(pool: &DbPool, actor: i64, org: i64) -> Result<OrganizationOutcome<i64>>);
 
+// REST's admin role is an owner, not Codeyard's delegated administrator role.
+native_operation!(crate::backend::db::postgres::organizations::membership::update_organization_member_role_by_owner, crate::backend::db::sqlite::organizations::membership::update_organization_member_role_by_owner,
+    fn update_organization_member_role_by_owner(pool: &DbPool, actor: i64, org: i64, target: i64, role: OrgRole) -> Result<OrganizationOutcome<OrgMembership>>);
+native_operation!(crate::backend::db::postgres::organizations::membership::remove_organization_member_by_owner, crate::backend::db::sqlite::organizations::membership::remove_organization_member_by_owner,
+    fn remove_organization_member_by_owner(pool: &DbPool, actor: i64, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
+
+native_operation!(crate::backend::db::postgres::organizations::membership::convert_to_outside_collaborator, crate::backend::db::sqlite::organizations::membership::convert_to_outside_collaborator,
+    fn convert_to_outside_collaborator(pool: &DbPool, actor: i64, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
+native_operation!(crate::backend::db::postgres::organizations::membership::prepare_outside_conversion, crate::backend::db::sqlite::organizations::membership::prepare_outside_conversion,
+    fn prepare_outside_conversion(pool: &DbPool, actor: i64, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
+
 pub fn parse_organization_role(
     value: &str,
 ) -> std::result::Result<OrgRole, OrganizationInputError> {

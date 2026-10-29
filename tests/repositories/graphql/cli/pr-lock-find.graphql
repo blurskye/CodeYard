@@ -1,0 +1,11 @@
+
+	query IssueByNumber($owner: String!, $repo: String!, $number: Int!) {
+		repository(owner: $owner, name: $repo) {
+			hasIssuesEnabled
+			issue: issueOrPullRequest(number: $number) {
+				__typename
+				...on Issue{activeLockReason,id,locked,number,title,url}
+				...on PullRequest{activeLockReason,id,locked,number,title,url}
+			}
+		}
+	}

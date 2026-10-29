@@ -17,7 +17,6 @@ pub enum LifecycleFailure {
     Invalid,
     OwnRepositoryFork,
     Denied,
-    UnsupportedOrganizationFork,
     Conflict,
     Unavailable,
     InitializationCleanupFailed,
@@ -38,26 +37,71 @@ impl std::fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {}
 
-fn storage_error(error: anyhow::Error) -> StorageError {
+pub(crate) fn storage_error(error: anyhow::Error) -> StorageError {
+    if let Some(refusal) = error.downcast_ref::<db::organizations::properties::Refusal>() {
+        return match refusal {
+            db::organizations::properties::Refusal::Invalid { message, .. } => StorageError {
+                kind: LifecycleFailure::Invalid,
+                message,
+            },
+            db::organizations::properties::Refusal::Denied => StorageError {
+                kind: LifecycleFailure::Denied,
+                message: "Organization policy does not allow setting these repository properties.",
+            },
+            _ => StorageError {
+                kind: LifecycleFailure::Invalid,
+                message: "Invalid organization repository properties.",
+            },
+        };
+    }
     match error.downcast_ref::<repo_lifecycle::RepositoryStorageRefusal>() {
         Some(repo_lifecycle::RepositoryStorageRefusal::Denied) => StorageError {
             kind: LifecycleFailure::Denied,
             message: "You are not allowed to create this repository.",
         },
-        Some(repo_lifecycle::RepositoryStorageRefusal::UnsupportedOrganizationFork) => StorageError {
-            kind: LifecycleFailure::UnsupportedOrganizationFork,
-            message: "Organization forks are not supported; create an empty organization repository instead.",
-        },
         Some(repo_lifecycle::RepositoryStorageRefusal::StalePlacement) => unavailable(),
-        None => match error.downcast_ref::<db::repositories::records::RepositorySettingsRefusal>() {
-            Some(db::repositories::records::RepositorySettingsRefusal::Denied | db::repositories::records::RepositorySettingsRefusal::VisibilityLocked) => StorageError { kind: LifecycleFailure::Denied, message: "Repository mutation is not permitted." },
-            Some(db::repositories::records::RepositorySettingsRefusal::InvalidName) => StorageError { kind: LifecycleFailure::Invalid, message: "Invalid repository name." },
-            Some(db::repositories::records::RepositorySettingsRefusal::NameConflict) => StorageError { kind: LifecycleFailure::Conflict, message: "A repository with this name already exists." },
-            Some(db::repositories::records::RepositorySettingsRefusal::NoMergeMethod) => StorageError { kind: LifecycleFailure::Invalid, message: "At least one merge method must stay allowed." },
-            Some(db::repositories::records::RepositorySettingsRefusal::InvalidTopics) => StorageError { kind: LifecycleFailure::Invalid, message: "Invalid repository topics." },
-            Some(db::repositories::records::RepositorySettingsRefusal::InvalidWebsite) => StorageError { kind: LifecycleFailure::Invalid, message: "Invalid repository website." },
-            None => unavailable(),
-        },
+        None => {
+            match error.downcast_ref::<db::repositories::records::RepositorySettingsRefusal>() {
+                Some(
+                    db::repositories::records::RepositorySettingsRefusal::Denied
+                    | db::repositories::records::RepositorySettingsRefusal::VisibilityLocked,
+                ) => StorageError {
+                    kind: LifecycleFailure::Denied,
+                    message: "Repository mutation is not permitted.",
+                },
+                Some(db::repositories::records::RepositorySettingsRefusal::InvalidName) => {
+                    StorageError {
+                        kind: LifecycleFailure::Invalid,
+                        message: "Invalid repository name.",
+                    }
+                }
+                Some(db::repositories::records::RepositorySettingsRefusal::NameConflict) => {
+                    StorageError {
+                        kind: LifecycleFailure::Conflict,
+                        message: "A repository with this name already exists.",
+                    }
+                }
+                Some(db::repositories::records::RepositorySettingsRefusal::NoMergeMethod) => {
+                    StorageError {
+                        kind: LifecycleFailure::Invalid,
+                        message: "At least one merge method must stay allowed.",
+                    }
+                }
+                Some(db::repositories::records::RepositorySettingsRefusal::InvalidTopics) => {
+                    StorageError {
+                        kind: LifecycleFailure::Invalid,
+                        message: "Invalid repository topics.",
+                    }
+                }
+                Some(db::repositories::records::RepositorySettingsRefusal::InvalidWebsite) => {
+                    StorageError {
+                        kind: LifecycleFailure::Invalid,
+                        message: "Invalid repository website.",
+                    }
+                }
+                None => unavailable(),
+            }
+        }
     }
 }
 
@@ -96,12 +140,24 @@ fn git_storage_error(error: RepoError) -> StorageError {
 async fn cleanup_failed_initialization(
     pool: &db::DbPool,
     context: Option<&NodeContext>,
-    actor: i64,
     repository: &Repository,
 ) -> (bool, bool) {
     // Never remove storage while a live database row could still point at it.
     // Re-read the row because a delete may commit even when its response is lost.
-    let deleted = db::repositories::records::delete_repository(pool, actor, repository.id).await;
+    // A row that has accepted writes is kept, so a failed creation never discards a push.
+    let deleted = if repository.is_gist {
+        db::gists::discard(pool, repository.id)
+            .await
+            .and_then(|row| {
+                row.ok_or_else(|| anyhow::anyhow!("Gist initialization is no longer discardable"))
+            })
+    } else {
+        db::repositories::records::delete_unwritten_repository(pool, repository.id)
+            .await
+            .and_then(|row| {
+                row.ok_or_else(|| anyhow::anyhow!("Repository has accepted writes and is kept"))
+            })
+    };
     let row_removed =
         match db::repositories::records::get_repository_by_id(pool, repository.id).await {
             Ok(row) => row.is_none(),
@@ -127,6 +183,13 @@ async fn cleanup_failed_initialization(
     (true, storage_removed.is_ok())
 }
 
+/// Authority and initial organization metadata, validated together before storage is initialized.
+#[derive(Clone, Copy, Debug)]
+pub struct CreationInput<'a> {
+    pub owner: repo_lifecycle::RepositoryCreationOwner,
+    pub properties: &'a [db::organizations::properties::ValueInput],
+}
+
 /// UUID directory names never change on a rename or ownership transfer.
 pub async fn provision(
     node: (&db::DbPool, Option<&NodeContext>),
@@ -137,6 +200,188 @@ pub async fn provision(
     private: bool,
     source: Option<&Repository>,
 ) -> Result<Repository, StorageError> {
+    provision_with_properties(
+        node,
+        repos_path,
+        CreationInput {
+            owner,
+            properties: &[],
+        },
+        name,
+        description,
+        private,
+        source,
+    )
+    .await
+}
+pub async fn provision_with_properties(
+    node: (&db::DbPool, Option<&NodeContext>),
+    repos_path: &Path,
+    input: CreationInput<'_>,
+    name: &str,
+    description: Option<&str>,
+    private: bool,
+    source: Option<&Repository>,
+) -> Result<Repository, StorageError> {
+    provision_stored(
+        node,
+        repos_path,
+        input,
+        name,
+        description,
+        ProvisionOptions {
+            private,
+            creation_source: source.map(|repository| CreationSource::Fork {
+                repository,
+                default_branch_only: false,
+            }),
+            gist: false,
+        },
+    )
+    .await
+}
+pub async fn provision_gist(
+    node: (&db::DbPool, Option<&NodeContext>),
+    repos_path: &Path,
+    owner: repo_lifecycle::RepositoryCreationOwner,
+    name: &str,
+    source: Option<&Repository>,
+) -> Result<Repository, StorageError> {
+    provision_stored(
+        node,
+        repos_path,
+        CreationInput {
+            owner,
+            properties: &[],
+        },
+        name,
+        None,
+        ProvisionOptions {
+            private: false,
+            creation_source: source.map(|repository| CreationSource::Fork {
+                repository,
+                default_branch_only: false,
+            }),
+            gist: true,
+        },
+    )
+    .await
+}
+#[derive(Clone, Copy)]
+enum CreationSource<'a> {
+    Fork {
+        repository: &'a Repository,
+        default_branch_only: bool,
+    },
+    Template {
+        repository: &'a Repository,
+        all_branches: bool,
+    },
+}
+impl<'a> CreationSource<'a> {
+    fn repository(self) -> &'a Repository {
+        match self {
+            Self::Fork { repository, .. } | Self::Template { repository, .. } => repository,
+        }
+    }
+}
+
+async fn provision_from(
+    node: (&db::DbPool, Option<&NodeContext>),
+    repos_path: &Path,
+    owner: repo_lifecycle::RepositoryCreationOwner,
+    name: &str,
+    description: Option<&str>,
+    options: ProvisionOptions<'_>,
+    chosen: &[db::organizations::properties::ValueInput],
+) -> Result<Repository, StorageError> {
+    let mut properties = inherited_properties(node.0, owner, options.creation_source).await?;
+    // Values chosen in the creation form replace inherited ones.
+    properties.retain(|value| {
+        !chosen
+            .iter()
+            .any(|chosen| chosen.property_name == value.property_name)
+    });
+    properties.extend_from_slice(chosen);
+    provision_stored(
+        node,
+        repos_path,
+        CreationInput {
+            owner,
+            properties: &properties,
+        },
+        name,
+        description,
+        options,
+    )
+    .await
+}
+
+/// A copy made inside the source's organization keeps the property values its creator may set.
+/// Another owner has its own definitions, so the copy starts from that owner's defaults.
+async fn inherited_properties(
+    pool: &db::DbPool,
+    owner: repo_lifecycle::RepositoryCreationOwner,
+    source: Option<CreationSource<'_>>,
+) -> Result<Vec<db::organizations::properties::ValueInput>, StorageError> {
+    let (Some(source), repo_lifecycle::RepositoryTarget::Organization(org)) =
+        (source.map(CreationSource::repository), owner.target)
+    else {
+        return Ok(Vec::new());
+    };
+    if source.owner_org_id != Some(org) {
+        return Ok(Vec::new());
+    }
+    let Some(db::organizations::properties::RepositoryMetadata {
+        values,
+        definitions,
+        organization_owner,
+        ..
+    }) = db::organizations::properties::repository(pool, Some(owner.actor_id), source.id)
+        .await
+        .map_err(|_| unavailable())?
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(values
+        .properties
+        .into_iter()
+        .filter(|value| {
+            value.value.is_some()
+                && definitions.iter().any(|definition| {
+                    definition
+                        .fields
+                        .property_name
+                        .eq_ignore_ascii_case(&value.property_name)
+                        && (organization_owner
+                            || definition.fields.values_editable_by
+                                == db::organizations::properties::EditableBy::OrgAndRepoActors)
+                })
+        })
+        .collect())
+}
+
+struct ProvisionOptions<'a> {
+    private: bool,
+    creation_source: Option<CreationSource<'a>>,
+    gist: bool,
+}
+async fn provision_stored(
+    node: (&db::DbPool, Option<&NodeContext>),
+    repos_path: &Path,
+    creation: CreationInput<'_>,
+    name: &str,
+    description: Option<&str>,
+    options: ProvisionOptions<'_>,
+) -> Result<Repository, StorageError> {
+    let ProvisionOptions {
+        private,
+        creation_source,
+        gist,
+    } = options;
+    let template = matches!(creation_source, Some(CreationSource::Template { .. }));
+    let source = creation_source.map(CreationSource::repository);
+    let owner = creation.owner;
     validate_name(name)?;
     let (pool, context) = node;
     let storage_node_id = placement::storage_node(context, source)
@@ -145,19 +390,24 @@ pub async fn provision(
     let root = std::path::absolute(repos_path).map_err(|_| unavailable())?;
     let location = root.join(format!("{}.git", Uuid::new_v4()));
     let disk_path = location.to_str().ok_or_else(unavailable)?;
-    let repository = repo_lifecycle::insert_repository(
-        pool,
-        repo_lifecycle::NewRepository {
-            owner,
-            name,
-            description,
-            is_private: private,
-            disk_path,
-            storage_node_id,
-            source_id: source.map(|repo| repo.id),
+    let input = repo_lifecycle::NewRepository {
+        owner,
+        name,
+        description,
+        is_private: private,
+        disk_path,
+        storage_node_id,
+        source_id: if template {
+            None
+        } else {
+            source.map(|repo| repo.id)
         },
-    )
-    .await
+    };
+    let mut repository = if gist {
+        repo_lifecycle::insert_gist_repository(pool, input).await
+    } else {
+        repo_lifecycle::insert_repository_with_properties(pool, input, creation.properties).await
+    }
     .map_err(storage_error)?
     .ok_or(StorageError {
         kind: LifecycleFailure::Conflict,
@@ -172,23 +422,49 @@ pub async fn provision(
             prepare_local_repository_root(&root).await?;
         }
         if let Some(source) = source {
+            if template {
+                db::repositories::records::update_repo_default_branch(
+                    pool,
+                    repository.id,
+                    &source.default_branch,
+                )
+                .await
+                .map_err(|_| unavailable())?;
+                repository.default_branch = source.default_branch.clone();
+            }
+            let default_branch_only = match creation_source {
+                Some(CreationSource::Fork {
+                    default_branch_only,
+                    ..
+                }) => default_branch_only,
+                Some(CreationSource::Template { all_branches, .. }) => !all_branches,
+                None => false,
+            };
             store
-                .initialize_fork(
+                .initialize_copy(
                     pool,
                     repository.id,
                     source.id,
                     owner.actor_id,
                     &repo_store(source, context),
-                    &repository.default_branch,
+                    &super::store::CopyOptions {
+                        default_branch: repository.default_branch.clone(),
+                        template,
+                        default_branch_only,
+                    },
                 )
                 .await
                 .map_err(|error| StorageError {
-                    kind: if error.kind == ErrorKind::Invalid {
-                        LifecycleFailure::Denied
-                    } else {
-                        LifecycleFailure::Unavailable
+                    kind: match error.kind {
+                        ErrorKind::Invalid => LifecycleFailure::Denied,
+                        ErrorKind::Conflict => LifecycleFailure::Conflict,
+                        _ => LifecycleFailure::Unavailable,
                     },
-                    message: "Repository is not available for forking.",
+                    message: if error.kind == ErrorKind::Conflict {
+                        "Repository copy conflicts with reserved immutable tag names."
+                    } else {
+                        "Repository is not available for copying."
+                    },
                 })?;
         } else {
             store
@@ -206,9 +482,8 @@ pub async fn provision(
     }
     .await;
     if let Err(error) = initialized {
-        return Err(abandon_repository(pool, context, owner.actor_id, &repository, error).await);
+        return Err(abandon_repository(pool, context, &repository, error).await);
     }
-    let mut repository = repository;
     if source.is_some() {
         // The fork is already usable. Accounting failures must not report creation as failed.
         let accounting = async {
@@ -223,6 +498,24 @@ pub async fn provision(
                 tracing::warn!(repo_id = repository.id, %error, "fork created but size accounting failed")
             }
         }
+    }
+    if source.is_none() {
+        let created = repository.clone();
+        let actor = owner.actor_id;
+        webhooks::emit(
+            pool,
+            &repository,
+            events::REPOSITORY,
+            vec![actor],
+            move |owner, people| {
+                serde_json::json!({
+                    "action": "created",
+                    "repository": payloads::repository(&created, owner),
+                    "sender": payloads::person(&people.get(actor)),
+                })
+            },
+        )
+        .await;
     }
     Ok(repository)
 }
@@ -253,7 +546,33 @@ pub async fn provision_with_initial_files(
     private: bool,
     files: InitialFiles,
 ) -> Result<Repository, StorageError> {
-    let repository = provision(node, repos_path, owner, name, description, private, None).await?;
+    provision_with_initial_properties(
+        node,
+        repos_path,
+        CreationInput {
+            owner,
+            properties: &[],
+        },
+        name,
+        description,
+        private,
+        files,
+    )
+    .await
+}
+pub async fn provision_with_initial_properties(
+    node: (&db::DbPool, Option<&NodeContext>),
+    repos_path: &Path,
+    input: CreationInput<'_>,
+    name: &str,
+    description: Option<&str>,
+    private: bool,
+    files: InitialFiles,
+) -> Result<Repository, StorageError> {
+    let owner = input.owner;
+    let repository =
+        provision_with_properties(node, repos_path, input, name, description, private, None)
+            .await?;
     if files.is_empty() {
         return Ok(repository);
     }
@@ -336,17 +655,17 @@ async fn commit_initial_files(
 }
 
 /// Removes a repository whose setup failed, and returns the error to report. When the removal
-/// is incomplete, that failure is reported instead, because the repository may still exist.
+/// is incomplete, that failure is reported instead, because the repository may still exist. A
+/// repository that has accepted writes is kept and reported this way.
 async fn abandon_repository(
     pool: &db::DbPool,
     context: Option<&NodeContext>,
-    actor: i64,
     repository: &Repository,
     error: StorageError,
 ) -> StorageError {
     // Network and disk work are never performed while a DB transaction is held.
     let (row_removed, storage_removed) =
-        cleanup_failed_initialization(pool, context, actor, repository).await;
+        cleanup_failed_initialization(pool, context, repository).await;
     if row_removed && storage_removed {
         return error;
     }
@@ -433,7 +752,7 @@ pub(crate) async fn remove_deleted_repository(
     cluster: Option<&NodeContext>,
     deleted: &Repository,
 ) -> Result<(), StorageError> {
-    if let Err(error) = repo_store(deleted, cluster).remove().await {
+    if let Err(error) = repo_store(deleted, cluster).retire().await {
         tracing::error!(
             repo_id = deleted.id,
             storage_node_id = ?deleted.storage_node_id,
@@ -451,31 +770,59 @@ pub(crate) async fn remove_deleted_repository(
 /// rights on the target.
 pub async fn transfer(
     pool: &db::DbPool,
+    cluster: Option<&NodeContext>,
     actor: i64,
     repo_id: i64,
     new_owner: &str,
 ) -> Result<Repository, StorageError> {
-    let target = transfer_target(pool, new_owner).await?;
-    db::repositories::records::transfer_repository(pool, actor, repo_id, target)
+    let repository = db::repositories::records::get_repository_by_id(pool, repo_id)
         .await
-        .map_err(storage_error)
+        .map_err(|_| unavailable())?
+        .ok_or_else(unavailable)?;
+    repo_store(&repository, cluster)
+        .transfer_repository_as(pool, repo_id, actor, new_owner)
+        .await
+        .map_err(|error| StorageError {
+            kind: if error.is_write_denied() {
+                LifecycleFailure::Denied
+            } else {
+                match error.kind {
+                    ErrorKind::Conflict => LifecycleFailure::Conflict,
+                    ErrorKind::Invalid => LifecycleFailure::Invalid,
+                    _ => LifecycleFailure::Unavailable,
+                }
+            },
+            message: if error.is_write_denied() {
+                "Repository transfer denied."
+            } else if error.kind == ErrorKind::Conflict {
+                "Repository transfer conflicts with existing names or immutable tag history."
+            } else {
+                "Repository transfer unavailable; check the destination owner."
+            },
+        })
 }
 
-async fn transfer_target(
+pub(crate) async fn transfer_target(
     pool: &db::DbPool,
     handle: &str,
-) -> Result<repo_lifecycle::RepositoryTarget, StorageError> {
+) -> Result<(repo_lifecycle::RepositoryTarget, String), StorageError> {
     if let Some(user) = db::users::accounts::get_user_by_username(pool, handle)
         .await
         .map_err(|_| unavailable())?
     {
-        return Ok(repo_lifecycle::RepositoryTarget::Personal(user.id));
+        return Ok((
+            repo_lifecycle::RepositoryTarget::Personal(user.id),
+            user.username,
+        ));
     }
     if let Some(org) = db::organizations::profiles::get_public_organization(pool, handle)
         .await
         .map_err(|_| unavailable())?
     {
-        return Ok(repo_lifecycle::RepositoryTarget::Organization(org.id));
+        return Ok((
+            repo_lifecycle::RepositoryTarget::Organization(org.id),
+            org.name,
+        ));
     }
     Err(StorageError {
         kind: LifecycleFailure::Invalid,
@@ -484,18 +831,13 @@ async fn transfer_target(
 }
 
 /// Why `actor` may not fork `source`, or `None` when the fork may go ahead. The fork action
-/// and the repository page's Fork control share these rules. The caller checks read access,
-/// and the database refuses archived sources again when it inserts the fork.
+/// and the repository page's personal Fork control share this destination rule. The caller
+/// checks read access; archived sources may be copied into a new writable repository.
 pub fn fork_refusal(source: &Repository, actor: i64) -> Option<StorageError> {
     if source.is_personal_owner(actor) {
         Some(StorageError {
             kind: LifecycleFailure::OwnRepositoryFork,
             message: "Cannot fork your own repository",
-        })
-    } else if source.is_archived {
-        Some(StorageError {
-            kind: LifecycleFailure::Denied,
-            message: "Archived repositories cannot be forked",
         })
     } else {
         None
@@ -511,6 +853,44 @@ pub async fn fork(
     source_id: i64,
     owner: &str,
 ) -> Result<Repository, StorageError> {
+    fork_into(
+        pool,
+        context,
+        repos_path,
+        broadcaster,
+        ForkOptions {
+            owner: repo_lifecycle::RepositoryCreationOwner::personal(actor),
+            name: None,
+            default_branch_only: false,
+            properties: &[],
+        },
+        source_id,
+        owner,
+    )
+    .await
+}
+
+pub struct ForkOptions<'a> {
+    pub owner: repo_lifecycle::RepositoryCreationOwner,
+    pub name: Option<&'a str>,
+    pub default_branch_only: bool,
+    /// Organization property values chosen for the copy.
+    pub properties: &'a [db::organizations::properties::ValueInput],
+}
+
+pub async fn fork_into(
+    pool: &db::DbPool,
+    context: Option<&NodeContext>,
+    repos_path: &Path,
+    broadcaster: &crate::backend::notifications::NotificationBroadcaster,
+    options: ForkOptions<'_>,
+    source_id: i64,
+    owner: &str,
+) -> Result<Repository, StorageError> {
+    let actor = options.owner.actor_id;
+    repo_lifecycle::check_creation_authority(pool, options.owner)
+        .await
+        .map_err(storage_error)?;
     let source = super::access::check_read(pool, source_id, Some(actor))
         .await
         .map_err(|error| StorageError {
@@ -521,30 +901,100 @@ pub async fn fork(
             },
             message: "Repository is not available for forking.",
         })?;
-    if let Some(refusal) = fork_refusal(&source, actor) {
-        return Err(refusal);
+    let same_owner = match options.owner.target {
+        repo_lifecycle::RepositoryTarget::Personal(id) => source.is_personal_owner(id),
+        repo_lifecycle::RepositoryTarget::Organization(id) => source.owner_org_id == Some(id),
+    };
+    if same_owner {
+        return Err(StorageError {
+            kind: LifecycleFailure::OwnRepositoryFork,
+            message: "Cannot fork into the source owner.",
+        });
+    }
+    if let Some(existing) = existing_fork(pool, actor, options.owner.target, source.id).await? {
+        return Ok(existing);
     }
     let user = db::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| unavailable())?
         .ok_or_else(unavailable)?;
-    let fork = provision(
+    let fork_owner = match options.owner.target {
+        repo_lifecycle::RepositoryTarget::Personal(_) => user.username.clone(),
+        repo_lifecycle::RepositoryTarget::Organization(id) => {
+            let db::organizations::OrganizationOutcome::Applied(org) =
+                db::organizations::profiles::get_organization_metadata(pool, actor, id)
+                    .await
+                    .map_err(|_| unavailable())?
+            else {
+                return Err(StorageError {
+                    kind: LifecycleFailure::Denied,
+                    message: "Repository owner is unavailable.",
+                });
+            };
+            org.name
+        }
+    };
+    let fork = match provision_from(
         (pool, context),
         repos_path,
-        repo_lifecycle::RepositoryCreationOwner::personal(actor),
-        &source.name,
+        options.owner,
+        options.name.unwrap_or(&source.name),
         source.description.as_deref(),
-        source.is_private,
-        Some(&source),
+        ProvisionOptions {
+            private: source.is_private,
+            creation_source: Some(CreationSource::Fork {
+                repository: &source,
+                default_branch_only: options.default_branch_only,
+            }),
+            gist: false,
+        },
+        options.properties,
     )
-    .await?;
+    .await
+    {
+        Ok(fork) => fork,
+        Err(error) if error.kind == LifecycleFailure::Conflict => {
+            if let Some(existing) =
+                existing_fork(pool, actor, options.owner.target, source.id).await?
+            {
+                return Ok(existing);
+            }
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
     if let Some(recipient) = source.personal_owner_id().filter(|id| *id != actor) {
         let title = format!("{} forked {}/{}", user.username, owner, source.name);
-        let body = format!("New fork: {}/{}", user.username, source.name);
-        let link = format!("/{}/{}", user.username, source.name);
-        let _ = crate::backend::notifications::create::create_and_broadcast_notification(pool, broadcaster, crate::backend::notifications::create::NotificationRequest {
-            user_id: recipient, actor_id: Some(actor), repo_id: Some(source.id), kind: "repository_forked", title: &title, body: Some(&body), link: Some(&link), metadata: serde_json::json!({"source_owner": owner, "source_repo": source.name, "subject": format!("{owner}/{}", source.name), "fork_owner": user.username, "fork_repo": fork.name}),
-        }).await;
+        let body = format!("New fork: {fork_owner}/{}", fork.name);
+        let link = format!("/{fork_owner}/{}", fork.name);
+        let notice = crate::backend::notifications::create::NotificationRequest {
+            user_id: recipient,
+            actor_id: Some(actor),
+            repo_id: Some(source.id),
+            kind: "repository_forked",
+            title: &title,
+            body: Some(&body),
+            link: Some(&link),
+            metadata: serde_json::json!({"source_owner":owner,"source_repo":source.name,"subject":format!("{owner}/{}",source.name),"fork_owner":fork_owner,"fork_repo":fork.name,"fork_repository_id":fork.id}),
+        };
+        let mut notified = Vec::new();
+        if crate::backend::notifications::create::create_and_broadcast_notification(
+            pool,
+            broadcaster,
+            notice.clone(),
+        )
+        .await
+        .is_ok()
+        {
+            notified.push(recipient);
+        }
+        crate::backend::notifications::create::notify_subscribers(
+            pool,
+            broadcaster,
+            notice,
+            &notified,
+        )
+        .await;
     }
     let (fork_for_hook, source_for_hook) = (fork.clone(), source.clone());
     webhooks::emit(
@@ -554,17 +1004,130 @@ pub async fn fork(
         vec![actor],
         move |source_owner, people| {
             let forker = people.get(actor);
-            let forkee_owner = forker.login.clone();
             payloads::fork(
                 &fork_for_hook,
                 &forker,
                 &source_for_hook,
                 source_owner,
-                &forkee_owner,
+                &fork_owner,
             )
         },
-    );
+    )
+    .await;
     Ok(fork)
+}
+
+async fn existing_fork(
+    pool: &db::DbPool,
+    actor: i64,
+    owner: repo_lifecycle::RepositoryTarget,
+    source: i64,
+) -> Result<Option<Repository>, StorageError> {
+    let Some(repo) = db::repositories::discovery::get_owner_fork(pool, owner, source)
+        .await
+        .map_err(|_| unavailable())?
+    else {
+        return Ok(None);
+    };
+    let repo = super::access::check_read(pool, repo.id, Some(actor))
+        .await
+        .map_err(|error| StorageError {
+            kind: if error == super::access::AccessError::Unavailable {
+                LifecycleFailure::Unavailable
+            } else {
+                LifecycleFailure::Denied
+            },
+            message: "Fork is unavailable.",
+        })?;
+    Ok(Some(repo))
+}
+
+pub struct TemplateOptions<'a> {
+    pub name: &'a str,
+    pub description: Option<&'a str>,
+    pub private: bool,
+    pub all_branches: bool,
+    /// Organization property values chosen for the copy.
+    pub properties: &'a [db::organizations::properties::ValueInput],
+}
+
+pub async fn generate(
+    node: (&db::DbPool, Option<&NodeContext>),
+    repos_path: &Path,
+    owner: repo_lifecycle::RepositoryCreationOwner,
+    source_id: i64,
+    options: TemplateOptions<'_>,
+) -> Result<Repository, StorageError> {
+    let TemplateOptions {
+        name,
+        description,
+        private,
+        all_branches,
+        properties,
+    } = options;
+    if let Some(description) = description {
+        validate_description(description)?;
+    }
+    repo_lifecycle::check_creation_authority(node.0, owner)
+        .await
+        .map_err(storage_error)?;
+    let source = super::access::check_read(node.0, source_id, Some(owner.actor_id))
+        .await
+        .map_err(|error| StorageError {
+            kind: if error == super::access::AccessError::Unavailable {
+                LifecycleFailure::Unavailable
+            } else {
+                LifecycleFailure::Denied
+            },
+            message: "Template repository is unavailable.",
+        })?;
+    if !source.is_template {
+        return Err(StorageError {
+            kind: LifecycleFailure::Invalid,
+            message: "Source repository is not a template.",
+        });
+    }
+    let refs = repo_store(&source, node.1)
+        .refs_from_primary()
+        .await
+        .map_err(git_storage_error)?;
+    if !refs.contains_key(&format!("refs/heads/{}", source.default_branch)) {
+        return Err(StorageError {
+            kind: LifecycleFailure::Invalid,
+            message: "Template repository is empty.",
+        });
+    }
+    // The copy runs in a task of its own. A request cancelled mid-copy then only drops the handle,
+    // and the task still finishes the row or cleans it up, so no repository is left without storage.
+    let pool = node.0.clone();
+    let context = node.1.cloned();
+    let repos_path = repos_path.to_owned();
+    let name = name.to_owned();
+    let description = description.map(str::to_owned);
+    let properties = properties.to_vec();
+    let task = tokio::spawn(async move {
+        provision_from(
+            (&pool, context.as_ref()),
+            &repos_path,
+            owner,
+            &name,
+            description.as_deref(),
+            ProvisionOptions {
+                private,
+                creation_source: Some(CreationSource::Template {
+                    repository: &source,
+                    all_branches,
+                }),
+                gist: false,
+            },
+            &properties,
+        )
+        .await
+    });
+    task.await.map_err(|_| StorageError {
+        kind: LifecycleFailure::Unavailable,
+        message: "Repository creation did not finish.",
+    })?
 }
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ fn merge_request(head: &str, base: &str, message: &str, name: &str, email: &str)
         head: head.into(),
         base: base.into(),
         message: message.into(),
+        squash_body: None,
         name: name.into(),
         email: email.into(),
         method: MergeMethod::Merge,
@@ -957,6 +958,7 @@ async fn commit_history_filters_by_author_and_committer_time() {
         since,
         until,
         message: None,
+        author_emails: Vec::new(),
     };
     let shas = |commits: &[CommitInfo]| -> Vec<String> {
         commits.iter().map(|commit| commit.sha.clone()).collect()
@@ -2259,6 +2261,7 @@ async fn merging_moves_the_base_only_when_nothing_changed_since_approval() {
         head: head.to_string(),
         base: f.second.to_string(),
         message: "Merge feature".into(),
+        squash_body: None,
         name: "Merger".into(),
         email: "merger@example.invalid".into(),
         method: MergeMethod::Merge,
@@ -2322,6 +2325,7 @@ async fn merging_moves_the_base_only_when_nothing_changed_since_approval() {
         head: left.to_string(),
         base: right.to_string(),
         message: "Merge left".into(),
+        squash_body: None,
         name: "Merger".into(),
         email: "merger@example.invalid".into(),
         method: MergeMethod::Merge,
@@ -3380,7 +3384,7 @@ async fn a_repository_at_the_ref_limit_refuses_new_branches_and_tags() {
 /// head is refused, while moving an existing head still works.
 #[tokio::test]
 async fn the_pull_head_limit_refuses_a_new_head_and_still_moves_one() {
-    const LIMIT: usize = crate::backend::git::MAX_MIRROR_REFS - MAX_REPOSITORY_REFS;
+    const LIMIT: usize = crate::backend::git::MAX_PULL_HEAD_REFS;
     let f = fixture().await;
     let authority = authority(&f).await;
     let (pool, repo_id, actor) = (&authority.pool, authority.repo_id, authority.actor);

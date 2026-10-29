@@ -138,6 +138,7 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                         {input(page, "team", "slug", "Team name")}
                         {input(page, "team", "name", "Display name (optional)")}
                         {input(page, "team", "description", "Description")}
+                        {input(page, "team", "parent_team_id", "Parent team ID (optional)")}
                         {select("Privacy", "privacy", field_value(page, "team", "privacy"), privacy_options())}
                         {controls(page, "team", "Create team")}
                     }
@@ -176,12 +177,13 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                         div { class: "org-detail-grid",
                             section { aria_labelledby: "team-members-title",
                                 h4 { id: "team-members-title", "Team members" }
+                                p { class: "org-note", "Members inherited from child teams must be removed from those teams." }
                                 ul { class: "org-list",
                                     if detail.members.is_empty() { li { class: "org-empty", "No members on this page." } }
                                     for member in &detail.members {
                                         li { key: "{member.user_id}", class: "org-row",
                                             div { class: "org-row-main",
-                                                h4 { NavLink { href: format!("/{}", crate::webui::encode_component(&member.username)), class: "org-row-link org-row-name", Avatar { name: member.username.clone(), size: 24 } "{member.username}" } }
+                                                h4 { NavLink { href: crate::webui::profile_path(&member.username), class: "org-row-link org-row-name", Avatar { name: member.username.clone(), size: 24 } "{member.username}" } }
                                             }
                                             div { class: "org-row-actions",
                                                 span { class: "org-label", "{member.role}" }
@@ -207,12 +209,13 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                             }
                             section { aria_labelledby: "team-repositories-title",
                                 h4 { id: "team-repositories-title", "Team repository grants" }
+                                p { class: "org-note", "Access inherited from a parent team must be changed on that team." }
                                 ul { class: "org-list",
                                     if detail.repositories.is_empty() { li { class: "org-empty", "No repositories on this page." } }
                                     for grant in &detail.repositories {
                                         li { key: "{grant.repo_id}", class: "org-row",
                                             div { class: "org-row-main",
-                                                h4 { NavLink { href: format!("/{}/{}", crate::webui::encode_component(&grant.owner), crate::webui::encode_component(&grant.name)), class: "org-row-link", "{grant.owner}/{grant.name}" } }
+                                                h4 { NavLink { href: crate::webui::repository_path(&grant.owner,&grant.name), class: "org-row-link", "{grant.owner}/{grant.name}" } }
                                             }
                                             div { class: "org-row-actions",
                                                 span { class: "org-label", "{permission_name(grant.permission)}" }
@@ -270,15 +273,18 @@ fn management(page: &Page, target: &str, detail: &super::TeamDetail) -> Element 
                     input { r#type: "hidden", name: "team_id", value: "{detail.team.id}" }
                     {input(page, "team-edit", "name", "Team name")}
                     {input(page, "team-edit", "description", "Description")}
+                    {input(page, "team-edit", "parent_team_id", "Parent team ID (leave blank for no parent)")}
+                    p { class: "org-note", "Nested teams must be visible. Members inherit their parent team's repository access." }
                     {select("Privacy", "privacy", field_value(page, "team-edit", "privacy"), privacy_options())}
                     {controls(page, "team-edit", "Save team")}
                 }
             }
             section { class: "org-subpanel", aria_labelledby: "team-add-member-title",
                 h4 { id: "team-add-member-title", "Add a team member" }
+                p { class: "org-note", "People outside the organization receive an invitation. Pending invitations appear in the organization's Members settings." }
                 form { method: "post", action: target.to_owned(), class: "org-inline-form",
                     input { r#type: "hidden", name: "team_id", value: "{detail.team.id}" }
-                    {input(page, "team-member", "username", "Organization member username")}
+                    {input(page, "team-member", "username", "Username")}
                     {select("Role", "role", field_value(page, "team-member", "role"), role_options())}
                     {controls(page, "team-member", "Add team member")}
                 }

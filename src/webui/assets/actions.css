@@ -665,6 +665,17 @@
   padding: 4px 0 14px;
   font: 12px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace;
 }
+.actions-page .actions-annotation { min-width: 0; padding: 12px; overflow-wrap: anywhere; }
+.actions-page .actions-annotation p { white-space: pre-wrap; }
+.actions-page .actions-log-group { min-width: 0; }
+.actions-page .actions-log-group-heading {
+  padding: 4px 12px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  background: var(--muted);
+}
+.actions-page .actions-log-group > .actions-log-group { border-left: 1px solid var(--border); }
 .actions-page .actions-log-line {
   display: grid;
   grid-template-columns: 3.5rem minmax(0, 1fr);
@@ -686,7 +697,7 @@
 }
 .actions-page .actions-log-line-number:hover { color: var(--primary); }
 .actions-page .actions-log-text { overflow-wrap: normal; white-space: pre; }
-.actions-page .actions-log-lines:not(.wrap-lines) > div { width: max-content; min-width: 100%; }
+.actions-page .actions-log-lines:not(.wrap-lines) .actions-log-line { width: max-content; min-width: 100%; }
 .actions-page .actions-log-lines.wrap-lines .actions-log-text { overflow-wrap: anywhere; white-space: pre-wrap; }
 .actions-page .actions-log-empty {
   margin: 12px;

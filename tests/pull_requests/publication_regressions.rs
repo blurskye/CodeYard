@@ -88,6 +88,8 @@ async fn inline_revision(pg: bool) {
                 pr_id: w.pull.id,
                 author_id: w.bob_id,
                 body: "stale",
+                start_line: None,
+                start_side: None,
                 path: Some("topic.txt"),
                 line: Some(1),
                 side: Some("RIGHT"),
@@ -216,6 +218,8 @@ async fn recovery(pg: bool) {
             base_branch: "main",
             base_sha: &base,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -339,6 +343,8 @@ async fn stack_target(pg: bool) {
             base_branch: "upper",
             base_sha: &head,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -644,6 +650,7 @@ async fn refs_prefixed_base(pg: bool) {
                     pipeline: None,
                     environment: None,
                     inputs: None,
+                    repo_id: None,
                 },
             )
             .await

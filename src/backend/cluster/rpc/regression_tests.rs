@@ -15,6 +15,8 @@ async fn context(path: &Path) -> NodeContext {
         .await
         .unwrap();
     db::run_migrations(&pool).await.unwrap();
+    // A web and storage node only exists in cluster mode.
+    db::cluster::enable_cluster(&pool).await.unwrap();
     let key = NodeKey::generate();
     let node = db::cluster::register_own_node(
         &pool,
@@ -362,7 +364,7 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
     )
     .await
     .unwrap();
-    db::users::tokens::delete_token(pool, actor.id, token.id)
+    db::users::tokens::delete_token(pool, actor.id, &session_id, token.id)
         .await
         .unwrap();
     let DbPool::Sqlite(raw) = pool else {

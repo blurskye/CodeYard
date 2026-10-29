@@ -4,7 +4,13 @@ use sqlx::FromRow;
 /// A webhook as stored. The secret stays encrypted; only the delivery path opens it.
 #[derive(Debug, Clone, FromRow)]
 pub struct Webhook {
+    pub username: Option<String>,
+    pub encrypted_password: Option<Vec<u8>>,
+    pub password_nonce: Option<Vec<u8>>,
     pub id: i64,
+    /// App hooks have a separate store because native hooks have exactly one repo/org owner.
+    #[sqlx(default)]
+    pub app_id: Option<i64>,
     pub repo_id: Option<i64>,
     pub org_id: Option<i64>,
     pub payload_url: String,
@@ -24,6 +30,7 @@ pub struct Webhook {
 /// fields are empty when no response came back.
 #[derive(Debug, Clone, FromRow)]
 pub struct WebhookDelivery {
+    pub redelivery: bool,
     pub id: i64,
     pub webhook_id: i64,
     pub guid: String,

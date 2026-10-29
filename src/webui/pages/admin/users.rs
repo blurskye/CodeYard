@@ -96,6 +96,7 @@ impl Listing {
             input { r#type: "hidden", name: "q", value: self.search.clone() }
             input { r#type: "hidden", name: "role", value: self.role.clone() }
             input { r#type: "hidden", name: "page", value: self.page.to_string() }
+            input { r#type: "hidden", name: "request_page", value: self.requests_page.to_string() }
         }
     }
 }
@@ -288,7 +289,7 @@ pub fn admin_users_page(
                         table { class: "identity-table identity-account-table",
                             thead { tr { th { "Account" } th { "Role" } th { "Status" } th { "Joined" } th { class: "identity-table-action", span { class: "identity-sr-only", "Actions" } } } }
                             tbody { for account in model.accounts.clone() { tr { key: "{account.id}",
-                                td { NavLink { href: format!("/{}", crate::webui::encode_component(&account.username)), class: "identity-account-name", "{account.username}" }
+                                td { NavLink { href: crate::webui::profile_path(&account.username), class: "identity-account-name", "{account.username}" }
                                     if !account.email.is_empty() { p { "{account.email}" } }
                                 }
                                 td { "data-label": "Role", if account.admin { "Administrator" } else { "Member" } }

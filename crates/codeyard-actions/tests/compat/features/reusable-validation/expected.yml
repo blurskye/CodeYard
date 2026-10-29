@@ -1,0 +1,11 @@
+exit_code: 1
+jobs:
+  verify: success
+contains:
+  - 'Wrong workflow_call input type: enabled'
+  - 'Missing required workflow_call input: enabled'
+  - 'Missing required workflow_call secret: password'
+  - Unknown workflow_call input
+  - refused-invalid-calls
+absent:
+  - must-not-execute-invalid-call

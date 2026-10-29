@@ -1,0 +1,18 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: produce
+        run: |
+          echo 'answer=42' >> "$GITHUB_OUTPUT"
+          printf 'multiline<<EOF\nfirst\nsecond\nEOF\n' >> "$GITHUB_OUTPUT"
+      - env:
+          ANSWER: ${{ steps.produce.outputs.answer }}
+          MULTILINE: ${{ steps.produce.outputs.multiline }}
+        run: |
+          test "$ANSWER" = 42
+          test "$MULTILINE" = $'first\nsecond'
+          echo compat:ok

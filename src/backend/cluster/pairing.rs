@@ -821,7 +821,7 @@ mod tests {
         let second = NodeKey::generate().public_hex();
         let third = NodeKey::generate().public_hex();
         let text = format!(
-            "{first}:web+ssh:Core-1,{second}:storage:store-1\n# the build farm\n\n{third}:actions-worker:ci-1 # trailing comment\n"
+            "{first}:web+ssh:Core-1,{second}:storage:store-1\n# the build farm\n\n{third}:runner:ci-1 # trailing comment\n"
         );
         let nodes = parse_declared_nodes(&text).unwrap();
         assert_eq!(nodes.len(), 3);

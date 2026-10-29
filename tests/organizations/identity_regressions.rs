@@ -371,14 +371,14 @@ async fn postgres_accept_and_decline_have_one_winner() {
         .unwrap();
     let pool = f.pool().clone();
     let acceptance = tokio::spawn(async move {
-        accept_organization_invitation(&pool, member, organization)
+        accept_organization_invitation(&pool, member, organization, None)
             .await
             .unwrap()
     });
     wait_until_blocked(raw, blocker, 1).await;
     let pool = f.pool().clone();
     let decline = tokio::spawn(async move {
-        decline_organization_invitation(&pool, member, organization)
+        decline_organization_invitation(&pool, member, organization, None)
             .await
             .unwrap()
     });
@@ -388,4 +388,55 @@ async fn postgres_accept_and_decline_have_one_winner() {
     applied(acceptance.await.unwrap());
     assert_eq!(decline.await.unwrap(), OrganizationOutcome::Missing);
     f.finish().await;
+}
+
+/// One account can hold two address offers from an organization; each answer names its own.
+async fn answers_use_the_chosen_offer(pg: bool) {
+    let mut f = Database::new(pg).await;
+    let owner = f.actor("offer_owner").await;
+    let member = f.actor("offer_member").await;
+    let organization = org(&f, owner, "offer_org").await;
+    let mut offers = Vec::new();
+    for (email, role) in [
+        ("first@offer.test", OrgRole::Member),
+        ("second@offer.test", OrgRole::Member),
+        ("third@offer.test", OrgRole::Admin),
+    ] {
+        let input = NewInvitation {
+            user_id: None,
+            email: Some(email.into()),
+            role,
+            reinstate: false,
+            teams: None,
+        };
+        let offer = create_organization_invitation(f.pool(), owner, organization, &input, false)
+            .await
+            .unwrap();
+        offers.push(applied(offer).id);
+    }
+    for email in ["first@offer.test", "second@offer.test", "third@offer.test"] {
+        let sql =
+            format!("INSERT INTO user_emails(user_id,email,verified) VALUES($1,'{email}',true)");
+        f.execute(&sql, &[member]).await;
+    }
+    applied(
+        decline_organization_invitation(f.pool(), member, organization, Some(offers[1]))
+            .await
+            .unwrap(),
+    );
+    let membership = applied(
+        accept_organization_invitation(f.pool(), member, organization, Some(offers[2]))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(membership.role, "admin");
+    f.finish().await;
+}
+#[tokio::test]
+async fn sqlite_invitation_answers_use_the_chosen_offer() {
+    answers_use_the_chosen_offer(false).await;
+}
+#[tokio::test]
+async fn postgres_invitation_answers_use_the_chosen_offer() {
+    answers_use_the_chosen_offer(true).await;
 }

@@ -92,7 +92,45 @@ pub fn gitignore(name: &str) -> Option<&'static Template> {
 pub fn license(name: &str) -> Option<&'static Template> {
     LICENSE_TEMPLATES
         .iter()
-        .find(|template| template.name == name)
+        .find(|template| template.name.eq_ignore_ascii_case(name))
+}
+
+pub fn is_license_file(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "license"
+            | "license.md"
+            | "license.txt"
+            | "licence"
+            | "licence.md"
+            | "licence.txt"
+            | "copying"
+            | "copying.md"
+            | "copying.txt"
+    )
+}
+
+/// The license template a text is. Case, punctuation, spacing and copyright lines do not
+/// change the answer; the community profile, REST, GraphQL and search all use this.
+pub fn detect_license(bytes: &[u8]) -> Option<&'static Template> {
+    fn normalize(text: &str) -> String {
+        text.lines()
+            .filter(|line| {
+                !line
+                    .trim_start()
+                    .to_ascii_lowercase()
+                    .starts_with("copyright")
+            })
+            .flat_map(|line| line.split(|ch: char| !ch.is_alphanumeric()))
+            .filter(|word| !word.is_empty())
+            .map(str::to_ascii_lowercase)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+    let text = normalize(std::str::from_utf8(bytes).ok()?);
+    LICENSE_TEMPLATES
+        .iter()
+        .find(|template| text == normalize(template.text))
 }
 
 /// The README a new repository starts with: its name, then its description when it has one.

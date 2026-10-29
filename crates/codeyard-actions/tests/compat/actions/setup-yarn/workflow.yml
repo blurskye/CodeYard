@@ -1,0 +1,22 @@
+# https://github.com/borales/actions-yarn/tree/3766bb1335b98fb13c60eaf358fe20811b730a88
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+      - run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+      - id: action
+        uses: borales/actions-yarn@3766bb1335b98fb13c60eaf358fe20811b730a88 # v5
+        with:
+          cmd: "init -y"
+      - name: Assert documented effect
+        run: |
+          test -s package.json
+          grep -q '"version": "1.0.0"' package.json
+          echo compat:ok

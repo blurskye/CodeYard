@@ -129,10 +129,15 @@ async fn fill_branch_statuses(
     };
     let counted = branches.len().min(MAX_BRANCH_STATUSES);
     let heads: Vec<String> = branches.iter().map(|branch| branch.sha.clone()).collect();
-    let statuses = repo_store(&loaded.repository, ctx.state.cluster.as_ref())
+    let statuses = match repo_store(&loaded.repository, ctx.state.cluster.as_ref())
         .branch_statuses(&base, &heads)
         .await
-        .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
+    {
+        Ok(statuses) => statuses,
+        // A history too long to walk in bounds leaves the dates and counts out, not the list.
+        Err(error) if error.is_response_too_large() => return Ok(()),
+        Err(error) => return Err(store_error(ctx, Some(&loaded.chrome), error)),
+    };
     for (index, (branch, status)) in branches.iter_mut().zip(statuses).enumerate() {
         branch.updated = Some(date(status.updated));
         if !branch.is_default && index < counted {

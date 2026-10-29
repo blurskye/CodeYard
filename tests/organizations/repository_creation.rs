@@ -189,19 +189,29 @@ async fn creation_contract(mut database: Database) {
         );
         assert_eq!(database.count().await, count);
     }
-    for creator in [own, admin] {
-        denied(
-            create(
-                &database,
-                owner(creator, RepositoryTarget::Organization(org)),
-                "org_fork",
-                false,
-                Some(personal.id),
-            )
-            .await,
-            RepositoryStorageRefusal::UnsupportedOrganizationFork,
-        );
-    }
+    let fork = create(
+        &database,
+        owner(own, RepositoryTarget::Organization(org)),
+        "org_fork",
+        false,
+        Some(personal.id),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(fork.is_fork);
+    assert_eq!(fork.owner_org_id, Some(org));
+    assert_eq!(fork.forked_from_id, Some(personal.id));
+    assert!(create(
+        &database,
+        owner(admin, RepositoryTarget::Organization(org)),
+        "duplicate_fork",
+        false,
+        Some(personal.id)
+    )
+    .await
+    .unwrap()
+    .is_none());
     // Banned or password-reset users, and demoted or removed admins, can't create.
     for column in ["is_banned", "must_change_password"] {
         database

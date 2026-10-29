@@ -1,0 +1,20 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+env:
+  LAYER: workflow
+  WORKFLOW_ONLY: workflow-value
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      LAYER: job
+    steps:
+      - env:
+          LAYER: step
+          FROM_CONTEXT: ${{ env.WORKFLOW_ONLY }}
+        run: |
+          test "$LAYER/$FROM_CONTEXT" = step/workflow-value
+      - run: |
+          test "$LAYER/$WORKFLOW_ONLY" = job/workflow-value
+          echo compat:ok

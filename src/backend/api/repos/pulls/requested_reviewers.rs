@@ -17,7 +17,7 @@ pub async fn request_reviewer(
     headers: HeaderMap,
     Path((owner, repo, number)): Path<(String, String, i32)>,
     Json(req): Json<RequestReviewerRequest>,
-) -> Result<(StatusCode, Json<RequestedReviewerResponse>), (StatusCode, Json<ApiError>)> {
+) -> Result<(StatusCode, Json<RequestedReviewer>), (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
     let result = crate::backend::repositories::pull_requests::reviews::request_reviewer(
         &state.pool,
@@ -36,7 +36,17 @@ pub async fn request_reviewer(
     } else {
         StatusCode::OK
     };
-    Ok((status, Json(RequestedReviewerResponse::new(result.target))))
+    Ok((
+        status,
+        Json(match result.target {
+            crate::backend::repositories::pull_requests::reviews::ReviewerTarget::User(user) => {
+                RequestedReviewer::User(RequestedReviewerResponse::new(user))
+            }
+            crate::backend::repositories::pull_requests::reviews::ReviewerTarget::Team(team) => {
+                RequestedReviewer::Team(team)
+            }
+        }),
+    ))
 }
 
 pub async fn remove_requested_reviewer(
@@ -57,6 +67,13 @@ pub async fn remove_requested_reviewer(
     .map_err(super::operation_error)?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum RequestedReviewer {
+    User(RequestedReviewerResponse),
+    Team(db::models::Team),
 }
 
 #[derive(Serialize)]
@@ -82,7 +99,7 @@ pub async fn list_requested_reviewers(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, number)): Path<(String, String, i32)>,
     headers: HeaderMap,
-) -> Result<Json<Vec<RequestedReviewerResponse>>, (StatusCode, Json<ApiError>)> {
+) -> Result<Json<Vec<RequestedReviewer>>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let pull_request =
         db::pull_requests::records::get_pull_request(&state.pool, repository.id, number)
@@ -100,10 +117,24 @@ pub async fn list_requested_reviewers(
             .await
             .map_err(|_| storage_unavailable())?;
 
-    Ok(Json(
-        users
+    let viewer =
+        crate::backend::api::http::session::get_optional_user(&state.pool, &headers).await?;
+    let teams = db::pull_requests::team_reviewers::list(
+        &state.pool,
+        repository.id,
+        Some(pull_request.id),
+        viewer.as_ref().map(|user| user.id),
+    )
+    .await
+    .map_err(|_| storage_unavailable())?;
+    let mut requested: Vec<_> = users
+        .into_iter()
+        .map(|user| RequestedReviewer::User(RequestedReviewerResponse::new(user)))
+        .collect();
+    requested.extend(
+        teams
             .into_iter()
-            .map(RequestedReviewerResponse::new)
-            .collect(),
-    ))
+            .map(|access| RequestedReviewer::Team(access.team)),
+    );
+    Ok(Json(requested))
 }

@@ -156,13 +156,19 @@ pub(crate) async fn native_index(
         1..=crate::backend::api::repos::paging::MAX_PAGE,
     )?;
     let offset = (page_number - 1) as i64 * db::milestones::MILESTONES_PER_PAGE;
-    let items =
-        db::milestones::list_milestones_page(&ctx.state.pool, repo.record.id, tab, &sort, offset)
-            .await
-            .map_err(|_| unavailable(&ctx))?
-            .into_iter()
-            .map(milestone_view)
-            .collect();
+    let items = db::milestones::list_milestones_page(
+        &ctx.state.pool,
+        repo.record.id,
+        Some(tab),
+        &sort,
+        db::milestones::MILESTONES_PER_PAGE,
+        offset,
+    )
+    .await
+    .map_err(|_| unavailable(&ctx))?
+    .into_iter()
+    .map(milestone_view)
+    .collect();
     Ok(ctx.page_model(
         "Milestones",
         page(view::Page::Milestones {

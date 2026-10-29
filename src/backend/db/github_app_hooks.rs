@@ -1,0 +1,35 @@
+//! App-owned webhook settings and delivery history; native repo/org hooks remain unchanged.
+use crate::backend::db::{
+    models::{Webhook, WebhookDelivery},
+    webhooks::{NewDelivery, SealedSecret, WebhookFields},
+    DbPool,
+};
+use anyhow::Result;
+#[derive(Debug, sqlx::FromRow)]
+pub struct Delivery {
+    #[sqlx(flatten)]
+    pub recorded: WebhookDelivery,
+    pub redelivery: bool,
+    pub installation_id: Option<i64>,
+    pub repository_id: Option<i64>,
+    pub url: String,
+}
+#[derive(sqlx::FromRow)]
+pub struct Subscription {
+    #[sqlx(flatten)]
+    pub hook: Webhook,
+    pub installation_id: i64,
+    pub permissions: String,
+}
+native_operation!(crate::backend::db::postgres::github_app_hooks::hook,crate::backend::db::sqlite::github_app_hooks::hook,
+    fn hook(pool:&DbPool,app:i64)->Result<Option<Webhook>>);
+native_operation!(crate::backend::db::postgres::github_app_hooks::save,crate::backend::db::sqlite::github_app_hooks::save,
+    fn save(pool:&DbPool,app:i64,fields:&WebhookFields,secret:Option<&SealedSecret>,clear:bool)->Result<()>);
+native_operation!(crate::backend::db::postgres::github_app_hooks::for_repository,crate::backend::db::sqlite::github_app_hooks::for_repository,
+    fn for_repository(pool:&DbPool,repo:i64)->Result<Vec<Subscription>>);
+native_operation!(crate::backend::db::postgres::github_app_hooks::insert_delivery,crate::backend::db::sqlite::github_app_hooks::insert_delivery,
+    fn insert_delivery(pool:&DbPool,app:i64,record:&NewDelivery,redelivery:bool,installation:Option<i64>,repo:Option<i64>,url:&str)->Result<()>);
+native_operation!(crate::backend::db::postgres::github_app_hooks::deliveries,crate::backend::db::sqlite::github_app_hooks::deliveries,
+    fn deliveries(pool:&DbPool,app:i64)->Result<Vec<Delivery>>);
+native_operation!(crate::backend::db::postgres::github_app_hooks::delivery,crate::backend::db::sqlite::github_app_hooks::delivery,
+    fn delivery(pool:&DbPool,app:i64,id:i64)->Result<Option<Delivery>>);

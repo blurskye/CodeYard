@@ -1,13 +1,12 @@
 //! Open pull requests follow their branches. Fork heads are retained in the base
 //! repository so deleting a fork does not remove the commits being reviewed.
 
-use super::workflows::queue_pull_request_ci;
 use crate::backend::ci::CiRuns;
 use crate::backend::db;
 use crate::backend::db::models::Repository;
 use crate::backend::db::DbPool;
-use crate::backend::repositories::store::{repo_store, ErrorKind, RepoStore};
-use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
+use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError, RepoStore};
+use crate::backend::webhooks::{self, events, payloads::Scope};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -89,6 +88,7 @@ fn revisions(
         repo_id: pull.repo_id,
         number: pull.number,
         author_id: pull.author_id,
+        head_publisher_id: pull.head_publisher_id,
         head_repo_id: pull.head_repo_id,
         head_branch: pull.head_branch,
         head_sha: pull.head_sha,
@@ -124,24 +124,22 @@ async fn move_head(
         .await
         .map_err(|_| RefreshError::Database)?;
     if let Some(current) = current {
-        if let Some(access) = ci_access {
-            let _ = queue_pull_request_ci(pool, ci, base, &current, actor_id, false, access).await;
-        }
         super::code_owners::request_code_owner_reviews(pool, ci, base, &current, actor_id).await;
         // Describe this successful CAS even if another refresh already moved the row again.
         let mut current = current;
         current.head_sha = to.to_owned();
+        let pull_for_ci = current.clone();
         let (author_id, repository) = (current.author_id, base.clone());
         let before = from.to_owned();
         let store = repo_store(base, ci.cluster.as_ref());
-        webhooks::emit(
+        let payload = webhooks::emit(
             pool,
             base,
             events::PULL_REQUEST,
             vec![author_id, actor_id],
             move |owner, people| {
                 let (author, sender) = (people.get(author_id), people.get(actor_id));
-                let mut payload = payloads::pull_request(
+                let mut payload = super::webhook_payload(
                     "synchronize",
                     &current,
                     &author,
@@ -150,26 +148,26 @@ async fn move_head(
                         owner,
                         sender: &sender,
                     },
+                    &store,
                 );
-                // The pull request row does not keep change counts, so read them from its diff.
-                let diff = tokio::runtime::Handle::current()
-                    .block_on(store.diff(&current.base_sha, &current.head_sha));
-                match diff {
-                    Ok(diff) => {
-                        let pull = &mut payload["pull_request"];
-                        pull["additions"] = diff.additions.into();
-                        pull["deletions"] = diff.deletions.into();
-                        pull["changed_files"] = diff.changed_files.into();
-                    }
-                    Err(error) => {
-                        tracing::warn!(pull_id, %error, "could not count pull request changes")
-                    }
-                }
                 payload["before"] = serde_json::json!(before);
                 payload["after"] = serde_json::json!(current.head_sha);
                 payload
             },
-        );
+        )
+        .await;
+        if let Some(access) = ci_access {
+            super::workflows::queue_pull_request_event_ci(
+                pool,
+                ci,
+                base,
+                &pull_for_ci,
+                actor_id,
+                access,
+                &payload,
+            )
+            .await;
+        }
     }
     Ok(true)
 }
@@ -335,23 +333,40 @@ async fn refresh_one(
             } else {
                 Some(pull.head_sha.clone())
             };
-            if let Err(error) = base_store
-                .fetch_pull_head(
-                    pool,
-                    base.id,
-                    head.id,
-                    if head.id == base.id {
-                        actor_id
-                    } else {
-                        pull.author_id
-                    },
-                    &repo_store(head, context),
-                    pull.number,
-                    &new_head,
-                    expected_head.as_deref(),
-                )
-                .await
-            {
+            // Storage rechecks this real contributor's live source/base read authority
+            // under the publication lock. An imported issue's author is not a credential.
+            let publisher = if head.id == base.id {
+                Some(actor_id)
+            } else {
+                pull.head_publisher_id
+            };
+            let publication = match publisher {
+                Some(publisher) => {
+                    base_store
+                        .fetch_pull_head(
+                            pool,
+                            base.id,
+                            head.id,
+                            publisher,
+                            &repo_store(head, context),
+                            pull.number,
+                            &new_head,
+                            expected_head.as_deref(),
+                        )
+                        .await
+                }
+                // Deleted contributors leave previously authorized snapshots usable,
+                // but cannot lend another principal authority to publish new commits.
+                None => match base_store
+                    .commit_from_primary(&format!("refs/pull/{}/head", pull.number))
+                    .await
+                {
+                    Ok(commit) if commit.sha == new_head => Ok(()),
+                    Ok(_) => Err(RepoError::write_denied()),
+                    Err(error) => Err(error),
+                },
+            };
+            if let Err(error) = publication {
                 head_ready = false;
                 if error.kind == ErrorKind::Conflict {
                     if head.id != base.id
@@ -444,6 +459,9 @@ pub async fn refresh_open_pull_requests(
     actor_id: i64,
     ci_access: db::models::AccessLevel,
 ) -> Result<usize, RefreshError> {
+    if let Err(error) = db::vulnerabilities::enqueue(pool, repo.id).await {
+        tracing::warn!(repo_id=repo.id,%error,"could not queue dependency vulnerability scan");
+    }
     let open = match branches.filter(|names| names.len() <= MAX_FILTERED_BRANCHES) {
         Some(names) => {
             db::pull_requests::records::list_open_pull_request_revisions_on_branches(

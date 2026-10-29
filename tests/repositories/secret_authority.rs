@@ -29,9 +29,15 @@ fn denied<T>(result: Result<T, SecretsError>) {
     );
 }
 async fn put(pool: &db::DbPool, repo: i64, actor: Option<i64>) -> Result<(), SecretsError> {
-    secrets::create_or_update_secret(pool, &encryptor(), repo, NAME, VALUE, actor).await
+    secrets::create_or_update_secret(pool, &encryptor(), repo, NAME, VALUE, actor)
+        .await
+        .map(|_| ())
 }
 async fn refuse(d: &Database, repo: i64, actor: i64) {
+    refuse_writes(d, repo, actor).await;
+    denied(secrets::list_secrets(d.pool(), actor, repo).await);
+}
+async fn refuse_writes(d: &Database, repo: i64, actor: i64) {
     let before = d.snapshot(repo).await;
     denied(put(d.pool(), repo, Some(actor)).await);
     denied(
@@ -45,7 +51,6 @@ async fn refuse(d: &Database, repo: i64, actor: i64) {
         )
         .await,
     );
-    denied(secrets::list_secrets(d.pool(), actor, repo).await);
     denied(secrets::delete_secret(d.pool(), actor, repo, NAME).await);
     denied(secrets::delete_secret(d.pool(), actor, repo, "UNKNOWN_NAME").await);
     assert_eq!(
@@ -431,7 +436,8 @@ async fn contract(pg: bool) {
         )
         .await;
     }
-    // An archived repository refuses every secret operation.
+    // An archived repository refuses every secret write. Its administrators may still list the
+    // names, as they may read its other settings.
     for repo in [personal, private, public] {
         d.execute(
             "UPDATE repositories SET is_archived=TRUE WHERE id=$1",
@@ -439,7 +445,21 @@ async fn contract(pg: bool) {
         )
         .await;
         for actor in [owner, admin, collaborator, site] {
-            refuse(&d, repo, actor).await;
+            let administers = actor == owner
+                || actor == collaborator
+                || actor == if repo == personal { site } else { admin };
+            if administers {
+                refuse_writes(&d, repo, actor).await;
+                assert_eq!(
+                    secrets::list_secrets(d.pool(), actor, repo)
+                        .await
+                        .unwrap()
+                        .len(),
+                    1
+                );
+            } else {
+                refuse(&d, repo, actor).await;
+            }
         }
         d.execute(
             "UPDATE repositories SET is_archived=FALSE WHERE id=$1",

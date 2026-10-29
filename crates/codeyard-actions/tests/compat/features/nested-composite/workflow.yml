@@ -1,0 +1,14 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: nested
+        uses: ./.github/actions/outer
+      - env:
+          GREETING: ${{ steps.nested.outputs.greeting }}
+        run: |
+          test "$GREETING" = 'Hello Nested'
+          echo compat:ok

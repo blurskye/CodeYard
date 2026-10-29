@@ -31,6 +31,10 @@ pub struct DispatchRequest {
     /// The `workflow_dispatch` inputs: strings, numbers or booleans.
     #[serde(default)]
     pub inputs: Option<BTreeMap<String, serde_json::Value>>,
+    /// The repository a web form was rendered for. A form whose owner and name now resolve
+    /// to another repository is refused.
+    #[serde(skip)]
+    pub repo_id: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -103,9 +107,7 @@ impl CiRuns {
         actor_id: i64,
         request: DispatchRequest,
     ) -> Result<db::models::CiRun, AdmissionError> {
-        use super::admission::{
-            is_safe_owner, is_safe_ref, is_safe_workflow_path, is_supported_event,
-        };
+        use super::admission::{is_safe_owner, is_safe_ref, is_safe_workflow_path};
         use crate::backend::git::is_full_commit_id;
         if !is_safe_owner(&request.repo_owner)
             || crate::backend::repositories::lifecycle::validate_name(&request.repo_name).is_err()
@@ -124,7 +126,10 @@ impl CiRuns {
                 "branch contains unsupported characters",
             ));
         }
-        if !is_supported_event(&request.event) {
+        if !matches!(
+            request.event.as_str(),
+            "push" | "pull_request" | "workflow_dispatch"
+        ) {
             return Err(AdmissionError::InvalidRequest(
                 "supported events are push, pull_request and workflow_dispatch",
             ));
@@ -145,6 +150,11 @@ impl CiRuns {
         )
         .await?
         .ok_or(AdmissionError::Missing("Repository not found"))?;
+        if request.repo_id.is_some_and(|id| id != repository.id) {
+            return Err(AdmissionError::Conflict(
+                "This form belongs to another repository; reload the page",
+            ));
+        }
         let user = db::users::accounts::get_user_by_id(&self.pool, actor_id)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
@@ -210,9 +220,123 @@ impl CiRuns {
         run_id: Uuid,
         actor_id: i64,
     ) -> Result<db::models::CiRun, AdmissionError> {
+        self.rerun_run_options(
+            run_id,
+            actor_id,
+            false,
+            db::ci::CiReplaySelection::All,
+            None,
+            true,
+        )
+        .await
+    }
+
+    /// Starts a new attempt of one logical workflow run from its immutable native snapshot.
+    pub async fn rerun_workflow_run(
+        &self,
+        repo: i64,
+        id: i64,
+        actor: i64,
+        debug: bool,
+        credential: Option<i64>,
+    ) -> Result<db::models::CiRun, AdmissionError> {
+        self.rerun_selected_workflow(
+            repo,
+            id,
+            actor,
+            debug,
+            credential,
+            db::ci::CiReplaySelection::All,
+        )
+        .await
+    }
+    pub async fn rerun_failed_workflow_run(
+        &self,
+        repo: i64,
+        id: i64,
+        actor: i64,
+        debug: bool,
+        credential: Option<i64>,
+    ) -> Result<db::models::CiRun, AdmissionError> {
+        self.rerun_selected_workflow(
+            repo,
+            id,
+            actor,
+            debug,
+            credential,
+            db::ci::CiReplaySelection::Failed,
+        )
+        .await
+    }
+    pub async fn rerun_workflow_job(
+        &self,
+        repo: i64,
+        id: i64,
+        actor: i64,
+        debug: bool,
+        credential: Option<i64>,
+    ) -> Result<db::models::CiRun, AdmissionError> {
+        let job = db::action_jobs::get(&self.pool, repo, id, false)
+            .await?
+            .ok_or(AdmissionError::Missing("Job not found"))?;
+        let source = db::ci::get_ci_run_by_id(&self.pool, repo, job.run_id)
+            .await?
+            .ok_or(AdmissionError::Missing("Run not found"))?;
+        self.rerun_selected_workflow(
+            repo,
+            source.workflow_run_id.unwrap_or(source.id),
+            actor,
+            debug,
+            credential,
+            db::ci::CiReplaySelection::Job(id),
+        )
+        .await
+    }
+    async fn rerun_selected_workflow(
+        &self,
+        repo: i64,
+        id: i64,
+        actor: i64,
+        debug: bool,
+        credential: Option<i64>,
+        selection: db::ci::CiReplaySelection,
+    ) -> Result<db::models::CiRun, AdmissionError> {
+        let source = db::action_runs::get(&self.pool, repo, id, None)
+            .await?
+            .ok_or(AdmissionError::Missing("Run not found"))?;
+        if !source.workflow_run_number.is_some_and(|number| number > 0) {
+            return Err(AdmissionError::Conflict(
+                "Source workflow metadata is unavailable",
+            ));
+        }
+        self.rerun_run_options(source.run_id, actor, debug, selection, credential, false)
+            .await
+    }
+
+    async fn rerun_run_options(
+        &self,
+        run_id: Uuid,
+        actor_id: i64,
+        debug: bool,
+        selection: db::ci::CiReplaySelection,
+        credential: Option<i64>,
+        allow_active: bool,
+    ) -> Result<db::models::CiRun, AdmissionError> {
         let run = db::ci::get_ci_run_by_run_id(&self.pool, run_id)
             .await?
             .ok_or(AdmissionError::Missing("Run not found"))?;
+        let attempt = run
+            .workflow_run_number
+            .filter(|number| *number > 0)
+            .map(|_| db::ci::NewCiAttempt {
+                source: run.id,
+                source_uuid: run.run_id,
+                credential,
+                allow_active,
+                selection,
+                definition: None,
+                debug,
+            });
         let head_sha = run.head_sha.ok_or(AdmissionError::Conflict(
             "This run has no commit to run again",
         ))?;
@@ -239,6 +363,9 @@ impl CiRuns {
             },
             true,
             db::models::AccessLevel::Owner,
+            attempt,
+            run.event_payload,
+            Some(run.workflow_blobs),
         )
         .await
     }
@@ -283,7 +410,18 @@ impl CiRuns {
         request: CiRunRequest,
         access: db::models::AccessLevel,
     ) -> Result<db::models::CiRun, AdmissionError> {
-        self.enqueue_run(request, false, access).await
+        self.enqueue_run(request, false, access, None, None, None)
+            .await
+    }
+
+    pub(crate) async fn trigger_event_run(
+        &self,
+        request: CiRunRequest,
+        access: db::models::AccessLevel,
+        payload: serde_json::Value,
+    ) -> Result<db::models::CiRun, AdmissionError> {
+        self.enqueue_run(request, false, access, None, Some(payload), None)
+            .await
     }
 
     async fn enqueue_run(
@@ -291,6 +429,9 @@ impl CiRuns {
         request: CiRunRequest,
         rerun: bool,
         access: db::models::AccessLevel,
+        mut attempt: Option<db::ci::NewCiAttempt>,
+        event_payload: Option<serde_json::Value>,
+        source_blobs: Option<serde_json::Value>,
     ) -> Result<db::models::CiRun, AdmissionError> {
         let revision = admission::resolve(
             &self.pool,
@@ -298,11 +439,32 @@ impl CiRuns {
             self.cluster.as_ref(),
             request,
             rerun,
+            event_payload.as_ref(),
+            source_blobs.as_ref(),
         )
         .await?;
         let request = revision.request;
+        if let Some(attempt) = attempt
+            .as_mut()
+            .filter(|attempt| attempt.selection != db::ci::CiReplaySelection::All)
+        {
+            if request.workflow_paths.len() != 1 {
+                return Err(AdmissionError::Conflict(
+                    "Partial re-runs require one workflow",
+                ));
+            }
+            // A workflow with calls is stored as its rewritten snapshot; replay reads that text.
+            let path = &request.workflow_paths[0];
+            attempt.definition = match revision.blobs.get(path).and_then(super::reusable::content) {
+                Some(content) => Some(content.to_owned()),
+                None => revision.definitions.get(path).cloned(),
+            };
+        }
         // YAML environments and configured workflow names can promote CI to deployment.
-        if request.pipeline.includes_cd() && !access.can_admin() {
+        if request.pipeline.includes_cd()
+            && !access.can_admin()
+            && !admission::fork_approval_required(&self.pool, &request).await?
+        {
             return Err(AdmissionError::Denied("CI deployment permission denied"));
         }
         let head_sha = request
@@ -316,38 +478,86 @@ impl CiRuns {
             .transpose()
             .map_err(|_| AdmissionError::Unavailable)?;
         let trusted: Vec<i64> = self.config.trusted_actor_ids.iter().copied().collect();
-        let run = db::ci::enqueue_ci_run(
-            &self.pool,
-            db::ci::NewCiRun {
-                repo_id: request.repo_id,
-                triggered_by_id: request.triggered_by_id,
-                pipeline: request.pipeline.as_str(),
-                event: &request.event,
-                pull_request_id: request.pull_request_id,
-                branch: if request.event == "pull_request" {
-                    &request.branch
-                } else {
-                    branch_name(&request.branch)
-                },
-                head_sha,
-                workflow_path: &request.workflow_paths.join(","),
-                workflow_blobs: &revision.blobs,
-                workflow_inputs: workflow_inputs.as_ref(),
-                environment: request.environment.as_deref(),
-                manual: request.manual,
+        let input = db::ci::NewCiRun {
+            repo_id: request.repo_id,
+            triggered_by_id: request.triggered_by_id,
+            pipeline: request.pipeline.as_str(),
+            event: &request.event,
+            pull_request_id: request.pull_request_id,
+            branch: if matches!(
+                request.event.as_str(),
+                "pull_request" | "pull_request_target"
+            ) {
+                &request.branch
+            } else {
+                branch_name(&request.branch)
             },
-            &trusted,
-        )
-        .await?;
+            head_sha,
+            workflow_path: &request.workflow_paths.join(","),
+            workflow_blobs: &revision.blobs,
+            workflow_inputs: workflow_inputs.as_ref(),
+            environment: request.environment.as_deref(),
+            manual: request.manual,
+        };
+        let run = match attempt {
+            Some(attempt) => {
+                db::ci::enqueue_ci_run_attempt(
+                    &self.pool,
+                    input,
+                    &trusted,
+                    attempt,
+                    &revision.scheduling,
+                    event_payload.as_ref(),
+                )
+                .await?
+            }
+            None => {
+                db::ci::enqueue_ci_run_for_runners(
+                    &self.pool,
+                    input,
+                    &trusted,
+                    &revision.scheduling,
+                    event_payload.as_ref(),
+                )
+                .await?
+            }
+        };
+        if let Err(error) =
+            crate::backend::webhooks::deployment_protection::requested(&self.pool, &run).await
+        {
+            tracing::warn!(run_id=run.id,%error,"Could not queue deployment protection requests");
+        }
         self.queued.notify_one();
+        Box::pin(self.emit_workflow_run(&run, "requested")).await;
         Ok(run)
     }
 
     /// Cancels a queued run, or asks the worker running it to stop.
     pub async fn cancel_run(&self, run_id: Uuid, actor_id: i64) -> Result<bool, AdmissionError> {
-        let (changed, notifications) =
-            db::ci::request_ci_cancellation(&self.pool, run_id, actor_id).await?;
+        self.cancel_run_with_token(run_id, actor_id, None).await
+    }
+
+    pub async fn cancel_run_with_token(
+        &self,
+        run_id: Uuid,
+        actor_id: i64,
+        token_id: Option<i64>,
+    ) -> Result<bool, AdmissionError> {
+        let (changed, notifications) = match token_id {
+            Some(token) => {
+                db::ci::request_ci_cancellation_with_token(&self.pool, run_id, actor_id, token)
+                    .await?
+            }
+            None => db::ci::request_ci_cancellation(&self.pool, run_id, actor_id).await?,
+        };
         self.notifications.send_created(&notifications).await;
+        if changed {
+            if let Some(run) = db::ci::get_ci_run_by_run_id(&self.pool, run_id).await? {
+                if run.completed_at.is_some() {
+                    self.emit_workflow_run(&run, "completed").await;
+                }
+            }
+        }
         Ok(changed)
     }
 }

@@ -293,38 +293,45 @@ fn chosen(output: &str, value: &str) -> bool {
 
 #[test]
 fn site_settings_change_the_signup_mode_and_the_ai_crawler_policy() {
-    let output = html(admin_settings_page(
-        AdminSettings {
-            private: true,
-            ai_crawlers: "block".into(),
-        },
-        "csrf-marker",
-        None,
-        false,
-    ));
-    // Each setting is its own form with its own Save button.
-    assert_eq!(output.matches("action=\"/admin/settings\"").count(), 2);
-    assert_eq!(
-        output
-            .matches("name=\"csrf_token\" value=\"csrf-marker\"")
-            .count(),
-        2
-    );
-    assert!(output.contains("name=\"node_mode\""));
-    assert!(output.contains("name=\"ai_crawlers\""));
-    assert!(chosen(&output, "private") && !chosen(&output, "public"));
-    assert!(chosen(&output, "block"));
-    let public = html(admin_settings_page(
-        AdminSettings {
-            private: false,
-            ai_crawlers: "allow".into(),
-        },
-        "csrf-marker",
-        None,
-        false,
-    ));
-    assert!(chosen(&public, "public") && !chosen(&public, "private"));
-    assert!(chosen(&public, "allow"));
+    // The draft inputs need a Dioxus runtime while the element is built.
+    crate::webui::tests::in_scope(|| {
+        let output = html(admin_settings_page(
+            AdminSettings {
+                private: true,
+                ai_crawlers: "block".into(),
+                osv_base_url: "https://osv-vulnerabilities.storage.googleapis.com".into(),
+                osv_ecosystems: String::new(),
+            },
+            "csrf-marker",
+            None,
+            false,
+        ));
+        // Each setting, and the vulnerability sources, is its own form with its own Save button.
+        assert_eq!(output.matches("action=\"/admin/settings\"").count(), 3);
+        assert_eq!(
+            output
+                .matches("name=\"csrf_token\" value=\"csrf-marker\"")
+                .count(),
+            3
+        );
+        assert!(output.contains("name=\"node_mode\""));
+        assert!(output.contains("name=\"ai_crawlers\""));
+        assert!(chosen(&output, "private") && !chosen(&output, "public"));
+        assert!(chosen(&output, "block"));
+        let public = html(admin_settings_page(
+            AdminSettings {
+                private: false,
+                ai_crawlers: "allow".into(),
+                osv_base_url: "https://osv-vulnerabilities.storage.googleapis.com".into(),
+                osv_ecosystems: String::new(),
+            },
+            "csrf-marker",
+            None,
+            false,
+        ));
+        assert!(chosen(&public, "public") && !chosen(&public, "private"));
+        assert!(chosen(&public, "allow"));
+    });
 }
 
 fn audit_model(entries: Vec<AuditEntry>, page: usize, pages: usize) -> AdminAudit {

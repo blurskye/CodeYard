@@ -79,6 +79,11 @@
 .org-index-list .org-row { min-height: 58px; }
 .org-page :is(a, button, input, textarea, select, summary):focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .org-inline-form > .org-note { flex-basis: 100%; margin: 0; }
+.org-inline-form .org-check-label { flex-direction: row; align-items: center; align-self: center; gap: 6px; font-weight: 400; }
+.org-check-label input[type="checkbox"] { width: 16px; height: 16px; flex: 0 0 auto; }
+.org-add-member .org-invitation-teams { flex: 1 1 100%; }
+.org-invitation-teams textarea.org-field { width: 100%; max-width: 100%; min-height: 64px; }
+.org-invitation-teams small { color: var(--muted-foreground); font-weight: 400; }
 @media (max-width: 800px) {
   .org-overview-grid, .org-index-grid { grid-template-columns: minmax(0, 1fr); }
   .org-detail-grid { grid-template-columns: minmax(0, 1fr); }

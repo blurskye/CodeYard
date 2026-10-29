@@ -667,11 +667,13 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
                 stage: "ci.yml".into(),
                 line: "running tests".into(),
                 level: "info".into(),
+                ..Default::default()
             },
             codeyard::backend::ci::queue::LogLine {
                 stage: "ci.yml".into(),
                 line: "warning: flaky test".into(),
                 level: "warn".into(),
+                ..Default::default()
             },
         ],
     )
@@ -768,7 +770,10 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         .execute(&fixture.raw)
         .await
         .unwrap();
-    assert_eq!(db::ci::fail_stale_ci_runs(&pool, 90).await.unwrap().0, 1);
+    assert_eq!(
+        db::ci::fail_stale_ci_runs(&pool, 90).await.unwrap().0.len(),
+        1
+    );
     let failed = db::ci::get_ci_run_by_run_id(&pool, running.run_id)
         .await
         .unwrap()
@@ -977,7 +982,7 @@ async fn token_session_revocation_contract(pool: &DbPool) {
         Err(TokenError::Denied)
     ));
     assert!(
-        codeyard::backend::db::users::tokens::list_tokens(pool, user.id)
+        codeyard::backend::db::users::tokens::list_tokens(pool, user.id, 0)
             .await
             .unwrap()
             .is_empty()
@@ -1185,6 +1190,8 @@ async fn pull_request_edit_contract(pool: &DbPool) {
             base_branch: "main",
             base_sha: &base,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -1201,7 +1208,7 @@ async fn pull_request_edit_contract(pool: &DbPool) {
         pool,
         pr.id,
         edit("open", pr.updated_at, Some("second"), None),
-        None,
+        Default::default(),
     )
     .await
     .unwrap()
@@ -1212,7 +1219,7 @@ async fn pull_request_edit_contract(pool: &DbPool) {
         pool,
         pr.id,
         edit("open", pr.updated_at, Some("stale"), None),
-        None,
+        Default::default(),
     )
     .await
     .unwrap()
@@ -1247,7 +1254,7 @@ async fn pull_request_edit_contract(pool: &DbPool) {
         pool,
         pr.id,
         edit("merged", merged.updated_at, None, Some("open")),
-        None,
+        Default::default(),
     )
     .await
     .unwrap()
@@ -1303,6 +1310,8 @@ async fn pull_request_revision_contract(pool: &DbPool) {
                     base_branch: "main",
                     base_sha: &sha('2'),
                     is_draft: false,
+                    maintainer_can_modify: false,
+                    issue: None,
                 },
             )
             .await
@@ -1321,10 +1330,11 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         body: None,
         state: Some("closed"),
     };
-    let closed = db::pull_requests::records::update_pull_request(pool, closed.id, close, None)
-        .await
-        .unwrap()
-        .expect("the owner can close it");
+    let closed =
+        db::pull_requests::records::update_pull_request(pool, closed.id, close, Default::default())
+            .await
+            .unwrap()
+            .expect("the owner can close it");
     assert!(db::pull_requests::records::mark_pull_requests_merged(
         pool,
         std::slice::from_ref(&merged),
@@ -1346,6 +1356,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
                 repo_id: repo.id,
                 number: first.number,
                 author_id: owner.id,
+                head_publisher_id: Some(owner.id),
                 head_repo_id: Some(repo.id),
                 head_branch: "feature-a".into(),
                 head_sha: sha('1'),
@@ -1358,6 +1369,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
                 repo_id: repo.id,
                 number: second.number,
                 author_id: owner.id,
+                head_publisher_id: Some(owner.id),
                 head_repo_id: Some(repo.id),
                 head_branch: "feature-b".into(),
                 head_sha: sha('3'),
@@ -1458,12 +1470,15 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         body: None,
         state: None,
     };
-    assert!(
-        db::pull_requests::records::update_pull_request(pool, first.id, stale, None)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(db::pull_requests::records::update_pull_request(
+        pool,
+        first.id,
+        stale,
+        Default::default()
+    )
+    .await
+    .unwrap()
+    .is_none());
     // Closed and merged pull requests never move.
     for pull in [&closed, &merged] {
         assert!(!db::pull_requests::records::move_open_pull_request_head(
@@ -1554,6 +1569,8 @@ async fn pull_request_revision_contract(pool: &DbPool) {
                     base_branch: "main",
                     base_sha: &base_sha,
                     is_draft: false,
+                    maintainer_can_modify: false,
+                    issue: None,
                 },
             )
             .await
@@ -1584,7 +1601,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
             body: None,
             state: Some("closed"),
         },
-        None,
+        Default::default(),
     )
     .await
     .unwrap()
@@ -1605,6 +1622,8 @@ async fn pull_request_revision_contract(pool: &DbPool) {
             base_branch: "main",
             base_sha: &base_sha,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -1622,7 +1641,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
             body: None,
             state: Some("open"),
         },
-        None,
+        Default::default(),
     )
     .await
     .unwrap_err();
@@ -1668,6 +1687,8 @@ async fn pull_request_merge_mark_contract(pool: &DbPool) {
             base_branch: "main",
             base_sha: &sha,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -1685,10 +1706,13 @@ async fn pull_request_merge_mark_contract(pool: &DbPool) {
             body: None,
             state: None,
         },
-        Some(NewBase {
-            branch: "develop",
-            sha: &"b".repeat(40),
-        }),
+        db::pull_requests::records::PullRequestUpdate {
+            base: Some(NewBase {
+                branch: "develop",
+                sha: &"b".repeat(40),
+            }),
+            maintainer_can_modify: None,
+        },
     )
     .await
     .unwrap()
@@ -1811,6 +1835,8 @@ async fn pull_request_branch_filter_contract(pool: &DbPool) {
                 base_branch,
                 base_sha: &sha,
                 is_draft: false,
+                maintainer_can_modify: false,
+                issue: None,
             },
         )
         .await
@@ -2328,6 +2354,8 @@ async fn viewer_work_contract(pool: &DbPool) {
             base_branch: "main",
             base_sha: BASE_SHA,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         };
     db::pull_requests::records::create_pull_request(
         pool,
@@ -2545,6 +2573,8 @@ async fn label_usage_contract(pool: &DbPool) {
             base_branch: "main",
             base_sha: "2222222222222222222222222222222222222222",
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await

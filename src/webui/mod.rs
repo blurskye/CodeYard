@@ -22,6 +22,28 @@ pub fn encode_component(value: &str) -> String {
     encoded
 }
 
+/// `/gists` is now a product page; keep preexisting accounts and repositories addressable.
+pub fn profile_path(username: &str) -> String {
+    let name = encode_component(username);
+    if username.eq_ignore_ascii_case("gists") {
+        format!("/gists/@users/{name}")
+    } else {
+        format!("/{name}")
+    }
+}
+pub fn repository_path(owner: &str, name: &str) -> String {
+    let prefix = if owner.eq_ignore_ascii_case("gists") {
+        "/gists/@repos"
+    } else {
+        ""
+    };
+    format!(
+        "{prefix}/{}/{}",
+        encode_component(owner),
+        encode_component(name)
+    )
+}
+
 /// `%XX` escapes decoded once; bytes that are not valid escapes stay as they are.
 pub fn decode_component(text: &str) -> String {
     let bytes = text.as_bytes();

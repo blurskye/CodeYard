@@ -10,9 +10,9 @@ use axum::http::StatusCode;
 use codeyard::backend::db;
 use database::Database;
 use pulls::Client;
-use serde_json::Value;
 
 async fn contract(pg: bool) {
+    crate::support::fake_webui_bundle::install();
     let mut f = Database::new(pg).await;
     f.complete_setup().await;
     let admin_id = f.actor("admin").await;
@@ -46,35 +46,54 @@ async fn contract(pg: bool) {
     .unwrap();
     let router = f.router(root.path()).await;
     let admin = Client::login(&router, f.pool(), admin_id).await;
-    let (status, accounts) = admin
-        .api("GET", "/api/auth/admin/accounts", Value::Null)
-        .await;
-    assert_eq!(status, StatusCode::OK, "{accounts}");
-    let owner = accounts
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|account| account["username"] == "owner")
+    let (status, page) = admin.model("/admin").await;
+    assert_eq!(status, StatusCode::OK);
+    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Admin {
+        model,
+    }) = page
+    else {
+        panic!("administration overview")
+    };
+    assert!(model.storage_bytes.iter().all(|bytes| *bytes == 0));
+    assert!(model.activity.iter().all(|point| point.commits == 0));
+    let accounts = db::users::accounts::list_admin_account_summaries(f.pool(), 100, 0)
+        .await
         .unwrap();
-    assert_eq!(owner["total_bytes"], 0);
-    assert_eq!(owner["commits_total"], 0);
+    let owner = accounts
+        .iter()
+        .find(|account| account.username == "owner")
+        .unwrap();
+    assert_eq!(owner.total_bytes, 0);
+    assert_eq!(owner.commits_total, 0);
     db::activity::record_repository_push(f.pool(), repository.id, owner_id, "main", 5)
         .await
         .unwrap();
-    let (_, recorded) = admin
-        .api("GET", "/api/auth/admin/accounts", Value::Null)
-        .await;
-    let recorded = recorded
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|account| account["username"] == "owner")
-        .unwrap();
-    assert_eq!(recorded["commits_total"], 5);
+    let (status, page) = admin.model("/admin").await;
+    assert_eq!(status, StatusCode::OK);
+    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Admin {
+        model,
+    }) = page
+    else {
+        panic!("administration overview")
+    };
+    assert!(model.storage_bytes.iter().all(|bytes| *bytes == 0));
     assert_eq!(
-        recorded["pushes_total"], 0,
-        "the documented push counter counts CI runs"
+        model
+            .activity
+            .iter()
+            .map(|point| point.commits)
+            .sum::<i64>(),
+        5
     );
+    let recorded = db::users::accounts::list_admin_account_summaries(f.pool(), 100, 0)
+        .await
+        .unwrap();
+    let recorded = recorded
+        .iter()
+        .find(|account| account.username == "owner")
+        .unwrap();
+    assert_eq!(recorded.commits_total, 5);
+    assert_eq!(recorded.pushes_total, 0, "the push counter counts CI runs");
     let chart = db::users::accounts::list_admin_activity_points(f.pool(), 7)
         .await
         .unwrap();
@@ -85,6 +104,51 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap();
     assert_eq!(stored.size_bytes, 0);
+    let (status, page) = admin.model("/admin/email").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(matches!(page, codeyard::webui::app::Page::Email(_)));
+    let invalid = admin
+        .form_reply(
+            "/admin/email",
+            &[("host", "bad host"), ("from_address", "invalid")],
+        )
+        .await;
+    assert_eq!(
+        invalid.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        invalid.text()
+    );
+    let test = admin.form_reply("/admin/email/test", &[]).await;
+    assert_eq!(test.status, StatusCode::BAD_GATEWAY, "{}", test.text());
+    assert!(test.text().contains("Your account has no email address"));
+    let member = Client::login(&router, f.pool(), owner_id).await;
+    for path in ["/admin/email", "/admin/email/test"] {
+        let reply = member.form_reply(path, &[]).await;
+        assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.text());
+    }
+    for (method, path) in [
+        ("POST", "/api/auth/admin/users".to_owned()),
+        ("GET", "/api/auth/admin/accounts".to_owned()),
+        ("PATCH", format!("/api/auth/admin/accounts/{owner_id}/ban")),
+        ("GET", "/api/auth/admin/signup-requests".to_owned()),
+        ("POST", "/api/auth/admin/signup-requests/resolve".to_owned()),
+        ("GET", "/api/auth/admin/ai-crawlers".to_owned()),
+        ("PUT", "/api/auth/admin/ai-crawlers".to_owned()),
+        ("GET", "/api/auth/admin/email".to_owned()),
+        ("PUT", "/api/auth/admin/email".to_owned()),
+        ("POST", "/api/auth/admin/email/test".to_owned()),
+    ] {
+        let reply = admin
+            .exchange(method, &path, "application/json", b"{}".to_vec())
+            .await;
+        assert_eq!(
+            reply.status,
+            StatusCode::NOT_FOUND,
+            "{method} {path}: {}",
+            reply.text()
+        );
+    }
     f.finish().await;
 }
 

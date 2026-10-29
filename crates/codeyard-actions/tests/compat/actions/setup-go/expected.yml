@@ -1,0 +1,11 @@
+{
+  "exit_code": 0,
+  "jobs": {
+    "test": "success"
+  },
+  "contains": [
+    "::error file=compat.go,line=3,col=4::matcher diagnostic",
+    "compat:ok"
+  ],
+  "timeout_seconds": 900
+}

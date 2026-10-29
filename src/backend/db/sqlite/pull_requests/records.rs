@@ -2,12 +2,26 @@ use crate::backend::db::discussions::{ListFilter, StateCounts, SHOWN_PR_COMMENT}
 use crate::backend::db::models::PullRequest;
 use crate::backend::db::pull_requests::records::PullRequestListEntry;
 use crate::backend::db::pull_requests::records::{
-    decide_join, DuplicateOpenPullRequest, JoinCheck, NewBase, NewPullRequest,
-    PullRequestRevisions, ReadyOutcome, StackJoin, StackRefusal,
+    can_grant_maintainer_edit, decide_join, DuplicateOpenPullRequest, JoinCheck, NewPullRequest,
+    PullRequestRevisions, PullRequestUpdate, ReadyOutcome, StackJoin, StackRefusal,
 };
 use crate::backend::db::pull_requests::records::{PullRequestRelation, ViewerPullRequestEntry};
 use anyhow::Result;
 use sqlx::SqlitePool;
+
+pub async fn commit_association_candidates(
+    pool: &SqlitePool,
+    repo: i64,
+    before: i64,
+    limit: i64,
+) -> Result<Vec<PullRequest>> {
+    anyhow::ensure!(
+        (1..=512).contains(&limit),
+        "Pull request association batch exceeds its limit"
+    );
+    Ok(sqlx::query_as("SELECT * FROM pull_requests WHERE repo_id=?1 AND id<?2 AND (state='open' OR merged) ORDER BY id DESC LIMIT ?3")
+        .bind(repo).bind(before).bind(limit).fetch_all(pool).await?)
+}
 
 /// The branches and commits that the open pull requests of a repository record.
 pub async fn list_open_pull_request_revisions(
@@ -15,7 +29,7 @@ pub async fn list_open_pull_request_revisions(
     repo_id: i64,
 ) -> Result<Vec<PullRequestRevisions>> {
     let rows = sqlx::query_as::<_, PullRequestRevisions>(
-        "SELECT id, repo_id, number, author_id, head_repo_id, head_branch, head_sha, base_branch, base_sha, stack_id FROM pull_requests WHERE (repo_id = ?1 OR head_repo_id = ?1) AND state = 'open' ORDER BY id",
+        "SELECT id, repo_id, number, author_id, head_publisher_id, head_repo_id, head_branch, head_sha, base_branch, base_sha, stack_id FROM pull_requests WHERE (repo_id = ?1 OR head_repo_id = ?1) AND state = 'open' ORDER BY id",
     )
     .bind(repo_id)
     .fetch_all(pool)
@@ -31,7 +45,7 @@ pub async fn list_open_pull_request_revisions_on_branches(
     branches: &[&str],
 ) -> Result<Vec<PullRequestRevisions>> {
     let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
-        "SELECT id, repo_id, number, author_id, head_repo_id, head_branch, head_sha, base_branch, base_sha, stack_id FROM pull_requests WHERE state = 'open' AND ((repo_id = ",
+        "SELECT id, repo_id, number, author_id, head_publisher_id, head_repo_id, head_branch, head_sha, base_branch, base_sha, stack_id FROM pull_requests WHERE state = 'open' AND ((repo_id = ",
     );
     query.push_bind(repo_id).push(" AND base_branch IN (");
     let mut names = query.separated(",");
@@ -74,6 +88,16 @@ pub async fn find_open_pull_request_from_branches(
 ) -> Result<Option<crate::backend::db::pull_requests::records::BranchPullRequest>> {
     Ok(sqlx::query_as("SELECT number,title,head_branch FROM pull_requests WHERE repo_id=?1 AND head_repo_id=?1 AND state='open' AND base_branch=?2 AND head_branch=?3 ORDER BY number LIMIT 1")
         .bind(repo_id).bind(base).bind(head).fetch_optional(pool).await?)
+}
+
+pub async fn merged_above(
+    pool: &SqlitePool,
+    repo_id: i64,
+    merge_sha: &str,
+    head_branch: &str,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pull_requests WHERE repo_id=?1 AND merged AND merge_commit_sha=?2 AND base_branch=?3)")
+        .bind(repo_id).bind(merge_sha).bind(head_branch).fetch_one(pool).await?)
 }
 
 /// Records a new head commit only while the open pull request still has the
@@ -183,6 +207,16 @@ pub async fn mark_pull_request_ready(
     actor_id: i64,
     expected: Option<&str>,
 ) -> Result<ReadyOutcome> {
+    set_pull_request_draft(pool, pr_id, actor_id, expected, false).await
+}
+
+pub async fn set_pull_request_draft(
+    pool: &SqlitePool,
+    pr_id: i64,
+    actor_id: i64,
+    expected: Option<&str>,
+    is_draft: bool,
+) -> Result<ReadyOutcome> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row: Option<(i64, i64, String, bool, String)> = sqlx::query_as(
         "SELECT repo_id, author_id, state, is_draft, updated_at FROM pull_requests WHERE id = ?1",
@@ -214,17 +248,22 @@ pub async fn mark_pull_request_ready(
     if state != "open" {
         return Ok(ReadyOutcome::NotOpen);
     }
-    if !draft {
+    if draft == is_draft {
         return Ok(ReadyOutcome::NotDraft);
+    }
+    // Converting to a draft never adds to a cap, so only a return to ready is checked.
+    if !is_draft {
+        super::super::pull_caps::check(&mut tx, author, repo, false, true, Some(pr_id)).await?;
     }
     let next = crate::backend::db::sqlite::time::next_revision(
         crate::backend::db::sqlite::time::decode(&updated)?,
     )?;
     let pr = sqlx::query_as::<_, PullRequest>(
-        "UPDATE pull_requests SET is_draft = 0, updated_at = ?2 WHERE id = ?1 AND state = 'open' AND is_draft RETURNING *",
+        "UPDATE pull_requests SET is_draft = ?3, updated_at = ?2 WHERE id = ?1 RETURNING *",
     )
     .bind(pr_id)
     .bind(next)
+    .bind(is_draft)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -242,6 +281,12 @@ pub async fn create_pull_request(
         input.repo_id,
     )
     .await?;
+    let source = match input.issue {
+        Some(number) => Some(
+            super::conversion::read_source(&mut tx, input.author_id, input.repo_id, number).await?,
+        ),
+        None => None,
+    };
     let head_id = input.head_repo_id.unwrap_or(input.repo_id);
     let head = sqlx::query_as::<_, crate::backend::db::models::Repository>(
         "SELECT * FROM repositories WHERE id = ?1",
@@ -265,6 +310,11 @@ pub async fn create_pull_request(
     {
         return Err(crate::backend::db::sqlite::discussions::AUTHORITY_DENIED.into());
     }
+    anyhow::ensure!(
+        !input.maintainer_can_modify
+            || can_grant_maintainer_edit(input.author_id, input.repo_id, &head),
+        crate::backend::db::sqlite::discussions::AUTHORITY_DENIED
+    );
     let duplicate: Option<i32> = sqlx::query_scalar(
         "SELECT number FROM pull_requests WHERE repo_id = ?1 AND head_repo_id = ?2 AND head_branch = ?3 AND base_branch = ?4 AND state = 'open' LIMIT 1",
     )
@@ -277,19 +327,34 @@ pub async fn create_pull_request(
     if let Some(number) = duplicate {
         return Err(DuplicateOpenPullRequest { number }.into());
     }
-    let number =
-        crate::backend::db::sqlite::discussions::allocate_number(&mut tx, input.repo_id).await?;
+    super::super::pull_caps::check(
+        &mut tx,
+        source
+            .as_ref()
+            .map_or(input.author_id, |issue| issue.author_id),
+        input.repo_id,
+        input.is_draft,
+        false,
+        None,
+    )
+    .await?;
+    let number = match &source {
+        Some(issue) => issue.number,
+        None => {
+            crate::backend::db::sqlite::discussions::allocate_number(&mut tx, input.repo_id).await?
+        }
+    };
     let pr = sqlx::query_as::<_, PullRequest>(
         r#"
-        INSERT INTO pull_requests (repo_id, number, author_id, title, body, head_branch, head_sha, base_branch, base_sha, is_draft, head_repo_id)
-        VALUES (?1, ?10, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?11)
+        INSERT INTO pull_requests (repo_id, number, author_id, title, body, head_branch, head_sha, base_branch, base_sha, is_draft, head_repo_id, maintainer_can_modify, maintainer_edit_granted_by_id,source_issue_id,created_at,milestone_id,head_publisher_id)
+        VALUES (?1, ?10, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?11, ?12, ?13,?14,COALESCE(?15,strftime('%Y-%m-%dT%H:%M:%f000Z','now')),?16,?17)
         RETURNING *
         "#,
     )
     .bind(input.repo_id)
-    .bind(input.author_id)
-    .bind(input.title)
-    .bind(input.body)
+    .bind(source.as_ref().map_or(input.author_id, |issue| issue.author_id))
+    .bind(source.as_ref().map_or(input.title, |issue| issue.title.as_str()))
+    .bind(source.as_ref().map_or(input.body, |issue| issue.body.as_str()))
     .bind(input.head_branch)
     .bind(input.head_sha)
     .bind(input.base_branch)
@@ -297,8 +362,17 @@ pub async fn create_pull_request(
     .bind(input.is_draft)
     .bind(number)
     .bind(input.head_repo_id.unwrap_or(input.repo_id))
+    .bind(input.maintainer_can_modify)
+    .bind(input.maintainer_can_modify.then_some(input.author_id))
+    .bind(source.as_ref().map(|issue| issue.id))
+    .bind(source.as_ref().map(|issue| super::super::time::encode(issue.created_at)))
+    .bind(source.as_ref().and_then(|issue| issue.milestone_id))
+    .bind(input.author_id)
     .fetch_one(&mut *tx)
     .await?;
+    if let Some(issue) = source.as_ref() {
+        super::conversion::move_source(&mut tx, issue, &pr, input.author_id).await?;
+    }
     tx.commit().await?;
     Ok(pr)
 }
@@ -319,6 +393,15 @@ pub async fn get_pull_request(
     Ok(pr)
 }
 
+pub async fn get_converted_pull_request(
+    pool: &SqlitePool,
+    repo_id: i64,
+    number: i32,
+) -> Result<Option<PullRequest>> {
+    Ok(sqlx::query_as("SELECT * FROM pull_requests WHERE repo_id=?1 AND number=?2 AND source_issue_id IS NOT NULL")
+        .bind(repo_id).bind(number).fetch_optional(pool).await?)
+}
+
 pub async fn get_pull_request_by_id(pool: &SqlitePool, id: i64) -> Result<Option<PullRequest>> {
     let pr = sqlx::query_as::<_, PullRequest>("SELECT * FROM pull_requests WHERE id = ?1")
         .bind(id)
@@ -326,6 +409,30 @@ pub async fn get_pull_request_by_id(pool: &SqlitePool, id: i64) -> Result<Option
         .await?;
 
     Ok(pr)
+}
+
+pub async fn list_filtered_pull_requests(
+    pool: &SqlitePool,
+    repo_id: i64,
+    filter: &crate::backend::db::pull_requests::records::PullRequestFilter<'_>,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<PullRequest>> {
+    let readable = super::super::repositories::access::readable_condition();
+    let rows = sqlx::query_as::<_, PullRequest>(&format!(
+        "SELECT p.* FROM pull_requests p LEFT JOIN repositories h ON h.id = p.head_repo_id
+         LEFT JOIN users u ON u.id = h.owner_user_id LEFT JOIN organizations o ON o.id = h.owner_org_id
+         WHERE p.repo_id = ?1 AND (?2 IS NULL OR p.state = ?2 OR (?2 = 'closed' AND p.state = 'merged'))
+         AND (?3 IS NULL OR p.base_branch = ?3) AND (?4 IS NULL OR COALESCE(u.username, o.name) = ?4 COLLATE NOCASE)
+         AND (?5 IS NULL OR p.head_branch = ?5)
+         AND (p.head_repo_id IS NULL OR EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?10 WHERE r.id=p.head_repo_id AND {readable}))
+         AND (NOT ?6 OR (p.state = 'open' AND julianday(p.created_at) < julianday(?7) AND julianday(p.updated_at) >= julianday(?7)))
+         ORDER BY {} LIMIT ?8 OFFSET ?9", filter.order()
+    ))
+    .bind(repo_id).bind(filter.state).bind(filter.base).bind(filter.head_owner).bind(filter.head_branch)
+    .bind(filter.sort == "long-running").bind(filter.month_ago).bind(limit).bind(offset).bind(filter.viewer_id)
+    .fetch_all(pool).await?;
+    Ok(rows)
 }
 
 pub async fn list_repo_pull_requests(
@@ -352,6 +459,7 @@ pub async fn list_repo_pull_requests(
             AND (?10 IS NULL OR (SELECT COUNT(DISTINCT LOWER(l.name)) FROM pr_labels pl JOIN labels l ON l.id=pl.label_id
                 WHERE pl.pull_request_id = i.id AND LOWER(l.name) IN (SELECT LOWER(value) FROM json_each(?10)))
                 = (SELECT COUNT(DISTINCT LOWER(value)) FROM json_each(?10)))
+            AND (?13 IS NULL OR i.head_branch = ?13)
         ORDER BY {order}, i.id DESC LIMIT ?4 OFFSET ?12"
     ))
     .bind(repo_id)
@@ -366,6 +474,7 @@ pub async fn list_repo_pull_requests(
     .bind(labels)
     .bind(filter.include_merged)
     .bind(filter.offset)
+    .bind(filter.head_ref)
     .fetch_all(pool)
     .await?;
 
@@ -373,20 +482,13 @@ pub async fn list_repo_pull_requests(
 }
 
 /// The condition that picks a viewer's pull requests. `?1` is the viewer.
-fn viewer_pull_request_sql(relation: PullRequestRelation) -> &'static str {
+fn viewer_pull_request_sql(relation: PullRequestRelation) -> String {
+    let requested = "(EXISTS (SELECT 1 FROM pr_reviewers a WHERE a.pull_request_id=p.id AND a.user_id=?1) OR (p.author_id<>?1 AND EXISTS(SELECT 1 FROM pr_team_reviewers q JOIN teams t ON t.id=q.team_id JOIN effective_team_memberships m ON m.team_id=t.id JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=p.repo_id JOIN repositories b ON b.id=p.repo_id AND b.owner_kind='org' AND b.owner_org_id=t.org_id AND b.owner_user_id IS NULL WHERE q.pull_request_id=p.id AND m.user_id=?1 AND a.permission BETWEEN 3 AND 5)))";
     match relation {
-        PullRequestRelation::Assigned => {
-            "p.id IN (SELECT pull_request_id FROM pr_assignees WHERE user_id = ?1)"
-        }
-        PullRequestRelation::Created => "p.author_id = ?1",
-        PullRequestRelation::ReviewRequested => {
-            "p.id IN (SELECT pull_request_id FROM pr_reviewers WHERE user_id = ?1)"
-        }
-        PullRequestRelation::Involved => {
-            "(p.author_id = ?1 \
-             OR p.id IN (SELECT pull_request_id FROM pr_assignees WHERE user_id = ?1) \
-             OR p.id IN (SELECT pull_request_id FROM pr_reviewers WHERE user_id = ?1))"
-        }
+        PullRequestRelation::Assigned => "p.id IN (SELECT pull_request_id FROM pr_assignees WHERE user_id=?1)".to_owned(),
+        PullRequestRelation::Created => "p.author_id=?1".to_owned(),
+        PullRequestRelation::ReviewRequested => requested.to_owned(),
+        PullRequestRelation::Involved => format!("(p.author_id=?1 OR p.id IN (SELECT pull_request_id FROM pr_assignees WHERE user_id=?1) OR {requested})"),
     }
 }
 
@@ -452,11 +554,34 @@ pub async fn count_repo_pull_requests(
     repo_id: i64,
     filter: &ListFilter<'_>,
 ) -> Result<StateCounts> {
+    Ok(StateCounts::from_rows(
+        count_repo_pull_requests_by_state(pool, repo_id, filter)
+            .await?
+            .into_iter()
+            .map(|(state, count)| {
+                (
+                    if state == "merged" {
+                        "closed".into()
+                    } else {
+                        state
+                    },
+                    count,
+                )
+            })
+            .collect(),
+    ))
+}
+
+pub async fn count_repo_pull_requests_by_state(
+    pool: &SqlitePool,
+    repo_id: i64,
+    filter: &ListFilter<'_>,
+) -> Result<Vec<(String, i64)>> {
     let (assignee_mode, assignee_id) = filter.assignee.binding();
     let (milestone_mode, milestone_id) = filter.milestone.binding();
     let labels = super::super::discussions::label_names_json(filter.labels)?;
     let rows = sqlx::query_as::<_, (String, i64)>(
-        r"SELECT CASE WHEN i.state = 'merged' THEN 'closed' ELSE i.state END AS bucket, COUNT(*) FROM pull_requests i WHERE i.repo_id = ?1
+        r"SELECT i.state AS bucket, COUNT(*) FROM pull_requests i WHERE i.repo_id = ?1
             AND (?2 IS NULL OR i.title REGEXP ?2 OR i.body REGEXP ?2)
             AND (?3 IS NULL OR i.author_id = ?3)
             AND (?4 = 0 OR (?4 = 1 AND NOT EXISTS (SELECT 1 FROM pr_assignees a WHERE a.pull_request_id = i.id))
@@ -465,6 +590,7 @@ pub async fn count_repo_pull_requests(
             AND (?8 IS NULL OR (SELECT COUNT(DISTINCT LOWER(l.name)) FROM pr_labels pl JOIN labels l ON l.id=pl.label_id
                 WHERE pl.pull_request_id = i.id AND LOWER(l.name) IN (SELECT LOWER(value) FROM json_each(?8)))
                 = (SELECT COUNT(DISTINCT LOWER(value)) FROM json_each(?8)))
+            AND (?9 IS NULL OR i.head_branch = ?9)
         GROUP BY bucket",
     )
     .bind(repo_id)
@@ -475,30 +601,72 @@ pub async fn count_repo_pull_requests(
     .bind(milestone_mode)
     .bind(milestone_id)
     .bind(labels)
+    .bind(filter.head_ref)
     .fetch_all(pool)
     .await?;
-    Ok(StateCounts::from_rows(rows))
+    Ok(rows)
 }
 
 pub async fn update_pull_request(
     pool: &SqlitePool,
     pr_id: i64,
     edit: crate::backend::db::discussions::DiscussionEdit<'_>,
-    base: Option<NewBase<'_>>,
+    changes: PullRequestUpdate<'_>,
 ) -> Result<Option<PullRequest>> {
+    let PullRequestUpdate {
+        base,
+        maintainer_can_modify,
+    } = changes;
     if !edit.has_exact_revision() {
         return Ok(None);
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let repo: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM pull_requests WHERE id = ?1")
-        .bind(pr_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let Some(repo) = repo else {
+    let scope: Option<(i64, i64, bool, Option<i64>)> = sqlx::query_as(
+        "SELECT repo_id,author_id,is_draft,head_repo_id FROM pull_requests WHERE id=?1",
+    )
+    .bind(pr_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((repo, author, draft, head_id)) = scope else {
         return Ok(None);
     };
-    if !crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, edit.actor_id, repo)
+    let writer =
+        crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, edit.actor_id, repo)
+            .await?;
+    let head = if maintainer_can_modify.is_some() {
+        sqlx::query_as::<_, crate::backend::db::models::Repository>(
+            "SELECT * FROM repositories WHERE id=?1",
+        )
+        .bind(head_id)
+        .fetch_optional(&mut *tx)
         .await?
+    } else {
+        None
+    };
+    let policy_only = maintainer_can_modify.is_some()
+        && edit.title.is_none()
+        && edit.body.is_none()
+        && edit.state.is_none()
+        && base.is_none();
+    let head_owner = head
+        .as_ref()
+        .is_some_and(|head| head.is_personal_owner(edit.actor_id));
+    let author_edit = author == edit.actor_id && base.is_none() && maintainer_can_modify.is_none();
+    if !writer
+        && (!((policy_only && (author == edit.actor_id || head_owner)) || author_edit)
+            || !crate::backend::db::sqlite::discussions::lock_contribution_authority(
+                &mut tx,
+                edit.actor_id,
+                repo,
+            )
+            .await?)
+    {
+        return Ok(None);
+    }
+    if maintainer_can_modify == Some(true)
+        && !head
+            .as_ref()
+            .is_some_and(|head| can_grant_maintainer_edit(edit.actor_id, repo, head))
     {
         return Ok(None);
     }
@@ -516,6 +684,9 @@ pub async fn update_pull_request(
     }
     // Reopening, or moving the base, must not leave two open pull requests for one head and base.
     let final_open = edit.state.unwrap_or(edit.expected_state) == "open";
+    if state == "closed" && final_open {
+        super::super::pull_caps::check(&mut tx, author, repo, draft, false, Some(pr_id)).await?;
+    }
     if final_open && (state == "closed" || base.is_some()) {
         let duplicate: Option<i32> = sqlx::query_scalar(
             "SELECT o.number FROM pull_requests p JOIN pull_requests o \
@@ -540,7 +711,9 @@ pub async fn update_pull_request(
             fork_sha = CASE WHEN ?9 IS NULL THEN fork_sha WHEN stack_id IS NOT NULL THEN COALESCE(fork_sha, base_sha) ELSE NULL END,
             closed_at = CASE WHEN ?4 = 'open' THEN NULL WHEN ?4 = 'closed' AND state <> 'closed' THEN strftime('%Y-%m-%dT%H:%M:%f000Z','now') ELSE closed_at END,
             stack_version = stack_version + CASE WHEN ?4 IS NULL AND ?9 IS NULL THEN 0 ELSE 1 END,
-            updated_at = ?7
+            updated_at = ?7,
+            maintainer_can_modify = COALESCE(?11,maintainer_can_modify),
+            maintainer_edit_granted_by_id = CASE WHEN ?11 IS NULL THEN maintainer_edit_granted_by_id WHEN ?11 THEN ?12 ELSE NULL END
         WHERE id = ?1 AND state = ?5 AND updated_at = ?6 AND repo_id = ?8
             AND (?4 IS NULL OR (state <> 'merged' AND ?4 IN ('open', 'closed')))
             AND (?9 IS NULL OR stack_id IS NULL OR (state = 'closed' AND ?4 = 'open'))
@@ -548,6 +721,7 @@ pub async fn update_pull_request(
     ).bind(pr_id).bind(edit.title).bind(edit.body).bind(edit.state)
         .bind(edit.expected_state).bind(stored_revision).bind(next).bind(repo)
         .bind(base.as_ref().map(|base| base.branch)).bind(base.as_ref().map(|base| base.sha))
+        .bind(maintainer_can_modify).bind(edit.actor_id)
         .fetch_optional(&mut *tx).await?;
     tx.commit().await?;
     Ok(pr)
@@ -582,6 +756,8 @@ pub async fn mark_pull_requests_merged(
         if changed != 1 {
             return Ok(false);
         }
+        sqlx::query("UPDATE repository_ref_activities SET activity_type='pr_merge' WHERE id=(SELECT id FROM repository_ref_activities WHERE repo_id=?1 AND reference='refs/heads/'||?2 AND after_sha=?3 ORDER BY id DESC LIMIT 1) AND activity_type IN ('push','force_push')")
+            .bind(pull.repo_id).bind(&pull.base_branch).bind(merge_sha).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(true)
@@ -644,25 +820,138 @@ pub async fn join_pull_request_stack(
         JoinCheck::Ready(plan) => plan,
         JoinCheck::Done(answer) => return Ok(answer),
     };
-    if plan.parent_starts_stack {
-        sqlx::query("UPDATE pull_requests SET stack_id = ?2 WHERE id = ?1 AND stack_id IS NULL")
-            .bind(plan.parent_id)
-            .bind(plan.stack_id)
-            .execute(&mut *tx)
-            .await?;
-    }
-    sqlx::query("UPDATE pull_requests SET stack_id = ?2, stack_version = stack_version + 1 WHERE id = ?1 AND stack_id IS NULL")
-        .bind(pull_request_id)
-        .bind(plan.stack_id)
-        .execute(&mut *tx)
-        .await?;
-    // The layer below gained a layer above it.
-    sqlx::query("UPDATE pull_requests SET stack_version = stack_version + 1 WHERE id = ?1")
-        .bind(plan.parent_id)
-        .execute(&mut *tx)
-        .await?;
+    apply_join(&mut tx, &plan, pull_request_id).await?;
     tx.commit().await?;
     Ok(StackJoin::Joined(plan.stack_id))
+}
+
+async fn apply_join(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    plan: &crate::backend::db::pull_requests::records::JoinPlan,
+    id: i64,
+) -> Result<()> {
+    sqlx::query("INSERT INTO pull_request_stacks(id,repo_id,number,base_branch) SELECT id,repo_id,number,base_branch FROM pull_requests WHERE id=?1 ON CONFLICT(id) DO UPDATE SET base_branch=excluded.base_branch").bind(plan.stack_id).execute(&mut **tx).await?;
+    if plan.parent_starts_stack {
+        sqlx::query("UPDATE pull_requests SET stack_id=?2 WHERE id=?1 AND stack_id IS NULL")
+            .bind(plan.parent_id)
+            .bind(plan.stack_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    sqlx::query("UPDATE pull_requests SET stack_id=?2,stack_version=stack_version+1 WHERE id=?1 AND stack_id IS NULL").bind(id).bind(plan.stack_id).execute(&mut **tx).await?;
+    sqlx::query("UPDATE pull_requests SET stack_version=stack_version+1 WHERE id=?1")
+        .bind(plan.parent_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+pub async fn join_pull_request_stack_batch(
+    pool: &SqlitePool,
+    actor_id: i64,
+    repo_id: i64,
+    root: i64,
+    pulls: &[i64],
+    creating: bool,
+) -> Result<StackJoin> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, actor_id, repo_id)
+        .await?
+    {
+        return Ok(StackJoin::Refused(StackRefusal::Denied));
+    }
+    if pulls.len() > crate::backend::db::pull_requests::records::MAX_STACK_LAYERS {
+        return Ok(StackJoin::Refused(StackRefusal::TooLarge));
+    }
+    if pulls.len() < if creating { 2 } else { 1 }
+        || pulls.iter().collect::<std::collections::HashSet<_>>().len() != pulls.len()
+    {
+        return Ok(StackJoin::Refused(StackRefusal::Changed));
+    }
+    if creating {
+        let bottom = sqlx::query_as::<_, PullRequest>(
+            "SELECT * FROM pull_requests WHERE id=?1 AND repo_id=?2",
+        )
+        .bind(root)
+        .bind(repo_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if !bottom.is_some_and(|p| {
+            p.state == "open" && p.stack_id.is_none() && p.head_repo_id == Some(repo_id)
+        }) || pulls.first() != Some(&root)
+        {
+            return Ok(StackJoin::Refused(StackRefusal::AlreadyStacked));
+        }
+    } else {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pull_requests WHERE repo_id=?1 AND stack_id=?2)",
+        )
+        .bind(repo_id)
+        .bind(root)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !exists {
+            return Ok(StackJoin::Refused(StackRefusal::Changed));
+        }
+    }
+    let mut previous = creating.then_some(root);
+    for id in pulls.iter().skip(if creating { 1 } else { 0 }) {
+        let repo: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM pull_requests WHERE id=?1")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if repo != Some(repo_id) {
+            return Ok(StackJoin::Refused(StackRefusal::Missing));
+        }
+        let plan = match read_join(&mut tx, *id).await? {
+            JoinCheck::Ready(plan) => plan,
+            JoinCheck::Done(StackJoin::AlreadyJoined(_)) => {
+                return Ok(StackJoin::Refused(StackRefusal::AlreadyStacked))
+            }
+            JoinCheck::Done(answer) => return Ok(answer),
+        };
+        if plan.stack_id != root || previous.is_some_and(|id| id != plan.parent_id) {
+            return Ok(StackJoin::Refused(StackRefusal::NoParent));
+        }
+        apply_join(&mut tx, &plan, *id).await?;
+        previous = Some(*id);
+    }
+    tx.commit().await?;
+    Ok(StackJoin::Joined(root))
+}
+
+pub async fn unstack_named_stack(
+    pool: &SqlitePool,
+    actor_id: i64,
+    repo_id: i64,
+    stack_id: i64,
+) -> Result<Option<Vec<PullRequest>>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, actor_id, repo_id)
+        .await?
+    {
+        return Ok(None);
+    }
+    let rows=sqlx::query_as("UPDATE pull_requests SET stack_id=NULL,stack_version=stack_version+1 WHERE repo_id=?1 AND stack_id=?2 AND state<>'merged' RETURNING *").bind(repo_id).bind(stack_id).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Some(rows))
+}
+
+pub async fn list_pull_request_stacks(
+    pool: &SqlitePool,
+    repo_id: i64,
+    pull_number: Option<i32>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<crate::backend::db::pull_requests::records::StackMetadata>> {
+    Ok(sqlx::query_as("SELECT s.* FROM pull_request_stacks s WHERE s.repo_id=?1 AND EXISTS(SELECT 1 FROM pull_requests p WHERE p.repo_id=s.repo_id AND p.stack_id=s.id AND (?2 IS NULL OR p.number=?2)) ORDER BY s.number DESC LIMIT ?3 OFFSET ?4").bind(repo_id).bind(pull_number).bind(limit).bind(offset).fetch_all(pool).await?)
+}
+pub async fn get_pull_request_stack(
+    pool: &SqlitePool,
+    repo_id: i64,
+    number: i32,
+) -> Result<Option<crate::backend::db::pull_requests::records::StackMetadata>> {
+    Ok(sqlx::query_as("SELECT s.* FROM pull_request_stacks s WHERE s.repo_id=?1 AND s.number=?2 AND EXISTS(SELECT 1 FROM pull_requests p WHERE p.repo_id=s.repo_id AND p.stack_id=s.id)").bind(repo_id).bind(number).fetch_optional(pool).await?)
 }
 
 /// The number of the open pull request that this pull request could join right now, if any.

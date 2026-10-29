@@ -1,5 +1,5 @@
-//! New repositories use the online storage node with the most free space. Without
-//! cluster settings there is one machine and no node is recorded.
+//! In cluster mode new repositories use the online storage node with the most free space.
+//! A single-node installation, with or without runners on other machines, records no node.
 use super::NodeContext;
 use crate::backend::{
     db::{
@@ -20,6 +20,14 @@ pub async fn storage_node(
     let Some(context) = context else {
         return Ok(None);
     };
+    // A single-node installation keeps every repository in one place and records no owner;
+    // its node connection is there only for runners.
+    if !db::cluster::cluster_enabled(context.database()?)
+        .await
+        .map_err(|_| super::rpc::unavailable())?
+    {
+        return Ok(None);
+    }
     let nodes = db::cluster::list_nodes(context.database()?)
         .await
         .map_err(|_| super::rpc::unavailable())?;

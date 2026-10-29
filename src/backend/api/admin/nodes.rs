@@ -39,13 +39,20 @@ async fn render(ctx: &PageContext, status: StatusCode, message: Option<String>) 
             )
         }
     };
+    let Ok(cluster_enabled) = db::cluster::cluster_enabled(&ctx.state.pool).await else {
+        return ctx.error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "The node list is unavailable.",
+        );
+    };
     let model = view::Page {
         csrf_token: ctx.csrf_token.clone(),
+        cluster_enabled,
         nodes: nodes
             .into_iter()
             .map(|node| view::Node {
                 offline: node.status == "active" && !node.is_online(),
-                roles: node.roles.join(", "),
+                roles: crate::backend::node::describe_roles(&node.roles),
                 version: node.version.unwrap_or_default(),
                 last_seen: node
                     .last_seen

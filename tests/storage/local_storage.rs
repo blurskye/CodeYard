@@ -178,7 +178,7 @@ async fn confirmations_refuse_a_busy_file_instead_of_queueing_behind_a_put() {
 }
 
 #[tokio::test]
-async fn put_waiters_take_io_slots_before_waiting_on_the_file_lock() {
+async fn put_waiters_on_one_file_leave_the_io_slots_free() {
     let f = Fixture::open().await;
     let reservation = f
         .reserve(
@@ -192,7 +192,7 @@ async fn put_waiters_take_io_slots_before_waiting_on_the_file_lock() {
         .await
         .unwrap()
         .unwrap();
-    let _lock = f.storage.lock_file(&file.object_key).await.unwrap();
+    let lock = f.storage.lock_file(&file.object_key).await.unwrap();
     let mut tasks = tokio::task::JoinSet::new();
     for _ in 0..32 {
         let (pool, store, owner, id) = (f.pool.clone(), f.storage.clone(), f.owner, file.id);
@@ -208,32 +208,10 @@ async fn put_waiters_take_io_slots_before_waiting_on_the_file_lock() {
             .await
         });
     }
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if f.storage.try_acquire_io().is_err() {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    assert_eq!(
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            files::put_local_upload(
-                &f.pool,
-                &f.storage,
-                f.owner,
-                file.id,
-                "text/plain",
-                std::io::Cursor::new(b"hello")
-            )
-        )
-        .await
-        .unwrap(),
-        Err(LocalUploadError::StorageUnavailable)
-    );
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Every waiter is queued on the file lock, so other storage work still finds a slot.
+    assert!(f.storage.try_acquire_io().is_ok());
+    drop(lock);
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
 }
@@ -705,8 +683,26 @@ async fn stream_confirm_download_delete_and_reopen() {
     assert_eq!(stats.downloads_24h, 1);
     assert_eq!(stats.total_bytes, bytes.len() as i64);
 
-    // Deleting removes both the record and the stored bytes.
+    // Deleting removes the record at once. The bytes stay for the restore window, so a
+    // restored database still finds them, and the sweep removes them once it ends.
     files::delete_owned_file(&fixture.pool, &fixture.storage, fixture.owner, id)
+        .await
+        .unwrap();
+    assert!(!fixture.stored_names().is_empty());
+    let kept: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pending_object_deletions WHERE object_key LIKE ?1 AND delete_after > strftime('%Y-%m-%dT%H:%M:%f000Z','now','+6 days')",
+    )
+    .bind(format!("%{id}"))
+    .fetch_one(&fixture.raw)
+    .await
+    .unwrap();
+    assert_eq!(kept, 1);
+    sqlx::query("UPDATE pending_object_deletions SET delete_after=?1")
+        .bind(timestamp(chrono::Utc::now() - chrono::Duration::seconds(1)))
+        .execute(&fixture.raw)
+        .await
+        .unwrap();
+    files::remove_expired_uploads(&fixture.pool, &fixture.storage)
         .await
         .unwrap();
     assert!(fixture.stored_names().is_empty());
@@ -1210,7 +1206,8 @@ async fn paused_http_put_serializes_delete_confirm_and_expiry_per_file() {
         .await
         .unwrap()
         .is_none());
-    assert!(!fixture.object_path(deleted.file_id).exists());
+    // The bytes wait out the restore window in the deletion queue.
+    assert!(fixture.object_path(deleted.file_id).exists());
 
     let confirmed = fixture
         .reserve(
@@ -1220,6 +1217,8 @@ async fn paused_http_put_serializes_delete_confirm_and_expiry_per_file() {
             FileVisibility::Owner,
         )
         .await;
+    // The deleted file's bytes are still kept, so wait for this PUT's own file.
+    let stored_before = fixture.stored_names().len();
     let (reader, mut writer) = tokio::io::duplex(64);
     writer.write_all(b"con").await.unwrap();
     let pool = fixture.pool.clone();
@@ -1235,7 +1234,7 @@ async fn paused_http_put_serializes_delete_confirm_and_expiry_per_file() {
             .parent()
             .unwrap()
             .exists()
-            && !fixture.stored_names().is_empty()
+            && fixture.stored_names().len() > stored_before
         {
             break;
         }
@@ -1270,6 +1269,7 @@ async fn paused_http_put_serializes_delete_confirm_and_expiry_per_file() {
             FileVisibility::Owner,
         )
         .await;
+    let stored_before = fixture.stored_names().len();
     let (reader, mut writer) = tokio::io::duplex(64);
     writer.write_all(b"exp").await.unwrap();
     let pool = fixture.pool.clone();
@@ -1279,7 +1279,7 @@ async fn paused_http_put_serializes_delete_confirm_and_expiry_per_file() {
         files::put_local_upload(&pool, &storage, owner, expired_id, "text/plain", reader).await
     });
     for _ in 0..100 {
-        if fixture.stored_names().len() > 1 {
+        if fixture.stored_names().len() > stored_before {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -2296,7 +2296,8 @@ async fn json_api_reserves_uploads_confirms_downloads_and_deletes() {
         status_of(&router, request("DELETE", &delete, Some(owner), true, None)).await,
         StatusCode::NO_CONTENT
     );
-    assert!(fixture.stored_names().is_empty());
+    // The bytes wait out the restore window in the deletion queue.
+    assert_eq!(fixture.stored_names(), vec![id.clone()]);
     let stats = call(
         &router,
         request("GET", "/api/files/stats", Some(owner), false, None),

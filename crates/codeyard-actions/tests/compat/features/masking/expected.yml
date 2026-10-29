@@ -1,0 +1,16 @@
+{
+  "exit_code": 0,
+  "jobs": {
+    "test": "success"
+  },
+  "contains": [
+    "***",
+    "compat:ok"
+  ],
+  "absent": [
+    "runtime-sensitive-value"
+  ],
+  "secrets": {
+    "COMPAT_SECRET": "configured-sensitive-value"
+  }
+}

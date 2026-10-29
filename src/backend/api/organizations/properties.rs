@@ -1,0 +1,322 @@
+//! Session-bound property controls. The larger body budget is isolated from other organization forms.
+use super::organization::{self, Fields};
+use crate::backend::{
+    api::http::context::PageContext,
+    app::AppState,
+    db::organizations::{properties as data, OrganizationOutcome},
+};
+use crate::webui::pages::orgs as view;
+use anyhow::{ensure, Result};
+use axum::{
+    extract::{DefaultBodyLimit, Form, Path, State},
+    http::{HeaderMap, StatusCode, Uri},
+    response::{IntoResponse, Response},
+    routing::post,
+    Router,
+};
+use std::{collections::HashSet, sync::Arc};
+use OrganizationOutcome::{Applied, Conflict, Denied, Missing, Suspended};
+
+pub(super) fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/settings/organizations/:id/properties", post(mutate))
+        .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
+}
+pub(super) async fn panel(
+    ctx: &PageContext,
+    actor: i64,
+    org: i64,
+) -> std::result::Result<view::PropertyPanel, Response> {
+    let definitions = match data::catalog(&ctx.state.pool, actor, org).await {
+        Ok(Applied(definitions)) => definitions,
+        Ok(_) => return Err(organization::not_found(ctx)),
+        Err(_) => return Err(organization::unavailable(ctx)),
+    };
+    let selected = if let Some(name) = ctx.query.get("property").filter(|name| !name.is_empty()) {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.fields.property_name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository property not found."))?;
+        let input = &definition.fields;
+        Some(view::PropertyDefinition {
+            name: input.property_name.clone(),
+            value_type: input.value_type.as_str().into(),
+            description: input.description.clone().unwrap_or_default(),
+            required: input.required,
+            require_explicit_values: input.require_explicit_values,
+            has_default: input.default_value.is_some(),
+            default_value: input
+                .default_value
+                .as_ref()
+                .map(data::PropertyValue::form_value)
+                .unwrap_or_default(),
+            allowed_values: input
+                .allowed_values
+                .as_deref()
+                .unwrap_or_default()
+                .join("\n"),
+            values_editable_by: input.values_editable_by.as_str().into(),
+        })
+    } else {
+        None
+    };
+    Ok(view::PropertyPanel {
+        definitions: definitions
+            .into_iter()
+            .map(|definition| view::PropertySummary {
+                name: definition.fields.property_name,
+                value_type: definition.fields.value_type.as_str().into(),
+                description: definition.fields.description.unwrap_or_default(),
+                required: definition.fields.required || definition.fields.require_explicit_values,
+            })
+            .collect(),
+        selected,
+    })
+}
+fn allowed(action: &str) -> &'static [&'static str] {
+    match action {
+        "save-property" => &[
+            "property_name",
+            "value_type",
+            "description",
+            "allowed_values",
+            "required",
+            "require_explicit_values",
+            "use_default",
+            "default_value",
+            "values_editable_by",
+        ],
+        "delete-property" => &["property_name", "confirm"],
+        "set-property-value" => &["property_name", "repository_names", "value", "unset"],
+        _ => &[],
+    }
+}
+fn bound(key: &str) -> usize {
+    match key {
+        "allowed_values" | "default_value" | "value" => {
+            data::MAX_ALLOWED_VALUES * (data::MAX_VALUE_BYTES + 1)
+        }
+        "description" => 4096,
+        "repository_names" => 8192,
+        "property_name" | "confirm" => 1024,
+        "csrf_token" => 64,
+        _ => 32,
+    }
+}
+fn valid_form(form: &Fields) -> bool {
+    let keys = allowed(organization::field(form, "action"));
+    !keys.is_empty()
+        && form.len() <= keys.len() + 2
+        && form.iter().all(|(key, value)| {
+            (matches!(key.as_str(), "action" | "csrf_token") || keys.contains(&key.as_str()))
+                && value.len() <= bound(key)
+        })
+}
+fn flag(form: &Fields, key: &str) -> Result<bool> {
+    match form.get(key).map(String::as_str) {
+        None | Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        _ => Err(data::invalid(key_name(key), "Invalid property checkbox value").into()),
+    }
+}
+fn key_name(key: &str) -> &'static str {
+    match key {
+        "required" => "required",
+        "require_explicit_values" => "require_explicit_values",
+        "use_default" => "default_value",
+        _ => "value",
+    }
+}
+/// Native multi-choice controls use one exact value per line, rather than exposing JSON.
+async fn apply(
+    ctx: &PageContext,
+    actor: i64,
+    org: i64,
+    form: &Fields,
+) -> Result<OrganizationOutcome<()>> {
+    let name = organization::field(form, "property_name");
+    ensure!(
+        data::valid_name(name),
+        data::invalid(
+            "property_name",
+            "Property names must contain 1-75 ASCII letters, numbers, hyphens or underscores"
+        )
+    );
+    match organization::field(form, "action") {
+        "save-property" => {
+            let kind = data::ValueType::parse(organization::field(form, "value_type"))?;
+            let choices = organization::field(form, "allowed_values");
+            let input = data::DefinitionInput {
+                property_name: name.into(),
+                value_type: kind,
+                description: organization::optional(form, "description").map(str::to_owned),
+                required: flag(form, "required")?,
+                require_explicit_values: flag(form, "require_explicit_values")?,
+                default_value: if flag(form, "use_default")? {
+                    Some(data::PropertyValue::from_form(
+                        kind,
+                        organization::field(form, "default_value"),
+                    ))
+                } else {
+                    None
+                },
+                allowed_values: if kind.selects() || !choices.is_empty() {
+                    Some(
+                        choices
+                            .lines()
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_owned)
+                            .collect(),
+                    )
+                } else {
+                    None
+                },
+                values_editable_by: data::EditableBy::parse(
+                    organization::optional(form, "values_editable_by").unwrap_or("org_actors"),
+                )?,
+            };
+            Ok(data::define(&ctx.state.pool, actor, org, &[input])
+                .await?
+                .map(|_| ()))
+        }
+        "delete-property" => {
+            ensure!(organization::field(form,"confirm")==name,data::invalid("confirm","Type the property name to confirm deleting its definition and every repository value"));
+            data::remove(&ctx.state.pool, actor, org, name).await
+        }
+        "set-property-value" => {
+            let definitions = match data::catalog(&ctx.state.pool, actor, org).await? {
+                Applied(definitions) => definitions,
+                other => return Ok(other.map(|_| ())),
+            };
+            let definition = definitions
+                .iter()
+                .find(|definition| definition.fields.property_name.eq_ignore_ascii_case(name))
+                .ok_or(data::Refusal::Missing)?;
+            let repositories = organization::field(form, "repository_names")
+                .lines()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let value = if flag(form, "unset")? {
+                None
+            } else {
+                Some(data::PropertyValue::from_form(
+                    definition.fields.value_type,
+                    organization::field(form, "value"),
+                ))
+            };
+            data::set_values(
+                &ctx.state.pool,
+                actor,
+                org,
+                &repositories,
+                &[data::ValueInput {
+                    property_name: name.into(),
+                    value,
+                }],
+            )
+            .await
+        }
+        _ => Err(data::invalid("action", "Invalid repository property operation").into()),
+    }
+}
+async fn mutate(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Path(org): Path<i64>,
+    input: std::result::Result<
+        Form<Vec<(String, String)>>,
+        axum::extract::rejection::FormRejection,
+    >,
+) -> Response {
+    let mut ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    ctx.query.insert("tab".into(), "properties".into());
+    let Form(pairs) = match input {
+        Ok(form) => form,
+        Err(error) => return error.into_response(),
+    };
+    let mut seen = HashSet::new();
+    if pairs.len() > 16 || pairs.iter().any(|(key, _)| !seen.insert(key)) {
+        return organization::invalid(&ctx);
+    }
+    let form: Fields = pairs.into_iter().collect();
+    if let Err(response) = ctx.check_csrf(&form) {
+        return response;
+    }
+    let actor = match ctx.require_user() {
+        Ok(user) => user.id,
+        Err(response) => return response,
+    };
+    if !valid_form(&form) {
+        return organization::invalid(&ctx);
+    }
+    if let Err(response) = organization::selected(&ctx, actor, org).await {
+        return response;
+    }
+    let draft = form
+        .iter()
+        .filter(|(key, _)| key.as_str() != "csrf_token")
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    let (status, message) = match apply(&ctx, actor, org, &form).await {
+        Ok(Applied(())) => {
+            let property = if organization::field(&form, "action") == "delete-property" {
+                String::new()
+            } else {
+                format!(
+                    "&property={}",
+                    crate::webui::encode_component(organization::field(&form, "property_name"))
+                )
+            };
+            return ctx.redirect(&format!("{}/{org}?tab=properties{property}", super::INDEX));
+        }
+        Ok(Denied) => (
+            StatusCode::FORBIDDEN,
+            "Only organization owners can manage repository properties.".to_owned(),
+        ),
+        Ok(Missing) => (
+            StatusCode::NOT_FOUND,
+            "Repository property not found.".to_owned(),
+        ),
+        Ok(Suspended) => (
+            StatusCode::CONFLICT,
+            "Organization governance is suspended.".to_owned(),
+        ),
+        Ok(Conflict) => (
+            StatusCode::CONFLICT,
+            "Repository properties changed. Reload and try again.".to_owned(),
+        ),
+        Err(error) => match error.downcast_ref::<data::Refusal>() {
+            Some(data::Refusal::Invalid { message, .. }) => {
+                (StatusCode::BAD_REQUEST, (*message).to_owned())
+            }
+            Some(data::Refusal::Denied) => (
+                StatusCode::FORBIDDEN,
+                "Repository property access denied.".to_owned(),
+            ),
+            Some(data::Refusal::Missing) => (
+                StatusCode::NOT_FOUND,
+                "Repository property not found.".to_owned(),
+            ),
+            _ => return organization::unavailable(&ctx),
+        },
+    };
+    ctx.query.remove("property");
+    if let Ok(Applied(definitions)) = data::catalog(&ctx.state.pool, actor, org).await {
+        if let Some(definition) = definitions.iter().find(|definition| {
+            definition
+                .fields
+                .property_name
+                .eq_ignore_ascii_case(organization::field(&form, "property_name"))
+        }) {
+            ctx.query
+                .insert("property".into(), definition.fields.property_name.clone());
+        }
+    }
+    organization::respond(&ctx, Some(org), status, Some(message), draft).await
+}

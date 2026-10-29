@@ -1,0 +1,17 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:3.21
+      env:
+        CONTAINER_VALUE: visible
+    steps:
+      - shell: sh
+        run: |
+          test -f /etc/alpine-release
+          test "$CONTAINER_VALUE" = visible
+          test -f "$GITHUB_WORKSPACE/compat-seed.txt"
+          echo compat:ok

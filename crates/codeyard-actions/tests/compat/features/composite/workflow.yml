@@ -1,0 +1,19 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/greeter
+        id: explicit
+        with:
+          who: Actions
+      - uses: ./.github/actions/greeter
+        id: default
+      - env:
+          EXPLICIT: ${{ steps.explicit.outputs.greeting }}
+          DEFAULT: ${{ steps.default.outputs.greeting }}
+        run: |
+          test "$EXPLICIT/$DEFAULT" = 'Hello Actions/Hello World'
+          echo compat:ok

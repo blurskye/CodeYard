@@ -1,0 +1,16 @@
+{
+  "exit_code": 0,
+  "jobs": {
+    "test": "success"
+  },
+  "contains": [
+    "[compat/test] ::group::compat group",
+    "compat:group-body",
+    "[compat/test] ::endgroup::",
+    "compat notice",
+    "compat warning",
+    "compat:ok",
+    "[compat/test] | ::error::literal command while stopped"
+  ],
+  "absent": ["[compat/test] ::error::literal command while stopped"]
+}

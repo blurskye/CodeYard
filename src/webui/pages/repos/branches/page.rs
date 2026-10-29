@@ -60,6 +60,9 @@ pub fn refs(
                         div { class: "title-with-count", h2 { "{title}" } span { class: "count-badge", {count_label(rows.len(), kind, plural)} } }
                         p { if tags { "Mark important points in this repository's history." } else { "View and manage lines of development." } }
                     }
+                    if !tags && repo.can_write && !repo.is_archived {
+                        NavLink { class: "btn btn-secondary", href: format!("{base}/merge"), "Merge branches" }
+                    }
                 }
                 if tags {
                     {super::super::releases::releases_tags_nav(repo, false)}

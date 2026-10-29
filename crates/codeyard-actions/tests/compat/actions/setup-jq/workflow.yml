@@ -1,0 +1,15 @@
+# https://github.com/dcarbone/install-jq-action/tree/b7ef57d46ece78760b4019dbc4080a1ba2a40b45
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: dcarbone/install-jq-action@b7ef57d46ece78760b4019dbc4080a1ba2a40b45 # v3
+        with:
+          version: "1.7.1"
+      - name: Assert documented effect
+        run: |
+          jq --version | grep 'jq-1\.7\.1'
+          echo compat:ok

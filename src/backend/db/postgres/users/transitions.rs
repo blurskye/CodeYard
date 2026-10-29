@@ -79,6 +79,37 @@ pub(crate) async fn live_session(
     )
 }
 
+pub(crate) async fn require_account(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<()> {
+    use crate::backend::db::users::accounts::{AccountCredential, AccountRestricted};
+    lock_membership_shared(tx).await?;
+    let active: bool = sqlx::query_scalar("SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR NO KEY UPDATE")
+        .bind(actor).fetch_optional(&mut **tx).await?.unwrap_or(false);
+    anyhow::ensure!(active, AccountRestricted);
+    let live = match credential {
+        AccountCredential::Session(session) => live_session(tx, actor, session).await?,
+        AccountCredential::Token(id) => {
+            let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar("SELECT expires_at FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' FOR SHARE")
+                .bind(id).bind(actor).fetch_optional(&mut **tx).await?;
+            match expiry {
+                Some(None) => true,
+                Some(Some(expiry)) => {
+                    sqlx::query_scalar("SELECT $1::timestamptz>clock_timestamp()")
+                        .bind(expiry)
+                        .fetch_one(&mut **tx)
+                        .await?
+                }
+                None => false,
+            }
+        }
+    };
+    anyhow::ensure!(live, AccountRestricted);
+    Ok(())
+}
+
 pub(crate) async fn current_password(
     tx: &mut Transaction<'_, Postgres>,
     user: i64,
@@ -367,7 +398,7 @@ pub async fn change_email(
     if !current_password(&mut tx, user_id, expected, session, false).await? {
         return Ok(EmailChange::Missing);
     }
-    if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE email=$1 AND id<>$2)")
+    if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE lower(email)=lower($1) AND id<>$2) OR EXISTS(SELECT 1 FROM user_emails WHERE lower(email)=lower($1) AND user_id<>$2)")
         .bind(email)
         .bind(user_id)
         .fetch_one(&mut *tx)
@@ -472,7 +503,8 @@ pub async fn register_password(
     if organization_name_exists(&mut tx, username).await? {
         return Ok(AccountAdmission::Conflict);
     }
-    if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username=$1 OR ($2::text IS NOT NULL AND email=$2))")
+    if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username=$1 OR ($2::text IS NOT NULL AND lower(email)=lower($2)))
+         OR ($2::text IS NOT NULL AND EXISTS(SELECT 1 FROM user_emails WHERE lower(email)=lower($2)))")
         .bind(username).bind(email).fetch_one(&mut *tx).await? { return Ok(AccountAdmission::Conflict); }
     if config.node_mode == "private" && administrator.is_none() {
         if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM signup_requests WHERE status='pending' AND (username_key=$1 OR ($2::text IS NOT NULL AND email_key=$2)))")
@@ -532,8 +564,14 @@ pub async fn admit_oauth_account(
     }
     let base: String = username_base.chars().take(200).collect();
     let mut name = base.clone();
-    for suffix in 0..32 {
-        if suffix > 0 {
+    // After the numbered names, a few random ones, so taken numbers cannot block the sign-in.
+    for suffix in 0..36 {
+        if suffix >= 32 {
+            name = format!(
+                "{base}_{}",
+                &crate::backend::identity::oauth_apps::random()[..8]
+            );
+        } else if suffix > 0 {
             name = format!("{base}_{suffix}");
         }
         if organization_name_exists(&mut tx, &name).await? {
@@ -618,20 +656,70 @@ pub async fn compare_exchange_password(
     let changed = sqlx::query_as::<_, User>("UPDATE users SET password_hash=$3,must_change_password=CASE WHEN $4 THEN FALSE ELSE must_change_password END,updated_at=NOW() WHERE id=$1 AND password_hash=$2 AND NOT is_banned RETURNING *")
         .bind(user_id).bind(expected).bind(replacement).bind(clear_must_change).fetch_optional(&mut *tx).await?;
     if changed.is_some() && revoke_sessions {
-        sqlx::query("DELETE FROM personal_access_tokens WHERE user_id=$1")
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM sessions WHERE user_id=$1")
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
-        // A reset link still in a mailbox would undo the new password.
-        sqlx::query("DELETE FROM email_tokens WHERE user_id=$1 AND purpose='reset'")
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
+        revoke_credentials(&mut tx, user_id).await?;
     }
     tx.commit().await?;
     Ok(changed)
+}
+
+/// Ends the account's sessions and access tokens, and its reset links: a reset link still in a
+/// mailbox would undo the new password.
+async fn revoke_credentials(tx: &mut Transaction<'_, Postgres>, user_id: i64) -> Result<()> {
+    sqlx::query("DELETE FROM personal_access_tokens WHERE user_id=$1")
+        .bind(user_id)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("DELETE FROM sessions WHERE user_id=$1")
+        .bind(user_id)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("DELETE FROM email_tokens WHERE user_id=$1 AND purpose='reset'")
+        .bind(user_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Uses a reset link and sets the password it was sent for. The link is used, the hash replaced
+/// and the credentials revoked in one transaction. Returns the account, or None when the link is
+/// no longer usable.
+pub async fn reset_password_with_link(
+    pool: &PgPool,
+    token_hash: &str,
+    replacement: &str,
+) -> Result<Option<i64>> {
+    let mut tx = pool.begin().await?;
+    // The membership lock comes before the link row, as in the other account changes.
+    lock_membership(&mut tx).await?;
+    let taken: Option<i64> = sqlx::query_scalar(
+        "DELETE FROM email_tokens
+         WHERE purpose = 'reset' AND token_hash = $1 AND expires_at > NOW()
+           AND EXISTS (SELECT 1 FROM users u
+                       WHERE u.id = email_tokens.user_id AND u.email = email_tokens.email
+                         AND NOT u.is_banned)
+         RETURNING user_id",
+    )
+    .bind(token_hash)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(user_id) = taken else {
+        return Ok(None);
+    };
+    owned_organizations_for_account_change(&mut tx, user_id).await?;
+    let changed = sqlx::query(
+        "UPDATE users SET password_hash=$2,must_change_password=FALSE,updated_at=NOW()
+         WHERE id=$1 AND password_hash IS NOT NULL AND NOT is_banned",
+    )
+    .bind(user_id)
+    .bind(replacement)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
+    if !changed {
+        return Ok(None);
+    }
+    revoke_credentials(&mut tx, user_id).await?;
+    tx.commit().await?;
+    Ok(Some(user_id))
 }

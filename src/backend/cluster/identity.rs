@@ -56,6 +56,11 @@ impl NodeKey {
         hex::encode(self.secret.to_bytes())
     }
 
+    /// Domain-separated application statements share the node's established signing identity.
+    pub(crate) fn sign(&self, message: &[u8]) -> [u8; 64] {
+        self.secret.sign(message).to_bytes()
+    }
+
     pub(super) fn iroh_secret(&self) -> SecretKey {
         (*self.secret).clone()
     }
@@ -132,9 +137,32 @@ fn saved_key(path: &Path, create: bool) -> Result<Option<NodeKey>> {
     // The key is written to a private temporary file and then linked into place, so
     // it appears complete and never replaces a key another process saved first. The
     // temporary name is random, so a file left by an interrupted start cannot block this one.
-    let directory = path.parent().unwrap_or(Path::new("."));
+    let directory = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut created = Vec::new();
+    let mut missing = directory;
+    while !missing.exists() {
+        created.push(missing);
+        match missing.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => missing = parent,
+            _ => break,
+        }
+    }
     fs::create_dir_all(directory)
         .with_context(|| format!("cannot create {}", directory.display()))?;
+    // A directory made here must survive a power loss with the key, so its entry is synced in
+    // its parent.
+    for made in created {
+        let parent = made
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        fs::File::open(parent)
+            .and_then(|parent| parent.sync_all())
+            .with_context(|| format!("cannot sync {}", parent.display()))?;
+    }
     let temporary = write_private(
         directory.join(format!("{KEY_FILE}.{}.tmp", Uuid::new_v4().simple())),
         &format!("{}\n", key.secret_hex()),
@@ -143,7 +171,13 @@ fn saved_key(path: &Path, create: bool) -> Result<Option<NodeKey>> {
     let linked = fs::hard_link(&temporary.0, path);
     drop(temporary);
     match linked {
-        Ok(()) => Ok(Some(key)),
+        Ok(()) => {
+            // Enrollment records this key, so its directory entry must survive a power loss.
+            fs::File::open(directory)
+                .and_then(|directory| directory.sync_all())
+                .with_context(|| format!("cannot sync {}", directory.display()))?;
+            Ok(Some(key))
+        }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => saved_key(path, false),
         Err(error) => {
             Err(error).with_context(|| format!("cannot save the node key to {}", path.display()))

@@ -1,0 +1,22 @@
+[package]
+name = "codeyard-github-graphql"
+version.workspace = true
+edition.workspace = true
+license = "LGPL-3.0-or-later"
+description = "GitHub GraphQL types and resolver traits derived from the published schema"
+
+# The generated types carry GitHub's schema descriptions as doc comments, and their JSON
+# examples are not Rust, so rustdoc must not compile them.
+[lib]
+doctest = false
+
+[dependencies]
+async-graphql = { version = "=7.2.1", default-features = false }
+async-graphql-derive = "=7.2.1"
+async-graphql-parser = "=7.2.1"
+async-graphql-value = "=7.2.1"
+chrono.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

@@ -1,0 +1,15 @@
+{
+  "exit_code": 0,
+  "jobs": {"test": "success"},
+  "secrets": {"DIAGNOSTIC_FILE": "private/file,part"},
+  "contains": [
+    "::warning file=src/test.rs,line=7,col=3,title=E42::tool diagnostic",
+    "::warning file=***,line=12,col=1,title=E44::hidden location",
+    "::warning file=***,line=13::hidden metadata",
+    "::notice file=subdir/src/other.rs,line=8::first loop diagnostic",
+    "::notice file=subdir/src/other.rs,line=9::second loop diagnostic",
+    "::error file=compat.py,line=3::matcher diagnostic",
+    "compat:ok"
+  ],
+  "absent": ["::notice file=subdir/src/other.rs,line=10", "::error file=src/test.rs,line=11", "::notice file=subdir/src/removed.rs", "private/file%2Cpart"]
+}

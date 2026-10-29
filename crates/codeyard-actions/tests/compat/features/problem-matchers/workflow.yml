@@ -1,0 +1,33 @@
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Register matchers
+        run: |
+          echo '##[add-matcher]matcher.json'
+      - name: Match tool output
+        env:
+          DIAGNOSTIC_FILE: ${{ secrets.DIAGNOSTIC_FILE }}
+        run: |
+          printf '\033[31msrc/test.rs:7:3: warning E42: tool diagnostic\033[0m\n'
+          echo "$DIAGNOSTIC_FILE:12:1: warning E44: hidden location"
+          echo '::warning file=private/file%2Cpart,line=13::hidden metadata'
+          echo 'file: src/other.rs'
+          echo '8: first loop diagnostic'
+          echo '9: second loop diagnostic'
+          echo 'break the loop'
+          echo '10: must not match'
+          echo '::remove-matcher owner=compiler::'
+          echo 'src/test.rs:11:2: error E99: removed diagnostic'
+          echo '::remove-matcher::matcher.json'
+          echo 'file: src/removed.rs'
+          echo '12: removed multiline'
+          # The pinned setup-python matcher is independent of its OS-specific installer.
+          echo '##[add-matcher]python.json'
+          touch compat.py
+          echo '  File "compat.py", line 3, in example'
+          echo "    raise ValueError('matcher diagnostic')"
+          echo '##[remove-matcher owner=python;]'
+          echo compat:ok

@@ -1,0 +1,18 @@
+# https://github.com/astral-sh/ruff-action/tree/4919ec5cf1f49eff0871dbcea0da843445b837e6
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: astral-sh/ruff-action@4919ec5cf1f49eff0871dbcea0da843445b837e6 # v3
+        with:
+          version: "0.11.0"
+          args: "--version"
+      - name: Assert documented effect
+        env:
+          RUFF_VERSION: ${{ steps.action.outputs.ruff-version }}
+        run: |
+          test "$RUFF_VERSION" = 0.11.0
+          echo compat:ok

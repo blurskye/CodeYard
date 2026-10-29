@@ -19,7 +19,7 @@ pub const ALPN_PAIR: &[u8] = b"codeyard/pair/1";
 /// Request and response calls between nodes. Members only.
 pub const ALPN_RPC: &[u8] = b"codeyard/rpc/3";
 /// CI job claims and log upload for workers without a database. Members only.
-pub const ALPN_EVENTS: &[u8] = b"codeyard/events/2";
+pub const ALPN_EVENTS: &[u8] = b"codeyard/events/5";
 
 /// Close code for a peer that is not an active member.
 pub const CLOSE_NOT_A_MEMBER: u32 = 403;
@@ -177,8 +177,10 @@ impl EndpointHooks for MembersOnly {
 }
 
 /// Used at handshake and immediately before every repository request.
+/// An active member whose roles the installation's mode allows: in single-node mode only
+/// runners connect, so a node joined for another role is refused on its next request.
 pub(crate) async fn active_member(pool: &DbPool, peer: PublicKey) -> Result<bool> {
-    db::cluster::is_active_node(pool, &peer.to_string()).await
+    db::cluster::is_admitted_node(pool, &peer.to_string()).await
 }
 
 /// iroh's connections wait 30 s for a silent peer. Three missed 5 s heartbeats is enough
@@ -488,7 +490,7 @@ mod tests {
     fn protocol_names_are_distinct_and_versioned() {
         assert_eq!(ALPN_PAIR, b"codeyard/pair/1");
         assert_eq!(ALPN_RPC, b"codeyard/rpc/3");
-        assert_eq!(ALPN_EVENTS, b"codeyard/events/2");
+        assert_eq!(ALPN_EVENTS, b"codeyard/events/5");
         let names = [ALPN_PAIR, ALPN_RPC, ALPN_EVENTS];
         for (index, name) in names.iter().enumerate() {
             assert!(names[index + 1..].iter().all(|other| other != name));

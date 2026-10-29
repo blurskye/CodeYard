@@ -3,6 +3,16 @@ use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, AdminU
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
+/// A settings mutation retains the live credential while it changes account data.
+pub enum AccountCredential<'a> {
+    Session(&'a str),
+    Token(i64),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("A live unrestricted account credential is required")]
+pub struct AccountRestricted;
+
 native_operation!(crate::backend::db::postgres::users::accounts::create_user,
     crate::backend::db::sqlite::users::accounts::create_user,
     fn create_user(pool: &DbPool, username: &str, email: Option<&str>) -> Result<User>);
@@ -62,6 +72,10 @@ native_operation!(crate::backend::db::postgres::users::accounts::get_users_by_em
     crate::backend::db::sqlite::users::accounts::get_users_by_emails,
     fn get_users_by_emails(pool: &DbPool, emails: &[String]) -> Result<Vec<User>>);
 
+native_operation!(crate::backend::db::postgres::users::accounts::get_verified_email_owners,
+    crate::backend::db::sqlite::users::accounts::get_verified_email_owners,
+    fn get_verified_email_owners(pool: &DbPool, emails: &[String]) -> Result<Vec<(String, i64)>>);
+
 native_operation!(crate::backend::db::postgres::users::accounts::get_users_by_usernames,
     crate::backend::db::sqlite::users::accounts::get_users_by_usernames,
     fn get_users_by_usernames(pool: &DbPool, usernames: &[String]) -> Result<Vec<User>>);
@@ -69,6 +83,10 @@ native_operation!(crate::backend::db::postgres::users::accounts::get_users_by_us
 native_operation!(crate::backend::db::postgres::users::accounts::get_users_by_ids,
     crate::backend::db::sqlite::users::accounts::get_users_by_ids,
     fn get_users_by_ids(pool: &DbPool, ids: &[i64]) -> Result<Vec<User>>);
+
+native_operation!(crate::backend::db::postgres::users::accounts::list_users_since,
+    crate::backend::db::sqlite::users::accounts::list_users_since,
+    fn list_users_since(pool: &DbPool, since: i64, limit: i64) -> Result<Vec<User>>);
 
 native_operation!(crate::backend::db::postgres::users::accounts::list_users,
     crate::backend::db::sqlite::users::accounts::list_users,

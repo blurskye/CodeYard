@@ -81,8 +81,9 @@ fn SiteHeader(chrome: Chrome, repo: Option<RepoChrome>, located: bool) -> Elemen
                         p { class: "site-menu-heading", "Navigation" }
                         NavLink { href: "/".to_string(), class: "site-menu-link".to_string(), "Home" }
                         NavLink { href: "/explore".to_string(), class: "site-menu-link".to_string(), "Explore" }
+                        NavLink {href:"/gists".to_string(),class:"site-menu-link".to_string(),"Gists"}
                         if let Some(username) = chrome.username.as_ref() {
-                            NavLink { href: format!("/{}?tab=repositories", encode_component(username)), class: "site-menu-link".to_string(), "Your repositories" }
+                            NavLink { href: format!("{}?tab=repositories", crate::webui::profile_path(username)), class: "site-menu-link".to_string(), "Your repositories" }
                             NavLink { href: "/new".to_string(), class: "site-menu-link".to_string(), "New repository" }
                             // The inbox is an icon in the header on wider screens. A phone finds it here.
                             NavLink { href: "/notifications".to_string(), class: "site-menu-link site-menu-phone".to_string(), aria_label: unread.map(|count| format!("Notifications, {} unread", unread_badge(count))),
@@ -164,6 +165,7 @@ fn SiteHeader(chrome: Chrome, repo: Option<RepoChrome>, located: bool) -> Elemen
                                     NavLink { href: "/new".to_string(), class: "site-menu-link".to_string(),
                                         {shell_icon(ShellIcon::Repository)} "New repository"
                                     }
+                                    NavLink {href:"/gists/new".to_string(),class:"site-menu-link".to_string(),"New gist"}
                                     NavLink { href: "/issues/new".to_string(), class: "site-menu-link".to_string(),
                                         {shell_icon(ShellIcon::Issue)} "New issue"
                                     }
@@ -181,7 +183,7 @@ fn SiteHeader(chrome: Chrome, repo: Option<RepoChrome>, located: bool) -> Elemen
                         NavLink { href: "/pulls".to_string(), class: "site-icon-button site-header-wide icon-tooltip".to_string(), aria_label: Some("Pull requests".to_string()),
                             {shell_icon(ShellIcon::PullRequest)}
                         }
-                        NavLink { href: format!("/{}?tab=repositories", encode_component(username)), class: "site-icon-button site-header-wide icon-tooltip".to_string(), aria_label: Some("Repositories".to_string()),
+                        NavLink { href: format!("{}?tab=repositories", crate::webui::profile_path(username)), class: "site-icon-button site-header-wide icon-tooltip".to_string(), aria_label: Some("Repositories".to_string()),
                             {shell_icon(ShellIcon::Repository)}
                         }
                         NavLink { href: "/notifications".to_string(), class: "site-icon-button site-header-wide icon-tooltip".to_string(), aria_label: Some(match unread {
@@ -209,8 +211,8 @@ fn SiteHeader(chrome: Chrome, repo: Option<RepoChrome>, located: bool) -> Elemen
                                     strong { "{username}" }
                                 }
                                 div { class: "site-menu-links",
-                                    NavLink { href: format!("/{}", encode_component(&username)), class: "site-menu-link".to_string(), {shell_icon(ShellIcon::User)} "Your profile" }
-                                    NavLink { href: format!("/{}?tab=repositories", encode_component(&username)), class: "site-menu-link".to_string(), {shell_icon(ShellIcon::Repository)} "Your repositories" }
+                                    NavLink { href: crate::webui::profile_path(&username), class: "site-menu-link".to_string(), {shell_icon(ShellIcon::User)} "Your profile" }
+                                    NavLink { href: format!("{}?tab=repositories", crate::webui::profile_path(&username)), class: "site-menu-link".to_string(), {shell_icon(ShellIcon::Repository)} "Your repositories" }
                                     NavLink { href: "/stars".to_string(), class: "site-menu-link".to_string(), {shell_icon(ShellIcon::Star)} "Your stars" }
                                     NavLink { href: "/issues".to_string(), class: "site-menu-link".to_string(), {shell_icon(ShellIcon::Issue)} "Your issues" }
                                     NavLink { href: "/pulls".to_string(), class: "site-menu-link".to_string(), {shell_icon(ShellIcon::PullRequest)} "Your pull requests" }
@@ -253,7 +255,7 @@ fn HeaderContext(
         // The repository name is the page heading.
         return rsx! {
             nav { class: "site-context", "aria-label": "Current location",
-                NavLink { href: format!("/{}", encode_component(&repo.owner)), class: "site-context-link".to_string(), "{repo.owner}" }
+                NavLink { href: crate::webui::profile_path(&repo.owner), class: "site-context-link".to_string(), "{repo.owner}" }
                 span { class: "site-context-slash", "aria-hidden": "true", "/" }
                 h1 { class: "site-context-heading",
                     NavLink { href: repo.base(), class: "site-context-link site-context-repo".to_string(), "{repo.name}" }
@@ -280,6 +282,8 @@ fn HeaderContext(
         "search" => Some("Search"),
         "ci" => Some("Actions"),
         "stars" => Some("Stars"),
+        "gists" if second == Some("@users") => Some("Profile"),
+        "gists" => Some("Gists"),
         "help" => Some("Help"),
         _ => None,
     };
@@ -309,7 +313,7 @@ fn HeaderContext(
             return rsx! {};
         };
         let (org, team) = (decode_component(org), decode_component(team));
-        let org_href = format!("/{}", encode_component(&org));
+        let org_href = crate::webui::profile_path(&org);
         return rsx! {
             nav { class: "site-context", "aria-label": "Current location",
                 NavLink { href: org_href.clone(), class: "site-context-link".to_string(), "{org}" }
@@ -323,13 +327,12 @@ fn HeaderContext(
     // The path is already percent-encoded; decode it to show the names and encode them once.
     let first = decode_component(first);
     let second = second.map(decode_component);
-    let owner = encode_component(&first);
     rsx! {
         nav { class: "site-context", "aria-label": "Current location",
-            NavLink { href: format!("/{owner}"), class: "site-context-link".to_string(), "{first}" }
+            NavLink { href: crate::webui::profile_path(&first), class: "site-context-link".to_string(), "{first}" }
             if let Some(name) = second {
                 span { class: "site-context-slash", "aria-hidden": "true", "/" }
-                NavLink { href: format!("/{owner}/{}", encode_component(&name)), class: "site-context-link site-context-repo".to_string(), "{name}" }
+                NavLink { href: crate::webui::repository_path(&first,&name), class: "site-context-link site-context-repo".to_string(), "{name}" }
             }
         }
     }
@@ -473,7 +476,9 @@ impl KeyShortcuts {
         let on_key = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
             |event: web_sys::KeyboardEvent| {
                 let key = event.key();
+                // A control that already handled the key, such as a select's type-ahead, keeps it.
                 if (key != "/" && key != "?")
+                    || event.default_prevented()
                     || event.ctrl_key()
                     || event.alt_key()
                     || event.meta_key()
@@ -488,6 +493,8 @@ impl KeyShortcuts {
                 };
                 let typing = document.active_element().is_some_and(|element| {
                     matches!(element.tag_name().as_str(), "INPUT" | "TEXTAREA" | "SELECT")
+                        || element.get_attribute("role").as_deref() == Some("combobox")
+                        || element.has_attribute("contenteditable")
                 });
                 if typing {
                     return;

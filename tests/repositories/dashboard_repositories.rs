@@ -144,15 +144,22 @@ async fn bounded_repository_pages(pg: bool) {
         assert_eq!(repository_count, total);
         assert_eq!(repositories.len(), tail);
         assert!(repositories_newer.is_some() && repositories_older.is_none());
-        let response = client
-            .expect(
-                "GET",
-                "/api/users/page_owner/repos?page=2",
-                serde_json::Value::Null,
-                StatusCode::OK,
-            )
-            .await;
-        assert_eq!(response.as_array().unwrap().len(), tail);
+        for suffix in ["", "/repos?page=2", "/activity", "/follow"] {
+            let reply = client
+                .exchange(
+                    "GET",
+                    &format!("/api/users/page_owner{suffix}"),
+                    "application/json",
+                    Vec::new(),
+                )
+                .await;
+            assert_eq!(
+                reply.status,
+                StatusCode::NOT_FOUND,
+                "{suffix}: {}",
+                reply.text()
+            );
+        }
     }
     let (status, html) = bob.page("/page_owner").await;
     assert_eq!(status, StatusCode::OK);
@@ -161,11 +168,11 @@ async fn bounded_repository_pages(pg: bool) {
     f.finish().await;
 }
 #[tokio::test]
-async fn sqlite_home_profile_and_api_repository_pages_are_bounded() {
+async fn sqlite_home_and_profile_repository_pages_are_bounded() {
     bounded_repository_pages(false).await;
 }
 #[tokio::test]
-async fn postgres_home_profile_and_api_repository_pages_are_bounded() {
+async fn postgres_home_and_profile_repository_pages_are_bounded() {
     bounded_repository_pages(true).await;
 }
 

@@ -72,6 +72,7 @@ fn input_failure(error: AccountInputError) -> ApiFailure {
         AccountInputError::UsernameReserved => "That username is reserved",
         AccountInputError::PasswordBounds => "Password must be between 8 and 1024 bytes",
         AccountInputError::EmailBounds => "Email exceeds supported bounds",
+        AccountInputError::EmailFormat => "Enter a valid email address",
     };
     ApiError::failure(StatusCode::BAD_REQUEST, "validation_error", message)
 }
@@ -128,15 +129,6 @@ pub(crate) fn login_failure(error: LoginError) -> ApiFailure {
             "That code does not match. Check your app and try again.",
         ),
     }
-}
-
-/// The JSON API does not complete two-factor sign-in, so a password is not enough for it.
-pub(crate) fn two_factor_required_failure() -> ApiFailure {
-    ApiError::failure(
-        StatusCode::FORBIDDEN,
-        "two_factor_required",
-        "This account signs in with two-factor authentication on the web. Sign in on the web for the API; use an access token for Git.",
-    )
 }
 
 pub(crate) fn two_factor_failure(error: TwoFactorError) -> ApiFailure {

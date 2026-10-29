@@ -5,6 +5,7 @@ use crate::backend::crypto::SecretEncryptor;
 use crate::backend::db::models::{Webhook, WebhookDelivery};
 use crate::backend::db::webhooks::{self as hooks, NewDelivery};
 use crate::backend::db::DbPool;
+use base64::Engine as _;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::net::SocketAddr;
@@ -24,6 +25,7 @@ const HEADERS_LIMIT: usize = 8 * 1024;
 /// What one delivery sends. The body is already encoded for `content_type`.
 #[derive(Debug, Clone)]
 pub struct Outgoing {
+    pub redelivery: bool,
     pub event: String,
     pub action: Option<String>,
     pub guid: String,
@@ -31,6 +33,18 @@ pub struct Outgoing {
     pub body: String,
     /// Automatic events obey the active flag and subscription; manual redelivery does not.
     pub automatic: bool,
+}
+
+pub(crate) fn json_payload(outgoing: &Outgoing) -> Option<serde_json::Value> {
+    if outgoing.content_type == super::settings::FORM_CONTENT_TYPE {
+        let json = url::form_urlencoded::parse(outgoing.body.as_bytes())
+            .find(|(key, _)| key == "payload")?
+            .1
+            .into_owned();
+        serde_json::from_str(&json).ok()
+    } else {
+        serde_json::from_str(&outgoing.body).ok()
+    }
 }
 
 enum Attempt {
@@ -53,8 +67,35 @@ pub async fn send(pool: &DbPool, hook: &Webhook, outgoing: &Outgoing) {
         Ok(None) => return,
         Err(error) => failed_record(outgoing, 0, error),
     };
-    if let Err(error) = hooks::insert_delivery(pool, hook.id, &record).await {
+    let payload = hook
+        .app_id
+        .map(|_| json_payload(outgoing).unwrap_or_default());
+    // The hook already received this delivery, so a storage failure retries only the record.
+    let mut retries = RETRY_DELAYS.iter();
+    loop {
+        let stored = match (hook.app_id, &payload) {
+            (Some(app), Some(payload)) => {
+                crate::backend::db::github_app_hooks::insert_delivery(
+                    pool,
+                    app,
+                    &record,
+                    outgoing.redelivery,
+                    payload["installation"]["id"].as_i64(),
+                    payload["repository"]["id"].as_i64(),
+                    &hook.payload_url,
+                )
+                .await
+            }
+            _ => hooks::insert_delivery(pool, hook.id, &record).await,
+        };
+        let Err(error) = stored else {
+            return;
+        };
         tracing::warn!(webhook_id = hook.id, %error, "could not record a webhook delivery");
+        match retries.next() {
+            Some(delay) => tokio::time::sleep(*delay).await,
+            None => return,
+        }
     }
 }
 
@@ -67,9 +108,10 @@ pub fn redelivery(recorded: &WebhookDelivery) -> Outgoing {
         .unwrap_or("application/json")
         .to_owned();
     Outgoing {
+        redelivery: true,
         event: recorded.event.clone(),
         action: recorded.action.clone(),
-        guid: uuid::Uuid::new_v4().to_string(),
+        guid: recorded.guid.clone(),
         content_type,
         body: recorded.request_body.clone(),
         automatic: false,
@@ -81,6 +123,11 @@ async fn current_hook(
     hook: &Webhook,
     outgoing: &Outgoing,
 ) -> Result<bool, &'static str> {
+    if let Some(app) = hook.app_id {
+        return super::github_apps::current(pool, app, hook, outgoing)
+            .await
+            .map_err(|_| "Webhook storage is unavailable");
+    }
     let owner = match (hook.repo_id, hook.org_id) {
         (Some(id), None) => hooks::HookOwner::Repository(id),
         (None, Some(id)) => hooks::HookOwner::Organization(id),
@@ -100,10 +147,29 @@ async fn current_hook(
             }
         }
     };
+    // An organization hook gets a repository's events only while the organization owns it. The
+    // repository may have been transferred while this send waited.
+    if let (Some(org), true) = (hook.org_id, outgoing.automatic) {
+        let repository =
+            json_payload(outgoing).and_then(|payload| payload["repository"]["id"].as_i64());
+        if let Some(repository) = repository {
+            let owned =
+                crate::backend::db::repositories::records::get_repository_by_id(pool, repository)
+                    .await
+                    .map_err(|_| "Webhook storage is unavailable")?
+                    .is_some_and(|repository| repository.owner_org_id == Some(org));
+            if !owned {
+                return Ok(false);
+            }
+        }
+    }
     Ok(current.payload_url == hook.payload_url
         && current.content_type == hook.content_type
         && current.encrypted_secret == hook.encrypted_secret
         && current.secret_nonce == hook.secret_nonce
+        && current.username == hook.username
+        && current.encrypted_password == hook.encrypted_password
+        && current.password_nonce == hook.password_nonce
         && current.ssl_verify == hook.ssl_verify
         && current.updated_at == hook.updated_at
         && (!outgoing.automatic
@@ -127,7 +193,31 @@ async fn transmit(
         ("X-GitHub-Event", outgoing.event.clone()),
         ("X-GitHub-Delivery", outgoing.guid.clone()),
     ];
+    if let Some(username) = &hook.username {
+        let password = match (&hook.encrypted_password, &hook.password_nonce) {
+            (Some(ciphertext), Some(nonce)) => open(ciphertext, nonce)?,
+            (None, None) => Vec::new(),
+            _ => return Err("The HTTP password could not be opened"),
+        };
+        let mut credentials = format!("{username}:").into_bytes();
+        credentials.extend_from_slice(&password);
+        headers.push((
+            "Authorization",
+            format!(
+                "Basic {}",
+                base64::engine::general_purpose::STANDARD.encode(credentials)
+            ),
+        ));
+    }
     if let Some(secret) = &secret {
+        // GitHub also sends the older SHA-1 signature, which some receivers still check.
+        let mut legacy =
+            Hmac::<sha1::Sha1>::new_from_slice(secret).expect("HMAC accepts any key length");
+        legacy.update(outgoing.body.as_bytes());
+        headers.push((
+            "X-Hub-Signature",
+            format!("sha1={}", hex::encode(legacy.finalize().into_bytes())),
+        ));
         headers.push((
             "X-Hub-Signature-256",
             format!(
@@ -138,13 +228,14 @@ async fn transmit(
     }
     let mut retries = RETRY_DELAYS.iter();
     let attempt = loop {
-        if !current_hook(pool, hook, outgoing).await? {
-            return Ok(None);
-        }
         let slot = super::SLOTS
             .acquire()
             .await
             .map_err(|_| "Webhook sends are stopped")?;
+        // The hook or its installation may have changed while this send waited for a slot.
+        if !current_hook(pool, hook, outgoing).await? {
+            return Ok(None);
+        }
         let started_attempt = Instant::now();
         let attempt = attempt(&url, hook.ssl_verify, &headers, &outgoing.body).await;
         let elapsed = started_attempt.elapsed();
@@ -162,7 +253,16 @@ async fn transmit(
         }
     };
     let (attempt, elapsed) = attempt;
-    let request_headers = join_headers(headers.iter().map(|(name, value)| (*name, value.as_str())));
+    let request_headers = join_headers(headers.iter().map(|(name, value)| {
+        (
+            *name,
+            if *name == "Authorization" {
+                "********"
+            } else {
+                value.as_str()
+            },
+        )
+    }));
     let duration_ms = i32::try_from(elapsed.as_millis()).unwrap_or(i32::MAX);
     Ok(Some(match attempt {
         Attempt::Responded {
@@ -170,6 +270,7 @@ async fn transmit(
             headers,
             body,
         } => NewDelivery {
+            redelivery: outgoing.redelivery,
             guid: outgoing.guid.clone(),
             event: outgoing.event.clone(),
             action: outgoing.action.clone(),
@@ -310,13 +411,16 @@ fn open_secret(hook: &Webhook) -> Result<Option<Vec<u8>>, &'static str> {
     let (Some(ciphertext), Some(nonce)) = (&hook.encrypted_secret, &hook.secret_nonce) else {
         return Ok(None);
     };
+    open(ciphertext, nonce).map(Some)
+}
+
+fn open(ciphertext: &[u8], nonce: &[u8]) -> Result<Vec<u8>, &'static str> {
     let encryptor = SecretEncryptor::configured_from_env()
         .ok()
         .flatten()
         .ok_or("The secret key is not configured")?;
     encryptor
         .decrypt(ciphertext, nonce)
-        .map(Some)
         .map_err(|_| "The secret could not be opened")
 }
 
@@ -347,6 +451,7 @@ fn join_headers<'a>(pairs: impl Iterator<Item = (&'a str, &'a str)>) -> String {
 
 fn failed_record(outgoing: &Outgoing, duration_ms: i32, error: &str) -> NewDelivery {
     NewDelivery {
+        redelivery: outgoing.redelivery,
         guid: outgoing.guid.clone(),
         event: outgoing.event.clone(),
         action: outgoing.action.clone(),
@@ -385,6 +490,7 @@ mod tests {
     #[test]
     fn preflight_failure_preserves_content_type() {
         let outgoing = Outgoing {
+            redelivery: false,
             event: "push".into(),
             action: None,
             guid: "id".into(),
@@ -419,6 +525,7 @@ mod tests {
     #[test]
     fn redelivery_reuses_the_recorded_body_and_content_type() {
         let recorded = WebhookDelivery {
+            redelivery: false,
             id: 1,
             webhook_id: 2,
             guid: "old".into(),
@@ -438,7 +545,8 @@ mod tests {
         assert_eq!(outgoing.content_type, "application/x-www-form-urlencoded");
         assert_eq!(outgoing.body, "payload=%7B%7D");
         assert_eq!(outgoing.event, "push");
-        assert_ne!(outgoing.guid, "old");
+        assert_eq!(outgoing.guid, "old");
+        assert!(outgoing.redelivery);
     }
 
     /// reqwest reads the proxy variables when a client is built, so the client is built in a child

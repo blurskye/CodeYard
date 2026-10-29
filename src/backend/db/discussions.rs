@@ -3,6 +3,12 @@ use crate::backend::db::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 
+/// A comment form's content revision, shared by display and transactional mutation.
+pub fn comment_revision(body: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(body.as_bytes()))
+}
+
 // The last number each repository has allocated to an issue or pull request. A repository
 // without a counter has none and is absent from the result.
 native_operation!(crate::backend::db::postgres::discussions::last_discussion_numbers,
@@ -27,6 +33,24 @@ pub enum DiscussionWriteRefusal {
     #[error("discussion_revision_changed")]
     RevisionChanged,
 }
+
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+pub enum LockRefusal {
+    #[error("Discussion lock denied")]
+    Denied,
+    #[error("Discussion not found")]
+    Missing,
+    #[error("Invalid lock reason")]
+    InvalidReason,
+}
+
+pub(crate) fn valid_lock_reason(reason: Option<&str>) -> bool {
+    reason.is_none_or(|reason| matches!(reason, "off-topic" | "too heated" | "resolved" | "spam"))
+}
+
+native_operation!(crate::backend::db::postgres::discussions::set_lock,
+    crate::backend::db::sqlite::discussions::set_lock,
+    fn set_lock(pool: &DbPool, actor_id: i64, repo_id: i64, item: super::assignees::AssignedItem, locked: bool, reason: Option<&str>) -> Result<()>);
 
 pub struct DiscussionEdit<'a> {
     pub actor_id: i64,
@@ -174,6 +198,7 @@ pub(crate) const SHOWN_PR_COMMENT: &str =
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ListFilter<'a> {
     pub state: Option<&'a str>,
+    pub head_ref: Option<&'a str>,
     /// Include merged pull requests in the closed milestone tab.
     pub include_merged: bool,
     pub search: Option<&'a str>,

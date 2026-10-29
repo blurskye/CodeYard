@@ -9,7 +9,6 @@ use axum::http::StatusCode;
 use clients::Client;
 use codeyard::backend::db;
 use database::Database;
-use serde_json::json;
 use std::sync::Arc;
 
 const PUBLIC: &str =
@@ -40,15 +39,6 @@ async fn contract(pg: bool) {
             .unwrap_err(),
             codeyard::backend::identity::keys::KeyError::InvalidName,
         );
-        let error = alice
-            .expect(
-                "POST",
-                "/api/user/keys",
-                json!({"name": name, "public_key": PUBLIC}),
-                StatusCode::BAD_REQUEST,
-            )
-            .await;
-        assert_eq!(error["error"], "validation_error");
         let (status, _) = alice
             .form("/settings/keys", &[("name", &name), ("public_key", PUBLIC)])
             .await;
@@ -67,16 +57,18 @@ async fn contract(pg: bool) {
             .await
             .unwrap_err();
         assert_eq!(error.downcast_ref::<Refusal>(), Some(&Refusal::InvalidKey));
-        let error = alice
-            .expect(
-                "POST",
-                "/api/user/keys",
-                json!({"name": "Invalid", "public_key": invalid}),
-                StatusCode::BAD_REQUEST,
+        let reply = alice
+            .form_reply(
+                "/settings/keys",
+                &[("name", "Invalid"), ("public_key", &invalid)],
             )
             .await;
-        assert_eq!(error["error"], "validation_error");
-        assert!(!error.to_string().contains("AAAA"));
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.text());
+        if invalid.contains("PRIVATE KEY") {
+            assert!(!reply.text().contains("AAAA"));
+        } else {
+            assert!(reply.text().contains("Invalid SSH public key format."));
+        }
     }
     assert!(db::users::ssh_keys::list_user_keys(f.pool(), alice_id)
         .await
@@ -108,18 +100,22 @@ async fn contract(pg: bool) {
     assert!(page.contains("never a private key"));
     assert!(!page.contains("BEGIN OPENSSH PRIVATE KEY"));
 
-    // Security-key algorithm names must not be rejected by an API prefix shortcut.
+    // Security-key algorithm names must not be rejected by a prefix shortcut.
     let security_key = "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJlAAAAC3NzaDpmaXh0dXJl";
-    let enrolled = alice
-        .expect(
-            "POST",
-            "/api/user/keys",
-            json!({"name": "Security key", "public_key": security_key}),
-            StatusCode::CREATED,
+    let reply = alice
+        .form_reply(
+            "/settings/keys",
+            &[("name", "Security key"), ("public_key", security_key)],
         )
         .await;
-    assert_eq!(enrolled["key_type"], "sk-ssh-ed25519@openssh.com");
-    let id = enrolled["id"].as_i64().unwrap();
+    assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
+    let enrolled = db::users::ssh_keys::list_user_keys(f.pool(), alice_id)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(enrolled.key_type, "sk-ssh-ed25519@openssh.com");
+    let id = enrolled.id;
     assert_eq!(
         db::users::ssh_keys::get_user_by_ssh_key_id(f.pool(), id)
             .await
@@ -129,14 +125,10 @@ async fn contract(pg: bool) {
             .id,
         alice_id
     );
-    alice
-        .expect(
-            "DELETE",
-            &format!("/api/user/keys/{id}"),
-            json!(null),
-            StatusCode::NO_CONTENT,
-        )
+    let reply = alice
+        .form_reply(&format!("/settings/keys/{id}/delete"), &[])
         .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
 
     let form_public = format!("  {PUBLIC} alice public comment  ");
     let (status, _) = alice
@@ -180,16 +172,6 @@ async fn contract(pg: bool) {
             .await
             .unwrap_err();
         assert_eq!(error.downcast_ref::<Refusal>(), Some(&Refusal::AlreadyUsed));
-        let error = client
-            .expect(
-                "POST",
-                "/api/user/keys",
-                json!({"name": "Copy", "public_key": public}),
-                StatusCode::CONFLICT,
-            )
-            .await;
-        assert_eq!(error["error"], "key_already_registered");
-        assert!(!error.to_string().contains("alice"));
         let (status, page) = client
             .form(
                 "/settings/keys",
@@ -199,6 +181,9 @@ async fn contract(pg: bool) {
         assert_eq!(status, StatusCode::CONFLICT);
         assert!(page.contains("This SSH public key is already registered."));
         assert!(page.contains("Duplicate draft") && page.contains(&public));
+        if actor == bob_id {
+            assert!(!page.contains("alice public comment"));
+        }
     }
 
     // Serialize enrollment even when several users submit a new key simultaneously.
@@ -250,13 +235,6 @@ async fn contract(pg: bool) {
     );
 
     // Other users cannot delete this key.
-    bob.expect(
-        "DELETE",
-        &format!("/api/user/keys/{}", key.id),
-        json!(null),
-        StatusCode::NOT_FOUND,
-    )
-    .await;
     let (status, page) = bob
         .form(&format!("/settings/keys/{}/delete", key.id), &[])
         .await;
@@ -266,22 +244,10 @@ async fn contract(pg: bool) {
         .unwrap()
         .iter()
         .any(|row| row.id == key.id));
-    alice
-        .expect(
-            "DELETE",
-            &format!("/api/user/keys/{}", key.id),
-            json!(null),
-            StatusCode::NO_CONTENT,
-        )
+    let reply = alice
+        .form_reply(&format!("/settings/keys/{}/delete", key.id), &[])
         .await;
-    alice
-        .expect(
-            "DELETE",
-            &format!("/api/user/keys/{}", key.id),
-            json!(null),
-            StatusCode::NOT_FOUND,
-        )
-        .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     let (status, page) = alice
         .form(&format!("/settings/keys/{}/delete", key.id), &[])
         .await;
@@ -367,9 +333,16 @@ async fn contract(pg: bool) {
             Some(&Refusal::AccountRestricted)
         );
         assert_eq!(
-            codeyard::backend::identity::keys::delete(f.pool(), user, existing.id)
-                .await
-                .unwrap_err(),
+            codeyard::backend::identity::keys::delete(
+                f.pool(),
+                user,
+                &codeyard::backend::db::users::accounts::AccountCredential::Session(
+                    &client.session
+                ),
+                existing.id,
+            )
+            .await
+            .unwrap_err(),
             codeyard::backend::identity::keys::KeyError::AccountRestricted
         );
 
@@ -397,6 +370,21 @@ async fn contract(pg: bool) {
             .unwrap();
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].id, existing.id);
+    }
+    for (method, path) in [
+        ("GET", "/api/user/keys".to_owned()),
+        ("POST", "/api/user/keys".to_owned()),
+        ("DELETE", format!("/api/user/keys/{}", key.id)),
+    ] {
+        let reply = alice
+            .exchange(method, &path, "application/json", b"{}".to_vec())
+            .await;
+        assert_eq!(
+            reply.status,
+            StatusCode::NOT_FOUND,
+            "{method} {path}: {}",
+            reply.text()
+        );
     }
     f.finish().await;
 }
@@ -461,7 +449,22 @@ async fn session_enrollment_contract(pg: bool) {
         .await
         .unwrap()
         .is_some());
-    keys::delete(f.pool(), user.id, key.id).await.unwrap();
+    // The password change ended the session, so it can no longer delete the key either.
+    assert_eq!(
+        keys::delete(
+            f.pool(),
+            user.id,
+            &codeyard::backend::db::users::accounts::AccountCredential::Session(&session),
+            key.id,
+        )
+        .await
+        .unwrap_err(),
+        KeyError::InvalidSession
+    );
+    assert!(ssh_keys::get_user_by_ssh_key_id(f.pool(), key.id)
+        .await
+        .unwrap()
+        .is_some());
     assert_eq!(
         keys::enroll(f.pool(), user.id, Some(&session), "After change", PUBLIC)
             .await
@@ -477,6 +480,14 @@ async fn session_enrollment_contract(pg: bool) {
         None,
         None,
         chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    keys::delete(
+        f.pool(),
+        user.id,
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(&session),
+        key.id,
     )
     .await
     .unwrap();

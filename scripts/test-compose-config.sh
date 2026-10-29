@@ -31,7 +31,7 @@ web=$(resolve GITSERV_NODE_ROLES=web)
 printf '%s\n' "$web" | grep -Fxq '      GITSERV_NODE_ROLES: web'
 
 all=$(resolve)
-printf '%s\n' "$all" | grep -Fxq '      GITSERV_NODE_ROLES: web,storage,ssh,actions-worker'
+printf '%s\n' "$all" | grep -Fxq '      GITSERV_NODE_ROLES: server,runner'
 printf '%s\n' "$all" | grep -Eq "      SSH_TRUSTED_PROXY_IPS: (\"\"|'')$"
 
 printf '%s\n' 'SSH_TRUSTED_PROXY_IPS=192.0.2.10,2001:db8::10' > "$env_file"

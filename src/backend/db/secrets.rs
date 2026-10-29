@@ -3,6 +3,28 @@ use crate::backend::crypto::{SecretEncryptor, SecretError};
 use crate::backend::db::models::RepoSecretMeta;
 use crate::backend::db::DbPool;
 
+#[derive(Clone, Copy)]
+pub enum SecretKind {
+    Actions,
+    Dependabot,
+}
+
+impl SecretKind {
+    pub(crate) fn secrets_table(self) -> &'static str {
+        match self {
+            Self::Actions => "repo_secrets",
+            Self::Dependabot => "repo_dependabot_secrets",
+        }
+    }
+
+    pub(crate) fn keys_table(self) -> &'static str {
+        match self {
+            Self::Actions => "repo_actions_keys",
+            Self::Dependabot => "repo_dependabot_keys",
+        }
+    }
+}
+
 pub const MAX_SECRET_NAME_BYTES: usize = 255;
 pub const MAX_SECRET_VALUE_BYTES: usize = 48 * 1024;
 /// Most repository secrets one CI claim carries.
@@ -23,6 +45,12 @@ pub enum SecretsError {
     Authority(#[source] anyhow::Error),
     #[error("Secret not found")]
     NotFound,
+    #[error("Secret visibility must be selected")]
+    NotSelected,
+    #[error("Invalid selected repositories")]
+    InvalidRepositorySelection,
+    #[error("Secret value is required")]
+    MissingValue,
     #[error("Repository secret name is invalid")]
     InvalidName,
     #[error("Repository secret name uses a reserved prefix")]
@@ -85,7 +113,17 @@ pub fn validate_repository_secret(name: &str, value: &str) -> Result<(), Secrets
 /// Checks the whole set that one CI claim carries: each secret, then the count and the
 /// total size.
 pub fn validate_repository_secrets(secrets: &[(String, String)]) -> Result<(), SecretsError> {
-    if secrets.len() > MAX_REPOSITORY_SECRETS {
+    validate_secret_set(secrets, MAX_REPOSITORY_SECRETS)
+}
+
+/// A workflow may inherit 100 organization secrets as well as its 100 repository secrets.
+/// The RPC byte bound is unchanged.
+pub fn validate_workflow_secrets(secrets: &[(String, String)]) -> Result<(), SecretsError> {
+    validate_secret_set(secrets, MAX_REPOSITORY_SECRETS * 2)
+}
+
+fn validate_secret_set(secrets: &[(String, String)], limit: usize) -> Result<(), SecretsError> {
+    if secrets.len() > limit {
         return Err(SecretsError::TooManySecrets);
     }
     let mut total = 0;
@@ -126,14 +164,35 @@ pub async fn create_or_update_secret(
     name: &str,
     value: &str,
     created_by_id: Option<i64>,
-) -> Result<(), SecretsError> {
+) -> Result<bool, SecretsError> {
+    create_or_update_secret_for(
+        pool,
+        encryptor,
+        (repo_id, SecretKind::Actions),
+        name,
+        value,
+        created_by_id,
+    )
+    .await
+}
+
+pub async fn create_or_update_secret_for(
+    pool: &DbPool,
+    encryptor: &SecretEncryptor,
+    repository: (i64, SecretKind),
+    name: &str,
+    value: &str,
+    created_by_id: Option<i64>,
+) -> Result<bool, SecretsError> {
+    // Secret names are case-insensitive, as on GitHub, so every writer stores them uppercase.
+    let name = &name.to_ascii_uppercase();
     validate_repository_secret(name, value)?;
     match pool {
         DbPool::Postgres(native) => {
             crate::backend::db::postgres::secrets::create_or_update_secret(
                 native,
                 encryptor,
-                repo_id,
+                repository,
                 name,
                 value,
                 created_by_id,
@@ -144,7 +203,7 @@ pub async fn create_or_update_secret(
             crate::backend::db::sqlite::secrets::create_or_update_secret(
                 native,
                 encryptor,
-                repo_id,
+                repository,
                 name,
                 value,
                 created_by_id,
@@ -154,17 +213,52 @@ pub async fn create_or_update_secret(
     }
 }
 
+pub async fn list_secrets(
+    pool: &DbPool,
+    actor_id: i64,
+    repo_id: i64,
+) -> Result<Vec<RepoSecretMeta>, SecretsError> {
+    list_secrets_for(pool, SecretKind::Actions, actor_id, repo_id).await
+}
+
+pub async fn delete_secret(
+    pool: &DbPool,
+    actor_id: i64,
+    repo_id: i64,
+    name: &str,
+) -> Result<bool, SecretsError> {
+    // An upgrade keeps an old lowercase name whose uppercase form was taken, so the exact name
+    // is deleted first.
+    let upper = name.to_ascii_uppercase();
+    Ok(
+        delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, name).await?
+            || (upper != name
+                && delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, &upper).await?),
+    )
+}
+
+native_operation!(crate::backend::db::postgres::secrets::repository_secret_key,
+    crate::backend::db::sqlite::secrets::repository_secret_key,
+    fn repository_secret_key_for(
+    pool: &DbPool,
+    kind: SecretKind,
+    encryptor: &SecretEncryptor,
+    actor_id: i64,
+    repo_id: i64,
+) -> Result<(String, crypto_box::SecretKey), SecretsError>);
+
 native_operation!(crate::backend::db::postgres::secrets::list_secrets,
     crate::backend::db::sqlite::secrets::list_secrets,
-    fn list_secrets(
+    fn list_secrets_for(
     pool: &DbPool,
+    kind: SecretKind,
     actor_id: i64,
     repo_id: i64,
 ) -> Result<Vec<RepoSecretMeta>, SecretsError>);
 
 native_operation!(crate::backend::db::postgres::secrets::delete_secret,
     crate::backend::db::sqlite::secrets::delete_secret,
-    fn delete_secret(pool: &DbPool, actor_id: i64, repo_id: i64, name: &str) -> Result<bool, SecretsError>);
+    fn delete_secret_for(pool: &DbPool, kind: SecretKind, actor_id: i64, repo_id: i64, name: &str) -> Result<bool, SecretsError>);
 
 // A claim with no encryption key must not silently omit configured secrets.
 native_operation!(crate::backend::db::postgres::secrets::repository_has_secrets,

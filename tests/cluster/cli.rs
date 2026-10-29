@@ -22,10 +22,50 @@ fn text(bytes: &[u8]) -> String {
 }
 
 #[tokio::test]
+async fn single_node_mode_refuses_cluster_roles_until_cluster_enable() {
+    use crate::support::native_database::PostgresDatabase;
+    let database = PostgresDatabase::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join(".env"), "").unwrap();
+    let url = database.connection_url();
+    let environment = [("DATABASE_URL", url.as_str())];
+    for arguments in [
+        &["cluster", "invite", "--roles", "storage"][..],
+        &["serve", "--roles", "web"][..],
+        &["serve", "--roles", "storage"][..],
+    ] {
+        let output = run(directory.path(), arguments, &environment);
+        assert!(!output.status.success(), "{arguments:?}");
+        let error = text(&output.stderr);
+        assert!(
+            error.contains("single-node mode") && error.contains("codeyard cluster enable"),
+            "{arguments:?}: {error}"
+        );
+    }
+    let output = run(directory.path(), &["cluster", "enable"], &environment);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(text(&output.stdout).contains("Cluster mode is on"));
+    let output = run(directory.path(), &["cluster", "enable"], &environment);
+    assert!(text(&output.stdout).contains("already on"));
+    // The invite now gets past the mode check and stops at the missing node key.
+    let output = run(
+        directory.path(),
+        &["cluster", "invite", "--roles", "storage"],
+        &environment,
+    );
+    let error = text(&output.stderr);
+    assert!(!error.contains("single-node mode"), "{error}");
+    assert!(error.contains("no key yet"), "{error}");
+}
+
+#[tokio::test]
 async fn repository_cli_requires_web_or_ssh_identity_before_inserting() {
     use crate::support::native_database::PostgresDatabase;
     use codeyard::backend::db;
     let database = PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let user = db::users::accounts::create_user(&database.pool, "owner", None)
         .await
         .unwrap();
@@ -224,6 +264,7 @@ fn membership_commands_refuse_a_sqlite_installation() {
         vec!["cluster", "approve", "node-1"],
         vec!["cluster", "revoke", "node-1"],
         vec!["cluster", "adopt"],
+        vec!["cluster", "enable"],
         vec!["cluster", "invite", "--roles", "storage"],
     ] {
         let output = run(directory.path(), &arguments, &environment);
@@ -286,7 +327,7 @@ fn serving_with_cluster_settings_on_sqlite_stops_before_listening() {
 }
 
 #[test]
-fn a_node_without_web_or_ssh_needs_a_cluster_to_serve() {
+fn a_storage_only_node_is_refused_in_single_node_mode() {
     let directory = tempfile::tempdir().unwrap();
     let state = directory.path().join("state");
     let repos = directory.path().join("repos");
@@ -306,7 +347,7 @@ fn a_node_without_web_or_ssh_needs_a_cluster_to_serve() {
     );
     assert!(!output.status.success());
     assert!(
-        text(&output.stderr).contains("join a cluster first"),
+        text(&output.stderr).contains("run `codeyard cluster enable`"),
         "{}",
         text(&output.stderr)
     );

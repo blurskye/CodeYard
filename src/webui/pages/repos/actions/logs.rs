@@ -1,4 +1,5 @@
-//! Pure projection of persisted act output. A missing marker never proves success.
+//! Pure projection of persisted act and codeyard-actions output. A missing marker never proves
+//! success.
 use super::{
     run::run_duration,
     runs::{icon, preserved_inputs, status_icon, status_label},
@@ -99,8 +100,14 @@ fn act_payload(line: &str) -> Option<&str> {
     Some(inner[inner.find(']')? + 1..].trim_start())
 }
 
+/// The step a start line names: act's "⭐ Run <name>" or codeyard-actions' "Step started: <name>".
 pub fn act_step_start(line: &str) -> Option<String> {
-    let rest = act_payload(line)?.strip_prefix('⭐')?.trim_start();
+    let payload = act_payload(line)?;
+    if let Some(name) = payload.strip_prefix("Step started:") {
+        let name = name.trim();
+        return (!name.is_empty()).then(|| name.to_owned());
+    }
+    let rest = payload.strip_prefix('⭐')?.trim_start();
     let rest = rest.strip_prefix("Run")?;
     if !rest.starts_with(char::is_whitespace) {
         return None;
@@ -109,8 +116,26 @@ pub fn act_step_start(line: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// A step's end: act's "✅ Success - <name> [time]", or codeyard-actions' "Step completed:
+/// <name> (<conclusion>; outcome: <outcome>)" and "Step skipped: <name>".
 pub fn act_step_outcome(line: &str) -> Option<(String, &'static str, Option<String>)> {
     let rest = act_payload(line)?;
+    if let Some(name) = rest.strip_prefix("Step skipped:") {
+        let name = name.trim();
+        return (!name.is_empty()).then(|| (name.to_owned(), "skipped", None));
+    }
+    if let Some(completed) = rest.strip_prefix("Step completed:") {
+        let (name, result) = completed.trim().rsplit_once(" (")?;
+        let status = match result.split(';').next()? {
+            "success" => "success",
+            "failure" => "failed",
+            "cancelled" => "cancelled",
+            "skipped" => "skipped",
+            _ => return None,
+        };
+        let name = name.trim();
+        return (!name.is_empty()).then(|| (name.to_owned(), status, None));
+    }
     let (status, rest) = if let Some(rest) = rest.strip_prefix('✅') {
         ("success", rest.trim_start().strip_prefix("Success")?)
     } else {
@@ -142,10 +167,12 @@ pub fn act_step_outcome(line: &str) -> Option<(String, &'static str, Option<Stri
 
 /// act ends a job with a flag line, "🏁  Job succeeded" or "🏁  Job failed". It gets the same
 /// status icon as a step outcome.
+/// codeyard-actions ends one with "Job completed: <result>".
 pub fn act_job_result(line: &str) -> Option<(&'static str, &'static str)> {
     match act_payload(line)?.trim_start_matches('🏁').trim() {
-        "Job succeeded" => Some(("success", "Job succeeded")),
-        "Job failed" => Some(("failed", "Job failed")),
+        "Job succeeded" | "Job completed: success" => Some(("success", "Job succeeded")),
+        "Job failed" | "Job completed: failure" => Some(("failed", "Job failed")),
+        "Job completed: cancelled" => Some(("cancelled", "Job cancelled")),
         _ => None,
     }
 }
@@ -158,6 +185,58 @@ pub fn display_log_text(line: &str) -> &str {
         }
     }
     line
+}
+
+#[derive(Debug, PartialEq)]
+pub(super) struct Annotation {
+    pub severity: String,
+    pub message: String,
+    pub title: String,
+    pub file: String,
+    pub line: String,
+    pub column: String,
+}
+
+fn command_payload(line: &str) -> Option<&str> {
+    let payload = act_payload(line).unwrap_or(line).trim_start();
+    (!payload.starts_with('|')).then_some(payload)
+}
+
+pub(super) fn annotation(line: &str) -> Option<Annotation> {
+    let payload = command_payload(line)?;
+    let start = payload.find("::")?;
+    let prefix = payload[..start].trim();
+    if !matches!(prefix, "" | "❗" | "🚧" | "❓") {
+        return None;
+    }
+    let (header, message) = payload[start + 2..].split_once("::")?;
+    let (severity, properties) = header.split_once(' ').unwrap_or((header, ""));
+    let severity = severity.to_ascii_lowercase();
+    if !matches!(severity.as_str(), "error" | "warning" | "notice") {
+        return None;
+    }
+    let decode = |value: &str| {
+        value
+            .replace("%0D", "\r")
+            .replace("%0A", "\n")
+            .replace("%25", "%")
+    };
+    let properties: std::collections::BTreeMap<_, _> = properties
+        .split(',')
+        .filter_map(|part| {
+            let (key, value) = part.split_once('=')?;
+            Some((key, decode(&value.replace("%3A", ":").replace("%2C", ","))))
+        })
+        .collect();
+    let get = |key| properties.get(key).cloned().unwrap_or_default();
+    Some(Annotation {
+        severity,
+        message: decode(message),
+        title: get("title"),
+        file: get("file"),
+        line: get("line"),
+        column: get("col"),
+    })
 }
 
 fn new_step(name: String) -> Step {
@@ -352,16 +431,21 @@ pub fn project_logs(lines: &[LogLine], run_status: &str) -> Vec<WorkflowJob> {
 
 /// Adds the steps the workflow file lists but the logs have not reached: pending while the run
 /// is active, skipped once it has ended. A planned job with no logs yet is listed the same way.
+/// The set-up and complete phases are the runner's: codeyard-actions logs no markers for them,
+/// so a finished job that logged steps does not get them as skipped.
 pub fn add_planned_steps(jobs: &mut Vec<WorkflowJob>, planned: &[PlannedJob], run_status: &str) {
-    let missing = if matches!(normalize_status(run_status), "queued" | "running") {
-        "pending"
-    } else {
-        "skipped"
-    };
+    let active = matches!(normalize_status(run_status), "queued" | "running");
+    let missing = if active { "pending" } else { "skipped" };
     for plan in planned.iter().filter(|plan| !plan.steps.is_empty()) {
-        let names = std::iter::once("Set up job")
+        let logged = jobs
+            .iter()
+            .any(|job| job.name == plan.name && !job.steps.is_empty());
+        let phases = active || !logged;
+        let names = phases
+            .then_some("Set up job")
+            .into_iter()
             .chain(plan.steps.iter().map(|step| step.as_str()))
-            .chain(std::iter::once("Complete job"));
+            .chain(phases.then_some("Complete job"));
         let job = match jobs.iter().position(|job| job.name == plan.name) {
             Some(index) => &mut jobs[index],
             None => {
@@ -496,7 +580,10 @@ pub(super) fn LogOutput(
                     p { class: "actions-log-limit", role: "status", "Only the most recent {model.log_limit} lines are shown." }
                 }
                 if logs_truncated || fetched_lines >= model.log_limit {
-                    a { class: "actions-history-link", href: format!("/api/ci/jobs/{}/history", run.id), "Full log history (paginated JSON)" }
+                    if let Some(url) = super::polling::log_url(&model, &run) {
+                        a { class: "actions-history-link", href: format!("{url}?after=0"), "Full log history (paginated JSON)" }
+                        a { class: "actions-history-link", href: url, "Download logs" }
+                    }
                 }
                 details { class: "actions-help",
                     summary { "About these logs" }
@@ -537,6 +624,79 @@ fn log_text(line: &str) -> Element {
     rsx! { span { class: "actions-log-text", "{display_log_text(line)}" } }
 }
 
+fn group_start(line: &str) -> Option<String> {
+    // act prints unhandled workflow commands with a question-mark prefix.
+    let text = command_payload(line)?.trim_start_matches('❓').trim_start();
+    text.strip_prefix("::group::")
+        .or_else(|| text.strip_prefix("##[group]"))
+        .map(|title| {
+            title
+                .replace("%0D", "\r")
+                .replace("%0A", "\n")
+                .replace("%25", "%")
+        })
+}
+
+fn group_end(line: &str) -> bool {
+    command_payload(line).is_some_and(|text| {
+        matches!(
+            text.trim_start_matches('❓').trim(),
+            "::endgroup::" | "##[endgroup]"
+        )
+    })
+}
+
+fn render_line(line: &LogLine) -> Element {
+    let level = annotation(&line.line)
+        .map(|issue| issue.severity)
+        .unwrap_or_else(|| line.level.to_ascii_lowercase());
+    rsx! {
+        div { id: format!("log-{}", line.id), class: match level.as_str() {
+            "error" | "fatal" => "actions-log-line is-error",
+            "warn" | "warning" => "actions-log-line is-warning",
+            _ => "actions-log-line",
+        },
+            a { class: "actions-log-line-number", href: format!("#log-{}", line.id), title: timestamp(line.timestamp), "{line.id}" }
+            {log_text(&line.line)}
+        }
+    }
+}
+
+fn render_lines(lines: &[&LogLine], fold: bool, depth: usize) -> Element {
+    let mut rendered = Vec::new();
+    let mut at = 0;
+    while at < lines.len() {
+        let line = lines[at];
+        if let Some(title) = group_start(&line.line).filter(|_| fold && depth < 64) {
+            let mut nesting = 1;
+            let mut end = at + 1;
+            while end < lines.len() {
+                if group_start(&lines[end].line).is_some() {
+                    nesting += 1;
+                } else if group_end(&lines[end].line) {
+                    nesting -= 1;
+                    if nesting == 0 {
+                        break;
+                    }
+                }
+                end += 1;
+            }
+            rendered.push(rsx! {
+                details { class: "actions-log-group",
+                    summary { id: format!("log-{}", line.id), class: "actions-log-group-heading", "{title}" }
+                    {render_lines(&lines[at + 1..end], fold, depth + 1)}
+                    if end < lines.len() { {render_line(lines[end])} }
+                }
+            });
+            at = (end + 1).min(lines.len());
+        } else {
+            rendered.push(render_line(line));
+            at += 1;
+        }
+    }
+    rsx! { for element in rendered { {element} } }
+}
+
 fn render_steps(job: &WorkflowJob, query: &str, wrap: bool) -> Element {
     let visible = search_steps(&job.steps, query);
     rsx! {
@@ -557,16 +717,7 @@ fn render_steps(job: &WorkflowJob, query: &str, wrap: bool) -> Element {
                     }
                 }
                 div { class: if wrap { "actions-log-lines wrap-lines" } else { "actions-log-lines" },
-                    for line in lines {
-                        div { id: format!("log-{}", line.id), class: match line.level.to_ascii_lowercase().as_str() {
-                            "error" | "fatal" => "actions-log-line is-error",
-                            "warn" | "warning" => "actions-log-line is-warning",
-                            _ => "actions-log-line",
-                        },
-                            a { class: "actions-log-line-number", href: format!("#log-{}", line.id), title: timestamp(line.timestamp), "{line.id}" }
-                            {log_text(&line.line)}
-                        }
-                    }
+                    {render_lines(lines, query.is_empty(), 0)}
                 }
             }
         }
@@ -585,6 +736,51 @@ mod tests {
             timestamp: id,
         }
     }
+    #[test]
+    fn annotations_preserve_matcher_locations_and_escaped_values() {
+        let issue = annotation(
+            "[compat/test] ::warning file=src/a.rs,line=7,col=2,title=E42::bad%0Avalue%2525",
+        )
+        .unwrap();
+        assert_eq!(issue.severity, "warning");
+        assert_eq!(issue.file, "src/a.rs");
+        assert_eq!(issue.line, "7");
+        assert_eq!(issue.column, "2");
+        assert_eq!(issue.title, "E42");
+        assert_eq!(issue.message, "bad\nvalue%25");
+        assert!(annotation("[CI/build] 🚧  ::warning::act warning").is_some());
+        assert!(annotation("[CI/build] | ::error::commands stopped").is_none());
+        assert!(group_start("[CI/build] | ::group::commands stopped").is_none());
+        assert!(!group_end("[CI/build] | ::endgroup::"));
+        assert!(annotation("[CI/build] Step started: echo '::error::not an annotation'").is_none());
+    }
+
+    #[test]
+    fn log_groups_fold_for_both_engines_and_search_exposes_the_body() {
+        let lines = [
+            log(1, "[CI/test] ::group::outer <title>"),
+            log(2, "[CI/test] ❓  ::group::nested"),
+            log(3, "[CI/test] | needle"),
+            log(4, "[CI/test] ❓  ::endgroup::"),
+            log(5, "[CI/test] ::endgroup::"),
+            log(6, "[CI/test] ::endgroup::"),
+            log(7, "[CI/test] ##[group]unfinished"),
+            log(8, "[CI/test] | tail"),
+        ];
+        let refs: Vec<_> = lines.iter().collect();
+        let html = dioxus_ssr::render_element(render_lines(&refs, true, 0));
+        assert_eq!(html.matches("<details").count(), 3);
+        assert!(!html.contains(" open="));
+        assert!(html.contains("outer &#60;title&#62;"));
+        assert!(!html.contains("outer <title>"));
+        for id in 1..=8 {
+            assert!(html.contains(&format!("id=\"log-{id}\"")));
+        }
+        let html = dioxus_ssr::render_element(render_lines(&refs, false, 0));
+        assert!(!html.contains("<details"));
+        assert!(html.contains("needle"));
+    }
+
     #[test]
     fn job_identity_includes_workflow_stage_and_the_full_act_prefix() {
         let mut lines = vec![
@@ -721,6 +917,50 @@ mod tests {
         add_planned_steps(&mut finished, &plan, "failed");
         assert_eq!(finished[0].steps[2].status, "skipped");
         assert_eq!(normalize_status("skipped"), "skipped");
+    }
+
+    #[test]
+    fn native_runner_markers_give_step_results() {
+        let plan = vec![PlannedJob {
+            name: "build".into(),
+            steps: vec!["checkout".into(), "test (unit)".into(), "lint".into()],
+        }];
+        let lines = vec![
+            log(1, "[CI/build] Job started"),
+            log(2, "[CI/build] Step started: checkout"),
+            log(
+                3,
+                "[CI/build] Step completed: checkout (success; outcome: success)",
+            ),
+            log(4, "[CI/build] Step started: test (unit)"),
+            log(
+                5,
+                "[CI/build] Step completed: test (unit) (failure; outcome: failure)",
+            ),
+            log(6, "[CI/build] Step skipped: lint"),
+            log(7, "[CI/build] Job completed: failure"),
+        ];
+        let mut jobs = project_logs(&lines, "failed");
+        add_planned_steps(&mut jobs, &plan, "failed");
+        let steps: Vec<_> = jobs[0]
+            .steps
+            .iter()
+            .map(|step| (step.name.as_str(), step.status.as_str()))
+            .collect();
+        // "Job started" comes before any step, so it sits in the runner's own row.
+        assert_eq!(
+            steps,
+            [
+                ("ci", "unknown"),
+                ("checkout", "success"),
+                ("test (unit)", "failed"),
+                ("lint", "skipped"),
+            ]
+        );
+        assert_eq!(
+            act_job_result("[CI/build] Job completed: failure"),
+            Some(("failed", "Job failed"))
+        );
     }
 
     #[test]

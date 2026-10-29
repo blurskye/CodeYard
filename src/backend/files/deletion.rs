@@ -23,9 +23,8 @@ pub enum DeleteError {
     ReferencedReleaseAsset,
 }
 
-/// Removes the owner's metadata immediately and records durable object cleanup in
-/// the same transaction. The immediate object delete is best-effort: the persisted
-/// work survives the initial PUT grace period; S3 keys remain queued for reconciliation.
+/// Removes the owner's metadata immediately and queues the bytes in the same
+/// transaction. The sweep removes them after the restore window.
 pub async fn delete_owned_file(
     pool: &DbPool,
     store: &ObjectStore,
@@ -40,24 +39,20 @@ pub async fn delete_owned_file(
         .lock_file(&first.object_key)
         .await
         .map_err(|_| DeleteError::StorageUnavailable)?;
-    let file = match files_db::delete_file(pool, file_id, actor_id)
+    match files_db::delete_file(pool, file_id, actor_id)
         .await
         .map_err(|_| DeleteError::MetadataUnavailable)?
     {
-        files_db::DeleteFileOutcome::Deleted(file) => file,
-        files_db::DeleteFileOutcome::NotFound => return Err(DeleteError::NotFound),
-        files_db::DeleteFileOutcome::Denied => return Err(DeleteError::Denied),
+        files_db::DeleteFileOutcome::Deleted(_) => Ok(()),
+        files_db::DeleteFileOutcome::NotFound => Err(DeleteError::NotFound),
+        files_db::DeleteFileOutcome::Denied => Err(DeleteError::Denied),
         files_db::DeleteFileOutcome::ReferencedOrganizationAvatar => {
-            return Err(DeleteError::ReferencedOrganizationAvatar)
+            Err(DeleteError::ReferencedOrganizationAvatar)
         }
         files_db::DeleteFileOutcome::ReferencedReleaseAsset => {
-            return Err(DeleteError::ReferencedReleaseAsset)
+            Err(DeleteError::ReferencedReleaseAsset)
         }
-    };
-    if let Err(error) = store.delete(&file.object_key).await {
-        tracing::warn!(file = %file.id, %error, "uploaded object cleanup deferred");
     }
-    Ok(())
 }
 
 /// Removes an unused picture only if no current avatar pointer references it. A
@@ -78,18 +73,12 @@ pub async fn delete_unreferenced_file(
         .lock_file(&first.object_key)
         .await
         .map_err(|_| DeleteError::StorageUnavailable)?;
-    let file = match files_db::delete_unreferenced_file(pool, file_id, actor_id)
-        .await
-        .map_err(|_| DeleteError::MetadataUnavailable)?
-    {
-        files_db::DeleteUnreferencedOutcome::Deleted(file) => file,
-        files_db::DeleteUnreferencedOutcome::NotFound
-        | files_db::DeleteUnreferencedOutcome::Referenced => return Ok(false),
-    };
-    if let Err(error) = store.delete(&file.object_key).await {
-        tracing::warn!(file = %file.id, %error, "picture object cleanup deferred");
-    }
-    Ok(true)
+    Ok(matches!(
+        files_db::delete_unreferenced_file(pool, file_id, actor_id)
+            .await
+            .map_err(|_| DeleteError::MetadataUnavailable)?,
+        files_db::DeleteUnreferencedOutcome::Deleted(_)
+    ))
 }
 
 /// One bounded sweep. Expired metadata and due object work have independent
@@ -103,6 +92,22 @@ pub async fn remove_expired_uploads(pool: &DbPool, store: &ObjectStore) -> anyho
     let mut removed = 0;
     let mut objects = HashMap::new();
     let metadata_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    crate::backend::db::action_objects::expire_objects(pool).await?;
+    // Package and attestation collection fail on their own, so a stuck package object cannot
+    // keep the upload backlog from expiring.
+    match tokio::time::timeout(
+        Duration::from_secs(30),
+        crate::backend::packages::collect(pool, store),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "package objects were not collected"),
+        Err(_) => tracing::warn!("package object collection timed out"),
+    }
+    if let Err(error) = crate::backend::db::attestations::collect(pool).await {
+        tracing::warn!(%error, "attestation bundles were not collected");
+    }
     let expired = files_db::expired_uploads(pool, EXPIRED_LIMIT).await?;
     for candidate in expired {
         let expire = async {

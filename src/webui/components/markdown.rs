@@ -5,7 +5,7 @@
 
 use super::code::themed_highlight;
 use super::markdown_html::{attributes, decode_references, is_void, may_nest, pieces, Piece};
-use super::references::{self, Candidates, Link, References};
+use super::references::{Candidates, Link, References};
 use dioxus::prelude::*;
 use pulldown_cmark::{
     Alignment, BlockQuoteKind, CodeBlockKind, CowStr, Event, HeadingLevel, LinkType, OffsetIter,
@@ -220,7 +220,7 @@ fn next_bare_url(text: &str, from: usize) -> Option<std::ops::Range<usize>> {
 }
 
 /// GitHub's most used emoji shortcodes, sorted by name for binary search.
-const EMOJI: &[(&str, &str)] = &[
+pub(crate) const EMOJI: &[(&str, &str)] = &[
     ("+1", "👍"),
     ("-1", "👎"),
     ("100", "💯"),
@@ -1042,13 +1042,10 @@ impl<'r> Emitter<'r> {
         // what its links cost rather than what its tokens cost.
         let budget = MAX_REFERENCE_LINKS - self.reference_links;
         let mut links = Vec::new();
-        references::scan_tokens(text, range.clone(), opaque, |token_range, token| {
-            if links.len() < budget {
-                if let Some(link) = self.references.link(&token) {
-                    links.push((token_range, link));
-                }
-            }
-        });
+        self.references
+            .scan_links(text, range.clone(), opaque, budget, |token_range, link| {
+                links.push((token_range, link))
+            });
         let mut done = range.start;
         for (token_range, link) in links {
             self.reference_links += 1;
@@ -1511,8 +1508,10 @@ pub struct LinkBase {
 const NEW_TAB: &str = " target=\"_blank\" rel=\"noopener noreferrer\"";
 
 impl LinkBase {
-    /// The target of a relative `url`, or `None` when it is not relative.
-    fn resolve(&self, url: &str, image: bool) -> Option<String> {
+    /// The target of a relative `url`, or `None` when it is not relative. With `rooted`, a path
+    /// that starts with one `/` is relative to the repository root, as on GitHub. Only authored
+    /// links and images are rooted; the forge's own reference links already name site paths.
+    fn resolve(&self, url: &str, image: bool, rooted: bool) -> Option<String> {
         let end = url.find(['?', '#']).unwrap_or(url.len());
         let (path, suffix) = url.split_at(end);
         if path.is_empty() {
@@ -1528,11 +1527,12 @@ impl LinkBase {
             return None;
         }
         let before_slash = path.split('/').next().unwrap_or("");
-        if path.starts_with('/') || before_slash.contains(':') {
+        let from_root = path.starts_with('/');
+        if (from_root && (!rooted || path.starts_with("//"))) || before_slash.contains(':') {
             return None;
         }
-        let mut parts: Vec<&str> = self
-            .directory
+        let directory = if from_root { "" } else { &self.directory };
+        let mut parts: Vec<&str> = directory
             .split('/')
             .filter(|part| !part.is_empty())
             .collect();
@@ -1587,7 +1587,11 @@ impl LinkBase {
             if index > 0 {
                 out.push_str(", ");
             }
-            out.push_str(&self.resolve(url, true).unwrap_or_else(|| url.to_owned()));
+            out.push_str(
+                &self
+                    .resolve(url, true, true)
+                    .unwrap_or_else(|| url.to_owned()),
+            );
             if !descriptor.is_empty() {
                 out.push(' ');
                 out.push_str(descriptor);
@@ -1636,7 +1640,9 @@ impl LinkBase {
             if srcset {
                 append_html(&mut out, &escape_html(&self.resolve_srcset(&value)))?;
             } else {
-                match self.resolve(&value, image) {
+                // A Markdown link opens in a new tab; the forge's reference links do not.
+                let authored = image || html[end..].starts_with(&format!("\"{NEW_TAB}"));
+                match self.resolve(&value, image, authored) {
                     Some(target) => {
                         append_html(&mut out, &escape_html(&target))?;
                         in_page = true;

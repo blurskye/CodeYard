@@ -1,0 +1,23 @@
+on:
+  workflow_call:
+    inputs:
+      message: {type: string, default: default-message}
+    secrets:
+      PASSWORD: {required: true}
+    outputs:
+      message:
+        value: ${{ jobs.test.outputs.message }}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    outputs:
+      message: ${{ steps.output.outputs.message }}
+    steps:
+      - id: output
+        env:
+          PASSWORD: ${{ secrets.PASSWORD }}
+        run: |
+          test "$PASSWORD" = reusable-password-value
+          test -n '${{ secrets.UNPASSED }}'
+          echo 'message=${{ inputs.message }}' >> "$GITHUB_OUTPUT"
+          echo inherited-call-ok

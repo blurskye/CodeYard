@@ -3,7 +3,7 @@
 use crate::webui::pages::repos::{
     chrome::{chrome, csrf, icon, repository_id, RepoChrome},
     commits::commit_target,
-    ref_path::file_url,
+    ref_path::branch_url,
     tree::breadcrumbs,
 };
 use crate::webui::{
@@ -39,8 +39,8 @@ pub struct UploadForm {
 
 pub fn upload_page(repo: &RepoChrome, form: &UploadForm) -> Element {
     let base = repo.base();
-    let form_action = file_url(&base, "upload", &form.branch, &form.directory);
-    let cancel_url = file_url(&base, "tree", &form.branch, &form.directory);
+    let form_action = branch_url(&base, "upload", &form.branch, &form.directory);
+    let cancel_url = branch_url(&base, "tree", &form.branch, &form.directory);
     let heading = if form.directory.is_empty() {
         format!("Upload files to the root of {}", form.branch)
     } else {
@@ -64,6 +64,7 @@ pub fn upload_page(repo: &RepoChrome, form: &UploadForm) -> Element {
                     {csrf(&repo.csrf_token)}
                     {repository_id(form.repository_id)}
                     input { r#type: "hidden", name: "expected_revision", value: form.expected_revision.clone() }
+                    input { r#type: "hidden", name: "branch", value: form.branch.clone() }
                     section { class: "repo-upload-panel panel",
                         header { class: "repo-section-heading", div { h3 { "Files" } p { "Up to 100 files become one commit on the branch." } } }
                         div { class: "repo-upload-body",

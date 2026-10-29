@@ -1,0 +1,18 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: slow
+        timeout-minutes: 1
+        continue-on-error: true
+        run: |
+          sleep 65
+          echo compat:too-late
+      - env:
+          OUTCOME: ${{ steps.slow.outcome }}
+        run: |
+          test "$OUTCOME" = failure
+          echo compat:ok

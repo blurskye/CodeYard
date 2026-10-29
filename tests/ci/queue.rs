@@ -352,11 +352,12 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
     );
 }
 
-async fn a_long_line_of_denied_runs_is_cancelled_in_batches(db: &Database) {
+async fn a_long_line_of_denied_runs_does_not_hide_later_work(db: &Database) {
     let w = world(db, "batch").await;
     let trusted = [w.collab];
     let mut denied = Vec::new();
-    for _ in 0..=db::ci::CLAIM_SCAN_LIMIT {
+    // More denied runs than the claim scan window used to cover.
+    for _ in 0..65 {
         denied.push(db.enqueue(w.repo, w.collab, false, &trusted).await);
     }
     let allowed = db.enqueue(w.repo, w.owner, false, &trusted).await;
@@ -366,25 +367,15 @@ async fn a_long_line_of_denied_runs_is_cancelled_in_batches(db: &Database) {
     )
     .await;
 
-    // One claim looks at a bounded number of runs, so it cancels that many and stops.
-    assert!(db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
-        .await
-        .unwrap()
-        .is_none());
-    let mut cancelled = 0;
-    for run in &denied {
-        if db.run(run.run_id).await.status == "cancelled" {
-            cancelled += 1;
-        }
-    }
-    assert_eq!(cancelled, db::ci::CLAIM_SCAN_LIMIT);
-    // The next one finishes the line and reaches the run that may start.
+    // One claim passes every denied run, cancels each of them and reaches the run that may start.
     let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
         .await
         .unwrap()
-        .expect("the owner's run is next");
+        .expect("the owner's run is reached");
     assert_eq!(claimed.id, allowed.id);
-    assert_cancelled(&db.run(denied.last().unwrap().run_id).await, ACCESS_LOST);
+    for run in &denied {
+        assert_cancelled(&db.run(run.run_id).await, ACCESS_LOST);
+    }
 }
 
 // ---- Revocations stop queued and running runs ----
@@ -754,7 +745,11 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
         .expect("the worker owns the run");
     assert_eq!(finished.status, "success");
     assert_eq!(
-        db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap().0,
+        db::ci::fail_stale_ci_runs(db.pool(), 90)
+            .await
+            .unwrap()
+            .0
+            .len(),
         0
     );
     let after = db.run(run.run_id).await;
@@ -785,7 +780,7 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
         .expect("claim");
     db.stop_heartbeat(run.id).await;
     let (failed, created) = db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap();
-    assert_eq!(failed, 1);
+    assert_eq!(failed.len(), 1);
     assert_eq!(created.len(), 1);
     assert_eq!(created[0].0, w.owner);
     assert!(
@@ -814,10 +809,8 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
     .unwrap();
     assert_eq!(statuses[0].state, "failure");
     assert_eq!(notified().await, 1, "one outcome, one notification");
-    assert_eq!(
-        db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap(),
-        (0, vec![])
-    );
+    let swept = db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap();
+    assert!(swept.0.is_empty() && swept.1.is_empty());
 
     // Cancelling something that already ended does nothing.
     assert!(
@@ -879,10 +872,8 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
     .unwrap()
     .expect("the worker owns the run");
     db.stop_heartbeat(running.id).await;
-    assert_eq!(
-        db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap(),
-        (0, vec![])
-    );
+    let swept = db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap();
+    assert!(swept.0.is_empty() && swept.1.is_empty());
     assert_eq!(db.run(running.run_id).await.status, "cancelled");
 }
 
@@ -1500,6 +1491,7 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
                 stage: "ci".into(),
                 line: format!("{index:04} {}", character.to_string().repeat(15_995)),
                 level: "info".into(),
+                ..Default::default()
             })
             .collect();
         for batch in lines.chunks(16) {
@@ -1555,7 +1547,10 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
             let bytes = get(
                 &router,
                 &session,
-                &format!("/api/ci/jobs/{}/history?after={cursor}", run.run_id),
+                &format!(
+                    "/api/v3/repos/log_page_owner/logs/actions/runs/{}/logs?after={cursor}",
+                    run.id
+                ),
             )
             .await;
             let history: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
@@ -1608,6 +1603,8 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
             base_branch: "main",
             base_sha: "1111111111111111111111111111111111111111",
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -1625,6 +1622,8 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
             base_branch: "main",
             base_sha: "1111111111111111111111111111111111111111",
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -1645,15 +1644,14 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
         manual: false,
     };
 
-    let denied = db::ci::enqueue_ci_run(db.pool(), input(Some(fork.id)), &[])
+    let pending = db::ci::enqueue_ci_run(db.pool(), input(Some(fork.id)), &[])
         .await
-        .unwrap_err();
-    assert!(matches!(
-        denied.downcast_ref::<db::ci::CiAdmissionRefusal>(),
-        Some(db::ci::CiAdmissionRefusal::Denied(
-            "Fork workflows require approval for this head commit"
-        ))
-    ));
+        .unwrap();
+    assert!(pending.approval_required && pending.is_fork);
+    assert!(db::ci::claim_ci_run(db.pool(), "unapproved", "local", &[])
+        .await
+        .unwrap()
+        .is_none());
 
     let same_run = db::ci::enqueue_ci_run(db.pool(), input(Some(same_repo.id)), &[])
         .await
@@ -1680,6 +1678,8 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
         .await
         .unwrap();
     assert_eq!(fork_run.pull_request_id, Some(fork.id));
+    assert_eq!(fork_run.id, pending.id);
+    assert!(!fork_run.approval_required);
     assert!(fork_run.is_fork);
     assert_ne!(fork_run.id, same_run.id);
 
@@ -1709,6 +1709,8 @@ async fn queued_pull_request_inputs_survive_base_and_title_changes(db: &Database
             base_branch: "main",
             base_sha: &"1".repeat(40),
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -1831,6 +1833,8 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
             base_branch: "main",
             base_sha: "1111111111111111111111111111111111111111",
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -1927,6 +1931,8 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
             base_branch: "main",
             base_sha: "1111111111111111111111111111111111111111",
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -2051,6 +2057,7 @@ async fn log_batches_preserve_line_order_and_totals(db: &Database) {
             stage: format!("stage-{i}"),
             line: format!("line-{i}"),
             level: "info".into(),
+            ..Default::default()
         })
         .collect();
     db::ci::append_ci_logs(db.pool(), run.id, WORKER, &lines)
@@ -2097,20 +2104,15 @@ async fn refused_claim(db: &Database, node_key: &str, run: i64, trusted: &[i64])
     assert_eq!(queued, 1, "the refused claim changed run {run}");
 }
 
-async fn cluster_claim_needs_an_active_actions_worker_node(db: &Database) {
+async fn cluster_claim_needs_an_active_runner_node(db: &Database) {
     let w = world(db, "node_claim").await;
     let trusted = [w.owner];
     let queued = db.enqueue(w.repo, w.owner, false, &trusted).await;
     let key = "a".repeat(64);
-    let node = db::cluster::register_own_node(
-        db.pool(),
-        &key,
-        "claim-node",
-        &["actions-worker".into()],
-        "test",
-    )
-    .await
-    .unwrap();
+    let node =
+        db::cluster::register_own_node(db.pool(), &key, "claim-node", &["runner".into()], "test")
+            .await
+            .unwrap();
 
     db::cluster::set_node_status(
         db.pool(),
@@ -2151,7 +2153,7 @@ async fn cluster_claim_needs_an_active_actions_worker_node(db: &Database) {
         &[db::cluster::DeclaredMember {
             public_key: key.clone(),
             name: node.name.clone(),
-            roles: vec!["actions-worker".into()],
+            roles: vec!["runner".into()],
         }],
     )
     .await
@@ -2322,7 +2324,7 @@ on_both_engines!(
     ci_notification_links_follow_renames_and_transfers,
     ci_lookup_indexes_and_one_deployment_per_run,
     claim_checks_the_starters_access_again,
-    a_long_line_of_denied_runs_is_cancelled_in_batches,
+    a_long_line_of_denied_runs_does_not_hide_later_work,
     revocations_stop_queued_and_running_runs,
     banning_the_last_owner_stops_organization_work,
     forcing_the_last_owner_password_stops_organization_work,
@@ -2340,7 +2342,7 @@ on_both_engines!(
     a_retried_claim_gets_back_the_run_its_worker_holds,
     commit_status_descriptions_redact_runner_messages,
     log_batches_preserve_line_order_and_totals,
-    cluster_claim_needs_an_active_actions_worker_node,
+    cluster_claim_needs_an_active_runner_node,
 );
 
 // ---- PostgreSQL: operations in a fixed order ----
@@ -2509,7 +2511,7 @@ mod interleaved {
         let swept = promptly("the stale sweep", db::ci::fail_stale_ci_runs(db.pool(), 90))
             .await
             .unwrap();
-        assert_eq!(swept, (0, vec![]));
+        assert!(swept.0.is_empty() && swept.1.is_empty());
         sqlx::query("UPDATE ci_runs SET status = 'success', completed_at = NOW() WHERE id = $1")
             .bind(run.id)
             .execute(&mut *worker)
@@ -2526,10 +2528,8 @@ mod interleaved {
             "the sweep announced nothing"
         );
         // Once the worker is done, the sweep still has nothing to fail.
-        assert_eq!(
-            db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap(),
-            (0, vec![])
-        );
+        let swept = db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap();
+        assert!(swept.0.is_empty() && swept.1.is_empty());
         db.finish().await;
     }
 

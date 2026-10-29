@@ -1,6 +1,32 @@
-use crate::backend::db::models::{Repository, User};
+use crate::backend::db::models::{Repository, User, Watch};
 use crate::backend::db::DbPool;
 use anyhow::Result;
+
+#[derive(sqlx::FromRow)]
+pub struct StarHistoryWeek {
+    pub week: chrono::NaiveDate,
+    pub day0: i64,
+    pub day1: i64,
+    pub day2: i64,
+    pub day3: i64,
+    pub day4: i64,
+    pub day5: i64,
+    pub day6: i64,
+}
+
+native_operation!(crate::backend::db::postgres::repositories::engagement::list_star_history,
+    crate::backend::db::sqlite::repositories::engagement::list_star_history,
+    fn list_star_history(pool: &DbPool, repo_id: i64, limit: i64, offset: i64) -> Result<Vec<StarHistoryWeek>>);
+
+native_operation!(crate::backend::db::postgres::repositories::engagement::get_repo_watch,
+    crate::backend::db::sqlite::repositories::engagement::get_repo_watch,
+    fn get_repo_watch(pool: &DbPool, user_id: i64, repo_id: i64) -> Result<Option<Watch>>);
+native_operation!(crate::backend::db::postgres::repositories::engagement::list_repo_watchers,
+    crate::backend::db::sqlite::repositories::engagement::list_repo_watchers,
+    fn list_repo_watchers(pool: &DbPool, repo_id: i64, limit: i64, offset: i64) -> Result<Vec<User>>);
+native_operation!(crate::backend::db::postgres::repositories::engagement::list_watched_repositories,
+    crate::backend::db::sqlite::repositories::engagement::list_watched_repositories,
+    fn list_watched_repositories(pool: &DbPool, user_id: i64, viewer: Option<i64>, limit: i64, offset: i64) -> Result<Vec<Repository>>);
 
 native_operation!(crate::backend::db::postgres::repositories::engagement::watch_repo,
     crate::backend::db::sqlite::repositories::engagement::watch_repo,
@@ -42,12 +68,19 @@ native_operation!(crate::backend::db::postgres::repositories::engagement::list_r
     crate::backend::db::sqlite::repositories::engagement::list_repo_stargazers,
     fn list_repo_stargazers(pool: &DbPool, repo_id: i64, limit: i64, offset: i64) -> Result<Vec<User>>);
 
+native_operation!(crate::backend::db::postgres::repositories::engagement::starred_at,
+    crate::backend::db::sqlite::repositories::engagement::starred_at,
+    fn starred_at(pool: &DbPool, user_id: i64, repo_id: i64) -> Result<Option<chrono::DateTime<chrono::Utc>>>);
+
 /// The order of a starred list. The page is taken after this order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StarSort {
     /// The latest star first.
     #[default]
     Recent,
+    Oldest,
+    Updated,
+    UpdatedOldest,
     /// The most stars first, then the latest star.
     Stars,
     /// By repository name, ignoring case.

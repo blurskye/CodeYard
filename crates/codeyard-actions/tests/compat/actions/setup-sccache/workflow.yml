@@ -1,0 +1,13 @@
+# https://github.com/mozilla-actions/sccache-action/tree/65101d47ea8028ed0c98a1cdea8dd9182e9b5133
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: mozilla-actions/sccache-action@65101d47ea8028ed0c98a1cdea8dd9182e9b5133 # v0.0.8
+      - name: Assert documented effect
+        run: |
+          sccache --version
+          echo compat:ok

@@ -1,0 +1,49 @@
+.gists-page { max-width: 1080px; margin: 0 auto; padding: 28px 24px 60px; display: grid; gap: 16px; min-width: 0; }
+.gists-page h1 { font-size: 24px; font-weight: 600; line-height: 1.35; margin: 0; overflow-wrap: anywhere; }
+.gists-page h2 { font-size: 17px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
+.gist-heading,.gist-file-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; min-width: 0; }
+.gist-heading>div { min-width: 0; }
+.gist-id { overflow-wrap: anywhere; font-family: ui-monospace,monospace; }
+.gist-meta,.gist-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; min-width: 0; font-size: 13px; }
+.gist-meta { color: var(--muted-foreground); overflow-wrap: anywhere; }
+.gist-toolbar form { margin: 0; }
+.gist-selected { border-color: var(--primary); color: var(--primary); }
+.gist-badge { display: inline-block; padding: 1px 8px; border: 1px solid var(--border); border-radius: 20px; color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.gist-card,.gist-comment,.gist-editor-file { border: 1px solid var(--border); border-radius: 6px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.gist-description { white-space: pre-wrap; overflow-wrap: anywhere; }
+.gist-empty { padding: 40px 16px; text-align: center; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 6px; }
+.gist-field { display: grid; gap: 6px; margin: 0 0 16px; min-width: 0; font-size: 14px; }
+.gist-field>span { font-weight: 600; }
+.gist-field input,.gist-field textarea { width: 100%; min-width: 0; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--background); }
+.gist-field input:focus,.gist-field textarea:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+.gist-editor-content { font-family: ui-monospace,monospace; tab-size: 4; }
+.gist-editor-file { margin: 16px 0; }
+.gist-editor-file .gist-field { margin: 0; }
+.gist-checkbox { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 14px; }
+.gist-checkbox input { accent-color: var(--primary); }
+.gist-notice { border: 1px solid var(--warning); border-radius: 6px; background: var(--card); padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.gist-clone { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.gist-clone code { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: 13px; }
+.gist-file { min-width: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.gist-file-heading { padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--card); }
+.gist-file-heading h2 { min-width: 0; flex: 1 1 180px; }
+.gist-code { overflow: auto; max-width: 100%; margin: 0; padding: 16px; font-size: 13px; line-height: 1.6; tab-size: 4; }
+.gist-markdown { padding: 20px; overflow: auto; }
+.gist-image { display: block; max-width: 100%; max-height: 700px; height: auto; margin: 0 auto; }
+.gist-file-notice { padding: 12px 16px; color: var(--muted-foreground); font-size: 13px; }
+.gist-section { min-width: 0; display: grid; gap: 12px; padding-top: 16px; border-top: 1px solid var(--border); }
+.gist-history { margin: 0; padding: 0; list-style: none; }
+.gist-history li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; border-bottom: 1px solid var(--border-muted); padding: 10px 0; font-size: 13px; }
+.gist-history li>a { font-family: ui-monospace,monospace; }
+.gist-comment { overflow-wrap: anywhere; }
+.gist-comment-edit summary { color: var(--muted-foreground); cursor: pointer; font-size: 13px; }
+.gist-comment-edit form,.gist-delete form { display: grid; gap: 12px; margin-top: 12px; }
+.gist-comment-edit button,.gist-delete button { justify-self: start; }
+.gist-delete { border-top: 1px solid var(--border); padding-top: 20px; }
+@media(max-width:600px) {
+  .gists-page { padding: 20px 12px 40px; gap: 14px; }
+  .gists-page h1 { font-size: 20px; }
+  .gist-card,.gist-comment,.gist-editor-file { padding: 12px; }
+  .gist-code,.gist-markdown { padding: 12px; }
+  .gist-file-heading { padding: 10px 12px; }
+}

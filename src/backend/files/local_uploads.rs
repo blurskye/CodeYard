@@ -43,12 +43,13 @@ pub async fn put_local_upload(
         .ok_or(LocalUploadError::NotPending)?;
     let key = first.object_key.clone();
     tokio::time::timeout(time_left, async {
-        let _io = store
-            .try_acquire_io()
-            .map_err(|_| LocalUploadError::StorageUnavailable)?;
+        // Wait for the file first: PUTs queued on one file must not hold the shared I/O slots.
         let _file_lock = store
             .lock_file(&key)
             .await
+            .map_err(|_| LocalUploadError::StorageUnavailable)?;
+        let _io = store
+            .try_acquire_io()
             .map_err(|_| LocalUploadError::StorageUnavailable)?;
         let file = files_db::get_owned_file(pool, file_id, actor_id)
             .await

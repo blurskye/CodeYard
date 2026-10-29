@@ -1,0 +1,16 @@
+# https://github.com/hashicorp/setup-terraform/tree/b9cd54a3c349d3f38e8881555d616ced269862dd
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: "false"
+      - name: Assert documented effect
+        run: |
+          terraform version | grep 'Terraform v1\.10\.5'
+          echo compat:ok

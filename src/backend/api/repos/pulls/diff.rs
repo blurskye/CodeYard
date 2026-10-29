@@ -94,7 +94,7 @@ pub async fn get_pull_request_diff(
             })?;
 
     let diff = repo_store(&repository, state.cluster.as_ref())
-        .diff(&pull_request.base_sha, &pull_request.head_sha)
+        .diff(pull_request.diff_base(), &pull_request.head_sha)
         .await
         .map_err(|error| {
             crate::backend::api::repos::responses::repo_store_error(
@@ -180,6 +180,8 @@ fn composer_from_query(query: &HashMap<String, String>) -> Option<LineComment> {
         path: query.get("path")?.clone(),
         side: side.clone(),
         line: line.clone(),
+        start_line: query.get("start_line").cloned().unwrap_or_default(),
+        start_side: query.get("start_side").cloned().unwrap_or_default(),
         in_reply_to: None,
         body: String::new(),
         preview: false,
@@ -227,13 +229,16 @@ pub(crate) async fn render_diff(
             .await
             .map_err(|_| unavailable(ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found"))?;
+    // A retargeted stack layer compares against its saved fork point, so the merged lower
+    // layer is not shown again. The base SHA stays for the revision checks.
+    let fork = (pull.diff_base() != pull.base_sha).then(|| pull.diff_base().to_owned());
     // Keep the patch, thread state and form fields on the item's revision snapshot.
     if let Some(compare) = &value.comparison {
         pull.head_sha.clone_from(&compare.head_sha);
         pull.base_sha.clone_from(&compare.base_sha);
     }
     let diff = repo_store(&repo.record, ctx.state.cluster.as_ref())
-        .diff(&pull.base_sha, &pull.head_sha)
+        .diff(fork.as_deref().unwrap_or(&pull.base_sha), &pull.head_sha)
         .await
         .map_err(|error| {
             if error.is_response_too_large() {
@@ -245,6 +250,8 @@ pub(crate) async fn render_diff(
                 unavailable(ctx)
             }
         })?;
+    let code_scanning =
+        super::security::checks(ctx, repo, &pull, &pull.head_sha, &pull.base_sha).await?;
     let inline =
         db::pull_requests::reviews::list_pull_request_inline_comments(&ctx.state.pool, pull.id)
             .await
@@ -263,6 +270,35 @@ pub(crate) async fn render_diff(
     };
     let pending_ids: HashSet<i64> = pending.iter().map(|entry| entry.comment.id).collect();
     let pending_comments = pending.len();
+    let stored = match (&review, ctx.user.as_ref()) {
+        (None, Some(user)) => {
+            db::pull_requests::reviews::get_pending_review(&ctx.state.pool, pull.id, user.id)
+                .await
+                .map_err(|_| unavailable(ctx))?
+        }
+        _ => None,
+    };
+    // A re-rendered form keeps the pending review it was submitted with. A fresh form names the
+    // stored one, which may hold only a summary.
+    let pending_review = match &review {
+        Some(draft) => draft.pending_review,
+        None => stored.as_ref().map(|pending| pending.id),
+    };
+    // A pending review started through the API can carry a summary. The form starts from it,
+    // so submitting the review keeps it.
+    let review = review.or_else(|| {
+        stored
+            .and_then(|pending| pending.body)
+            .filter(|body| !body.is_empty())
+            .map(|body| ReviewDraft {
+                state: "commented".to_owned(),
+                body,
+                preview: false,
+                commit: String::new(),
+                repository_id: None,
+                pending_review,
+            })
+    });
     let mut entries = inline.comments;
     entries.extend(pending);
     let mut threads = review_forms::threads(ctx, repo, &pull, entries, &pending_ids);
@@ -324,11 +360,13 @@ pub(crate) async fn render_diff(
                 repository: repo.view.clone(),
                 item: value.clone(),
                 diff,
+                code_scanning,
                 threads,
                 truncated,
                 composer: composer.cloned(),
                 review,
                 pending_comments,
+                pending_review,
                 error: error.map(str::to_owned),
                 references: Box::new(references),
                 split,

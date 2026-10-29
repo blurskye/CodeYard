@@ -1,0 +1,21 @@
+# https://github.com/paulhatch/semantic-version/tree/a8f8f59fd7f0625188492e945240f12d7ad2dca3
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          git tag v1.2.3; git -c user.name=Compat -c user.email=compat@example.invalid -c commit.gpgsign=false commit --allow-empty -m 'fix: compatibility'
+      - id: action
+        uses: paulhatch/semantic-version@a8f8f59fd7f0625188492e945240f12d7ad2dca3 # v5.4.0
+        with:
+          tag_prefix: "v"
+          major_pattern: "BREAKING CHANGE:"
+          minor_pattern: "feat:"
+      - name: Assert documented effect
+        env:
+          VERSION: ${{ steps.action.outputs.version }}
+        run: |
+          test "$VERSION" = 1.2.4
+          echo compat:ok

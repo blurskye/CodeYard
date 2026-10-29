@@ -21,7 +21,7 @@ the `DX` and `TAILWIND` variables.
 
 ```bash
 DX=/path/to/dx TAILWIND=/path/to/tailwindcss scripts/build-webui.sh release
-cargo build --release -p codeyard --bin codeyard
+cargo build --release -p codeyard -p codeyard-actions --bin codeyard --bin codeyard-actions
 
 WEBUI_DIST="$PWD/dist/webui" PUBLIC_URL=http://localhost:3000 \
   ./target/release/codeyard serve
@@ -48,22 +48,27 @@ Setting any `S3_` variable turns S3 on, and then `S3_ENDPOINT`, `S3_ACCESS_KEY`,
 another port on the forge hostname is not isolated. Host-only cookies allow sibling
 hosts, while `COOKIE_DOMAIN` also covers its subdomains.
 
-Cluster mode needs PostgreSQL. SQLite runs a single node, and `codeyard db copy` moves a
-database between the two while the server is stopped. Node roles, below, split web, SSH,
-storage and CI across separate machines.
+Runners on other machines and cluster mode need PostgreSQL. SQLite runs a single node,
+and `codeyard db copy` moves a database between the two while the server is stopped.
 
 `GITSERV_STATE_DIR` chooses where `gitserv.db` and uploads are kept. The container default
 is `/data/state`; set `GITSERV_STATE_DIR=/data` to put `gitserv.db` directly in `/data`.
 
 ## Node roles and CI
 
-`GITSERV_NODE_ROLES` lists the services a node runs: `web`, `storage`, `ssh` and
-`actions-worker`. The default is all four, which is a complete single machine. In a
-cluster nodes take separate roles: web and SSH
-servers, machines that only hold repositories, and CI workers that need no database.
+`GITSERV_NODE_ROLES` says what a machine runs: `server` (web pages, API, Git storage
+and SSH) and `runner` (Actions jobs). The default is both, a complete single machine.
+A runner can also run alone on another machine with no database: create a ticket with
+`codeyard cluster invite --roles runner`, put it in `CLUSTER_JOIN_TOKEN` on that machine
+and start `codeyard serve --roles runner` (see
+[docs/CI_LOCAL_RUNNER.md](docs/CI_LOCAL_RUNNER.md)). Splitting the server itself across
+machines is cluster mode, described in [docs/CLUSTER.md](docs/CLUSTER.md).
 
-CI jobs need `act` (`CI_ACT_BINARY`, found on `PATH` by default) and, in the default
-`CI_EXECUTION_MODE=podman`, a Podman socket (`CI_PODMAN_SOCKET`). Let only trusted
+CI jobs run on the in-house runner `codeyard-actions`, which is the default engine. It must
+sit next to `codeyard`, be on `PATH`, or be named by `CI_ACTIONS_BINARY`. It starts job
+containers with the `podman` command, so a Podman client must be on `PATH` too. The `act`
+engine needs `act` (`CI_ACT_BINARY`, found on `PATH` by default). Both use a Podman socket
+(`CI_PODMAN_SOCKET`) in the default `CI_EXECUTION_MODE=podman`. Let only trusted
 users run workflows (`CI_TRUSTED_ACTOR_IDS`, or site administrators). Anyone who can use
 the Podman socket can run code as your host user, and `CI_EXECUTION_MODE=local` runs jobs
 on the host with no container isolation.
@@ -135,6 +140,96 @@ server {
 Failed sign-ins are limited per client address. Set `HTTP_TRUSTED_PROXY_IPS` to the proxy's
 address (for example `127.0.0.1`) so the server reads the client from `X-Forwarded-For`;
 without it every visitor shares the proxy's address and its limit.
+
+### Packages
+
+Packages use the same host: OCI at `/v2/`, npm at `/api/packages/OWNER/npm/`,
+Maven/Gradle at `/OWNER/REPOSITORY/`, NuGet v3 at
+`/api/packages/OWNER/nuget/index.json`, and RubyGems at
+`/api/packages/OWNER/rubygems/`.
+Use a personal access token (or an Actions `GITHUB_TOKEN` with `packages` permission)
+for registry authentication. For example, after `docker login HOST`, push with
+`docker push HOST/OWNER/IMAGE:TAG`. OCI namespaces must use lowercase ASCII account
+or organization names. For npm, set
+`@OWNER:registry=https://HOST/api/packages/OWNER/npm/` and
+`//HOST/api/packages/OWNER/npm/:_authToken=${CODEYARD_TOKEN}` in `.npmrc`.
+
+The reverse proxy must allow large request bodies and long uploads on registry paths,
+including Maven's repository-layout PUTs, not just Git routes; the nginx configuration
+above already does. Objects and package archives have a 100 MiB limit; XML and metadata
+extracted from archives are limited to 1 MiB. Upload requests time out after 120 seconds.
+Packages start private; their settings
+control visibility and the linked repository. Deletion retains versions for REST
+recovery for 30 days, then the upload sweep collects unreferenced objects.
+
+Maven and Gradle use HTTP Basic authentication: put the account name and token in
+Maven's `settings.xml` server entry (with the same id as `distributionManagement`),
+or in Gradle's repository `credentials`. Set the repository URL to
+`https://HOST/OWNER/REPOSITORY`. Coordinates are `groupId:artifactId`; the URL's
+repository must belong to the owner and the publishing credential must have write
+access. Releases cannot overwrite an existing artifact with different bytes;
+SNAPSHOT artifacts and `maven-metadata.xml` can be updated. POMs, JARs, classifiers,
+Gradle module metadata and MD5/SHA-1/SHA-256/SHA-512 sidecars use repository layout.
+Plugin-prefix group metadata is accepted after its plugin artifact is published.
+Metadata is publisher-supplied; after manual version deletion, re-publish repository
+metadata when needed.
+
+For NuGet, register `https://HOST/api/packages/OWNER/nuget/index.json` with
+`dotnet nuget add source https://HOST/api/packages/OWNER/nuget/index.json --name codeyard --username USERNAME --password "$CODEYARD_TOKEN"`
+(add `--store-password-in-clear-text` only when the client cannot encrypt its config).
+Publish with `dotnet nuget push PACKAGE.nupkg --source codeyard --api-key "$CODEYARD_TOKEN"`.
+The API key is the PAT or job token, not an independent registry secret. The v3 index
+advertises publish, flat-container, registration and search resources. Symbol servers
+and `.snupkg` publication are not implemented. NuGet unlisting is unsupported; use
+Packages REST/pages for deletion and restoration. Search download counts record authorized
+package-download responses, not metadata probes or completed installations.
+
+For RubyGems, set a named API key in `~/.gem/credentials` (mode `0600`), for example
+`:codeyard: TOKEN`, then use
+`gem push PACKAGE.gem --key codeyard --host https://HOST/api/packages/OWNER/rubygems`.
+Configure Bundler's credentials for that same source URL as `USERNAME:TOKEN`, and use
+`source "https://HOST/api/packages/OWNER/rubygems/"` in the Gemfile. Bundler uses the
+compact `/versions` and `/info/NAME` indexes, including platform variants, dependencies,
+archive checksums, conditional requests and byte ranges. The legacy Marshal indexes,
+yank API, and gem-signing verification are not implemented; archive bytes and signatures
+are retained unchanged for client-side verification.
+
+### Artifact attestations and inventory
+
+The GitHub-compatible API stores Sigstore DSSE bundles once and indexes their SHA-256/SHA-512
+subjects across repository associations. Repository and organization reads filter current
+repository visibility before cursor pagination. Organization deletion removes only associations
+on repositories the caller may write; unreferenced bundles are collected in bounded sweeps.
+Browse `/OWNER/REPOSITORY/attestations` (also linked from Insights) or `/orgs/ORG/attestations`
+for native, JavaScript-optional filters, bundle downloads and CSRF-protected deletion.
+Personal repository attestations are also available at `/users/USERNAME/attestations`,
+with the matching GitHub REST list and deletion operations. Docker conflict listings return
+an empty collection: Codeyard publishes directly to its container registry, without a legacy
+Docker registry migration.
+
+Bundles are **stored, not cryptographically verified**. Structural validation is bounded to 1 MiB,
+100 subjects and 32 signatures. Validate signatures, trusted roots and the expected signer separately.
+The API returns inline `bundle` values without `bundle_url`: current `gh attestation verify` falls
+back to that field, while its unauthenticated external-URL transport expects Snappy-compressed data.
+Downloaded JSON can also be supplied with `--bundle` and an explicit expected repository/owner.
+Serving a bundle does not make Codeyard its Sigstore issuer or establish a verification verdict.
+Pages budget 16 MiB of bundle data; an oversized single bulk expansion returns 413 and requires
+fewer requested digests. No real `gh` signature/trust-policy verification is claimed by the fixtures.
+
+Organization artifact deployment/storage metadata uses the same live provenance repository
+associations. Explicit `github_repository` is a fallback only when no SLSA provenance is stored;
+only currently writable associations are eligible, and stable deployment identities also recheck
+any prior repository. Digest identities retain their original artifact name/version. Cluster batches
+create or update the named deployments; omitted records are unchanged. Partial batches leave rejected
+records unchanged, and empty or all-rejected batches are no-ops. Requests are bounded
+to 16 MiB, synchronous batches to 1,000 deployments and durable jobs to 5,000. Every web node may
+resume pending jobs; inventory changes and terminal job results commit together, with the original
+credential and current repository authority checked again. Storage writes support at most 1,000 eligible
+repository associations. Unpaged inventory reads over 16 MiB/10,000 records return 413, not a silently
+truncated inventory. Repository transfers discard inventory
+from the former namespace rather than transferring it or permanently reserving its deployment names.
+Actions tokens need `attestations` or `artifact-metadata` permissions and remain scoped to their own
+repository. REST requires a token, and read credentials cannot mutate this state.
 
 ## Configuration
 

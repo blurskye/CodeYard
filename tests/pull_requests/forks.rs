@@ -37,6 +37,7 @@ async fn admitted_workflows(f: &Database, repo: i64, head: &str) -> Vec<String> 
     let mut paths: Vec<String> = runs
         .into_iter()
         .filter(|run| run.head_sha.as_deref() == Some(head))
+        .filter(|run| !run.approval_required)
         .map(|run| run.workflow_path)
         .collect();
     paths.sort();
@@ -62,6 +63,19 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
+    // This contract inspects act's isolated checkout and excludes repository secrets.
+    // Select that engine explicitly now that the site's default is codeyard-actions.
+    db::actions::save_repo_actions_settings(
+        f.pool(),
+        alice_id,
+        base.id,
+        &db::actions::RepoActionsSettings {
+            engine: Some("act".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     let encryptor = Arc::new(SecretEncryptor::new(&[42; 32]));
     db::secrets::create_or_update_secret(
         f.pool(),
@@ -73,10 +87,19 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
+    // The fake runner below stands in for act, so the repository picks that engine.
+    let mut settings = db::actions::get_repo_actions_settings(f.pool(), base.id)
+        .await
+        .unwrap();
+    settings.engine = Some("act".into());
+    db::actions::save_repo_actions_settings(f.pool(), alice_id, base.id, &settings)
+        .await
+        .unwrap();
     let runner = root.path().join("runner");
     let config = Arc::new(CiConfig {
         mode: CiExecutionMode::Local,
         act_binary: runner.to_str().unwrap().to_owned(),
+        actions_binary: runner.to_str().unwrap().to_owned(),
         max_active_runs: 1,
         trusted_actor_ids: BTreeSet::from([alice_id, bob_id]),
         ..CiConfig::default()
@@ -200,10 +223,17 @@ async fn contract(pg: bool) {
         diff.to_string().contains("fork.txt") && diff.to_string().contains("fork one"),
         "{diff}"
     );
-    assert!(db::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
+    let pending = db::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
         .await
-        .unwrap()
-        .is_empty());
+        .unwrap();
+    assert_eq!(pending.len(), 1);
+    assert!(pending[0].approval_required && pending[0].is_fork);
+    assert!(
+        db::ci::claim_ci_run(f.pool(), "not-approved", "local", &[alice_id, bob_id])
+            .await
+            .unwrap()
+            .is_none()
+    );
     bob.expect(
         "POST",
         "/api/repos/alice/proj/pulls/1/workflows",
@@ -223,6 +253,8 @@ async fn contract(pg: bool) {
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].pull_request_id, opened["id"].as_i64());
     assert!(runs[0].is_fork);
+    assert!(!runs[0].approval_required);
+    assert_eq!(runs[0].id, pending[0].id);
     alice
         .expect(
             "POST",
@@ -306,14 +338,16 @@ async fn contract(pg: bool) {
             .to_string(),
         h2
     );
-    assert_eq!(
-        db::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
-            .await
-            .unwrap()
-            .len(),
-        1,
-        "new fork commit waits for approval"
-    );
+    let waiting = db::ci::list_ci_runs_for_repo(f.pool(), base.id, 20)
+        .await
+        .unwrap();
+    assert_eq!(waiting.len(), 2);
+    assert!(waiting
+        .iter()
+        .any(|run| run.head_sha.as_deref() == Some(&h2) && run.approval_required));
+    assert!(!waiting
+        .iter()
+        .any(|run| run.head_sha.as_deref() == Some(&h2) && run.worker.is_some()));
     alice
         .expect(
             "POST",
@@ -386,7 +420,8 @@ async fn contract(pg: bool) {
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
 
     // The production worker invokes this executable instead of act. Check the
-    // actual job checkout and keep the fork's secret-file refusal.
+    // actual job checkout, and that a fork gets only its read-only token, never the
+    // base repository's secrets.
     std::fs::write(
         &runner,
         format!(
@@ -395,7 +430,13 @@ set -eu
 checkout=
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --secret-file) exit 42 ;;
+        --secret-file)
+            shift
+            # Only the run-scoped GitHub token may be delivered, never base-repository secrets.
+            test "$(wc -l < "$1")" -eq 1
+            grep -q '^GITHUB_TOKEN=' "$1"
+            ! grep -q 'must-not-be-delivered' "$1"
+            ;;
         --directory) shift; checkout=$1 ;;
     esac
     shift
@@ -448,7 +489,10 @@ echo isolated-checkout-only-admitted-objects
             let (_, logs) = alice
                 .send(
                     "GET",
-                    &format!("/api/ci/jobs/{}/logs", run.run_id),
+                    &format!(
+                        "/api/v3/repos/alice/proj/actions/runs/{}/logs?after=0",
+                        run.id
+                    ),
                     "application/json",
                     String::new(),
                 )
@@ -709,6 +753,15 @@ echo isolated-checkout-only-admitted-objects
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
     assert_eq!(refused["error"], "ci_not_queued", "{refused}");
+    let pending_deploy = db::ci::list_ci_runs_for_repo(f.pool(), base.id, 100)
+        .await
+        .unwrap();
+    assert!(pending_deploy
+        .iter()
+        .any(|run| run.head_sha.as_deref() == Some(&deploy_head)
+            && run.workflow_path == ".github/workflows/deploy.yml"
+            && run.approval_required
+            && run.worker.is_none()));
     assert!(
         text(&refused, "message").contains("CI deployment permission denied"),
         "{refused}"
@@ -1172,6 +1225,8 @@ async fn private_fork_revocation_contract(pg: bool) {
             base_branch: "main",
             base_sha: &advanced_base.sha,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await

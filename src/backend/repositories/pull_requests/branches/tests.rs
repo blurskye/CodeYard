@@ -123,11 +123,14 @@ async fn row(forks: &Forks, id: i64) -> PullRequest {
 async fn open(forks: &Forks, head_branch: &str) -> PullRequest {
     let request = mutations::CreatePullRequestRequest {
         head_repo_id: Some(forks.fork.id),
-        title: format!("From {head_branch}"),
-        body: None,
+        source: mutations::PullRequestSource::New {
+            title: format!("From {head_branch}"),
+            body: None,
+        },
         head_branch: head_branch.to_owned(),
         base_branch: "main".to_owned(),
         is_draft: false,
+        maintainer_can_modify: None,
     };
     mutations::create_pull_request(
         &forks.pool,
@@ -151,6 +154,7 @@ async fn close(forks: &Forks, pull: &PullRequest) {
         body: None,
         state: Some("closed".to_owned()),
         base: None,
+        maintainer_can_modify: None,
     };
     mutations::update_pull_request(
         &forks.pool,
@@ -339,11 +343,14 @@ async fn existing_owner_requests_do_not_take_a_write_lock() {
         "proj".into(),
         mutations::CreatePullRequestRequest {
             head_repo_id: Some(forks.base.id),
-            title: "Owned".into(),
-            body: None,
+            source: mutations::PullRequestSource::New {
+                title: "Owned".into(),
+                body: None,
+            },
             head_branch: "feature".into(),
             base_branch: "main".into(),
             is_draft: false,
+            maintainer_can_modify: None,
         },
     )
     .await

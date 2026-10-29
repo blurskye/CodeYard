@@ -1,0 +1,14 @@
+{
+  "exit_code": 0,
+  "jobs": {
+    "produce": "success",
+    "skip": "skipped",
+    "test": "success"
+  },
+  "contains": [
+    "compat:ok"
+  ],
+  "absent": [
+    "compat:must-not-run"
+  ]
+}

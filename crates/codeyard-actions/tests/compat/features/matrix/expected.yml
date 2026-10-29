@@ -1,0 +1,18 @@
+{
+  "exit_code": 0,
+  "jobs": {
+    "test-apple-cat": "success",
+    "test-apple-dog": "success",
+    "test-pear-cat": "success",
+    "test-banana-owl": "success"
+  },
+  "contains": [
+    "compat:matrix:apple/cat/green",
+    "compat:matrix:apple/dog/green",
+    "compat:matrix:pear/cat/",
+    "compat:matrix:banana/owl/yellow"
+  ],
+  "absent": [
+    "compat:matrix:pear/dog/"
+  ]
+}

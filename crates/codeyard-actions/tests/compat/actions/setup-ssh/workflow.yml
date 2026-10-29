@@ -1,0 +1,16 @@
+# https://github.com/shimataro/ssh-key-action/tree/87a8f067114a8ce263df83e9ed5c849953548bc3
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: shimataro/ssh-key-action@87a8f067114a8ce263df83e9ed5c849953548bc3 # v2
+        with:
+          key: "${{ secrets.COMPAT_SSH_PRIVATE_KEY }}"
+          known_hosts: "compat.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      - name: Assert documented effect
+        run: |
+          test -s "$HOME/.ssh/id_rsa"; test -s "$HOME/.ssh/known_hosts"
+          echo compat:ok

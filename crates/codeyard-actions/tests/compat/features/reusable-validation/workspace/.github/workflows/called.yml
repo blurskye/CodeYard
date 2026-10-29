@@ -1,0 +1,11 @@
+on:
+  workflow_call:
+    inputs:
+      enabled: {type: boolean, required: true}
+    secrets:
+      password: {required: true}
+jobs:
+  forbidden:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo must-not-execute-invalid-call

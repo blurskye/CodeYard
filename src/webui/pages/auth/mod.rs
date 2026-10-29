@@ -1,4 +1,6 @@
 //! Sign-in, registration, setup and sign-out pages: `/login`, `/register`, `/setup`, `/enter`, `/logout`.
+pub(crate) mod apps;
+pub(crate) mod oauth;
 mod page;
 #[cfg(test)]
 mod tests;

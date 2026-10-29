@@ -1,0 +1,15 @@
+# https://github.com/mlugg/setup-zig/tree/53fc45b17fe98b52f92ee5ea08ff48a85a3e7eb7
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: mlugg/setup-zig@53fc45b17fe98b52f92ee5ea08ff48a85a3e7eb7 # v1
+        with:
+          version: "0.13.0"
+      - name: Assert documented effect
+        run: |
+          zig version | grep '^0\.13\.0'
+          echo compat:ok

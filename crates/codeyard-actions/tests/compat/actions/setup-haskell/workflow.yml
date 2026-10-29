@@ -1,0 +1,16 @@
+# https://github.com/haskell-actions/setup/tree/0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2
+        with:
+          ghc-version: "9.6.6"
+          cabal-version: "3.10.3.0"
+      - name: Assert documented effect
+        run: |
+          ghc --numeric-version | grep '^9\.6\.6'
+          echo compat:ok

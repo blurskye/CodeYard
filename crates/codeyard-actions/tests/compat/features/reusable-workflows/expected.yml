@@ -1,0 +1,13 @@
+exit_code: 0
+jobs:
+  Explicit / middle / leaf / test: success
+  inherited (one) / test: success
+  inherited (two) / test: success
+  verify: success
+contains:
+  - typed-call-ok
+  - inherited-call-ok
+  - reusable-outputs-ok
+secrets:
+  PASSWORD: reusable-password-value
+  UNPASSED: not-passed-to-explicit-call

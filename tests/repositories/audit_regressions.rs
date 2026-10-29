@@ -104,6 +104,30 @@ async fn contract(pg: bool) {
         duplicate.downcast_ref::<db::labels::LabelWriteRefusal>(),
         Some(&db::labels::LabelWriteRefusal::DuplicateName)
     );
+    // Names are matched without regard to case, so `BUG` would shadow `bug`.
+    client
+        .expect(
+            "POST",
+            &format!("{api}/labels"),
+            json!({"name":"BUG", "color":"123456"}),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    let renamed = db::labels::update_label(
+        f.pool(),
+        alice,
+        repository.id,
+        other.id,
+        Some("Bug"),
+        None,
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        renamed.downcast_ref::<db::labels::LabelWriteRefusal>(),
+        Some(&db::labels::LabelWriteRefusal::DuplicateName)
+    );
     for (action, extra) in [
         ("label", Vec::new()),
         ("edit-label", vec![("label_id", other.id.to_string())]),

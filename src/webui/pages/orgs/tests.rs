@@ -2,6 +2,10 @@ use super::*;
 use crate::webui::pages::users::Repository;
 use dioxus::prelude::VirtualDom;
 use std::collections::HashMap;
+#[path = "properties_tests.rs"]
+mod properties_tests;
+#[path = "settings_tests.rs"]
+mod settings_tests;
 
 fn team() -> Team {
     Team {
@@ -10,6 +14,7 @@ fn team() -> Team {
         slug: "writers".into(),
         description: "Writes the docs".into(),
         privacy: "visible".into(),
+        parent_team_id: None,
         member_count: 2,
     }
 }
@@ -53,11 +58,18 @@ fn sample_page(draft: HashMap<String, String>, repositories: Vec<RepositoryChoic
         pending_invitations: vec![],
         invitations_next: None,
         pending_invitations_next: None,
+        failed_invitations: vec![],
+        failed_invitations_next: None,
+        outside_collaborators: vec![],
+        outside_next: None,
+        blocked_users: vec![],
+        blocks_next: None,
         ownerless_next: None,
         notice: None,
         can_manage: true,
         is_owner: true,
         viewer_id: 0,
+        membership_public: false,
         more_organizations: false,
         more_members: false,
         more_teams: false,
@@ -68,6 +80,13 @@ fn sample_page(draft: HashMap<String, String>, repositories: Vec<RepositoryChoic
         teams_cursor: 0,
         tab: "teams".into(),
         webhooks: None,
+        dependabot: None,
+        private_registries: None,
+        actions: None,
+        roles: None,
+        properties: None,
+        settings: None,
+        interactions: None,
         message: None,
         draft,
     }
@@ -84,6 +103,48 @@ fn html(page: Page) -> String {
     let mut dom = VirtualDom::new_with_props(render, page);
     dom.rebuild_in_place();
     dioxus_ssr::render(&dom)
+}
+
+#[test]
+fn actions_settings_use_native_forms_and_never_render_secret_values() {
+    let mut page = sample_page(Default::default(), vec![]);
+    page.tab = "actions".into();
+    page.actions = Some(Box::new(super::actions::Panel {
+        oidc_claim_keys: "repo, context".into(),
+        oidc_properties: vec!["business_unit".into()],
+        csrf_token: "csrf-fixture".into(),
+        org_id: 3,
+        encryption_enabled: true,
+        values: vec![
+            super::actions::Value {
+                name: "SECRET".into(),
+                value: String::new(),
+                secret: true,
+                visibility: "selected".into(),
+                repositories: "7, 9".into(),
+            },
+            super::actions::Value {
+                name: "VARIABLE".into(),
+                value: "<script>readable</script>".into(),
+                secret: false,
+                visibility: "all".into(),
+                repositories: String::new(),
+            },
+        ],
+        previous: None,
+        next: None,
+    }));
+    let rendered = html(page);
+    assert!(rendered.contains("/settings/organizations/3/actions/oidc-save"));
+    assert!(rendered.contains("/settings/organizations/3/actions/oidc-property-add"));
+    assert!(rendered.contains("/settings/organizations/3/actions/oidc-property-delete"));
+    assert!(rendered.contains("/settings/organizations/3/actions/secret-access"));
+    assert!(rendered.contains("/settings/organizations/3/actions/variable-save"));
+    assert!(rendered.contains("method=\"post\""));
+    assert!(rendered.contains("name=\"csrf_token\""));
+    assert!(rendered.contains("name=\"repositories\""));
+    assert!(!rendered.contains("<script>readable</script>"));
+    assert!(rendered.contains("&lt;script&gt;readable&lt;/script&gt;"));
 }
 
 /// Every rendered `<select>` whose opening tag names `name`, in document order.
@@ -143,6 +204,50 @@ fn selected(block: &str, value: &str) -> bool {
 }
 
 #[test]
+fn repository_roles_require_owner_authority_and_confirmed_scoped_forms() {
+    let mut page = sample_page(HashMap::new(), vec![]);
+    page.tab = "roles".into();
+    let team = super::RoleTeam {
+        id: 8,
+        slug: "builders".into(),
+        name: "Builders".into(),
+    };
+    page.roles = Some(Box::new(super::RolePanel {
+        definitions: vec![super::RoleDefinition {
+            id: 5,
+            name: "All-repository admin".into(),
+            description: "Administer every repository, not the organization.".into(),
+        }],
+        selected: 5,
+        users: vec![super::RoleUser {
+            id: 44,
+            username: "role_holder".into(),
+            direct: true,
+            teams: vec![team.clone()],
+        }],
+        teams: vec![team],
+        users_next: None,
+        teams_next: None,
+    }));
+    let output = html(page.clone());
+    assert!(output.contains("All-repository admin"));
+    assert!(output.contains("method=\"get\""));
+    assert!(output.contains("Inherited from"));
+    assert!(output.contains("revoke-all-user-roles"));
+    assert!(output.contains("revoke-all-team-roles"));
+    assert!(output.contains("name=\"confirm\""));
+    assert!(output.contains("tab=roles&#38;role=5"));
+    page.selected.as_mut().unwrap().suspended = true;
+    let suspended = html(page.clone());
+    assert!(!suspended.contains("Assign to member"));
+    assert!(!suspended.contains("Remove direct role"));
+    page.is_owner = false;
+    let denied = html(page);
+    assert!(!denied.contains("role_holder"));
+    assert!(!denied.contains("Administer every repository"));
+}
+
+#[test]
 fn the_new_and_edited_team_descriptions_have_their_own_ids() {
     // Each description is a separate draft, so the two forms must not share an id or a name.
     let page = html(sample_page(HashMap::new(), Vec::new()));
@@ -199,6 +304,8 @@ fn public_profile(
     repositories: Vec<Repository>,
 ) -> OrganizationProfile {
     OrganizationProfile {
+        contacts: Default::default(),
+        can_create: manage,
         organization: Organization {
             id: 3,
             name: "acme".into(),
@@ -352,6 +459,7 @@ fn public_organization_tabs_follow_the_viewer() {
         slug: "reviewers".into(),
         description: "Reviews code.".into(),
         privacy: "visible".into(),
+        parent_team_id: None,
         member_count: 2,
     }];
     let teams_html = profile_html(teams.clone());
@@ -861,6 +969,19 @@ fn members_get_a_read_only_organization() {
 }
 
 #[test]
+fn members_can_change_only_their_own_membership_visibility() {
+    let mut page = member_page();
+    page.membership_public = true;
+    let output = html(page.clone());
+    assert!(output.contains("Your membership visibility"));
+    assert!(output.contains("value=\"membership-visibility\""));
+    assert!(output.contains("name=\"csrf_token\""));
+    assert!(selected(selects(&output, "visibility")[0], "public"));
+    page.selected.as_mut().unwrap().suspended = true;
+    assert!(!html(page).contains("value=\"membership-visibility\""));
+}
+
+#[test]
 fn owners_get_inline_member_controls_and_a_danger_card_for_delete() {
     let mut page = member_page();
     page.can_manage = true;
@@ -906,7 +1027,15 @@ fn owners_confirm_each_removal_by_username_and_see_each_role_once() {
         + output.matches("value=\"remove-team-member\"").count();
     assert!(removals >= 2);
     // The organization delete confirmation belongs to Overview, not Members.
-    assert_eq!(output.matches("name=\"confirm\"").count(), removals);
+    let conversions = output.matches("value=\"convert-outside\"").count();
+    assert_eq!(
+        conversions, 2,
+        "each member has a separately confirmed conversion"
+    );
+    assert_eq!(
+        output.matches("name=\"confirm\"").count(),
+        removals + conversions
+    );
     let mut overview = member_page();
     overview.can_manage = true;
     overview.is_owner = true;
@@ -998,6 +1127,17 @@ fn team_member_removal_asks_for_the_username_in_a_centred_dialog() {
     assert!(output.contains("aria-label=\"Remove bob from the team\""));
     assert!(output.contains("Type bob to confirm"));
     assert!(output.contains("value=\"remove-team-member\""));
+}
+
+#[test]
+fn members_who_cannot_manage_may_leave() {
+    let mut page = member_page();
+    page.viewer_id = 6;
+    let output = html(page);
+    assert!(output.contains("href=\"#remove-member-6\""));
+    assert!(output.contains("aria-label=\"Leave the organization\""));
+    assert!(output.contains("Type bob to confirm"));
+    assert!(!output.contains("href=\"#remove-member-5\""));
 }
 
 #[test]
@@ -1095,20 +1235,72 @@ fn organization_pictures_use_the_upload_or_the_generated_avatar() {
 }
 
 #[test]
+fn organization_blocks_are_private_to_owners_and_explain_irreversible_removal() {
+    let mut page = sample_page(HashMap::new(), vec![]);
+    page.tab = "members".into();
+    page.can_manage = true;
+    page.is_owner = true;
+    page.blocked_users = vec![BlockedUser {
+        user_id: 43,
+        username: "blockedacct".into(),
+    }];
+    let owner = html(page.clone());
+    assert!(owner.contains("Blocked users"));
+    assert!(owner.contains("blockedacct"));
+    assert!(owner.contains("Unblocking does not restore"));
+    assert!(owner.contains("value=\"block-user\""));
+    assert!(owner.contains("value=\"unblock-user\""));
+    page.is_owner = false;
+    let delegated = html(page);
+    assert!(!delegated.contains("Blocked users"));
+    assert!(!delegated.contains("blockedacct"));
+    assert!(!delegated.contains("block-user"));
+}
+
+#[test]
+fn outside_collaborator_controls_are_owner_only_and_confirm_each_change() {
+    let mut page = sample_page(HashMap::new(), vec![]);
+    page.tab = "members".into();
+    page.can_manage = true;
+    page.is_owner = true;
+    page.members = vec![Member {
+        user_id: 44,
+        username: "member".into(),
+        role: "member".into(),
+    }];
+    page.outside_collaborators = vec![OutsideCollaborator {
+        user_id: 43,
+        username: "external".into(),
+    }];
+    let owner = html(page.clone());
+    assert!(owner.contains("Outside collaborators"));
+    assert!(owner.contains("Convert to outside collaborator"));
+    assert!(owner.contains("value=\"remove-outside\""));
+    assert!(owner.contains("Type external to confirm"));
+    page.is_owner = false;
+    let delegated = html(page);
+    assert!(!delegated.contains("Outside collaborators"));
+    assert!(!delegated.contains("Convert to outside collaborator"));
+    assert!(!delegated.contains("remove-outside"));
+}
+
+#[test]
 fn pending_invitations_show_cancel_to_owners_and_accept_or_decline_to_invitees() {
     let mut page = sample_page(HashMap::new(), vec![]);
     page.can_manage = true;
     page.tab = "members".into();
     page.pending_invitations = vec![super::page::PendingInvitation {
         id: 1,
-        user_id: 44,
+        user_id: Some(44),
         username: "dana".into(),
         role: "admin".into(),
+        failed_reason: None,
     }];
     let owner_view = html(page.clone());
     assert!(owner_view.contains("Pending invitations"));
     assert!(owner_view.contains("Invited as admin"));
-    assert!(owner_view.contains("id=\"cancel-invitation-44\""));
+    assert!(owner_view.contains("id=\"cancel-invitation-1\""));
+    assert!(owner_view.contains("name=\"invitation_id\" value=\"1\""));
     assert!(owner_view.contains("value=\"cancel-invitation\""));
     assert!(owner_view.contains("Invite a member"));
 

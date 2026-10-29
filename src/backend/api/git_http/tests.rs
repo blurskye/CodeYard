@@ -114,7 +114,7 @@ async fn personal_administrator_git_access_keeps_token_scopes_and_org_restrictio
             .authorize(&state.pool, &org_repo, false)
             .await
             .is_err());
-        db::users::tokens::delete_token(&state.pool, actor.id, token.id)
+        db::users::tokens::delete_token(&state.pool, actor.id, &session, token.id)
             .await
             .unwrap();
         assert!(

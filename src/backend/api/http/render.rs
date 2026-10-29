@@ -30,6 +30,39 @@ impl PageContext {
         self.page_model_status(status, title, page)
     }
 
+    /// A page whose form posts here and is then redirected to `target`, such as an OAuth
+    /// consent page. Browsers check that redirect against the page's form-action, so the
+    /// policy allows the target, and the page always loads as a full document because a
+    /// hydrated page keeps the policy of the document it was loaded in.
+    pub fn page_model_with_form_target(&self, title: &str, page: Page, target: &str) -> Response {
+        if accepts_page_model(&self.headers) {
+            let response = Response::builder()
+                .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                .body(Body::empty())
+                .expect("static HTML response headers");
+            return secure_html_headers(response);
+        }
+        let mut response = self.page_model(title, page);
+        let source = url::Url::parse(target).ok().map(|url| match url.scheme() {
+            "http" | "https" => url.origin().ascii_serialization(),
+            scheme => format!("{scheme}:"),
+        });
+        if let Some(policy) = source
+            .map(|source| {
+                CSP.replace(
+                    "form-action 'self'",
+                    &format!("form-action 'self' {source}"),
+                )
+            })
+            .and_then(|policy| HeaderValue::from_str(&policy).ok())
+        {
+            response
+                .headers_mut()
+                .insert(header::CONTENT_SECURITY_POLICY, policy);
+        }
+        response
+    }
+
     /// Submitted non-secret values can be re-rendered with a real validation or
     /// conflict status, without overriding an infrastructure/render failure.
     pub fn page_model_status(
@@ -38,6 +71,7 @@ impl PageContext {
         title: &str,
         page: crate::webui::app::Page,
     ) -> Response {
+        let observation = super::traffic::page(self, title, &page);
         let mut envelope = crate::webui::app::PageEnvelope {
             title: title.to_string(),
             location: self.location.clone(),
@@ -71,7 +105,11 @@ impl PageContext {
                 )
                 .body(Body::from(json))
                 .expect("static page model response headers");
-            return self.with_cookie(secure_html_headers(response));
+            let mut response = self.with_cookie(secure_html_headers(response));
+            if let Some(observation) = observation {
+                response.extensions_mut().insert(observation);
+            }
+            return response;
         }
         let runtime_module = match super::static_files::runtime_module() {
             Ok(module) => module,
@@ -90,7 +128,11 @@ impl PageContext {
             "x-codeyard-rendering",
             HeaderValue::from_static("ssr-hydrated"),
         );
-        self.with_cookie(secure_html_headers(response))
+        let mut response = self.with_cookie(secure_html_headers(response));
+        if let Some(observation) = observation {
+            response.extensions_mut().insert(observation);
+        }
+        response
     }
 
     pub fn error(&self, status: StatusCode, message: &str) -> Response {

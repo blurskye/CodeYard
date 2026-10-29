@@ -1,7 +1,7 @@
 //! Links mailed to a user: one confirms an address, one lets a forgotten password be reset. The
 //! mail carries a random token, shown as a code to paste and, when PUBLIC_URL is set, in a link.
 //! Only its hash is stored. A token works once, until it expires.
-use super::{config, messages, outbox};
+use super::{config, messages};
 use crate::backend::api::http::config::public_origin;
 use crate::backend::db::{self, models::User, DbPool};
 use crate::backend::identity::admission::{self, AdmissionError};
@@ -71,26 +71,27 @@ async fn queue_link(
     email: &str,
 ) -> Result<(), LinkError> {
     let token = new_token();
-    let saved = db::email::save_email_token(
-        pool,
-        user.id,
-        purpose.name(),
-        email,
-        &hash(&token),
-        purpose.lifetime_seconds(),
-    )
-    .await
-    .map_err(unavailable)?;
-    // The mail sent less than a minute ago still holds the live token; the answer stays the same.
-    if !saved {
-        return Ok(());
-    }
     let origin = public_origin();
     let mail = match purpose {
         Purpose::Verify => messages::verify_email(&origin, &user.username, &token),
         Purpose::Reset => messages::password_reset(&origin, &user.username, &token),
     };
-    outbox::enqueue(pool, email, mail).await;
+    // The token and its mail are saved together. A mail sent less than a minute ago still holds
+    // the live token, and then nothing is saved; the answer stays the same.
+    db::email::save_email_token(
+        pool,
+        &db::email::EmailLink {
+            user_id: user.id,
+            purpose: purpose.name(),
+            email,
+            token_hash: &hash(&token),
+            ttl_seconds: purpose.lifetime_seconds(),
+            subject: &mail.subject,
+            body_text: &mail.body,
+        },
+    )
+    .await
+    .map_err(unavailable)?;
     Ok(())
 }
 
@@ -110,6 +111,50 @@ pub async fn send_verification(pool: &DbPool, user: &User) -> Result<(), LinkErr
     queue_link(pool, Purpose::Verify, user, email).await
 }
 
+/// Mails each of the user's new secondary addresses its own code, so adding a batch does not
+/// invalidate earlier mail. Each address keeps its own resend interval. The batch is charged
+/// once against the mail budget. NoAddress when none of the addresses awaits a code.
+pub async fn send_secondary_verifications(
+    pool: &DbPool,
+    user: &User,
+    emails: &[String],
+) -> Result<(), LinkError> {
+    let addresses = db::users::emails::list_emails(pool, user.id)
+        .await
+        .map_err(unavailable)?;
+    let pending: Vec<&str> = emails
+        .iter()
+        .map(String::as_str)
+        .filter(|&email| {
+            addresses
+                .iter()
+                .any(|address| address.email.eq_ignore_ascii_case(email) && !address.verified)
+        })
+        .collect();
+    if pending.is_empty() {
+        return Err(LinkError::NoAddress);
+    }
+    if !config::is_configured(pool).await {
+        return Err(LinkError::NotConfigured);
+    }
+    admission::admit_mail(pool, None, &format!("user:{}", user.id)).await?;
+    for email in pending {
+        let token = new_token();
+        let mail = messages::verify_email(&public_origin(), &user.username, &token);
+        db::users::emails::save_verification(
+            pool,
+            user.id,
+            email,
+            &hash(&token),
+            &mail.subject,
+            &mail.body,
+        )
+        .await
+        .map_err(unavailable)?;
+    }
+    Ok(())
+}
+
 /// Mails a password reset code to the account that has this verified address. Nothing tells the
 /// caller whether such an account exists, so the answer is the same for every address.
 pub async fn send_password_reset(
@@ -127,26 +172,38 @@ pub async fn send_password_reset(
         .await
         .map_err(unavailable)?
         .filter(|user| user.email_verified && user.password_hash.is_some() && !user.is_banned);
-    match user {
-        Some(user) => queue_link(pool, Purpose::Reset, &user, address).await,
-        None => Ok(()),
-    }
+    let Some(user) = user else {
+        return Ok(());
+    };
+    // The mail goes to the address on the account, which may differ in case from the one typed.
+    let Some(stored) = user.email.as_deref() else {
+        return Ok(());
+    };
+    queue_link(pool, Purpose::Reset, &user, stored).await
 }
 
 /// Whether the link can still be used, without using it.
 pub async fn is_valid(pool: &DbPool, purpose: Purpose, token: &str) -> Result<bool, LinkError> {
-    db::email::email_token_is_valid(pool, purpose.name(), &hash(token))
+    let hash = hash(token);
+    let valid = db::email::email_token_is_valid(pool, purpose.name(), &hash)
         .await
-        .map_err(unavailable)
+        .map_err(unavailable)?;
+    if !valid && purpose == Purpose::Verify {
+        return db::users::emails::verification_valid(pool, &hash)
+            .await
+            .map_err(unavailable);
+    }
+    Ok(valid)
 }
 
-/// Uses up the link. Returns the user it was for and the address it was sent to.
-pub async fn take(
+/// Uses up a reset link and sets the account's new password hash, in one transaction. Returns the
+/// account the link was for, or None when the link is no longer usable.
+pub async fn use_reset_link(
     pool: &DbPool,
-    purpose: Purpose,
     token: &str,
-) -> Result<Option<(i64, String)>, LinkError> {
-    db::email::take_email_token(pool, purpose.name(), &hash(token))
+    password_hash: &str,
+) -> Result<Option<i64>, LinkError> {
+    db::users::transitions::reset_password_with_link(pool, &hash(token), password_hash)
         .await
         .map_err(unavailable)
 }
@@ -154,10 +211,14 @@ pub async fn take(
 /// Uses up a verification link and marks the address verified. False when the link is unknown,
 /// expired, already used, or the user has changed their address since.
 pub async fn verify_address(pool: &DbPool, token: &str) -> Result<bool, LinkError> {
-    let Some((user_id, email)) = take(pool, Purpose::Verify, token).await? else {
-        return Ok(false);
-    };
-    db::email::confirm_email(pool, user_id, &email)
+    let hash = hash(token);
+    match db::email::verify_email_token(pool, &hash)
         .await
-        .map_err(unavailable)
+        .map_err(unavailable)?
+    {
+        Some(confirmed) => Ok(confirmed),
+        None => db::users::emails::verify_email(pool, &hash)
+            .await
+            .map_err(unavailable),
+    }
 }

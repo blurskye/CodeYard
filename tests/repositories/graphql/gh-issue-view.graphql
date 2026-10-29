@@ -1,0 +1,51 @@
+# cli/cli 5056c0a8ef34512be1d5b4120d4e4b30412ada8b
+# pkg/cmd/issue/shared/lookup.go FindIssueOrPR, with the field substitutions
+# from api/query_builder.go IssueGraphQL and PullRequestGraphQL.
+query IssueByNumber($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    hasIssuesEnabled
+    issue: issueOrPullRequest(number: $number) {
+      __typename
+      ... on Issue {
+        id number title body state stateReason closed closedAt createdAt updatedAt locked
+        author { login ... on User { id name } }
+        authorAssociation
+        assignees(first: 100) { nodes { id login name databaseId } totalCount }
+        labels(first: 100) { nodes { id name description color } totalCount }
+        projectCards(first: 100) { nodes { project { name } column { name } } totalCount }
+        milestone { number title description dueOn }
+        reactionGroups { content users { totalCount } }
+        repository { id name nameWithOwner databaseId viewerPermission }
+        comments(first: 100) {
+          nodes {
+            id author { login ... on User { id name } } authorAssociation
+            body createdAt includesCreatedEdit isMinimized minimizedReason
+            reactionGroups { content users { totalCount } } url viewerDidAuthor
+          }
+          pageInfo { hasNextPage endCursor }
+          totalCount
+        }
+      }
+      ... on PullRequest {
+        id number title body state closed closedAt createdAt updatedAt
+        author { login ... on User { id name } }
+        authorAssociation
+        assignees(first: 100) { nodes { id login name databaseId } totalCount }
+        labels(first: 100) { nodes { id name description color } totalCount }
+        projectCards(first: 100) { nodes { project { name } column { name } } totalCount }
+        milestone { number title description dueOn }
+        reactionGroups { content users { totalCount } }
+        repository { id name nameWithOwner databaseId viewerPermission }
+        comments(first: 100) {
+          nodes {
+            id author { login ... on User { id name } } authorAssociation
+            body createdAt includesCreatedEdit isMinimized minimizedReason
+            reactionGroups { content users { totalCount } } url viewerDidAuthor
+          }
+          pageInfo { hasNextPage endCursor }
+          totalCount
+        }
+      }
+    }
+  }
+}

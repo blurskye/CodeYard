@@ -22,13 +22,16 @@ pub(super) struct Cli {
 pub(super) enum Commands {
     /// Start HTTP and the selected Git SSH transport
     Serve {
-        /// Services to run on this node; all of them by default
-        #[arg(
-            long,
-            env = "GITSERV_NODE_ROLES",
-            default_value = "web,storage,ssh,actions-worker"
-        )]
+        /// Roles of this machine: server (web pages, API, Git storage and SSH) and runner
+        /// (Actions jobs). A runner may run alone on another machine. In cluster mode the
+        /// server's parts are the web, storage and ssh roles, on separate machines.
+        #[arg(long, env = "GITSERV_NODE_ROLES", default_value = "server,runner")]
         roles: node::NodeRoles,
+
+        /// Turn cluster mode on first (PostgreSQL only), so this node can take the web,
+        /// storage and ssh roles. Same as running `cluster enable` before `serve`.
+        #[arg(long)]
+        cluster: bool,
 
         /// SSH transport: auto, openssh, builtin or disabled
         #[arg(long, env = "SSH_MODE", value_enum, default_value = "auto")]
@@ -98,6 +101,21 @@ pub(super) enum Commands {
 
     /// Create the database and run migrations
     Init,
+
+    /// Copy the database, then every repository, then local uploads into a directory.
+    /// Runs while the server serves; a second run into the same directory copies only
+    /// what changed. Single-node installations only.
+    Backup {
+        /// Backup directory, created if missing
+        dir: PathBuf,
+    },
+
+    /// Restore a backup into an empty database, REPOS_PATH and upload directory, then
+    /// run `repo verify --repair` and `repo rebuild`
+    Restore {
+        /// Backup directory written by `codeyard backup`
+        dir: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -191,6 +209,16 @@ pub(super) enum RepoAction {
         /// Repository name
         name: String,
     },
+    /// Check every repository's Git data and pull request refs against the database
+    Verify {
+        /// Bring the database and pull request refs in line with Git, and put back
+        /// repositories the database still lists from the kept deleted copies. Stop the
+        /// server first.
+        #[arg(long)]
+        repair: bool,
+    },
+    /// Rebuild pack indexes, commit graphs and language statistics. Stop the server first.
+    Rebuild,
     /// Grant access to a repository
     Grant {
         /// Owner username
@@ -203,4 +231,20 @@ pub(super) enum RepoAction {
         #[arg(long, default_value = "read")]
         level: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serve_takes_the_cluster_flag_with_cluster_roles() {
+        let cli =
+            Cli::try_parse_from(["codeyard", "serve", "--cluster", "--roles", "web,ssh"]).unwrap();
+        let Commands::Serve { cluster, roles, .. } = cli.command else {
+            panic!("serve expected");
+        };
+        assert!(cluster);
+        assert_eq!(roles.to_string(), "web,ssh");
+    }
 }

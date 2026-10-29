@@ -1,0 +1,17 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: alpine:3.21
+    services:
+      web:
+        image: nginx:1.27-alpine
+        options: --health-cmd "wget -q -O /dev/null http://localhost" --health-interval 1s --health-retries 20
+    steps:
+      - shell: sh
+        run: |
+          wget -q -O index.html http://web
+          grep -q 'Welcome to nginx' index.html
+          echo compat:ok

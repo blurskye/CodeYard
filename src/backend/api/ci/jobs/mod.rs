@@ -1,9 +1,5 @@
-pub mod cancel;
 pub mod collection;
-pub mod deployment;
-pub mod history;
 pub mod job;
-pub mod logs;
 use crate::backend::{
     api::{http::error::ApiError, http::session::get_current_user},
     app::AppState,
@@ -11,8 +7,7 @@ use crate::backend::{
 };
 use axum::{
     http::{HeaderMap, StatusCode},
-    middleware::from_fn,
-    routing::{get, post},
+    routing::get,
     Json, Router,
 };
 use std::sync::Arc;
@@ -82,23 +77,4 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/ci/jobs", get(collection::list_ci_jobs))
         .route("/api/ci/jobs/:job_id", get(job::get_ci_job))
-        .route("/api/ci/jobs/:job_id/logs", get(logs::get_ci_job_logs))
-        .route(
-            "/api/ci/jobs/:job_id/history",
-            get(history::get_ci_job_history),
-        )
-        .route(
-            "/api/ci/jobs/:job_id/log-download",
-            get(logs::download_ci_job_logs),
-        )
-        .route(
-            "/api/ci/jobs/:job_id/cancel",
-            post(cancel::cancel_ci_job).layer(from_fn(
-                crate::backend::api::http::csrf::cookie_api_submission,
-            )),
-        )
-        .route(
-            "/api/ci/jobs/:job_id/deployment",
-            get(deployment::get_ci_deployment),
-        )
 }

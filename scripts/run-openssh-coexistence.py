@@ -297,6 +297,7 @@ def static_contract(args):
     root_path(Path('/etc/sudoers.d'), directory=True)
     require(re.search(r'(?m)^\s*(?:@includedir|#includedir)\s+/etc/sudoers.d\s*(?:#.*)?$',
                       Path('/etc/sudoers').read_text()), 'operator must provision sudoers inclusion')
+    sys.dont_write_bytecode = True  # The rehearsal must not write a __pycache__ into the fixture.
     spec = importlib.util.spec_from_file_location('coexistence_installer', root / 'install-openssh.py')
     installer = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = installer

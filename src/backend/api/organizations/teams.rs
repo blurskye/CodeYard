@@ -59,6 +59,16 @@ impl Command {
         let team = || organization::id(form, "team_id").map_err(|()| INVALID_FORM);
         let privacy =
             || TeamPrivacy::parse(organization::field(form, "privacy")).map_err(|_| PRIVACY_RULE);
+        let parent = if form.contains_key("parent_team_id") {
+            Some(
+                organization::optional(form, "parent_team_id")
+                    .map(str::parse::<i64>)
+                    .transpose()
+                    .map_err(|_| INVALID_FORM)?,
+            )
+        } else {
+            None
+        };
         // The create form's Team name is the slug, so each form says which name rule applies.
         let profile = |name: &str, name_rule: &'static str| -> Result<TeamProfile, &'static str> {
             TeamProfile::new(
@@ -66,6 +76,7 @@ impl Command {
                 organization::optional(form, "description"),
                 privacy()?,
             )
+            .and_then(|profile| profile.with_parent(parent))
             .map_err(|error| match error {
                 OrganizationInputError::Name => name_rule,
                 _ => INVALID_FORM,
@@ -155,9 +166,28 @@ pub(super) async fn apply(
             let Some(user) = target(ctx, &username).await? else {
                 return Ok(OrganizationOutcome::Denied);
             };
-            organizations::add_organization_team_member(pool, actor, org, team, user, role)
-                .await
-                .map(unit)
+            match organizations::get_organization_role(pool, user, org).await {
+                Ok(OrganizationOutcome::Applied(_)) => {
+                    organizations::add_organization_team_member(pool, actor, org, team, user, role)
+                        .await
+                        .map(unit)
+                }
+                Ok(_) => {
+                    let result =
+                        organizations::invite_team_member(pool, actor, org, team, user, role).await;
+                    if let Ok(OrganizationOutcome::Applied(invitation)) = &result {
+                        crate::backend::notifications::create::organization_invitation(
+                            pool,
+                            &ctx.state.notification_broadcaster,
+                            actor,
+                            invitation,
+                        )
+                        .await;
+                    }
+                    result.map(unit)
+                }
+                Err(error) => Err(error),
+            }
         }
         Command::RemoveMember { team, user } => {
             organizations::remove_organization_team_member(pool, actor, org, team, user).await
@@ -175,7 +205,9 @@ pub(super) async fn apply(
             organizations::revoke_organization_team_repository(pool, actor, org, team, repo).await
         }
     };
-    result.map_err(|_| unavailable(ctx))
+    result.map_err(|error| if error.is::<InvalidTeamParent>() {
+        ctx.error(StatusCode::BAD_REQUEST,"Parent and child teams must be visible in the same organization and cannot form a cycle.")
+    } else { unavailable(ctx) })
 }
 
 /// The repositories a team grant can name: one page of those the viewer can read. The flag

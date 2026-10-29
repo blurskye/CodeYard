@@ -1,0 +1,17 @@
+# https://github.com/pdm-project/setup-pdm/tree/544d7237314ee09c256785bd360f6b30add38b37
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: pdm-project/setup-pdm@544d7237314ee09c256785bd360f6b30add38b37 # v4
+        with:
+          version: "2.22.0"
+          python-version: "3.12"
+          cache: "false"
+      - name: Assert documented effect
+        run: |
+          pdm --version | grep '2\.22\.0'
+          echo compat:ok

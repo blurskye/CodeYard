@@ -1,0 +1,14 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CONFIGURED: ${{ secrets.COMPAT_SECRET }}
+        run: |
+          echo "$CONFIGURED"
+          echo '::add-mask::runtime-sensitive-value'
+          echo 'runtime-sensitive-value'
+          echo compat:ok

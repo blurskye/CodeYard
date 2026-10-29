@@ -168,6 +168,7 @@ async fn release_creation_uses_the_checked_repository_id(pg: bool) {
                 body: Some("Confidential release notes".into()),
                 ..Default::default()
             },
+            new_tag_denied: false,
         },
     )
     .await
@@ -346,6 +347,17 @@ async fn releases_flow(pg: bool) {
             StatusCode::OK,
         )
         .await;
+
+    // A draft does not create its tag. The tag appears when the draft is published.
+    let tags = alice
+        .expect(
+            "GET",
+            "/api/repos/alice/proj/tags",
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    assert!(!tags.to_string().contains("v2.0-rc"), "{tags}");
 
     // Readers and outsiders cannot publish; a duplicate tag is refused.
     let (status, _) = bob
@@ -577,6 +589,15 @@ async fn releases_flow(pg: bool) {
         .await;
     assert_eq!(published["draft"], false, "{published}");
     assert_eq!(published["name"], "Release candidate", "{published}");
+    let tags = alice
+        .expect(
+            "GET",
+            "/api/repos/alice/proj/tags",
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    assert!(tags.to_string().contains("v2.0-rc"), "{tags}");
     let reply = alice
         .form_reply(&format!("/alice/proj/releases/{draft_id}/delete"), &[])
         .await;
@@ -967,6 +988,36 @@ async fn asset_files_leave_through_their_release(pg: bool) {
         .await;
     assert_eq!(release["assets"].as_array().unwrap().len(), 1, "{release}");
     let asset_id = release["assets"][0]["id"].as_i64().unwrap();
+    let edit_path = format!("/alice/proj/releases/{release_id}/assets/{asset_id}/edit");
+    let page = alice
+        .page_ok(&format!("/alice/proj/releases/edit/{release_id}"))
+        .await;
+    assert!(
+        page.contains(&edit_path) && page.contains("Save asset"),
+        "{page}"
+    );
+    let denied = world
+        .bob
+        .form_reply(&edit_path, &[("name", "denied.bin")])
+        .await;
+    assert_eq!(denied.status, StatusCode::NOT_FOUND);
+    let invalid = alice
+        .form_reply(&edit_path, &[("name", "../invalid")])
+        .await;
+    assert_eq!(invalid.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let renamed = alice
+        .form_reply(
+            &edit_path,
+            &[("name", "renamed.bin"), ("label", "Updated label")],
+        )
+        .await;
+    assert_eq!(renamed.status, StatusCode::SEE_OTHER, "{}", renamed.text());
+    let asset = db::releases::list_release_assets(world.database.pool(), release_id)
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(asset.name, "renamed.bin");
+    assert_eq!(asset.label.as_deref(), Some("Updated label"));
     let removed = alice
         .form_reply(
             &format!("/alice/proj/releases/{release_id}/assets/{asset_id}/delete"),
@@ -1356,8 +1407,11 @@ async fn release_write_regressions(pg: bool) {
         .acquire_many_owned(4)
         .await
         .unwrap();
+    // A busy or refused upload answers without reading the body. The body never ends and the
+    // form-body layer would wait 30 seconds for it, so 20 seconds still catches a read while
+    // leaving room for a loaded test machine.
     let busy = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
+        std::time::Duration::from_secs(20),
         world.alice.router.clone().oneshot(request(&world.alice)),
     )
     .await
@@ -1365,7 +1419,7 @@ async fn release_write_regressions(pg: bool) {
     .unwrap();
     assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
     let denied = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
+        std::time::Duration::from_secs(20),
         world.bob.router.clone().oneshot(request(&world.bob)),
     )
     .await

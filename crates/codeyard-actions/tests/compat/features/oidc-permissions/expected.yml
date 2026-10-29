@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "jobs": {"writer": "success", "reader": "success"},
+  "contains": ["compat:oidc-authorized", "compat:oidc-denied"],
+  "absent": ["ghs_oidc_writer", "ghs_oidc_reader"],
+  "job_tokens": {
+    "tokens": {"writer": "ghs_oidc_writer", "reader": "ghs_oidc_reader"},
+    "completion_secret": "",
+    "oidc_url": "https://codeyard.example/actions/oidc/token?api-version=2.0",
+    "oidc_jobs": ["writer"]
+  }
+}

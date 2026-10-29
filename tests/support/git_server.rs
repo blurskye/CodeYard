@@ -36,6 +36,20 @@ impl Server {
         slots: usize,
         wait_seconds: u64,
     ) -> Self {
+        Self::start_configured(root, url, slots, wait_seconds, None).await
+    }
+
+    pub async fn start_with_master_key(root: &Path, url: &str, key: &str) -> Self {
+        Self::start_configured(root, url, 16, 0, Some(key)).await
+    }
+
+    async fn start_configured(
+        root: &Path,
+        url: &str,
+        slots: usize,
+        wait_seconds: u64,
+        master_key: Option<&str>,
+    ) -> Self {
         let log = root.join("server.log");
         let client = Client::new();
         let (child, addresses) = spawn_on_free_ports(
@@ -57,9 +71,12 @@ impl Server {
                     .env("GITSERV_STATE_DIR", root.join("state"))
                     .env("REPOS_PATH", root.join("repos"))
                     .env("PUBLIC_URL", format!("http://{address}"))
-                    .args(["serve", "--roles", "web,storage", "--ssh-mode", "disabled"])
+                    .args(["serve", "--roles", "server", "--ssh-mode", "disabled"])
                     .args(["--http-addr", &address])
                     .current_dir(root);
+                if let Some(key) = master_key {
+                    command.env("SECRETS_MASTER_KEY", key);
+                }
                 command
             },
             |addresses| {

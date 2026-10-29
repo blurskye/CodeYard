@@ -55,7 +55,21 @@ pub fn ThemeForm(
                     let (token, target) = (form_token.clone(), form_target.clone());
                     spawn(async move {
                         let _guard = guard;
-                        save_theme(token, target, next, notice).await;
+                        let mut notice = notice;
+                        let Ok(controller) = web_sys::AbortController::new() else {
+                            notice.set("Appearance could not be saved. Please try again.".into());
+                            return;
+                        };
+                        // A stalled save gives the controls back instead of keeping them disabled.
+                        let save = save_theme(token, target, next, notice, controller.signal());
+                        let timeout = gloo_timers::future::TimeoutFuture::new(SAVE_TIMEOUT_MS);
+                        futures_util::pin_mut!(save, timeout);
+                        if let futures_util::future::Either::Right(_) =
+                            futures_util::future::select(save, timeout).await
+                        {
+                            controller.abort();
+                            notice.set("Appearance could not be saved. Please try again.".into());
+                        }
                     });
                 }
             },
@@ -71,6 +85,9 @@ pub fn ThemeForm(
         }
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+const SAVE_TIMEOUT_MS: u32 = 15_000;
 
 struct ThemeSaveGuard(Signal<bool>);
 
@@ -98,6 +115,7 @@ async fn save_theme(
     return_to: String,
     choice: Theme,
     mut notice: Signal<String>,
+    signal: web_sys::AbortSignal,
 ) {
     notice.set(String::new());
     let mut serializer = url::form_urlencoded::Serializer::new(String::new());
@@ -109,6 +127,7 @@ async fn save_theme(
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Accept", crate::webui::bootstrap::MODEL_CONTENT_TYPE)
         .credentials(web_sys::RequestCredentials::SameOrigin)
+        .abort_signal(Some(&signal))
         .body(serializer.finish());
     let response = match request {
         Ok(request) => request.send().await,

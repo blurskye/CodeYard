@@ -1,4 +1,5 @@
 //! Runner stage names and the limit on what one run stores.
+pub mod archive;
 use super::queue::LogLine;
 
 /// Lines one run may store, counting its truncation line.
@@ -33,6 +34,8 @@ pub fn admit_log_lines(
                 stage: line.stage.clone(),
                 line: TRUNCATED_LINE.to_owned(),
                 level: "warn".to_owned(),
+                job_id: line.job_id,
+                step_number: line.step_number,
             });
             return (stored, MAX_RUN_LOG_LINES, bytes);
         }
@@ -56,6 +59,7 @@ mod tests {
             stage: "ci.yml".into(),
             line: text.into(),
             level: "info".into(),
+            ..Default::default()
         }
     }
 

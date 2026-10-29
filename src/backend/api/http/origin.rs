@@ -48,9 +48,10 @@ fn same_origin_with_public_url(headers: &HeaderMap, public_url: Option<&str>) ->
 }
 
 /// Restrict redirects to local absolute paths. Encoded delimiters are refused in the path;
-/// the query and fragment are data and pass through unchanged.
+/// the query and fragment are data and pass through unchanged. The bound leaves room for a
+/// 200-character search, which percent-encoding can grow to 2,400 bytes, plus its cursor.
 pub fn safe_redirect_path(path: &str) -> bool {
-    if path.len() > 2048
+    if path.len() > 8192
         || !path.starts_with('/')
         || path.starts_with("//")
         || path.chars().any(|c| c.is_control() || c == '\\')

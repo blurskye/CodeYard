@@ -132,6 +132,18 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         permalink: String::new(),
         references: Default::default(),
         empty: loaded.refs.is_empty(),
+        migration_status: crate::backend::db::source_imports::get(
+            &ctx.state.pool,
+            loaded.repository.id,
+        )
+        .await
+        .map_err(|_| {
+            ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Migration status unavailable.",
+            )
+        })?
+        .and_then(|import| (import.state() != "complete").then(|| import.state().to_owned())),
         http_clone: format!(
             "{}/{}/{}.git",
             crate::backend::api::http::config::http_clone_base().trim_end_matches('/'),

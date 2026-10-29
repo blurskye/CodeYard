@@ -1,0 +1,17 @@
+# https://github.com/shivammathur/setup-php/tree/eb7c497e18156a6bbabfef1d3a82760b9eda3962
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
+        with:
+          php-version: "8.3"
+          coverage: "none"
+          tools: "none"
+      - name: Assert documented effect
+        run: |
+          php --version | grep '^PHP 8\.3\.'
+          echo compat:ok

@@ -2,18 +2,17 @@
 //! This is the collaboration lane: the `Page` enum the app renders for issues and pull requests.
 use super::new::chooser;
 use super::{detail, list, new, BranchChoices, DetailDraft, IssueChoices, NewDraft, TemplateCard};
+use crate::webui::components::{references::References, task_lists::TaskCount};
 use crate::webui::pages::repos::{
     actions::Run,
     chrome::RepoChrome,
     commits::Commit,
     compare, labels, milestones,
     pulls::{self, Conversation, Diff, LineComment, Review, ReviewDraft, Reviewer, Thread},
-};
-use crate::webui::{
-    components::{references::References, task_lists::TaskCount},
-    encode_component,
+    security,
 };
 use dioxus::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -44,7 +43,7 @@ impl Kind {
 }
 
 pub fn repo_url(owner: &str, repo: &str) -> String {
-    format!("/{}/{}", encode_component(owner), encode_component(repo))
+    crate::webui::repository_path(owner, repo)
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -205,6 +204,8 @@ pub struct Item {
     /// The reactions on the issue or pull request description.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<Reaction>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<crate::webui::pages::projects::Assignment>,
 }
 
 /// One reaction on a description or comment: how many users gave it, and whether the viewer did.
@@ -257,6 +258,8 @@ pub struct MilestoneDraft {
 /// any; `none` means no assignee or no milestone.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ListFilters {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned_issues: Vec<RelatedIssue>,
     /// The labels the list can filter by, with their colours.
     pub labels: Vec<Label>,
     /// The labels the list must all carry, in the order they were chosen.
@@ -375,9 +378,105 @@ pub struct CommentEdit {
     pub preview: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SuggestionDraft {
+    pub change: String,
+    pub target: String,
+    pub value: String,
+    pub rationale: String,
+    pub confidence: String,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IssueSuggestion {
+    pub id: i64,
+    pub action: String,
+    pub target_name: String,
+    pub value: serde_json::Value,
+    pub state: String,
+    pub rationale: Option<String>,
+    pub confidence: Option<String>,
+    pub actor: Option<String>,
+    pub resolved_by: Option<String>,
+    pub created: String,
+    pub updated: String,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IssueSuggestions {
+    pub enabled: bool,
+    pub can_review: bool,
+    pub can_propose: bool,
+    pub rows: Vec<IssueSuggestion>,
+    pub page: usize,
+    pub has_more: bool,
+    pub state: String,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IssueSelectOption {
+    pub id: i64,
+    pub name: String,
+    pub color: String,
+    pub description: Option<String>,
+    pub priority: i64,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IssueAttribute {
+    pub id: i64,
+    pub kind: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub data_type: String,
+    pub visibility: String,
+    pub is_enabled: bool,
+    pub color: Option<String>,
+    pub options: Vec<IssueSelectOption>,
+    pub value: Option<serde_json::Value>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IssueAttributes {
+    pub selected_type: Option<i64>,
+    pub types: Vec<IssueAttribute>,
+    pub fields: Vec<IssueAttribute>,
+    pub can_configure: bool,
+    pub organization: bool,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RelatedIssue {
+    pub id: i64,
+    pub kind: String,
+    pub title: String,
+    pub state: String,
+    pub reference: String,
+    pub href: String,
+}
+
+/// A pinned comment remains visible even when its original discussion entry is on another page.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PinnedComment {
+    pub id: i64,
+    pub author: String,
+    pub body: String,
+    pub href: String,
+    pub pinned_by: Option<String>,
+    pub pinned_at: String,
+}
+
 /// One page of discussion comments and reviews, oldest first. `page` counts from 1.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CommentPage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_management: Option<Box<IssueManagement>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestions: Option<Box<IssueSuggestions>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attributes: Option<Box<IssueAttributes>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relationships: Vec<RelatedIssue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<Box<PinnedComment>>,
+    #[serde(default)]
+    pub locked: bool,
+    #[serde(default)]
+    pub lock_reason: Option<String>,
     pub comments: Vec<Comment>,
     #[serde(default)]
     pub reviews: Vec<Review>,
@@ -389,6 +488,14 @@ pub struct CommentPage {
     /// Continuation within this comment page's event span.
     #[serde(default)]
     pub events_next: Option<usize>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct IssueManagement {
+    pub pinned: bool,
+    pub branches: Vec<(String, String)>,
+    pub closing_pulls: Vec<(String, String)>,
+    pub duplicate: Option<(String, String)>,
 }
 
 /// One change to an issue or pull request, shown between its comments.
@@ -526,6 +633,8 @@ pub enum Page {
         repository: Repository,
         item: Item,
         diff: Diff,
+        #[serde(default)]
+        code_scanning: Vec<security::Check>,
         /// Inline conversations, placed under their lines when the diff is shown.
         threads: Vec<Thread>,
         /// The inline comment list was cut at its limit; the Discussion tab lists every comment.
@@ -538,6 +647,9 @@ pub enum Page {
         /// How many comments the viewer has waiting in their pending review.
         #[serde(default)]
         pending_comments: usize,
+        /// The viewer's pending review, so its forms act on this review and no later one.
+        #[serde(default)]
+        pending_review: Option<i64>,
         error: Option<String>,
         /// The side-by-side view, from `?view=split`.
         #[serde(default)]
@@ -558,6 +670,8 @@ pub enum Page {
         runs: Vec<Run>,
         #[serde(default)]
         statuses: Vec<pulls::CheckStatus>,
+        #[serde(default)]
+        code_scanning: Vec<security::Check>,
     },
 }
 
@@ -726,11 +840,13 @@ pub fn render(page: Page) -> Element {
             repository,
             item,
             diff,
+            code_scanning,
             threads,
             truncated,
             composer,
             review,
             pending_comments,
+            pending_review,
             error,
             references,
             split,
@@ -743,9 +859,11 @@ pub fn render(page: Page) -> Element {
             composer.as_ref(),
             review.as_ref(),
             pending_comments,
+            pending_review,
             error.as_deref(),
             &references,
             split,
+            &code_scanning,
         ),
         Page::PullCommits {
             repository,
@@ -757,6 +875,7 @@ pub fn render(page: Page) -> Element {
             item,
             runs,
             statuses,
-        } => pulls::checks_page(&repository, &item, &runs, &statuses),
+            code_scanning,
+        } => pulls::checks_page(&repository, &item, &runs, &statuses, &code_scanning),
     }
 }

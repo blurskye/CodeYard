@@ -1,0 +1,11 @@
+name: Local Docker
+description: Docker action inputs and workspace mount
+inputs:
+  message:
+    description: Message
+    required: true
+runs:
+  using: docker
+  image: Dockerfile
+  args:
+    - ${{ inputs.message }}

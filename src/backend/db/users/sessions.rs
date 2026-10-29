@@ -135,7 +135,7 @@ native_operation!(crate::backend::db::postgres::users::sessions::list_user_sessi
 // Ends one session if it belongs to the account. Returns whether a session was ended.
 native_operation!(crate::backend::db::postgres::users::sessions::revoke_user_session,
     crate::backend::db::sqlite::users::sessions::revoke_user_session,
-    fn revoke_user_session(pool: &DbPool, user_id: i64, session_id: &str) -> Result<bool>);
+    fn revoke_user_session(pool: &DbPool, user_id: i64, session_id: &str, current: &str) -> Result<bool>);
 
 // Ends every session of the account except `keep`. Returns how many were ended.
 native_operation!(crate::backend::db::postgres::users::sessions::revoke_other_user_sessions,

@@ -1,0 +1,15 @@
+# https://github.com/typst-community/setup-typst/tree/48aeee7543d37f01afd1ffb27307dc277387ba13
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: typst-community/setup-typst@48aeee7543d37f01afd1ffb27307dc277387ba13 # v4
+        with:
+          typst-version: "0.13.0"
+      - name: Assert documented effect
+        run: |
+          typst --version | grep '0\.13\.0'
+          echo compat:ok

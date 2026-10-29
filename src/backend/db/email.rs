@@ -10,6 +10,18 @@ use anyhow::Result;
 /// requests cannot flood a mailbox.
 pub(in crate::backend::db) const RESEND_SECONDS: i64 = 60;
 
+/// A link mail: the hash of its token and the message that carries the token. Both are saved
+/// in one transaction.
+pub struct EmailLink<'a> {
+    pub user_id: i64,
+    pub purpose: &'a str,
+    pub email: &'a str,
+    pub token_hash: &'a str,
+    pub ttl_seconds: i64,
+    pub subject: &'a str,
+    pub body_text: &'a str,
+}
+
 pub struct NewEmailSettings<'a> {
     pub host: &'a str,
     pub port: i32,
@@ -39,10 +51,27 @@ native_operation!(crate::backend::db::postgres::email::enqueue_email,
     crate::backend::db::sqlite::email::enqueue_email,
     fn enqueue_email(pool: &DbPool, to_address: &str, subject: &str, body_text: &str) -> Result<()>);
 
+native_operation!(crate::backend::db::postgres::email::enqueue_notification_email,
+    crate::backend::db::sqlite::email::enqueue_notification_email,
+    /// Queues the email for a notification. It goes out only while the recipient can still read
+    /// the notification.
+    fn enqueue_notification_email(pool: &DbPool, notification: i64, to_address: &str, subject: &str, body_text: &str) -> Result<()>);
+
+native_operation!(crate::backend::db::postgres::email::withdraw_email,
+    crate::backend::db::sqlite::email::withdraw_email,
+    /// Drops an unsent message that must no longer be sent.
+    fn withdraw_email(pool: &DbPool, id: i64) -> Result<()>);
+
+native_operation!(crate::backend::db::postgres::email::enqueue_invitation_email,
+    crate::backend::db::sqlite::email::enqueue_invitation_email,
+    fn enqueue_invitation_email(pool: &DbPool, invitation: i64, to_address: &str, subject: &str, body_text: &str) -> Result<()>);
+
 native_operation!(crate::backend::db::postgres::email::claim_due_email,
     crate::backend::db::sqlite::email::claim_due_email,
-    /// Takes the oldest due message that has attempts left and holds it for `lease_seconds`. The
-    /// attempt is counted now. Nodes that run this at once get different messages.
+    /// Takes the oldest due message that has attempts left and holds it for `lease_seconds`.
+    /// `attempts` is the number of this attempt; only a recorded failure counts it, so a send
+    /// that dies mid-way is tried again once the hold ends. Nodes that run this at once get
+    /// different messages.
     fn claim_due_email(pool: &DbPool, max_attempts: i32, lease_seconds: i64) -> Result<Option<OutboxMessage>>);
 
 native_operation!(crate::backend::db::postgres::email::mark_email_sent,
@@ -76,22 +105,19 @@ native_operation!(crate::backend::db::postgres::email::notification_email_addres
 
 native_operation!(crate::backend::db::postgres::email::save_email_token,
     crate::backend::db::sqlite::email::save_email_token,
-    /// Stores the hash of a link mailed to the user, for `purpose` 'verify' or 'reset'. It
-    /// replaces the user's earlier link of that kind, unless that one went to the same address
-    /// less than `RESEND_SECONDS` ago. False when the earlier link stays and nothing is to be sent.
-    fn save_email_token(pool: &DbPool, user_id: i64, purpose: &str, email: &str, token_hash: &str, ttl_seconds: i64) -> Result<bool>);
+    /// Stores the hash of a link mailed to the user, for `purpose` 'verify' or 'reset', and queues
+    /// the mail in the same transaction. It replaces the user's earlier link of that kind, unless
+    /// that one went to the same address less than `RESEND_SECONDS` ago. False when the earlier
+    /// link stays and nothing is queued.
+    fn save_email_token(pool: &DbPool, link: &EmailLink<'_>) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::email::email_token_is_valid,
     crate::backend::db::sqlite::email::email_token_is_valid,
     /// Whether the link exists, has not expired, and was sent to the address the user has now.
     fn email_token_is_valid(pool: &DbPool, purpose: &str, token_hash: &str) -> Result<bool>);
 
-native_operation!(crate::backend::db::postgres::email::take_email_token,
-    crate::backend::db::sqlite::email::take_email_token,
-    /// Uses up a valid link and returns the user and the address it was sent to. A link works once.
-    fn take_email_token(pool: &DbPool, purpose: &str, token_hash: &str) -> Result<Option<(i64, String)>>);
-
-native_operation!(crate::backend::db::postgres::email::confirm_email,
-    crate::backend::db::sqlite::email::confirm_email,
-    /// Marks the user's address verified, if it is still `email`.
-    fn confirm_email(pool: &DbPool, user_id: i64, email: &str) -> Result<bool>);
+native_operation!(crate::backend::db::postgres::email::verify_email_token,
+    crate::backend::db::sqlite::email::verify_email_token,
+    /// Uses up a valid primary-address link and marks its address verified, in one transaction.
+    /// None when no such link has this hash. Some(false) when the user changed the address since.
+    fn verify_email_token(pool: &DbPool, token_hash: &str) -> Result<Option<bool>>);

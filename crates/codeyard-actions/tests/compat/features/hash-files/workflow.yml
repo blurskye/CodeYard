@@ -1,0 +1,14 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          HASH: ${{ hashFiles('data/**/*.txt') }}
+          NONE: ${{ hashFiles('missing/**') }}
+        run: |
+          test "$HASH" = 'ecb65bb98f9d905b70458986c39fcbad7715e5f2fcc3b1f07767d7c83e2438cc'
+          test -z "$NONE"
+          echo compat:ok

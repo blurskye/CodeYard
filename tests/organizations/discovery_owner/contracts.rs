@@ -321,119 +321,83 @@ pub async fn run(f: &Fixture) {
             .as_deref(),
         Some(USER)
     );
-    discovery_api_contracts(f).await;
+    discovery_page_failures_and_old_repositories(f).await;
     api_contracts(f).await;
 }
 
-fn api_public_repositories(f: &Fixture, repositories: &serde_json::Value) {
-    let repositories = repositories.as_array().unwrap();
-    assert_eq!(repositories.len(), f.public.len());
-    for (index, id) in f.public.iter().enumerate() {
-        let repository = repositories.iter().find(|row| row["id"] == *id).unwrap();
-        let owner = if index % 2 == 0 { USER } else { ORG };
-        assert_eq!(repository["owner_id"], COLLISION);
-        assert_eq!(repository["owner"], owner);
-        assert_eq!(repository["name"], NAMES[index]);
-        assert_eq!(repository["full_name"], format!("{owner}/{}", NAMES[index]));
-        assert_eq!(repository["is_private"], false);
-    }
-}
-
-fn api_public_issues(f: &Fixture, response: &serde_json::Value) {
-    let issues = response["issues"].as_array().unwrap();
-    assert_eq!(issues.len(), f.public.len());
-    assert_eq!(response["issues_count"], issues.len());
-    for (index, id) in f.public.iter().enumerate() {
-        let issue = issues.iter().find(|row| row["repo_id"] == *id).unwrap();
-        assert_eq!(issue["repo_name"], NAMES[index]);
-        assert_eq!(issue["repo_owner"], if index % 2 == 0 { USER } else { ORG });
-        assert_eq!(issue["number"], 1);
-        assert_eq!(issue["author"]["username"], "discovery_governor");
-        assert_ne!(issue["author"]["id"], COLLISION);
-    }
-}
-
-async fn discovery_api_contracts(f: &Fixture) {
+async fn discovery_page_failures_and_old_repositories(f: &Fixture) {
     use axum::http::StatusCode;
 
-    for path in ["/api/explore", "/api/explore?sort=stars"] {
-        let (status, response) = f.api(path).await;
-        assert_eq!(status, StatusCode::OK, "{response}");
-        api_public_repositories(f, &response);
-    }
-    for search_type in ["", "&type=repos", "&type=issues"] {
-        let (status, response) = f
-            .api(&format!("/api/search?q=discovery{search_type}"))
-            .await;
-        assert_eq!(status, StatusCode::OK, "{response}");
-        if search_type != "&type=issues" {
-            api_public_repositories(f, &response["repos"]);
-            assert_eq!(response["repos_count"], f.public.len());
-        } else {
-            assert!(response["repos"].as_array().unwrap().is_empty());
-            assert_eq!(response["repos_count"], 0);
-        }
-        if search_type != "&type=repos" {
-            api_public_issues(f, &response);
-        } else {
-            assert!(response["issues"].as_array().unwrap().is_empty());
-            assert_eq!(response["issues_count"], 0);
-        }
-        if !search_type.is_empty() {
-            assert!(response["users"].as_array().unwrap().is_empty());
-            assert_eq!(response["users_count"], 0);
+    for path in ["/api/explore", "/api/search?q=discovery"] {
+        for authenticated in [false, true] {
+            let reply = f.page(path, authenticated).await;
+            assert_eq!(reply.status, StatusCode::NOT_FOUND, "{path}");
         }
     }
-    let (status, response) = f.api("/api/search?q=discovery_user&type=users").await;
-    assert_eq!(status, StatusCode::OK, "{response}");
-    assert_eq!(response["users_count"], 1);
-    assert_eq!(response["users"][0]["username"], USER);
-    assert_eq!(response["repos_count"], 0);
-    assert_eq!(response["issues_count"], 0);
+    let view::Page::Search(model) = f
+        .page("/search?q=discovery_user&type=users", false)
+        .await
+        .discovery()
+    else {
+        panic!("user search")
+    };
+    assert_eq!(model.counts.users, 1);
+    assert_eq!(model.users[0].username, USER);
+    assert!(model.repositories.is_empty() && model.issues.is_empty());
 
-    // The matching issues' repositories are older than the newest 1,000 rows.
-    // The same rows exercise explore's default, minimum and maximum list size.
-    f.database
-        .execute(
-            "WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<1000) INSERT INTO repositories(owner_kind,owner_org_id,name,is_private,disk_path) SELECT 'org',700000,'api_recent_listing_' || n,FALSE,'/fixture/not-executed.git' FROM numbers",
-            &[],
-        )
-        .await;
-    for (path, count) in [
-        ("/api/explore", 50),
-        ("/api/explore?limit=0", 1),
-        ("/api/explore?limit=1", 1),
-        ("/api/explore?limit=100", 100),
-        ("/api/explore?limit=101", 100),
-        ("/api/explore?limit=4294967295", 100),
-    ] {
-        let (status, response) = f.api(path).await;
-        assert_eq!(status, StatusCode::OK, "{response}");
-        let repositories = response.as_array().unwrap();
-        assert_eq!(repositories.len(), count, "{path}");
-        assert!(repositories.iter().all(|repo| repo["owner"] == ORG));
+    // Matching issues remain discoverable beyond the newest 1,000 repositories.
+    f.database.execute(
+        "WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<1000) INSERT INTO repositories(owner_kind,owner_org_id,name,is_private,disk_path) SELECT 'org',700000,'recent_listing_' || n,FALSE,'/fixture/not-executed.git' FROM numbers",
+        &[],
+    ).await;
+    for page in [1, 2, 20] {
+        let view::Page::Explore(model) = f
+            .page(&format!("/explore?page={page}"), false)
+            .await
+            .discovery()
+        else {
+            panic!("explore page")
+        };
+        assert_eq!(model.repositories.len(), 50);
+        assert!(model.has_older);
+        assert!(model.repositories.iter().all(|repo| repo.owner == ORG));
     }
-    for path in [
-        "/api/search?q=discovery",
-        "/api/search?q=discovery&type=issues",
-    ] {
-        let (status, response) = f.api(path).await;
-        assert_eq!(status, StatusCode::OK, "{response}");
-        api_public_issues(f, &response);
+    let view::Page::Explore(model) = f.page("/explore?page=21", false).await.discovery() else {
+        panic!("last explore page")
+    };
+    assert_eq!(model.repositories.len(), 4);
+    assert!(!model.has_older);
+    for (index, id) in f.public.iter().enumerate() {
+        let repo = model
+            .repositories
+            .iter()
+            .find(|repo| repo.id == *id)
+            .unwrap();
+        assert_eq!(repo.owner, if index % 2 == 0 { USER } else { ORG });
+        assert_eq!(repo.name, NAMES[index]);
     }
-    f.database
-        .execute(
-            "DELETE FROM repositories WHERE owner_kind='org' AND owner_org_id=700000 AND name LIKE 'api_recent_listing_%'",
-            &[],
-        )
-        .await;
-    discovery_api_database_errors(f).await;
-}
+    let view::Page::Search(model) = f
+        .page("/search?q=discovery&type=issues", false)
+        .await
+        .discovery()
+    else {
+        panic!("issue search")
+    };
+    assert_eq!(model.issues.len(), f.public.len());
+    assert_eq!(model.counts.issues, f.public.len());
+    for (index, name) in NAMES.iter().enumerate() {
+        let issue = model
+            .issues
+            .iter()
+            .find(|issue| issue.repo == *name)
+            .unwrap();
+        assert_eq!(issue.owner, if index % 2 == 0 { USER } else { ORG });
+        assert_eq!(issue.number, 1);
+        assert_eq!(issue.author, "discovery_governor");
+    }
+    f.database.execute("DELETE FROM repositories WHERE owner_kind='org' AND owner_org_id=700000 AND name LIKE 'recent_listing_%'", &[]).await;
 
-async fn discovery_api_database_errors(f: &Fixture) {
-    use axum::http::StatusCode;
-
-    // Renames are confined to the disposable fixture and restored for later contracts.
+    // Failures stay sanitized in the same page model used by SSR and hydration.
     for (table, search_type) in [
         ("repositories", "repos"),
         ("issues", "issues"),
@@ -447,23 +411,55 @@ async fn discovery_api_database_errors(f: &Fixture) {
             )
             .await;
         let mut paths = vec![
-            "/api/search?q=discovery".to_string(),
-            format!("/api/search?q=discovery&type={search_type}"),
+            "/search?q=discovery".to_owned(),
+            format!("/search?q=discovery&type={search_type}"),
         ];
-        if table == "repositories" || table == "organizations" {
-            paths.push("/api/explore".to_string());
-            paths.push("/api/search?q=discovery&type=issues".to_string());
+        if matches!(table, "repositories" | "organizations") {
+            paths.extend([
+                "/explore".to_owned(),
+                "/search?q=discovery&type=issues".to_owned(),
+            ]);
         }
         for path in paths {
-            let (status, error) = f.api(&path).await;
-            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{path}: {error}");
-            assert_eq!(error["error"], "database_error");
+            let reply = f.page(&path, false).await;
+            assert_eq!(
+                reply.status,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{path}: {}",
+                reply.body
+            );
+            let codeyard::webui::app::Page::Error {
+                status, message, ..
+            } = reply.envelope.page
+            else {
+                panic!("error page")
+            };
+            assert_eq!(status, 503);
+            assert_eq!(
+                message,
+                "This page's data is temporarily unavailable. Please try again."
+            );
+            for secret in [
+                "unavailable_",
+                "SELECT ",
+                "not-executed.git",
+                "namespace-secret",
+            ] {
+                assert!(!reply.body.contains(secret));
+            }
         }
         if table == "repositories" {
-            // User-only search must not load unrelated repository lists.
-            let (status, response) = f.api("/api/search?q=discovery_user&type=users").await;
-            assert_eq!(status, StatusCode::OK, "{response}");
-            assert_eq!(response["users_count"], 1);
+            // Reading user rows is independent of the repository counts used for tab badges.
+            let users = db::repositories::discovery::search_users(
+                f.database.pool(),
+                "discovery_user",
+                0,
+                50,
+            )
+            .await
+            .unwrap();
+            assert_eq!(users.len(), 1);
+            assert_eq!(users[0].username, USER);
         }
         f.database
             .execute(
@@ -484,6 +480,7 @@ async fn api_contracts(f: &Fixture) {
         let repository = repositories.iter().find(|row| row["id"] == *id).unwrap();
         let owner = if index % 2 == 0 { USER } else { ORG };
         assert_eq!(repository["owner"], owner);
+        assert_eq!(repository["owner_id"], COLLISION);
         assert_eq!(repository["full_name"], format!("{owner}/{}", NAMES[index]));
         let (status, detail) = f.api(&format!("/api/repos/{owner}/{}", NAMES[index])).await;
         assert_eq!(status, StatusCode::OK, "{detail}");
@@ -498,6 +495,7 @@ async fn api_contracts(f: &Fixture) {
         .database
         .insert_repository_row("org", "api_private_fork", true)
         .await;
+    f.database.distinct_fork_organization(private_fork).await;
     for fork in [public_fork, private_fork] {
         f.database
             .execute(
@@ -569,12 +567,18 @@ pub async fn bounded_queries(f: &Fixture) {
         .insert_repository_row("user", "paged_base", false)
         .await;
     let mut fork_ids = Vec::new();
+    let mut fork_owners = Vec::new();
     for n in 0..125 {
         let kind = if n % 2 == 0 { "user" } else { "org" };
         let id = f
             .database
             .insert_repository_row(kind, &format!("paged_fork_{n}"), false)
             .await;
+        fork_owners.push(if kind == "org" {
+            f.database.distinct_fork_organization(id).await
+        } else {
+            USER.to_owned()
+        });
         f.database.execute("UPDATE repositories SET forked_from_id=$1,is_fork=TRUE,created_at='2024-01-01T00:00:00.000000Z' WHERE id=$2", &[base, id]).await;
         fork_ids.push(id);
     }
@@ -621,7 +625,7 @@ pub async fn bounded_queries(f: &Fixture) {
             if endpoint == "forks" {
                 for row in rows {
                     let index = fork_ids.iter().position(|id| row["id"] == *id).unwrap();
-                    assert_eq!(row["owner"], if index % 2 == 0 { USER } else { ORG });
+                    assert_eq!(row["owner"], fork_owners[index]);
                     assert_eq!(row["forked_from"]["owner"], USER);
                 }
             }
@@ -665,6 +669,7 @@ pub async fn bounded_queries(f: &Fixture) {
             .database
             .insert_repository_row("org", &format!("paged_hidden_{n}"), true)
             .await;
+        f.database.distinct_fork_organization(id).await;
         f.database.execute("UPDATE repositories SET forked_from_id=$1,is_fork=TRUE,created_at='2026-01-01T00:00:00.000000Z' WHERE id=$2", &[base, id]).await;
     }
     let path = format!("/api/repos/{USER}/paged_base/forks");
@@ -697,6 +702,7 @@ pub async fn bounded_queries(f: &Fixture) {
         .database
         .insert_repository_row("org", "paged_granted", true)
         .await;
+    f.database.distinct_fork_organization(private_org).await;
     f.database.execute("UPDATE repositories SET forked_from_id=$1,is_fork=TRUE,created_at='2028-01-01T00:00:00.000000Z' WHERE id=$2", &[base, private_org]).await;
     assert!(f
         .api_as(&format!("{path}?per_page=1"), true)
@@ -757,59 +763,65 @@ pub async fn bounded_queries(f: &Fixture) {
         queries <= 10,
         "repository owner projection: {queries} queries"
     );
-    let ((status, response), queries) =
-        count_queries(f.api("/api/search?q=batch_issue&type=issues")).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(response["issues_count"], 50);
-    assert!(queries <= 12, "issue JSON projection: {queries} queries");
-    for issue in response["issues"].as_array().unwrap() {
-        let index = issue_repos
-            .iter()
-            .position(|id| issue["repo_id"] == *id)
-            .unwrap();
-        assert_eq!(issue["repo_owner"], if index % 2 == 0 { USER } else { ORG });
-        assert_eq!(issue["repo_name"], format!("batch_repo_{index}"));
-        assert_eq!(
-            issue["author"]["username"],
-            if index % 2 == 0 { USER } else { "paged_star_1" }
-        );
-        assert!(issue["author"].get("email").is_none());
-    }
     // Issue projection adds three batched statements (repositories, owners and authors) whatever the
     // issue count, so compare with the same page when nothing matches.
     let (_, without_issues) =
         count_queries(f.page("/search?q=batch_issue_none&type=issues", false)).await;
-    let (reply, queries) = count_queries(f.page("/search?q=batch_issue&type=issues", false)).await;
-    let view::Page::Search(model) = reply.discovery() else {
-        panic!("expected search")
-    };
-    // One page of issues: 30 per page, with the rest on later pages.
-    assert_eq!(model.issues.len(), 30);
-    assert!(
-        queries <= without_issues + 3,
-        "issue HTML/model projection: {queries} queries, {without_issues} without issues"
-    );
-    for issue in model.issues {
-        let index = issue
-            .repo
-            .strip_prefix("batch_repo_")
-            .unwrap()
-            .parse::<usize>()
-            .unwrap();
-        assert_eq!(issue.owner, if index % 2 == 0 { USER } else { ORG });
+    let mut found = std::collections::BTreeSet::new();
+    for (page, count) in [(1, 30), (2, 20)] {
+        let (reply, queries) = count_queries(f.page(
+            &format!("/search?q=batch_issue&type=issues&page={page}"),
+            false,
+        ))
+        .await;
+        assert!(!reply.body.contains("email"));
+        let view::Page::Search(model) = reply.discovery() else {
+            panic!("expected search")
+        };
+        assert_eq!(model.issues.len(), count);
+        assert_eq!(model.counts.issues, 50);
+        assert_eq!(model.has_older, page == 1);
+        assert!(
+            queries <= without_issues + 3,
+            "issue model projection: {queries} queries, {without_issues} without issues"
+        );
+        for issue in model.issues {
+            let index = issue
+                .repo
+                .strip_prefix("batch_repo_")
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
+            assert!(found.insert(index));
+            assert_eq!(issue.owner, if index % 2 == 0 { USER } else { ORG });
+            assert_eq!(
+                issue.author,
+                if index % 2 == 0 { USER } else { "paged_star_1" }
+            );
+        }
     }
+    assert_eq!(found.len(), 50);
     f.database
         .execute(
             "UPDATE repositories SET is_private=TRUE WHERE id=$1",
             &[issue_repos[0]],
         )
         .await;
-    let (status, response) = f.api("/api/search?q=batch_issue&type=issues").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(response["issues_count"], 49);
-    assert!(response["issues"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|issue| issue["repo_id"] != issue_repos[0]));
+    for page in [1, 2] {
+        let view::Page::Search(model) = f
+            .page(
+                &format!("/search?q=batch_issue&type=issues&page={page}"),
+                false,
+            )
+            .await
+            .discovery()
+        else {
+            panic!("expected search")
+        };
+        assert_eq!(model.counts.issues, 49);
+        assert!(model
+            .issues
+            .iter()
+            .all(|issue| issue.repo != "batch_repo_0"));
+    }
 }

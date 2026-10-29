@@ -28,6 +28,8 @@ fn oversized_patches_keep_threads_and_refused_line_drafts_in_both_views() {
         path: "large.rs".into(),
         line: Some(1),
         side: "RIGHT".into(),
+        start_line: None,
+        start_side: String::new(),
         replies: vec![],
         pending: false,
     };
@@ -53,9 +55,11 @@ fn oversized_patches_keep_threads_and_refused_line_drafts_in_both_views() {
                 Some(&composer),
                 None,
                 0,
+                None,
                 Some("Head changed"),
                 &References::default(),
                 split,
+                &[],
             ))
         });
         assert!(html.contains("This patch is too large to display"));
@@ -83,6 +87,7 @@ fn review_summary_keeps_its_commit_snapshot_when_the_head_refreshes() {
             true,
             None,
             0,
+            None,
             &References::default(),
             false,
         )

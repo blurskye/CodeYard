@@ -1,0 +1,17 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo '::group::compat group'
+          echo 'compat:group-body'
+          echo '::endgroup::'
+          echo '::notice title=compat::compat notice'
+          echo '::warning file=compat.txt,line=1::compat warning'
+          echo '::stop-commands::compat-resume'
+          echo '::error::literal command while stopped'
+          echo '::compat-resume::'
+          echo compat:ok

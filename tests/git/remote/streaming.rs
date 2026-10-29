@@ -37,6 +37,9 @@ fn peak_memory(server: &Server) -> u64 {
 pub async fn exercise(remote: bool) {
     bundle::install();
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     db::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
@@ -122,6 +125,10 @@ pub async fn exercise(remote: bool) {
         owner.id,
     )
     .await;
+    // The pack is larger than these limits, so buffering it anywhere fails the test. Startup
+    // memory (mostly the mapped debug binary) is not part of what streaming must bound.
+    let web_start = peak_memory(&web);
+    let storage_start = storage.as_ref().map(peak_memory);
     let client = Client::new();
     let work = root.path().join("clients");
     std::fs::create_dir(&work).unwrap();
@@ -324,16 +331,16 @@ pub async fn exercise(remote: bool) {
         assert!(String::from_utf8_lossy(&rejected.stderr).contains("pre-receive hook declined"));
         last_url = url;
     }
+    let web_growth = peak_memory(&web) - web_start;
     assert!(
-        peak_memory(&web) < 192 * 1024,
-        "web process used {} KiB",
-        peak_memory(&web)
+        web_growth < 96 * 1024,
+        "web process grew by {web_growth} KiB"
     );
     if let Some(storage) = storage.as_mut() {
+        let storage_growth = peak_memory(storage) - storage_start.unwrap();
         assert!(
-            peak_memory(storage) < 192 * 1024,
-            "storage process used {} KiB",
-            peak_memory(storage)
+            storage_growth < 96 * 1024,
+            "storage process grew by {storage_growth} KiB"
         );
         let root = work.clone();
         let key = key.clone();

@@ -55,7 +55,7 @@ async fn lock_discussion_authority(
         return Ok(None);
     };
     let repo: Option<(String, Option<i64>, Option<i64>)> = sqlx::query_as(
-        "SELECT owner_kind, owner_user_id, owner_org_id FROM repositories WHERE id = ?1 AND (?2 OR NOT is_archived)",
+        "SELECT owner_kind, owner_user_id, owner_org_id FROM repositories WHERE id = ?1 AND NOT is_gist AND (?2 OR NOT is_archived) AND NOT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=?1)",
     ).bind(repo_id).bind(include_archived).fetch_optional(&mut **tx).await?;
     let Some((kind, owner, org)) = repo else {
         return Ok(None);
@@ -84,6 +84,10 @@ async fn lock_discussion_authority(
         }
         _ => return Ok(None),
     };
+    if !admin && super::users::blocks::repository_interaction_blocked(tx, actor_id, repo_id).await?
+    {
+        return Ok(None);
+    }
     let access =
         super::repositories::access::user_repo_access_in_transaction(tx, actor_id, repo_id).await?;
     Ok(Some(DiscussionAuthority {
@@ -92,6 +96,16 @@ async fn lock_discussion_authority(
         personal_owner: !organization && owner == Some(actor_id),
         organization,
     }))
+}
+
+pub(crate) async fn lock_triage_authority(
+    tx: &mut Transaction<'_, Sqlite>,
+    actor_id: i64,
+    repo_id: i64,
+) -> Result<bool> {
+    Ok(lock_discussion_authority(tx, actor_id, repo_id, false)
+        .await?
+        .is_some_and(|a| a.access >= AccessLevel::Triage || a.personal_override))
 }
 
 pub(crate) async fn lock_write_authority(
@@ -132,9 +146,40 @@ pub(crate) async fn lock_archive_authority(
     actor_id: i64,
     repo_id: i64,
 ) -> Result<bool> {
+    lock_policy_authority(tx, actor_id, repo_id, false).await
+}
+
+/// Reading repository settings. Administrators may read them on archived repositories too;
+/// with `admin` false, anyone who may take part in the repository may also read them.
+pub(crate) async fn lock_settings_read_authority(
+    tx: &mut Transaction<'_, Sqlite>,
+    actor_id: i64,
+    repo_id: i64,
+    admin: bool,
+) -> Result<bool> {
+    if !admin && lock_contribution_authority(tx, actor_id, repo_id).await? {
+        return Ok(true);
+    }
+    lock_policy_authority(tx, actor_id, repo_id, false).await
+}
+
+/// Settings and bypass administration remain available after archival.
+pub(crate) async fn lock_policy_authority(
+    tx: &mut Transaction<'_, Sqlite>,
+    actor_id: i64,
+    repo_id: i64,
+    maintain: bool,
+) -> Result<bool> {
     Ok(lock_discussion_authority(tx, actor_id, repo_id, true)
         .await?
-        .is_some_and(|a| a.access.can_admin() || a.personal_owner || a.personal_override))
+        .is_some_and(|a| {
+            (if maintain {
+                a.access.can_maintain()
+            } else {
+                a.access.can_admin()
+            }) || a.personal_owner
+                || a.personal_override
+        }))
 }
 
 /// Whether the actor may still take part in the repository (read access is enough).
@@ -143,9 +188,22 @@ pub(crate) async fn lock_contribution_authority(
     actor_id: i64,
     repo_id: i64,
 ) -> Result<bool> {
-    Ok(lock_discussion_authority(tx, actor_id, repo_id, false)
-        .await?
-        .is_some_and(|a| a.access.can_read() || a.personal_override))
+    let authority = lock_discussion_authority(tx, actor_id, repo_id, false).await?;
+    let Some(authority) = authority else {
+        return Ok(false);
+    };
+    if !(authority.access.can_read() || authority.personal_override)
+        || super::users::blocks::repository_interaction_blocked(tx, actor_id, repo_id).await?
+    {
+        return Ok(false);
+    }
+    super::interactions::allows_contribution(
+        tx,
+        actor_id,
+        repo_id,
+        authority.access.can_write() || authority.personal_override,
+    )
+    .await
 }
 
 pub(crate) async fn require_contribution_authority(
@@ -157,6 +215,58 @@ pub(crate) async fn require_contribution_authority(
         lock_contribution_authority(tx, actor_id, repo_id).await?,
         AUTHORITY_DENIED
     );
+    Ok(())
+}
+
+pub async fn set_lock(
+    pool: &sqlx::SqlitePool,
+    actor_id: i64,
+    repo_id: i64,
+    item: crate::backend::db::assignees::AssignedItem,
+    locked: bool,
+    reason: Option<&str>,
+) -> Result<()> {
+    use crate::backend::db::{assignees::AssignedItem, discussions::LockRefusal};
+    anyhow::ensure!(
+        crate::backend::db::discussions::valid_lock_reason(reason),
+        LockRefusal::InvalidReason
+    );
+    let reason = if locked { reason } else { None };
+    let (table, subject, id) = match item {
+        AssignedItem::Issue(id) => ("issues", "issue", id),
+        AssignedItem::PullRequest(id) => ("pull_requests", "pull_request", id),
+    };
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    anyhow::ensure!(
+        lock_write_authority(&mut tx, actor_id, repo_id).await?,
+        LockRefusal::Denied
+    );
+    let (previous, previous_reason, updated): (
+        bool,
+        Option<String>,
+        chrono::DateTime<chrono::Utc>,
+    ) = sqlx::query_as(&format!(
+        "SELECT locked,lock_reason,updated_at FROM {table} WHERE id=?1 AND repo_id=?2"
+    ))
+    .bind(id)
+    .bind(repo_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(LockRefusal::Missing)?;
+    if previous != locked || previous_reason.as_deref() != reason {
+        let next = super::time::next_revision(updated)?;
+        sqlx::query(&format!(
+            "UPDATE {table} SET locked=?2,lock_reason=?3,updated_at=?4 WHERE id=?1"
+        ))
+        .bind(id)
+        .bind(locked)
+        .bind(reason)
+        .bind(next)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind,detail) VALUES (?1,?2,?3,?4,?5,?6)").bind(repo_id).bind(subject).bind(id).bind(actor_id).bind(if locked {"locked"} else {"unlocked"}).bind(reason.unwrap_or("")).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -184,12 +294,18 @@ pub(crate) async fn lock_pull_request_contribution(
     actor_id: i64,
     pr_id: i64,
 ) -> Result<()> {
-    let repo: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM pull_requests WHERE id=?1")
-        .bind(pr_id)
-        .fetch_optional(&mut **tx)
-        .await?;
-    let repo = repo.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
-    require_contribution_authority(tx, actor_id, repo).await
+    let scope: Option<(i64, bool)> =
+        sqlx::query_as("SELECT repo_id,locked FROM pull_requests WHERE id=?1")
+            .bind(pr_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+    let (repo, locked) = scope.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
+    require_contribution_authority(tx, actor_id, repo).await?;
+    anyhow::ensure!(
+        !locked,
+        crate::backend::db::discussions::DiscussionWriteRefusal::Locked
+    );
+    Ok(())
 }
 
 pub(crate) async fn lock_pull_request_review_authority(
@@ -206,6 +322,7 @@ pub(crate) async fn lock_pull_request_review_authority(
         lock_write_authority(tx, actor_id, repo).await?,
         AUTHORITY_DENIED
     );
+    lock_pull_request_contribution(tx, actor_id, pr_id).await?;
     read_pull_request_review_state(tx, pr_id).await
 }
 

@@ -50,17 +50,100 @@ pub async fn queue_pull_request_ci(
     manual: bool,
     access: db::models::AccessLevel,
 ) -> Result<(), AdmissionError> {
-    if pull.state != "open"
-        || pull.is_draft
-        || (pull.head_repo_id != Some(repository.id)
-            && pull.workflows_approved_sha.as_deref() != Some(&pull.head_sha))
-    {
+    if pull.state != "open" || pull.is_draft {
         return Ok(());
     }
-    match ci
-        .actor_may_discover_workflows(repository.id, actor_id)
+    let owner = db::ci::ci_repository_owner(pool, repository.id)
+        .await?
+        .ok_or(AdmissionError::Unavailable)?;
+    let author = db::users::accounts::get_user_by_id(pool, pull.author_id)
+        .await?
+        .ok_or(AdmissionError::Unavailable)?;
+    let sender = db::users::accounts::get_user_by_id(pool, actor_id)
+        .await?
+        .ok_or(AdmissionError::Unavailable)?;
+    use crate::backend::webhooks::payloads::{self, Person, Scope};
+    let mut payload = payloads::pull_request(
+        "synchronize",
+        pull,
+        &Person::of(&author),
+        Scope {
+            repo: repository,
+            owner: &owner,
+            sender: &Person::of(&sender),
+        },
+    );
+    crate::backend::webhooks::set_open_issues(pool, repository.id, &mut payload).await;
+    queue_pull_request_workflow_event(
+        pool,
+        ci,
+        repository,
+        pull,
+        actor_id,
+        manual,
+        access,
+        "pull_request",
+        &payload,
+    )
+    .await
+}
+
+/// The exact webhook document is also the workflow's event document.
+pub(crate) async fn queue_pull_request_event_ci(
+    pool: &DbPool,
+    ci: &CiRuns,
+    repository: &Repository,
+    pull: &PullRequest,
+    actor_id: i64,
+    access: db::models::AccessLevel,
+    payload: &serde_json::Value,
+) {
+    if payload.is_null() {
+        return;
+    }
+    for event in ["pull_request", "pull_request_target"] {
+        if let Err(error) = queue_pull_request_workflow_event(
+            pool, ci, repository, pull, actor_id, false, access, event, payload,
+        )
         .await
-    {
+        {
+            tracing::warn!(repo_id=repository.id, pull_number=pull.number, %error, event, "pull request event workflows were not queued");
+        }
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "A pull request event carries its immutable webhook document and execution authority."
+)]
+async fn queue_pull_request_workflow_event(
+    pool: &DbPool,
+    ci: &CiRuns,
+    repository: &Repository,
+    pull: &PullRequest,
+    actor_id: i64,
+    manual: bool,
+    access: db::models::AccessLevel,
+    event: &str,
+    payload: &serde_json::Value,
+) -> Result<(), AdmissionError> {
+    let target = event == "pull_request_target";
+    if !target && (pull.is_draft || (pull.state != "open" && payload["action"] != "closed")) {
+        return Ok(());
+    }
+    let awaiting_approval = !target
+        && !manual
+        && pull.head_repo_id != Some(repository.id)
+        && pull.workflows_approved_sha.as_deref() != Some(&pull.head_sha);
+    let may_discover = if awaiting_approval {
+        db::repositories::access::get_user_repo_access(pool, actor_id, repository.id)
+            .await
+            .map(|access| access.can_read())
+    } else {
+        ci.actor_may_discover_workflows(repository.id, actor_id)
+            .await
+    };
+    match may_discover {
         Ok(true) => {}
         Ok(false) => {
             return Err(AdmissionError::Denied(
@@ -78,11 +161,17 @@ pub async fn queue_pull_request_ci(
         }
     }
     // A layer runs its workflows for the branch its stack merges into, not for the layer below it.
-    let (trunk, base_sha, _) = super::stacks::merge_target(pool, pull)
-        .await
-        .map_err(|_| AdmissionError::Unavailable)?;
+    let (trunk, base_sha) = if target {
+        (pull.base_branch.clone(), pull.base_sha.clone())
+    } else {
+        let (branch, sha, _) = super::stacks::merge_target(pool, pull)
+            .await
+            .map_err(|_| AdmissionError::Unavailable)?;
+        (branch, sha)
+    };
     let store = repo_store(repository, ci.cluster.as_ref());
-    let workflows = match list_workflows_for_ref(&store, &pull.head_sha).await {
+    let revision = if target { &base_sha } else { &pull.head_sha };
+    let workflows = match list_workflows_for_ref(&store, revision).await {
         Ok(workflows) => workflows,
         Err(_) => {
             tracing::warn!(
@@ -96,7 +185,10 @@ pub async fn queue_pull_request_ci(
     let mut match_budget = WorkflowMatchBudget::new();
     let mut applicable = Vec::new();
     for workflow in workflows {
-        match workflow.matches_event_with_budget("pull_request", &trunk, &mut match_budget) {
+        if !workflow.matches_activity(event, payload["action"].as_str().unwrap_or_default()) {
+            continue;
+        }
+        match workflow.matches_event_with_budget(event, &trunk, &mut match_budget) {
             Ok(true) => applicable.push(workflow),
             Ok(false) => {}
             Err(error) => {
@@ -116,15 +208,17 @@ pub async fn queue_pull_request_ci(
         return Ok(());
     }
 
-    let message = commit_message_for_ref(&store, &pull.head_sha).await;
+    let message = if target {
+        None
+    } else {
+        commit_message_for_ref(&store, &pull.head_sha).await
+    };
     if message.as_deref().is_some_and(should_skip_run_from_message) {
         return Ok(());
     }
     let needs_paths = applicable.iter().any(|workflow| {
         workflow
-            .triggers
-            .pull_request
-            .as_ref()
+            .pull_request_filter(event)
             .is_some_and(|filter| !filter.paths.is_empty() || !filter.paths_ignore.is_empty())
     });
     let mut first_failure = None;
@@ -150,15 +244,13 @@ pub async fn queue_pull_request_ci(
     for workflow in applicable {
         if paths.is_none()
             && workflow
-                .triggers
-                .pull_request
-                .as_ref()
+                .pull_request_filter(event)
                 .is_some_and(|filter| !filter.paths.is_empty() || !filter.paths_ignore.is_empty())
         {
             continue;
         }
         match workflow.matches_event_with_context_and_budget(
-            "pull_request",
+            event,
             &trunk,
             paths.as_deref().unwrap_or_default(),
             message.as_deref(),
@@ -199,14 +291,14 @@ pub async fn queue_pull_request_ci(
     for workflow in matched {
         let pipeline = infer_pipeline_from_workflow_path(&workflow.path);
         if let Err(error) = ci
-            .trigger_run_with_access(
+            .trigger_event_run(
                 CiRunRequest {
                     repo_id: repository.id,
                     repo_owner: owner.clone(),
                     repo_name: repository.name.clone(),
                     branch: trunk.clone(),
-                    head_sha: Some(pull.head_sha.clone()),
-                    event: "pull_request".into(),
+                    head_sha: Some(revision.clone()),
+                    event: event.into(),
                     pull_request_id: Some(pull.id),
                     pipeline,
                     workflow_paths: vec![workflow.path],
@@ -216,9 +308,13 @@ pub async fn queue_pull_request_ci(
                     manual,
                 },
                 access,
+                payload.clone(),
             )
             .await
         {
+            if !manual && matches!(error, AdmissionError::WorkflowDisabled) {
+                continue;
+            }
             tracing::warn!(
                 repo_id = repository.id,
                 pull_number = pull.number,

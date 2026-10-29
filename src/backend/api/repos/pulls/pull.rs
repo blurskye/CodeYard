@@ -50,6 +50,7 @@ pub struct PullRequestResponse {
     pub base_branch: String,
     pub base_sha: String,
     pub is_draft: bool,
+    pub maintainer_can_modify: bool,
     pub mergeable: Option<bool>,
     pub stack_id: Option<i64>,
     pub author_id: i64,
@@ -65,6 +66,7 @@ impl PullRequestResponse {
         pull_request: db::models::PullRequest,
         author: Option<UserResponse>,
     ) -> Self {
+        let maintainer_can_modify = pull_request.maintainer_edits_enabled();
         Self {
             id: pull_request.id,
             number: pull_request.number,
@@ -77,6 +79,7 @@ impl PullRequestResponse {
             base_branch: pull_request.base_branch,
             base_sha: pull_request.base_sha,
             is_draft: pull_request.is_draft,
+            maintainer_can_modify,
             mergeable: pull_request.mergeable,
             stack_id: pull_request.stack_id,
             author_id: pull_request.author_id,

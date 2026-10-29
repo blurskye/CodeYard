@@ -36,6 +36,79 @@ use std::sync::Arc;
 
 const REPO_ADMIN_REQUIRED: &str = "Only repository administrators can manage these settings.";
 
+fn autolink_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
+    use db::repositories::autolinks::Refusal;
+    match error.downcast_ref::<Refusal>() {
+        Some(Refusal::Denied) => ApiError::failure(
+            StatusCode::FORBIDDEN,
+            "permission_denied",
+            REPO_ADMIN_REQUIRED,
+        ),
+        Some(Refusal::Missing) => {
+            ApiError::failure(StatusCode::NOT_FOUND, "not_found", "Autolink not found")
+        }
+        Some(error) => ApiError::failure(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation_error",
+            &error.to_string(),
+        ),
+        None => ApiError::failure(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "Autolink storage unavailable",
+        ),
+    }
+}
+
+fn immutable_releases_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
+    use db::repositories::immutable_releases::Refusal;
+    match error.downcast_ref::<Refusal>() {
+        Some(Refusal::Denied) => ApiError::failure(
+            StatusCode::FORBIDDEN,
+            "permission_denied",
+            REPO_ADMIN_REQUIRED,
+        ),
+        Some(Refusal::Archived) => ApiError::failure(
+            StatusCode::CONFLICT,
+            "archived",
+            "Archived repositories cannot change immutable release settings",
+        ),
+        None => ApiError::failure(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "Release policy storage unavailable",
+        ),
+    }
+}
+
+fn invitation_error(
+    error: crate::backend::repositories::collaborators::Error,
+) -> (StatusCode, Json<ApiError>) {
+    use crate::backend::repositories::collaborators::Error;
+    match error {
+        Error::Denied => ApiError::failure(
+            StatusCode::FORBIDDEN,
+            "permission_denied",
+            REPO_ADMIN_REQUIRED,
+        ),
+        Error::NotFound => ApiError::failure(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Invitation or user not found",
+        ),
+        Error::Invalid(message) => ApiError::failure(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation_error",
+            &message,
+        ),
+        Error::Unavailable => ApiError::failure(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "Invitation storage unavailable",
+        ),
+    }
+}
+
 pub async fn get_repo(
     State(state): State<Arc<AppState>>,
     Path((owner, repo)): Path<(String, String)>,
@@ -143,9 +216,15 @@ pub async fn transfer_repo(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
-    let updated = lifecycle::transfer(&state.pool, user.id, repository.id, &req.new_owner)
-        .await
-        .map_err(lifecycle_error)?;
+    let updated = lifecycle::transfer(
+        &state.pool,
+        state.cluster.as_ref(),
+        user.id,
+        repository.id,
+        &req.new_owner,
+    )
+    .await
+    .map_err(lifecycle_error)?;
     Ok(Json(repository_response(&state, &headers, &updated).await?))
 }
 
@@ -295,6 +374,19 @@ pub(super) async fn settings_model(
         viewer: viewer.username.clone(),
         ..view::settings::Settings::default()
     };
+    if tab == "general" {
+        settings.interactions = Some(
+            crate::backend::api::user::interactions::panel(
+                &ctx.state.pool,
+                viewer.id,
+                db::interactions::InteractionScope::Repository(loaded.repository.id),
+                &loaded.chrome.csrf_token,
+                true,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?,
+        );
+    }
     // Only the branch-protection section uses rules and their user choices.
     if tab == "branches" {
         settings.force_push_suggestions = db::repositories::access::list_write_access_users(
@@ -321,7 +413,28 @@ pub(super) async fn settings_model(
         .map_err(|_| unavailable(ctx))?;
         let text = |value: Option<i32>| value.map(|value| value.to_string()).unwrap_or_default();
         let server_minutes = ctx.state.ci_runs.config.run_timeout_seconds.div_ceil(60);
-        settings.actions = Some(view::settings::RepoActions {
+        let oidc = db::oidc::settings(
+            pool,
+            viewer.id,
+            db::oidc::Scope::Repository(loaded.repository.id),
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?;
+        settings.actions = Some(Box::new(view::settings::RepoActions {
+            oidc_use_default: oidc.use_default,
+            oidc_claim_keys: oidc.include_claim_keys.unwrap_or_default().join(", "),
+            engine: loaded.repository.actions_engine.clone().unwrap_or_default(),
+            enabled_engines: ["codeyard-actions", "act"]
+                .into_iter()
+                .filter(|engine| site.engine_enabled(engine))
+                .map(str::to_owned)
+                .collect(),
+            site_engine: site.default_engine.clone(),
+            engine_fallback: loaded
+                .repository
+                .actions_engine
+                .as_deref()
+                .is_some_and(|engine| !site.engine_enabled(engine)),
             enabled: own.enabled,
             run_timeout_minutes: text(own.run_timeout_minutes),
             job_cpus: text(own.job_cpus),
@@ -333,10 +446,155 @@ pub(super) async fn settings_model(
                 .unwrap_or(server_minutes),
             site_cpus: site.job_cpus,
             site_memory_gib: site.job_memory_gib,
-        });
+            effective_cache_size_gib: Some(site.cache_size_bytes(&own) / (1024 * 1024 * 1024)),
+            effective_cache_retention_days: Some(site.cache_expiry_days(&own)),
+            cache_size_gib: text(own.cache_size_gib),
+            cache_retention_days: text(own.cache_retention_days),
+        }));
     }
-    if tab == "collaborators" && loaded.chrome.can_manage_collaborators {
-        // Only personal owners manage collaborators, as the JSON listing does.
+    if tab == "security" {
+        let security = db::secret_scanning::settings(&ctx.state.pool, loaded.repository.id)
+            .await
+            .map_err(|_| unavailable(ctx))?;
+        settings.secret_scanning = security.enabled;
+        settings.push_protection = security.push_protection;
+        use crate::backend::repositories::secret_scanning::patterns::Owner;
+        let mut scopes = vec![(Owner::Repository(loaded.repository.id), false)];
+        if let Some(org) = loaded.repository.owner_org_id {
+            scopes.push((Owner::Organization(org), true));
+        }
+        for (scope, organization) in scopes {
+            let patterns =
+                match db::secret_scanning::list_patterns(&ctx.state.pool, viewer.id, scope).await {
+                    Ok(patterns) => patterns,
+                    Err(error)
+                        if matches!(
+                            error.downcast_ref::<db::secret_scanning::Refusal>(),
+                            Some(db::secret_scanning::Refusal::Denied)
+                        ) =>
+                    {
+                        continue
+                    }
+                    Err(_) => return Err(unavailable(ctx)),
+                };
+            settings
+                .secret_patterns
+                .extend(
+                    patterns
+                        .into_iter()
+                        .map(|pattern| view::secret_scanning::CustomPattern {
+                            id: pattern.id,
+                            name: pattern.name,
+                            state: pattern.state,
+                            organization,
+                        }),
+                );
+        }
+    }
+    if tab == "secrets" {
+        settings.environments =
+            db::environment_values::environments(&ctx.state.pool, viewer.id, loaded.repository.id)
+                .await
+                .map_err(|_| unavailable(ctx))?;
+        if let Some(name) = ctx.query.get("environment").filter(|name| !name.is_empty()) {
+            let key = db::environment_values::environment_key(name).map_err(|_| {
+                ctx.repo_error(
+                    &loaded.chrome,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "Invalid environment name.",
+                )
+            })?;
+            let name = settings
+                .environments
+                .iter()
+                .find(|name| {
+                    db::environment_values::environment_key(name).ok().as_ref() == Some(&key)
+                })
+                .cloned()
+                .ok_or_else(|| {
+                    ctx.repo_error(
+                        &loaded.chrome,
+                        StatusCode::NOT_FOUND,
+                        "Environment not found.",
+                    )
+                })?;
+            let (secrets, variables) = tokio::try_join!(
+                db::environment_values::list(
+                    &ctx.state.pool,
+                    viewer.id,
+                    loaded.repository.id,
+                    &name,
+                    db::environment_values::Kind::Secret
+                ),
+                db::environment_values::list(
+                    &ctx.state.pool,
+                    viewer.id,
+                    loaded.repository.id,
+                    &name,
+                    db::environment_values::Kind::Variable
+                ),
+            )
+            .map_err(|_| unavailable(ctx))?;
+            settings.environment = Some(Box::new(view::settings::environments::Environment {
+                name,
+                secrets: secrets
+                    .into_iter()
+                    .map(|value| view::settings::secrets::Secret {
+                        name: value.name,
+                        updated_at: value.updated_at.to_rfc3339(),
+                    })
+                    .collect(),
+                variables: variables
+                    .into_iter()
+                    .map(|value| view::settings::secrets::Variable {
+                        name: value.name,
+                        value: value.value,
+                    })
+                    .collect(),
+            }));
+        }
+        settings.secrets_enabled = ctx.state.secret_encryptor.is_some();
+        settings.variables = db::variables::list(&ctx.state.pool, viewer.id, loaded.repository.id)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(|variable| view::settings::secrets::Variable {
+                name: variable.name,
+                value: variable.value,
+            })
+            .collect();
+        settings.secrets =
+            db::secrets::list_secrets(&ctx.state.pool, viewer.id, loaded.repository.id)
+                .await
+                .map_err(|_| unavailable(ctx))?
+                .into_iter()
+                .map(|secret| view::settings::secrets::Secret {
+                    name: secret.name,
+                    updated_at: secret.updated_at.to_rfc3339(),
+                })
+                .collect();
+    }
+    if tab == "dependabot-secrets" {
+        settings.secrets_enabled = ctx.state.secret_encryptor.is_some();
+        settings.dependabot_secrets = db::secrets::list_secrets_for(
+            &ctx.state.pool,
+            db::secrets::SecretKind::Dependabot,
+            viewer.id,
+            loaded.repository.id,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?
+        .into_iter()
+        .map(|secret| view::settings::secrets::Secret {
+            name: secret.name,
+            updated_at: secret.updated_at.to_rfc3339(),
+        })
+        .collect();
+    }
+    if tab == "collaborators"
+        && (loaded.chrome.can_manage_collaborators || loaded.chrome.can_manage_invitations)
+    {
+        // Team-derived access is managed on teams; invitations and direct grants are managed here.
         let accesses = db::repositories::access::list_repo_collaborators(
             &ctx.state.pool,
             loaded.repository.id,
@@ -360,6 +618,68 @@ pub(super) async fn settings_model(
             });
         }
     }
+    if tab == "collaborators"
+        && (loaded.chrome.can_manage_collaborators || loaded.chrome.can_manage_invitations)
+    {
+        let invitations = crate::backend::repositories::collaborators::invitations(
+            &ctx.state.pool,
+            viewer.id,
+            Some(loaded.repository.id),
+            0,
+            350,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?;
+        let ids = invitations
+            .iter()
+            .map(|invitation| invitation.invitee_id)
+            .collect::<Vec<_>>();
+        let users = db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(|user| (user.id, user))
+            .collect::<HashMap<_, _>>();
+        for invitation in invitations {
+            let user = users
+                .get(&invitation.invitee_id)
+                .ok_or_else(|| unavailable(ctx))?;
+            settings
+                .invitations
+                .push(view::settings::PendingInvitation {
+                    id: invitation.id,
+                    username: user.username.clone(),
+                    access: db::models::AccessLevel::from(invitation.permission)
+                        .as_str()
+                        .to_owned(),
+                });
+        }
+    }
+    if tab == "releases" {
+        settings.immutable_releases = Some(
+            crate::backend::repositories::releases::immutable::enabled(
+                &ctx.state.pool,
+                ctx.user.as_ref(),
+                &loaded.repository,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?,
+        );
+    }
+    if tab == "autolinks" {
+        settings.autolinks = db::repositories::autolinks::list(
+            &ctx.state.pool,
+            viewer.id,
+            loaded.repository.id,
+            50,
+            0,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?
+        .into_iter()
+        .map(super::refs::references::autolink)
+        .collect();
+    }
     if tab == "deploy-keys" {
         settings.deploy_keys =
             Some(super::deploy_keys::settings_section(ctx, loaded, viewer).await?);
@@ -379,6 +699,12 @@ pub(super) async fn settings_model(
             .map_err(|error| webhook_page_error(ctx, loaded, error))?;
         settings.webhooks = Some(Box::new(built));
     }
+    if tab == "properties" {
+        settings.properties = Some(Box::new(
+            super::properties::panel(ctx, loaded, ctx.query.get("property").map(String::as_str))
+                .await?,
+        ));
+    }
     Ok(settings)
 }
 
@@ -390,7 +716,7 @@ fn webhook_page_error(ctx: &PageContext, loaded: &Loaded, error: HookError) -> R
 async fn settings_page(ctx: &PageContext, loaded: &Loaded) -> Result<Response, Response> {
     let tab = view::settings::settings_tab(
         ctx.query.get("tab").map_or("", String::as_str),
-        loaded.chrome.can_manage_collaborators,
+        loaded.chrome.can_manage_collaborators || loaded.chrome.can_manage_invitations,
     );
     let mut settings = settings_model(ctx, loaded, tab).await?;
     settings.saved = ctx.query.get("saved").map(String::as_str) == Some("general");
@@ -417,7 +743,7 @@ pub(super) fn settings_response(
             "Repository settings",
             crate::webui::app::Page::Repositories(view::page::Page::Settings {
                 repo: loaded.chrome.clone(),
-                settings,
+                settings: Box::new(settings),
             }),
         ),
         status,
@@ -472,6 +798,7 @@ async fn branch_rules(
             allow_deletions: rule.allow_deletions,
             restrict_pushes: rule.restrict_pushes,
             push_allowances: rule.push_allowances,
+            push_team_allowances: rule.push_team_allowances,
             force_push_allowances: rule.force_push_allowances,
         });
     }
@@ -529,6 +856,9 @@ fn submitted_rule(
         push_allowances: names(&field(form, "push_allowances"), |c: char| {
             c == ',' || c.is_whitespace()
         }),
+        push_team_allowances: names(&field(form, "push_team_allowances"), |c: char| {
+            c == ',' || c.is_whitespace()
+        }),
         force_push_allowances: force_push_names(form, pairs),
     }
 }
@@ -566,6 +896,7 @@ fn rule_request(
         allow_deletions: rule.allow_deletions,
         restrict_pushes: rule.restrict_pushes,
         push_allowances: rule.push_allowances.clone(),
+        push_team_allowances: rule.push_team_allowances.clone(),
         force_push_allowances: rule.force_push_allowances.clone(),
         // The form never offers signed commits, so a submitted rule asks for none.
         require_signed_commits: false,
@@ -670,14 +1001,8 @@ async fn webhook_form(
                 Ok(settings) => settings,
                 Err(response) => return response,
             };
-            if let (Some(panel), Some(mut draft)) = (settings.webhooks.as_mut(), draft) {
-                if let Some(id) = draft.id {
-                    draft.has_secret = db::webhooks::get_webhook(pool, owner, id)
-                        .await
-                        .ok()
-                        .flatten()
-                        .is_some_and(|hook| hook.encrypted_secret.is_some());
-                }
+            // The refused draft already shows the credentials the hook still has.
+            if let (Some(panel), Some(draft)) = (settings.webhooks.as_mut(), draft) {
                 panel.editing = Some(draft);
             }
             if let Some(panel) = settings.webhooks.as_mut() {
@@ -708,6 +1033,30 @@ fn confirmation(form: &HashMap<String, String>) -> Result<(), &'static str> {
 /// Only declared non-secret form fields enter typed bootstrap/navigation state.
 /// Arbitrary extra POST keys, credentials and the synchronizer token are never reflected.
 fn safe_submission(action: &str, values: &HashMap<String, String>) -> HashMap<String, String> {
+    if action == "immutable-releases" {
+        return HashMap::from([(
+            "enabled".to_owned(),
+            checkbox(values, "enabled").to_string(),
+        )]);
+    }
+    if action == "autolink-add" {
+        let mut fields = HashMap::from([(
+            "is_alphanumeric".to_owned(),
+            checkbox(values, "is_alphanumeric").to_string(),
+        )]);
+        for name in ["key_prefix", "url_template"] {
+            if let Some(value) = values.get(name) {
+                fields.insert(name.to_owned(), value.clone());
+            }
+        }
+        return fields;
+    }
+    if action == "template" {
+        return HashMap::from([(
+            "is_template".to_owned(),
+            checkbox(values, "is_template").to_string(),
+        )]);
+    }
     if action == "merge-methods" {
         // An unchecked box is not posted at all, so the retry form takes each box's state from
         // `checkbox`, the same reading the save uses.
@@ -720,16 +1069,40 @@ fn safe_submission(action: &str, values: &HashMap<String, String>) -> HashMap<St
         .map(|name| (name.to_owned(), checkbox(values, name).to_string()))
         .collect();
     }
+    if action == "code-security" {
+        return ["secret_scanning", "push_protection"]
+            .into_iter()
+            .map(|name| (name.to_owned(), checkbox(values, name).to_string()))
+            .collect();
+    }
+    if action == "oidc-settings" {
+        let mut fields: HashMap<String, String> = values
+            .get("include_claim_keys")
+            .map(|keys| ("include_claim_keys".to_owned(), keys.clone()))
+            .into_iter()
+            .collect();
+        fields.insert(
+            "use_default".to_owned(),
+            checkbox(values, "use_default").to_string(),
+        );
+        return fields;
+    }
     if action == "actions-settings" {
-        let mut fields: HashMap<String, String> =
-            ["run_timeout_minutes", "job_cpus", "job_memory_gib"]
-                .into_iter()
-                .filter_map(|name| {
-                    values
-                        .get(name)
-                        .map(|value| (name.to_owned(), value.clone()))
-                })
-                .collect();
+        let mut fields: HashMap<String, String> = [
+            "engine",
+            "run_timeout_minutes",
+            "job_cpus",
+            "job_memory_gib",
+            "cache_size_gib",
+            "cache_retention_days",
+        ]
+        .into_iter()
+        .filter_map(|name| {
+            values
+                .get(name)
+                .map(|value| (name.to_owned(), value.clone()))
+        })
+        .collect();
         fields.insert(
             "enabled".to_owned(),
             checkbox(values, "enabled").to_string(),
@@ -745,8 +1118,10 @@ fn safe_submission(action: &str, values: &HashMap<String, String>) -> HashMap<St
         "about" => &["description", "website", "topics"],
         "settings" => &["description", "visibility"],
         "default-branch" => &["branch"],
-        "collaborator" => &["username", "access"],
-        "remove-collaborator" => &["username"],
+        "collaborator" | "invite-collaborator" => &["username", "access"],
+        "cancel-invitation" => &["invitation_id"],
+        "autolink-delete" => &["autolink_id"],
+        "remove-collaborator" | "remove-invited-collaborator" => &["username"],
         "label" => &["name", "color", "description"],
         "edit-label" => &["label_id", "name", "color", "description"],
         "delete-label" => &["label_id"],
@@ -824,10 +1199,28 @@ const FORM_ACTIONS: &[FormAction] = &[
     form_action("settings", "/settings", BOUND | ADMIN),
     form_action("merge-methods", "/settings", BOUND | ADMIN),
     form_action("actions-settings", "/settings", BOUND | ADMIN),
+    form_action("oidc-settings", "/settings?tab=actions", BOUND | ADMIN),
+    form_action("environment-create", "/settings?tab=secrets", BOUND | ADMIN),
+    form_action("environment-secret-save", "/settings?tab=secrets", BOUND | ADMIN),
+    form_action("environment-secret-delete", "/settings?tab=secrets", BOUND | ADMIN | CONFIRM),
+    form_action("environment-variable-save", "/settings?tab=secrets", BOUND | ADMIN),
+    form_action("environment-variable-delete", "/settings?tab=secrets", BOUND | ADMIN | CONFIRM),
+    form_action("code-security", "/settings", BOUND | ADMIN),
+    form_action("secret-pattern-publish", "/settings", BOUND | ADMIN),
+    form_action("secret-save", "/settings?tab=secrets", BOUND | ADMIN),
+    form_action("variable-save", "/settings?tab=secrets", BOUND | ADMIN),
+    form_action("variable-delete", "/settings?tab=secrets", BOUND | ADMIN | CONFIRM),
+    form_action("secret-delete", "/settings?tab=secrets", BOUND | ADMIN | CONFIRM),
     form_action("rename", "/settings", BOUND | ADMIN | CONFIRM),
     form_action("transfer", "/settings", BOUND | ADMIN),
     form_action("delete", "/settings", BOUND | ADMIN),
     form_action("collaborator", "/settings", BOUND | ADMIN),
+    form_action("invite-collaborator", "/settings", BOUND | ADMIN),
+    form_action("cancel-invitation", "/settings", BOUND | ADMIN),
+    form_action("immutable-releases", "/settings", BOUND | ADMIN),
+    form_action("autolink-add","/settings",BOUND | ADMIN),
+    form_action("autolink-delete","/settings",BOUND | ADMIN | CONFIRM),
+    form_action("remove-invited-collaborator","/settings",BOUND | ADMIN | CONFIRM),
     form_action("remove-collaborator", "/settings", BOUND | ADMIN | CONFIRM),
     form_action("label", "/labels", BOUND | ADMIN),
     form_action("edit-label", "/labels", BOUND | ADMIN),
@@ -840,6 +1233,9 @@ const FORM_ACTIONS: &[FormAction] = &[
     form_action("archive", "/settings", BOUND | ADMIN | CONFIRM),
     form_action("unarchive", "/settings", BOUND | ADMIN | CONFIRM),
     form_action("default-branch", "/settings", GIT | BOUND | ADMIN),
+    form_action("template","/settings",BOUND | ADMIN),
+    form_action("repository-property-set", "/settings?tab=properties", BOUND | ADMIN),
+    form_action("repository-property-unset", "/settings?tab=properties", BOUND | ADMIN),
     form_action("webhook-save", "", BOUND | ADMIN),
     form_action("webhook-delete", "", BOUND | ADMIN),
     form_action("webhook-ping", "", BOUND | ADMIN),
@@ -1007,11 +1403,23 @@ pub(super) async fn post_form(
     if row.has(ADMIN) && !loaded.chrome.can_admin {
         return ctx.repo_error(&loaded.chrome, StatusCode::FORBIDDEN, REPO_ADMIN_REQUIRED);
     }
+    if action.starts_with("repository-property-") {
+        return super::properties::form(&ctx, &loaded, action, &form, &pairs).await;
+    }
     if action.starts_with("protection-") {
         return protection_form(&ctx, &loaded, action, &form, &pairs).await;
     }
     if action.starts_with("webhook-") {
         return webhook_form(&ctx, &loaded, action, &form, &pairs).await;
+    }
+    if action.starts_with("environment-") {
+        return super::settings::environment_values::form(&ctx, &loaded, action, &form).await;
+    }
+    if action.starts_with("variable-") {
+        return super::settings::variables::form(&ctx, &loaded, action, &form).await;
+    }
+    if matches!(action.as_str(), "secret-save" | "secret-delete") {
+        return super::settings::secrets::form(&ctx, &loaded, action, &form).await;
     }
     if action.starts_with("deploy-key-") {
         return super::deploy_keys::form(&ctx, &loaded, action, &form).await;
@@ -1089,11 +1497,7 @@ async fn mutate(
             )),
         )
     })?;
-    let base = format!(
-        "/{}/{}",
-        crate::webui::encode_component(owner),
-        crate::webui::encode_component(name)
-    );
+    let base = crate::webui::repository_path(owner, name);
     let cluster = ctx.state.cluster.as_ref();
     let ci = &ctx.state.ci_runs;
     match action {
@@ -1280,6 +1684,102 @@ async fn mutate(
             .map_err(repository_settings_error)?;
             Ok(settings_section_url(&base, action))
         }
+        "secret-pattern-publish" => {
+            use crate::backend::repositories::secret_scanning::patterns::Owner;
+            let id = field(form, "pattern_id").parse().map_err(|_| {
+                ApiError::failure(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation_error",
+                    "Invalid custom pattern",
+                )
+            })?;
+            let scope = if field(form, "organization") == "true" {
+                Owner::Organization(repository.owner_org_id.ok_or_else(|| {
+                    ApiError::failure(StatusCode::NOT_FOUND, "not_found", "Organization not found")
+                })?)
+            } else {
+                Owner::Repository(repository.id)
+            };
+            db::secret_scanning::publish_pattern(pool, actor.id, scope, id)
+                .await
+                .map_err(
+                    |error| match error.downcast_ref::<db::secret_scanning::Refusal>() {
+                        Some(db::secret_scanning::Refusal::Denied) => ApiError::failure(
+                            StatusCode::FORBIDDEN,
+                            "forbidden",
+                            "Pattern administration required",
+                        ),
+                        Some(db::secret_scanning::Refusal::Missing) => ApiError::failure(
+                            StatusCode::NOT_FOUND,
+                            "not_found",
+                            "Pattern not found",
+                        ),
+                        _ => ApiError::failure(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "unavailable",
+                            "Custom patterns unavailable",
+                        ),
+                    },
+                )?;
+            Ok(settings_section_url(&base, action))
+        }
+        "code-security" => {
+            let settings = db::secret_scanning::Settings {
+                enabled: checkbox(form, "secret_scanning"),
+                push_protection: checkbox(form, "push_protection"),
+            };
+            if settings.enabled && ctx.state.secret_encryptor.is_none() {
+                return Err(ApiError::failure(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "unavailable",
+                    "Secret scanning requires SECRETS_MASTER_KEY",
+                ));
+            }
+            db::secret_scanning::save_settings(pool, actor.id, repository.id, &settings)
+                .await
+                .map_err(
+                    |error| match error.downcast_ref::<db::secret_scanning::Refusal>() {
+                        Some(db::secret_scanning::Refusal::Invalid) => ApiError::failure(
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "validation_error",
+                            "Push protection requires secret scanning",
+                        ),
+                        Some(db::secret_scanning::Refusal::Denied) => ApiError::failure(
+                            StatusCode::FORBIDDEN,
+                            "forbidden",
+                            "Repository administration required",
+                        ),
+                        _ => ApiError::failure(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "unavailable",
+                            "Secret scanning settings unavailable",
+                        ),
+                    },
+                )?;
+            Ok(settings_section_url(&base, action))
+        }
+        "oidc-settings" => {
+            let settings = db::oidc::Settings::from_keys(
+                checkbox(form, "use_default"),
+                &field(form, "include_claim_keys"),
+            );
+            db::oidc::save_settings(
+                pool,
+                actor.id,
+                db::oidc::Scope::Repository(repository.id),
+                &settings,
+            )
+            .await
+            .map_err(|error| {
+                let status = match error.downcast_ref::<db::oidc::Refusal>() {
+                    Some(db::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
+                    Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
+                    None => StatusCode::SERVICE_UNAVAILABLE,
+                };
+                ApiError::failure(status, "oidc_settings", "Could not save OIDC settings")
+            })?;
+            Ok(format!("{base}/settings?tab=actions"))
+        }
         "actions-settings" => {
             let invalid = |message: String| {
                 (
@@ -1305,7 +1805,26 @@ async fn mutate(
                     _ => Ok(value),
                 }
             };
+            let engine = field(form, "engine");
+            if !engine.is_empty() && !site.engine_enabled(&engine) {
+                return Err(invalid("Choose Site default or an enabled engine.".into()));
+            }
             let settings = db::actions::RepoActionsSettings {
+                org_cache_size_gib: None,
+                org_cache_retention_days: None,
+                engine: (!engine.is_empty()).then_some(engine),
+                cache_size_gib: limit(
+                    "cache_size_gib",
+                    "Cache size in GiB",
+                    10240,
+                    site.cache_size_gib.or(Some(10)),
+                )?,
+                cache_retention_days: limit(
+                    "cache_retention_days",
+                    "Cache expiry in days",
+                    365,
+                    site.cache_retention_days.or(Some(7)),
+                )?,
                 enabled: checkbox(form, "enabled"),
                 run_timeout_minutes: limit(
                     "run_timeout_minutes",
@@ -1367,23 +1886,20 @@ async fn mutate(
             )
             .await
             .map_err(repository_settings_error)?;
-            Ok(format!(
-                "/{}/{}",
-                crate::webui::encode_component(owner),
-                crate::webui::encode_component(&updated.name)
-            ))
+            Ok(crate::webui::repository_path(owner, &updated.name))
         }
         "transfer" => {
-            let updated =
-                lifecycle::transfer(pool, actor.id, repository.id, &field(form, "new_owner"))
-                    .await
-                    .map_err(lifecycle_error)?;
+            let updated = lifecycle::transfer(
+                pool,
+                ctx.state.cluster.as_ref(),
+                actor.id,
+                repository.id,
+                &field(form, "new_owner"),
+            )
+            .await
+            .map_err(lifecycle_error)?;
             let new_owner = repository_owner(pool, &updated).await?;
-            Ok(format!(
-                "/{}/{}",
-                crate::webui::encode_component(&new_owner),
-                crate::webui::encode_component(&updated.name)
-            ))
+            Ok(crate::webui::repository_path(&new_owner, &updated.name))
         }
         "archive" | "unarchive" => {
             crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
@@ -1404,7 +1920,122 @@ async fn mutate(
             lifecycle::delete(pool, cluster, actor.id, repository.id)
                 .await
                 .map_err(lifecycle_error)?;
-            Ok(format!("/{}", crate::webui::encode_component(owner)))
+            Ok(crate::webui::profile_path(owner))
+        }
+        "template" => {
+            db::repositories::records::patch_repository(
+                pool,
+                actor.id,
+                repository.id,
+                &db::repositories::records::RepositoryChanges {
+                    is_template: Some(checkbox(form, "is_template")),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(lifecycle::storage_error)
+            .map_err(lifecycle_error)?;
+            Ok(settings_section_url(&base, action))
+        }
+        "remove-invited-collaborator" => {
+            crate::backend::repositories::collaborators::remove(
+                pool,
+                actor.id,
+                repository.id,
+                &field(form, "username"),
+            )
+            .await
+            .map_err(invitation_error)?;
+            Ok(settings_section_url(&base, action))
+        }
+        "immutable-releases" => {
+            confirmation(form).map_err(|message| {
+                ApiError::failure(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation_error",
+                    message,
+                )
+            })?;
+            crate::backend::repositories::releases::immutable::set_enabled(
+                pool,
+                actor.id,
+                repository.id,
+                checkbox(form, "enabled"),
+            )
+            .await
+            .map_err(immutable_releases_error)?;
+            Ok(settings_section_url(&base, action))
+        }
+        "autolink-add" => {
+            let input = db::repositories::autolinks::NewAutolink::new(
+                &field(form, "key_prefix"),
+                &field(form, "url_template"),
+                checkbox(form, "is_alphanumeric"),
+            )
+            .map_err(|error| {
+                ApiError::failure(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation_error",
+                    &error.to_string(),
+                )
+            })?;
+            db::repositories::autolinks::create(pool, actor.id, repository.id, &input)
+                .await
+                .map_err(autolink_error)?;
+            Ok(settings_section_url(&base, action))
+        }
+        "autolink-delete" => {
+            let id = field(form, "autolink_id").parse::<i64>().map_err(|_| {
+                ApiError::failure(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation_error",
+                    "Invalid autolink",
+                )
+            })?;
+            db::repositories::autolinks::remove(pool, actor.id, repository.id, id)
+                .await
+                .map_err(autolink_error)?;
+            Ok(settings_section_url(&base, action))
+        }
+        "invite-collaborator" => {
+            let permission =
+                crate::backend::repositories::collaborators::permission(&field(form, "access"))
+                    .ok_or_else(|| {
+                        ApiError::failure(
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "validation_error",
+                            "Invalid permission",
+                        )
+                    })?;
+            crate::backend::repositories::collaborators::add(
+                pool,
+                actor.id,
+                repository.id,
+                &field(form, "username"),
+                permission,
+            )
+            .await
+            .map_err(invitation_error)?;
+            Ok(settings_section_url(&base, action))
+        }
+        "cancel-invitation" => {
+            let id = field(form, "invitation_id").parse::<i64>().map_err(|_| {
+                ApiError::failure(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation_error",
+                    "Invalid invitation",
+                )
+            })?;
+            crate::backend::repositories::collaborators::update_invitation(
+                pool,
+                actor.id,
+                repository.id,
+                id,
+                None,
+            )
+            .await
+            .map_err(invitation_error)?;
+            Ok(settings_section_url(&base, action))
         }
         "collaborator" | "remove-collaborator" => {
             let permission = if action == "remove-collaborator" {
@@ -1491,12 +2122,7 @@ pub(super) async fn page(
             Ok(ctx) => ctx,
             Err(response) => return response,
         };
-    let tab = view::settings::settings_tab(
-        ctx.query.get("tab").map_or("", String::as_str),
-        ctx.user
-            .as_ref()
-            .is_some_and(|user| user.username == params["owner"]),
-    );
+    let tab = view::settings::settings_tab(ctx.query.get("tab").map_or("", String::as_str), true);
     let loaded = match if tab == "general" || tab.is_empty() {
         load_metadata(&ctx, &params["owner"], &params["repo"]).await
     } else {
@@ -1581,6 +2207,23 @@ mod tests {
             safe_submission("watch-level", &form)["events_issues"],
             "yes"
         );
+    }
+
+    #[test]
+    fn retries_keep_the_ci_engine_and_oidc_choices() {
+        let form = HashMap::from([
+            ("engine".into(), "native".into()),
+            ("job_memory_gib".into(), "999".into()),
+            ("use_default".into(), "on".into()),
+            ("include_claim_keys".into(), "repo, bad key".into()),
+        ]);
+        assert_eq!(
+            safe_submission("actions-settings", &form)["engine"],
+            "native"
+        );
+        let oidc = safe_submission("oidc-settings", &form);
+        assert_eq!(oidc["use_default"], "true");
+        assert_eq!(oidc["include_claim_keys"], "repo, bad key");
     }
 
     #[test]

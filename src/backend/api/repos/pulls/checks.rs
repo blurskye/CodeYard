@@ -36,6 +36,13 @@ async fn render_checks(
         .comparison
         .as_ref()
         .map_or(pull.head_sha.as_str(), |compare| compare.head_sha.as_str());
+    let base = value
+        .comparison
+        .as_ref()
+        .map_or(pull.base_sha.as_str(), |comparison| {
+            comparison.base_sha.as_str()
+        });
+    let code_scanning = super::security::checks(ctx, repo, &pull, head, base).await?;
     let (target, _, _) =
         crate::backend::repositories::pull_requests::stacks::merge_target(&ctx.state.pool, &pull)
             .await
@@ -44,6 +51,29 @@ async fn render_checks(
         db::ci::latest_ci_runs_for_commit(&ctx.state.pool, repo.record.id, head, pull.id, &target)
             .await
             .map_err(|_| unavailable(ctx))?;
+    // Check runs an integration published through the API, latest per name, link to their pages.
+    let filter = db::checks::Filter {
+        head_sha: Some(head.to_owned()),
+        ..Default::default()
+    };
+    let check_runs = db::checks::runs(&ctx.state.pool, repo.record.id, &filter, 0, 100)
+        .await
+        .map_err(|_| unavailable(ctx))?
+        .into_iter()
+        .map(|run| crate::webui::pages::repos::pulls::CheckStatus {
+            state: match (run.status.as_str(), run.conclusion.as_deref()) {
+                ("completed", Some("success" | "neutral" | "skipped")) => "success",
+                ("completed", _) => "failure",
+                _ => "pending",
+            }
+            .to_owned(),
+            description: run.data.title.clone().or(run.conclusion),
+            target_url: Some(format!(
+                "/{}/{}/runs/{}",
+                repo.view.owner, repo.record.name, run.id
+            )),
+            context: run.name,
+        });
     let statuses =
         db::repositories::protection::list_commit_statuses(&ctx.state.pool, repo.record.id, head)
             .await
@@ -61,6 +91,7 @@ async fn render_checks(
                 description: status.description,
                 target_url: status.target_url,
             })
+            .chain(check_runs)
             .collect();
     let runs = runs
         .into_iter()
@@ -73,6 +104,7 @@ async fn render_checks(
             item: value,
             runs,
             statuses,
+            code_scanning,
         }),
     ))
 }
@@ -119,6 +151,8 @@ mod tests {
                 base_branch: "main",
                 base_sha: &first,
                 is_draft: false,
+                maintainer_can_modify: false,
+                issue: None,
             },
         )
         .await

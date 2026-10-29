@@ -5,6 +5,18 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct CiRun {
+    #[serde(default)]
+    #[sqlx(default)]
+    pub workflow_run_number: Option<i64>,
+    #[serde(default)]
+    #[sqlx(default)]
+    pub workflow_run_id: Option<i64>,
+    #[serde(default)]
+    #[sqlx(default)]
+    pub workflow_run_attempt: Option<i32>,
+    #[serde(default)]
+    #[sqlx(default)]
+    pub engine: Option<String>,
     pub id: i64,
     pub run_id: Uuid,
     pub repo_id: i64,
@@ -21,16 +33,26 @@ pub struct CiRun {
     pub attempt: i32,
     #[serde(default)]
     pub pull_request_event: Option<serde_json::Value>,
+    #[serde(default)]
+    #[sqlx(default)]
+    pub event_payload: Option<serde_json::Value>,
     /// Inputs of a manual `workflow_dispatch` run; NULL for other events.
     #[serde(default)]
     pub workflow_inputs: Option<serde_json::Value>,
     #[serde(default)]
     pub is_fork: bool,
+    #[serde(default)]
+    #[sqlx(default)]
+    pub approval_required: bool,
     pub branch: String,
     pub head_sha: Option<String>,
     pub workflow_path: String,
     pub workflow_sha: Option<String>,
     pub workflow_blobs: serde_json::Value,
+    #[serde(skip, default = "empty_runner_labels")]
+    pub runner_labels: String,
+    #[serde(skip)]
+    pub runner_group: Option<String>,
     /// Worker node that claimed the run.
     pub worker: Option<String>,
     pub heartbeat_at: Option<DateTime<Utc>>,
@@ -44,7 +66,28 @@ pub struct CiRun {
     pub updated_at: DateTime<Utc>,
 }
 
+fn empty_runner_labels() -> String {
+    "[]".into()
+}
+
+/// A branch or tag name without its `refs/heads/` or `refs/tags/` prefix.
+pub fn workflow_branch(reference: &str) -> &str {
+    reference
+        .strip_prefix("refs/heads/")
+        .or_else(|| reference.strip_prefix("refs/tags/"))
+        .unwrap_or(reference)
+}
+
 impl CiRun {
+    /// The branch GitHub names as the run's head: a pull request's head branch, otherwise the
+    /// pushed branch or tag.
+    pub fn head_branch(&self) -> &str {
+        self.pull_request_event
+            .as_ref()
+            .and_then(|event| event["head_ref"].as_str())
+            .unwrap_or_else(|| workflow_branch(&self.branch))
+    }
+
     pub fn commit_status_context(&self) -> String {
         if self.workflow_path.contains(',') {
             format!("gitserv/pipeline/{}", self.pipeline)

@@ -1,7 +1,10 @@
 use crate::backend::db::models::Repository;
 use crate::backend::db::{
     models::OrgRole,
-    organizations::OrganizationOutcome,
+    organizations::{
+        properties::{invalid as invalid_property, ValueInput},
+        OrganizationOutcome,
+    },
     repositories::creation::{
         NewRepository, RepositoryCreationOwner, RepositoryStorageRefusal, RepositoryTarget,
     },
@@ -31,6 +34,11 @@ pub(crate) async fn creation_authority(
             .await?
             {
                 OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => Ok(false),
+                OrganizationOutcome::Applied(OrgRole::Member) => {
+                    let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organization_settings WHERE org_id=?1 AND (members_can_create_public_repositories OR members_can_create_private_repositories))").bind(org).fetch_one(connection).await?;
+                    anyhow::ensure!(allowed, RepositoryStorageRefusal::Denied);
+                    Ok(false)
+                }
                 _ => Err(RepositoryStorageRefusal::Denied.into()),
             }
         }
@@ -38,27 +46,67 @@ pub(crate) async fn creation_authority(
     }
 }
 
+pub async fn check_creation_authority(
+    pool: &SqlitePool,
+    owner: RepositoryCreationOwner,
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    creation_authority(&mut tx, owner).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub(crate) async fn validate_creation_visibility(
+    c: &mut sqlx::SqliteConnection,
+    owner: RepositoryCreationOwner,
+    private: bool,
+) -> Result<()> {
+    if let RepositoryTarget::Organization(org) = owner.target {
+        let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m LEFT JOIN organization_settings s ON s.org_id=m.org_id WHERE m.org_id=?1 AND m.user_id=?2 AND (m.role IN ('owner','admin') OR (m.role='member' AND CASE WHEN ?3 THEN s.members_can_create_private_repositories ELSE s.members_can_create_public_repositories END)))").bind(org).bind(owner.actor_id).bind(private).fetch_one(c).await?;
+        anyhow::ensure!(allowed, RepositoryStorageRefusal::Denied);
+    }
+    Ok(())
+}
+pub(crate) async fn grant_creator(
+    c: &mut sqlx::SqliteConnection,
+    owner: RepositoryCreationOwner,
+    repo: i64,
+) -> Result<()> {
+    if let RepositoryTarget::Organization(org) = owner.target {
+        sqlx::query("INSERT INTO repo_access(user_id,repo_id,access_level) SELECT ?1,?2,5 FROM org_memberships WHERE org_id=?3 AND user_id=?1 AND role='member' ON CONFLICT(user_id,repo_id) DO UPDATE SET access_level=5").bind(owner.actor_id).bind(repo).bind(org).execute(c).await?;
+    }
+    Ok(())
+}
 async fn fork_source(
     connection: &mut sqlx::SqliteConnection,
     actor: i64,
     admin: bool,
     id: i64,
 ) -> Result<Repository> {
-    let source = sqlx::query_as::<_, Repository>(
-        "SELECT * FROM repositories WHERE id=?1 AND NOT is_archived",
-    )
-    .bind(id)
-    .fetch_optional(&mut *connection)
-    .await?
-    .ok_or(RepositoryStorageRefusal::Denied)?;
+    let source = sqlx::query_as::<_, Repository>("SELECT * FROM repositories WHERE id=?1")
+        .bind(id)
+        .fetch_optional(&mut *connection)
+        .await?
+        .ok_or(RepositoryStorageRefusal::Denied)?;
+    anyhow::ensure!(
+        !super::super::users::blocks::repository_interaction_blocked(connection, actor, id).await?,
+        RepositoryStorageRefusal::Denied
+    );
     let access = super::access::user_repo_access_in_transaction(connection, actor, id).await?;
     // Site admins may fork any personal repository, not organization ones.
     let personal_admin = admin
         && source.owner_kind == "user"
         && source.owner_user_id.is_some()
         && source.owner_org_id.is_none();
-    if !access.can_read() && !personal_admin {
+    // Gist forks stage an unlisted source; initialize_fork rechecks live Git read access.
+    if !(access.can_read() || personal_admin || (source.is_gist && !source.is_private)) {
         return Err(RepositoryStorageRefusal::Denied.into());
+    }
+    if source.is_private {
+        if let Some(org) = source.owner_org_id {
+            let allowed:bool=sqlx::query_scalar("SELECT COALESCE((SELECT members_can_fork_private_repositories FROM organization_settings WHERE org_id=?1),1) OR EXISTS(SELECT 1 FROM org_memberships WHERE org_id=?1 AND user_id=?2 AND role IN ('owner','admin'))").bind(org).bind(actor).fetch_one(connection).await?;
+            anyhow::ensure!(allowed, RepositoryStorageRefusal::Denied);
+        }
     }
     Ok(source)
 }
@@ -69,10 +117,31 @@ pub async fn insert_repository(
     pool: &SqlitePool,
     input: NewRepository<'_>,
 ) -> Result<Option<Repository>> {
-    if matches!(input.owner.target, RepositoryTarget::Organization(_)) && input.source_id.is_some()
-    {
-        return Err(RepositoryStorageRefusal::UnsupportedOrganizationFork.into());
-    }
+    insert_repository_with_properties(pool, input, &[]).await
+}
+pub async fn insert_repository_with_properties(
+    pool: &SqlitePool,
+    input: NewRepository<'_>,
+    properties: &[ValueInput],
+) -> Result<Option<Repository>> {
+    insert_kind(pool, input, false, properties).await
+}
+pub async fn insert_gist_repository(
+    pool: &SqlitePool,
+    input: NewRepository<'_>,
+) -> Result<Option<Repository>> {
+    anyhow::ensure!(
+        matches!(input.owner.target, RepositoryTarget::Personal(_)) && !input.is_private,
+        RepositoryStorageRefusal::Denied
+    );
+    insert_kind(pool, input, true, &[]).await
+}
+async fn insert_kind(
+    pool: &SqlitePool,
+    input: NewRepository<'_>,
+    gist: bool,
+    properties: &[ValueInput],
+) -> Result<Option<Repository>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let creator = input.owner.actor_id;
     let admin = creation_authority(&mut tx, input.owner).await?;
@@ -80,11 +149,35 @@ pub async fn insert_repository(
         RepositoryTarget::Personal(id) => ("user", Some(id), None),
         RepositoryTarget::Organization(id) => ("org", None, Some(id)),
     };
+    let property_values = if let Some(org) = org {
+        super::super::organizations::properties::creation_values_on(
+            &mut tx, creator, org, properties,
+        )
+        .await?
+    } else {
+        anyhow::ensure!(
+            properties.is_empty(),
+            invalid_property(
+                "custom_properties",
+                "Custom properties belong to organization repositories"
+            )
+        );
+        Vec::new()
+    };
+    if !gist
+        && !super::super::gists::ordinary_name_available(&mut tx, user, org, input.name).await?
+    {
+        return Ok(None);
+    }
     // Same order as the PostgreSQL version: check the source, then look for an existing fork.
     let source = match input.source_id {
         Some(id) => Some(fork_source(&mut tx, input.owner.actor_id, admin, id).await?),
         None => None,
     };
+    anyhow::ensure!(
+        source.as_ref().is_none_or(|source| source.is_gist == gist),
+        RepositoryStorageRefusal::Denied
+    );
     if source
         .as_ref()
         .is_some_and(|source| source.storage_node_id != input.storage_node_id)
@@ -92,8 +185,8 @@ pub async fn insert_repository(
         return Err(RepositoryStorageRefusal::StalePlacement.into());
     }
     if let Some(source_id) = input.source_id {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE owner_kind='user' AND owner_user_id=?1 AND owner_org_id IS NULL AND forked_from_id=?2)")
-            .bind(user)
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE owner_kind=?1 AND (owner_user_id=?2 OR owner_org_id=?3) AND forked_from_id=?4)")
+            .bind(kind).bind(user).bind(org)
             .bind(source_id)
             .fetch_one(&mut *tx)
             .await?;
@@ -102,9 +195,10 @@ pub async fn insert_repository(
         }
     }
     let private = input.is_private || source.as_ref().is_some_and(|repo| repo.is_private);
+    validate_creation_visibility(&mut tx, input.owner, private).await?;
     let repository = sqlx::query_as::<_, Repository>(
-        "INSERT INTO repositories (owner_kind,owner_user_id,owner_org_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,storage_node_id,created_by_id)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) ON CONFLICT DO NOTHING RETURNING *",
+        "INSERT INTO repositories (owner_kind,owner_user_id,owner_org_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,storage_node_id,created_by_id,is_gist)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT DO NOTHING RETURNING *",
     )
     .bind(kind)
     .bind(user)
@@ -118,8 +212,24 @@ pub async fn insert_repository(
     .bind(source.as_ref().map_or("main", |repo| repo.default_branch.as_str()))
     .bind(input.storage_node_id)
     .bind(creator)
+    .bind(gist)
     .fetch_optional(&mut *tx)
     .await?;
+    if let Some(repository) = &repository {
+        super::super::code_security::apply_default(&mut tx, repository).await?;
+    }
+    if let (Some(org), Some(repository)) = (org, repository.as_ref()) {
+        super::super::organizations::properties::apply_on(
+            &mut tx,
+            org,
+            repository.id,
+            &property_values,
+        )
+        .await?;
+    }
+    if let Some(repository) = repository.as_ref() {
+        grant_creator(&mut tx, input.owner, repository.id).await?;
+    }
     tx.commit().await?;
     Ok(repository)
 }

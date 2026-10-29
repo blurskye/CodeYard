@@ -1,7 +1,13 @@
 pub mod accounts;
 pub mod admission;
+pub mod blocks;
+pub mod emails;
+pub mod gpg_keys;
+pub mod profiles;
 pub mod sessions;
+pub mod signing_keys;
 pub mod signup_requests;
+pub mod social_accounts;
 pub mod ssh_keys;
 pub mod tokens;
 pub mod transitions;

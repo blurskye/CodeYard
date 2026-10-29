@@ -1,5 +1,5 @@
 //! Profile pictures of users and organizations, on SQLite and PostgreSQL: a user
-//! points their picture at a confirmed upload through the JSON API or sends a
+//! points their picture at a confirmed upload in the shared domain or sends a
 //! picture from the settings form; organization owners and admins do the same
 //! from the organization page. Only the holder's own confirmed upload made for
 //! that picture can be used, and a replaced picture is deleted.
@@ -80,17 +80,25 @@ async fn upload(client: &Client, reason: &str, bytes: &[u8], confirm: bool) -> S
     id
 }
 
-async fn set_avatar(client: &Client, file_id: &str) -> (StatusCode, Value) {
-    client
-        .api("PUT", "/api/user/avatar", json!({"file_id": file_id}))
-        .await
+async fn set_avatar(
+    pool: &db::DbPool,
+    user: &db::models::User,
+    file_id: &str,
+) -> Result<(), avatars::AvatarError> {
+    avatars::set_user_avatar(pool, user, file_id.parse().unwrap()).await
 }
 
 async fn avatar_url(client: &Client) -> Option<String> {
-    let me = client
-        .expect("GET", "/api/auth/me", Value::Null, StatusCode::OK)
-        .await;
-    me["user"]["avatar_url"].as_str().map(str::to_owned)
+    let (status, page) = client.model("/settings?tab=profile").await;
+    assert_eq!(status, StatusCode::OK);
+    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Settings {
+        model,
+        ..
+    }) = page
+    else {
+        panic!("profile settings")
+    };
+    model.profile.avatar_url
 }
 
 /// What anyone can download of a file right now.
@@ -165,12 +173,15 @@ async fn contract(pg: bool) {
     let erin = Client::login(&router, f.pool(), ids[4]).await;
     let nobody = Client::anonymous(&router);
 
-    // ----- A user's picture through the JSON API -----
+    // The shared assignment checks ownership, reason and verification at the effect.
+    let alice_user = db::users::accounts::get_user_by_id(f.pool(), ids[0])
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(avatar_url(&alice).await, None);
     let first = upload(&alice, "avatar", PNG, true).await;
-    let (status, body) = set_avatar(&alice, &first).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let url = body["avatar_url"].as_str().unwrap().to_owned();
+    set_avatar(f.pool(), &alice_user, &first).await.unwrap();
+    let url = avatar_url(&alice).await.unwrap();
     assert_eq!(id_of(&url), first);
     assert_eq!(avatar_url(&alice).await.as_deref(), Some(url.as_str()));
     // Everyone can fetch it, the owner and strangers alike, and so can a visitor.
@@ -205,40 +216,38 @@ async fn contract(pg: bool) {
         organization_picture.as_str(),
         "00000000-0000-4000-8000-000000000000",
     ] {
-        let (status, body) = set_avatar(&alice, file).await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{file}: {body}");
-        assert_eq!(body["error"], "unusable_file", "{file}: {body}");
+        assert_eq!(
+            set_avatar(f.pool(), &alice_user, file).await,
+            Err(avatars::AvatarError::NotUsable),
+            "{file}"
+        );
     }
     assert_eq!(avatar_url(&alice).await.as_deref(), Some(url.as_str()));
-    assert_eq!(
-        set_avatar(&nobody, &first).await.0,
-        StatusCode::UNAUTHORIZED
-    );
-    assert_eq!(
-        nobody
-            .api("DELETE", "/api/user/avatar", Value::Null)
-            .await
-            .0,
-        StatusCode::UNAUTHORIZED
-    );
+    let reply = nobody.form_reply("/settings/avatar/remove", &[]).await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
+    assert_eq!(avatar_url(&alice).await.as_deref(), Some(url.as_str()));
 
     // A new picture replaces the old one, which is deleted.
     let second = upload(&alice, "avatar", PNG, true).await;
-    let (status, _) = set_avatar(&alice, &second).await;
-    assert_eq!(status, StatusCode::OK);
+    set_avatar(f.pool(), &alice_user, &second).await.unwrap();
     assert_eq!(download(&bob, &first).await, StatusCode::NOT_FOUND);
     assert_eq!(download(&alice, &first).await, StatusCode::NOT_FOUND);
     assert_eq!(download(&bob, &second).await, StatusCode::OK);
 
     // Removing it deletes that file too.
-    alice
-        .expect(
-            "DELETE",
-            "/api/user/avatar",
-            Value::Null,
-            StatusCode::NO_CONTENT,
-        )
-        .await;
+    let reply = alice.form_reply("/settings/avatar/remove", &[]).await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    for method in ["PUT", "DELETE"] {
+        let reply = alice
+            .exchange(
+                method,
+                "/api/user/avatar",
+                "application/json",
+                b"{}".to_vec(),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::NOT_FOUND, "{method}");
+    }
     assert_eq!(avatar_url(&alice).await, None);
     assert_eq!(download(&bob, &second).await, StatusCode::NOT_FOUND);
 
@@ -395,7 +404,7 @@ async fn contract(pg: bool) {
     assert_eq!(avatar_url(&alice).await, None);
     assert_eq!(download(&nobody, id_of(&url)).await, StatusCode::NOT_FOUND);
 
-    // Concurrent API selections use the current database value, not the stale
+    // Concurrent assignments use the current database value, not the stale
     // request user, so exactly one selected upload remains.
     let frank_id = f.actor("frank").await;
     let frank = Arc::new(Client::login(&router, f.pool(), frank_id).await);
@@ -403,18 +412,24 @@ async fn contract(pg: bool) {
     let mut changed_png = PNG.to_vec();
     changed_png.push(0);
     let second = upload(&frank, "avatar", &changed_png, true).await;
+    let request_user = db::users::accounts::get_user_by_id(f.pool(), frank_id)
+        .await
+        .unwrap()
+        .unwrap();
     let first_task = {
-        let frank = frank.clone();
+        let pool = f.pool().clone();
+        let user = request_user.clone();
         let first = first.clone();
-        tokio::spawn(async move { set_avatar(&frank, &first).await })
+        tokio::spawn(async move { set_avatar(&pool, &user, &first).await })
     };
     let second_task = {
-        let frank = frank.clone();
+        let pool = f.pool().clone();
+        let user = request_user.clone();
         let second = second.clone();
-        tokio::spawn(async move { set_avatar(&frank, &second).await })
+        tokio::spawn(async move { set_avatar(&pool, &user, &second).await })
     };
-    assert_eq!(first_task.await.unwrap().0, StatusCode::OK);
-    assert_eq!(second_task.await.unwrap().0, StatusCode::OK);
+    first_task.await.unwrap().unwrap();
+    second_task.await.unwrap().unwrap();
     let selected = avatar_url(&frank).await.unwrap();
     assert!(selected.contains(&first) || selected.contains(&second));
     let stats = db::files::get_user_file_stats(f.pool(), frank_id)

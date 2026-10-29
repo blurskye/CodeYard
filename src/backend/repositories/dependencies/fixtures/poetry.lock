@@ -1,0 +1,5 @@
+[[package]]
+name = "Django"
+version = "4.2.0"
+optional = false
+python-versions = ">=3.8"

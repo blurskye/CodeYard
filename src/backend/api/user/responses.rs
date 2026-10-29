@@ -57,41 +57,6 @@ impl From<db::models::User> for PublicUserResponse {
     }
 }
 
-#[derive(Debug, Serialize)]
-pub struct AuthUserResponse {
-    pub id: i64,
-    pub username: String,
-    pub email: Option<String>,
-    pub avatar_url: Option<String>,
-    pub display_name: Option<String>,
-    pub bio: Option<String>,
-    pub location: Option<String>,
-    pub website: Option<String>,
-    pub is_admin: bool,
-    pub is_banned: bool,
-    pub must_change_password: bool,
-    pub created_at: String,
-}
-
-impl From<db::models::User> for AuthUserResponse {
-    fn from(user: db::models::User) -> Self {
-        Self {
-            id: user.id,
-            username: user.username.clone(),
-            email: user.email,
-            avatar_url: avatar_url(user.avatar_file_id),
-            display_name: user.display_name,
-            bio: user.bio,
-            location: user.location,
-            website: user.website,
-            is_admin: user.is_admin,
-            is_banned: user.is_banned,
-            must_change_password: user.must_change_password,
-            created_at: user.created_at.to_rfc3339(),
-        }
-    }
-}
-
 pub(crate) type Fields = HashMap<String, String>;
 
 pub(crate) fn field<'a>(form: &'a Fields, name: &str) -> &'a str {
@@ -257,11 +222,4 @@ pub(crate) fn mutation_guard(
     ctx.check_csrf(form)?;
     require_account(ctx, admin)?;
     Ok(())
-}
-
-#[derive(Debug, Serialize)]
-pub struct AuthResponse {
-    pub success: bool,
-    pub user: Option<AuthUserResponse>,
-    pub message: Option<String>,
 }

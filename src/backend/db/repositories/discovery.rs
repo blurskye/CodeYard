@@ -21,6 +21,10 @@ native_operation!(crate::backend::db::postgres::repositories::discovery::create_
     input: NewForkedRepository<'_>,
 ) -> Result<Repository>);
 
+native_operation!(crate::backend::db::postgres::repositories::discovery::get_owner_fork,
+    crate::backend::db::sqlite::repositories::discovery::get_owner_fork,
+    fn get_owner_fork(pool: &DbPool, owner: super::creation::RepositoryTarget, forked_from: i64) -> Result<Option<Repository>>);
+
 native_operation!(crate::backend::db::postgres::repositories::discovery::get_user_fork,
     crate::backend::db::sqlite::repositories::discovery::get_user_fork,
     fn get_user_fork(

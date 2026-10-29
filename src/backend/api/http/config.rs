@@ -1,9 +1,7 @@
-//! Safe runtime clone endpoints for SSR and JSON. No host paths or credentials.
+//! Safe runtime clone endpoints for repository pages. No host paths or credentials.
 //! SSH endpoints follow the startup-selected transport; unavailable SSH is hidden.
 
-use axum::{Extension, Json};
-use serde::Serialize;
-use std::{collections::HashSet, net::IpAddr, sync::Arc};
+use std::{collections::HashSet, net::IpAddr};
 
 /// The HTTP clone endpoint when neither PUBLIC_HTTP_CLONE_BASE nor PUBLIC_URL is set.
 pub const DEFAULT_HTTP_CLONE_BASE: &str = "http://localhost:3000";
@@ -13,7 +11,6 @@ pub const DEFAULT_SSH_CLONE_BASE: &str = "ssh://git@localhost:2222";
 /// Immutable HTTP settings captured when the router is constructed.
 #[derive(Debug, Clone)]
 pub struct WebConfig {
-    pub public: PublicConfig,
     /// Origins allowed to call the API from another site. None unless `CORS_ORIGINS` is set.
     pub cors_origins: Vec<String>,
     /// Reverse proxies whose `X-Forwarded-For` header names the real client.
@@ -23,14 +20,6 @@ pub struct WebConfig {
 impl WebConfig {
     pub fn from_env() -> Self {
         Self {
-            public: PublicConfig {
-                http_clone_base: http_clone_base(),
-                ssh_clone_base: ssh_clone_base(),
-                ssh_mode: crate::backend::ssh::mode::selected()
-                    .map_or("builtin", |s| s.mode.as_str()),
-                ssh_setup_required: crate::backend::ssh::mode::selected()
-                    .is_some_and(|s| s.setup_required),
-            },
             cors_origins: std::env::var("CORS_ORIGINS")
                 .unwrap_or_default()
                 .split(',')
@@ -44,14 +33,6 @@ impl WebConfig {
                 .collect(),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PublicConfig {
-    pub http_clone_base: String,
-    pub ssh_clone_base: String,
-    pub ssh_mode: &'static str,
-    pub ssh_setup_required: bool,
 }
 
 /// Blank clone settings use the default endpoint.
@@ -70,6 +51,17 @@ pub fn public_origin() -> String {
         .and_then(|value| url::Url::parse(value.trim()).ok())
         .map(|url| url.origin().ascii_serialization())
         .unwrap_or_default()
+}
+
+/// The origin of absolute links in API documents and webhook payloads: `PUBLIC_URL`'s, or the
+/// default address when it is unset, as for the HTTP clone base.
+pub fn link_origin() -> String {
+    let origin = public_origin();
+    if origin.is_empty() {
+        DEFAULT_HTTP_CLONE_BASE.to_owned()
+    } else {
+        origin
+    }
 }
 
 pub fn http_clone_base() -> String {
@@ -112,11 +104,6 @@ fn configured_ssh_base(
         _ => format!("ssh://git@localhost:{}", selected.builtin_port),
     };
     value_or(value, &fallback)
-}
-
-/// `GET /api/config`
-pub async fn get_public_config(Extension(config): Extension<Arc<WebConfig>>) -> Json<PublicConfig> {
-    Json(config.public.clone())
 }
 
 #[cfg(test)]

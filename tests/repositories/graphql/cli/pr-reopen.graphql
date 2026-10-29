@@ -1,0 +1,1 @@
+mutation PullRequestReopen($input:ReopenPullRequestInput!){reopenPullRequest(input: $input){pullRequest{id}}}

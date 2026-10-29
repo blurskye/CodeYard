@@ -1,7 +1,7 @@
 use crate::backend::repositories::store::{
-    BlobRange, CommitFilter, ErrorKind, FileWrite, GitService, GitSession, MergeFailure,
-    MergeMethod, MergeRequest, PreparedFile, RepoError, RestackMove, UploadWrite, MAX_EDITOR_BYTES,
-    MAX_UPLOAD_TOTAL_BYTES,
+    AsyncMergePublication, BlobRange, CommitFilter, ErrorKind, FileWrite, GitService, GitSession,
+    MergeFailure, MergeMethod, MergeRequest, PreparedFile, PullBranchUpdate, RepoError,
+    RestackMove, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_TOTAL_BYTES,
 };
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,26 @@ pub enum Operation {
         source: Option<Uuid>,
         default_branch: String,
     },
+    /// Kept separate from Initialize so older nodes reject new copy semantics rather than
+    /// silently preserving history when a template requested its removal.
+    InitializeCopy {
+        source: Uuid,
+        default_branch: String,
+        template: bool,
+        default_branch_only: bool,
+    },
     Remove,
+    GistSnapshot {
+        revision: Option<String>,
+    },
+    GistHistory {
+        revision: Option<String>,
+        offset: usize,
+        limit: usize,
+    },
+    GistWrite {
+        credential: crate::backend::repositories::store::GistCredential,
+    },
     /// Fetches a commit of another repository on this node into a pull ref.
     FetchPullHead {
         source: Uuid,
@@ -39,8 +58,38 @@ pub enum Operation {
     /// The same refs as `Refs`, answered only by the primary. For a caller that writes the
     /// answer into the database.
     PrimaryRefs,
+    BranchPublication {
+        repository_id: i64,
+        reference: String,
+    },
     Info,
     CommitCount,
+    GitTree {
+        revision: String,
+        recursive: bool,
+    },
+    GitTag {
+        sha: String,
+    },
+    GitObjectKind {
+        sha: String,
+    },
+    UpdateReference {
+        reference: String,
+        sha: String,
+        force: bool,
+    },
+    WriteGitObject {
+        input: crate::backend::git::objects::ObjectWrite,
+    },
+    ImportGit {
+        import: crate::backend::repositories::imports::GitImport,
+    },
+    CancelImport,
+    LockMigration {
+        migration: i64,
+    },
+    MigrationArchive,
     Tree {
         git_ref: String,
         path: String,
@@ -78,6 +127,9 @@ pub enum Operation {
         filter: CommitFilter,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         walk_millis: Option<u64>,
+        /// The caller can decode JSON from the raw response frame.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        raw_json: bool,
     },
     CommitPage {
         git_ref: String,
@@ -87,6 +139,9 @@ pub enum Operation {
         filter: CommitFilter,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         walk_millis: Option<u64>,
+        /// The caller can decode JSON from the raw response frame.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        raw_json: bool,
     },
     /// Lines of the files at `git_ref` that contain `text`, as `RepoStore::search_code` finds them.
     SearchCode {
@@ -104,6 +159,9 @@ pub enum Operation {
         limit: usize,
         #[serde(default, skip_serializing_if = "CommitFilter::is_empty")]
         filter: CommitFilter,
+        /// The caller can decode JSON from the raw response frame.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        raw_json: bool,
     },
     Commit {
         revision: String,
@@ -113,18 +171,29 @@ pub enum Operation {
     PrimaryCommit {
         revision: String,
     },
+    ReleaseHistory {
+        head: String,
+        previous: Option<String>,
+        exclude_tag: String,
+    },
     CommitDiff {
         revision: String,
     },
     Diff {
         base_ref: String,
         head_ref: String,
+        /// Counts and file metadata only, with empty patches.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stats: bool,
     },
     /// Commits reachable from `head_ref` but not from `base_ref`, newest first.
     CommitsBetween {
         base_ref: String,
         head_ref: String,
         limit: usize,
+        /// Include the full count and GitHub's first 250 commits, oldest first.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pull_request: bool,
         /// The caller can decode JSON from the raw response frame.
         #[serde(default)]
         raw_json: bool,
@@ -141,6 +210,16 @@ pub enum Operation {
         endpoints: bool,
         #[serde(default)]
         renames: bool,
+    },
+    ComparisonFrom {
+        source: Uuid,
+        base_ref: String,
+        head_ref: String,
+        offset: usize,
+        limit: usize,
+        /// The caller can decode JSON from the raw response frame.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        raw_json: bool,
     },
     DiffFrom {
         source: Uuid,
@@ -167,6 +246,9 @@ pub enum Operation {
         path: String,
     },
     Contributors,
+    CommitStatistics {
+        branch: String,
+    },
     CodeFrequency {
         branch: String,
     },
@@ -188,6 +270,14 @@ pub enum Operation {
         sha: String,
         workflow_path: String,
     },
+    RenameBranch {
+        old: String,
+        new: String,
+    },
+    MergeUpstream {
+        source: Uuid,
+        branch: String,
+    },
     CreateBranch {
         name: String,
         sha: String,
@@ -197,6 +287,22 @@ pub enum Operation {
     },
     SetDefaultBranch {
         name: String,
+    },
+    TransferRepository {
+        new_owner: String,
+    },
+    ConfigureDependencySecurity {
+        feature: crate::backend::db::repositories::dependencies::Feature,
+        enabled: bool,
+        private_consent: bool,
+    },
+    MutateRelease {
+        mutation: crate::backend::repositories::releases::immutable::Mutation,
+        attestation: Option<crate::backend::repositories::releases::integrity::Attestation>,
+    },
+    PatchRepository {
+        default_branch: String,
+        changes: crate::backend::db::repositories::records::RepositoryChanges<String>,
     },
     CreateTag {
         name: String,
@@ -216,6 +322,10 @@ pub enum Operation {
     PublishFile {
         prepared: PreparedFile,
     },
+    PublishDependencyUpdate {
+        prepared: PreparedFile,
+        publication: Box<crate::backend::db::repositories::dependencies::Publication>,
+    },
     SaveFile {
         write: FileWrite,
         author: String,
@@ -231,6 +341,19 @@ pub enum Operation {
     },
     PrepareMerge {
         request: MergeRequest,
+    },
+    PrepareRevert {
+        request: crate::backend::repositories::store::RevertRequest,
+    },
+    UpdatePullBranch {
+        source: Uuid,
+        request: PullBranchUpdate,
+    },
+    PublishAsyncMerge {
+        request: AsyncMergePublication,
+    },
+    PublishBranchMerge {
+        publication: crate::backend::repositories::store::BranchMergePublication,
     },
     PublishMerge {
         head_branch: String,
@@ -289,6 +412,9 @@ impl Operation {
     pub fn is_read_only(&self) -> bool {
         match self {
             Self::Tree { .. }
+            | Self::GitTree { .. }
+            | Self::GitTag { .. }
+            | Self::GitObjectKind { .. }
             | Self::SidebarTrees { .. }
             | Self::TemplateTexts { .. }
             | Self::Blob { .. }
@@ -312,6 +438,7 @@ impl Operation {
             | Self::FilePaths { .. }
             | Self::Blame { .. }
             | Self::Contributors
+            | Self::CommitStatistics { .. }
             | Self::CodeFrequency { .. }
             | Self::BranchStatuses { .. } => true,
             Self::AdvertiseRefs { service } => *service == GitService::UploadPack,
@@ -320,28 +447,52 @@ impl Operation {
             | Self::SizeBytes
             | Self::WorkflowFiles { .. }
             | Self::PrimaryRefs
+            | Self::BranchPublication { .. }
+            | Self::GistSnapshot { .. }
+            | Self::GistHistory { .. }
             | Self::PrimaryCommit { .. }
+            | Self::ReleaseHistory { .. }
             | Self::ChangedPaths { .. }
             | Self::DiffFrom { .. }
+            | Self::ComparisonFrom { .. }
             | Self::IsAncestor { .. }
             | Self::ResolveCiCommit { .. }
             | Self::CiWorkflowFile { .. } => false,
             Self::Initialize { .. }
+            | Self::InitializeCopy { .. }
             | Self::Remove
             | Self::FetchPullHead { .. }
             | Self::PrepareFile { .. }
+            | Self::WriteGitObject { .. }
+            | Self::GistWrite { .. }
+            | Self::ImportGit { .. }
+            | Self::CancelImport
+            | Self::LockMigration { .. }
+            | Self::MigrationArchive
+            | Self::UpdateReference { .. }
             | Self::PrepareUpload { .. }
             | Self::PublishFile { .. }
+            | Self::PublishDependencyUpdate { .. }
             | Self::SaveFile { .. }
             | Self::Merge { .. }
             | Self::PrepareMerge { .. }
+            | Self::PrepareRevert { .. }
             | Self::PublishMerge { .. }
+            | Self::PublishAsyncMerge { .. }
+            | Self::UpdatePullBranch { .. }
+            | Self::PublishBranchMerge { .. }
             | Self::PublishStackedMerge { .. }
             | Self::PrepareRestack { .. }
             | Self::PublishRestack { .. }
+            | Self::RenameBranch { .. }
+            | Self::MergeUpstream { .. }
             | Self::CreateBranch { .. }
             | Self::DeleteBranch { .. }
             | Self::SetDefaultBranch { .. }
+            | Self::PatchRepository { .. }
+            | Self::MutateRelease { .. }
+            | Self::TransferRepository { .. }
+            | Self::ConfigureDependencySecurity { .. }
             | Self::CreateTag { .. }
             | Self::DeleteTag { .. }
             | Self::ReplicaPack { .. } => false,
@@ -402,7 +553,12 @@ pub fn unavailable() -> RepoError {
 pub(super) fn operation_body_limit(operation: &Operation) -> usize {
     match operation {
         Operation::PrepareFile { .. } | Operation::SaveFile { .. } => MAX_EDITOR_BYTES,
+        Operation::WriteGitObject {
+            input: crate::backend::git::objects::ObjectWrite::Blob,
+        } => crate::backend::git::objects::MAX_BLOB_WRITE_BYTES,
         Operation::PrepareUpload { .. } => MAX_UPLOAD_TOTAL_BYTES,
+        Operation::GistWrite { .. } => crate::backend::repositories::store::MAX_GIST_REQUEST_BYTES,
+        Operation::ImportGit { .. } => crate::backend::repositories::imports::MAX_IMPORT_PACK_BYTES,
         _ => 0,
     }
 }
@@ -496,6 +652,7 @@ mod tests {
                 limit: 30,
                 filter: Default::default(),
                 walk_millis: None,
+                raw_json: false,
             })
             .unwrap(),
             serde_json::json!({"Commits": {"git_ref": "main", "limit": 30}})
@@ -507,6 +664,7 @@ mod tests {
                 limit: 30,
                 filter: Default::default(),
                 walk_millis: None,
+                raw_json: false,
             })
             .unwrap(),
             serde_json::json!({

@@ -81,6 +81,8 @@ async fn new_pr(
             base_branch: "main",
             base_sha: "0000000000000000000000000000000000000000",
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -1282,17 +1284,18 @@ async fn watch_count_transitions(pool: &db::DbPool) {
     let ignored = db::users::accounts::create_user(pool, "ignored", None)
         .await
         .unwrap();
-    let releases = db::users::accounts::create_user(pool, "releases", None)
+    let custom = db::users::accounts::create_user(pool, "custom", None)
         .await
         .unwrap();
     let repo = repository(pool, owner.id, "watched").await;
     let empty = repository(pool, owner.id, "empty").await;
-    // A repository with no active watches is covered by the empty repository below.
+    // A repository with no active watches is covered by the empty repository below;
+    // participating and ignoring rows do not count.
     execute_sql(pool, &format!(
-        "INSERT INTO watches(user_id,repo_id,level) VALUES ({},{},'watching'),({},{},'releases_only'),({},{},'ignoring');
-         INSERT INTO watches(user_id,repo_id,level) VALUES ({},{},'ignoring');",
-        owner.id, repo.id, releases.id, repo.id, ignored.id, repo.id,
-        owner.id, empty.id
+        "INSERT INTO watches(user_id,repo_id,level) VALUES ({},{},'watching'),({},{},'custom'),({},{},'ignoring');
+         INSERT INTO watches(user_id,repo_id,level) VALUES ({},{},'ignoring'),({},{},'participating');",
+        owner.id, repo.id, custom.id, repo.id, ignored.id, repo.id,
+        owner.id, empty.id, ignored.id, empty.id
     )).await;
     assert_watch_count(pool, repo.id, 2).await;
     assert_watch_count(pool, empty.id, 0).await;
@@ -1302,7 +1305,7 @@ async fn watch_count_transitions(pool: &db::DbPool) {
             .unwrap()
     );
     assert!(
-        repositories::engagement::is_repo_watched(pool, releases.id, repo.id)
+        repositories::engagement::is_repo_watched(pool, custom.id, repo.id)
             .await
             .unwrap()
     );
@@ -1320,7 +1323,7 @@ async fn watch_count_transitions(pool: &db::DbPool) {
     );
     assert_watch_count(pool, repo.id, 3).await;
     assert!(
-        repositories::engagement::watch_repo(pool, releases.id, repo.id)
+        repositories::engagement::watch_repo(pool, custom.id, repo.id)
             .await
             .unwrap()
     );
@@ -1347,7 +1350,7 @@ async fn watch_count_transitions(pool: &db::DbPool) {
     );
     assert_watch_count(pool, repo.id, 1).await;
     assert!(
-        repositories::engagement::unwatch_repo(pool, releases.id, repo.id)
+        repositories::engagement::unwatch_repo(pool, custom.id, repo.id)
             .await
             .unwrap()
     );
@@ -1370,8 +1373,8 @@ async fn watch_count_transitions(pool: &db::DbPool) {
     execute_sql(
         pool,
         &format!(
-            "INSERT INTO watches(user_id,repo_id,level) VALUES ({},{},'releases_only')",
-            releases.id, repo.id
+            "INSERT INTO watches(user_id,repo_id,level) VALUES ({},{},'custom')",
+            custom.id, repo.id
         ),
     )
     .await;
@@ -1388,7 +1391,7 @@ async fn watch_count_transitions(pool: &db::DbPool) {
     assert_watch_count(pool, repo.id, 0).await;
     assert_watch_count(pool, empty.id, 1).await;
     assert!(
-        repositories::engagement::unwatch_repo(pool, releases.id, empty.id)
+        repositories::engagement::unwatch_repo(pool, custom.id, empty.id)
             .await
             .unwrap()
     );
@@ -1544,6 +1547,8 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
                 pr_id: pr.id,
                 author_id: owner.id,
                 body: "first",
+                start_line: None,
+                start_side: None,
                 expected_revisions: None,
                 path: None,
                 line: None,
@@ -3012,6 +3017,8 @@ async fn check_list_display_projections(pool: &db::DbPool) {
             base_branch: "main",
             base_sha: "0000000000000000000000000000000000000000",
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -3054,6 +3061,8 @@ async fn check_list_display_projections(pool: &db::DbPool) {
             pr_id: pull.id,
             author_id: writer.id,
             body: "PR comment",
+            start_line: None,
+            start_side: None,
             expected_revisions: None,
             path: None,
             line: None,
@@ -3076,6 +3085,8 @@ async fn check_list_display_projections(pool: &db::DbPool) {
             pr_id: pull.id,
             author_id: writer.id,
             body: "PR second",
+            start_line: None,
+            start_side: None,
             expected_revisions: None,
             path: None,
             line: None,
@@ -3092,6 +3103,8 @@ async fn check_list_display_projections(pool: &db::DbPool) {
             pr_id: pull.id,
             author_id: writer.id,
             body: "PR third",
+            start_line: None,
+            start_side: None,
             expected_revisions: None,
             path: None,
             line: None,
@@ -4688,6 +4701,8 @@ async fn check_issue_and_pull_request_counts_and_search(pool: &db::DbPool) {
                     base_branch: "main",
                     base_sha: "0000000000000000000000000000000000000000",
                     is_draft: false,
+                    maintainer_can_modify: false,
+                    issue: None,
                 },
             )
             .await
@@ -4706,7 +4721,7 @@ async fn check_issue_and_pull_request_counts_and_search(pool: &db::DbPool) {
             body: None,
             state: Some("closed"),
         },
-        None,
+        Default::default(),
     )
     .await
     .unwrap()

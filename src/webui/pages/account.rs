@@ -35,6 +35,32 @@ pub enum Page {
     Logout {
         csrf_token: String,
     },
+    OAuthDevice {
+        csrf_token: String,
+        code: String,
+        application: Option<(String, String)>,
+        message: Option<String>,
+    },
+    OAuthAuthorize {
+        csrf_token: String,
+        name: String,
+        client_id: String,
+        redirect_uri: String,
+        scopes: String,
+        state: String,
+        challenge: String,
+    },
+    OAuthRegister {
+        csrf_token: String,
+        credentials: Option<(String, String)>,
+    },
+    OAuthApplications {
+        applications: Vec<(String, String, String)>,
+    },
+    GitHubApps {
+        csrf_token: String,
+        model: crate::webui::pages::auth::apps::Model,
+    },
     PasswordHelp {
         redirect: String,
         csrf_token: String,
@@ -78,6 +104,9 @@ pub enum Page {
         csrf_token: String,
         message: Option<String>,
         is_error: bool,
+    },
+    RepositoryInvitations {
+        page: super::repos::invitations::Page,
     },
     Admin {
         model: Admin,
@@ -145,6 +174,44 @@ pub fn render(page: Page) -> Element {
             is_error,
         ),
         Page::Logout { csrf_token } => logout_page(&csrf_token),
+        Page::OAuthDevice {
+            csrf_token,
+            code,
+            application,
+            message,
+        } => crate::webui::pages::auth::oauth::device(
+            &csrf_token,
+            &code,
+            application,
+            message.as_deref(),
+        ),
+        Page::OAuthAuthorize {
+            csrf_token,
+            name,
+            client_id,
+            redirect_uri,
+            scopes,
+            state,
+            challenge,
+        } => crate::webui::pages::auth::oauth::authorize(
+            &csrf_token,
+            &name,
+            &client_id,
+            &redirect_uri,
+            &scopes,
+            &state,
+            &challenge,
+        ),
+        Page::OAuthRegister {
+            csrf_token,
+            credentials,
+        } => crate::webui::pages::auth::oauth::register(&csrf_token, credentials),
+        Page::OAuthApplications { applications } => {
+            crate::webui::pages::auth::oauth::applications(applications)
+        }
+        Page::GitHubApps { csrf_token, model } => {
+            crate::webui::pages::auth::apps::page(&csrf_token, model)
+        }
         Page::PasswordHelp {
             redirect,
             csrf_token,
@@ -199,6 +266,7 @@ pub fn render(page: Page) -> Element {
             message,
             is_error,
         } => settings_page(*model, &csrf_token, message.as_deref(), is_error),
+        Page::RepositoryInvitations { page } => super::repos::invitations::render(&page),
         Page::Admin { model } => admin_page(model),
         Page::AdminSettings {
             model,
@@ -354,6 +422,10 @@ mod tests {
                         must_change_password: true,
                         values: values.clone(),
                         two_factor: Default::default(),
+                        signing_keys: vec![],
+                        gpg_keys: vec![],
+                        blocked: Default::default(),
+                        emails: vec![],
                     }),
                     csrf_token: "csrf-marker".into(),
                     message: Some("<b>Validation error</b>".into()),
@@ -387,6 +459,8 @@ mod tests {
                 model: AdminSettings {
                     private: true,
                     ai_crawlers: "block".into(),
+                    osv_base_url: "https://osv-vulnerabilities.storage.googleapis.com".into(),
+                    osv_ecosystems: String::new(),
                 },
                 csrf_token: "csrf-marker".into(),
                 message: Some("<b>Validation error</b>".into()),

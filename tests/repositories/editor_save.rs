@@ -318,10 +318,9 @@ async fn contract(pg: bool) {
         ] {
             assert_eq!(commit[field], saved["commit"][field], "{endpoint}: {field}");
         }
-        assert!(
-            commit.get("author").is_none(),
-            "unlinked Git author must not gain an identity"
-        );
+        // The editor commits with the account's noreply address, which names the account
+        // in lists and single commits alike.
+        assert_eq!(commit["author"]["id"], actor, "{endpoint}");
     }
     assert!(
         chrono::DateTime::parse_from_rfc3339(saved["commit"]["author_date"].as_str().unwrap())

@@ -195,6 +195,8 @@ async fn contract(pg: bool) {
                 base_branch: base,
                 base_sha: &first.to_string(),
                 is_draft: false,
+                maintainer_can_modify: false,
+                issue: None,
             },
         )
         .await

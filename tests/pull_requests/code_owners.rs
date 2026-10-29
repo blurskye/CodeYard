@@ -431,6 +431,20 @@ async fn private_teams_and_unverified_email_do_not_resolve(pg: bool) {
     )
     .await
     .unwrap();
+    assert!(
+        resolve_owners(pool, &org_repo, ["@acme/council"])
+            .await
+            .unwrap()["@acme/council"]
+            .is_empty(),
+        "A member's direct write access does not grant the team CODEOWNERS authority"
+    );
+    world
+        ._database
+        .execute(
+            "INSERT INTO team_repo_access(team_id,repo_id,permission) VALUES(909090,$1,3)",
+            &[org_repo.id],
+        )
+        .await;
     assert_eq!(
         resolve_owners(pool, &org_repo, ["@acme/council"])
             .await

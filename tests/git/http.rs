@@ -7,7 +7,10 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::{Duration, Utc};
 use codeyard::backend::{
     db::{self, repositories, users::tokens, DbPool},
-    git::{MAX_MIRROR_REFS, MAX_MIRROR_REF_BYTES, MAX_REPOSITORY_REFS, MAX_REPOSITORY_REF_BYTES},
+    git::{
+        MAX_MIRROR_REFS, MAX_PULL_HEAD_REFS, MAX_PULL_HEAD_REF_BYTES, MAX_REPOSITORY_REFS,
+        MAX_REPOSITORY_REF_BYTES,
+    },
     repositories::lifecycle,
 };
 use git_server::{git, success, Server};
@@ -21,19 +24,43 @@ fn hash(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 async fn create_token(client: &Client, base: &str, cookie: &str, csrf: &str, scope: &str) -> Value {
+    let name = format!("test-{scope}");
+    let form = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs([
+            ("name", name.as_str()),
+            ("scope", scope),
+            ("expiry", "never"),
+            ("csrf_token", csrf),
+        ])
+        .finish();
     let response = client
-        .post(format!("{base}/api/user/tokens"))
+        .post(format!("{base}/settings/tokens"))
         .header("Cookie", cookie)
-        .header("x-csrf-token", csrf)
-        .json(&json!({"name":format!("test-{scope}"),"scope":scope}))
+        .header("Accept", "application/vnd.codeyard.page+json")
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(form)
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["cache-control"], "no-store, private");
-    let created: Value = response.json().await.unwrap();
-    assert_eq!(created["value"].as_str().unwrap().len(), 64);
-    created
+    let envelope: codeyard::webui::app::PageEnvelope = response.json().await.unwrap();
+    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Settings {
+        model,
+        ..
+    }) = envelope.page
+    else {
+        panic!("token settings")
+    };
+    let value = model.new_token.unwrap();
+    assert!(value.starts_with("cy_pat_"));
+    assert_eq!(value.len(), 71);
+    let token = model
+        .tokens
+        .iter()
+        .find(|token| token.name == name)
+        .unwrap();
+    json!({"id": token.id, "value": value})
 }
 async fn refused(client: &Client, uri: &str, token: Option<&str>) {
     let mut request = client.get(uri);
@@ -260,7 +287,7 @@ async fn near_budget_http_clone(root: &Path, disk_path: &str, url: &str) {
     let mut refs = std::collections::BTreeMap::new();
     refs.insert("refs/heads/main".to_owned(), commit);
     let mut pull_bytes = 0;
-    for number in 1..=MAX_MIRROR_REFS - MAX_REPOSITORY_REFS {
+    for number in 1..=MAX_PULL_HEAD_REFS {
         let name = format!("refs/pull/{number}/head");
         pull_bytes += name.len() + 40;
         refs.insert(name, commit);
@@ -274,8 +301,8 @@ async fn near_budget_http_clone(root: &Path, disk_path: &str, url: &str) {
         refs.insert(name, tag);
     }
     assert!(public_bytes <= MAX_REPOSITORY_REF_BYTES);
-    assert!(pull_bytes <= MAX_MIRROR_REF_BYTES - MAX_REPOSITORY_REF_BYTES);
-    assert!(refs.len() - (MAX_MIRROR_REFS - MAX_REPOSITORY_REFS) <= MAX_REPOSITORY_REFS);
+    assert!(pull_bytes <= MAX_PULL_HEAD_REF_BYTES);
+    assert!(refs.len() - MAX_PULL_HEAD_REFS <= MAX_REPOSITORY_REFS);
     assert!(refs.len() <= MAX_MIRROR_REFS);
     // Write the large fixture as packed refs instead of creating 41,000 loose files.
     let mut packed = std::io::BufWriter::new(
@@ -451,7 +478,13 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
 
         let expected = match case {
             "deleted_token" => {
-                assert!(tokens::delete_token(pool, reader.id, token.id)
+                // A signed-out browser cannot revoke the token.
+                assert!(
+                    !tokens::delete_token(pool, reader.id, &native::token(), token.id)
+                        .await
+                        .unwrap()
+                );
+                assert!(tokens::delete_token(pool, reader.id, &session, token.id)
                     .await
                     .unwrap());
                 401
@@ -625,6 +658,56 @@ async fn archive_tag_budgets(client: &Client, base: &str, disk_path: &str) {
     }
 }
 
+async fn signature_push(client: &Client, base: &str, root: &Path, token: &str, expected: &str) {
+    let branch = format!("{base}/api/v3/repos/http_owner/closed/branches/main/protection");
+    let response = client
+        .put(&branch)
+        .bearer_auth(token)
+        .json(&json!({
+            "required_status_checks":null,"enforce_admins":true,
+            "required_pull_request_reviews":null,"restrictions":null
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{}",
+        response.text().await.unwrap()
+    );
+    let response = client
+        .post(format!("{branch}/required_signatures"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let rejected = git(
+        root,
+        &["-C", "reader", "push", "origin", "main"],
+        Some(token),
+    );
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("verified signatures"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    let response: Value = client
+        .get(format!(
+            "{base}/api/v3/repos/http_owner/closed/git/ref/heads/main"
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(response["object"]["sha"], expected);
+}
+
 async fn exercise(pool: &DbPool, url: &str) {
     bundle::install();
     match pool {
@@ -712,28 +795,72 @@ async fn exercise(pool: &DbPool, url: &str) {
         .await
         .unwrap()
         .is_some());
-    let listing: Value = client
-        .get(format!("{}/api/user/tokens", server.base))
+    let response = client
+        .get(format!("{}/settings?tab=tokens", server.base))
         .header("Cookie", &cookie)
+        .header("Accept", "application/vnd.codeyard.page+json")
         .send()
         .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let listing = response.text().await.unwrap();
+    assert!(!listing.contains(read_value));
+    assert!(!listing.contains("token_hash"));
+    let envelope: codeyard::webui::app::PageEnvelope = serde_json::from_str(&listing).unwrap();
+    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Settings {
+        model,
+        ..
+    }) = envelope.page
+    else {
+        panic!("token settings")
+    };
+    assert_eq!(model.tokens.len(), 2);
+    assert!(model.new_token.is_none());
+    let unauthenticated = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
         .unwrap()
-        .json()
+        .get(format!("{}/settings?tab=tokens", server.base))
+        .header("Accept", "application/vnd.codeyard.page+json")
+        .basic_auth("ignored", Some(write_value))
+        .send()
         .await
         .unwrap();
-    assert_eq!(listing.as_array().unwrap().len(), 2);
-    assert!(!listing.to_string().contains(read_value));
-    assert!(!listing.to_string().contains("token_hash"));
-    assert_eq!(
-        client
-            .get(format!("{}/api/user/tokens", server.base))
-            .basic_auth("ignored", Some(write_value))
+    assert_eq!(unauthenticated.status(), StatusCode::SEE_OTHER);
+    assert_eq!(unauthenticated.headers()["location"], "/login");
+    for (method, path, status) in [
+        (
+            reqwest::Method::GET,
+            "/api/user/tokens".to_owned(),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            reqwest::Method::POST,
+            "/api/user/tokens".to_owned(),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            reqwest::Method::DELETE,
+            format!("/api/user/tokens/{}", read["id"]),
+            StatusCode::NOT_FOUND,
+        ),
+        // The two-segment repository page matches this path, but has no PATCH handler.
+        (
+            reqwest::Method::PATCH,
+            "/api/user".to_owned(),
+            StatusCode::METHOD_NOT_ALLOWED,
+        ),
+    ] {
+        let response = client
+            .request(method.clone(), format!("{}{path}", server.base))
+            .header("Cookie", &cookie)
+            .header("x-csrf-token", &csrf)
+            .json(&json!({}))
             .send()
             .await
-            .unwrap()
-            .status(),
-        StatusCode::UNAUTHORIZED
-    );
+            .unwrap();
+        assert_eq!(response.status(), status, "{method} {path}");
+    }
     // Native settings and hydrated page-model navigation use the same token view.
     for accept in ["text/html", "application/vnd.codeyard.page+json"] {
         let response = client
@@ -1348,6 +1475,14 @@ async fn exercise(pool: &DbPool, url: &str) {
             .to_string(),
         local.trim()
     );
+    signature_push(
+        &client,
+        &server.base,
+        root.path(),
+        write_value,
+        local.trim(),
+    )
+    .await;
     let expired = native::token();
     tokens::create_token(
         pool,
@@ -1363,13 +1498,25 @@ async fn exercise(pool: &DbPool, url: &str) {
     .unwrap();
     refused(&client, &refs, Some(&expired)).await;
     let deleted = client
-        .delete(format!("{}/api/user/tokens/{}", server.base, read["id"]))
+        .post(format!(
+            "{}/settings/tokens/{}/delete",
+            server.base, read["id"]
+        ))
         .header("Cookie", &cookie)
-        .header("x-csrf-token", &csrf)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(
+            url::form_urlencoded::Serializer::new(String::new())
+                .extend_pairs([("confirm", "yes"), ("csrf_token", csrf.as_str())])
+                .finish(),
+        )
         .send()
         .await
         .unwrap();
-    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    assert_eq!(deleted.status(), StatusCode::OK);
+    assert!(deleted
+        .url()
+        .as_str()
+        .ends_with("/settings?tab=tokens&saved=token-deleted"));
     refused(&client, &refs, Some(read_value)).await;
     db::users::accounts::update_user_password(pool, owner.id, "unused-hash", true)
         .await

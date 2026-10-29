@@ -8,7 +8,14 @@ use dioxus::{core::AttributeValue, prelude::*};
 use std::collections::BTreeMap;
 fn run() -> Run {
     Run {
+        approval_required: false,
+        approval_pull: None,
+        concurrency_groups: Vec::new(),
+        waiting_for_concurrency: false,
+        artifacts: Vec::new(),
         id: "real-run".into(),
+        api_id: 42,
+        api_attempt: 2,
         repository: "repo".into(),
         status: "running".into(),
         workflow_path: ".github/workflows/ci.yml".into(),
@@ -17,6 +24,7 @@ fn run() -> Run {
         event: "push".into(),
         pipeline: "ci".into(),
         mode: "act".into(),
+        engine: Some("act".into()),
         head_sha: None,
         created_at: 1,
         started_at: None,
@@ -36,7 +44,10 @@ fn repo_chrome() -> RepoChrome {
         topics: Vec::new(),
         is_private: false,
         is_archived: false,
+        is_template: false,
+        can_manage_invitations: false,
         can_write: true,
+        can_view_traffic: true,
         can_admin: true,
         is_owner: false,
         can_manage_collaborators: false,
@@ -49,6 +60,7 @@ fn repo_chrome() -> RepoChrome {
         stars: 7,
         open_issues: 0,
         open_pulls: 0,
+        packages: 0,
         watchers: 3,
         forks: 2,
         fork_url: None,
@@ -111,6 +123,53 @@ fn ssr_has_real_navigation_and_csrf_dispatch_form() {
     assert!(!html.contains("<script")); // Initial view/fallback only, not a global runtime ban.
 }
 #[test]
+fn concurrency_waiting_is_visible_and_group_names_are_escaped() {
+    let mut model = model();
+    let mut shown = run();
+    shown.status = "queued".into();
+    shown.concurrency_groups = vec!["deploy-<main>".into()];
+    shown.waiting_for_concurrency = true;
+    model.selected = Some(SelectedRun {
+        run: shown,
+        logs: Vec::new(),
+        deployment: None,
+        fetched_lines: 0,
+        logs_truncated: false,
+        planned: Vec::new(),
+    });
+    let mut dom = VirtualDom::new_with_props(|props: ActionsPage| actions_page(props), model);
+    dom.rebuild_in_place();
+    let html = dioxus_ssr::render(&dom);
+    assert!(html.contains("Waiting for concurrency group"));
+    assert!(html.contains("Concurrency group"));
+    assert!(html.contains("deploy-&#60;main&#62;"));
+    assert!(!html.contains("deploy-<main>"));
+    assert!(html.contains("overflow-wrap:anywhere"));
+}
+
+#[test]
+fn pending_fork_run_links_to_the_native_approval_form() {
+    let mut model = model();
+    let mut shown = run();
+    shown.status = "queued".into();
+    shown.approval_required = true;
+    shown.approval_pull = Some("/alice/repo/pulls/7".into());
+    model.selected = Some(SelectedRun {
+        run: shown,
+        logs: Vec::new(),
+        deployment: None,
+        fetched_lines: 0,
+        logs_truncated: false,
+        planned: Vec::new(),
+    });
+    let mut dom = VirtualDom::new_with_props(|props: ActionsPage| actions_page(props), model);
+    dom.rebuild_in_place();
+    let html = dioxus_ssr::render(&dom);
+    assert!(html.contains("Waiting for fork workflow approval"));
+    assert!(html.contains("href=\"/alice/repo/pulls/7\""));
+}
+
+#[test]
 fn persisted_output_is_escaped_and_absent_deployment_is_honest() {
     let mut model = model();
     model.selected = Some(SelectedRun {
@@ -138,6 +197,36 @@ fn persisted_output_is_escaped_and_absent_deployment_is_honest() {
     assert!(html.contains("log-42"));
     assert!(html.contains(" open=true") || html.contains(" open=\"true\""));
     assert!(!html.contains("<script>unsafe"));
+}
+
+#[test]
+fn artifacts_have_native_downloads_and_writer_delete_forms_after_hydration() {
+    let mut model = model();
+    let mut shown = run();
+    shown.artifacts.push(Artifact {
+        id: 7,
+        name: "build-output".into(),
+        size: 4096,
+        can_delete: true,
+    });
+    model.selected = Some(SelectedRun {
+        run: shown,
+        logs: Vec::new(),
+        deployment: None,
+        fetched_lines: 0,
+        logs_truncated: false,
+        planned: Vec::new(),
+    });
+    let decoded: ActionsPage =
+        serde_json::from_str(&serde_json::to_string(&model).unwrap()).unwrap();
+    assert_eq!(model, decoded);
+    let rendered = html(decoded);
+    assert!(rendered.contains("/alice/repo/actions/runs/real-run/artifacts/7/download"));
+    assert!(rendered.contains("action=\"/alice/repo/actions/runs/real-run/artifacts/7/delete\""));
+    assert!(rendered.contains("4096 bytes"));
+    assert!(rendered.contains("csrf_token"));
+    model.selected.as_mut().unwrap().run.artifacts[0].can_delete = false;
+    assert!(!html(model).contains("artifacts/7/delete"));
 }
 
 #[test]
@@ -614,7 +703,12 @@ fn event_filter_offers_the_supported_events_before_any_run() {
     page.runs.clear();
     let rendered = html(page);
     assert!(rendered.contains("Any event"));
-    for event in ["pull_request", "push", "workflow_dispatch"] {
+    for event in [
+        "pull_request",
+        "push",
+        "workflow_dispatch",
+        "repository_dispatch",
+    ] {
         assert!(rendered.contains(&format!("value=\"{event}\"")), "{event}");
     }
 }
@@ -676,6 +770,33 @@ fn queued_run_header_states_its_status_once_and_what_it_waits_for() {
     let rendered = html(page);
     assert!(rendered.contains("Waiting for a runner"));
     assert!(!rendered.contains("· Queued"));
+}
+
+#[test]
+fn matcher_annotations_show_the_severity_location_code_and_message() {
+    let mut page = model();
+    let mut finished = run();
+    finished.status = "success".into();
+    page.selected = Some(SelectedRun {
+        run: finished,
+        fetched_lines: 1,
+        logs_truncated: false,
+        planned: Vec::new(),
+        logs: vec![LogLine {
+            id: 1,
+            stage: "ci.yml".into(),
+            line: "[CI/test] ::warning file=src/a.rs,line=7,col=2,title=E42::bad <value>".into(),
+            level: "info".into(),
+            timestamp: 1,
+        }],
+        deployment: None,
+    });
+    let rendered = html(page);
+    assert!(rendered.contains("actions-annotation\""));
+    assert!(rendered.contains("warning: E42"));
+    assert!(rendered.contains("src/a.rs:7:2"));
+    assert!(rendered.contains("bad &#60;value&#62;"));
+    assert!(!rendered.contains("bad <value>"));
 }
 
 #[test]
@@ -821,7 +942,10 @@ fn byte_limited_logs_explain_truncation_and_link_to_history() {
     let rendered = html(page);
     assert!(rendered.contains("Recent logs were shortened to fit this page"));
     assert!(rendered.contains("Run status continues to update"));
-    assert!(rendered.contains("href=\"/api/ci/jobs/real-run/history\""));
+    assert!(rendered
+        .contains("href=\"/api/v3/repos/alice/repo/actions/runs/42/attempts/2/logs?after=0\""));
+    assert!(rendered.contains("href=\"/api/v3/repos/alice/repo/actions/runs/42/attempts/2/logs\""));
+    assert!(!rendered.contains("/api/ci/"));
     assert!(!rendered.contains("Only the most recent 2000 lines"));
 }
 

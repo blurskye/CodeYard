@@ -2,7 +2,7 @@
 use crate::webui::{
     components::{
         compact_date, count_label, languages::LanguageShare, short_sha, submit_form, Avatar,
-        DraftCheckbox, DraftSelect, FieldError, SelectOption,
+        DraftCheckbox, DraftInput, DraftSelect, FieldError, SelectOption,
     },
     encode_component,
     navigation::NavLink,
@@ -223,6 +223,23 @@ pub struct NewRepositoryForm {
     /// The chosen license; empty for none.
     #[serde(default)]
     pub license: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub fork_source: bool,
+    #[serde(default)]
+    pub all_branches: bool,
+    /// Metadata drafts belong to this owner, never a subsequently selected namespace.
+    #[serde(default)]
+    pub properties_owner_org_id: String,
+    #[serde(default)]
+    pub property_values: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub property_set: std::collections::HashSet<String>,
+    /// Fresh server display metadata, not a write permit.
+    #[serde(default)]
+    pub property_fields:
+        Vec<crate::webui::components::repository_properties::RepositoryPropertyField>,
 }
 
 /// A refused submission. A `field` puts the message beside that control; without one it
@@ -302,6 +319,13 @@ pub enum Page {
     Explore(ExploreModel),
     Search(SearchModel),
     Stars(StarsModel),
+    Migration {
+        owner: String,
+        csrf_token: String,
+        choices: RepositoryCreationChoices,
+        form: super::MigrationForm,
+        error: Option<FormError>,
+    },
     NewRepository {
         owner: String,
         csrf_token: String,
@@ -318,6 +342,13 @@ pub fn render(page: Page) -> Element {
         Page::Explore(model) => explore(model),
         Page::Search(model) => search(model),
         Page::Stars(model) => stars(model),
+        Page::Migration {
+            owner,
+            csrf_token,
+            choices,
+            form,
+            error,
+        } => rsx! { super::migration::MigrationView { owner, csrf_token, choices, form, error } },
         Page::NewRepository {
             owner,
             csrf_token,
@@ -329,11 +360,7 @@ pub fn render(page: Page) -> Element {
 }
 
 pub fn repository_url(owner: &str, name: &str) -> String {
-    format!(
-        "/{}/{}",
-        crate::webui::encode_component(owner),
-        crate::webui::encode_component(name)
-    )
+    crate::webui::repository_path(owner, name)
 }
 
 pub fn search_tab_url(query: &str, tab: &str) -> String {
@@ -636,6 +663,10 @@ pub fn explore(model: ExploreModel) -> Element {
     rsx! {
         div { class: "page-shell max-w-5xl py-8 pb-14",
             header { class: "mb-6 space-y-1",
+                nav { class: "package-tabs mb-4", aria_label: "Explore",
+                    NavLink { href: "/explore", aria_current: "page", "Repositories" }
+                    NavLink { href: "/explore/packages", "Packages" }
+                }
                 h1 { class: "text-2xl font-semibold tracking-tight", "Explore repositories" }
                 p { class: "text-sm text-muted-foreground", "Discover public projects across codeyard." }
             }
@@ -897,7 +928,7 @@ fn search_results(model: &SearchModel) -> Element {
                     article { class: "flex items-start gap-3 border-b border-border px-4 py-4",
                         Avatar { name: user.username.clone(), size: 40 }
                         div { class: "min-w-0",
-                            h2 { class: "text-sm font-semibold", NavLink { href: format!("/{}", crate::webui::encode_component(&user.username)), class: "text-primary hover:underline", "{user.display_name.as_deref().unwrap_or(&user.username)}" } }
+                            h2 { class: "text-sm font-semibold", NavLink { href: crate::webui::profile_path(&user.username), class: "text-primary hover:underline", "{user.display_name.as_deref().unwrap_or(&user.username)}" } }
                             p { class: "text-xs text-muted-foreground", "@{user.username}" }
                             if let Some(bio) = &user.bio { p { class: "mt-1 text-sm text-muted-foreground", "{bio}" } }
                         }
@@ -1149,6 +1180,7 @@ fn NewRepositoryView(
     rsx! {
         div { class: "container mx-auto max-w-2xl p-4 py-8",
             h1 { class: "mb-2 text-2xl font-bold", "Create a new repository" }
+            p { class: "mb-4", NavLink { href: "/new/migration", class: "text-primary hover:underline", "Import an existing repository" } }
             p { class: "mb-8 text-muted-foreground", "A repository contains all project files, including the revision history." }
             if let Some(message) = banner { div { role: "alert", class: "mb-6 rounded-md border border-red-500/30 bg-red-500/10 p-4 text-red-400", "{message}" } }
             // Browser constraint checks would show only a native bubble that is not part of
@@ -1185,6 +1217,13 @@ fn NewRepositoryView(
                         input { id: "repo-description", name: "description", "value": form.description, maxlength: 2000, class: INPUT, placeholder: "Short description of your repository" }
                     }
                     fieldset { class: "collaboration-option-group",
+                        legend { class: "text-sm font-medium", "Source repository (optional)" }
+                        label { class: "repo-field", span { "Owner/repository" } DraftInput { name:"source",initial_value:form.source.clone(),maxlength:Some(2048),placeholder:"owner/template" } }
+                        label { class:"repo-check-label", DraftCheckbox {name:"fork_source",initial_checked:form.fork_source} span {"Keep history and create a fork"} }
+                        label { class:"repo-check-label", DraftCheckbox {name:"all_branches",initial_checked:form.all_branches} span {"Include all branches"} }
+                        p {class:"text-xs text-muted-foreground","Leave the source blank for an empty repository. Otherwise use a template, or select Fork to retain history. Forks inherit the source's description and visibility. Initialization options below apply only without a source."}
+                    }
+                    fieldset { class: "collaboration-option-group",
                         legend { class: "text-sm font-medium", "Visibility" }
                         label { class: if !is_private() { "flex cursor-pointer items-start gap-3 rounded-md border border-success-emphasis p-3 ring-1 ring-success-emphasis" } else { "flex cursor-pointer items-start gap-3 rounded-md border border-border p-3" },
                             input { r#type: "radio", name: "visibility", value: "public", checked: !is_private(), onchange: move |_| is_private.set(false), class: "mt-1" }
@@ -1193,6 +1232,23 @@ fn NewRepositoryView(
                         label { class: if is_private() { "flex cursor-pointer items-start gap-3 rounded-md border border-success-emphasis p-3 ring-1 ring-success-emphasis" } else { "flex cursor-pointer items-start gap-3 rounded-md border border-border p-3" },
                             input { r#type: "radio", name: "visibility", value: "private", checked: is_private(), onchange: move |_| is_private.set(true), class: "mt-1" }
                             div { p { class: "flex items-center gap-2 font-medium", {profile_icon(ProfileIcon::Lock)} "Private" } p { class: "text-sm text-muted-foreground", "You choose who can see and commit to this repository." } }
+                        }
+                    }
+                    fieldset {class:"collaboration-option-group",
+                        legend {class:"text-sm font-medium","Organization properties"}
+                        input {r#type:"hidden",name:"properties_owner_org_id",value:form.properties_owner_org_id.clone()}
+                        p {class:"text-xs text-muted-foreground","Choose an owner, then load its properties. Changing owners clears the previous owner's property drafts."}
+                        for field in &form.property_fields {
+                            div {key:"{form.properties_owner_org_id}-{field.name}",
+                                {crate::webui::components::repository_properties::repository_property_field(field,form.property_values.get(&field.name).map(String::as_str).unwrap_or(""),form.property_set.contains(&field.name))}
+                            }
+                        }
+                        // Owner paging must not silently lose an unavailable owner's drafts.
+                        for (name,value) in &form.property_values {
+                            if !form.property_fields.iter().any(|field|field.name==*name) {
+                                input {r#type:"hidden",name:format!("property_value_{name}"),value:value.clone()}
+                                if form.property_set.contains(name) {input {r#type:"hidden",name:format!("property_set_{name}"),value:"true"}}
+                            }
                         }
                     }
                     fieldset { class: "collaboration-option-group",
@@ -1216,6 +1272,7 @@ fn NewRepositoryView(
                 div { class: "flex justify-end gap-3",
                     NavLink { href: "/", class: "btn btn-secondary", "Cancel" }
                     button { r#type: "submit", disabled: submitting(), class: BUTTON, if submitting() { "Creating…" } else { "Create repository" } }
+                    button {r#type:"submit",name:"intent",value:"load-properties",class:"btn btn-secondary","Load owner properties"}
                 }
                 nav { class: "mt-2 flex gap-3 text-sm", aria_label: "Repository owner choices",
                     if choices.after > 0 { button { r#type: "submit", name: "intent", value: "page-owners", formaction: choices.page_url(0), class: "text-primary hover:underline", "First organization choices" } }

@@ -1,0 +1,15 @@
+# https://github.com/prefix-dev/setup-pixi/tree/92815284c57faa15cd896c4d5cfb2d59f32dc43d
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: prefix-dev/setup-pixi@92815284c57faa15cd896c4d5cfb2d59f32dc43d # v0.8.3
+        with:
+          run-install: "false"
+      - name: Assert documented effect
+        run: |
+          pixi --version
+          echo compat:ok

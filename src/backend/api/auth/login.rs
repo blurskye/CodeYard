@@ -1,11 +1,7 @@
-use crate::backend::api::auth::errors;
-use crate::backend::api::auth::session::LoginSessionRequest;
-use crate::backend::api::auth::setup::configured_admin_secret;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::{ApiError, ApiFailure};
+use crate::backend::api::http::error::ApiFailure;
 use crate::backend::api::user::responses::{
-    api_error, field, optional_field, public_api_message, safe_redirect, within_bounds,
-    AuthResponse, AuthUserResponse as UserResponse, Fields,
+    api_error, field, optional_field, public_api_message, safe_redirect, within_bounds, Fields,
 };
 use crate::backend::api::{auth, http::session};
 use crate::backend::app::AppState;
@@ -21,49 +17,8 @@ use crate::webui::pages::{
 };
 use axum::extract::{Form, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
-use axum::response::{IntoResponse, Response};
-use axum::Json;
-use serde::Deserialize;
+use axum::response::Response;
 use std::sync::Arc;
-
-#[derive(Debug, Deserialize)]
-pub struct LoginRequest {
-    pub username: String,
-    pub password: String,
-}
-
-pub async fn login(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<LoginRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
-    let session = LoginSessionRequest::from_headers(&headers);
-    let first = identity::login::password_login(
-        &state.pool,
-        state.secret_encryptor.as_deref(),
-        PasswordCredentials {
-            identity: &req.username,
-            password: &req.password,
-        },
-        session.context(),
-    )
-    .await
-    .map_err(errors::login_failure)?;
-    let FirstFactor::Authenticated(authenticated) = first else {
-        return Err(errors::two_factor_required_failure());
-    };
-    let cookie =
-        session::build_session_cookie(&authenticated.session_id, session::session_duration_days());
-    Ok((
-        StatusCode::OK,
-        [(header::SET_COOKIE, cookie)],
-        Json(AuthResponse {
-            success: true,
-            user: Some(UserResponse::from(authenticated.user)),
-            message: None,
-        }),
-    ))
-}
 
 pub(crate) fn auth_mode(path: &str, mode: Option<&str>) -> AuthMode {
     match path {
@@ -224,7 +179,7 @@ pub(crate) async fn auth_post(
         .await;
     }
     // Preserve the initiating anonymous identifier: identity rotates it and
-    // invalidates its CSRF atomically. No JSON handler owns this sequencing.
+    // invalidates its CSRF atomically.
     let session_request =
         crate::backend::api::auth::session::LoginSessionRequest::from_headers(&ctx.headers);
     let email = optional_field(&form, "email");
@@ -265,7 +220,10 @@ pub(crate) async fn auth_post(
         .map_err(auth::errors::registration_failure),
         AuthMode::Setup => {
             let supplied_secret = optional_field(&form, "admin_secret");
-            let expected_secret = configured_admin_secret();
+            let expected_secret = std::env::var("ADMIN_SECRET")
+                .ok()
+                .map(|secret| secret.trim().to_owned())
+                .filter(|secret| !secret.is_empty());
             identity::setup::complete_setup(
                 &ctx.state.pool,
                 SetupInput {
@@ -323,6 +281,7 @@ pub(crate) async fn auth_post(
 
 #[cfg(test)]
 mod tests {
+    use crate::backend::api::http::error::ApiError;
     use crate::backend::db;
 
     use super::*;
@@ -435,7 +394,11 @@ mod tests {
             updated_at: now,
         };
         let page = account::Page::Profile {
-            profile: profile_model(&user),
+            profile: profile_model(
+                &user,
+                &db::users::profiles::ProfileSettings::default(),
+                vec![],
+            ),
             repositories: vec![],
             repository_count: 0,
             repositories_newer: None,

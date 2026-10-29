@@ -22,6 +22,11 @@ native_operation!(crate::backend::db::postgres::organizations::teams::team_membe
     fn team_members_by_names(pool: &DbPool, org_id: i64, teams: &[String]) -> Result<Vec<(String, i64)>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::list_organization_team_members, crate::backend::db::sqlite::organizations::teams::list_organization_team_members,
     fn list_organization_team_members(pool: &DbPool, actor: i64, org: i64, team: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<TeamMembership>>>);
+// Migration archives retain direct edges and team parents, not flattened inherited access.
+native_operation!(crate::backend::db::postgres::organizations::teams::list_direct_organization_team_members, crate::backend::db::sqlite::organizations::teams::list_direct_organization_team_members,
+    fn list_direct_organization_team_members(pool: &DbPool, actor: i64, org: i64, team: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<TeamMembership>>>);
+native_operation!(crate::backend::db::postgres::organizations::teams::list_direct_organization_team_repositories, crate::backend::db::sqlite::organizations::teams::list_direct_organization_team_repositories,
+    fn list_direct_organization_team_repositories(pool: &DbPool, actor: i64, org: i64, team: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::add_organization_team_member, crate::backend::db::sqlite::organizations::teams::add_organization_team_member,
     fn add_organization_team_member(pool: &DbPool, actor: i64, org: i64, team: i64, target: i64, role: TeamRole) -> Result<OrganizationOutcome<TeamMembership>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::remove_organization_team_member, crate::backend::db::sqlite::organizations::teams::remove_organization_team_member,
@@ -69,6 +74,10 @@ pub struct PublicTeam {
     pub manage: bool,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("Team parents must be visible teams in the same organization and cannot form a cycle")]
+pub struct InvalidTeamParent;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TeamPrivacy {
     Visible,
@@ -114,6 +123,12 @@ pub struct TeamProfile {
     pub(in crate::backend::db) name: String,
     pub(in crate::backend::db) description: Option<String>,
     pub(in crate::backend::db) privacy: TeamPrivacy,
+    pub(in crate::backend::db) slug: Option<String>,
+    pub(in crate::backend::db) default_permission: Option<i16>,
+    pub(in crate::backend::db) notifications_enabled: Option<bool>,
+    pub(in crate::backend::db) parent_team_id: Option<Option<i64>>,
+    /// An update keeps the privacy the team has when the update runs.
+    pub(in crate::backend::db) keep_privacy: bool,
 }
 impl TeamProfile {
     pub fn new(
@@ -127,13 +142,52 @@ impl TeamProfile {
             name: name.to_owned(),
             description: description.map(str::to_owned),
             privacy,
+            slug: None,
+            default_permission: None,
+            notifications_enabled: None,
+            parent_team_id: None,
+            keep_privacy: false,
         })
+    }
+
+    /// An edit that leaves privacy out must not restore a value read before a concurrent change.
+    pub fn keeping_privacy(mut self) -> Self {
+        self.keep_privacy = true;
+        self
+    }
+
+    pub fn with_parent(
+        mut self,
+        parent: Option<Option<i64>>,
+    ) -> std::result::Result<Self, OrganizationInputError> {
+        if parent.flatten().is_some_and(|id| id <= 0) {
+            return Err(OrganizationInputError::Parent);
+        }
+        self.parent_team_id = parent;
+        Ok(self)
+    }
+
+    pub fn with_settings(
+        mut self,
+        slug: Option<&str>,
+        permission: Option<TeamRepositoryPermission>,
+        notifications_enabled: Option<bool>,
+    ) -> std::result::Result<Self, OrganizationInputError> {
+        if let Some(slug) = slug {
+            validate_slug(slug)?;
+        }
+        self.slug = slug.map(str::to_owned);
+        self.default_permission = permission.map(|permission| permission.0);
+        self.notifications_enabled = notifications_enabled;
+        Ok(self)
     }
 }
 #[derive(Debug, Clone)]
 pub struct NewTeam {
     pub(in crate::backend::db) slug: String,
     pub(in crate::backend::db) profile: TeamProfile,
+    pub(in crate::backend::db) maintainers: Vec<i64>,
+    pub(in crate::backend::db) repositories: Vec<i64>,
 }
 impl NewTeam {
     pub fn new(
@@ -144,9 +198,32 @@ impl NewTeam {
         Ok(Self {
             slug: slug.to_owned(),
             profile,
+            maintainers: Vec::new(),
+            repositories: Vec::new(),
         })
     }
+
+    pub fn with_members_and_repositories(
+        mut self,
+        maintainers: Vec<i64>,
+        repositories: Vec<i64>,
+    ) -> Self {
+        self.maintainers = maintainers;
+        self.repositories = repositories;
+        self
+    }
 }
+
+// Only project this after authorizing the child; parents are visible in the same organization.
+native_operation!(crate::backend::db::postgres::organizations::teams::get_team_parent, crate::backend::db::sqlite::organizations::teams::get_team_parent,
+    fn get_team_parent(pool: &DbPool, team: i64) -> Result<Option<Team>>);
+native_operation!(crate::backend::db::postgres::organizations::teams::get_team_by_id, crate::backend::db::sqlite::organizations::teams::get_team_by_id,
+    fn get_team_by_id(pool: &DbPool, actor: i64, team: i64) -> Result<Option<Team>>);
+native_operation!(crate::backend::db::postgres::organizations::teams::list_child_teams, crate::backend::db::sqlite::organizations::teams::list_child_teams,
+    fn list_child_teams(pool: &DbPool, actor: i64, org: i64, team: i64, page: OrganizationPage) -> Result<Option<Vec<Team>>>);
+native_operation!(crate::backend::db::postgres::organizations::teams::list_user_teams, crate::backend::db::sqlite::organizations::teams::list_user_teams,
+    fn list_user_teams(pool: &DbPool, actor: i64, offset: i64, limit: i64) -> Result<Vec<Team>>);
+
 #[derive(Debug, Clone, Copy)]
 pub struct TeamRepositoryPermission(pub(in crate::backend::db) i16);
 impl TeamRepositoryPermission {

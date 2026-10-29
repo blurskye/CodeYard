@@ -5,15 +5,47 @@
 mod tests;
 
 use super::chrome::icon;
+use super::commits::history_url;
 use super::ref_path::ref_switch_url;
 use crate::webui::navigation::NavLink;
 use dioxus::prelude::*;
 
-/// A branch or tag in the menu, with the page that opens it.
+/// Where the menu's names lead. Links are built only for the names the menu draws, so a long
+/// path is not copied into one URL per ref.
 #[derive(Clone, Debug, PartialEq)]
-pub struct RefOption {
-    pub name: String,
-    pub href: String,
+pub enum RefLinks {
+    /// `path` on the chosen ref, or the ref's root when the path is missing there, so a ref
+    /// switch keeps the reader where they are when it can.
+    Files {
+        base: String,
+        kind: &'static str,
+        path: String,
+    },
+    /// The history of `path`, keeping the history filters in `query`.
+    History {
+        base: String,
+        path: String,
+        query: String,
+    },
+}
+
+impl RefLinks {
+    fn href(&self, name: &str, tag: bool) -> String {
+        match self {
+            Self::Files { base, kind, path } => {
+                let namespace = if tag { "refs/tags/" } else { "refs/heads/" };
+                ref_switch_url(base, kind, &format!("{namespace}{name}"), path)
+            }
+            Self::History { base, path, query } => {
+                let reference = if tag {
+                    format!("refs/tags/{name}")
+                } else {
+                    name.to_owned()
+                };
+                format!("{}{query}", history_url(base, &reference, path))
+            }
+        }
+    }
 }
 
 /// The current ref as a menu. Every name is a plain link, so the lists work without JavaScript.
@@ -23,8 +55,9 @@ pub struct RefOption {
 pub fn RefSwitcher(
     base: String,
     current: String,
-    branches: Vec<RefOption>,
-    tags: Vec<RefOption>,
+    branches: Vec<String>,
+    tags: Vec<String>,
+    links: RefLinks,
     #[props(default = String::new())] default_branch: String,
 ) -> Element {
     let mut filter = use_signal(String::new);
@@ -46,8 +79,8 @@ pub fn RefSwitcher(
                     input { id: "repo-ref-filter", class: "repo-ref-filter", r#type: "search", placeholder: "Find a branch or tag", autocomplete: "off",
                         oninput: move |event| filter.set(event.value()) }
                 }
-                {ref_group("Branches", &shown_branches, &current, Some(default_branch.as_str()))}
-                {ref_group("Tags", &shown_tags, &current, None)}
+                {ref_group("Branches", &shown_branches, &current, Some(default_branch.as_str()), &links)}
+                {ref_group("Tags", &shown_tags, &current, None, &links)}
                 if nothing_shown { p { class: "repo-ref-empty", "No branch or tag matches." } }
                 div { class: "repo-menu-footer", NavLink { href: format!("{base}/branches"), "View all branches" } NavLink { href: format!("{base}/tags"), "View all tags" } }
             }
@@ -58,41 +91,11 @@ pub fn RefSwitcher(
 /// Most names the menu draws at once. The filter reaches the rest.
 const MAX_REF_OPTIONS: usize = 50;
 
-/// One option per name. Each option links to `path` on that ref, or to the ref's root when the
-/// path is missing there, so a ref switch keeps the reader where they are when it can.
-pub fn ref_options(
-    base: &str,
-    kind: &str,
-    path: &str,
-    names: &[String],
-    prefix: &str,
-) -> Vec<RefOption> {
+/// The names that contain `query`, which is already trimmed and lower-cased.
+fn matching<'a>(names: &'a [String], query: &str) -> Vec<&'a String> {
     names
         .iter()
-        .map(|name| RefOption {
-            name: name.clone(),
-            href: ref_switch_url(
-                base,
-                kind,
-                &format!(
-                    "{}{name}",
-                    if prefix.is_empty() {
-                        "refs/heads/"
-                    } else {
-                        prefix
-                    }
-                ),
-                path,
-            ),
-        })
-        .collect()
-}
-
-/// The options whose names contain `query`, which is already trimmed and lower-cased.
-fn matching<'a>(options: &'a [RefOption], query: &str) -> Vec<&'a RefOption> {
-    options
-        .iter()
-        .filter(|option| option.name.to_lowercase().contains(query))
+        .filter(|name| name.to_lowercase().contains(query))
         .take(MAX_REF_OPTIONS)
         .collect()
 }
@@ -101,16 +104,18 @@ fn matching<'a>(options: &'a [RefOption], query: &str) -> Vec<&'a RefOption> {
 /// name to mark with the default badge, and it is `None` for tags.
 fn ref_group(
     title: &str,
-    options: &[&RefOption],
+    names: &[&String],
     current: &str,
     default_branch: Option<&str>,
+    links: &RefLinks,
 ) -> Element {
-    if options.is_empty() {
+    if names.is_empty() {
         return rsx! {};
     }
-    let count = options.len();
+    let count = names.len();
+    let tag = title == "Tags";
     let selected = |name: &str| {
-        if title == "Tags" {
+        if tag {
             current == format!("refs/tags/{name}")
         } else {
             current == name || current == format!("refs/heads/{name}")
@@ -120,12 +125,12 @@ fn ref_group(
         section { class: "repo-ref-group",
             h3 { class: "repo-ref-group-title", "{title}" span { class: "repo-ref-group-count", "{count}" } }
             ul { class: "repo-ref-list",
-                for option in options {
-                    li { key: "{option.name}",
-                        NavLink { class: (if selected(&option.name) { "repo-menu-item repo-ref-selected" } else { "repo-menu-item" }).to_owned(), href: option.href.clone(),
-                            span { class: "repo-ref-check", "aria-hidden": "true", if selected(&option.name) { {icon("check")} } }
-                            span { class: "repo-ref-option-name", title: "{option.name}", "{option.name}" }
-                            if default_branch == Some(option.name.as_str()) {
+                for name in names {
+                    li { key: "{name}",
+                        NavLink { class: (if selected(name) { "repo-menu-item repo-ref-selected" } else { "repo-menu-item" }).to_owned(), href: links.href(name, tag),
+                            span { class: "repo-ref-check", "aria-hidden": "true", if selected(name) { {icon("check")} } }
+                            span { class: "repo-ref-option-name", title: "{name}", "{name}" }
+                            if default_branch == Some(name.as_str()) {
                                 span { class: "repo-label-neutral repo-ref-default", "default" }
                             }
                         }

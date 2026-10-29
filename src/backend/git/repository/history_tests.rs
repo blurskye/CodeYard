@@ -236,6 +236,7 @@ async fn squash_subjects_are_byte_bounded_even_for_zero_width_characters() {
         &head.to_string(),
         &base.to_string(),
         "Squash",
+        None,
         &person,
         &person,
     )

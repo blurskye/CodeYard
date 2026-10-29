@@ -7,6 +7,7 @@ use crate::backend::git::repository::process as git_process;
 use crate::backend::repositories::store::{
     begin_ref_change, repo_store, ErrorKind, GitService, GitSession, GitStreams, RepoError,
 };
+use crate::backend::repositories::traffic;
 use anyhow::{ensure, Context, Result};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
@@ -44,6 +45,7 @@ pub(super) struct Operation {
     pub(super) repo_id: i64,
     pub(super) owner: String,
     pub(super) path: PathBuf,
+    pub(super) publication_lease: Option<Arc<crate::backend::git::locks::PublicationLease>>,
     // Only the broker holds the generated hook directory's lifetime.
     pub(super) hooks: TempDir,
     pub(super) state: Mutex<HookState>,
@@ -53,10 +55,12 @@ pub(super) struct Operation {
 pub(super) struct HookState {
     pub(super) proposed: Option<Vec<RefUpdate>>,
     pub(super) previous_refs: Vec<String>,
+    pub(super) secret_bypasses: Vec<String>,
     pub(super) post_started: bool,
     pub(super) dispatch_failed: bool,
-    // Held from admission until Git reports publication (or the receive ends).
-    pub(super) publication: Option<tokio::sync::OwnedMutexGuard<()>>,
+    // Acquired in pre-receive through the description already inherited by the child.
+    // Released only when Git reports completed publication, before post-receive follow-up.
+    pub(super) publication: Option<Arc<crate::backend::git::locks::PublicationGuard>>,
 }
 
 struct ActiveOperation {
@@ -197,7 +201,12 @@ fn refusal_message(error: &anyhow::Error) -> Option<Vec<u8>> {
     }
     error
         .downcast_ref::<RepoError>()
-        .filter(|error| error.kind == ErrorKind::Invalid)
+        .filter(|error| {
+            error.kind == ErrorKind::Invalid
+                || (error.kind == ErrorKind::Conflict
+                    && error.message
+                        == crate::backend::repositories::releases::immutable::TAG_PROTECTED)
+        })
         .map(|error| format!("{}\n", error.message).into_bytes())
 }
 
@@ -435,8 +444,13 @@ impl Gateway {
                     state.post_started = true;
                     state.proposed = None;
                     state.dispatch_failed = true;
-                    // Release before waiting for control capacity: other pre-hooks may
-                    // occupy it while waiting for this publication's repository lock.
+                    // Git has completed all ref updates. Release both locks before control
+                    // capacity/follow-up: a later push may run while this dispatch is pending.
+                    operation
+                        .publication_lease
+                        .as_ref()
+                        .context("receive publication lease missing")?
+                        .published()?;
                     state.publication.take();
                 }
                 let _slot = timeout(protocol::CONTROL_TIMEOUT, self.controls.acquire())
@@ -560,10 +574,13 @@ impl Gateway {
     ) -> Result<()> {
         let command = validation::parse_command(raw_command)?;
         let git_protocol = validation::protocol(git_protocol)?;
-        let repo =
-            db::repositories::records::get_repository(&self.pool, &command.owner, &command.repo)
-                .await?
-                .context("repository unavailable")?;
+        let repo = db::repositories::records::get_git_repository(
+            &self.pool,
+            &command.owner,
+            &command.repo,
+        )
+        .await?
+        .context("repository unavailable")?;
         ensure!(
             matches!(
                 credential,
@@ -571,20 +588,29 @@ impl Gateway {
             ),
             "SSH credential required"
         );
-        credential
+        let (actor, _) = credential
             .authorize(&self.pool, &repo, command.write)
             .await?;
+        let visitor = match credential {
+            ReceiveCredential::DeployKey(id) => traffic::Identity::deploy_key(id),
+            _ => traffic::Identity::account(actor.id),
+        };
         if let ReceiveCredential::DeployKey(id) = credential {
             crate::backend::repositories::deploy_keys::record_use(&self.pool, id).await;
         }
         let path = self.bare_path(&repo).await?;
         let _slot = slot;
-        let (input, mut child_input) = tokio::io::duplex(CHUNK);
-        let (mut child_output, output) = tokio::io::duplex(CHUNK);
+        let (input, child_input) = tokio::io::duplex(CHUNK);
+        let (child_output, output) = tokio::io::duplex(CHUNK);
         let (mut child_errors, errors) = tokio::io::duplex(CHUNK);
         let (reader, mut writer) = stream.split();
         let inbound = framed_input(reader, input);
-        let outbound = framed_output(output, errors, &mut writer);
+        let mut delivered = false;
+        let outbound = async {
+            let result = framed_output(output, errors, &mut writer).await;
+            delivered = result.is_ok();
+            result
+        };
         let options = GitSession {
             service: if command.write {
                 GitService::ReceivePack
@@ -597,7 +623,13 @@ impl Gateway {
             owner: command.owner,
             allow_unreachable: false,
         };
+        let repo_id = repo.id;
+        let write = command.write;
+        let observation = traffic::clone::Observation::default();
+        let observed = observation.clone();
         let session = async move {
+            let mut child_input = observed.input(child_input);
+            let mut child_output = observed.output(child_output);
             self.session(
                 &repo,
                 path,
@@ -622,6 +654,17 @@ impl Gateway {
                 _ = &mut outbound => session.await?,
             }
         };
+        if !write && status.success() && delivered && observation.initial_transfer() {
+            if let Some(visitor) = visitor {
+                traffic::observe(
+                    &self.pool,
+                    repo_id,
+                    &visitor,
+                    &traffic::Metric::clone_transfer(),
+                )
+                .await;
+            }
+        }
         protocol::finish(&mut writer, status.code().unwrap_or(1).clamp(0, 255)).await
     }
 
@@ -635,6 +678,13 @@ impl Gateway {
         let write = options.service == GitService::ReceivePack;
         let credential = options.credential.context("Git credential required")?;
         let (actor, _) = credential.authorize(&self.pool, repo, write).await?;
+        // Inherit an unlocked description now; pre-receive locks that same description.
+        // This keeps negotiation concurrent without leaving a crash gap before publication.
+        let publication_lease = if write {
+            Some(crate::backend::git::locks::open_publication(&path).await?)
+        } else {
+            None
+        };
         let token = uuid::Uuid::new_v4().simple().to_string();
         let hooks = self.make_hooks(credential.id(), repo.id, write)?;
         let operation = Arc::new(Operation {
@@ -643,6 +693,7 @@ impl Gateway {
             repo_id: repo.id,
             owner: options.owner,
             path,
+            publication_lease: publication_lease.clone(),
             hooks,
             state: Mutex::new(HookState::default()),
         });
@@ -673,7 +724,14 @@ impl Gateway {
         } else {
             None
         };
-        let mut command_process = self.git_command(&operation, &token, write, options.stateless)?;
+        let mut command_process = match publication_lease.as_ref() {
+            Some(held) => {
+                held.scope(async { self.git_command(&operation, &token, write, options.stateless) })
+                    .await?
+            }
+            None => self.git_command(&operation, &token, write, options.stateless)?,
+        };
+        drop(publication_lease);
         if let Some(protocol) = validation::protocol(options.git_protocol.as_deref())? {
             command_process.env("GIT_PROTOCOL", protocol);
         }

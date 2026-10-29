@@ -62,6 +62,7 @@ pub async fn get_combined_commit_status(
         &sha,
         offset as i64,
         limit as i64,
+        false,
     )
     .await
     .map_err(|_| repository_unavailable())?;

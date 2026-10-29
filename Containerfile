@@ -3,6 +3,8 @@
 # the image, place the release in dist/release/:
 #
 #   dist/release/codeyard            the server binary
+#   dist/release/codeyard-actions    the in-house workflow runner
+#   dist/release/act                 pinned act with job-scoped environment values
 #   dist/release/webui/              the browser bundle (output of scripts/build-webui.sh)
 #   dist/release/runtime-nix.tar.gz  the /nix/store files the binary needs at run time;
 #                                    an empty archive when it needs none
@@ -22,26 +24,30 @@ RUN cd /opt/codeyard-release \
     && mkdir -p /runtime/nix/store /runtime/usr/local/bin /runtime/app/webui \
     && tar -xzf runtime-nix.tar.gz -C /runtime \
     && install -m 0755 codeyard /runtime/usr/local/bin/codeyard \
+    && install -m 0755 codeyard-actions /runtime/usr/local/bin/codeyard-actions \
+    && install -m 0755 act /runtime/usr/local/bin/act \
     && cp -R webui /runtime/app/webui/dist
 
 FROM docker.io/library/debian:trixie-slim
 
+# The workflow runner starts job containers with the `podman` command, which reaches the host
+# daemon through the mounted socket. Backups run pg_dump and pg_restore, which must be at least
+# the server's major version (compose.yaml runs PostgreSQL 18), so they come from the PostgreSQL
+# project's repository.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl git libssl3 tini \
+        ca-certificates curl git libssl3 podman-remote tini \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+        https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt trixie-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-client-18 \
+    && ln -s /usr/bin/podman-remote /usr/local/bin/podman \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=package /runtime/ /
-# Archive pin for v0.2.89 (published 2026-06-01), taken from the release's
-# checksums.txt and matched against the downloaded archive. Versions before
-# 0.2.86 have CVE-2026-34041 and CVE-2026-34042. To change the version, change the
-# URL and the hash together; do not trust a checksum downloaded beside mutable bytes.
-RUN curl -fsSL "https://github.com/nektos/act/releases/download/v0.2.89/act_Linux_x86_64.tar.gz" -o /tmp/codeyard-act.tar.gz \
-    && printf '%s\n' '0191d6f1f3b716b5c55820032605d05fc3c1cdbf581ebeff655019e5dd1524c0  /tmp/codeyard-act.tar.gz' | sha256sum -c - \
-    && tar -xzf /tmp/codeyard-act.tar.gz -C /usr/local/bin act \
-    && chown 0:0 /usr/local/bin/act \
-    && chmod 0755 /usr/local/bin/act \
-    && rm /tmp/codeyard-act.tar.gz
 
 WORKDIR /app
 # Database: DATABASE_URL (PostgreSQL) or, unset, SQLite at $GITSERV_STATE_DIR/gitserv.db.

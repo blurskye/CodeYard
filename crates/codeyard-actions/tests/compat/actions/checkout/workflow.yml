@@ -1,0 +1,17 @@
+# https://github.com/actions/checkout/tree/11d5960a326750d5838078e36cf38b85af677262
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: "actions/hello-world-javascript"
+          path: "upstream"
+          persist-credentials: "false"
+      - name: Assert documented effect
+        run: |
+          test -f upstream/action.yml
+          echo compat:ok

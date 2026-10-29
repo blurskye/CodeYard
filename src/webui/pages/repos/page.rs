@@ -54,9 +54,23 @@ pub enum Page {
         /// The branches and tags whose tip is this commit.
         branches: Vec<String>,
         tags: Vec<String>,
+        #[serde(default)]
+        discussion: Box<super::commits::comments::Discussion>,
+        #[serde(default)]
+        related_pulls: Box<super::commits::pulls::RelatedPulls>,
         /// The side-by-side view is shown instead of the unified one.
         #[serde(default)]
         split: bool,
+    },
+    BranchMerge {
+        repo: RepoChrome,
+        form: Box<super::merge::MergeForm>,
+    },
+    CommitCommentDraft {
+        repo: RepoChrome,
+        sha: String,
+        draft: Box<super::commits::comments::Draft>,
+        message: String,
     },
     Refs {
         repo: RepoChrome,
@@ -87,7 +101,7 @@ pub enum Page {
     },
     Settings {
         repo: RepoChrome,
-        settings: Settings,
+        settings: Box<Settings>,
     },
     RejectedForm {
         repo: RepoChrome,
@@ -99,9 +113,49 @@ pub enum Page {
         repo: RepoChrome,
         page: super::releases::Page,
     },
+    Security {
+        repo: RepoChrome,
+        page: super::security::Page,
+    },
+    Dependabot {
+        repo: RepoChrome,
+        page: super::dependabot::Page,
+    },
     Insights {
         repo: RepoChrome,
         page: super::insights::Page,
+    },
+    SecretSecurity {
+        repo: RepoChrome,
+        page: super::secret_scanning::Page,
+    },
+    Pages {
+        repo: RepoChrome,
+        page: super::pages::Page,
+    },
+    Advisories {
+        repo: RepoChrome,
+        page: Box<super::advisories::Page>,
+    },
+    DisclosureSecurity {
+        repo: RepoChrome,
+        page: Box<super::disclosure::Page>,
+    },
+    DependencyGraph {
+        repo: RepoChrome,
+        page: super::dependency_graph::Page,
+    },
+    Check {
+        repo: RepoChrome,
+        check: Box<super::checks::Check>,
+    },
+    Dependencies {
+        repo: RepoChrome,
+        page: Box<super::dependencies::Page>,
+    },
+    RepositoryEvent {
+        repo: RepoChrome,
+        page: Box<super::actions::RepositoryEventForm>,
     },
 }
 
@@ -115,6 +169,8 @@ impl Page {
             | Page::Find { repo, .. }
             | Page::Commits { repo, .. }
             | Page::CommitDetail { repo, .. }
+            | Page::CommitCommentDraft { repo, .. }
+            | Page::BranchMerge { repo, .. }
             | Page::Refs { repo, .. }
             | Page::Editor { repo, .. }
             | Page::DeleteFile { repo, .. }
@@ -122,7 +178,17 @@ impl Page {
             | Page::Settings { repo, .. }
             | Page::RejectedForm { repo, .. }
             | Page::Releases { repo, .. }
-            | Page::Insights { repo, .. } => repo,
+            | Page::Insights { repo, .. }
+            | Page::Security { repo, .. }
+            | Page::Dependabot { repo, .. }
+            | Page::SecretSecurity { repo, .. }
+            | Page::DependencyGraph { repo, .. }
+            | Page::Dependencies { repo, .. }
+            | Page::Pages { repo, .. }
+            | Page::Advisories { repo, .. }
+            | Page::DisclosureSecurity { repo, .. }
+            | Page::Check { repo, .. }
+            | Page::RepositoryEvent { repo, .. } => repo,
         }
     }
 }
@@ -131,6 +197,7 @@ impl Page {
 pub fn render(page: Page) -> Element {
     match page {
         Page::Tree { repo, page } => tree(&repo, &page),
+        Page::BranchMerge { repo, form } => super::merge::merge(&repo, &form),
         Page::Blob { repo, page } => blob(&repo, &page),
         Page::Blame { repo, page } => blame(&repo, &page),
         Page::Find { repo, page } => find(&repo, &page),
@@ -154,7 +221,24 @@ pub fn render(page: Page) -> Element {
             branches,
             tags,
             split,
-        } => commit_detail(&repo, &commit, &diff, &branches, &tags, split),
+            discussion,
+            related_pulls,
+        } => commit_detail(
+            &repo,
+            &commit,
+            &diff,
+            &branches,
+            &tags,
+            split,
+            &discussion,
+            &related_pulls,
+        ),
+        Page::CommitCommentDraft {
+            repo,
+            sha,
+            draft,
+            message,
+        } => super::commits::comments::rejected(&repo, &sha, &draft, &message),
         Page::Refs {
             repo,
             rows,
@@ -176,6 +260,16 @@ pub fn render(page: Page) -> Element {
         } => settings(&repo, &state),
         Page::Releases { repo, page } => super::releases::render(&repo, page),
         Page::Insights { repo, page } => super::insights::render(&repo, page),
+        Page::Security { repo, page } => super::security::render(&repo, page),
+        Page::Dependabot { repo, page } => super::dependabot::render(&repo, &page),
+        Page::SecretSecurity { repo, page } => super::secret_scanning::render(&repo, page),
+        Page::Dependencies { repo, page } => super::dependencies::render(&repo, &page),
+        Page::DependencyGraph { repo, page } => super::dependency_graph::render(&repo, &page),
+        Page::Pages { repo, page } => super::pages::render(&repo, &page),
+        Page::Advisories { repo, page } => super::advisories::render(&repo, &page),
+        Page::DisclosureSecurity { repo, page } => super::disclosure::security(&repo, &page),
+        Page::Check { repo, check } => super::checks::render(&repo, &check),
+        Page::RepositoryEvent { repo, page } => super::actions::repository_event(&repo, &page),
         Page::RejectedForm {
             repo,
             action,

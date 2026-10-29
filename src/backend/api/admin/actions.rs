@@ -49,7 +49,54 @@ fn parse_fields(fields: &Fields) -> Result<ActionsSettings, String> {
     if image.len() > 255 || image.chars().any(char::is_whitespace) {
         return Err("The runner image must be one image name without spaces.".to_owned());
     }
-    Ok(ActionsSettings {
+    let results_url = field(fields, "results_url").trim();
+    if !results_url.is_empty() {
+        let url = url::Url::parse(results_url)
+            .map_err(|_| "The Results URL must be an HTTP or HTTPS origin.".to_owned())?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || url.path() != "/"
+        {
+            return Err(
+                "The Results URL must be an HTTP or HTTPS origin without credentials or a path."
+                    .to_owned(),
+            );
+        }
+    }
+    let permissions = match field(fields, "default_workflow_permissions").trim() {
+        "" | "restricted" => "restricted",
+        "permissive" => "permissive",
+        _ => return Err("Workflow token permissions must be restricted or permissive.".into()),
+    };
+    let legacy = !fields.contains_key("default_engine");
+    let settings = ActionsSettings {
+        default_engine: match field(fields, "default_engine").trim() {
+            "" => "codeyard-actions",
+            value => value,
+        }
+        .into(),
+        codeyard_actions_enabled: legacy || field(fields, "codeyard_actions_enabled") == "on",
+        act_enabled: legacy || field(fields, "act_enabled") == "on",
+        default_workflow_permissions: permissions.into(),
+        results_url: (!results_url.is_empty())
+            .then(|| results_url.trim_end_matches('/').to_owned()),
+        cache_size_gib: optional_number(fields, "cache_size_gib", "Cache size in GiB", 10240)?,
+        cache_retention_days: optional_number(
+            fields,
+            "cache_retention_days",
+            "Cache expiry in days",
+            365,
+        )?,
+        artifact_retention_days: optional_number(
+            fields,
+            "artifact_retention_days",
+            "Artifact retention in days",
+            365,
+        )?,
         enabled: field(fields, "enabled") == "on",
         run_timeout_minutes: optional_number(
             fields,
@@ -65,7 +112,11 @@ fn parse_fields(fields: &Fields) -> Result<ActionsSettings, String> {
             MAX_MEMORY_GIB,
         )?,
         runner_image: (!image.is_empty()).then(|| image.to_owned()),
-    })
+    };
+    settings
+        .validate_engines()
+        .map_err(|error| error.to_string())?;
+    Ok(settings)
 }
 
 fn text(value: Option<i32>) -> String {
@@ -80,19 +131,35 @@ async fn render(
 ) -> Response {
     let settings = match submitted {
         Some(fields) => view::Settings {
+            default_engine: field(fields, "default_engine").to_owned(),
+            codeyard_actions_enabled: field(fields, "codeyard_actions_enabled") == "on",
+            act_enabled: field(fields, "act_enabled") == "on",
+            default_workflow_permissions: field(fields, "default_workflow_permissions").to_owned(),
             enabled: field(fields, "enabled") == "on",
             run_timeout_minutes: field(fields, "run_timeout_minutes").trim().to_owned(),
             job_cpus: field(fields, "job_cpus").trim().to_owned(),
             job_memory_gib: field(fields, "job_memory_gib").trim().to_owned(),
             runner_image: field(fields, "runner_image").trim().to_owned(),
+            results_url: field(fields, "results_url").trim().to_owned(),
+            cache_size_gib: field(fields, "cache_size_gib").trim().to_owned(),
+            cache_retention_days: field(fields, "cache_retention_days").trim().to_owned(),
+            artifact_retention_days: field(fields, "artifact_retention_days").trim().to_owned(),
         },
         None => match db::actions::get_actions_settings(&ctx.state.pool).await {
             Ok(saved) => view::Settings {
+                default_engine: saved.default_engine,
+                codeyard_actions_enabled: saved.codeyard_actions_enabled,
+                act_enabled: saved.act_enabled,
+                default_workflow_permissions: saved.default_workflow_permissions,
                 enabled: saved.enabled,
                 run_timeout_minutes: text(saved.run_timeout_minutes),
                 job_cpus: text(saved.job_cpus),
                 job_memory_gib: text(saved.job_memory_gib),
                 runner_image: saved.runner_image.unwrap_or_default(),
+                results_url: saved.results_url.unwrap_or_default(),
+                cache_size_gib: text(saved.cache_size_gib),
+                cache_retention_days: text(saved.cache_retention_days),
+                artifact_retention_days: text(saved.artifact_retention_days),
             },
             Err(_) => {
                 return ctx.error(

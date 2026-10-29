@@ -1,0 +1,1 @@
+query GetIssueOrPullRequest($url:URI!){resource(url: $url){__typename,... on Issue{id},... on PullRequest{id}}}

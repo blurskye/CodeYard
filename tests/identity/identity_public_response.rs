@@ -37,20 +37,47 @@ async fn profile_updates_reject_nul_in_json_and_native_forms_on_both_engines() {
             "display_name": "é".repeat(50), "bio": "é".repeat(2000),
             "location": "é".repeat(100), "website": format!("https://example.com/{}", "x".repeat(235)),
         });
-        let original = client
-            .expect("PATCH", "/api/user", valid.clone(), StatusCode::OK)
+        let token = codeyard::backend::identity::tokens::create(
+            pool,
+            user.id,
+            Some(&client.session),
+            codeyard::backend::identity::tokens::TokenInput {
+                name: "profile",
+                scope: "write",
+                expires_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        let token = format!("Bearer {}", token.value);
+        super::github::request(
+            &router,
+            "users/update-authenticated",
+            "PATCH",
+            "/api/v3/user",
+            Some(&token),
+            json!({"name": valid["display_name"], "bio": valid["bio"],
+                "location": valid["location"], "blog": valid["website"]}),
+            200,
+        )
+        .await;
+        for (field, api_field) in [
+            ("display_name", "name"),
+            ("bio", "bio"),
+            ("location", "location"),
+            ("website", "blog"),
+        ] {
+            let (_, error) = super::github::request(
+                &router,
+                "users/update-authenticated",
+                "PATCH",
+                "/api/v3/user",
+                Some(&token),
+                json!({api_field: "a\0b"}),
+                422,
+            )
             .await;
-        for field in ["display_name", "bio", "location", "website"] {
-            let error = client
-                .expect(
-                    "PATCH",
-                    "/api/user",
-                    json!({field: "a\0b"}),
-                    StatusCode::BAD_REQUEST,
-                )
-                .await;
-            assert_eq!(error["error"], "validation_error");
-            assert!(error["message"].as_str().unwrap().contains("NUL"));
+            assert_eq!(error["message"], "Validation Failed");
             let (status, page) = client.form("/settings/profile", &[(field, "a\0b")]).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{page}");
             assert!(page.contains("Profile fields must not contain NUL characters"));
@@ -62,17 +89,18 @@ async fn profile_updates_reject_nul_in_json_and_native_forms_on_both_engines() {
             assert!(
                 page.contains("Website must be a web address starting with http:// or https://")
             );
-            // /api/user accepts only PATCH; the public profile carries the same four fields.
-            let stored = client
-                .expect(
-                    "GET",
-                    "/api/users/profile_owner",
-                    serde_json::Value::Null,
-                    StatusCode::OK,
-                )
-                .await;
+            // The public profile carries the same four fields as the update.
+            let (status, page) = client.model("/profile_owner").await;
+            assert_eq!(status, StatusCode::OK);
+            let codeyard::webui::app::Page::Identity(
+                codeyard::webui::pages::account::Page::Profile { profile, .. },
+            ) = page
+            else {
+                panic!("profile")
+            };
+            let stored = serde_json::to_value(profile).unwrap();
             for key in ["display_name", "bio", "location", "website"] {
-                assert_eq!(stored[key], original[key]);
+                assert_eq!(stored[key], valid[key]);
             }
         }
         let fields: Vec<_> = valid

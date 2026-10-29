@@ -442,8 +442,8 @@
   .identity-settings-layout { grid-template-columns: minmax(0, 1fr); gap: 24px; }
   .identity-settings-nav:not(.org-settings-nav) { display: none; }
   .identity-settings-picker { display: block; }
-  /* An organization has three sections, which fit one row. */
-  .org-settings-nav { flex-direction: row; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+  /* Management sections grow with enabled features; keep every tab reachable on phones. */
+  .org-settings-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
   .org-settings-nav .identity-settings-nav-title { display: none; }
   .org-settings-nav .identity-settings-nav-link { flex: 0 0 auto; white-space: nowrap; }
   .org-settings-nav .identity-settings-nav-current::before { content: none; }

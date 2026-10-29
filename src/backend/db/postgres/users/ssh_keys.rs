@@ -1,9 +1,9 @@
 use crate::backend::db::models::{SshKey, User, UserWithKey};
+use crate::backend::db::users::accounts::{AccountCredential, AccountRestricted};
 use crate::backend::db::users::ssh_keys::{
     calculate_fingerprint, valid_stored_key, SshKeyWriteRefusal,
 };
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use tracing::debug;
 
@@ -24,13 +24,70 @@ pub async fn add_ssh_key_for_session(
     name: &str,
     public_key: &str,
 ) -> Result<SshKey> {
-    insert_ssh_key(pool, user_id, Some(session_id), name, public_key).await
+    insert_ssh_key(
+        pool,
+        user_id,
+        Some(&AccountCredential::Session(session_id)),
+        name,
+        public_key,
+    )
+    .await
+}
+
+pub async fn add_ssh_key_for_token(
+    pool: &PgPool,
+    user_id: i64,
+    token: i64,
+    name: &str,
+    public_key: &str,
+) -> Result<SshKey> {
+    insert_ssh_key(
+        pool,
+        user_id,
+        Some(&AccountCredential::Token(token)),
+        name,
+        public_key,
+    )
+    .await
+}
+
+async fn require_key_account(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user: i64,
+    credential: Option<&AccountCredential<'_>>,
+) -> Result<()> {
+    if let Some(credential @ AccountCredential::Token(_)) = credential {
+        return super::transitions::require_account(tx, user, credential)
+            .await
+            .map_err(|error| {
+                if error.is::<AccountRestricted>() {
+                    anyhow::Error::from(SshKeyWriteRefusal::AccountRestricted)
+                } else {
+                    error
+                }
+            });
+    }
+    super::transitions::lock_membership_shared(tx).await?;
+    let active: Option<bool> = sqlx::query_scalar(
+        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR SHARE",
+    )
+    .bind(user)
+    .fetch_optional(&mut **tx)
+    .await?;
+    anyhow::ensure!(active == Some(true), SshKeyWriteRefusal::AccountRestricted);
+    if let Some(AccountCredential::Session(session)) = credential {
+        anyhow::ensure!(
+            super::transitions::live_session(tx, user, session).await?,
+            SshKeyWriteRefusal::InvalidSession
+        );
+    }
+    Ok(())
 }
 
 async fn insert_ssh_key(
     pool: &PgPool,
     user_id: i64,
-    session_id: Option<&str>,
+    credential: Option<&AccountCredential<'_>>,
     name: &str,
     public_key: &str,
 ) -> Result<SshKey> {
@@ -44,14 +101,7 @@ async fn insert_ssh_key(
         .to_string();
 
     let mut tx = pool.begin().await?;
-    super::transitions::lock_membership_shared(&mut tx).await?;
-    let active: Option<bool> = sqlx::query_scalar(
-        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id = $1 FOR SHARE",
-    )
-    .bind(user_id)
-    .fetch_optional(&mut *tx)
-    .await?;
-    anyhow::ensure!(active == Some(true), SshKeyWriteRefusal::AccountRestricted);
+    require_key_account(&mut tx, user_id, credential).await?;
     // Serialize enrollments of this fingerprint so that only one can pass the check below.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 37000003))")
         .bind(&fingerprint)
@@ -63,22 +113,6 @@ async fn insert_ssh_key(
             .fetch_one(&mut *tx)
             .await?;
     anyhow::ensure!(!used, SshKeyWriteRefusal::AlreadyUsed);
-    if let Some(session_id) = session_id {
-        // A separate statement sees revocation committed while the account lock waited.
-        let expiry: Option<DateTime<Utc>> = sqlx::query_scalar(
-            "SELECT expires_at FROM sessions WHERE id=$1 AND user_id=$2 FOR SHARE",
-        )
-        .bind(session_id)
-        .bind(user_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let live: bool =
-            sqlx::query_scalar("SELECT COALESCE($1::timestamptz>clock_timestamp(),FALSE)")
-                .bind(expiry)
-                .fetch_one(&mut *tx)
-                .await?;
-        anyhow::ensure!(live, SshKeyWriteRefusal::InvalidSession);
-    }
     let result = sqlx::query_as::<_, SshKey>(
         r#"
         INSERT INTO ssh_keys (user_id, name, fingerprint, public_key, key_type)
@@ -128,10 +162,12 @@ pub async fn get_user_by_key_fingerprint(
         .filter(|identity| valid_stored_key(&identity.key)))
 }
 
-/// Resolve an SSH helper's key ID against live rows; deleted keys cannot authenticate.
+/// Resolve an SSH helper's key ID against live rows; deleted keys cannot authenticate. A
+/// fingerprint that is also a deploy key is ambiguous, as it is at authentication, so it
+/// resolves to no account.
 pub async fn get_user_by_ssh_key_id(pool: &PgPool, key_id: i64) -> Result<Option<UserWithKey>> {
     let fingerprint =
-        sqlx::query_scalar::<_, String>("SELECT fingerprint FROM ssh_keys WHERE id = $1")
+        sqlx::query_scalar::<_, String>("SELECT fingerprint FROM ssh_keys WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM deploy_keys d WHERE d.fingerprint = ssh_keys.fingerprint)")
             .bind(key_id)
             .fetch_optional(pool)
             .await?;
@@ -154,6 +190,32 @@ pub async fn list_user_key_summaries(
         .bind(user_id).bind(after.max(0)).fetch_all(pool).await?)
 }
 
+pub async fn user_keys_page(
+    pool: &PgPool,
+    user_id: i64,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<SshKey>> {
+    Ok(sqlx::query_as::<_, SshKey>(
+        "SELECT * FROM ssh_keys WHERE user_id = $1 ORDER BY created_at, id LIMIT $2 OFFSET $3",
+    )
+    .bind(user_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn get_user_key(pool: &PgPool, user_id: i64, key_id: i64) -> Result<Option<SshKey>> {
+    Ok(
+        sqlx::query_as::<_, SshKey>("SELECT * FROM ssh_keys WHERE user_id = $1 AND id = $2")
+            .bind(user_id)
+            .bind(key_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
 pub async fn list_user_keys(pool: &PgPool, user_id: i64) -> Result<Vec<SshKey>> {
     let keys = sqlx::query_as::<_, SshKey>(
         "SELECT * FROM ssh_keys WHERE user_id = $1 ORDER BY created_at",
@@ -165,15 +227,38 @@ pub async fn list_user_keys(pool: &PgPool, user_id: i64) -> Result<Vec<SshKey>> 
     Ok(keys)
 }
 
-pub async fn delete_user_ssh_key(pool: &PgPool, user_id: i64, key_id: i64) -> Result<bool> {
-    let mut tx = pool.begin().await?;
-    let active: Option<bool> = sqlx::query_scalar(
-        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id = $1 FOR SHARE",
+pub async fn delete_user_ssh_key(
+    pool: &PgPool,
+    user_id: i64,
+    credential: &AccountCredential<'_>,
+    key_id: i64,
+) -> Result<bool> {
+    delete_key(pool, user_id, Some(credential), key_id).await
+}
+
+pub async fn delete_user_ssh_key_for_token(
+    pool: &PgPool,
+    user_id: i64,
+    token: i64,
+    key_id: i64,
+) -> Result<bool> {
+    delete_key(
+        pool,
+        user_id,
+        Some(&AccountCredential::Token(token)),
+        key_id,
     )
-    .bind(user_id)
-    .fetch_optional(&mut *tx)
-    .await?;
-    anyhow::ensure!(active == Some(true), SshKeyWriteRefusal::AccountRestricted);
+    .await
+}
+
+async fn delete_key(
+    pool: &PgPool,
+    user_id: i64,
+    credential: Option<&AccountCredential<'_>>,
+    key_id: i64,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    require_key_account(&mut tx, user_id, credential).await?;
     let result = sqlx::query("DELETE FROM ssh_keys WHERE id = $1 AND user_id = $2")
         .bind(key_id)
         .bind(user_id)

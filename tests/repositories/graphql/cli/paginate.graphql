@@ -1,0 +1,8 @@
+query($endCursor: String) {
+  repository(owner: "graphql-alice", name: "proj") {
+    pullRequests(first: 1, after: $endCursor, orderBy: {field: CREATED_AT, direction: DESC}) {
+      nodes { number title }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}

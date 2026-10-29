@@ -177,7 +177,7 @@ import sys
 if len(sys.argv) != 2 or not re.fullmatch(r"(?:deploy:)?[1-9][0-9]{{0,18}}", sys.argv[1], re.ASCII):
     sys.exit(1)
 deploy = sys.argv[1].startswith("deploy:")
-key_id = sys.argv[1].removeprefix("deploy:")
+key_id = sys.argv[1][len("deploy:"):] if deploy else sys.argv[1]
 if int(key_id) > 9223372036854775807:
     sys.exit(1)
 original = os.environ.get("SSH_ORIGINAL_COMMAND", "")

@@ -7,7 +7,7 @@ use crate::webui::pages::repos::{
     chrome::{chrome, csrf, icon, repository_id, RepoChrome},
     commits::{commit_date, latest_commit_bar, Commit},
     ref_path::{file_url, link_base},
-    ref_switcher::{ref_options, RefSwitcher},
+    ref_switcher::{RefLinks, RefSwitcher},
 };
 use crate::webui::{
     components::{
@@ -56,6 +56,8 @@ pub struct TreePage {
     #[serde(default)]
     pub permalink: String,
     pub empty: bool,
+    #[serde(default)]
+    pub migration_status: Option<String>,
     pub http_clone: String,
     pub ssh_clone: String,
     /// The references the README links; empty when there is no README. Boxed, because the
@@ -112,6 +114,16 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
     };
     let main = rsx! {
         div { class: "repo-blob-main",
+            if let Some(status) = &page.migration_status {
+                section { class: "panel p-4 mb-4", role: "status",
+                    h2 { class: "font-semibold", if status == "error" { "Migration failed" } else { "Migration in progress" } }
+                    p { class: "mt-2 text-sm", if status == "error" { "Git data already imported is retained. A repository administrator can retry the migration." } else { "Git data is being imported in the background." } }
+                    div { class: "mt-3 flex flex-wrap gap-3",
+                        a { href: base.clone(), class: "btn btn-secondary", "Refresh" }
+                        if repo.can_admin { NavLink { href: format!("{base}/migration"), class: "btn btn-secondary", "Manage migration" } }
+                    }
+                }
+            }
             {top}
             if page.empty {
                 section { class: "repo-empty panel",
@@ -122,7 +134,7 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
                             NavLink { class: "btn btn-primary".to_owned(), href: file_url(&base, "new", &page.reference, &page.path), "Create new file" }
                             NavLink { class: "btn btn-secondary".to_owned(), href: file_url(&base, "upload", &page.reference, &page.path), "Upload files" }
                         }
-                        {quick_setup(&page.http_clone, &page.ssh_clone, &page.reference)}
+                        {quick_setup(&page.http_clone, &page.ssh_clone, page.reference.strip_prefix("refs/heads/").unwrap_or(&page.reference))}
                     }
                 }
             } else {
@@ -194,13 +206,16 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
             }
         }
     } else {
-        let branch_options = ref_options(&base, "tree", &page.path, &page.branches, "");
-        let tag_options = ref_options(&base, "tree", &page.path, &page.tags, "refs/tags/");
+        let links = RefLinks::Files {
+            base: base.clone(),
+            kind: "tree",
+            path: page.path.clone(),
+        };
         rsx! {
             div { class: "repo-blob-layout",
                 if !page.empty {
                     input { r#type: "checkbox", id: "repo-files-toggle", class: "sr-only repo-files-toggle" }
-                    FilesPanel { base: base.clone(), reference: page.reference.clone(), path: page.path.clone(), directory: page.path.clone(), folders: page.folders.clone(), branches: branch_options, tags: tag_options, can_write: can_commit_on(repo, &page.reference, &page.branches), default_branch: repo.default_branch.clone() }
+                    FilesPanel { base: base.clone(), reference: page.reference.clone(), path: page.path.clone(), directory: page.path.clone(), folders: page.folders.clone(), branches: page.branches.clone(), tags: page.tags.clone(), links, can_write: can_commit_on(repo, &page.reference, &page.branches), default_branch: repo.default_branch.clone() }
                 }
                 {main}
             }
@@ -281,13 +296,16 @@ fn code_menu(repo: &RepoChrome, page: &TreePage) -> Element {
 /// menu or search, only the counts and Code.
 fn home_toolbar(repo: &RepoChrome, page: &TreePage) -> Element {
     let base = repo.base();
-    let branch_options = ref_options(&base, "tree", &page.path, &page.branches, "");
-    let tag_options = ref_options(&base, "tree", &page.path, &page.tags, "refs/tags/");
+    let links = RefLinks::Files {
+        base: base.clone(),
+        kind: "tree",
+        path: page.path.clone(),
+    };
     rsx! {
         div { class: "repo-home-toolbar",
             div { class: "repo-home-refs",
                 if !page.empty {
-                    RefSwitcher { base: base.clone(), current: page.reference.clone(), branches: branch_options, tags: tag_options, default_branch: repo.default_branch.clone() }
+                    RefSwitcher { base: base.clone(), current: page.reference.clone(), branches: page.branches.clone(), tags: page.tags.clone(), links, default_branch: repo.default_branch.clone() }
                 }
                 {ref_counts(repo, page)}
                 if !page.empty {

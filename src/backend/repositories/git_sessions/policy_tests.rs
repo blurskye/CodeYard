@@ -438,6 +438,8 @@ mod fixture {
                     base_branch: "main",
                     base_sha: &fixture.oid.to_string(),
                     is_draft: false,
+                    maintainer_can_modify: false,
+                    issue: None,
                 },
             )
             .await
@@ -475,6 +477,7 @@ mod fixture {
                     db::users::tokens::delete_token(
                         &fixture.pool,
                         fixture.actor_id,
+                        &"b".repeat(64),
                         fixture.token_id,
                     )
                     .await
@@ -535,6 +538,27 @@ mod fixture {
                 .await
                 .unwrap();
         assert_eq!(counts, [1, 1]);
+        fixture.pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn account_key_that_is_also_a_deploy_key_does_not_reauthorize() {
+        let fixture = Fixture::new().await;
+        let account = db::users::ssh_keys::get_user_by_ssh_key_id(&fixture.pool, fixture.key_id)
+            .await
+            .unwrap()
+            .unwrap();
+        sqlx::query("INSERT INTO deploy_keys(repo_id,name,fingerprint,public_key,read_only,created_by_id) VALUES(?,'deploy',?,?,TRUE,?)")
+            .bind(fixture.repo_id).bind(&account.key.fingerprint).bind(&account.key.public_key).bind(fixture.actor_id)
+            .execute(&fixture.native).await.unwrap();
+        let repo = db::repositories::records::get_repository_by_id(&fixture.pool, fixture.repo_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(ReceiveCredential::SshKey(fixture.key_id)
+            .authorize(&fixture.pool, &repo, false)
+            .await
+            .is_err());
         fixture.pool.close().await;
     }
 
@@ -808,6 +832,7 @@ mod fixture {
                     assert!(db::users::tokens::delete_token(
                         &fixture.pool,
                         fixture.actor_id,
+                        &"b".repeat(64),
                         fixture.token_id,
                     )
                     .await
@@ -1792,6 +1817,8 @@ mod fixture {
                     base_branch: "main",
                     base_sha: &fixture.oid.to_string(),
                     is_draft: false,
+                    maintainer_can_modify: false,
+                    issue: None,
                 },
             )
             .await

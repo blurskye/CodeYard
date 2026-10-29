@@ -129,6 +129,8 @@ async fn late_pr_comment_notices_and_mentions_cannot_restore_deleted_text() {
                 base_branch: "main",
                 base_sha: &"b".repeat(40),
                 is_draft: false,
+                maintainer_can_modify: false,
+                issue: None,
             },
         )
         .await
@@ -139,6 +141,8 @@ async fn late_pr_comment_notices_and_mentions_cannot_restore_deleted_text() {
                 pr_id: pr.id,
                 author_id: owner,
                 body: "deleted text",
+                start_line: None,
+                start_side: None,
                 path: None,
                 line: None,
                 side: None,

@@ -922,9 +922,8 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
     );
     assert!(s3.deleted().is_empty());
 
-    // Metadata disappears immediately. A failed best-effort object removal leaves
-    // persisted work that is not eligible until the issued PUT has expired.
-    s3.refuse_deletes(true);
+    // Metadata disappears immediately. The object waits out the restore window in the
+    // deletion queue, and a failed removal once it is due leaves the work queued.
     file_operations::delete_owned_file(&db.pool, &s3.store, db.user, file.id)
         .await
         .unwrap();
@@ -932,6 +931,15 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
         .await
         .unwrap()
         .is_none());
+    assert!(s3.deleted().is_empty());
+    sqlx::query("UPDATE pending_object_deletions SET delete_after=NOW()-INTERVAL '1 second'")
+        .execute(&db.raw)
+        .await
+        .unwrap();
+    s3.refuse_deletes(true);
+    file_operations::remove_expired_uploads(&db.pool, &s3.store)
+        .await
+        .unwrap();
     assert_eq!(s3.deleted(), [s3.path(&file.object_key)]);
     s3.refuse_deletes(false);
     sqlx::query("UPDATE pending_object_deletions SET delete_after=NOW()-INTERVAL '1 second'")
@@ -985,7 +993,15 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
     file_operations::delete_owned_file(&db.pool, &s3.store, db.user, pending.id)
         .await
         .unwrap();
-    assert_eq!(s3.deleted().last(), Some(&s3.path(&pending.object_key)));
+    assert!(!s3.deleted().contains(&s3.path(&pending.object_key)));
+    sqlx::query("UPDATE pending_object_deletions SET delete_after=NOW()-INTERVAL '1 second'")
+        .execute(&db.raw)
+        .await
+        .unwrap();
+    file_operations::remove_expired_uploads(&db.pool, &s3.store)
+        .await
+        .unwrap();
+    assert!(s3.deleted().contains(&s3.path(&pending.object_key)));
     assert!(files::get_file_by_id(&db.pool, pending.id)
         .await
         .unwrap()

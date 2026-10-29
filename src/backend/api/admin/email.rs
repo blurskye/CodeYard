@@ -1,8 +1,6 @@
-//! Admin email settings: the page and its forms, plus the same operations as JSON.
-use super::accounts::require_admin_user;
+//! Admin email settings and test-mail forms.
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::{ApiError, ApiFailure};
-use crate::backend::api::http::{csrf, middleware, session};
+use crate::backend::api::http::session;
 use crate::backend::api::user::responses::{field, mutation_guard, Fields};
 use crate::backend::app::AppState;
 use crate::backend::db::{self, email::NewEmailSettings};
@@ -14,24 +12,17 @@ use crate::webui::{app::Page, pages::admin::email as view};
 use axum::{
     extract::{DefaultBodyLimit, Form, State},
     http::{HeaderMap, StatusCode, Uri},
-    middleware::from_fn,
     response::Response,
     routing::{get, post},
-    Json, Router,
+    Router,
 };
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
-    let api = Router::new()
-        .route("/api/auth/admin/email", get(api_get).put(api_put))
-        .route("/api/auth/admin/email/test", post(api_test))
-        .route_layer(from_fn(csrf::auth_submission))
-        .layer(from_fn(middleware::private_api_response));
-    let pages = Router::new()
+    Router::new()
         .route("/admin/email", get(show).post(save_form))
         .route("/admin/email/test", post(test_form))
-        .layer(DefaultBodyLimit::max(16 * 1024));
-    api.merge(pages)
+        .layer(DefaultBodyLimit::max(16 * 1024))
 }
 
 /// Reads and checks the form fields. The password is handled apart from the rest.
@@ -71,7 +62,13 @@ async fn save(
     }
     // The first save from the environment's settings keeps the environment's password.
     if password.is_empty() {
-        if let Ok(Some((env, Source::Environment, _))) = config::describe(&state.pool).await {
+        let source = config::describe(&state.pool).await.map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to read the current mail settings.".to_owned(),
+            )
+        })?;
+        if let Some((env, Source::Environment, _)) = source {
             password = env.password.unwrap_or_default();
         }
     }
@@ -250,13 +247,15 @@ async fn test_form(
     uri: Uri,
     Form(form): Form<Fields>,
 ) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await {
+    let mut ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
     if let Err(response) = mutation_guard(&ctx, &form, true) {
         return response;
     }
+    // The result page's own forms, such as the theme, return to the page and not the POST URL.
+    ctx.return_to = Some("/admin/email".into());
     let admin = ctx.user.as_ref().expect("admin guard");
     match send_test_mail(&ctx.state, admin).await {
         Ok(to) => {
@@ -272,54 +271,5 @@ async fn test_form(
             let message = format!("The test email failed: {message}");
             render(&ctx, StatusCode::BAD_GATEWAY, Some(message), None).await
         }
-    }
-}
-
-fn failure((status, message): (StatusCode, String)) -> ApiFailure {
-    let code = match status {
-        StatusCode::BAD_REQUEST => "validation_error",
-        StatusCode::FORBIDDEN => "forbidden",
-        StatusCode::CONFLICT => "conflict",
-        _ => "unavailable",
-    };
-    ApiError::failure(status, code, &message)
-}
-
-async fn api_get(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<Json<view::Settings>, ApiFailure> {
-    require_admin_user(&state, &headers).await?;
-    let settings = current(&state.pool, None)
-        .await
-        .map_err(|message| failure((StatusCode::SERVICE_UNAVAILABLE, message)))?;
-    Ok(Json(settings))
-}
-
-async fn api_put(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(fields): Json<Fields>,
-) -> Result<Json<view::Settings>, ApiFailure> {
-    let admin = require_admin_user(&state, &headers).await?;
-    let session = session::extract_session_id(&headers).unwrap_or_default();
-    save(&state, admin.id, &session, &fields)
-        .await
-        .map_err(failure)?;
-    api_get(State(state), headers).await
-}
-
-async fn api_test(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, ApiFailure> {
-    let admin = require_admin_user(&state, &headers).await?;
-    match send_test_mail(&state, &admin).await {
-        Ok(to) => Ok(Json(serde_json::json!({ "sent_to": to }))),
-        Err(message) => Err(ApiError::failure(
-            StatusCode::BAD_GATEWAY,
-            "email_failed",
-            &message,
-        )),
     }
 }

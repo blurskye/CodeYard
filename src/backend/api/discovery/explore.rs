@@ -1,6 +1,4 @@
-use super::{
-    database_error, missing_owner, owner_name, page_number, repository_cards, unavailable,
-};
+use super::{page_number, repository_cards, unavailable};
 use crate::backend::db::repositories::records::{RepositoryFilter, RepositoryKind, RepositorySort};
 use crate::backend::{api::http::context::PageContext, app::AppState, db};
 use crate::webui::app::Page as AppPage;
@@ -11,53 +9,6 @@ use axum::{
     response::Response,
 };
 use std::{collections::HashMap, sync::Arc};
-
-use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::responses::RepoResponse;
-
-use axum::{extract::Query, Json};
-use serde::Deserialize;
-
-#[derive(Deserialize)]
-pub struct ExploreQuery {
-    pub sort: Option<String>,
-    pub limit: Option<u32>,
-}
-
-pub async fn explore_repos(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<ExploreQuery>,
-) -> Result<Json<Vec<RepoResponse>>, (StatusCode, Json<ApiError>)> {
-    let limit = query.limit.unwrap_or(50).clamp(1, 100) as i64;
-
-    let repos = db::repositories::records::list_public_repositories(
-        &state.pool,
-        repository_sort(query.sort.as_deref()),
-        limit,
-    )
-    .await
-    .map_err(database_error)?;
-
-    let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
-    let owners = db::repositories::records::repository_owner_names(&state.pool, &ids)
-        .await
-        .map_err(database_error)?;
-    let mut topics = db::repositories::topics::repository_topics(&state.pool, &ids)
-        .await
-        .map_err(database_error)?;
-    let mut responses = Vec::with_capacity(repos.len());
-    for repo in repos {
-        let owner = owner_name(&repo, &owners).map_err(|_| missing_owner())?;
-        responses.push(RepoResponse::new(
-            &repo,
-            &owner,
-            topics.remove(&repo.id).unwrap_or_default(),
-            None,
-        ));
-    }
-
-    Ok(Json(responses))
-}
 
 /// Any value but stars, forks or updated is newest first.
 fn repository_sort(sort: Option<&str>) -> RepositorySort {

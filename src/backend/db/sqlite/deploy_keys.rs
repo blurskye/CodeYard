@@ -20,6 +20,13 @@ pub async fn get_deploy_key(pool: &SqlitePool, key_id: i64) -> Result<Option<Dep
         .await?)
 }
 
+pub async fn usable_deploy_key(pool: &SqlitePool, key_id: i64) -> Result<Option<DeployKey>> {
+    let sql=format!("SELECT {COLUMNS} FROM deploy_keys WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM repositories r JOIN organization_settings s ON s.org_id=r.owner_org_id WHERE r.id=deploy_keys.repo_id AND r.owner_kind='org' AND r.owner_user_id IS NULL AND NOT s.deploy_keys_enabled_for_repositories) AND NOT EXISTS(SELECT 1 FROM ssh_keys k WHERE k.fingerprint=deploy_keys.fingerprint)");
+    Ok(sqlx::query_as(&sql)
+        .bind(key_id)
+        .fetch_optional(pool)
+        .await?)
+}
 pub async fn get_deploy_key_by_fingerprint(
     pool: &SqlitePool,
     fingerprint: &str,
@@ -35,15 +42,18 @@ async fn require_admin(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     actor: i64,
     repo: i64,
-    session: &str,
+    credential: crate::backend::db::deploy_keys::Credential,
 ) -> Result<()> {
     let access =
         super::repositories::access::user_repo_access_in_transaction(tx, actor, repo).await?;
-    let site_admin: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND r.owner_kind='user' AND u.is_admin AND NOT u.is_banned AND NOT u.must_change_password)")
+    let site_admin: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND NOT r.is_gist AND r.owner_kind='user' AND u.is_admin AND NOT u.is_banned AND NOT u.must_change_password)")
         .bind(actor).bind(repo).fetch_one(&mut **tx).await?;
+    let live = match credential {
+        crate::backend::db::deploy_keys::Credential::Session(session) => super::users::transitions::live_session(tx, actor, &session).await?,
+        crate::backend::db::deploy_keys::Credential::Token(id) => sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=?1 AND user_id=?2 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))").bind(id).bind(actor).fetch_one(&mut **tx).await?,
+    };
     anyhow::ensure!(
-        (access.can_admin() || site_admin)
-            && super::users::transitions::live_session(tx, actor, session).await?,
+        (access.can_admin() || site_admin) && live,
         crate::backend::repositories::deploy_keys::DeployKeyError::Denied
     );
     Ok(())
@@ -52,10 +62,16 @@ async fn require_admin(
 pub async fn insert_deploy_key(
     pool: &SqlitePool,
     key: &NewDeployKey,
-    session: &str,
+    credential: impl Into<crate::backend::db::deploy_keys::Credential>,
 ) -> Result<DeployKey> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_admin(&mut tx, key.created_by_id, key.repo_id, session).await?;
+    require_admin(&mut tx, key.created_by_id, key.repo_id, credential.into()).await?;
+    let enabled:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM repositories r JOIN organization_settings s ON s.org_id=r.owner_org_id WHERE r.id=?1 AND r.owner_kind='org' AND r.owner_user_id IS NULL AND NOT s.deploy_keys_enabled_for_repositories)").bind(key.repo_id).fetch_one(&mut *tx).await?;
+    anyhow::ensure!(
+        enabled,
+        crate::backend::repositories::deploy_keys::DeployKeyError::Denied
+    );
+
     let used: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM ssh_keys WHERE fingerprint = ?1) OR EXISTS(SELECT 1 FROM deploy_keys WHERE fingerprint = ?1)",
     )
@@ -91,10 +107,10 @@ pub async fn delete_deploy_key(
     repo_id: i64,
     key_id: i64,
     actor: i64,
-    session: &str,
+    credential: impl Into<crate::backend::db::deploy_keys::Credential>,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_admin(&mut tx, actor, repo_id, session).await?;
+    require_admin(&mut tx, actor, repo_id, credential.into()).await?;
     let result = sqlx::query("DELETE FROM deploy_keys WHERE id = ?1 AND repo_id = ?2")
         .bind(key_id)
         .bind(repo_id)

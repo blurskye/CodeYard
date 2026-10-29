@@ -69,9 +69,21 @@ native_operation!(crate::backend::db::postgres::labels::list_repo_labels,
     crate::backend::db::sqlite::labels::list_repo_labels,
     fn list_repo_labels(pool: &DbPool, repo_id: i64) -> Result<Vec<Label>>);
 
+native_operation!(crate::backend::db::postgres::labels::get_label_by_id,
+    crate::backend::db::sqlite::labels::get_label_by_id,
+    fn get_label_by_id(pool: &DbPool, id: i64) -> Result<Option<Label>>);
+
+native_operation!(crate::backend::db::postgres::labels::count_repo_labels,
+    crate::backend::db::sqlite::labels::count_repo_labels,
+    fn count_repo_labels(pool: &DbPool, repo_id: i64, query: &str) -> Result<i64>);
+
 native_operation!(crate::backend::db::postgres::labels::list_repo_labels_page,
     crate::backend::db::sqlite::labels::list_repo_labels_page,
     fn list_repo_labels_page(pool: &DbPool, repo_id: i64, query: &str, sort: &str, limit: i64, offset: i64) -> Result<Vec<Label>>);
+
+native_operation!(crate::backend::db::postgres::labels::list_milestone_labels,
+    crate::backend::db::sqlite::labels::list_milestone_labels,
+    fn list_milestone_labels(pool: &DbPool, repo_id: i64, milestone_id: i64, limit: i64, offset: i64) -> Result<Vec<Label>>);
 
 native_operation!(crate::backend::db::postgres::labels::list_label_usage,
     crate::backend::db::sqlite::labels::list_label_usage,
@@ -172,3 +184,7 @@ pub(crate) struct ItemLabel {
 native_operation!(crate::backend::db::postgres::labels::set_issue_labels,
     crate::backend::db::sqlite::labels::set_issue_labels,
     fn set_issue_labels(pool: &DbPool, actor_id: i64, repo_id: i64, issue_id: i64, label_ids: &[i64]) -> Result<()>);
+
+native_operation!(crate::backend::db::postgres::labels::set_pull_request_labels,
+    crate::backend::db::sqlite::labels::set_pull_request_labels,
+    fn set_pull_request_labels(pool: &DbPool, actor_id: i64, repo_id: i64, pull_request_id: i64, label_ids: &[i64]) -> Result<()>);

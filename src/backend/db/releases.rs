@@ -1,5 +1,8 @@
 //! Releases and their assets. Writers create and change them; readers see published releases,
 //! and writers also see drafts (the caller decides which list it asks for).
+mod notes;
+pub use notes::{release_note_pulls, ReleaseNotePull};
+
 use crate::backend::db::models::{File, Release, ReleaseAsset, ReleaseRow};
 use crate::backend::db::DbPool;
 use anyhow::Result;
@@ -15,9 +18,18 @@ pub enum ReleaseRefusal {
     TagTaken,
     #[error("An asset with this name already exists")]
     AssetNameTaken,
+    #[error("The release is immutable")]
+    Immutable,
+    #[error("The tag name is reserved by an immutable release")]
+    TagReserved,
     #[error("Release changed")]
     Conflict,
+    #[error("A release can contain at most 1000 assets")]
+    TooManyAssets,
 }
+
+/// The most assets one release holds; immutable publication signs at most this many.
+pub const MAX_RELEASE_ASSETS: i64 = 1000;
 
 /// An uploaded file being attached to a release, with the details the asset row keeps.
 #[derive(Debug, Clone)]
@@ -29,8 +41,18 @@ pub struct NewReleaseAsset<'a> {
     pub size: i64,
 }
 
+#[derive(Debug, Default)]
+pub struct AssetChanges {
+    pub name: Option<String>,
+    pub label: Option<Option<String>>,
+}
+
+native_operation!(crate::backend::db::postgres::releases::update_release_asset,
+    crate::backend::db::sqlite::releases::update_release_asset,
+    fn update_release_asset(pool: &DbPool, actor: i64, repo_id: i64, asset_id: i64, changes: &AssetChanges) -> Result<ReleaseAsset>);
+
 /// The fields a writer sets on a release. The tag and its target are fixed once the release exists.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ReleaseFields {
     pub name: Option<String>,
     pub body: Option<String>,
@@ -42,14 +64,28 @@ pub struct ReleaseFields {
 }
 
 /// Only supplied fields change; omitted values are read under the write lock.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ReleaseChanges {
     pub expected_revision: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::backend::db::repositories::records::nullable_change"
+    )]
     pub name: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::backend::db::repositories::records::nullable_change"
+    )]
     pub body: Option<Option<String>>,
     pub is_draft: Option<bool>,
     pub is_prerelease: Option<bool>,
     pub make_latest: Option<bool>,
+    /// Publishing a draft whose tag is missing creates the tag, which this refuses. It is the
+    /// caller's capability, so it is never stored.
+    #[serde(skip)]
+    pub new_tag_denied: bool,
 }
 
 impl From<&ReleaseFields> for ReleaseChanges {
@@ -61,18 +97,23 @@ impl From<&ReleaseFields> for ReleaseChanges {
             is_draft: Some(fields.is_draft),
             is_prerelease: Some(fields.is_prerelease),
             make_latest: Some(fields.make_latest),
+            new_tag_denied: false,
         }
     }
 }
 
 impl ReleaseChanges {
     pub fn apply_to(&self, current: &Release) -> ReleaseFields {
+        let is_draft = self.is_draft.unwrap_or(current.is_draft);
         ReleaseFields {
             name: self.name.clone().unwrap_or_else(|| current.name.clone()),
             body: self.body.clone().unwrap_or_else(|| current.body.clone()),
-            is_draft: self.is_draft.unwrap_or(current.is_draft),
+            is_draft,
             is_prerelease: self.is_prerelease.unwrap_or(current.is_prerelease),
-            make_latest: self.make_latest.unwrap_or(current.is_latest),
+            // Publishing a draft makes it the latest release unless the edit says otherwise.
+            make_latest: self
+                .make_latest
+                .unwrap_or(current.is_latest || (current.is_draft && !is_draft)),
         }
     }
 }
@@ -85,6 +126,7 @@ pub fn release_revision(release: &Release) -> String {
         &release.name,
         &release.body,
         release.is_draft,
+        release.is_immutable,
         release.is_prerelease,
         release.is_latest,
     ))
@@ -99,6 +141,14 @@ native_operation!(crate::backend::db::postgres::releases::create_release,
 native_operation!(crate::backend::db::postgres::releases::update_release,
     crate::backend::db::sqlite::releases::update_release,
     fn update_release(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64, fields: &ReleaseChanges) -> Result<(Release, bool)>);
+
+native_operation!(crate::backend::db::postgres::releases::create_release_with_publication,
+    crate::backend::db::sqlite::releases::create_release_with_publication,
+    fn create_release_with_publication(pool: &DbPool, actor_id: i64, repo_id: i64, tag: &str, target: &str, fields: &ReleaseFields,publication:Option<&crate::backend::db::repositories::immutable_releases::Publication>) -> Result<Release>);
+
+native_operation!(crate::backend::db::postgres::releases::update_release_with_publication,
+    crate::backend::db::sqlite::releases::update_release_with_publication,
+    fn update_release_with_publication(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64, fields: &ReleaseChanges,publication:Option<&crate::backend::db::repositories::immutable_releases::Publication>) -> Result<(Release, bool)>);
 
 // Removes the release, unused file metadata and queues object cleanup atomically.
 // Returns the removed files for an immediate best-effort object delete.
@@ -124,6 +174,29 @@ native_operation!(crate::backend::db::postgres::releases::get_release,
     fn get_release(pool: &DbPool, repo_id: i64, release_id: i64) -> Result<Option<ReleaseRow>>);
 
 // Newest first. Drafts are left out unless `include_drafts` is set.
+#[derive(Clone, Copy)]
+pub enum ReleaseOrder {
+    Published,
+    CreatedAsc,
+    CreatedDesc,
+    NameAsc,
+    NameDesc,
+}
+impl ReleaseOrder {
+    pub(crate) fn sql(self) -> &'static str {
+        match self {
+            Self::Published => "COALESCE(r.published_at,r.created_at) DESC,r.id DESC",
+            Self::CreatedAsc => "r.created_at,r.id",
+            Self::CreatedDesc => "r.created_at DESC,r.id DESC",
+            Self::NameAsc => "LOWER(COALESCE(r.name,'')),r.id",
+            Self::NameDesc => "LOWER(COALESCE(r.name,'')) DESC,r.id DESC",
+        }
+    }
+}
+native_operation!(crate::backend::db::postgres::releases::list_releases_ordered,
+    crate::backend::db::sqlite::releases::list_releases_ordered,
+    fn list_releases_ordered(pool:&DbPool,repo_id:i64,include_drafts:bool,order:ReleaseOrder,limit:i64,offset:i64)->Result<Vec<ReleaseRow>>);
+
 native_operation!(crate::backend::db::postgres::releases::list_releases,
     crate::backend::db::sqlite::releases::list_releases,
     fn list_releases(pool: &DbPool, repo_id: i64, include_drafts: bool, limit: i64, offset: i64) -> Result<Vec<ReleaseRow>>);
@@ -131,6 +204,11 @@ native_operation!(crate::backend::db::postgres::releases::list_releases,
 native_operation!(crate::backend::db::postgres::releases::count_releases,
     crate::backend::db::sqlite::releases::count_releases,
     fn count_releases(pool: &DbPool, repo_id: i64, include_drafts: bool) -> Result<i64>);
+
+// GraphQL orders by creation, independently of when a draft was published.
+native_operation!(crate::backend::db::postgres::releases::list_releases_by_creation,
+    crate::backend::db::sqlite::releases::list_releases_by_creation,
+    fn list_releases_by_creation(pool: &DbPool, repo_id: i64, include_drafts: bool, ascending: bool, limit: i64, offset: i64) -> Result<Vec<ReleaseRow>>);
 
 // The release marked latest, when it is published.
 native_operation!(crate::backend::db::postgres::releases::latest_release,
@@ -140,6 +218,10 @@ native_operation!(crate::backend::db::postgres::releases::latest_release,
 native_operation!(crate::backend::db::postgres::releases::list_release_assets,
     crate::backend::db::sqlite::releases::list_release_assets,
     fn list_release_assets(pool: &DbPool, release_id: i64) -> Result<Vec<ReleaseAsset>>);
+
+native_operation!(crate::backend::db::postgres::releases::get_repository_release_asset,
+    crate::backend::db::sqlite::releases::get_repository_release_asset,
+    fn get_repository_release_asset(pool: &DbPool, repo_id: i64, asset_id: i64) -> Result<Option<ReleaseAsset>>);
 
 native_operation!(crate::backend::db::postgres::releases::get_release_asset_by_name,
     crate::backend::db::sqlite::releases::get_release_asset_by_name,

@@ -1,0 +1,8 @@
+query RepositoryProjectList($endCursor: String, $name: String!, $owner: String!) {
+  repository(owner: $owner, name: $name) {
+    projects(states: [OPEN], first: 100, orderBy: {field: NAME, direction: ASC}, after: $endCursor) {
+      nodes { id name number resourcePath }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}

@@ -1,0 +1,449 @@
+pub(crate) mod pages;
+use crate::backend::db::artifact_metadata::{
+    Actor, Artifact, ClusterInput, Deployment, DeploymentInput, Environment, Job, JobInput,
+    Mutation, Record, Refusal, StorageInput,
+};
+use anyhow::Result;
+use serde_json::{json, Value};
+use sqlx::{Sqlite, SqlitePool, Transaction};
+type Tx<'a> = Transaction<'a, Sqlite>;
+
+async fn begin(pool: &SqlitePool) -> Result<Tx<'_>> {
+    Ok(pool.begin_with("BEGIN IMMEDIATE").await?)
+}
+
+async fn credential(tx: &mut Tx<'_>, actor: Actor) -> Result<()> {
+    let name: Option<String> = sqlx::query_scalar("SELECT u.username FROM users u JOIN personal_access_tokens t ON t.user_id=u.id WHERE u.id=?1 AND t.id=?2 AND t.scope='write' AND (t.expires_at IS NULL OR julianday(t.expires_at)>julianday('now')) AND NOT u.is_banned AND NOT u.must_change_password")
+        .bind(actor.user).bind(actor.token).fetch_optional(&mut **tx).await?;
+    let name = name.ok_or(Refusal::Denied)?;
+    if name == crate::backend::db::ci_tokens::BOT {
+        let job: Option<(i64,String)> = sqlx::query_as("SELECT r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=?1 AND (t.revoked_at IS NULL OR t.revoked_at>CAST(strftime('%s','now') AS INTEGER)-60) AND (r.status='running' OR julianday(r.completed_at)>julianday('now','-1 minute'))")
+            .bind(actor.token).fetch_optional(&mut **tx).await?;
+        let (repo, permissions) = job.ok_or(Refusal::Denied)?;
+        let permissions: crate::backend::ci::tokens::Permissions =
+            serde_json::from_str(&permissions)?;
+        anyhow::ensure!(
+            actor.repo == Some(repo) && permissions.allows("artifact-metadata", true),
+            Refusal::Denied
+        );
+    } else {
+        anyhow::ensure!(actor.repo.is_none(), Refusal::Denied);
+    }
+    Ok(())
+}
+
+async fn writable(tx: &mut Tx<'_>, actor: Actor, org: i64, repo: i64) -> Result<()> {
+    anyhow::ensure!(
+        actor.repo.is_none_or(|scope| scope == repo),
+        Refusal::Missing
+    );
+    let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND r.owner_kind='org' AND r.owner_org_id=?3 AND {})",super::repositories::access::readable_condition()))
+        .bind(actor.user).bind(repo).bind(org).fetch_one(&mut **tx).await?;
+    anyhow::ensure!(readable, Refusal::Missing);
+    anyhow::ensure!(
+        super::discussions::lock_write_authority(tx, actor.user, repo).await?,
+        Refusal::Denied
+    );
+    let belongs: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=?1 AND owner_kind='org' AND owner_org_id=?2)").bind(repo).bind(org).fetch_one(&mut **tx).await?;
+    anyhow::ensure!(belongs, Refusal::Missing);
+    Ok(())
+}
+
+async fn targets(
+    tx: &mut Tx<'_>,
+    actor: Actor,
+    org: i64,
+    artifact: &Artifact,
+    maximum: usize,
+) -> Result<Vec<(i64, Option<i64>)>> {
+    let mut rows: Vec<(i64,Option<i64>)> = sqlx::query_as("SELECT a.repo_id,MAX(a.id) FROM artifact_attestations a JOIN attestation_subjects s ON s.attestation_id=a.id JOIN repositories r ON r.id=a.repo_id WHERE r.owner_kind='org' AND r.owner_org_id=?1 AND s.digest=?2 AND a.predicate_type IN ('https://slsa.dev/provenance/v1','https://slsa.dev/provenance/v0.2') GROUP BY a.repo_id ORDER BY MAX(a.id) DESC")
+        .bind(org).bind(&artifact.digest).fetch_all(&mut **tx).await?;
+    if rows.is_empty() {
+        let name = artifact
+            .github_repository
+            .as_deref()
+            .ok_or(Refusal::Missing)?;
+        let repo: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?1 AND LOWER(name)=LOWER(?2)").bind(org).bind(name).fetch_optional(&mut **tx).await?;
+        rows.push((repo.ok_or(Refusal::Missing)?, None));
+    }
+    let mut authorized = Vec::new();
+    let mut refusal = Refusal::Missing;
+    for (repo, attestation) in rows {
+        match writable(tx, actor, org, repo).await {
+            Ok(()) => {
+                authorized.push((repo, attestation));
+                if authorized.len() == maximum {
+                    break;
+                }
+            }
+            Err(error) if matches!(error.downcast_ref::<Refusal>(), Some(Refusal::Denied)) => {
+                refusal = Refusal::Denied
+            }
+            Err(error) if matches!(error.downcast_ref::<Refusal>(), Some(Refusal::Missing)) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    anyhow::ensure!(!authorized.is_empty(), refusal);
+    Ok(authorized)
+}
+
+struct NewRecord<'a> {
+    actor: Actor,
+    org: i64,
+    repo: i64,
+    attestation: Option<i64>,
+    artifact: &'a Artifact,
+    kind: &'a str,
+    identity: String,
+    cluster: &'a str,
+    environment: Option<&'a Environment>,
+    document: Value,
+}
+
+async fn previous_authority(
+    tx: &mut Tx<'_>,
+    actor: Actor,
+    org: i64,
+    kind: &str,
+    identity: &str,
+) -> Result<()> {
+    let previous: Option<i64> = sqlx::query_scalar("SELECT a.repo_id FROM artifact_metadata_records d JOIN artifact_metadata a ON a.id=d.artifact_id WHERE d.org_id=?1 AND d.kind=?2 AND d.identity=?3")
+        .bind(org).bind(kind).bind(identity).fetch_optional(&mut **tx).await?;
+    if let Some(repo) = previous {
+        writable(tx, actor, org, repo).await?;
+    }
+    Ok(())
+}
+
+async fn put(tx: &mut Tx<'_>, record: NewRecord<'_>) -> Result<Record> {
+    previous_authority(tx, record.actor, record.org, record.kind, &record.identity).await?;
+    let artifact: i64 = sqlx::query_scalar("INSERT INTO artifact_metadata(repo_id,digest,name,version) VALUES(?1,?2,?3,?4) ON CONFLICT(repo_id,digest) DO UPDATE SET digest=excluded.digest RETURNING id")
+        .bind(record.repo).bind(&record.artifact.digest).bind(&record.artifact.name).bind(&record.artifact.version).fetch_one(&mut **tx).await?;
+    let now = super::time::encode(super::time::now());
+    let id: i64 = sqlx::query_scalar("INSERT INTO artifact_metadata_records(org_id,artifact_id,kind,identity,cluster,logical_environment,physical_environment,document,attestation_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10) ON CONFLICT(org_id,kind,identity) DO UPDATE SET artifact_id=excluded.artifact_id,document=excluded.document,attestation_id=excluded.attestation_id,updated_at=excluded.updated_at RETURNING id")
+        .bind(record.org).bind(artifact).bind(record.kind).bind(record.identity).bind(record.cluster).bind(record.environment.map_or("",|env|env.logical_environment.as_str())).bind(record.environment.map_or("",|env|env.physical_environment.as_str())).bind(serde_json::to_string(&record.document)?).bind(record.attestation).bind(now).fetch_one(&mut **tx).await?;
+    Ok(sqlx::query_as("SELECT d.id,a.repo_id,d.kind,a.digest,a.name,a.version,d.document,d.attestation_id,d.created_at,d.updated_at FROM artifact_metadata_records d JOIN artifact_metadata a ON a.id=d.artifact_id WHERE d.id=?1").bind(id).fetch_one(&mut **tx).await?)
+}
+
+fn identity(environment: &Environment, cluster: &str, deployment: &str) -> String {
+    json!([
+        environment.logical_environment,
+        environment.physical_environment,
+        cluster,
+        deployment
+    ])
+    .to_string()
+}
+
+async fn put_deployment(
+    tx: &mut Tx<'_>,
+    authority: (Actor, i64),
+    repo: i64,
+    attestation: Option<i64>,
+    environment: &Environment,
+    cluster: &str,
+    deployment: &Deployment,
+) -> Result<Record> {
+    let (actor, org) = authority;
+    let document = json!({"logical_environment":environment.logical_environment,"physical_environment":environment.physical_environment,"cluster":cluster,"deployment_name":deployment.deployment_name,"status":deployment.status,"tags":deployment.tags,"runtime_risks":deployment.runtime_risks});
+    put(
+        tx,
+        NewRecord {
+            actor,
+            org,
+            repo,
+            attestation,
+            artifact: &deployment.artifact,
+            kind: "deployment",
+            identity: identity(environment, cluster, &deployment.deployment_name),
+            cluster,
+            environment: Some(environment),
+            document,
+        },
+    )
+    .await
+}
+
+pub async fn deployment(
+    pool: &SqlitePool,
+    actor: Actor,
+    org: i64,
+    input: &DeploymentInput,
+) -> Result<Mutation> {
+    input.validate()?;
+    let mut tx = begin(pool).await?;
+    credential(&mut tx, actor).await?;
+    let (repo, attestation) = targets(&mut tx, actor, org, &input.deployment.artifact, 1)
+        .await?
+        .into_iter()
+        .next()
+        .ok_or(Refusal::Missing)?;
+    writable(&mut tx, actor, org, repo).await?;
+    let row = put_deployment(
+        &mut tx,
+        (actor, org),
+        repo,
+        attestation,
+        &input.environment,
+        &input.cluster,
+        &input.deployment,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Mutation {
+        records: vec![row],
+        errors: vec![],
+    })
+}
+
+pub async fn storage(
+    pool: &SqlitePool,
+    actor: Actor,
+    org: i64,
+    input: &StorageInput,
+) -> Result<Mutation> {
+    input.validate()?;
+    let mut tx = begin(pool).await?;
+    credential(&mut tx, actor).await?;
+    let targets = targets(&mut tx, actor, org, &input.artifact, 1001).await?;
+    anyhow::ensure!(targets.len() <= 1000, Refusal::TooLarge);
+    for (repo, _) in &targets {
+        writable(&mut tx, actor, org, *repo).await?;
+    }
+    let mut records = Vec::new();
+    for (repo, attestation) in targets {
+        let mut document = json!({"registry_url":input.registry_url,"status":input.status});
+        if let Some(url) = &input.artifact_url {
+            document["artifact_url"] = json!(url);
+        }
+        if let Some(repository) = &input.repository {
+            document["repository"] = json!(repository);
+        }
+        if let Some(path) = &input.path {
+            document["path"] = json!(path);
+        }
+        let identity = input.identity(repo);
+        records.push(
+            put(
+                &mut tx,
+                NewRecord {
+                    actor,
+                    org,
+                    repo,
+                    attestation,
+                    artifact: &input.artifact,
+                    kind: "storage",
+                    identity,
+                    cluster: "",
+                    environment: None,
+                    document,
+                },
+            )
+            .await?,
+        );
+    }
+    tx.commit().await?;
+    Ok(Mutation {
+        records,
+        errors: vec![],
+    })
+}
+
+fn rejected(deployment: &Deployment, error: &anyhow::Error) -> Value {
+    json!({"cause":if matches!(error.downcast_ref::<Refusal>(),Some(Refusal::Denied)) {"unauthorized"} else {"not_found"},"deployment":deployment})
+}
+
+async fn prepare(
+    tx: &mut Tx<'_>,
+    actor: Actor,
+    org: i64,
+    cluster: &str,
+    input: &ClusterInput,
+) -> Result<(Vec<(Deployment, i64, Option<i64>)>, Vec<Value>)> {
+    let mut accepted = Vec::new();
+    let mut errors = Vec::new();
+    for deployment in &input.deployments {
+        let resolved = async {
+            let (repo, attestation) = targets(tx, actor, org, &deployment.artifact, 1)
+                .await?
+                .into_iter()
+                .next()
+                .ok_or(Refusal::Missing)?;
+            writable(tx, actor, org, repo).await?;
+            previous_authority(
+                tx,
+                actor,
+                org,
+                "deployment",
+                &identity(&input.environment, cluster, &deployment.deployment_name),
+            )
+            .await?;
+            Ok::<_, anyhow::Error>((repo, attestation))
+        }
+        .await;
+        match resolved {
+            Ok((repo, attestation)) => accepted.push((deployment.clone(), repo, attestation)),
+            Err(error)
+                if input.partial_success
+                    && matches!(
+                        error.downcast_ref::<Refusal>(),
+                        Some(Refusal::Missing | Refusal::Denied)
+                    ) =>
+            {
+                errors.push(rejected(deployment, &error))
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok((accepted, errors))
+}
+
+async fn apply(
+    tx: &mut Tx<'_>,
+    actor: Actor,
+    org: i64,
+    cluster: &str,
+    input: &ClusterInput,
+) -> Result<Mutation> {
+    let (accepted, errors) = prepare(tx, actor, org, cluster, input).await?;
+    let mut records = Vec::new();
+    for (deployment, repo, attestation) in accepted {
+        records.push(
+            put_deployment(
+                tx,
+                (actor, org),
+                repo,
+                attestation,
+                &input.environment,
+                cluster,
+                &deployment,
+            )
+            .await?,
+        );
+    }
+    Ok(Mutation { records, errors })
+}
+
+pub async fn cluster(
+    pool: &SqlitePool,
+    actor: Actor,
+    org: i64,
+    cluster: &str,
+    input: &ClusterInput,
+) -> Result<Mutation> {
+    input.validate(cluster, 1000)?;
+    let mut tx = begin(pool).await?;
+    credential(&mut tx, actor).await?;
+    let mutation = apply(&mut tx, actor, org, cluster, input).await?;
+    tx.commit().await?;
+    Ok(mutation)
+}
+
+pub async fn list(
+    pool: &SqlitePool,
+    actor: Actor,
+    org: i64,
+    digest: &str,
+    kind: &str,
+) -> Result<Vec<Record>> {
+    use futures_util::TryStreamExt;
+    let sql = format!("SELECT d.id,a.repo_id,d.kind,a.digest,a.name,a.version,d.document,d.attestation_id,d.created_at,d.updated_at FROM artifact_metadata_records d JOIN artifact_metadata a ON a.id=d.artifact_id JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=?1 WHERE d.org_id=?2 AND r.owner_kind='org' AND r.owner_org_id=?2 AND a.digest=?3 AND d.kind=?4 AND (?5 IS NULL OR r.id=?5) AND {} ORDER BY d.id LIMIT 10001",super::repositories::access::readable_condition());
+    let mut stream = sqlx::query_as(&sql)
+        .bind(actor.user)
+        .bind(org)
+        .bind(digest)
+        .bind(kind)
+        .bind(actor.repo)
+        .fetch(pool);
+    let mut rows = Vec::new();
+    let mut bytes = 0;
+    while let Some(row) = stream.try_next().await? {
+        crate::backend::db::artifact_metadata::append_record(&mut rows, row, &mut bytes)?;
+    }
+    Ok(rows)
+}
+
+pub async fn enqueue(
+    pool: &SqlitePool,
+    actor: Actor,
+    org: i64,
+    cluster: &str,
+    input: &ClusterInput,
+) -> Result<(i64, Vec<Value>)> {
+    input.validate(cluster, 5000)?;
+    let mut input = input.clone();
+    input.partial_success = true;
+    let mut tx = begin(pool).await?;
+    credential(&mut tx, actor).await?;
+    let (accepted, errors) = prepare(&mut tx, actor, org, cluster, &input).await?;
+    let noop = accepted.is_empty();
+    if !noop {
+        let busy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM artifact_metadata_jobs WHERE org_id=?1 AND cluster=?2 AND status IN ('pending','processing'))").bind(org).bind(cluster).fetch_one(&mut *tx).await?;
+        anyhow::ensure!(!busy, Refusal::Busy);
+    }
+    input.deployments = accepted
+        .into_iter()
+        .map(|(deployment, _, _)| deployment)
+        .collect();
+    let saved = JobInput { input };
+    let id = sqlx::query_scalar("INSERT INTO artifact_metadata_jobs(org_id,cluster,actor_id,token_id,scoped_repo,input,status,errors) VALUES(?1,?2,?3,?4,?5,?6,?8,?7) RETURNING id")
+        .bind(org).bind(cluster).bind(actor.user).bind(actor.token).bind(actor.repo).bind(serde_json::to_string(&saved)?).bind(serde_json::to_string(&errors)?).bind(if noop {"completed"} else {"pending"}).fetch_one(&mut *tx).await?;
+    if noop {
+        sqlx::query("UPDATE artifact_metadata_jobs SET started_at=?2,total_count=0 WHERE id=?1")
+            .bind(id)
+            .bind(super::time::encode(super::time::now()))
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok((id, errors))
+}
+
+pub async fn job(
+    pool: &SqlitePool,
+    actor: Actor,
+    org: i64,
+    cluster: &str,
+    id: i64,
+) -> Result<Option<Job>> {
+    Ok(sqlx::query_as("SELECT * FROM artifact_metadata_jobs WHERE id=?1 AND org_id=?2 AND cluster=?3 AND actor_id=?4 AND (?5 IS NULL OR scoped_repo=?5)")
+        .bind(id).bind(org).bind(cluster).bind(actor.user).bind(actor.repo).fetch_optional(pool).await?)
+}
+
+pub async fn process_job(pool: &SqlitePool, id: Option<i64>) -> Result<bool> {
+    let mut tx = begin(pool).await?;
+    let job: Option<Job> = sqlx::query_as("SELECT * FROM artifact_metadata_jobs WHERE status='pending' AND (?1 IS NULL OR id=?1) ORDER BY id LIMIT 1").bind(id).fetch_optional(&mut *tx).await?;
+    let Some(job) = job else {
+        return Ok(false);
+    };
+    let actor = Actor {
+        user: job.actor_id,
+        token: job.token_id,
+        repo: job.scoped_repo,
+    };
+    let started = super::time::encode(super::time::now());
+    let result = async {
+        credential(&mut tx, actor).await?;
+        let saved: JobInput = serde_json::from_str(&job.input)?;
+        apply(&mut tx, actor, job.org_id, &job.cluster, &saved.input).await
+    }
+    .await;
+    match result {
+        Ok(mutation) => {
+            let mut errors: Vec<Value> = serde_json::from_str(&job.errors)?;
+            errors.extend(mutation.errors);
+            sqlx::query("UPDATE artifact_metadata_jobs SET status='completed',started_at=?2,total_count=?3,errors=?4 WHERE id=?1").bind(job.id).bind(started).bind(mutation.records.len() as i64).bind(serde_json::to_string(&errors)?).execute(&mut *tx).await?;
+            tx.commit().await?;
+        }
+        Err(error) => {
+            tx.rollback().await?;
+            let message = if error.downcast_ref::<Refusal>().is_some() {
+                error.to_string()
+            } else {
+                "Artifact metadata processing failed".to_owned()
+            };
+            sqlx::query("UPDATE artifact_metadata_jobs SET status='failed',started_at=?2,errors=?3 WHERE id=?1 AND status='pending'").bind(job.id).bind(started).bind(json!([{"cause":message}]).to_string()).execute(pool).await?;
+        }
+    }
+    Ok(true)
+}

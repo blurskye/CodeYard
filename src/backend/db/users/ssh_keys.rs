@@ -191,6 +191,10 @@ native_operation!(crate::backend::db::postgres::users::ssh_keys::add_ssh_key,
     public_key: &str,
 ) -> Result<SshKey>);
 
+native_operation!(crate::backend::db::postgres::users::ssh_keys::add_ssh_key_for_token,
+    crate::backend::db::sqlite::users::ssh_keys::add_ssh_key_for_token,
+    fn add_ssh_key_for_token(pool: &DbPool, user_id: i64, token: i64, name: &str, public_key: &str) -> Result<SshKey>);
+
 native_operation!(crate::backend::db::postgres::users::ssh_keys::add_ssh_key_for_session,
     crate::backend::db::sqlite::users::ssh_keys::add_ssh_key_for_session,
     fn add_ssh_key_for_session(
@@ -216,9 +220,22 @@ native_operation!(crate::backend::db::postgres::users::ssh_keys::list_user_keys,
     crate::backend::db::sqlite::users::ssh_keys::list_user_keys,
     fn list_user_keys(pool: &DbPool, user_id: i64) -> Result<Vec<SshKey>>);
 
+// One page of an account's keys, oldest first.
+native_operation!(crate::backend::db::postgres::users::ssh_keys::user_keys_page,
+    crate::backend::db::sqlite::users::ssh_keys::user_keys_page,
+    fn user_keys_page(pool: &DbPool, user_id: i64, offset: i64, limit: i64) -> Result<Vec<SshKey>>);
+
+native_operation!(crate::backend::db::postgres::users::ssh_keys::get_user_key,
+    crate::backend::db::sqlite::users::ssh_keys::get_user_key,
+    fn get_user_key(pool: &DbPool, user_id: i64, key_id: i64) -> Result<Option<SshKey>>);
+
+native_operation!(crate::backend::db::postgres::users::ssh_keys::delete_user_ssh_key_for_token,
+    crate::backend::db::sqlite::users::ssh_keys::delete_user_ssh_key_for_token,
+    fn delete_user_ssh_key_for_token(pool: &DbPool, user_id: i64, token: i64, key_id: i64) -> Result<bool>);
+
 native_operation!(crate::backend::db::postgres::users::ssh_keys::delete_user_ssh_key,
     crate::backend::db::sqlite::users::ssh_keys::delete_user_ssh_key,
-    fn delete_user_ssh_key(pool: &DbPool, user_id: i64, key_id: i64) -> Result<bool>);
+    fn delete_user_ssh_key(pool: &DbPool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, key_id: i64) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::users::ssh_keys::delete_ssh_key,
     crate::backend::db::sqlite::users::ssh_keys::delete_ssh_key,

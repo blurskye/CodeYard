@@ -1,4 +1,4 @@
-use crate::backend::db::reactions::{ReactionCount, ReactionRefusal, Subject};
+use crate::backend::db::reactions::{Reaction, ReactionCount, ReactionRefusal, Subject, Target};
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -15,26 +15,21 @@ pub async fn toggle_reaction(
     subject_id: i64,
     content: &str,
 ) -> Result<bool> {
-    let mut tx = pool.begin().await?;
-    super::discussions::require_contribution_authority(&mut tx, actor_id, repo_id).await?;
-    let item_table = match subject {
-        Subject::Issue | Subject::IssueComment => "issues",
-        Subject::PullRequest | Subject::PullRequestComment | Subject::PullRequestReview => {
-            "pull_requests"
-        }
-    };
-    let item: Option<i64> = sqlx::query_scalar(&format!(
-        "SELECT id FROM {item_table} WHERE id = $1 AND repo_id = $2 FOR UPDATE"
-    ))
-    .bind(item_id)
-    .bind(repo_id)
-    .fetch_optional(&mut *tx)
-    .await?;
-    anyhow::ensure!(item.is_some(), ReactionRefusal::NotFound);
     anyhow::ensure!(
-        is_on_item(&mut tx, subject, subject_id, item_id).await?,
-        ReactionRefusal::NotFound
+        crate::backend::db::reactions::valid_content(subject, content),
+        "Unknown reaction"
     );
+    let mut tx = begin_write(
+        pool,
+        actor_id,
+        Target {
+            repo_id,
+            item_id,
+            subject,
+            subject_id,
+        },
+    )
+    .await?;
     let removed = sqlx::query(
         "DELETE FROM reactions WHERE user_id = $1 AND subject_kind = $2 AND subject_id = $3 AND content = $4",
     )
@@ -59,6 +54,101 @@ pub async fn toggle_reaction(
     }
     tx.commit().await?;
     Ok(set)
+}
+
+async fn begin_write(
+    pool: &PgPool,
+    actor_id: i64,
+    target: Target,
+) -> Result<Transaction<'_, Postgres>> {
+    let mut tx = pool.begin().await?;
+    super::discussions::require_contribution_authority(&mut tx, actor_id, target.repo_id).await?;
+    let table = match target.subject {
+        Subject::Issue | Subject::IssueComment => "issues",
+        Subject::Release => "releases",
+        Subject::CommitComment => "commit_comments",
+        _ => "pull_requests",
+    };
+    let item: Option<i64> = sqlx::query_scalar(&format!(
+        "SELECT id FROM {table} WHERE id=$1 AND repo_id=$2 FOR UPDATE"
+    ))
+    .bind(target.item_id)
+    .bind(target.repo_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    anyhow::ensure!(
+        item.is_some()
+            && is_on_item(&mut tx, target.subject, target.subject_id, target.item_id).await?,
+        ReactionRefusal::NotFound
+    );
+    if target.subject == Subject::Release {
+        let draft: bool = sqlx::query_scalar("SELECT is_draft FROM releases WHERE id=$1")
+            .bind(target.item_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        anyhow::ensure!(
+            !draft
+                || super::discussions::lock_write_authority(&mut tx, actor_id, target.repo_id)
+                    .await?,
+            ReactionRefusal::NotFound
+        );
+    }
+    Ok(tx)
+}
+
+pub async fn create_reaction(
+    pool: &PgPool,
+    actor_id: i64,
+    target: Target,
+    content: &str,
+) -> Result<(Reaction, bool)> {
+    anyhow::ensure!(
+        crate::backend::db::reactions::valid_content(target.subject, content),
+        "Unknown reaction"
+    );
+    let mut tx = begin_write(pool, actor_id, target).await?;
+    let existing: Option<Reaction> = sqlx::query_as("SELECT * FROM reactions WHERE user_id=$1 AND subject_kind=$2 AND subject_id=$3 AND content=$4")
+        .bind(actor_id).bind(target.subject.name()).bind(target.subject_id).bind(content).fetch_optional(&mut *tx).await?;
+    let result = match existing {
+        Some(reaction) => (reaction, false),
+        None => (sqlx::query_as("INSERT INTO reactions (repo_id,user_id,subject_kind,subject_id,content) VALUES ($1,$2,$3,$4,$5) RETURNING *")
+            .bind(target.repo_id).bind(actor_id).bind(target.subject.name()).bind(target.subject_id).bind(content).fetch_one(&mut *tx).await?, true),
+    };
+    tx.commit().await?;
+    Ok(result)
+}
+
+pub async fn delete_reaction(
+    pool: &PgPool,
+    actor_id: i64,
+    target: Target,
+    reaction_id: i64,
+) -> Result<bool> {
+    let mut tx = begin_write(pool, actor_id, target).await?;
+    let result = sqlx::query("DELETE FROM reactions WHERE id=$1 AND repo_id=$2 AND user_id=$3 AND subject_kind=$4 AND subject_id=$5")
+        .bind(reaction_id).bind(target.repo_id).bind(actor_id).bind(target.subject.name()).bind(target.subject_id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn find_reaction(
+    pool: &PgPool,
+    actor: i64,
+    target: Target,
+    content: &str,
+) -> Result<Option<Reaction>> {
+    Ok(sqlx::query_as("SELECT * FROM reactions WHERE repo_id=$1 AND user_id=$2 AND subject_kind=$3 AND subject_id=$4 AND content=$5").bind(target.repo_id).bind(actor).bind(target.subject.name()).bind(target.subject_id).bind(content).fetch_optional(pool).await?)
+}
+
+pub async fn list_reactions(
+    pool: &PgPool,
+    target: Target,
+    content: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Reaction>> {
+    Ok(sqlx::query_as("SELECT * FROM reactions WHERE repo_id=$1 AND subject_kind=$2 AND subject_id=$3 AND ($4::TEXT IS NULL OR content=$4) ORDER BY id LIMIT $5 OFFSET $6")
+        .bind(target.repo_id).bind(target.subject.name()).bind(target.subject_id).bind(content).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
 /// The reactions on `ids`, in the order they were first given.
@@ -105,7 +195,7 @@ async fn is_on_item(
     item_id: i64,
 ) -> Result<bool> {
     let sql = match subject {
-        Subject::Issue | Subject::PullRequest => return Ok(id == item_id),
+        Subject::Issue | Subject::PullRequest | Subject::Release | Subject::CommitComment => return Ok(id == item_id),
         Subject::IssueComment => "SELECT 1 FROM issue_comments WHERE id = $1 AND issue_id = $2",
         Subject::PullRequestComment => "SELECT 1 FROM pr_comments c WHERE c.id = $1 AND c.pull_request_id = $2 AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = c.review_id AND v.state = 'pending')",
         Subject::PullRequestReview => "SELECT 1 FROM pr_reviews WHERE id = $1 AND pull_request_id = $2 AND state <> 'pending'",

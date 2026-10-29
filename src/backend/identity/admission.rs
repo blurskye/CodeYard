@@ -26,14 +26,36 @@ pub async fn admit_login(
     user_id: Option<i64>,
     identity: &str,
 ) -> Result<Attempt, AdmissionError> {
-    let account = match user_id {
+    let account = account_key(user_id, identity);
+    admit(pool, client.map(|client| format!("ip:{client}")), account).await
+}
+
+fn account_key(user_id: Option<i64>, identity: &str) -> String {
+    match user_id {
         Some(id) => format!("user:{id}"),
         None => format!(
             "unknown:{}",
             hex::encode(Sha256::digest(identity.trim().to_lowercase().as_bytes()))
         ),
+    }
+}
+
+/// Counts an OAuth sign-in start per client address. Each start stores state for ten minutes,
+/// so abandoned starts count; a completed sign-in gives its start back.
+pub async fn admit_oauth_start(pool: &DbPool, client: Option<&str>) -> Result<(), AdmissionError> {
+    let identity = format!("oauth-start:{}", client.unwrap_or_default());
+    admit(pool, None, account_key(None, &identity))
+        .await
+        .map(drop)
+}
+
+pub async fn forgive_oauth_start(pool: &DbPool, client: Option<&str>) {
+    let identity = format!("oauth-start:{}", client.unwrap_or_default());
+    let attempt = Attempt {
+        client: None,
+        account: account_key(None, &identity),
     };
-    admit(pool, client.map(|client| format!("ip:{client}")), account).await
+    forgive_login(pool, &attempt).await
 }
 
 /// Counts a request for a mailed link against `client` and `key` (a user, or the hash of an

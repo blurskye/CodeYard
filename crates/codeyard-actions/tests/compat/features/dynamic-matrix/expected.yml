@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "jobs": {
+    "generate": "success",
+    "test-alpha": "success",
+    "test-beta": "success"
+  },
+  "contains": [
+    "compat:project:alpha",
+    "compat:project:beta"
+  ]
+}

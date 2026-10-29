@@ -1,7 +1,10 @@
 //! Webhooks: subscriptions on repositories and organizations, and the background sends that
 //! follow a committed write. Callers never wait for a send, and a send never fails a request.
 pub mod delivery;
+pub mod deployment_protection;
+pub mod documents;
 pub mod events;
+pub mod github_apps;
 pub mod outbound;
 pub mod panel;
 pub mod payloads;
@@ -46,10 +49,21 @@ const OWNER_QUEUE_LIMIT: usize = 16;
 const HOOK_QUEUE_LIMIT: usize = 16;
 const MANUAL_PER_MINUTE: usize = 10;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Owner {
+    Native(HookOwner),
+    App(i64),
+}
+impl From<HookOwner> for Owner {
+    fn from(owner: HookOwner) -> Self {
+        Self::Native(owner)
+    }
+}
+
 #[derive(Default)]
 struct Queue {
     total: usize,
-    owners: HashMap<(usize, HookOwner), OwnerQueue>,
+    owners: HashMap<(usize, Owner), OwnerQueue>,
 }
 
 struct OwnerQueue {
@@ -65,10 +79,11 @@ impl Queue {
     fn take(
         &mut self,
         pool: &DbPool,
-        owner: HookOwner,
+        owner: impl Into<Owner>,
         hook: Option<i64>,
         manual: bool,
     ) -> Option<Arc<Semaphore>> {
+        let owner = owner.into();
         let now = Instant::now();
         self.owners.retain(|_, queue| {
             queue
@@ -106,7 +121,8 @@ impl Queue {
         Some(queue.slot.clone())
     }
 
-    fn release(&mut self, owner: (usize, HookOwner), hook: Option<i64>) {
+    fn release(&mut self, owner: (usize, impl Into<Owner>), hook: Option<i64>) {
+        let owner = (owner.0, owner.1.into());
         let queue = self.owners.get_mut(&owner).expect("queued owner");
         queue.pending -= 1;
         if let Some(id) = hook {
@@ -125,13 +141,19 @@ impl Queue {
 
 /// A place in the queue, freed when dropped. Each owner runs only one delivery at once.
 struct Ticket {
-    owner: (usize, HookOwner),
+    owner: (usize, Owner),
     hook: Option<i64>,
     slot: Arc<Semaphore>,
 }
 
 impl Ticket {
-    fn take(pool: &DbPool, owner: HookOwner, hook: Option<i64>, manual: bool) -> Option<Self> {
+    fn take(
+        pool: &DbPool,
+        owner: impl Into<Owner>,
+        hook: Option<i64>,
+        manual: bool,
+    ) -> Option<Self> {
+        let owner = owner.into();
         let slot = QUEUED
             .lock()
             .unwrap_or_else(|error| error.into_inner())
@@ -160,10 +182,13 @@ fn pool_id(pool: &DbPool) -> usize {
     }
 }
 
-fn hook_owner(hook: &Webhook) -> Option<HookOwner> {
+fn hook_owner(hook: &Webhook) -> Option<Owner> {
+    if let Some(id) = hook.app_id {
+        return Some(Owner::App(id));
+    }
     match (hook.repo_id, hook.org_id) {
-        (Some(id), None) => Some(HookOwner::Repository(id)),
-        (None, Some(id)) => Some(HookOwner::Organization(id)),
+        (Some(id), None) => Some(HookOwner::Repository(id).into()),
+        (None, Some(id)) => Some(HookOwner::Organization(id).into()),
         _ => None,
     }
 }
@@ -200,6 +225,7 @@ fn enqueue_delivery(pool: &DbPool, hook: Webhook, outgoing: Outgoing) -> bool {
 /// The send for one hook: a new delivery id, and the body encoded for the hook's content type.
 pub fn outgoing(event: &str, action: Option<&str>, hook: &Webhook, json: &str) -> Outgoing {
     Outgoing {
+        redelivery: false,
         event: event.to_owned(),
         action: action.map(str::to_owned),
         guid: uuid::Uuid::new_v4().to_string(),
@@ -219,99 +245,169 @@ impl People {
         self.0.get(&id).cloned().unwrap_or(Person {
             login: String::new(),
             id,
+            site_admin: false,
         })
     }
 }
 
-/// Sends `event` to every active hook of the repository, and of its organization, that
-/// subscribes to it. `user_ids` are the users the payload names, and `build` gets the owner's
-/// name and those users, and makes the payload. Both run in the background, and `build` runs on a
-/// blocking thread only when some hook wants the event. A send never fails the caller.
-pub fn emit<F>(pool: &DbPool, repo: &Repository, event: &'static str, user_ids: Vec<i64>, build: F)
+/// Records activity after the native write, whether or not hooks exist. Building is bounded;
+/// network deliveries remain background work and cannot prevent event persistence.
+pub async fn emit<F>(
+    pool: &DbPool,
+    repo: &Repository,
+    event: &'static str,
+    user_ids: Vec<i64>,
+    build: F,
+) -> Value
 where
     F: FnOnce(&str, &People) -> Value + Send + 'static,
 {
-    if TASKS.is_closed() {
-        return;
-    }
-    let Some(ticket) = Ticket::take(pool, HookOwner::Repository(repo.id), None, false) else {
-        tracing::warn!(event, "webhook queue is full; an event was dropped");
-        return;
+    let Ok(_build_slot) = BUILD_SLOTS.acquire().await else {
+        return Value::Null;
     };
-    let pool = pool.clone();
-    let repo = repo.clone();
-    TASKS.spawn(async move {
-        let ticket = ticket;
-        let Ok(_build_slot) = BUILD_SLOTS.acquire().await else {
-            return;
-        };
-        // Never select a former organization's hooks using a pre-transfer snapshot.
-        let Ok(Some(current)) =
-            db::repositories::records::get_repository_by_id(&pool, repo.id).await
-        else {
-            return;
-        };
-        if current.owner_user_id != repo.owner_user_id || current.owner_org_id != repo.owner_org_id
-        {
-            return;
-        }
-        let hooks = match hooks_for(&pool, &repo).await {
-            Ok(hooks) => hooks,
+    let Ok(Some(current)) = db::repositories::records::get_repository_by_id(pool, repo.id).await
+    else {
+        return Value::Null;
+    };
+    // Never select a former organization's hooks using a pre-transfer snapshot.
+    if !same_owner(&current, repo) {
+        return Value::Null;
+    }
+    let owner = db::repositories::records::repository_owner_names(pool, &[repo.id])
+        .await
+        .ok()
+        .and_then(|mut names| names.remove(&repo.id));
+    let Some(owner) = owner else {
+        return Value::Null;
+    };
+    let people = people(pool, user_ids).await;
+    let builder_owner = owner.clone();
+    let mut payload =
+        match tokio::task::spawn_blocking(move || build(&builder_owner, &people)).await {
+            Ok(value) => value,
             Err(error) => {
-                tracing::warn!(repo_id = repo.id, %error, "could not load webhooks");
-                return;
+                tracing::warn!(repo_id=repo.id,%error,"could not build activity payload");
+                return Value::Null;
             }
         };
-        let hooks: Vec<Webhook> = hooks
-            .into_iter()
-            .filter(|hook| hook.active && events::subscribes(&hook.events, event))
-            .collect();
-        if hooks.is_empty() {
-            return;
+    set_open_issues(pool, repo.id, &mut payload).await;
+    documents::complete(pool, &current, &owner, &mut payload).await;
+    // Enrichment reads the stored issue or pull request as it is now. If the repository changed
+    // owner meanwhile, those reads may hold the new owner's content, so the emission stops.
+    if !matches!(
+        db::repositories::records::get_repository_by_id(pool, repo.id).await,
+        Ok(Some(now)) if same_owner(&now, repo)
+    ) {
+        return Value::Null;
+    }
+    if let Err(error) = record_event(
+        pool,
+        repo,
+        event,
+        &payload,
+        !current.is_private && !repo.is_private,
+    )
+    .await
+    {
+        tracing::warn!(repo_id=repo.id,%error,"could not record repository activity");
+    }
+    let json = payload.to_string();
+    // The limit is on deliveries; the event itself, and the workflows it starts, go ahead.
+    if json.len() > MAX_PAYLOAD_BYTES {
+        tracing::warn!(event, "webhook payload exceeds its size limit");
+        return payload;
+    }
+    if TASKS.is_closed() {
+        return payload;
+    }
+    let hooks = match hooks_for(pool, repo).await {
+        Ok(hooks) => hooks,
+        Err(error) => {
+            tracing::warn!(repo_id=repo.id,%error,"could not load webhooks");
+            return payload;
         }
-        let owner = db::repositories::records::repository_owner_names(&pool, &[repo.id])
-            .await
-            .ok()
-            .and_then(|mut names| names.remove(&repo.id))
-            .unwrap_or_default();
-        let people = people(&pool, user_ids).await;
-        let mut payload = match TASKS.spawn_blocking(move || build(&owner, &people)).await {
-            Ok(payload) => payload,
-            Err(error) => {
-                tracing::warn!(repo_id = repo.id, %error, "could not build a webhook payload");
-                return;
-            }
-        };
-        set_open_issues(&pool, repo.id, &mut payload).await;
-        let json = payload.to_string();
-        if json.len() > MAX_PAYLOAD_BYTES {
-            tracing::warn!(event, "webhook payload is too large; an event was dropped");
-            return;
+    };
+    let action = payload.get("action").and_then(Value::as_str);
+    // One event has one delivery GUID, shared by every hook that receives it.
+    let guid = uuid::Uuid::new_v4().to_string();
+    if let Err(error) =
+        github_apps::emit_repository(pool, repo, event, action, &guid, &payload).await
+    {
+        tracing::warn!(repo_id=repo.id,%error,"could not queue GitHub App webhooks");
+    }
+    for hook in hooks
+        .into_iter()
+        .filter(|h| h.active && events::subscribes(&h.events, event))
+    {
+        let mut outgoing = outgoing(event, action, &hook, &json);
+        outgoing.guid.clone_from(&guid);
+        if !enqueue_delivery(pool, hook, outgoing) {
+            tracing::warn!(event, "webhook queue is full; a delivery was dropped");
         }
-        let action = payload
-            .get("action")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        // The deliveries take their own places, so the repository's last hook is not crowded out.
-        drop(ticket);
-        for hook in hooks {
-            let outgoing = outgoing(event, action.as_deref(), &hook, &json);
-            if !enqueue_delivery(&pool, hook, outgoing) {
-                tracing::warn!(event, "webhook queue is full; a delivery was dropped");
-            }
-        }
-    });
+    }
+    payload
+}
+
+/// Whether the repository has the owners an emission was made for.
+fn same_owner(current: &Repository, repo: &Repository) -> bool {
+    current.owner_user_id == repo.owner_user_id && current.owner_org_id == repo.owner_org_id
+}
+
+async fn record_event(
+    pool: &DbPool,
+    repo: &Repository,
+    event: &str,
+    payload: &Value,
+    public: bool,
+) -> anyhow::Result<()> {
+    // GitHub's activity shows a new repository as a CreateEvent, though its webhook is
+    // `repository`.
+    let created;
+    let (event, payload) = if event == events::REPOSITORY && payload["action"] == "created" {
+        created = serde_json::json!({
+            "ref": null,
+            "ref_type": "repository",
+            "full_ref": null,
+            "master_branch": repo.default_branch,
+            "description": repo.description,
+            "pusher_type": "user",
+            "sender": payload["sender"],
+        });
+        (events::CREATE, &created)
+    } else {
+        (event, payload)
+    };
+    let kind = match event {
+        events::PUSH => "PushEvent",
+        events::CREATE => "CreateEvent",
+        events::DELETE => "DeleteEvent",
+        events::FORK => "ForkEvent",
+        events::STAR if payload["action"] == "created" => "WatchEvent",
+        events::RELEASE if payload["release"]["draft"] == false => "ReleaseEvent",
+        events::ISSUES => "IssuesEvent",
+        events::ISSUE_COMMENT => "IssueCommentEvent",
+        events::PULL_REQUEST => "PullRequestEvent",
+        events::PULL_REQUEST_REVIEW => "PullRequestReviewEvent",
+        events::PULL_REQUEST_REVIEW_COMMENT => "PullRequestReviewCommentEvent",
+        _ => return Ok(()),
+    };
+    let public = public && (kind != "ForkEvent" || payload["forkee"]["private"] == false);
+    let Some(actor) = payload["sender"]["id"].as_i64() else {
+        return Ok(());
+    };
+    db::events::record_event(pool, repo.id, Some(actor), kind, payload, public).await
 }
 
 /// The repository's `open_issues_count` is counted when the payload is made, because the
-/// stored column is not kept up to date.
+/// stored column is not kept up to date. Like GitHub's, it counts open pull requests too.
 pub(crate) async fn set_open_issues(pool: &DbPool, repo_id: i64, payload: &mut Value) {
     let Some(repository) = payload.get_mut("repository").and_then(Value::as_object_mut) else {
         return;
     };
-    match db::issues::count_repo_issues(pool, repo_id, &Default::default()).await {
-        Ok(counts) => {
-            repository.insert("open_issues_count".into(), counts.open.into());
+    match db::repository_stats::repository_document_facts(pool, repo_id).await {
+        Ok(facts) => {
+            repository.insert("open_issues_count".into(), facts.open_items.into());
+            repository.insert("open_issues".into(), facts.open_items.into());
         }
         Err(error) => tracing::warn!(repo_id, %error, "could not count open issues for a webhook"),
     }
@@ -394,7 +490,7 @@ mod tests {
         let other = HookOwner::Repository(2);
         let slot = queue.take(&pool, other, Some(3), false).unwrap();
         assert_eq!(slot.available_permits(), 1);
-        assert!(queue.owners[&(pool_id(&pool), owner)]
+        assert!(queue.owners[&(pool_id(&pool), owner.into())]
             .slot
             .try_acquire()
             .is_ok());

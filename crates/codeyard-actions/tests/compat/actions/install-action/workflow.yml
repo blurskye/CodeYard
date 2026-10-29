@@ -1,0 +1,15 @@
+# https://github.com/taiki-e/install-action/tree/a4d3f3f761dcd95cce1b72cb61cb6d1963438177
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2
+        with:
+          tool: "just@1.40.0"
+      - name: Assert documented effect
+        run: |
+          just --version | grep '^just 1\.40\.0'
+          echo compat:ok

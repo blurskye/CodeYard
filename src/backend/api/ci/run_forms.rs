@@ -44,6 +44,62 @@ async fn readable_run(
     Ok((repository, run))
 }
 
+pub(crate) async fn download_artifact(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, run_id, artifact)): Path<(String, String, String, i64)>,
+    headers: HeaderMap,
+    OriginalUri(uri): OriginalUri,
+) -> Response {
+    use axum::response::IntoResponse;
+    let ctx = match PageContext::load(state.clone(), headers.clone(), &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    let (_, run) = match readable_run(&ctx, &owner, &name, &run_id).await {
+        Ok(run) => run,
+        Err(response) => return response,
+    };
+    let object = match db::action_objects::artifact_by_id(&state.pool, artifact).await {
+        Ok(Some(object)) if object.run_id == Some(run.id) => object,
+        Ok(_) => return ctx.error(StatusCode::NOT_FOUND, "Artifact not found."),
+        Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Artifacts unavailable."),
+    };
+    match super::results::download(state, object, &headers).await {
+        Ok(response) => response,
+        Err(error) => error.into_response(),
+    }
+}
+
+pub(crate) async fn delete_artifact(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, run_id, artifact)): Path<(String, String, String, i64)>,
+    headers: HeaderMap,
+    OriginalUri(uri): OriginalUri,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    if let Err(response) = ctx.check_csrf(&form) {
+        return response;
+    }
+    let (_, run) = match readable_run(&ctx, &owner, &name, &run_id).await {
+        Ok(run) => run,
+        Err(response) => return response,
+    };
+    let actor = ctx.user.as_ref().expect("readable run").id;
+    match db::action_objects::delete_artifact(&ctx.state.pool, artifact, run.id, Some(actor)).await
+    {
+        Ok(true) => ctx.redirect(&run_page(&owner, &name, run.run_id)),
+        Ok(false) => ctx.error(
+            StatusCode::FORBIDDEN,
+            "Repository write access is required.",
+        ),
+        Err(_) => ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Artifacts unavailable."),
+    }
+}
+
 fn run_page(owner: &str, name: &str, run_id: Uuid) -> String {
     format!(
         "/{}/{}/actions?job={run_id}",

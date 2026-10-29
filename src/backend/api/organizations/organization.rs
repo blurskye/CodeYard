@@ -3,6 +3,7 @@
 use super::INDEX;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
+use crate::backend::db::interactions::InteractionScope;
 use crate::backend::db::models::OrgRole;
 use crate::backend::db::organizations;
 use crate::backend::db::organizations::OrganizationOutcome::*;
@@ -32,6 +33,7 @@ pub(super) enum Command {
     Create(NewOrganization),
     Profile(OrganizationProfile),
     Membership(super::membership::Command),
+    Role(super::roles::Command),
     Team(super::teams::Command),
     Delete,
 }
@@ -64,26 +66,44 @@ fn keys(action: &str) -> &'static [&'static str] {
     match action {
         "create" => &["slug", "display_name", "description"],
         "profile" => &["display_name", "description"],
-        "add-member" => &["username", "role"],
+        "add-member" => &["username", "role", "team_slugs", "reinstate"],
         "member-role" => &["user_id", "role"],
-        "remove-member" => &["user_id", "confirm"],
-        "cancel-invitation" => &["user_id"],
+        "membership-visibility" => &["visibility"],
+        "remove-member" | "convert-outside" | "remove-outside" => &["user_id", "confirm"],
+        "cancel-invitation" => &["user_id", "invitation_id"],
+        "block-user" => &["username"],
+        "unblock-user" => &["user_id"],
+        "assign-user-role" => &["username", "role_id"],
+        "assign-team-role" => &["team_slug", "role_id"],
+        "revoke-user-role" => &["username", "role_id", "confirm"],
+        "revoke-team-role" => &["team_slug", "role_id", "confirm"],
+        "revoke-all-user-roles" => &["username", "confirm"],
+        "revoke-all-team-roles" => &["team_slug", "confirm"],
         "recover-owner" => &["org_id", "username", "confirm"],
         "delete-organization" => &["confirm"],
-        "team" => &["slug", "name", "description", "privacy"],
-        "team-edit" => &["team_id", "name", "description", "privacy"],
+        "team" => &["slug", "name", "description", "privacy", "parent_team_id"],
+        "team-edit" => &[
+            "team_id",
+            "name",
+            "description",
+            "privacy",
+            "parent_team_id",
+        ],
         "team-delete" => &["team_id", "confirmation"],
         "team-member" => &["team_id", "username", "role"],
         "remove-team-member" => &["team_id", "user_id", "confirm"],
         "grant" => &["team_id", "repo_id", "permission"],
         "revoke" => &["team_id", "repo_id"],
+        "dependabot-default" => &["default_level"],
+        "dependabot-add" | "dependabot-remove" => &["repo_id"],
         _ => &[],
     }
 }
 fn bound(key: &str) -> usize {
     match key {
         "description" => 4096,
-        "slug" | "display_name" | "name" | "username" | "confirm" => 1024,
+        "team_slugs" => 24 * 1024,
+        "slug" | "team_slug" | "display_name" | "name" | "username" | "confirm" => 1024,
         "csrf_token" => 64,
         _ => 32,
     }
@@ -160,11 +180,23 @@ impl Command {
                 )?,
             ),
             "profile" => Self::Profile(profile()?),
-            "add-member" | "member-role" | "remove-member" | "cancel-invitation" => {
-                Self::Membership(
-                    super::membership::Command::parse(form).map_err(|()| INVALID_FORM)?,
-                )
-            }
+            "add-member"
+            | "member-role"
+            | "remove-member"
+            | "convert-outside"
+            | "remove-outside"
+            | "block-user"
+            | "unblock-user"
+            | "cancel-invitation"
+            | "membership-visibility" => Self::Membership(
+                super::membership::Command::parse(form).map_err(|()| INVALID_FORM)?,
+            ),
+            "assign-user-role"
+            | "assign-team-role"
+            | "revoke-user-role"
+            | "revoke-team-role"
+            | "revoke-all-user-roles"
+            | "revoke-all-team-roles" => Self::Role(super::roles::Command::parse(form)?),
             "delete-organization" => match current {
                 Some(org) if field(form, "confirm") == org.name => Self::Delete,
                 _ => return Err("Type the organization name to confirm deletion."),
@@ -217,6 +249,7 @@ pub(super) fn team_view(team: crate::backend::db::models::Team, member_count: i6
         slug: team.slug,
         description: team.description.unwrap_or_default(),
         privacy: team.privacy,
+        parent_team_id: team.parent_team_id,
         member_count,
     }
 }
@@ -331,14 +364,35 @@ pub(super) async fn respond_with_hook_draft(
     let mut tab = requested_tab(ctx);
     if !ctx.query.contains_key("tab") {
         tab = match draft.get("action").map(String::as_str) {
-            Some("add-member" | "member-role" | "remove-member" | "cancel-invitation") => {
-                "members".into()
-            }
+            Some(
+                "add-member"
+                | "member-role"
+                | "remove-member"
+                | "convert-outside"
+                | "remove-outside"
+                | "block-user"
+                | "unblock-user"
+                | "cancel-invitation"
+                | "membership-visibility",
+            ) => "members".into(),
+            Some(
+                "assign-user-role"
+                | "assign-team-role"
+                | "revoke-user-role"
+                | "revoke-team-role"
+                | "revoke-all-user-roles"
+                | "revoke-all-team-roles",
+            ) => "roles".into(),
             Some(action) if keys(action).contains(&"team_id") || action == "team" => "teams".into(),
             _ => tab,
         };
     }
-    if tab == "webhooks" && !is_owner {
+    if (matches!(tab.as_str(), "webhooks" | "roles" | "settings") && !is_owner)
+        || (matches!(
+            tab.as_str(),
+            "actions" | "dependabot" | "private-registries"
+        ) && !can_manage)
+    {
         tab = "overview".to_owned();
     }
     // Only the overview offers organization deletion.
@@ -393,6 +447,43 @@ pub(super) async fn respond_with_hook_draft(
     } else {
         vec![]
     };
+    let interactions = if can_manage && tab == "overview" {
+        if let Some(org) = &current {
+            match crate::backend::api::user::interactions::panel(
+                &ctx.state.pool,
+                actor,
+                InteractionScope::Organization(org.id),
+                &ctx.csrf_token,
+                is_owner,
+            )
+            .await
+            {
+                Ok(panel) => Some(Box::new(panel)),
+                Err(_) => return unavailable(ctx),
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let membership_public = if let Some(org) = org {
+        match organizations::discovery::list_organizations(
+            &ctx.state.pool,
+            Some(actor),
+            false,
+            org - 1,
+            0,
+            1,
+        )
+        .await
+        {
+            Ok(rows) => rows.first().is_some_and(|row| row.id == org),
+            Err(_) => return unavailable(ctx),
+        }
+    } else {
+        false
+    };
     let mut model = view::Page {
         csrf_token: ctx.csrf_token.clone(),
         organizations: vec![],
@@ -400,6 +491,7 @@ pub(super) async fn respond_with_hook_draft(
         can_manage,
         is_owner,
         viewer_id: actor,
+        membership_public,
         tab,
         members: vec![],
         teams: vec![],
@@ -422,11 +514,24 @@ pub(super) async fn respond_with_hook_draft(
             .then(|| "Organization deleted.".to_owned()),
         message,
         webhooks: None,
+        dependabot: None,
+        private_registries: None,
+        actions: None,
+        roles: None,
+        properties: None,
+        settings: None,
+        interactions,
         draft,
         invitations: vec![],
         pending_invitations: vec![],
         invitations_next: None,
         pending_invitations_next: None,
+        failed_invitations: vec![],
+        failed_invitations_next: None,
+        outside_collaborators: vec![],
+        outside_next: None,
+        blocked_users: vec![],
+        blocks_next: None,
         ownerless_next,
     };
     if let Some(org) = org {
@@ -498,6 +603,117 @@ pub(super) async fn respond_with_hook_draft(
             model.repositories = repositories;
             model.more_repositories = more_repositories;
         }
+        if model.tab == "dependabot" {
+            let (default_level, repositories) =
+                match crate::backend::db::dependabot::repository_access(&ctx.state.pool, actor, org)
+                    .await
+                {
+                    Ok(access) => access,
+                    Err(
+                        crate::backend::db::secrets::SecretsError::Denied
+                        | crate::backend::db::secrets::SecretsError::NotFound,
+                    ) => return not_found(ctx),
+                    Err(_) => return unavailable(ctx),
+                };
+            let page = ctx
+                .query
+                .get("page")
+                .and_then(|p| p.parse::<i64>().ok())
+                .unwrap_or(1)
+                .clamp(1, 10_000);
+            let offset = (page as usize - 1) * 30;
+            let has_more = offset + 30 < repositories.len();
+            model.dependabot = Some(Box::new(view::dependabot::RepositoryAccess {
+                default_level,
+                page,
+                has_more,
+                repositories: repositories
+                    .into_iter()
+                    .skip(offset)
+                    .take(30)
+                    .map(|repo| view::dependabot::Repository {
+                        id: repo.id,
+                        name: repo.name,
+                        private: repo.is_private,
+                    })
+                    .collect(),
+            }));
+        }
+        if model.tab == "private-registries" {
+            let registries =
+                match crate::backend::db::private_registries::list(&ctx.state.pool, actor, org)
+                    .await
+                {
+                    Ok(registries) => registries,
+                    Err(crate::backend::db::private_registries::RegistryError::Secret(
+                        crate::backend::db::secrets::SecretsError::Denied
+                        | crate::backend::db::secrets::SecretsError::NotFound,
+                    )) => return not_found(ctx),
+                    Err(_) => return unavailable(ctx),
+                };
+            let registries = match registries
+                .into_iter()
+                .map(super::private_registries::project)
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(registries) => registries,
+                Err(_) => return unavailable(ctx),
+            };
+            let editing = if let Some(name) = ctx.query.get("registry") {
+                match registries
+                    .iter()
+                    .find(|registry| registry.name.eq_ignore_ascii_case(name))
+                    .cloned()
+                {
+                    Some(registry) => Some(registry),
+                    None => return not_found(ctx),
+                }
+            } else {
+                None
+            };
+            let page = ctx
+                .query
+                .get("page")
+                .and_then(|p| p.parse::<i64>().ok())
+                .unwrap_or(1)
+                .clamp(1, 10_000);
+            let offset = (page as usize - 1) * 30;
+            let has_more = offset + 30 < registries.len();
+            model.private_registries = Some(Box::new(view::private_registries::Page {
+                registries: registries.into_iter().skip(offset).take(30).collect(),
+                editing,
+                page,
+                has_more,
+            }));
+        }
+        if model.tab == "actions" {
+            match super::action_values::build(ctx, actor, org).await {
+                Ok(panel) => model.actions = Some(Box::new(panel)),
+                Err(
+                    crate::backend::db::organization_values::ValueError::Denied
+                    | crate::backend::db::organization_values::ValueError::NotFound,
+                ) => return not_found(ctx),
+                Err(_) => return unavailable(ctx),
+            }
+        }
+        if model.tab == "roles" {
+            model.roles = match super::roles::panel(ctx, actor, org).await {
+                Ok(panel) => Some(Box::new(panel)),
+                Err(response) => return response,
+            };
+        }
+        if model.tab == "settings" {
+            model.settings = match super::settings::panel(ctx, actor, org).await {
+                Ok(panel) => Some(Box::new(panel)),
+                Err(response) => return response,
+            };
+        }
+        if model.tab == "properties" {
+            model.properties = match super::properties::panel(ctx, actor, org).await {
+                Ok(panel) => Some(Box::new(panel)),
+                Err(response) => return response,
+            };
+        }
         if model.tab == "webhooks" {
             let base = format!("{INDEX}/{org}?tab=webhooks");
             let action_base = format!("{INDEX}/{org}/webhooks?tab=webhooks");
@@ -532,7 +748,14 @@ pub(super) async fn respond_with_hook_draft(
             }
         }
         if can_manage && model.tab == "members" {
-            let Some((_, invitations_page)) = cursor(ctx, "invitations_after") else {
+            let Some((invitations_after, invitations_page)) = cursor(ctx, "invitations_after")
+            else {
+                return invalid(ctx);
+            };
+            let Some((failed_after, _)) = cursor(ctx, "failed_invitations_after") else {
+                return invalid(ctx);
+            };
+            let Some((outside_after, _)) = cursor(ctx, "outside_after") else {
                 return invalid(ctx);
             };
             model.pending_invitations = match organizations::list_organization_invitations(
@@ -545,24 +768,87 @@ pub(super) async fn respond_with_hook_draft(
             {
                 Ok(Applied(values)) => {
                     if values.len() as i64 == PAGE_LIMIT {
-                        model.pending_invitations_next = values.last().map(|v|format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={}",v.id));
+                        model.pending_invitations_next = values.last().map(|v|format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&failed_invitations_after={failed_after}&invitations_after={}",v.id));
                     }
-                    let ids: Vec<_> = values.iter().map(|v| v.id).collect();
-                    let pending = values
-                        .into_iter()
-                        .map(|invite| (invite.user_id, invite.role))
-                        .collect();
-                    match super::membership::project(ctx, pending).await {
-                        Ok(members) => members
+                    match super::membership::project_invitations(ctx, values).await {
+                        Ok(invitations) => invitations,
+                        Err(response) => return response,
+                    }
+                }
+                _ => return unavailable(ctx),
+            };
+            if is_owner {
+                let Some((blocks_after, _)) = cursor(ctx, "blocks_after") else {
+                    return invalid(ctx);
+                };
+                model.blocked_users = match organizations::blocks::list(
+                    &ctx.state.pool,
+                    actor,
+                    org,
+                    blocks_after,
+                    (0, PAGE_LIMIT),
+                )
+                .await
+                {
+                    Ok(Applied(users)) => {
+                        if users.len() as i64 == PAGE_LIMIT {
+                            model.blocks_next = users.last().map(|user|format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={invitations_after}&failed_invitations_after={failed_after}&outside_after={outside_after}&blocks_after={}",user.id));
+                        }
+                        users
                             .into_iter()
-                            .zip(ids)
-                            .map(|(member, id)| view::PendingInvitation {
-                                id,
-                                user_id: member.user_id,
-                                username: member.username,
-                                role: member.role,
+                            .map(|user| view::BlockedUser {
+                                user_id: user.id,
+                                username: user.username,
                             })
-                            .collect(),
+                            .collect()
+                    }
+                    _ => return unavailable(ctx),
+                };
+                model.outside_collaborators = match organizations::outside::list(
+                    &ctx.state.pool,
+                    actor,
+                    org,
+                    "all",
+                    outside_after,
+                    (0, PAGE_LIMIT),
+                )
+                .await
+                {
+                    Ok(Applied(users)) => {
+                        if users.len() as i64 == PAGE_LIMIT {
+                            model.outside_next = users.last().map(|user| format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={invitations_after}&failed_invitations_after={failed_after}&outside_after={}",user.id));
+                        }
+                        users
+                            .into_iter()
+                            .map(|user| view::OutsideCollaborator {
+                                user_id: user.id,
+                                username: user.username,
+                            })
+                            .collect()
+                    }
+                    _ => return unavailable(ctx),
+                };
+            }
+            let filter = organizations::InvitationFilter {
+                failed: true,
+                after: failed_after,
+                ..Default::default()
+            };
+            model.failed_invitations = match organizations::invitation_page(
+                &ctx.state.pool,
+                actor,
+                org,
+                &filter,
+                (0, PAGE_LIMIT),
+            )
+            .await
+            {
+                Ok(Applied(values)) => {
+                    if values.len() as i64 == PAGE_LIMIT {
+                        model.failed_invitations_next = values.last().map(|v| format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={invitations_after}&failed_invitations_after={}", v.id));
+                    }
+                    match super::membership::project_invitations(ctx, values).await {
+                        Ok(invitations) => invitations,
                         Err(response) => return response,
                     }
                 }
@@ -633,7 +919,10 @@ pub(super) async fn respond_with_hook_draft(
 /// The section the URL names. Overview is the default, and any other value shows it too.
 pub(super) fn requested_tab(ctx: &PageContext) -> String {
     match ctx.query.get("tab").map(String::as_str) {
-        Some(tab @ ("members" | "teams" | "webhooks")) => tab.to_owned(),
+        Some(
+            tab @ ("members" | "teams" | "webhooks" | "actions" | "roles" | "properties"
+            | "settings" | "dependabot" | "private-registries"),
+        ) => tab.to_owned(),
         None if ctx.query.contains_key("team")
             || (ctx.query.contains_key("teams_after")
                 && !ctx.query.contains_key("members_after")) =>
@@ -651,7 +940,16 @@ pub(super) fn destination(ctx: &PageContext, org: Option<i64>, keep_team: bool) 
         return INDEX.to_owned();
     };
     let mut query = url::form_urlencoded::Serializer::new(String::new());
-    for key in ["members_after", "teams_after", "invitations_after"] {
+    for key in [
+        "members_after",
+        "teams_after",
+        "invitations_after",
+        "failed_invitations_after",
+        "outside_after",
+        "blocks_after",
+        "role_users_after",
+        "role_teams_after",
+    ] {
         if ctx.query.contains_key(key) {
             if let Some((after, _)) = cursor(ctx, key) {
                 query.append_pair(key, &after.to_string());
@@ -676,6 +974,25 @@ pub(super) fn destination(ctx: &PageContext, org: Option<i64>, keep_team: bool) 
         }
     }
     let tab = requested_tab(ctx);
+    if tab == "properties" {
+        if let Some(property) = ctx
+            .query
+            .get("property")
+            .filter(|property| organizations::properties::valid_name(property))
+        {
+            query.append_pair("property", property);
+        }
+    }
+    if tab == "roles" {
+        if let Some(role) = ctx
+            .query
+            .get("role")
+            .and_then(|value| value.parse::<i64>().ok())
+            .filter(|id| *id > 0)
+        {
+            query.append_pair("role", &role.to_string());
+        }
+    }
     if tab != "overview" && ctx.query.contains_key("tab") {
         query.append_pair("tab", &tab);
     }
@@ -691,48 +1008,23 @@ pub(super) fn destination(ctx: &PageContext, org: Option<i64>, keep_team: bool) 
     )
 }
 pub(super) fn unit<T>(result: OrganizationOutcome<T>) -> OrganizationOutcome<()> {
-    match result {
-        Applied(_) => Applied(()),
-        Missing => Missing,
-        Denied => Denied,
-        Conflict => Conflict,
-        Suspended => Suspended,
-    }
+    result.map(|_| ())
 }
 
-/// Deletes each repository the organization owns through the repository deletion path, then
-/// the organization. Repositories go first, one at a time, so a retry after a failure only
-/// sees what is left. Repositories created meanwhile make the final delete a Conflict.
 async fn delete_with_repositories(
     ctx: &PageContext,
     actor: i64,
     org: i64,
 ) -> Result<OrganizationOutcome<()>, Response> {
-    let pool = &ctx.state.pool;
-    let repositories =
-        match organizations::list_organization_deletion_repositories(pool, actor, org).await {
-            Ok(Applied(repositories)) => repositories,
-            Ok(other) => return Ok(unit(other)),
-            Err(_) => return Err(unavailable(ctx)),
-        };
-    for repository in repositories {
-        let deleted =
-            match organizations::delete_organization_repository(pool, actor, org, repository).await
-            {
-                Ok(Applied(deleted)) => deleted,
-                Ok(other) => return Ok(unit(other)),
-                Err(_) => return Err(unavailable(ctx)),
-            };
-        if let Err(error) =
-            lifecycle::remove_deleted_repository(ctx.state.cluster.as_ref(), &deleted).await
-        {
-            return Err(ctx.error(StatusCode::CONFLICT, error.message));
-        }
-    }
-    organizations::delete_organization(pool, actor, org)
+    crate::backend::organizations::delete(&ctx.state, actor, org)
         .await
-        .map(unit)
-        .map_err(|_| unavailable(ctx))
+        .map_err(|error| {
+            if let Some(error) = error.downcast_ref::<lifecycle::StorageError>() {
+                ctx.error(StatusCode::CONFLICT, error.message)
+            } else {
+                unavailable(ctx)
+            }
+        })
 }
 
 async fn apply(
@@ -761,6 +1053,18 @@ async fn apply(
                 .map(|outcome| match outcome {
                     Missing if !add => Denied,
                     outcome => outcome,
+                });
+        }
+        Command::Role(command) => {
+            return super::roles::apply(ctx, actor, org, command)
+                .await
+                .map_err(|_| unavailable(ctx))
+                .map(|outcome| {
+                    if matches!(outcome, Missing) {
+                        Denied
+                    } else {
+                        outcome
+                    }
                 });
         }
         Command::Team(command) => {
@@ -854,10 +1158,14 @@ pub(super) async fn mutate(
             .await
         }
     };
-    let self_removal = matches!(&command, Command::Membership(super::membership::Command::Remove { user }) if *user == actor);
+    let self_removal = matches!(&command, Command::Membership(super::membership::Command::Remove { user } | super::membership::Command::ConvertOutside { user }) if *user == actor);
     // Every removal needs the removed account's username typed in that row's confirmation field.
     let removed = match &command {
-        Command::Membership(super::membership::Command::Remove { user })
+        Command::Membership(
+            super::membership::Command::Remove { user }
+            | super::membership::Command::ConvertOutside { user }
+            | super::membership::Command::RemoveOutside { user },
+        )
         | Command::Team(super::teams::Command::RemoveMember { user, .. }) => Some(*user),
         _ => None,
     };
@@ -891,6 +1199,7 @@ pub(super) async fn mutate(
         Command::Membership(
             super::membership::Command::ChangeRole { .. }
                 | super::membership::Command::Remove { .. }
+                | super::membership::Command::ConvertOutside { .. }
         )
     );
     let team_deleted = matches!(
@@ -919,6 +1228,26 @@ pub(super) async fn mutate(
     if matches!(outcome, Ok(Missing)) && field(&form, "action") == "add-member" {
         let message = format!("No user named {}.", field(&form, "username"));
         return respond(&ctx, org, StatusCode::NOT_FOUND, Some(message), draft).await;
+    }
+    if matches!(outcome, Ok(Conflict)) && field(&form, "action") == "assign-user-role" {
+        return respond(
+            &ctx,
+            org,
+            StatusCode::CONFLICT,
+            Some("Only organization members can be assigned organization roles.".into()),
+            draft,
+        )
+        .await;
+    }
+    if matches!(outcome, Ok(Conflict)) && field(&form, "action") == "block-user" {
+        return respond(
+            &ctx,
+            org,
+            StatusCode::CONFLICT,
+            Some("Remove the user from the organization before blocking them.".into()),
+            draft,
+        )
+        .await;
     }
     if matches!(outcome, Ok(Conflict)) && field(&form, "action") == "add-member" {
         let message = format!(

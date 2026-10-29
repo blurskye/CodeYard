@@ -1,0 +1,12 @@
+
+		mutation CloneTemplateRepository($input: CloneTemplateRepositoryInput!) {
+			cloneTemplateRepository(input: $input) {
+				repository {
+					id
+					name
+					owner { login }
+					url
+				}
+			}
+		}
+		

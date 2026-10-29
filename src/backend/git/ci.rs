@@ -173,13 +173,14 @@ fn workflow_files_in_commit(
             continue;
         }
         let path = format!(".github/workflows/{name}");
-        let blob = match read_bounded_workflow_blob(git, entry.id()) {
-            Ok(blob) => blob,
-            Err(error) => {
-                tracing::warn!(workflow = %path, commit = %commit.id(), %error, "unreadable workflow skipped");
-                continue;
-            }
-        };
+        // An oversized workflow is unsupported and left out. A missing or unreadable object fails the
+        // listing, so an incomplete result is never cached as the commit's workflows.
+        let (size, _) = git.odb()?.read_header(entry.id())?;
+        if size > MAX_CI_WORKFLOW_BYTES {
+            tracing::warn!(workflow = %path, commit = %commit.id(), "oversized workflow skipped");
+            continue;
+        }
+        let blob = read_bounded_workflow_blob(git, entry.id())?;
         if blob.is_binary() {
             tracing::warn!(workflow = %path, commit = %commit.id(), "binary workflow skipped");
             continue;
@@ -197,13 +198,16 @@ fn workflow_files_in_commit(
     Ok(files)
 }
 
+/// A workflow file directly in `.github/workflows/`. Spaces and non-ASCII letters are valid, as
+/// on GitHub. A separator, a comma, a control character or `..` is not, and neither is a colon,
+/// which job identities use to split the path from the job.
 pub(crate) fn is_ci_workflow_filename(name: &str) -> bool {
     name.len() + ".github/workflows/".len() <= 255
         && (name.ends_with(".yml") || name.ends_with(".yaml"))
         && !name.contains("..")
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        && !name
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '/' | '\\' | ',' | ':'))
 }
 
 fn bounded_ancestor(git: &Repository, tip: Oid, ancestor: Oid) -> Result<bool> {

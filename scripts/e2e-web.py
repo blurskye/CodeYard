@@ -14,6 +14,7 @@ failure go to stderr. Exit status: 0 ok, 1 an expectation failed, 2 bad usage.
   e2e-web.py form-post --from FILE [options] POST a form saved by form-get
   e2e-web.py page PATH [options]             server HTML plus hydration contract
   e2e-web.py bundle --dir DIR                the browser bundle is served intact
+  e2e-web.py review-range DIFF --path FILE    publish/check a range on a disposable PR
 """
 import argparse
 import hashlib
@@ -251,19 +252,25 @@ class PageParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.title = []
         self.in_title = False
+        # A browser's document title ignores SVG <title> elements, which charts use as tooltips.
+        self.svg_depth = 0
         self.scripts = []
         self._script = None
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
-        if tag == "title":
-            self.in_title = True
+        if tag == "svg":
+            self.svg_depth += 1
+        elif tag == "title":
+            self.in_title = self.svg_depth == 0
         elif tag == "script":
             self._script = {"attrs": a, "data": []}
             self.scripts.append(self._script)
 
     def handle_endtag(self, tag):
-        if tag == "title":
+        if tag == "svg":
+            self.svg_depth = max(0, self.svg_depth - 1)
+        elif tag == "title":
             self.in_title = False
         elif tag == "script":
             self._script = None
@@ -690,6 +697,37 @@ def cmd_form(client, a):
     post_form(client, a, a.path, submit_target(form, form.action, a.submit, a.action), fields, form, files)
 
 
+def cmd_review_range(client, a):
+    """Exercise native refusal preservation and publication through the real forms."""
+    check(0 < a.start < a.end, "review-range needs a positive forward range")
+    diff = a.diff.rstrip("/")
+    action = diff.removesuffix("/diff") + "/comments"
+    target = diff + "?" + urllib.parse.urlencode({"path": a.path, "side": "RIGHT", "line": a.end})
+    selection = argparse.Namespace(path=target, action=action, has=["start_line"])
+    body = "Native range form"
+    for start, expected in ((a.end + 1, 400), (a.start, 303)):
+        _, form = get_form(client, selection, "200")
+        fields = apply_overrides(form.fields, [f"start_line={start}", "start_side=RIGHT", f"body={body}"], [], "intent=comment")
+        response = client.request("POST", resolve_action(target, form.action),
+                                  {"Content-Type": "application/x-www-form-urlencoded"},
+                                  urllib.parse.urlencode(fields).encode())
+        if response.status != expected:
+            fail(response, f"review range expected {expected}, got {response.status}")
+        if expected == 400:
+            refused = pick_form(parse_forms(response.text), action, ["start_line"])
+            check(refused.get("start_line") == str(start), "refused range start was lost")
+            check(refused.get("start_side") == "RIGHT", "refused range side was lost")
+            check(refused.get("body") == body, "refused range body was lost")
+        else:
+            check((response.header("location") or "").startswith(diff + "#thread-"), "range did not redirect to its real thread")
+    for view in ("", "?view=split"):
+        response = client.request("GET", diff + view, {"Accept": ACCEPT["html"]})
+        check(response.status == 200, "range page is unavailable")
+        text = visible_text(response.text)
+        check(f"Lines RIGHT {a.start}–RIGHT {a.end}" in text and body in text, "published range is missing")
+    print("PASS native review range refusal, publication and unified/split projections", file=sys.stderr)
+
+
 def cmd_form_get(client, a):
     page, form = get_form(client, a, a.status)
     if a.save:
@@ -888,6 +926,14 @@ def build_parser():
     p.add_argument("--user")
     p.add_argument("--anonymous", action="store_true")
     p.set_defaults(run=cmd_page)
+
+    p = sub.add_parser("review-range")
+    common(p)
+    p.add_argument("diff")
+    p.add_argument("--path", required=True)
+    p.add_argument("--start", type=int, default=1)
+    p.add_argument("--end", type=int, default=3)
+    p.set_defaults(run=cmd_review_range)
 
     p = sub.add_parser("bundle")
     common(p)

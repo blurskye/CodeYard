@@ -142,7 +142,7 @@ async fn contract(pg: bool) {
     let reader = http::Client::login(&router, f.pool(), reader_id).await;
     let csrf = writer.csrf.clone();
     let page = "/upload_owner/site/upload/main";
-    let tree = "/upload_owner/site/tree/main";
+    let tree = "/upload_owner/site/tree/refs/heads/main";
 
     // An upload opened for a private repository cannot reach a public replacement.
     let original = lifecycle::provision(
@@ -208,6 +208,28 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::OK, "{html}");
     let action = "/upload_owner/private-upload/upload/refs/heads/main/docs";
     assert!(html.contains(&format!("action=\"{action}\"")));
+    assert!(html.contains("name=\"branch\" value=\"main\""), "{html}");
+    // A form opened for another split of the same path does not land here.
+    let (content_type, body) = form(
+        &replacement.id.to_string(),
+        &[
+            ("csrf_token", &csrf),
+            ("expected_revision", "unborn"),
+            ("branch", "main/docs"),
+            ("message", "Moved target"),
+        ],
+        &[("moved.txt", b"moved")],
+    );
+    let (status, _, reply) = send(
+        &router,
+        &writer.session,
+        "POST",
+        action,
+        &content_type,
+        body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{reply}");
     let (content_type, body) = form(
         &replacement.id.to_string(),
         &[

@@ -57,9 +57,17 @@ pub(crate) fn comment_view(
 ) -> view::Comment {
     let author = entry.author.username;
     let comment = entry.comment;
-    // The side is not shown. The thread's link on the Files changed tab marks the old and new lines.
     let location = comment.path.map(|path| match comment.line {
-        Some(line) => format!("{path}:{line}"),
+        Some(line) => match (
+            comment.start_line,
+            comment.start_side.as_deref(),
+            comment.side.as_deref(),
+        ) {
+            (Some(start), Some(first), Some(last)) => {
+                format!("{path}:{first}:{start}–{last}:{line}")
+            }
+            _ => format!("{path}:{line}"),
+        },
         None => path,
     });
     view::Comment {
@@ -137,6 +145,8 @@ pub(crate) fn threads(
                 path: entry.comment.path.clone().unwrap_or_default(),
                 line: entry.comment.line,
                 side: entry.comment.side.clone().unwrap_or_default(),
+                start_line: entry.comment.start_line,
+                start_side: entry.comment.start_side.clone().unwrap_or_default(),
                 pending: pending.contains(&id),
                 replies: replies.remove(&id).unwrap_or_default(),
                 root: comment_view(entry, Some(state)),
@@ -172,6 +182,7 @@ pub(crate) async fn page_reviews(
     repo: &RepositoryData,
     pull: &db::models::PullRequest,
     entries: Vec<PullRequestReviewEntry>,
+    rights: &crate::backend::api::repos::discussion::CommentRights,
 ) -> ResultPage<Vec<pulls::Review>> {
     let ids: Vec<i64> = entries.iter().map(|entry| entry.review.id).collect();
     let offset = crate::backend::api::repos::paging::number(
@@ -194,7 +205,13 @@ pub(crate) async fn page_reviews(
         let Some(review_id) = entry.comment.review_id else {
             continue;
         };
-        let comment = discussion_comment(ctx, repo, pull, entry);
+        let (author_id, created, updated) = (
+            entry.comment.author_id,
+            entry.comment.created_at,
+            entry.comment.updated_at,
+        );
+        let mut comment = discussion_comment(ctx, repo, pull, entry);
+        rights.apply(&mut comment, author_id, created, updated);
         if let Some(review) = reviews.iter_mut().find(|review| review.id == review_id) {
             review.comments.push(comment);
         }
@@ -261,6 +278,11 @@ pub(crate) async fn reviewers(
         .iter()
         .flat_map(|(_, names)| names.iter().map(String::as_str))
         .collect();
+    let owner_teams: HashSet<String> = names
+        .iter()
+        .filter(|name| name.starts_with('@') && name.contains('/'))
+        .map(|name| (*name).to_owned())
+        .collect();
     let owner_ids: HashSet<i64> = if names.is_empty() {
         HashSet::new()
     } else {
@@ -305,6 +327,30 @@ pub(crate) async fn reviewers(
                 code_owner,
             });
         }
+    }
+    let teams = db::pull_requests::team_reviewers::list(
+        &ctx.state.pool,
+        repo.record.id,
+        Some(pull_id),
+        ctx.user.as_ref().map(|user| user.id),
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?;
+    if let Some(owner) = db::ci::ci_repository_owner(&ctx.state.pool, repo.record.id)
+        .await
+        .map_err(|_| unavailable(ctx))?
+    {
+        reviewers.extend(teams.into_iter().map(|team| {
+            let username = format!("@{owner}/{}", team.team.slug);
+            let code_owner = owner_teams.contains(&username);
+            pulls::Reviewer {
+                username,
+                status: pulls::ReviewerStatus::Requested,
+                stale: false,
+                pending: true,
+                code_owner,
+            }
+        }));
     }
     Ok(reviewers)
 }
@@ -385,7 +431,20 @@ pub(crate) async fn native_review(
         body: field(&form, "body"),
         preview: field(&form, "intent") == "preview",
         commit: field(&form, "commit_sha"),
+        repository_id: field(&form, "repository_id").parse().ok(),
+        pending_review: field(&form, "pending_review").parse().ok(),
     };
+    if submitted.repository_id != Some(repo.record.id) {
+        return refuse_review(
+            &ctx,
+            &repo,
+            &value,
+            submitted,
+            Some("The repository changed after this review was started. Reload before submitting."),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    }
     if submitted.preview {
         return refuse_review(&ctx, &repo, &value, submitted, None, StatusCode::OK).await;
     }
@@ -409,6 +468,8 @@ pub(crate) async fn native_review(
         state: Some(submitted.state.clone()).filter(|state| !state.is_empty()),
         body: (!submitted.body.trim().is_empty()).then(|| submitted.body.clone()),
         commit_sha: Some(compare.head_sha.clone()),
+        // The pending review the form showed; another one started since is not published.
+        review_id: submitted.pending_review,
     };
     let user = ctx.require_user()?.id;
     match review_rules::create_pull_request_review(
@@ -593,6 +654,8 @@ pub(crate) async fn native_pull_comment(
         path: field(&form, "path"),
         side: field(&form, "side"),
         line: field(&form, "line"),
+        start_line: field(&form, "start_line"),
+        start_side: field(&form, "start_side"),
         in_reply_to: form.get("in_reply_to").and_then(|id| id.parse().ok()),
         body: field(&form, "body"),
         preview: field(&form, "intent") == "preview",
@@ -648,23 +711,27 @@ pub(crate) async fn native_pull_comment(
         )
         .await;
     }
-    let number_line = match line.line.as_str() {
-        "" => None,
-        text => match text.parse::<i32>() {
-            Ok(number) => Some(number),
-            Err(_) => {
-                return refuse_comment(
-                    &ctx,
-                    &repo,
-                    &value,
-                    from_diff,
-                    &line,
-                    Some("Choose a line in the diff to comment on."),
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                )
-                .await
-            }
-        },
+    let parse_line = |text: &str| {
+        if text.is_empty() {
+            Ok(None)
+        } else {
+            text.parse::<i32>().map(Some)
+        }
+    };
+    let (number_line, start_line) = match (parse_line(&line.line), parse_line(&line.start_line)) {
+        (Ok(line), Ok(start)) => (line, start),
+        _ => {
+            return refuse_comment(
+                &ctx,
+                &repo,
+                &value,
+                from_diff,
+                &line,
+                Some("Choose lines in the diff to comment on."),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )
+            .await
+        }
     };
     let request = CreatePullRequestCommentRequest {
         body: line.body.clone(),
@@ -672,11 +739,14 @@ pub(crate) async fn native_pull_comment(
         path: inline.then(|| line.path.clone()),
         line: number_line,
         side: (!line.side.is_empty()).then(|| line.side.clone()),
+        start_line,
+        start_side: start_line.and((!line.start_side.is_empty()).then(|| line.start_side.clone())),
         commit_sha: inline.then(|| head.to_owned()),
         base_sha: inline.then(|| line.base.clone()),
         in_reply_to_comment_id: line.in_reply_to,
         // "Start a review" and "Add to review" file the comment in the pending review.
         pending: field(&form, "intent") == "review",
+        review_id: None,
     };
     let user = ctx.require_user()?.id;
     match comment_rules::create_pull_request_comment(
@@ -846,7 +916,8 @@ pub(crate) async fn native_discard_review(
     } else {
         ""
     };
-    match review_rules::discard_pending_review(&ctx.state.pool, user, owner, name, number)
+    let pending = field(&form, "pending_review").parse().ok();
+    match review_rules::discard_pending_review(&ctx.state.pool, user, owner, name, number, pending)
         .await
         .map_err(operation_error)
     {

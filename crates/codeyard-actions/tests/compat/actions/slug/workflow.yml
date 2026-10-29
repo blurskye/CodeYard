@@ -1,0 +1,13 @@
+# https://github.com/rlespinasse/github-slug-action/tree/0e3299190dac9a700da92a90de4556116ea965ed
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: rlespinasse/github-slug-action@0e3299190dac9a700da92a90de4556116ea965ed # v5
+      - name: Assert documented effect
+        run: |
+          test "$GITHUB_REF_SLUG" = main; test "$GITHUB_REPOSITORY_SLUG" = compat-example
+          echo compat:ok

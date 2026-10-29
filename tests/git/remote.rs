@@ -67,6 +67,9 @@ async fn refused_receive(
 async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     bundle::install();
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     db::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
@@ -541,7 +544,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
         );
     }
     let raw = &database.raw;
-    sqlx::query("UPDATE nodes SET roles=ARRAY['actions-worker'] WHERE id=$1")
+    sqlx::query("UPDATE nodes SET roles=ARRAY['runner'] WHERE id=$1")
         .bind(caller.context.node_id)
         .execute(raw)
         .await

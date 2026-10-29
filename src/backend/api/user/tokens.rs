@@ -1,11 +1,9 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::{ApiError, ApiFailure};
-use crate::backend::api::http::session::{extract_session_id, get_current_user};
+use crate::backend::api::http::session::extract_session_id;
 use crate::backend::api::user::profile::{load_settings, settings_response, settings_result};
 use crate::backend::api::user::responses::{field, mutation_guard, Fields};
 use crate::backend::app::AppState;
-use crate::backend::db::models::PersonalAccessToken;
-use crate::backend::db::users::tokens as stored;
 use crate::backend::identity::tokens;
 use crate::backend::identity::tokens::{TokenError, TokenInput};
 use crate::webui::pages::account;
@@ -14,23 +12,7 @@ use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
 use chrono::{DateTime, NaiveDate, Utc};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CreateTokenRequest {
-    pub name: String,
-    pub scope: String,
-    pub expires_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Serialize)]
-pub struct CreatedToken {
-    #[serde(flatten)]
-    pub token: PersonalAccessToken,
-    pub value: String,
-}
 
 pub(crate) fn token_failure(error: TokenError) -> ApiFailure {
     let (status, code) = match error {
@@ -40,58 +22,6 @@ pub(crate) fn token_failure(error: TokenError) -> ApiFailure {
         TokenError::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
     };
     (status, Json(ApiError::new(code, &error.to_string())))
-}
-
-pub async fn list_tokens(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<Json<Vec<PersonalAccessToken>>, ApiFailure> {
-    let user = get_current_user(&state.pool, &headers).await?;
-    Ok(Json(
-        stored::list_tokens(&state.pool, user.id)
-            .await
-            .map_err(|_| token_failure(TokenError::Unavailable))?,
-    ))
-}
-
-pub async fn create_token(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(request): Json<CreateTokenRequest>,
-) -> Result<(StatusCode, Json<CreatedToken>), ApiFailure> {
-    let user = get_current_user(&state.pool, &headers).await?;
-    let session_id = extract_session_id(&headers);
-    let created = tokens::create(
-        &state.pool,
-        user.id,
-        session_id.as_deref(),
-        TokenInput {
-            name: &request.name,
-            scope: &request.scope,
-            expires_at: request.expires_at,
-        },
-    )
-    .await
-    .map_err(token_failure)?;
-    Ok((
-        StatusCode::CREATED,
-        Json(CreatedToken {
-            token: created.token,
-            value: created.value,
-        }),
-    ))
-}
-
-pub async fn delete_token(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<i64>,
-) -> Result<StatusCode, ApiFailure> {
-    let user = get_current_user(&state.pool, &headers).await?;
-    tokens::delete(&state.pool, user.id, id)
-        .await
-        .map_err(token_failure)?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 /// The token form posts `expiry` as `never`, or as `date` with `expires_at` set to a calendar
@@ -193,7 +123,8 @@ pub(crate) async fn token_delete_post(
         .id;
     // A revoked token stops working at once, so the server refuses a delete that did not confirm.
     let result = if field(&form, "confirm") == "yes" {
-        tokens::delete(&ctx.state.pool, actor, id)
+        let session_id = extract_session_id(&ctx.headers);
+        tokens::delete(&ctx.state.pool, actor, session_id.as_deref(), id)
             .await
             .map_err(token_failure)
     } else {

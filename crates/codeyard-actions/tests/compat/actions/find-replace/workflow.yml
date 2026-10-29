@@ -1,0 +1,20 @@
+# https://github.com/jacobtomlinson/gha-find-replace/tree/2ff30f644d2e0078fc028beb9193f5ff0dcad39e
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo BEFORE > replace.txt
+      - id: action
+        uses: jacobtomlinson/gha-find-replace@2ff30f644d2e0078fc028beb9193f5ff0dcad39e # v3
+        with:
+          find: "BEFORE"
+          replace: "AFTER"
+          include: "replace.txt"
+          regex: "false"
+      - name: Assert documented effect
+        run: |
+          test "$(cat replace.txt)" = AFTER
+          echo compat:ok

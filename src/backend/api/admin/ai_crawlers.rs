@@ -1,10 +1,6 @@
-//! The site settings page: the sign-up mode, and the site-wide AI crawler setting, which the
-//! admin API can also change.
-use super::accounts::require_admin_user;
-use crate::backend::api::auth::errors::database_failure;
+//! The site settings page: the sign-up mode and the site-wide AI crawler setting.
 use crate::backend::api::crawlers::{self, BLOCK};
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
 use crate::backend::api::user::responses::{field, mutation_guard, require_account, Fields};
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -13,60 +9,7 @@ use crate::webui::pages::{account, admin::AdminSettings};
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
-use axum::Json;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AiCrawlersSetting {
-    /// `block` (default) or `allow`.
-    pub ai_crawlers: String,
-}
-
-pub async fn admin_get_ai_crawlers(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<Json<AiCrawlersSetting>, (StatusCode, Json<ApiError>)> {
-    require_admin_user(&state, &headers).await?;
-    let config = db::node_config::get_node_configuration(&state.pool)
-        .await
-        .map_err(|_| database_failure())?;
-    Ok(Json(AiCrawlersSetting {
-        ai_crawlers: config.map_or_else(|| BLOCK.to_owned(), |config| config.ai_crawlers),
-    }))
-}
-
-pub async fn admin_set_ai_crawlers(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(body): Json<AiCrawlersSetting>,
-) -> Result<Json<AiCrawlersSetting>, (StatusCode, Json<ApiError>)> {
-    let actor = require_admin_user(&state, &headers).await?;
-    let value = crawlers::setting_value(&body.ai_crawlers).ok_or((
-        StatusCode::BAD_REQUEST,
-        Json(ApiError::new(
-            "validation_error",
-            "ai_crawlers must be allow or block.",
-        )),
-    ))?;
-    let session =
-        crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default();
-    let updated = db::node_config::set_ai_crawlers(&state.pool, actor.id, &session, value)
-        .await
-        .map_err(|_| database_failure())?;
-    if !updated {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ApiError::new(
-                "not_set_up",
-                "Finish setup before changing this setting.",
-            )),
-        ));
-    }
-    Ok(Json(AiCrawlersSetting {
-        ai_crawlers: value.to_owned(),
-    }))
-}
 
 /// The site settings page. A refused save shows the page again with the message.
 async fn settings_response(
@@ -89,6 +32,15 @@ async fn settings_response(
             )
         }
     };
+    let osv = match db::vulnerabilities::settings(&ctx.state.pool).await {
+        Ok(value) => value,
+        Err(_) => {
+            return ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load vulnerability settings.",
+            )
+        }
+    };
     let private = config.as_ref().is_some_and(|config| config.is_private());
     let ai_crawlers = config.map_or_else(|| BLOCK.to_owned(), |config| config.ai_crawlers);
     ctx.page_model_status(
@@ -98,6 +50,10 @@ async fn settings_response(
             model: AdminSettings {
                 private,
                 ai_crawlers,
+                osv_base_url: osv.base_url,
+                osv_ecosystems: serde_json::from_str::<Vec<String>>(&osv.ecosystems)
+                    .unwrap_or_default()
+                    .join(", "),
             },
             csrf_token: ctx.csrf_token.clone(),
             message: message.map(str::to_owned),
@@ -118,6 +74,7 @@ pub(crate) async fn settings_get(
     let message = match ctx.query.get("saved").map(String::as_str) {
         Some("crawlers") => Some("AI crawler setting saved."),
         Some("signup") => Some("Sign-up setting saved."),
+        Some("vulnerabilities") => Some("Vulnerability sources saved."),
         _ => None,
     };
     settings_response(&ctx, StatusCode::OK, message).await
@@ -140,6 +97,39 @@ pub(crate) async fn settings_post(
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let actor = ctx.user.as_ref().expect("admin guard").id;
+    if form.contains_key("osv_base_url") {
+        let ecosystems = field(&form, "osv_ecosystems")
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+        let settings = db::vulnerabilities::Settings {
+            base_url: field(&form, "osv_base_url").into(),
+            ecosystems: serde_json::json!(ecosystems).to_string(),
+        };
+        return match db::vulnerabilities::save_settings(&ctx.state.pool, actor, &session, &settings)
+            .await
+        {
+            Ok(()) => ctx.redirect("/admin/settings?saved=vulnerabilities"),
+            Err(error) => {
+                settings_response(
+                    &ctx,
+                    if error
+                        .downcast_ref::<db::vulnerabilities::Refusal>()
+                        .is_some()
+                    {
+                        StatusCode::UNPROCESSABLE_ENTITY
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    },
+                    Some(
+                        "Unable to save vulnerability sources. Check the URL and ecosystem names.",
+                    ),
+                )
+                .await
+            }
+        };
+    }
     // Each section of the page posts its own field.
     let (saved, section, failure) = if form.contains_key("node_mode") {
         let Some(mode) = crate::backend::identity::setup::node_mode(field(&form, "node_mode"))

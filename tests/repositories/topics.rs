@@ -168,8 +168,11 @@ async fn topics_save_validate_and_filter(pg: bool) {
     assert!(page.contains("aria-label=\"Topic filter\""));
     let (_, page) = carol.page("/explore?topic=rust").await;
     assert!(!visible_text(&page).contains("/alice/proj"));
-    let (_, list) = carol.api("GET", "/api/explore", Value::Null).await;
-    assert_eq!(list[0]["topics"].as_array().unwrap().len(), 6);
+    let (status, topics) = carol
+        .api("GET", "/api/v3/repos/alice/proj/topics", Value::Null)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(topics["names"], json!(["a1", "a2", "a3", "a4", "a5", "a6"]));
 
     // An archived repository refuses the save, even from a writer, and keeps its text.
     database

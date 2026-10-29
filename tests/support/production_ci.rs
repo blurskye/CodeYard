@@ -48,6 +48,10 @@ impl Fixture {
     pub async fn finish(&mut self) {
         self.database.finish().await;
     }
+    pub fn connection_url(&self) -> String {
+        self.database.connection_url()
+    }
+
     pub async fn count(&self, table: &str) -> i64 {
         assert!(matches!(
             table,

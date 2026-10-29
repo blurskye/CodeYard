@@ -1,0 +1,15 @@
+# https://github.com/superfly/flyctl-actions/tree/fc53c09e1bc3be6f54706524e3b82c4f462f77be
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: superfly/flyctl-actions/setup-flyctl@fc53c09e1bc3be6f54706524e3b82c4f462f77be # 1.5
+        with:
+          version: "0.3.70"
+      - name: Assert documented effect
+        run: |
+          flyctl version
+          echo compat:ok

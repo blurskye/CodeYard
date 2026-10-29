@@ -14,6 +14,8 @@ pub struct CreatePullRequestReviewRequest {
     pub state: Option<String>,
     pub body: Option<String>,
     pub commit_sha: Option<String>,
+    /// Submitting a particular draft must not publish a different, concurrently created review.
+    pub review_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -27,8 +29,90 @@ pub struct RequestReviewerRequest {
 }
 
 pub struct RequestReviewerResult {
-    pub target: db::models::User,
+    pub target: ReviewerTarget,
     pub created: bool,
+}
+
+/// Edit a review through the same author check, native transaction and edited webhook as REST.
+pub async fn edit_review(
+    pool: &db::DbPool,
+    actor_id: i64,
+    repo: &db::models::Repository,
+    pull: &db::models::PullRequest,
+    id: i64,
+    body: &str,
+) -> Result<db::models::PullRequestReview, OperationError> {
+    let actor = super::actor(pool, actor_id).await?;
+    super::require_read(pool, &actor, repo).await?;
+    if pull.repo_id != repo.id {
+        return Err(OperationError::Missing {
+            code: "not_found",
+            message: "Review not found".into(),
+        });
+    }
+    check_optional_text(Some(body))?;
+    let previous = db::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
+        .await
+        .map_err(database_error)?
+        .filter(|r| r.pull_request_id == pull.id)
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Review not found".into(),
+        })?;
+    if previous.author_id != actor.id {
+        return Err(if previous.state == "pending" {
+            OperationError::Missing {
+                code: "not_found",
+                message: "Review not found".into(),
+            }
+        } else {
+            OperationError::Denied {
+                code: "write_denied",
+                message: "Only the review author may edit it".into(),
+            }
+        });
+    }
+    let review = db::pull_requests::reviews::edit_review_body(pool, pull.id, actor.id, id, body)
+        .await
+        .map_err(super::write_error)?
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Review not found".into(),
+        })?;
+    if review.state != "pending" {
+        let (r, p, v) = (repo.clone(), pull.clone(), review.clone());
+        let reviewer = actor.id;
+        let author = pull.author_id;
+        webhooks::emit(
+            pool,
+            repo,
+            events::PULL_REQUEST_REVIEW,
+            vec![author, reviewer],
+            move |owner, people| {
+                payloads::pull_request_review(
+                    "edited",
+                    &v,
+                    &p,
+                    &people.get(author),
+                    &people.get(reviewer),
+                    Scope {
+                        repo: &r,
+                        owner,
+                        sender: &people.get(reviewer),
+                    },
+                )
+            },
+        )
+        .await;
+    }
+    Ok(review)
+}
+
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+pub enum ReviewerTarget {
+    User(db::models::User),
+    Team(db::models::Team),
 }
 
 /// Review bodies and dismissal reasons use the discussion text limit. Leaving one
@@ -170,13 +254,14 @@ pub async fn create_pull_request_review(
         });
     }
 
-    let review = db::pull_requests::reviews::add_pull_request_review(
+    let review = db::pull_requests::reviews::save_pull_request_review(
         pool,
         pull_request.id,
         user.id,
         &review_state,
         req.body.as_deref(),
         Some(commit_sha.as_str()),
+        req.review_id,
     )
     .await
     .map_err(super::write_error)?;
@@ -185,35 +270,37 @@ pub async fn create_pull_request_review(
     let base = format!("/{}/{}/pulls/{}", owner, repo, pull_request.number);
     let link = format!("{base}?review={0}#review-{0}", review.id);
 
-    if pull_request.author_id != user.id {
-        let title = format!(
-            "{} submitted a {} review",
-            user.username,
-            review.state.as_str()
-        );
-        let _ = create_and_broadcast_notification(
-            pool,
-            broadcaster,
-            NotificationRequest {
-                user_id: pull_request.author_id,
-                actor_id: Some(user.id),
-                repo_id: Some(repository.id),
-                kind: "pull_request_review",
-                title: &title,
-                body: review.body.as_deref(),
-                link: Some(&link),
-                metadata: json!({
-                    "repo_owner": owner,
-                    "repo_name": repo,
-                    "pull_number": pull_request.number,
-                    "subject": pull_request.title,
-                    "review_id": review.id,
-                    "state": review.state.as_str(),
-                }),
-            },
-        )
-        .await;
+    let title = format!(
+        "{} submitted a {} review",
+        user.username,
+        review.state.as_str()
+    );
+    let notice = NotificationRequest {
+        user_id: pull_request.author_id,
+        actor_id: Some(user.id),
+        repo_id: Some(repository.id),
+        kind: "pull_request_review",
+        title: &title,
+        body: review.body.as_deref(),
+        link: Some(&link),
+        metadata: json!({"repo_owner":owner,"repo_name":repo,"pull_number":pull_request.number,"subject":pull_request.title,"review_id":review.id,"state":review.state.as_str()}),
+    };
+    let mut notified = Vec::new();
+    if pull_request.author_id != user.id
+        && create_and_broadcast_notification(pool, broadcaster, notice.clone())
+            .await
+            .is_ok()
+    {
+        notified.push(pull_request.author_id);
     }
+    let subscribers = crate::backend::notifications::create::notify_subscribers(
+        pool,
+        broadcaster,
+        notice,
+        &notified,
+    )
+    .await;
+    notified.extend(subscribers);
 
     notify_mentions(
         pool,
@@ -229,7 +316,7 @@ pub async fn create_pull_request_review(
             comment_id: None,
             old_text: None,
             text: review.body.as_deref().unwrap_or(""),
-            notified: &[pull_request.author_id],
+            notified: &notified,
         },
     )
     .await;
@@ -261,7 +348,7 @@ pub async fn create_pull_request_review(
                 ),
                 old_text: None,
                 text: &entry.comment.body,
-                notified: &[pull_request.author_id],
+                notified: &notified,
             },
         )
         .await;
@@ -305,7 +392,8 @@ pub async fn create_pull_request_review(
                     },
                 )
             },
-        );
+        )
+        .await;
     }
 
     Ok(review)
@@ -421,7 +509,8 @@ pub async fn dismiss_pull_request_review(
                 },
             )
         },
-    );
+    )
+    .await;
 
     Ok(dismissed)
 }
@@ -453,6 +542,43 @@ pub async fn request_reviewer(
             message: "Pull request not found".to_owned(),
         })?;
 
+    if let Some(name) = req
+        .username
+        .strip_prefix('@')
+        .and_then(|name| name.split_once('/'))
+    {
+        if !name.0.eq_ignore_ascii_case(&owner) {
+            return Err(OperationError::Invalid {
+                code: "invalid_review_team",
+                message: "Review team belongs to another organization".to_owned(),
+            });
+        }
+        let target =
+            db::pull_requests::team_reviewers::list(pool, repository.id, None, Some(actor_id))
+                .await
+                .map_err(database_error)?
+                .into_iter()
+                .map(|access| access.team)
+                .find(|team| team.slug.eq_ignore_ascii_case(name.1))
+                .ok_or_else(|| OperationError::Invalid {
+                    code: "invalid_review_team",
+                    message: "Review team not found or lacks write access".to_owned(),
+                })?;
+        let changed = super::team_reviewers::change(
+            pool,
+            broadcaster,
+            &requester,
+            &repository,
+            &pull_request,
+            &[name.1.to_owned()],
+            db::pull_requests::team_reviewers::ReviewTeamAction::Request,
+        )
+        .await?;
+        return Ok(RequestReviewerResult {
+            target: ReviewerTarget::Team(target),
+            created: !changed.is_empty(),
+        });
+    }
     let target = db::users::accounts::get_user_by_username(pool, &req.username)
         .await
         .map_err(database_error)?
@@ -479,7 +605,10 @@ pub async fn request_reviewer(
     )
     .await?;
 
-    Ok(RequestReviewerResult { target, created })
+    Ok(RequestReviewerResult {
+        target: ReviewerTarget::User(target),
+        created,
+    })
 }
 
 /// Records that `target` is asked to review `pull`, and tells them unless they asked themselves.
@@ -584,6 +713,28 @@ pub async fn remove_requested_reviewer(
             message: "Pull request not found".to_owned(),
         })?;
 
+    if let Some((org, slug)) = username
+        .strip_prefix('@')
+        .and_then(|name| name.split_once('/'))
+    {
+        if !org.eq_ignore_ascii_case(&owner) {
+            return Err(OperationError::Invalid {
+                code: "invalid_review_team",
+                message: "Review team belongs to another organization".to_owned(),
+            });
+        }
+        db::pull_requests::team_reviewers::change(
+            pool,
+            actor.id,
+            pull_request.id,
+            &[slug.to_owned()],
+            db::pull_requests::team_reviewers::ReviewTeamAction::Remove,
+            None,
+        )
+        .await
+        .map_err(super::team_reviewers::error)?;
+        return Ok(());
+    }
     let target = db::users::accounts::get_user_by_username(pool, &username)
         .await
         .map_err(database_error)?
@@ -612,12 +763,14 @@ pub async fn remove_requested_reviewer(
 }
 
 /// Deletes the viewer's pending review and the comments it holds. Nobody else has seen them.
+/// Discards the actor's pending review; with `review`, only when that is still the pending one.
 pub async fn discard_pending_review(
     pool: &db::DbPool,
     actor_id: i64,
     owner: String,
     repo: String,
     number: i32,
+    review: Option<i64>,
 ) -> Result<(), OperationError> {
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -636,10 +789,20 @@ pub async fn discard_pending_review(
             message: "Pull request not found".to_owned(),
         })?;
 
-    let discarded =
-        db::pull_requests::reviews::discard_pending_review(pool, pull_request.id, actor_id)
+    let discarded = match review {
+        Some(review) => db::pull_requests::reviews::delete_pending_review_by_id(
+            pool,
+            pull_request.id,
+            actor_id,
+            review,
+        )
+        .await
+        .map_err(super::write_error)?
+        .is_some(),
+        None => db::pull_requests::reviews::discard_pending_review(pool, pull_request.id, actor_id)
             .await
-            .map_err(super::write_error)?;
+            .map_err(super::write_error)?,
+    };
     if discarded {
         Ok(())
     } else {

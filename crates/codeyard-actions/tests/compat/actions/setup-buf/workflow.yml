@@ -1,0 +1,16 @@
+# https://github.com/bufbuild/buf-setup-action/tree/a47c93e0b1648d5651a065437926377d060baa99
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1
+        with:
+          version: "1.50.0"
+          github_token: "${{ secrets.GITHUB_TOKEN }}"
+      - name: Assert documented effect
+        run: |
+          buf --version | grep '^1\.50\.0'
+          echo compat:ok

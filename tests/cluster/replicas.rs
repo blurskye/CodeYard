@@ -271,6 +271,9 @@ async fn check_replica_rules(pool: &DbPool) {
 #[tokio::test]
 async fn retirement_waits_for_single_and_family_promotions() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let raw = sqlx::PgPool::connect(&database.connection_url())
         .await
@@ -369,6 +372,9 @@ async fn replica_rules_hold_on_sqlite() {
 #[tokio::test]
 async fn replica_rules_hold_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_replica_rules(&database.pool).await;
 }
 
@@ -603,6 +609,9 @@ async fn two_storage_nodes(pool: &DbPool, root: &Path) -> (cluster::Cluster, clu
 #[tokio::test]
 async fn copies_follow_commits_tags_branches_and_force_moves() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "copied").await;
@@ -661,6 +670,9 @@ async fn copies_follow_commits_tags_branches_and_force_moves() {
 #[tokio::test]
 async fn replicas_keep_recorded_ci_inputs_after_the_branch_is_deleted() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "ci_retained").await;
@@ -745,6 +757,9 @@ async fn replicas_keep_recorded_ci_inputs_after_the_branch_is_deleted() {
 #[tokio::test]
 async fn empty_repositories_and_large_files_copy() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "empty").await;
@@ -790,6 +805,9 @@ async fn empty_repositories_and_large_files_copy() {
 #[tokio::test]
 async fn only_nodes_holding_a_copy_may_ask_for_its_packs() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, holder) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "guarded").await;
@@ -845,6 +863,9 @@ async fn only_nodes_holding_a_copy_may_ask_for_its_packs() {
 #[tokio::test]
 async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     db::node_config::upsert_node_configuration(pool, "public", true)
         .await
@@ -912,6 +933,9 @@ async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
 #[tokio::test]
 async fn the_loop_copies_on_its_own_and_stops_at_shutdown() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "looped").await;
@@ -1001,6 +1025,9 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
         }
     };
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let (primary, copy) = two_storage_nodes(pool, &root).await;
     let web = web_node(pool, &root).await;
@@ -1086,6 +1113,9 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
 #[tokio::test]
 async fn completed_copies_refill_slots_before_the_next_periodic_pass() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
@@ -1131,6 +1161,9 @@ async fn completed_copies_refill_slots_before_the_next_periodic_pass() {
 #[tokio::test]
 async fn busy_repositories_do_not_starve_later_copies() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
@@ -1176,6 +1209,9 @@ async fn busy_repositories_do_not_starve_later_copies() {
 #[tokio::test]
 async fn a_copy_waits_while_a_ref_change_is_counted() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
@@ -1243,6 +1279,9 @@ async fn ref_change_counting_on_sqlite() {
 #[tokio::test]
 async fn ref_change_counting_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_ref_change_counting(&database.pool).await;
 }
 
@@ -1483,6 +1522,9 @@ async fn sqlite_old_transfers_cannot_become_current_after_rollback_and_return() 
 #[tokio::test]
 async fn postgres_old_transfers_cannot_become_current_after_rollback_and_return() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_old_transfers_after_rollback(&database.pool).await;
 }
 
@@ -1495,6 +1537,9 @@ async fn promotion_on_sqlite() {
 #[tokio::test]
 async fn promotion_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_promotion(&database.pool).await;
 }
 
@@ -1540,6 +1585,9 @@ async fn delete_names_the_promoted_primary_on_sqlite() {
 #[tokio::test]
 async fn delete_names_the_promoted_primary_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_delete_names_the_promoted_primary(&database.pool).await;
 }
 
@@ -1551,6 +1599,9 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
     };
     use codeyard::backend::notifications::NotificationBroadcaster;
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
@@ -1568,7 +1619,7 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
         pool,
         &key.public_hex(),
         "ci-copy-worker",
-        &["actions-worker".into()],
+        &["runner".into()],
         "test",
     )
     .await
@@ -1645,6 +1696,9 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
 #[tokio::test]
 async fn a_promoted_copy_takes_writes_and_the_old_primary_follows() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "moved").await;
@@ -1707,6 +1761,9 @@ async fn a_promoted_copy_takes_writes_and_the_old_primary_follows() {
 #[tokio::test]
 async fn returning_former_primary_cleanup_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (former, primary) = two_storage_nodes(pool, root.path()).await;
@@ -1782,6 +1839,9 @@ async fn returning_former_primary_cleanup_on_postgres() {
 #[tokio::test]
 async fn a_former_primary_with_a_copy_keeps_the_repository_through_cleanup() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (former, primary) = two_storage_nodes(pool, root.path()).await;
@@ -1808,6 +1868,9 @@ async fn a_former_primary_with_a_copy_keeps_the_repository_through_cleanup() {
 #[tokio::test]
 async fn a_former_primary_without_a_copy_row_drops_its_directory() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (former, primary) = two_storage_nodes(pool, root.path()).await;
@@ -2052,6 +2115,9 @@ async fn heartbeat_clock_on_sqlite() {
 #[tokio::test]
 async fn heartbeat_clock_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_heartbeat_clock(&database.pool).await;
 }
 
@@ -2064,6 +2130,9 @@ async fn take_over_on_sqlite() {
 #[tokio::test]
 async fn take_over_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_take_over(&database.pool).await;
 }
 
@@ -2145,12 +2214,18 @@ async fn missing_copy_blocks_take_over_on_sqlite() {
 #[tokio::test]
 async fn missing_copy_blocks_take_over_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_missing_copy_blocks_take_over(&database.pool).await;
 }
 
 #[tokio::test]
 async fn lost_current_copies_are_rebuilt_without_a_primary_write() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
@@ -2257,6 +2332,9 @@ async fn offline_target_is_refused_on_sqlite() {
 #[tokio::test]
 async fn offline_target_is_refused_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_offline_target_is_refused(&database.pool).await;
 }
 
@@ -2265,6 +2343,9 @@ async fn offline_target_is_refused_on_postgres() {
 #[tokio::test]
 async fn a_copy_git_cannot_open_is_cleared_and_rebuilt() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
@@ -2322,6 +2403,9 @@ async fn a_copy_git_cannot_open_is_cleared_and_rebuilt() {
 #[tokio::test]
 async fn a_complete_copy_removes_stale_unusable_directories_only() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
@@ -2380,6 +2464,9 @@ async fn a_complete_copy_removes_stale_unusable_directories_only() {
 #[tokio::test]
 async fn an_incremental_copy_clears_stale_unusable_directories_after_it_succeeds() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
@@ -2433,6 +2520,9 @@ async fn an_incremental_copy_clears_stale_unusable_directories_after_it_succeeds
 #[tokio::test]
 async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let a = storage_node(pool, "race-a").await;
     let b = reporting_storage_node(pool, "race-b").await;
@@ -2478,6 +2568,9 @@ async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
 #[tokio::test]
 async fn replica_copies_follow_ref_namespace_changes_in_both_directions() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "namespace").await;
@@ -2497,6 +2590,9 @@ async fn replica_copies_follow_ref_namespace_changes_in_both_directions() {
 #[tokio::test]
 async fn retiring_a_replica_removes_quarantined_directories_too() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "quarantined").await;
@@ -2563,6 +2659,9 @@ async fn default_promotion_takes_a_holder_that_is_reporting_in_on_sqlite() {
 #[tokio::test]
 async fn default_promotion_takes_a_holder_that_is_reporting_in_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_default_target_is_reporting_in(&database.pool).await;
 }
 
@@ -2609,6 +2708,9 @@ async fn unreadable_copy_does_not_stop_takeover_on_sqlite() {
 #[tokio::test]
 async fn unreadable_copy_does_not_stop_takeover_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_unreadable_copy_does_not_stop_takeover(&database.pool).await;
 }
 
@@ -2618,6 +2720,9 @@ async fn unreadable_copy_does_not_stop_takeover_on_postgres() {
 #[tokio::test]
 async fn an_unreadable_copy_does_not_stop_the_others_from_being_rebuilt() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
@@ -2664,6 +2769,9 @@ async fn an_unreadable_copy_does_not_stop_the_others_from_being_rebuilt() {
 #[tokio::test]
 async fn a_copy_takes_over_when_its_primary_stops() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "failover").await;
@@ -2813,6 +2921,9 @@ async fn fork_family_promotion_on_sqlite() {
 #[tokio::test]
 async fn fork_family_promotion_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_fork_family_promotion(&database.pool).await;
 }
 
@@ -2877,6 +2988,9 @@ async fn fork_family_take_over_on_sqlite() {
 #[tokio::test]
 async fn fork_family_take_over_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_fork_family_take_over(&database.pool).await;
 }
 
@@ -2931,6 +3045,9 @@ async fn two_take_overs_keep_a_fork_family_whole_on_sqlite() {
 #[tokio::test]
 async fn two_take_overs_keep_a_fork_family_whole_on_postgres() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     check_two_take_overs_keep_a_fork_family_whole(&database.pool).await;
 }
 
@@ -2939,6 +3056,9 @@ async fn two_take_overs_keep_a_fork_family_whole_on_postgres() {
 #[tokio::test]
 async fn promote_all_from_moves_a_fork_family_once() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let a = storage_node(pool, "all-a").await;
     let b = reporting_storage_node(pool, "all-b").await;
@@ -2993,6 +3113,9 @@ fn fetch_input(sha: &str) -> String {
 #[tokio::test]
 async fn reads_are_served_by_a_copy_while_the_primary_is_down() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
@@ -3074,6 +3197,9 @@ async fn reads_are_served_by_a_copy_while_the_primary_is_down() {
 #[tokio::test]
 async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
@@ -3097,6 +3223,8 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
             base_branch: "main",
             base_sha: &base,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -3138,6 +3266,9 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
 #[tokio::test]
 async fn a_commit_a_database_write_depends_on_is_not_read_from_a_copy() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
@@ -3163,6 +3294,9 @@ async fn a_commit_a_database_write_depends_on_is_not_read_from_a_copy() {
 #[tokio::test]
 async fn a_read_aimed_at_the_old_primary_reaches_the_promoted_copy() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
@@ -3198,6 +3332,9 @@ async fn a_read_aimed_at_the_old_primary_reaches_the_promoted_copy() {
 #[tokio::test]
 async fn a_copy_holder_reads_its_own_copy_while_the_primary_is_down() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     db::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
@@ -3265,6 +3402,9 @@ async fn a_copy_holder_reads_its_own_copy_while_the_primary_is_down() {
 #[tokio::test]
 async fn unreadable_fallbacks_are_skipped_but_an_answering_primary_is_not() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (primary, first) = two_storage_nodes(pool, root.path()).await;
@@ -3352,6 +3492,9 @@ async fn unreadable_fallbacks_are_skipped_but_an_answering_primary_is_not() {
 #[tokio::test]
 async fn a_moved_primary_that_answers_is_final_even_when_a_copy_could_serve() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let pool = &database.pool;
     let root = tempfile::tempdir().unwrap();
     let (old, new) = two_storage_nodes(pool, root.path()).await;
@@ -3398,6 +3541,9 @@ async fn a_moved_primary_that_answers_is_final_even_when_a_copy_could_serve() {
 #[tokio::test]
 async fn a_read_moves_on_when_the_own_copy_cannot_serve() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     db::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
@@ -3451,6 +3597,9 @@ async fn a_read_moves_on_when_the_own_copy_cannot_serve() {
 #[tokio::test]
 async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
@@ -3470,6 +3619,8 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
             base_branch: "main",
             base_sha: &head,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -3493,7 +3644,7 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
         &codeyard::backend::notifications::NotificationBroadcaster::new(&database.pool), repo.actor,
         (actor.username, repo.repository.name.clone(), pull.number),
         codeyard::backend::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
-            state:Some("commented".into()), body:Some("Old revision".into()), commit_sha:Some(head),
+            state:Some("commented".into()), body:Some("Old revision".into()), commit_sha:Some(head), review_id:None,
         },
     ).await.unwrap_err();
     assert!(matches!(
@@ -3516,6 +3667,9 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
 #[tokio::test]
 async fn writes_are_refused_while_the_primary_is_down() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
@@ -3587,6 +3741,9 @@ async fn writes_are_refused_while_the_primary_is_down() {
 #[tokio::test]
 async fn a_node_without_a_copy_row_refuses_reads() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
@@ -3621,6 +3778,9 @@ async fn a_node_without_a_copy_row_refuses_reads() {
 #[tokio::test]
 async fn a_read_without_a_copy_that_has_copied_is_unavailable() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
@@ -3655,6 +3815,9 @@ async fn a_read_without_a_copy_that_has_copied_is_unavailable() {
 #[tokio::test]
 async fn a_not_found_from_the_primary_does_not_fail_over() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;

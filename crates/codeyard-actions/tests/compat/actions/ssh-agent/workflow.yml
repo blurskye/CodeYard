@@ -1,0 +1,15 @@
+# https://github.com/webfactory/ssh-agent/tree/dc588b651fe13675774614f8e6a936a468676387
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: webfactory/ssh-agent@dc588b651fe13675774614f8e6a936a468676387 # v0.9.0
+        with:
+          ssh-private-key: "${{ secrets.COMPAT_SSH_PRIVATE_KEY }}"
+      - name: Assert documented effect
+        run: |
+          ssh-add -l
+          echo compat:ok

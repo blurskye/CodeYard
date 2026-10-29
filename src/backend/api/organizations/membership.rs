@@ -4,12 +4,10 @@ use super::organization;
 use super::organization::{unavailable, unit, Fields};
 use crate::backend::api::http::context::PageContext;
 use crate::backend::db;
-use crate::backend::db::models::{OrgInvitation, OrgRole};
+use crate::backend::db::models::OrgRole;
 use crate::backend::db::organizations;
 use crate::backend::db::organizations::OrganizationOutcome;
-use crate::backend::notifications::create::{
-    create_and_broadcast_notification, NotificationRequest,
-};
+use crate::backend::notifications::create::organization_invitation;
 use crate::webui::pages::orgs as view;
 use axum::response::Response;
 use std::collections::HashMap;
@@ -39,11 +37,48 @@ pub(super) async fn project(
         .ok_or_else(|| unavailable(ctx))
 }
 
+pub(super) async fn project_invitations(
+    ctx: &PageContext,
+    invitations: Vec<db::models::OrgInvitation>,
+) -> Result<Vec<view::PendingInvitation>, Response> {
+    let identities = invitations
+        .iter()
+        .filter_map(|invite| invite.user_id.map(|user| (user, invite.role.clone())))
+        .collect();
+    let users: HashMap<_, _> = project(ctx, identities)
+        .await?
+        .into_iter()
+        .map(|user| (user.user_id, user.username))
+        .collect();
+    invitations
+        .into_iter()
+        .map(|invite| {
+            let username = invite
+                .user_id
+                .and_then(|id| users.get(&id).cloned())
+                .or(invite.email)
+                .ok_or_else(|| unavailable(ctx))?;
+            Ok(view::PendingInvitation {
+                id: invite.id,
+                user_id: invite.user_id,
+                username,
+                role: invite.role,
+                failed_reason: invite.failed_reason,
+            })
+        })
+        .collect()
+}
+
 pub(super) enum Command {
+    Visibility {
+        public: bool,
+    },
     /// Offers membership; the person joins only when they accept.
     Invite {
         username: String,
         role: OrgRole,
+        team_slugs: Vec<String>,
+        reinstate: bool,
     },
     ChangeRole {
         user: i64,
@@ -55,15 +90,58 @@ pub(super) enum Command {
     CancelInvitation {
         user: i64,
     },
+    CancelInvitationId {
+        invitation: i64,
+    },
+    Block {
+        username: String,
+    },
+    Unblock {
+        user: i64,
+    },
+    ConvertOutside {
+        user: i64,
+    },
+    RemoveOutside {
+        user: i64,
+    },
 }
 impl Command {
     pub(super) fn parse(form: &Fields) -> Result<Self, ()> {
         Ok(match organization::field(form, "action") {
-            "add-member" => Self::Invite {
-                username: organization::username(form)?,
-                role: organizations::parse_organization_role(organization::field(form, "role"))
-                    .map_err(|_| ())?,
+            "membership-visibility" => Self::Visibility {
+                public: match organization::field(form, "visibility") {
+                    "public" => true,
+                    "private" => false,
+                    _ => return Err(()),
+                },
             },
+            "add-member" => {
+                let recipient = organization::field(form, "username");
+                let username = if recipient.contains('@') {
+                    recipient.trim().to_ascii_lowercase()
+                } else {
+                    organization::username(form)?
+                };
+                let team_slugs = organization::field(form, "team_slugs")
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+                let reinstate = match organization::field(form, "reinstate") {
+                    "" => false,
+                    "yes" => true,
+                    _ => return Err(()),
+                };
+                Self::Invite {
+                    username,
+                    role: organizations::parse_organization_role(organization::field(form, "role"))
+                        .map_err(|_| ())?,
+                    team_slugs,
+                    reinstate,
+                }
+            }
             "member-role" => Self::ChangeRole {
                 user: organization::id(form, "user_id")?,
                 role: organizations::parse_organization_role(organization::field(form, "role"))
@@ -72,7 +150,32 @@ impl Command {
             "remove-member" => Self::Remove {
                 user: organization::id(form, "user_id")?,
             },
-            "cancel-invitation" => Self::CancelInvitation {
+            "block-user" => {
+                let username = organization::field(form, "username").trim();
+                if username.is_empty() {
+                    return Err(());
+                }
+                Self::Block {
+                    username: username.to_owned(),
+                }
+            }
+            "unblock-user" => Self::Unblock {
+                user: organization::id(form, "user_id")?,
+            },
+            "convert-outside" => Self::ConvertOutside {
+                user: organization::id(form, "user_id")?,
+            },
+            "remove-outside" => Self::RemoveOutside {
+                user: organization::id(form, "user_id")?,
+            },
+            "cancel-invitation"
+                if form.contains_key("invitation_id") && !form.contains_key("user_id") =>
+            {
+                Self::CancelInvitationId {
+                    invitation: organization::id(form, "invitation_id")?,
+                }
+            }
+            "cancel-invitation" if !form.contains_key("invitation_id") => Self::CancelInvitation {
                 user: organization::id(form, "user_id")?,
             },
             _ => return Err(()),
@@ -85,33 +188,6 @@ pub(super) async fn target(ctx: &PageContext, username: &str) -> Result<Option<i
         .map(|user| user.map(|user| user.id))
         .map_err(|_| unavailable(ctx))
 }
-/// Tells the invitee. The invitation stands even when the notification cannot be stored.
-async fn notify_invitee(ctx: &PageContext, actor: i64, org: i64, invitation: &OrgInvitation) {
-    let name = match organizations::get_organization_metadata(&ctx.state.pool, actor, org).await {
-        Ok(OrganizationOutcome::Applied(metadata)) => metadata.name,
-        _ => return,
-    };
-    let request = NotificationRequest {
-        user_id: invitation.user_id,
-        actor_id: Some(actor),
-        repo_id: None,
-        kind: "organization_invitation",
-        title: &format!("Invitation to join {name}"),
-        body: None,
-        link: Some("/settings/organizations"),
-        metadata: serde_json::json!({ "org_id": org, "role": invitation.role }),
-    };
-    if let Err(error) = create_and_broadcast_notification(
-        &ctx.state.pool,
-        &ctx.state.notification_broadcaster,
-        request,
-    )
-    .await
-    {
-        tracing::warn!(%error, "organization invitation notification was not stored");
-    }
-}
-
 pub(super) async fn apply(
     ctx: &PageContext,
     actor: i64,
@@ -120,8 +196,22 @@ pub(super) async fn apply(
 ) -> Result<OrganizationOutcome<()>, Response> {
     let pool = &ctx.state.pool;
     let result = match command {
-        Command::Invite { username, role } => {
-            let Some(user) = target(ctx, &username).await? else {
+        Command::Visibility { public } => {
+            organizations::discovery::set_membership_public(pool, actor, org, public).await
+        }
+        Command::Invite {
+            username,
+            role,
+            team_slugs,
+            reinstate,
+        } => {
+            let email = username.contains('@').then(|| username.clone());
+            let user = if email.is_some() {
+                None
+            } else {
+                target(ctx, &username).await?
+            };
+            if user.is_none() && email.is_none() {
                 // Only an owner or admin may learn that the name is unknown; anyone else is refused.
                 return match organizations::get_organization_role(pool, actor, org).await {
                     Ok(OrganizationOutcome::Applied(role)) if organizations::administers(role) => {
@@ -130,17 +220,34 @@ pub(super) async fn apply(
                     Ok(_) => Ok(OrganizationOutcome::Denied),
                     Err(_) => Err(unavailable(ctx)),
                 };
+            }
+            let input = organizations::NewInvitation {
+                user_id: user,
+                email,
+                role,
+                reinstate,
+                teams: Some(organizations::InvitationTeams::Slugs(team_slugs)),
             };
-            let outcome = organizations::invite_organization_member(pool, actor, org, user, role)
-                .await
-                .map_err(|_| unavailable(ctx))?;
+            let outcome =
+                organizations::create_organization_invitation(pool, actor, org, &input, false)
+                    .await
+                    .map_err(|_| unavailable(ctx))?;
             if let OrganizationOutcome::Applied(invitation) = &outcome {
-                notify_invitee(ctx, actor, org, invitation).await;
+                organization_invitation(
+                    pool,
+                    &ctx.state.notification_broadcaster,
+                    actor,
+                    invitation,
+                )
+                .await;
             }
             return Ok(unit(outcome));
         }
         Command::CancelInvitation { user } => {
             organizations::cancel_organization_invitation(pool, actor, org, user).await
+        }
+        Command::CancelInvitationId { invitation } => {
+            organizations::cancel_invitation_id(pool, actor, org, invitation, false).await
         }
         Command::ChangeRole { user, role } => {
             organizations::update_organization_member_role(pool, actor, org, user, role)
@@ -149,6 +256,21 @@ pub(super) async fn apply(
         }
         Command::Remove { user } => {
             organizations::remove_organization_member(pool, actor, org, user).await
+        }
+        Command::Block { username } => {
+            let Some(user) = target(ctx, &username).await? else {
+                return Ok(OrganizationOutcome::Missing);
+            };
+            organizations::blocks::change(pool, actor, org, user, true).await
+        }
+        Command::Unblock { user } => {
+            organizations::blocks::change(pool, actor, org, user, false).await
+        }
+        Command::ConvertOutside { user } => {
+            organizations::convert_to_outside_collaborator(pool, actor, org, user).await
+        }
+        Command::RemoveOutside { user } => {
+            organizations::outside::remove(pool, actor, org, user).await
         }
     };
     result.map_err(|_| unavailable(ctx))

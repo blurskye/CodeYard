@@ -1,4 +1,4 @@
-//! Git-only token creation. Plaintext is returned once; only its hash is persisted.
+//! Personal token lifecycle (only hashes persist) and restricted activity-feed credentials.
 
 use crate::backend::db::{models::PersonalAccessToken, users::tokens, DbPool};
 use chrono::{DateTime, Utc};
@@ -28,6 +28,61 @@ pub enum TokenError {
     Unavailable,
 }
 
+fn random_token() -> String {
+    let mut random = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut random);
+    hex::encode(random)
+}
+
+/// A feed credential has only read-only event access and remains bound to this API token's
+/// lifetime. Deleting the API token cascades to the feed credential; expiry is checked on reads.
+pub async fn activity_feed_token(pool: &DbPool, token_id: i64) -> Result<String, TokenError> {
+    tokens::token_user(pool, token_id, false)
+        .await
+        .map_err(|_| TokenError::Unavailable)?
+        .ok_or(TokenError::Denied)?;
+    // Feeds carry an account identity, not repository-specific integration bounds.
+    if super::github_apps::authority(pool, token_id)
+        .await
+        .map_err(|_| TokenError::Unavailable)?
+        .is_some()
+    {
+        return Err(TokenError::Denied);
+    }
+    crate::backend::db::events::activity_feed_token(
+        pool,
+        token_id,
+        &format!("feed_{}", random_token()),
+    )
+    .await
+    .map_err(|_| TokenError::Unavailable)?
+    .ok_or(TokenError::Denied)
+}
+pub async fn activity_feed_user(
+    pool: &DbPool,
+    value: &str,
+) -> Result<crate::backend::db::models::User, TokenError> {
+    if value.len() != 69 || !value.starts_with("feed_") {
+        return Err(TokenError::Denied);
+    }
+    let id = crate::backend::db::events::activity_feed_token_id(pool, value)
+        .await
+        .map_err(|_| TokenError::Unavailable)?
+        .ok_or(TokenError::Denied)?;
+    let user = tokens::token_user(pool, id, false)
+        .await
+        .map_err(|_| TokenError::Unavailable)?
+        .ok_or(TokenError::Denied)?;
+    if super::github_apps::authority(pool, id)
+        .await
+        .map_err(|_| TokenError::Unavailable)?
+        .is_some()
+    {
+        return Err(TokenError::Denied);
+    }
+    Ok(user)
+}
+
 pub fn token_hash(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
@@ -54,9 +109,7 @@ pub async fn create(
 ) -> Result<CreatedToken, TokenError> {
     validate(&input, Utc::now())?;
     let session_id = session_id.ok_or(TokenError::Denied)?;
-    let mut random = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut random);
-    let value = hex::encode(random);
+    let value = format!("cy_pat_{}", random_token());
     let token = tokens::create_token(
         pool,
         actor,
@@ -72,8 +125,14 @@ pub async fn create(
     Ok(CreatedToken { token, value })
 }
 
-pub async fn delete(pool: &DbPool, actor: i64, id: i64) -> Result<(), TokenError> {
-    if tokens::delete_token(pool, actor, id)
+pub async fn delete(
+    pool: &DbPool,
+    actor: i64,
+    session_id: Option<&str>,
+    id: i64,
+) -> Result<(), TokenError> {
+    let session_id = session_id.ok_or(TokenError::Denied)?;
+    if tokens::delete_token(pool, actor, session_id, id)
         .await
         .map_err(|_| TokenError::Unavailable)?
     {

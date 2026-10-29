@@ -63,6 +63,12 @@ pub struct NotificationDelivery {
     pub unread_count: i64,
 }
 
+native_operation!(crate::backend::db::postgres::notifications::records::notification_email_allowed,
+    crate::backend::db::sqlite::notifications::records::notification_email_allowed,
+    /// Whether a queued email for this notification may still go out: the recipient is active
+    /// and can still read the notification's repository.
+    fn notification_email_allowed(pool: &DbPool, notification_id: i64) -> Result<bool>);
+
 native_operation!(crate::backend::db::postgres::notifications::records::notification_delivery,
     crate::backend::db::sqlite::notifications::records::notification_delivery,
     fn notification_delivery(pool: &DbPool, session_id: &str, user_id: i64, notification_id: Option<i64>) -> Result<Option<NotificationDelivery>>);
@@ -180,12 +186,20 @@ pub struct NotificationCounts {
     pub repositories: Vec<(i64, String)>,
 }
 
+/// A real native credential; token access never creates or impersonates a browser session.
+#[derive(Clone, Copy)]
+pub enum NotificationCredential<'a> {
+    Session(&'a str),
+    Token(i64),
+}
+
 /// Original-session persisted projection/acknowledgment. None means the original
 /// session is invalid, revoked, expired or its recipient is restricted. Valid
 /// actions may return no rows; SQL errors propagate. All result fields share one
 /// native transaction, including final expiry verification before commit.
 #[derive(Clone)]
 pub enum NotificationInboxAction {
+    Threads(super::threads::ThreadAction),
     List {
         filter: NotificationFilter,
         limit: i64,
@@ -209,7 +223,17 @@ pub enum NotificationInboxAction {
     },
 }
 
+impl NotificationInboxAction {
+    pub(crate) fn requires_write(&self) -> bool {
+        match self {
+            Self::Threads(action) => action.requires_write(),
+            _ => !matches!(self, Self::List { .. }),
+        }
+    }
+}
+
 pub struct NotificationInbox {
+    pub threads: Option<super::threads::ThreadInbox>,
     pub notifications: Vec<Notification>,
     pub next_cursor: Option<NotificationCursor>,
     /// Unread notifications in the inbox: the count the unread badge shows.
@@ -223,6 +247,10 @@ pub struct NotificationInbox {
 native_operation!(crate::backend::db::postgres::notifications::records::notification_inbox,
     crate::backend::db::sqlite::notifications::records::notification_inbox,
     fn notification_inbox(pool: &DbPool, session_id: &str, user_id: i64, action: NotificationInboxAction) -> Result<Option<NotificationInbox>>);
+
+native_operation!(crate::backend::db::postgres::notifications::records::notification_inbox_with_credential,
+    crate::backend::db::sqlite::notifications::records::notification_inbox_with_credential,
+    fn notification_inbox_with_credential(pool:&DbPool,credential:NotificationCredential<'_>,user_id:i64,action:NotificationInboxAction)->Result<Option<NotificationInbox>>);
 
 // Persisted projection/ack contract: user_id is the original authenticated
 // recipient, not a replacement administrator. Missing, banned or password-change

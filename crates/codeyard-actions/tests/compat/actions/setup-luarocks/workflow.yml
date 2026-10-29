@@ -1,0 +1,16 @@
+# https://github.com/leafo/gh-actions-luarocks/tree/e65774a6386cb4f24e293dca7fc4ff89165b64c5
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: leafo/gh-actions-lua@8aace3457a2fcf3f3c4e9007ecc6b869ff6d74d6 # v11
+      - id: action
+        uses: leafo/gh-actions-luarocks@e65774a6386cb4f24e293dca7fc4ff89165b64c5 # v4
+        with:
+          luaRocksVersion: "3.11.1"
+      - name: Assert documented effect
+        run: |
+          luarocks --version
+          echo compat:ok

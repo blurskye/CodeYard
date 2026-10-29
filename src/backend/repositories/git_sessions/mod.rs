@@ -118,6 +118,16 @@ impl ReceiveCredential {
             db,
             repositories::{access, deploy_keys},
         };
+        anyhow::ensure!(
+            !(repo.is_gist && write && matches!(self, Self::DeployKey(_))),
+            "Gists require an account credential"
+        );
+        // Checked before the deploy-key return below, so every write credential is covered. A
+        // migration lock keeps the export's snapshot complete.
+        anyhow::ensure!(
+            !write || !db::repository_exports::locked(pool, repo.id).await?,
+            "repository is locked for migration"
+        );
         let identity = match self {
             Self::SshKey(id) => {
                 anyhow::ensure!(id > 0, "invalid key ID");
@@ -138,11 +148,54 @@ impl ReceiveCredential {
                 identity.user
             }
             Self::DeployKey(id) => return deploy_keys::authorize(pool, id, repo, write).await,
-            Self::Token(id) => db::users::tokens::token_user(pool, id, write)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("token unavailable"))?,
+            Self::Token(id) => {
+                anyhow::ensure!(
+                    crate::backend::identity::oauth_apps::allows_git(pool, id, repo.is_gist)
+                        .await?,
+                    "OAuth repository access denied"
+                );
+                db::users::tokens::token_user(pool, id, write)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("token unavailable"))?
+            }
         };
-        let level = access::user_access(pool, &identity, repo).await?;
+        anyhow::ensure!(
+            !identity.username.ends_with("[bot]") || matches!(self, Self::Token(_)),
+            "bot identities require a scoped token"
+        );
+        if let Self::Token(id) = self {
+            if let Some(bounds) = crate::backend::identity::github_apps::authority(pool, id).await?
+            {
+                anyhow::ensure!(
+                    bounds.contains(pool, identity.id, repo.id).await?
+                        && crate::backend::identity::github_apps::allows(
+                            &bounds.permissions,
+                            "contents",
+                            write
+                        ),
+                    "integration repository access denied"
+                );
+            }
+        }
+        anyhow::ensure!(
+            !repo.is_gist || !write || repo.owner_user_id == Some(identity.id),
+            "Only the gist owner may push"
+        );
+        if identity.username == db::ci_tokens::BOT {
+            let Self::Token(id) = self else {
+                anyhow::bail!("bot requires a run token");
+            };
+            let token = db::ci_tokens::get(pool, id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("run token unavailable"))?;
+            let permissions: crate::backend::ci::tokens::Permissions =
+                serde_json::from_str(&token.permissions)?;
+            anyhow::ensure!(
+                token.repo_id == repo.id && permissions.allows("contents", write),
+                "run token repository access denied"
+            );
+        }
+        let level = access::user_git_access(pool, &identity, repo).await?;
         anyhow::ensure!(
             if write {
                 level.can_write()

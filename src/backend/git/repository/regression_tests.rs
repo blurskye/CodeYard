@@ -502,7 +502,7 @@ async fn merge_and_replay_refuse_a_base_larger_than_the_child_memory_limit() {
         email: "test@example.invalid",
         date: None,
     };
-    let error = checked::prepare_merge(directory.path(), head, other, "merge", &person)
+    let error = checked::prepare_merge(directory.path(), head, other, "merge", &person, &person)
         .await
         .unwrap_err();
     assert!(

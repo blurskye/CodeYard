@@ -914,7 +914,7 @@ async fn oauth_state_requires_browser_provider_origin_and_one_atomic_consumer() 
     let fixture = Database::new().await;
     let state = random_id();
     let browser = binding(&random_id());
-    let redirect = "https://git.example/api/auth/oauth/google/callback";
+    let redirect = "https://git.example/login/oauth/google/callback";
     stored::save_bound_oauth_state(
         &fixture.pool,
         &state,
@@ -1323,7 +1323,7 @@ async fn token_insert_waiting_behind_password_revocation_is_refused() {
         racing.await.unwrap(),
         Err(identity::tokens::TokenError::Denied)
     ));
-    assert!(db::users::tokens::list_tokens(&fixture.pool, user.id)
+    assert!(db::users::tokens::list_tokens(&fixture.pool, user.id, 0)
         .await
         .unwrap()
         .is_empty());

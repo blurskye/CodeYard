@@ -9,6 +9,7 @@ pub mod ready;
 pub mod requested_reviewers;
 pub mod review_forms;
 pub mod reviews;
+mod security;
 pub mod stack;
 pub mod workflows;
 
@@ -81,6 +82,112 @@ pub fn json_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
         )
 }
 
+/// GitHub links a pull request as `/pull/N`; the pages here live under `/pulls/N`.
+async fn pull_alias(
+    axum::extract::State(state): axum::extract::State<
+        std::sync::Arc<crate::backend::app::AppState>,
+    >,
+    axum::extract::Path((owner, repo, number)): axum::extract::Path<(String, String, String)>,
+    headers: axum::http::HeaderMap,
+    uri: axum::http::Uri,
+) -> axum::response::Response {
+    for (suffix, patch) in [(".diff", false), (".patch", true)] {
+        if let Some(number) = number
+            .strip_suffix(suffix)
+            .and_then(|n| n.parse::<i32>().ok())
+        {
+            // A download is a page: a private node admits only signed-in people to it.
+            if let Err(response) = crate::backend::api::http::context::PageContext::load(
+                state.clone(),
+                headers.clone(),
+                &uri,
+            )
+            .await
+            {
+                return response;
+            }
+            return pull_text(&state, &owner, &repo, number, &headers, patch).await;
+        }
+    }
+    pull_redirect(&owner, &repo, &number, "", &uri)
+}
+
+/// `/pull/N.diff` and `/pull/N.patch`, as GitHub serves them.
+async fn pull_text(
+    state: &crate::backend::app::AppState,
+    owner: &str,
+    repo: &str,
+    number: i32,
+    headers: &axum::http::HeaderMap,
+    patch: bool,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let repository = match crate::backend::api::repos::access::readable_repository(
+        &state.pool,
+        owner,
+        repo,
+        headers,
+    )
+    .await
+    {
+        Ok(repository) => repository,
+        Err(error) => return error.into_response(),
+    };
+    let pull = match crate::backend::db::pull_requests::records::get_pull_request(
+        &state.pool,
+        repository.id,
+        number,
+    )
+    .await
+    {
+        Ok(Some(pull)) => pull,
+        Ok(None) => return axum::http::StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    crate::backend::api::github::pull_diff_text(state, &repository, &pull, patch).await
+}
+
+async fn pull_alias_with_tab(
+    axum::extract::Path((owner, repo, number, rest)): axum::extract::Path<(
+        String,
+        String,
+        String,
+        String,
+    )>,
+    uri: axum::http::Uri,
+) -> axum::response::Response {
+    pull_redirect(&owner, &repo, &number, &rest, &uri)
+}
+
+/// The path parts arrive decoded, so they are encoded again; a decoded `/` in the owner would
+/// otherwise make the target `//host/...`, which browsers follow off the site.
+fn pull_redirect(
+    owner: &str,
+    repo: &str,
+    number: &str,
+    rest: &str,
+    uri: &axum::http::Uri,
+) -> axum::response::Response {
+    use crate::webui::encode_component;
+    use axum::response::IntoResponse;
+    let tab = rest
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .map(|part| format!("/{}", encode_component(part)))
+        .collect::<String>();
+    let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
+    let target = format!(
+        "/{}/{}/pulls/{}{tab}{query}",
+        encode_component(owner),
+        encode_component(repo),
+        encode_component(number)
+    );
+    if !crate::backend::api::http::origin::safe_redirect_path(&target) {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    }
+    axum::response::Redirect::permanent(&target).into_response()
+}
+
 pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
     use crate::backend::api::repos::issues;
     use axum::{
@@ -88,6 +195,8 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
         Router,
     };
     Router::new()
+        .route("/:owner/:repo/pull/:number", get(pull_alias))
+        .route("/:owner/:repo/pull/:number/*rest", get(pull_alias_with_tab))
         .route("/:owner/:repo/pulls", get(issues::collection::native_index))
         .route(
             "/:owner/:repo/pulls/new",
@@ -112,6 +221,14 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
         .route(
             "/:owner/:repo/pulls/:number/comments",
             post(review_forms::native_pull_comment),
+        )
+        .route(
+            "/:owner/:repo/pulls/:number/lock",
+            post(issues::locking::native_lock),
+        )
+        .route(
+            "/:owner/:repo/pulls/:number/comments/:comment/pin",
+            post(issues::pins::native_pin),
         )
         .route(
             "/:owner/:repo/pulls/:number/react",

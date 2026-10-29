@@ -907,6 +907,8 @@ async fn assert_comment_paths_are_bounded(
                 pr_id,
                 author_id: reader_id,
                 body: "At limit",
+                start_line: None,
+                start_side: None,
                 expected_revisions: None,
                 path: Some(&accepted),
                 line: Some(1),
@@ -949,6 +951,8 @@ async fn assert_comment_paths_are_bounded(
                 pr_id,
                 author_id: reader_id,
                 body: "Oversized path",
+                start_line: None,
+                start_side: None,
                 expected_revisions: None,
                 path: Some(&oversized_path),
                 line: Some(1),
@@ -1559,7 +1563,7 @@ async fn assert_large_comment_socket(alice: &Client, bob: &Client) {
     let router = alice.router.clone();
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
-    socket.write_all(format!("GET /api/notifications/ws HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nCookie: session_id={}\r\n\r\n", alice.session).as_bytes()).await.unwrap();
+    socket.write_all(format!("GET /api/v3/notifications/ws HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nCookie: session_id={}\r\n\r\n", alice.session).as_bytes()).await.unwrap();
     let mut handshake = Vec::new();
     while !handshake.ends_with(b"\r\n\r\n") {
         handshake.push(socket.read_u8().await.unwrap());

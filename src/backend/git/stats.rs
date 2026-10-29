@@ -108,6 +108,17 @@ fn extension_to_language(ext: &str) -> Option<&'static str> {
         .map(|(_, l)| *l)
 }
 
+pub fn language_for_path(path: &str) -> Option<&'static str> {
+    let path = Path::new(path);
+    if path.file_name().is_some_and(|name| name == "Dockerfile") {
+        Some("Dockerfile")
+    } else {
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .and_then(|extension| extension_to_language(&extension.to_ascii_lowercase()))
+    }
+}
+
 pub const MAX_LANGUAGE_FILES: usize = 100_000;
 const MAX_LANGUAGE_PATH_BYTES: usize = 4 * 1024;
 const MAX_LANGUAGE_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
@@ -151,14 +162,7 @@ fn parse_language_stats(output: &[u8]) -> Result<Vec<LanguageStat>> {
         let size = size.ok_or_else(|| anyhow::anyhow!("Missing Git blob size"))?;
         let size = std::str::from_utf8(size)?.parse::<u64>()?;
         let filepath = String::from_utf8_lossy(filepath);
-        let path = Path::new(filepath.as_ref());
-        let language = if path.file_name().is_some_and(|name| name == "Dockerfile") {
-            Some("Dockerfile")
-        } else {
-            path.extension()
-                .and_then(|extension| extension.to_str())
-                .and_then(extension_to_language)
-        };
+        let language = language_for_path(filepath.as_ref());
         if let Some(language) = language {
             let bytes = lang_bytes.entry(language.to_owned()).or_insert(0);
             *bytes = bytes
@@ -327,7 +331,9 @@ async fn current_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
     let permit = process::operation_slot(process::RPC_TIMEOUT).await?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        super::repository::list_mirror_refs(&path)
+        let mut refs = super::repository::list_mirror_refs(&path)?;
+        refs.retain(|name, _| !name.starts_with("refs/codeyard/"));
+        Ok(refs)
     })
     .await?
 }
@@ -369,7 +375,7 @@ pub(crate) async fn get_contributors(repo_path: &Path) -> Result<Vec<Contributor
     cached_by_refs(&CONTRIBUTOR_CACHES, repo_path, String::new(), |_| async {
         let mut command = process::git_command()?;
         command
-            .args(["shortlog", "-sne", "--all"])
+            .args(["shortlog", "-sne", "--exclude=refs/codeyard/*", "--all"])
             .current_dir(repo_path);
         let (status, output) = process::buffered(
             command,
@@ -454,17 +460,21 @@ pub(crate) async fn get_code_frequency(repo_path: &Path, branch: &str) -> Result
     let reference = format!("refs/heads/{branch}");
     let key = format!("{reference} {first}");
     cached_by_refs(&CODE_FREQUENCY_CACHES, repo_path, key, |refs| async move {
-        if !refs.contains_key(&reference) {
+        // The snapshot's commit, not the live branch, so a branch that moves and returns
+        // cannot leave another commit's chart cached under this one.
+        let Some(tip) = refs.get(&reference) else {
             return Ok(parse_week_changes(b"", first));
-        }
+        };
         let mut command = process::git_command()?;
         // A merge's lines were counted on the commits it brings in.
         command
             .args(["log", "--no-merges", "--format=@%ct", "--shortstat"])
-            .arg(format!("--since={first} 00:00:00 +0000"))
-            .arg(&reference)
+            // Filtering keeps recent commits that sit below an older tip.
+            .arg(format!("--since-as-filter={first} 00:00:00 +0000"))
+            .arg(tip)
             .arg("--")
             .current_dir(repo_path);
+        process::limit_memory(&mut command);
         let (status, output) = process::buffered(
             command,
             b"",
@@ -528,9 +538,209 @@ pub(crate) fn directory_size(path: &Path) -> Result<u64> {
     Ok(size)
 }
 
+/// Sunday-based history counts, shared by repository statistics and contributor lists.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CommitStatistics {
+    pub commits: u64,
+    pub weeks: Vec<CommitWeek>,
+    pub authors: Vec<AuthorStatistics>,
+    pub punch_card: Vec<[u64; 3]>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CommitWeek {
+    pub week: i64,
+    pub days: [u64; 7],
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AuthorStatistics {
+    pub name: String,
+    pub email: String,
+    pub commits: u64,
+    /// Contributor statistics exclude empty commits; contributor lists do not.
+    pub total: u64,
+    pub weeks: Vec<AuthorWeek>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AuthorWeek {
+    pub week: i64,
+    pub commits: u64,
+    pub all_commits: u64,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+static COMMIT_STATISTICS_CACHES: LazyLock<RefCaches<CommitStatistics>> =
+    LazyLock::new(Mutex::default);
+
+pub(crate) async fn get_commit_statistics(
+    repo_path: &Path,
+    branch: &str,
+) -> Result<CommitStatistics> {
+    cached_by_refs(
+        &COMMIT_STATISTICS_CACHES,
+        repo_path,
+        branch.to_owned(),
+        |refs| async move {
+            let Some(id) = refs.get(&format!("refs/heads/{branch}")) else {
+                return parse_commit_statistics(b"");
+            };
+            let mut command = process::git_command()?;
+            command
+                .args([
+                    "log",
+                    "--no-merges",
+                    "--format=%x00%at%x00%aN%x00%aE%x00",
+                    "--numstat",
+                ])
+                .arg(id)
+                .arg("--")
+                .current_dir(repo_path);
+            process::limit_memory(&mut command);
+            let (status, output) = process::buffered(
+                command,
+                b"",
+                MAX_CODE_FREQUENCY_OUTPUT_BYTES,
+                process::RPC_TIMEOUT,
+            )
+            .await?;
+            ensure!(status.success(), "Git commit statistics listing failed");
+            parse_commit_statistics(&output)
+        },
+    )
+    .await
+}
+
+fn parse_commit_statistics(output: &[u8]) -> Result<CommitStatistics> {
+    use chrono::{Datelike, Timelike};
+    use std::collections::BTreeMap;
+    let mut result = CommitStatistics {
+        punch_card: (0..7)
+            .flat_map(|day| (0..24).map(move |hour| [day, hour, 0]))
+            .collect(),
+        ..Default::default()
+    };
+    if output.is_empty() {
+        return Ok(result);
+    }
+    let fields: Vec<_> = output.split(|byte| *byte == 0).collect();
+    ensure!(
+        fields[0].is_empty() && (fields.len() - 1).is_multiple_of(4),
+        "Malformed Git statistics record"
+    );
+    let mut weeks = BTreeMap::<i64, CommitWeek>::new();
+    let mut authors = BTreeMap::<String, (AuthorStatistics, BTreeMap<i64, AuthorWeek>)>::new();
+    for record in fields[1..].as_chunks::<4>().0 {
+        let timestamp = std::str::from_utf8(record[0])?.parse::<i64>()?;
+        let date = chrono::DateTime::from_timestamp(timestamp, 0)
+            .ok_or_else(|| anyhow::anyhow!("Invalid commit timestamp"))?;
+        let day = date.weekday().num_days_from_sunday() as usize;
+        let week = date
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp()
+            - day as i64 * 86_400;
+        let mut additions = 0;
+        let mut deletions = 0;
+        let mut changed = false;
+        for line in record[3]
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+        {
+            let mut parts = line.splitn(3, |byte| *byte == b'\t');
+            let (Some(added), Some(deleted), Some(_path)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                anyhow::bail!("Malformed Git line count");
+            };
+            if added != b"-" {
+                additions += std::str::from_utf8(added)?.parse::<u64>()?;
+            }
+            if deleted != b"-" {
+                deletions += std::str::from_utf8(deleted)?.parse::<u64>()?;
+            }
+            changed = true;
+        }
+        let entry = weeks.entry(week).or_insert_with(|| CommitWeek {
+            week,
+            ..Default::default()
+        });
+        entry.days[day] += 1;
+        entry.additions += additions;
+        entry.deletions += deletions;
+        result.commits += 1;
+        result.punch_card[day * 24 + date.hour() as usize][2] += 1;
+        let email = String::from_utf8_lossy(record[2]).into_owned();
+        let (author, author_weeks) = authors.entry(email.clone()).or_insert_with(|| {
+            (
+                AuthorStatistics {
+                    name: String::from_utf8_lossy(record[1]).into_owned(),
+                    email,
+                    ..Default::default()
+                },
+                BTreeMap::new(),
+            )
+        });
+        author.commits += 1;
+        let entry = author_weeks.entry(week).or_insert_with(|| AuthorWeek {
+            week,
+            ..Default::default()
+        });
+        entry.all_commits += 1;
+        if changed {
+            author.total += 1;
+            entry.commits += 1;
+            entry.additions += additions;
+            entry.deletions += deletions;
+        }
+        check_contributor_count(authors.len())?;
+    }
+    result.weeks = weeks.into_values().collect();
+    result.authors = authors
+        .into_values()
+        .map(|(mut author, weeks)| {
+            author.weeks = weeks.into_values().collect();
+            author
+        })
+        .collect();
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commit_statistics_use_sundays_and_exclude_empty_commits_only_from_contributions() {
+        let sunday = chrono::NaiveDate::from_ymd_opt(2026, 1, 4)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        let log = format!("\0{sunday}\0Test\0test@example.test\0\n2\t1\tpath\n\0{}\0Test\0test@example.test\0\n\0{}\0Other\0other@example.test\0\n-\t-\tbinary\n", sunday+86400, sunday+7*86400);
+        let stats = parse_commit_statistics(log.as_bytes()).unwrap();
+        assert_eq!(stats.commits, 3);
+        assert_eq!(stats.weeks[0].week, sunday);
+        assert_eq!(stats.weeks[0].days, [1, 1, 0, 0, 0, 0, 0]);
+        assert_eq!((stats.weeks[0].additions, stats.weeks[0].deletions), (2, 1));
+        let author = stats
+            .authors
+            .iter()
+            .find(|author| author.name == "Test")
+            .unwrap();
+        assert_eq!((author.commits, author.total), (2, 1));
+        assert_eq!(author.weeks[0].all_commits, 2);
+        assert_eq!(stats.punch_card[0], [0, 0, 2]);
+        assert_eq!(stats.punch_card[24], [1, 0, 1]);
+        assert!(parse_commit_statistics(b"\0bad").is_err());
+    }
 
     #[test]
     fn code_frequency_sums_each_week_and_skips_older_commits() {

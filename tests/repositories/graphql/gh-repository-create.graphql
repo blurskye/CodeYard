@@ -1,0 +1,11 @@
+# cli/cli 5056c0a8ef34512be1d5b4120d4e4b30412ada8b, pkg/cmd/repo/create/http.go
+mutation RepositoryCreate($input: CreateRepositoryInput!) {
+  createRepository(input: $input) {
+    repository {
+      id
+      name
+      owner { login }
+      url
+    }
+  }
+}

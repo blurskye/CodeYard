@@ -1,0 +1,15 @@
+# https://github.com/terraform-linters/setup-tflint/tree/90f302c255ef959cbfb4bd10581afecdb7ece3e6
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: terraform-linters/setup-tflint@90f302c255ef959cbfb4bd10581afecdb7ece3e6 # v4
+        with:
+          tflint_version: "v0.55.1"
+      - name: Assert documented effect
+        run: |
+          tflint --version | grep '0\.55\.1'
+          echo compat:ok

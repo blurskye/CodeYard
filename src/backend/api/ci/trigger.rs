@@ -108,15 +108,18 @@ fn draft(
         } else {
             BTreeMap::new()
         },
-        inputs_text: value("inputs"),
+        // Kept as typed, so a refused draft comes back unchanged.
+        inputs_text: form.get("inputs").cloned().unwrap_or_default(),
     }
 }
 
-/// The `name=value` lines of the global form. Each name appears once.
+/// The `name=value` lines of the global form. Each name appears once. Spaces around the name and
+/// the value are dropped, as in `name = value`; a choice that has such spaces can still be picked
+/// in the repository's own form.
 fn input_lines(text: &str) -> Result<BTreeMap<String, serde_json::Value>, &'static str> {
     const FORMAT: &str = "each workflow input goes on its own line as name=value";
     let mut inputs = BTreeMap::new();
-    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let (name, value) = line.split_once('=').ok_or(FORMAT)?;
         let name = name.trim();
         if name.is_empty() {
@@ -294,6 +297,11 @@ async fn dispatch(
         pipeline: Some(draft.pipeline.clone()),
         environment: optional(&draft.environment),
         inputs,
+        // The rendered repository form sends its repository; a bad value matches none.
+        repo_id: scope
+            .as_ref()
+            .and_then(|_| form.get("repository_id"))
+            .map(|id| id.parse().unwrap_or(0)),
     };
     let actor_id = ctx.require_user().expect("user checked above").id;
     match ctx

@@ -4,9 +4,25 @@ use sqlx::PgPool;
 
 use crate::backend::db::repository_stats::{LanguageSource, RepoActivityPoint, WorkflowUsage};
 
+pub async fn repository_document_facts(
+    pool: &PgPool,
+    repo: i64,
+) -> Result<crate::backend::db::repository_stats::RepositoryDocumentFacts> {
+    Ok(sqlx::query_as("SELECT (SELECT COUNT(*) FROM issues WHERE repo_id=r.id AND state='open')+(SELECT COUNT(*) FROM pull_requests WHERE repo_id=r.id AND state='open') AS open_items,(SELECT MAX(accepted_at) FROM ci_accepted_pushes WHERE repo_id=r.id) AS pushed_at,(SELECT language FROM repo_languages WHERE repo_id=r.id ORDER BY bytes DESC,language LIMIT 1) AS language FROM repositories r WHERE r.id=$1")
+        .bind(repo).fetch_one(pool).await?)
+}
+
 pub async fn language_source(pool: &PgPool, repo_id: i64) -> Result<Option<LanguageSource>> {
     Ok(sqlx::query_as("SELECT id AS repo_id,default_branch,storage_node_id,write_version FROM repositories WHERE id=$1")
         .bind(repo_id).fetch_optional(pool).await?)
+}
+
+pub async fn forget_languages(pool: &PgPool, repo_id: i64) -> Result<()> {
+    sqlx::query("DELETE FROM repo_language_cache WHERE repo_id=$1")
+        .bind(repo_id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn languages_computed(

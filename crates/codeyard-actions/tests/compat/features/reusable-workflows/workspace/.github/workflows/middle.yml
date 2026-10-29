@@ -1,0 +1,17 @@
+on:
+  workflow_call:
+    inputs:
+      message: {type: string, required: true}
+      enabled: {type: boolean, required: true}
+      count: {type: number, required: true}
+    outputs:
+      message:
+        value: ${{ jobs.leaf.outputs.message }}
+jobs:
+  leaf:
+    uses: ./.github/workflows/leaf.yml
+    with:
+      message: ${{ inputs.message }}
+      enabled: ${{ inputs.enabled }}
+      count: ${{ inputs.count }}
+    secrets: inherit

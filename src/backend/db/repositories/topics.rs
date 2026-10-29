@@ -101,3 +101,7 @@ native_operation!(crate::backend::db::postgres::repositories::topics::repository
     /// The topics of each listed repository, alphabetically. A repository without topics is
     /// absent from the map. This read grants no access; callers scope the repositories first.
     fn repository_topics(pool: &DbPool, repo_ids: &[i64]) -> Result<BTreeMap<i64, Vec<String>>>);
+
+native_operation!(crate::backend::db::postgres::repositories::topics::replace_topics,
+    crate::backend::db::sqlite::repositories::topics::replace_topics,
+    fn replace_topics(pool: &DbPool, actor_id: i64, repo_id: i64, topics: &[String]) -> Result<()>);

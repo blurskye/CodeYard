@@ -14,7 +14,19 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Run {
+    #[serde(default)]
+    pub approval_required: bool,
+    #[serde(default)]
+    pub approval_pull: Option<String>,
+    #[serde(default)]
+    pub concurrency_groups: Vec<String>,
+    #[serde(default)]
+    pub waiting_for_concurrency: bool,
+    #[serde(default)]
+    pub artifacts: Vec<Artifact>,
     pub id: String,
+    pub api_id: i64,
+    pub api_attempt: i32,
     pub repository: String,
     pub status: String,
     pub workflow_path: String,
@@ -23,6 +35,8 @@ pub struct Run {
     pub event: String,
     pub pipeline: String,
     pub mode: String,
+    #[serde(default)]
+    pub engine: Option<String>,
     pub head_sha: Option<String>,
     pub created_at: i64,
     pub started_at: Option<i64>,
@@ -31,6 +45,14 @@ pub struct Run {
     /// The inputs of a manual run, by name; empty for other events.
     #[serde(default)]
     pub inputs: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Artifact {
+    pub can_delete: bool,
+    pub id: i64,
+    pub name: String,
+    pub size: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -89,6 +111,12 @@ pub(super) fn short_id(value: &str, length: usize) -> String {
 /// The timing note beside a run's status: how long it took, or what it is waiting for. The
 /// status itself is shown separately, so this never repeats it.
 pub(super) fn run_duration(run: &Run) -> String {
+    if run.status == "queued" && run.approval_required {
+        return "Waiting for fork workflow approval".into();
+    }
+    if run.status == "queued" && run.waiting_for_concurrency {
+        return "Waiting for concurrency group".into();
+    }
     match (run.started_at, run.completed_at) {
         (Some(start), Some(end)) => logs::duration(end - start),
         _ => match (logs::normalize_status(&run.status), run.started_at) {
@@ -156,6 +184,11 @@ fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> El
     let model = &model;
     let selected = &selected;
     let run = &selected.run;
+    let engine = run.engine.as_deref().unwrap_or(if run.status == "queued" {
+        "Not started"
+    } else {
+        "act"
+    });
     let show_logs = model.value("view") != "summary";
     let log_key = format!(
         "{}:{}:{}",
@@ -163,6 +196,11 @@ fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> El
         model.value("log_q"),
         model.value("wrap")
     );
+    let annotations: Vec<_> = selected
+        .logs
+        .iter()
+        .filter_map(|line| logs::annotation(&line.line).map(|issue| (line.id, issue)))
+        .collect();
     let error_lines = selected
         .logs
         .iter()
@@ -215,18 +253,27 @@ fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> El
                 }
             }
             div { class: "actions-detail-main",
-                if error_lines > 0 || run_failed {
+                if !annotations.is_empty() || error_lines > 0 || run_failed {
                     details { class: "actions-annotations", open: true,
                         summary {
                             span { h2 { "Annotations" }
                                 span { class: "actions-annotation-count",
-                                    if error_lines > 0 { "{error_lines} error line" if error_lines != 1 { "s" } }
+                                    if !annotations.is_empty() { "{annotations.len()} annotation" if annotations.len() != 1 { "s" } }
+                                    else if error_lines > 0 { "{error_lines} error line" if error_lines != 1 { "s" } }
                                     else { "Runner reported an error" }
                                 }
                             }
                             span { class: "actions-disclosure-label", "Details" }
                         }
                         if run_failed { p { role: "alert", "{run.error_message.as_deref().unwrap_or_default()}" } }
+                        for (id, issue) in &annotations {
+                            div { class: "actions-annotation",
+                                strong { "{issue.severity}" if !issue.title.is_empty() { ": {issue.title}" } }
+                                if !issue.file.is_empty() { p { "{issue.file}" if !issue.line.is_empty() { ":{issue.line}" } if !issue.column.is_empty() { ":{issue.column}" } } }
+                                p { "{issue.message}" }
+                                a { class: "actions-history-link", href: format!("#log-{id}"), "View log line" }
+                            }
+                        }
                     }
                 }
                 if show_logs {
@@ -260,6 +307,23 @@ fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> El
                         }
                     }
                 }
+                if !run.artifacts.is_empty() {
+                    section { class: "actions-summary-card", aria_label: "Artifacts",
+                        h2 { "Artifacts" }
+                        for artifact in &run.artifacts {
+                            div { class: "actions-run-heading-row",
+                                a { class: "actions-history-link", style: "overflow-wrap:anywhere;min-width:0", href: format!("{}/runs/{}/artifacts/{}/download", model.base_path, run.id, artifact.id), "{artifact.name}.zip" }
+                                span { "{artifact.size} bytes" }
+                                if artifact.can_delete {
+                                    form { method: "post", action: format!("{}/runs/{}/artifacts/{}/delete", model.base_path, run.id, artifact.id),
+                                        {crate::webui::pages::repos::chrome::csrf(&model.csrf_token)}
+                                        button { r#type: "submit", class: "actions-button", "Delete" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 if let Some(deployment) = &selected.deployment {
                     section { class: "actions-deployment-card", "aria-label": "Deployment",
                         h2 { "Deployment" }
@@ -276,12 +340,23 @@ fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> El
                     summary { {icon("usage")} "Run details" }
                     // A fragment inside details lets native navigation reveal its ancestor.
                     dl { class: "actions-metadata-grid", id: "run-metadata",
+                        if run.status == "queued" && run.approval_required {
+                            if let Some(url) = &run.approval_pull {
+                                div { dt { "Approval" } dd {
+                                    a { href: "{url}", "Review fork workflows on the pull request" }
+                                } }
+                            }
+                        }
                         div { dt { "Run ID" } dd { code { "{run.id}" } } }
                         div { dt { "Repository" } dd { "{run.repository}" } }
                         div { dt { "Workflow" } dd { "{run.workflow_path}" } }
+                        for group in &run.concurrency_groups {
+                            div { dt { "Concurrency group" } dd { style: "overflow-wrap:anywhere;min-width:0", code { "{group}" } } }
+                        }
                         div { dt { "Commit status" } dd { code { "{run.commit_status_context}" } } }
                         div { dt { "Event" } dd { "{run.event}" } }
                         div { dt { "Branch" } dd { "{run.branch}" } }
+                        div { dt { "Engine" } dd { "{engine}" } }
                         div { dt { "Runner / pipeline" } dd { "{run.mode} / {run.pipeline}" } }
                         div { dt { "Commit" } dd { code { {run.head_sha.as_deref().unwrap_or("Not recorded")} } } }
                         div { dt { "Created" } dd { "{logs::timestamp(run.created_at)}" } }

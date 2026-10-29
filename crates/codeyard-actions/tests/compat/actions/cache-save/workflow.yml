@@ -1,0 +1,18 @@
+# https://github.com/actions/cache/tree/0057852bfaa89a56745cba8c7296529d2fc39830
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          mkdir cache-data; echo payload > cache-data/data.txt
+      - id: action
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: "cache-data"
+          key: "compat-save-${{ env.COMPAT_CACHE_KEY }}"
+      - name: Assert documented effect
+        run: |
+          test -f cache-data/data.txt
+          echo compat:ok

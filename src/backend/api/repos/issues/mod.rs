@@ -1,9 +1,15 @@
 pub mod assignees;
+pub mod attributes;
 pub mod collection;
 pub mod comments;
 pub mod issue;
 pub mod labels;
+pub mod locking;
+pub(crate) mod management;
+pub mod pins;
 pub mod reactions;
+pub mod relationships;
+pub mod suggestions;
 pub mod tasks;
 
 pub fn json_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
@@ -23,6 +29,10 @@ pub fn json_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
         .route(
             "/api/repos/:owner/:repo/issues/:number/comments",
             get(comments::list_issue_comments).post(comments::create_issue_comment),
+        )
+        .route(
+            "/api/repos/:owner/:repo/issues/:number/suggestions",
+            post(suggestions::agent_propose),
         )
         .route(
             "/api/repos/:owner/:repo/issues/:number/labels",
@@ -47,6 +57,10 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
         )
         .route("/:owner/:repo/issues/:number", get(issue::native_detail))
         .route(
+            "/:owner/:repo/issues/:number/manage",
+            post(management::native_change),
+        )
+        .route(
             "/:owner/:repo/issues/:number/edit",
             post(issue::native_edit),
         )
@@ -69,6 +83,26 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
         .route(
             "/:owner/:repo/issues/:number/tasks",
             post(tasks::native_toggle_task),
+        )
+        .route(
+            "/:owner/:repo/issues/:number/lock",
+            post(locking::native_lock),
+        )
+        .route(
+            "/:owner/:repo/issues/:number/relationships",
+            post(relationships::native_change),
+        )
+        .route(
+            "/:owner/:repo/issues/:number/attributes",
+            post(attributes::native_change),
+        )
+        .route(
+            "/:owner/:repo/issues/:number/suggestions",
+            post(suggestions::native_change),
+        )
+        .route(
+            "/:owner/:repo/issues/:number/comments/:comment/pin",
+            post(pins::native_pin),
         )
         .route(
             "/:owner/:repo/issues/:number/react",

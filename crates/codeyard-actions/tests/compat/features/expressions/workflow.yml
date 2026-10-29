@@ -1,0 +1,18 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CASE: ${{ 'Hello' == 'hello' }}
+          COERCE: ${{ '2' == 2 }}
+          EMPTY: ${{ null == 0 }}
+          INDEX: ${{ fromJSON('["a","b"]')[1] }}
+          FALLBACK: ${{ false || 'fallback' }}
+          MISSING: ${{ github.event.no_such_property }}
+        run: |
+          test "$CASE/$COERCE/$EMPTY" = true/true/true
+          test "$INDEX/$FALLBACK/$MISSING" = b/fallback/
+          echo compat:ok

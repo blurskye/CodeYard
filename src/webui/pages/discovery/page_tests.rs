@@ -559,8 +559,8 @@ fn visibility_choices_are_icon_cards_with_one_line_explanations() {
         None,
     ));
     let visibility = html
-        .split("collaboration-option-group")
-        .nth(1)
+        .split("<fieldset")
+        .find(|section| section.contains(">Visibility</legend>"))
         .unwrap()
         .split("</fieldset>")
         .next()

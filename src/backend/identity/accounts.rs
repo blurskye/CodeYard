@@ -101,19 +101,8 @@ pub async fn reset_password(
     let hash = passwords::hash_password(new_password)
         .await
         .map_err(PasswordResetError::Password)?;
-    let (user_id, _) = links::take(pool, Purpose::Reset, token)
-        .await
-        .map_err(|_| PasswordResetError::AccountUnavailable)?
-        .ok_or(PasswordResetError::InvalidLink)?;
-    let user = db::users::accounts::get_user_by_id(pool, user_id)
-        .await
-        .map_err(|_| PasswordResetError::AccountUnavailable)?
-        .ok_or(PasswordResetError::InvalidLink)?;
-    let expected = user
-        .password_hash
-        .as_deref()
-        .ok_or(PasswordResetError::InvalidLink)?;
-    transitions::compare_exchange_password(pool, user.id, expected, &hash, true, true, None)
+    // Using the link, replacing the hash and ending the sessions commit together.
+    links::use_reset_link(pool, token, &hash)
         .await
         .map_err(|_| PasswordResetError::AccountUnavailable)?
         .map(|_| ())

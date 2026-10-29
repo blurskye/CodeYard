@@ -1,7 +1,8 @@
 //! Admin Actions page: whether workflows run on this site, the limits on each run, and the
 //! runner image. Repositories can set lower limits in their own settings.
+use crate::webui::components::{DraftSelect, SelectOption};
 use crate::webui::pages::admin::{admin_layout, Section};
-use crate::webui::pages::fields::{csrf, notice, text_field, SUBMIT};
+use crate::webui::pages::fields::{csrf, notice, text_field, FIELD, SUBMIT};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -10,11 +11,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
+    pub default_engine: String,
+    pub codeyard_actions_enabled: bool,
+    pub act_enabled: bool,
+    pub default_workflow_permissions: String,
     pub enabled: bool,
     pub run_timeout_minutes: String,
     pub job_cpus: String,
     pub job_memory_gib: String,
     pub runner_image: String,
+    pub results_url: String,
+    pub cache_size_gib: String,
+    pub cache_retention_days: String,
+    pub artifact_retention_days: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -53,6 +62,26 @@ pub fn render(page: Page) -> Element {
                         span { "Run workflows on this site" }
                     }
                     fieldset { class: "identity-fieldset",
+                        legend { "CI engines" }
+                        label { class: "block text-sm font-semibold", r#for: "default_engine", "Default engine" }
+                        DraftSelect { class: FIELD, id: Some("default_engine".into()), name: "default_engine", initial_value: settings.default_engine.clone(), options: vec![
+                            SelectOption { value: "codeyard-actions".into(), label: "codeyard-actions".into() },
+                            SelectOption { value: "act".into(), label: "act".into() },
+                        ] }
+                        label { class: "identity-check", input { r#type: "checkbox", name: "codeyard_actions_enabled", value: "on", checked: settings.codeyard_actions_enabled } span { "Enable codeyard-actions" } }
+                        label { class: "identity-check", input { r#type: "checkbox", name: "act_enabled", value: "on", checked: settings.act_enabled } span { "Enable act" } }
+                        p { class: "identity-form-hint", "At least one engine, including the site default, must stay enabled." }
+                    }
+                    fieldset { class: "identity-fieldset",
+                        legend { "Workflow token permissions" }
+                        label { class: "block text-sm font-semibold", r#for: "default_workflow_permissions", "Default GITHUB_TOKEN permissions" }
+                        DraftSelect { class: FIELD, id: Some("default_workflow_permissions".into()), name: "default_workflow_permissions", initial_value: settings.default_workflow_permissions.clone(), options: vec![
+                            SelectOption { value: "restricted".into(), label: "Restricted: contents and metadata read".into() },
+                            SelectOption { value: "permissive".into(), label: "Permissive: read and write".into() },
+                        ] }
+                        p { class: "identity-form-hint", "An explicit workflow or job permissions block replaces this default. Fork pull requests are always read-only." }
+                    }
+                    fieldset { class: "identity-fieldset",
                         legend { "Limits on each run" }
                         p { class: "identity-form-hint", "Leave a field empty for no limit. A repository can set lower limits in its settings." }
                         {text_field("run_timeout_minutes", "Timeout in minutes", settings.run_timeout_minutes.clone(), "number", false, 5)}
@@ -66,6 +95,15 @@ pub fn render(page: Page) -> Element {
                         legend { "Runner image" }
                         {text_field("runner_image", "Image for ubuntu-latest and the other Ubuntu labels", settings.runner_image.clone(), "text", false, 255)}
                         p { class: "identity-form-hint break-all", "Empty uses " code { "{page.default_image}" } ". A node pulls a missing image on its first run." }
+                    }
+                    fieldset { class: "identity-fieldset",
+                        legend { "Caches and artifacts" }
+                        {text_field("results_url", "Server URL reachable by job containers", settings.results_url.clone(), "url", false, 2048)}
+                        p { class: "identity-form-hint", "Empty uses PUBLIC_URL. Use an HTTP or HTTPS origin without a path." }
+                        {text_field("cache_size_gib", "Cache size per repository in GiB", settings.cache_size_gib.clone(), "number", false, 5)}
+                        {text_field("cache_retention_days", "Expire caches after days without use", settings.cache_retention_days.clone(), "number", false, 3)}
+                        {text_field("artifact_retention_days", "Artifact retention in days", settings.artifact_retention_days.clone(), "number", false, 3)}
+                        p { class: "identity-form-hint", "Defaults: 10 GiB of cache per repository, 7 days without use, and 90 days for artifacts." }
                     }
                     div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Save" } }
                 }
@@ -82,11 +120,19 @@ mod tests {
         Page {
             csrf_token: "csrf-marker".into(),
             settings: Settings {
+                default_engine: "codeyard-actions".into(),
+                codeyard_actions_enabled: true,
+                act_enabled: true,
+                default_workflow_permissions: "restricted".into(),
                 enabled: true,
                 run_timeout_minutes: String::new(),
                 job_cpus: "4".into(),
                 job_memory_gib: String::new(),
                 runner_image: String::new(),
+                results_url: String::new(),
+                cache_size_gib: String::new(),
+                cache_retention_days: String::new(),
+                artifact_retention_days: String::new(),
             },
             default_timeout_minutes: 60,
             default_image: "ghcr.io/catthehacker/ubuntu:act-latest".into(),
@@ -98,7 +144,7 @@ mod tests {
 
     #[test]
     fn the_form_shows_the_saved_limits_and_the_server_defaults() {
-        let html = dioxus_ssr::render_element(render(page()));
+        let html = crate::webui::tests::in_scope(|| dioxus_ssr::render_element(render(page())));
         assert!(html.contains("aria-label=\"Administration\""), "{html}");
         assert!(html.contains("action=\"/admin/actions\""), "{html}");
         assert!(html.contains("name=\"job_cpus\""), "{html}");

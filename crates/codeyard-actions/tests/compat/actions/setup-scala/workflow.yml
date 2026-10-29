@@ -1,0 +1,20 @@
+# https://github.com/coursier/setup-action/tree/039f736548afa5411c1382f40a5bd9c2d30e0383
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - id: action
+        uses: coursier/setup-action@039f736548afa5411c1382f40a5bd9c2d30e0383 # v1
+        with:
+          jvm: "temurin:21"
+          apps: "sbt"
+      - name: Assert documented effect
+        run: |
+          sbt --script-version
+          echo compat:ok

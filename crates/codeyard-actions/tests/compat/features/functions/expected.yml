@@ -1,0 +1,9 @@
+{
+  "exit_code": 0,
+  "jobs": {
+    "test": "success"
+  },
+  "contains": [
+    "compat:ok"
+  ]
+}

@@ -40,7 +40,7 @@ pub async fn readable_repository_ids(
     repo_ids: &[i64],
 ) -> Result<Vec<i64>> {
     anyhow::ensure!(repo_ids.len() <= 100, "Repository page exceeds its limit");
-    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id IN (SELECT value FROM json_each(?2)) AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({USER_REPO_ACCESS_SQL}) >= 1)"))
+    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id IN (SELECT value FROM json_each(?2)) AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({USER_REPO_ACCESS_SQL}) >= 1)"))
         .bind(user_id).bind(serde_json::to_string(repo_ids)?).fetch_all(pool).await?)
 }
 
@@ -67,23 +67,45 @@ pub(crate) async fn user_repo_access_in_transaction(
 // The actor's access level on repository `r`, 0 when none. A plain scalar over the
 // outer `r` and `u` rows, so the run list can evaluate it once per repository.
 pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
-    (CASE WHEN NOT u.is_banned AND NOT u.must_change_password
+    (CASE WHEN NOT r.is_gist AND NOT u.is_banned AND NOT u.must_change_password
         AND ((r.owner_kind = 'user' AND r.owner_user_id IS NOT NULL AND r.owner_org_id IS NULL)
             OR (r.owner_kind = 'org' AND r.owner_user_id IS NULL AND r.owner_org_id IS NOT NULL
                 AND EXISTS (SELECT 1 FROM organizations o WHERE o.id = r.owner_org_id)))
+        AND NOT EXISTS (SELECT 1 FROM organization_blocks b WHERE b.org_id=r.owner_org_id AND b.user_id=u.id)
         THEN MIN(MAX(
             CASE WHEN r.owner_kind = 'user' AND r.owner_user_id = u.id
                 AND r.owner_org_id IS NULL THEN 6 ELSE 0 END,
             CASE WHEN NOT r.is_private THEN 1 ELSE 0 END,
+            COALESCE((SELECT MAX(a.access_level) FROM github_apps a
+                JOIN github_app_installations i ON i.app_id=a.id
+                JOIN users owner ON owner.id=a.owner_id
+                WHERE a.bot_id=u.id AND i.suspended_at IS NULL
+                    AND NOT owner.is_banned AND NOT owner.must_change_password
+                    AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id)
+                    AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar
+                        WHERE ar.installation_id=i.id AND ar.repo_id=r.id))),0),
             COALESCE((SELECT d.access_level FROM repo_access d
                 WHERE d.repo_id = r.id AND d.user_id = u.id
                     AND d.access_level BETWEEN 1 AND 5), 0),
+            COALESCE((SELECT s.default_repository_permission FROM organization_settings s
+                JOIN org_memberships member ON member.org_id=s.org_id AND member.user_id=u.id
+                    AND member.role IN ('owner','admin','member')
+                WHERE s.org_id=r.owner_org_id AND s.default_repository_permission IN (1,3,5)),0),
+            COALESCE((SELECT MAX(role.base_level) FROM organization_role_assignments a
+                JOIN organization_roles role ON role.id=a.role_id AND role.base_level BETWEEN 1 AND 5
+                WHERE a.org_id=r.owner_org_id
+                    AND EXISTS(SELECT 1 FROM org_memberships member WHERE member.org_id=a.org_id
+                        AND member.user_id=u.id AND member.role IN ('owner','admin','member'))
+                    AND ((a.user_id=u.id AND a.team_id IS NULL) OR (a.user_id IS NULL AND EXISTS(
+                        SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id
+                        WHERE t.id=a.team_id AND t.org_id=a.org_id AND t.privacy IN ('visible','secret')
+                            AND tm.user_id=u.id AND tm.role IN ('member','maintainer'))))),0),
             COALESCE((
                 SELECT CASE m.role WHEN 'owner' THEN 6 WHEN 'admin' THEN 5
                     WHEN 'member' THEN COALESCE((
                         SELECT MAX(a.permission) FROM team_repo_access a
                         JOIN teams t ON t.id = a.team_id AND t.org_id = m.org_id
-                        JOIN team_memberships tm ON tm.team_id = t.id
+                        JOIN effective_team_memberships tm ON tm.team_id = t.id
                             AND tm.user_id = u.id AND tm.role IN ('member','maintainer')
                         WHERE a.repo_id = r.id AND a.permission BETWEEN 1 AND 5
                             AND t.privacy IN ('visible','secret')
@@ -107,7 +129,7 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
 /// personal repositories of a site admin, and the access projection for everything else.
 pub(crate) fn readable_condition() -> String {
     format!(
-        "(NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL}) >= 1)"
+        "(NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL}) >= 1))"
     )
 }
 
@@ -128,12 +150,16 @@ pub async fn readable_repositories_by_ids(
     .await?)
 }
 
-async fn grant_repo_access_in_transaction(
+pub(super) async fn grant_repo_access_in_transaction(
     tx: &mut Transaction<'_, Sqlite>,
     user_id: i64,
     repo_id: i64,
     level: AccessLevel,
 ) -> Result<RepoAccess> {
+    anyhow::ensure!(
+        !super::super::users::blocks::repository_interaction_blocked(tx, user_id, repo_id).await?,
+        crate::backend::db::users::blocks::InteractionBlocked
+    );
     let previous: Option<i16> = sqlx::query_scalar(
         "SELECT access_level FROM repo_access WHERE user_id = ?1 AND repo_id = ?2",
     )
@@ -154,13 +180,14 @@ async fn grant_repo_access_in_transaction(
     .bind(level as i16)
     .fetch_one(&mut **tx)
     .await?;
+    sqlx::query("UPDATE repository_invitations SET state='cancelled' WHERE repo_id=?1 AND invitee_id=?2 AND state='pending'").bind(repo_id).bind(user_id).execute(&mut **tx).await?;
     if previous.is_some_and(|previous| previous > level as i16) {
         super::super::ci::stop_actor_repo_ci_runs(tx, user_id, repo_id).await?;
     }
     Ok(result)
 }
 
-async fn revoke_repo_access_in_transaction(
+pub(super) async fn revoke_repo_access_in_transaction(
     tx: &mut Transaction<'_, Sqlite>,
     user_id: i64,
     repo_id: i64,
@@ -171,6 +198,7 @@ async fn revoke_repo_access_in_transaction(
         .execute(&mut **tx)
         .await?;
     let removed = result.rows_affected() > 0;
+    sqlx::query("UPDATE repository_invitations SET state='cancelled' WHERE repo_id=?1 AND invitee_id=?2 AND state='pending'").bind(repo_id).bind(user_id).execute(&mut **tx).await?;
     if removed {
         // The collaborator's queued runs here are cancelled and running ones are
         // asked to stop, like the organization revocations do.
@@ -208,6 +236,11 @@ pub async fn change_personal_repository_collaborator(
     let Some(target) = target else {
         return Ok(CollaboratorChange::NotFound);
     };
+    if permission.is_some()
+        && super::super::users::blocks::interaction_blocked(&mut tx, actor, target.id).await?
+    {
+        return Ok(CollaboratorChange::NotFound);
+    }
     if permission.is_some() && (target.is_banned || target.must_change_password) {
         return Ok(CollaboratorChange::NotFound);
     }
@@ -266,11 +299,20 @@ pub async fn write_access_user_ids(
     repo_id: i64,
     ids: &[i64],
 ) -> Result<Vec<i64>> {
+    let mut connection = pool.acquire().await?;
+    write_access_user_ids_on(&mut connection, repo_id, ids).await
+}
+
+pub(super) async fn write_access_user_ids_on(
+    connection: &mut sqlx::SqliteConnection,
+    repo_id: i64,
+    ids: &[i64],
+) -> Result<Vec<i64>> {
     Ok(sqlx::query_scalar(&format!(
         "SELECT u.id FROM repositories r JOIN users u ON u.id IN (SELECT value FROM json_each(?2))
          WHERE r.id = ?1 AND NOT r.is_archived AND NOT u.is_banned AND NOT u.must_change_password
          AND ((r.owner_kind = 'user' AND (u.is_admin OR r.owner_user_id = u.id)) OR ({USER_REPO_ACCESS_SQL}) >= ?3)"
-    )).bind(repo_id).bind(serde_json::to_string(ids)?).bind(AccessLevel::Write as i16).fetch_all(pool).await?)
+    )).bind(repo_id).bind(serde_json::to_string(ids)?).bind(AccessLevel::Write as i16).fetch_all(connection).await?)
 }
 
 /// Up to 30 users other than `viewer_id` who can write to the repository, most privileged first.

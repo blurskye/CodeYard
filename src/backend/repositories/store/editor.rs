@@ -340,6 +340,12 @@ pub struct PreparedFile {
     pub reference: String,
     pub expected: Option<String>,
     pub commit: CommitInfo,
+    /// Trusted server-side origin, not a field accepted by either file API.
+    #[serde(default)]
+    pub web_commit: bool,
+    /// Publish this commit on an unborn destination, retaining its prepared source parent.
+    #[serde(default)]
+    pub new_branch: bool,
 }
 
 /// One path a commit sets, and the bytes it gets. A change without bytes removes the file.
@@ -433,6 +439,8 @@ async fn prepare_commit(
         reference,
         expected,
         commit: metadata,
+        web_commit: false,
+        new_branch: false,
     })
 }
 
@@ -523,9 +531,12 @@ pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<Comm
         .checked(&["cat-file", "commit", &prepared.commit.sha], b"", None)
         .await?;
     let commit = decode_commit(&bytes, &prepared.commit.sha)?;
-    if commit != prepared.commit
-        || commit.parents != prepared.expected.iter().cloned().collect::<Vec<_>>()
-    {
+    let valid_parents = if prepared.new_branch {
+        prepared.expected.is_none() && commit.parents.len() <= 1
+    } else {
+        commit.parents == prepared.expected.iter().cloned().collect::<Vec<_>>()
+    };
+    if commit != prepared.commit || !valid_parents {
         return Err(invalid("Invalid prepared file publication."));
     }
     let transaction = format!(
@@ -594,11 +605,14 @@ fn decode_commit(bytes: &[u8], sha: &str) -> Result<CommitInfo, RepoError> {
     }
     let text = std::str::from_utf8(bytes).map_err(|_| unavailable())?;
     let (headers, message) = text.split_once("\n\n").ok_or_else(unavailable)?;
+    let mut tree_sha = None;
     let mut author = None;
     let mut committer = None;
     let mut parents = Vec::new();
     for header in headers.lines() {
-        if let Some(value) = header.strip_prefix("author ") {
+        if let Some(value) = header.strip_prefix("tree ") {
+            tree_sha = Some(oid(value.as_bytes())?);
+        } else if let Some(value) = header.strip_prefix("author ") {
             author = Some(signature(value)?);
         } else if let Some(value) = header.strip_prefix("committer ") {
             committer = Some(signature(value)?);
@@ -611,6 +625,7 @@ fn decode_commit(bytes: &[u8], sha: &str) -> Result<CommitInfo, RepoError> {
         committer.ok_or_else(unavailable)?;
     Ok(CommitInfo {
         sha: sha.into(),
+        tree_sha: tree_sha.ok_or_else(unavailable)?,
         message: message.into(),
         author_name,
         author_email,
@@ -619,6 +634,8 @@ fn decode_commit(bytes: &[u8], sha: &str) -> Result<CommitInfo, RepoError> {
         timestamp,
         committer_timestamp,
         parents,
+        signature: None,
+        signature_payload: None,
     })
 }
 fn signature(value: &str) -> Result<(String, String, i64), RepoError> {

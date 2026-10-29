@@ -1,0 +1,16 @@
+# https://github.com/arduino/setup-protoc/tree/c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
+        with:
+          version: "29.3"
+          repo-token: "${{ secrets.GITHUB_TOKEN }}"
+      - name: Assert documented effect
+        run: |
+          protoc --version | grep '29\.3'
+          echo compat:ok

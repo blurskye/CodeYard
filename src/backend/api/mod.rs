@@ -1,19 +1,26 @@
 //! HTTP composition: resource routers own their paths and representation-specific layers.
 //! Health, crawler, picture and Git endpoints are not resources, so they stay at the root.
 pub(crate) mod admin;
+mod artifact_metadata_pages;
+mod attestations;
 pub(crate) mod auth;
 pub(crate) mod ci;
 pub(crate) mod crawlers;
 pub(crate) mod dashboard;
 pub(crate) mod discovery;
 pub(crate) mod files;
+pub(crate) mod gists;
 pub(crate) mod git_http;
+pub(crate) mod github;
+pub(crate) mod graphql;
 pub(crate) mod health;
 pub(crate) mod help;
 pub(crate) mod http;
 pub(crate) mod notifications;
 pub(crate) mod organizations;
+pub(crate) mod packages;
 pub(crate) mod pictures;
+pub(crate) mod projects;
 pub(crate) mod repos;
 pub mod user;
 pub(crate) mod users;
@@ -56,36 +63,66 @@ pub fn create_router(state: AppState) -> Router {
             header::AUTHORIZATION,
             header::COOKIE,
             header::HeaderName::from_static("x-csrf-token"),
+            header::HeaderName::from_static("x-github-api-version"),
+        ])
+        // Browser API clients read pagination, caching and rate-limit headers, as on GitHub.
+        .expose_headers([
+            header::ETAG,
+            header::LINK,
+            header::LOCATION,
+            header::RETRY_AFTER,
+            header::HeaderName::from_static("x-ratelimit-limit"),
+            header::HeaderName::from_static("x-ratelimit-remaining"),
+            header::HeaderName::from_static("x-ratelimit-reset"),
+            header::HeaderName::from_static("x-ratelimit-resource"),
+            header::HeaderName::from_static("x-ratelimit-used"),
+            header::HeaderName::from_static("x-oauth-scopes"),
+            header::HeaderName::from_static("x-poll-interval"),
+            header::HeaderName::from_static("x-github-api-version-selected"),
         ])
         .allow_credentials(true);
 
     Router::new()
         .merge(health::router())
         .merge(crawlers::router())
-        // Needed before setup and in private mode.
-        .route("/api/config", get(config::get_public_config))
         .merge(auth::router())
         .merge(user::router())
         .merge(users::router())
         .merge(admin::router())
         .merge(organizations::router())
+        .merge(projects::router())
         .merge(discovery::router())
+        .merge(gists::router())
         .merge(help::router())
         .merge(repos::router())
         .merge(ci::router())
         .merge(files::router())
         .merge(notifications::router())
         .merge(dashboard::router())
+        .merge(attestations::router())
         .layer(axum::middleware::from_fn(middleware::bounded_form_body))
         // Git owns token-only auth, outside browser/session/CSRF and request-body layers.
         .merge(git_http::router())
+        .merge(github::router())
+        .merge(packages::router())
+        .merge(artifact_metadata_pages::router())
+        .merge(ci::results::router())
+        .merge(ci::oidc::router())
+        .merge(graphql::router())
         .route("/assets/*path", get(static_files::asset))
         .route("/wasm/*path", get(static_files::asset))
         .fallback(render::not_found)
+        // GitHub-style Maven URLs share the repository prefix; only repository-layout artifacts intercept it.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            packages::maven_requests,
+        ))
         .with_state(state.clone())
         // Sees every response, including errors. It reads the state, so it sits inside the Extension layer.
         .layer(axum::middleware::from_fn(render::render_page))
+        .layer(axum::middleware::from_fn(http::interaction_proofs::prepare))
         .layer(axum::middleware::from_fn(middleware::no_ai_html))
+        .layer(axum::middleware::from_fn(http::traffic::record_views))
         // Outside every handler, so no request keeps a client address that it sent itself.
         .layer(axum::middleware::from_fn(middleware::stamp_client_address))
         // Resource middleware extracts this before handlers extract router state.
@@ -102,6 +139,10 @@ pub async fn run_web_server(
     state: AppState,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
+    let traffic_pool = state.pool.clone();
+    let dependency_pool = state.pool.clone();
+    let dependency_ci = state.ci_runs.clone();
+    let dependency_notifications = state.notification_broadcaster.clone();
     let git_tasks = state.git_tasks.clone();
     let app = create_router(state).layer(axum::middleware::from_fn_with_state(
         stop.clone(),
@@ -120,7 +161,23 @@ pub async fn run_web_server(
         })
         .await
     };
-    let result = server.await;
+    let result = {
+        let maintenance =
+            crate::backend::repositories::traffic::maintain(traffic_pool, stop.clone());
+        let dependencies = crate::backend::repositories::dependencies::worker::run(
+            dependency_pool,
+            dependency_ci,
+            dependency_notifications,
+            stop.clone(),
+        );
+        // Keep polling both workers until both stop. A worker future left unpolled could hold
+        // the pool slot it was waiting for, and starve the request handlers.
+        let workers = async {
+            tokio::join!(maintenance, dependencies);
+        };
+        tokio::pin!(server, workers);
+        tokio::select! {result=&mut server=>result,()=&mut workers=>server.await}
+    };
     // Accepted handlers may still be waiting for a Git session slot. Keep task
     // admission open until those handlers finish or their shutdown grace expires.
     git_tasks.drain().await;

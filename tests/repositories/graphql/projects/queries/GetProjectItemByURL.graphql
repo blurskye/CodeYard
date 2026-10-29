@@ -1,0 +1,1 @@
+query GetProjectItemByURL($firstItems:Int!$url:URI!){resource(url: $url){__typename,... on Issue{projectItems(first: $firstItems){nodes{id,project{id}}}},... on PullRequest{projectItems(first: $firstItems){nodes{id,project{id}}}}}}

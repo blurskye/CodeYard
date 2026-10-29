@@ -238,7 +238,7 @@ async fn serve_runtime(root: &Path, uri: &Uri, headers: &HeaderMap) -> Response 
     )
 }
 
-fn not_modified(headers: &HeaderMap, etag: &str) -> bool {
+pub(crate) fn not_modified(headers: &HeaderMap, etag: &str) -> bool {
     headers
         .get_all(header::IF_NONE_MATCH)
         .iter()

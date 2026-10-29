@@ -345,7 +345,7 @@ mod tests {
         let url = authorize_url(
             &meta,
             "client id",
-            "https://git.example/api/auth/oauth/github/callback",
+            "https://git.example/login/oauth/github/callback",
             "state-1",
         );
         assert!(url.starts_with("https://github.com/login/oauth/authorize?"));
@@ -353,7 +353,7 @@ mod tests {
         assert!(url.contains("client_id=client%20id"));
         assert!(url.contains("scope=read%3Auser"));
         assert!(url.contains(
-            "redirect_uri=https%3A%2F%2Fgit.example%2Fapi%2Fauth%2Foauth%2Fgithub%2Fcallback"
+            "redirect_uri=https%3A%2F%2Fgit.example%2Flogin%2Foauth%2Fgithub%2Fcallback"
         ));
         assert!(url.contains("state=state-1"));
         assert!(url.ends_with("&response_type=code"));

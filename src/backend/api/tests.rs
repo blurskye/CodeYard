@@ -1,4 +1,4 @@
-//! Router-level tests: the composed app's health, public config, asset, error and form
+//! Router-level tests: the composed app's health, asset, error and form
 //! redirect behaviour, checked through `create_router` without a database.
 use super::*;
 use crate::backend::db;
@@ -176,7 +176,7 @@ async fn incomplete_native_forms_are_bounded_and_expire_before_extraction() {
             app.clone().oneshot(
                 axum::http::Request::builder()
                     .method("POST")
-                    .uri("/api/auth/login")
+                    .uri("/login")
                     .header(header::CONTENT_TYPE, content_type)
                     .header(header::CONTENT_LENGTH, "4194304")
                     .body(Body::from_stream(body))
@@ -195,7 +195,7 @@ async fn incomplete_native_forms_are_bounded_and_expire_before_extraction() {
         app.clone().oneshot(
             axum::http::Request::builder()
                 .method("POST")
-                .uri("/api/auth/login")
+                .uri("/login")
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from_stream(futures_util::stream::pending::<
                     Result<bytes::Bytes, std::io::Error>,
@@ -245,7 +245,7 @@ async fn incomplete_native_forms_are_bounded_and_expire_before_extraction() {
         .oneshot(
             axum::http::Request::builder()
                 .method("POST")
-                .uri("/api/auth/login")
+                .uri("/login")
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from(vec![b'x'; 4 * 1024 * 1024 + 1]))
                 .unwrap(),
@@ -259,6 +259,9 @@ async fn incomplete_native_forms_are_bounded_and_expire_before_extraction() {
 async fn anonymous_slow_posts_cannot_block_authenticated_mutations() {
     let pool = db::init_db("sqlite::memory:").await.unwrap();
     db::run_migrations(&pool).await.unwrap();
+    db::node_config::upsert_node_configuration(&pool, "public", true)
+        .await
+        .unwrap();
     let user = db::users::accounts::create_user(&pool, "alice", None)
         .await
         .unwrap();
@@ -323,15 +326,16 @@ async fn anonymous_slow_posts_cannot_block_authenticated_mutations() {
         .oneshot(
             axum::http::Request::builder()
                 .method("POST")
-                .uri("/api/auth/logout")
+                .uri("/logout")
                 .header(header::COOKIE, format!("session_id={session}"))
-                .header("x-csrf-token", csrf)
-                .body(Body::empty())
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(format!("csrf_token={csrf}")))
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(response.headers()[header::LOCATION], "/login");
     for request in requests {
         request.abort();
         let _ = request.await;
@@ -372,12 +376,11 @@ async fn small_bodies_take_no_slot_so_a_full_pool_cannot_block_them() {
 }
 
 #[tokio::test]
-async fn health_readiness_and_public_config_do_not_require_setup_or_a_session() {
+async fn health_and_readiness_do_not_require_setup_or_a_session() {
     let app = create_router(closed_state().await);
     for (path, expected) in [
         ("/health", StatusCode::OK),
         ("/ready", StatusCode::SERVICE_UNAVAILABLE),
-        ("/api/config", StatusCode::OK),
     ] {
         let response = app
             .clone()
@@ -393,13 +396,14 @@ async fn health_readiness_and_public_config_do_not_require_setup_or_a_session() 
         assert!(!response.headers().contains_key(header::SET_COOKIE));
         let body = to_bytes(response.into_body(), 1_000_000).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        if path == "/api/config" {
-            assert!(json["http_clone_base"].is_string());
-            assert!(json["ssh_clone_base"].is_string());
-            assert!(json["ssh_mode"].is_string());
-            assert!(json["ssh_setup_required"].is_boolean());
-            assert_eq!(json.as_object().unwrap().len(), 4);
-        }
+        assert_eq!(
+            json["status"],
+            if path == "/health" {
+                "ok"
+            } else {
+                "database unavailable"
+            }
+        );
     }
 }
 

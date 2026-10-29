@@ -270,6 +270,8 @@ async fn ready_and_deleted_sources(pg: bool) {
             base_branch: "main",
             base_sha: &w.base,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -301,7 +303,7 @@ async fn ready_and_deleted_sources(pg: bool) {
             body: None,
             state: Some("open"),
         },
-        None,
+        Default::default(),
     )
     .await
     .unwrap()
@@ -449,7 +451,7 @@ async fn review_page_budgets(pg: bool) {
 
 async fn bounded_codeowners_fallback(pg: bool) {
     let mut w = World::new(pg).await;
-    let commit = {
+    let commit = |size: usize| {
         let repo = git2::Repository::open_bare(&w.repository.disk_path).unwrap();
         let parent = repo
             .find_commit(git2::Oid::from_str(&w.base).unwrap())
@@ -457,7 +459,7 @@ async fn bounded_codeowners_fallback(pg: bool) {
         let tree = parent.tree().unwrap();
         let mut builder = repo.treebuilder(Some(&tree)).unwrap();
         let mut text = b"/topic.txt @bob\n#".to_vec();
-        text.resize(33 * 1024 * 1024, b'x');
+        text.resize(size, b'x');
         let blob = repo.blob(&text).unwrap();
         builder.insert("CODEOWNERS", blob, 0o100644).unwrap();
         let tree = repo.find_tree(builder.write().unwrap()).unwrap();
@@ -473,13 +475,21 @@ async fn bounded_codeowners_fallback(pg: bool) {
         .unwrap()
         .to_string()
     };
-    // No .github directory: MissingPath must fall through to the bounded root read.
-    let rules = repositories::code_owners::load_rules(&w.repository, None, &commit)
+    let small = commit(64);
+    let oversized = commit(33 * 1024 * 1024);
+    // No .github directory: MissingPath must fall through to the root file.
+    let rules = repositories::code_owners::load_rules(&w.repository, None, &small)
         .await
         .unwrap();
     assert_eq!(
         rules.owned_paths(&["topic.txt".to_owned()]).unwrap()[0].1,
         ["@bob"]
+    );
+    // An oversized file is refused whole, so merges fail closed instead of enforcing a part.
+    assert!(
+        repositories::code_owners::load_rules(&w.repository, None, &oversized)
+            .await
+            .is_err()
     );
     // A bad revision is not a missing file, and must not turn into empty ownership rules.
     assert!(
@@ -748,6 +758,8 @@ async fn published_reviews_and_delayed_notices(pg: bool) {
             pr_id: w.pull.id,
             author_id: w.bob_id,
             body: "Root",
+            start_line: None,
+            start_side: None,
             path: Some("topic.txt"),
             line: Some(1),
             side: Some("RIGHT"),
@@ -796,6 +808,8 @@ async fn published_reviews_and_delayed_notices(pg: bool) {
             pr_id: w.pull.id,
             author_id: w.bob_id,
             body: "Deleted text",
+            start_line: None,
+            start_side: None,
             path: None,
             line: None,
             side: None,

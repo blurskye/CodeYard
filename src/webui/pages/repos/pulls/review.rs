@@ -32,6 +32,14 @@ pub struct ReviewDraft {
     /// checked against it; empty means the current head.
     #[serde(default)]
     pub commit: String,
+    /// The repository the review was started in, so a submit never lands in another repository
+    /// that took over the URL. `None` means the current one.
+    #[serde(default)]
+    pub repository_id: Option<i64>,
+    /// The pending review the form showed. A preview keeps it, so a review started meanwhile in
+    /// another tab is not published by this form.
+    #[serde(default)]
+    pub pending_review: Option<i64>,
 }
 
 /// One review in the discussion.
@@ -108,6 +116,10 @@ pub struct Thread {
     pub line: Option<i32>,
     /// `LEFT` for the base side, `RIGHT` for the head side, empty without a line.
     pub side: String,
+    #[serde(default)]
+    pub start_line: Option<i32>,
+    #[serde(default)]
+    pub start_side: String,
     pub replies: Vec<Comment>,
     /// The thread is in the viewer's pending review. Nobody else sees it until the review is submitted.
     #[serde(default)]
@@ -123,6 +135,10 @@ pub struct LineComment {
     pub path: String,
     pub side: String,
     pub line: String,
+    #[serde(default)]
+    pub start_line: String,
+    #[serde(default)]
+    pub start_side: String,
     pub in_reply_to: Option<i64>,
     pub body: String,
     pub preview: bool,
@@ -265,6 +281,7 @@ pub(in crate::webui::pages::repos) fn review_changes(
     vote: bool,
     draft: Option<&ReviewDraft>,
     pending_comments: usize,
+    pending_review: Option<i64>,
     references: &References,
     split: bool,
 ) -> Element {
@@ -274,6 +291,9 @@ pub(in crate::webui::pages::repos) fn review_changes(
     let commit = draft
         .filter(|draft| !draft.commit.is_empty())
         .map_or_else(|| head.to_owned(), |draft| draft.commit.clone());
+    let repository_id = draft
+        .and_then(|draft| draft.repository_id)
+        .unwrap_or(repo.chrome.id);
     let reason = if author {
         "You opened this pull request, so you can comment but not approve or request changes."
     } else if !vote {
@@ -294,6 +314,7 @@ pub(in crate::webui::pages::repos) fn review_changes(
                 if open {
                     form { id: "review-form", method: "post", action: format!("{url}/reviews{view}"), class: "collaboration-form-fields collaboration-review-form",
                         {csrf(&repo.csrf)}
+                        if let Some(id) = pending_review { input { r#type: "hidden", name: "pending_review", value: "{id}" } }
                         div { class: "collaboration-review-body",
                             h3 { "Review changes" }
                             fieldset { class: "collaboration-option-group",
@@ -323,7 +344,7 @@ pub(in crate::webui::pages::repos) fn review_changes(
                             if !reason.is_empty() { p { class: "collaboration-muted collaboration-review-reason", "{reason}" } }
                             // The header already names the box, so the label is for screen readers only.
                             label { r#for: "review-body", class: "sr-only", "Summary (Markdown)" }
-                            ReviewEditor { key: "{url}:review:{choice}:{body}:{preview}", commit, body, preview, references: references.clone() }
+                            ReviewEditor { key: "{url}:review:{choice}:{body}:{preview}", commit, repository_id, body, preview, references: references.clone() }
                         }
                         div { class: "collaboration-card-footer",
                             button { r#type: "submit", name: "intent", value: "submit", class: "btn btn-primary collaboration-submit-review", "Submit review" }
@@ -336,6 +357,7 @@ pub(in crate::webui::pages::repos) fn review_changes(
                         // Cancel reloads the Files changed page, which closes the dialog without JavaScript.
                         {confirm_dialog(None, "Discard review", &format!("{url}/diff{view}"), &format!("{url}/reviews/pending/discard{view}"), rsx! {
                             {csrf(&repo.csrf)}
+                            if let Some(id) = pending_review { input { r#type: "hidden", name: "pending_review", value: "{id}" } }
                             strong { "Discard your review?" }
                             p { "This deletes {pending_text}. This cannot be undone." }
                             label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } " I understand" }
@@ -348,11 +370,19 @@ pub(in crate::webui::pages::repos) fn review_changes(
 }
 
 #[component]
-fn ReviewEditor(commit: String, body: String, preview: bool, references: References) -> Element {
-    // The commit the review is for stays the one the form loaded with.
+fn ReviewEditor(
+    commit: String,
+    repository_id: i64,
+    body: String,
+    preview: bool,
+    references: References,
+) -> Element {
+    // The commit and repository the review is for stay the ones the form loaded with.
     let commit = use_signal(|| commit);
+    let repository_id = use_signal(|| repository_id);
     rsx! {
         input { r#type: "hidden", name: "commit_sha", value: commit() }
+        input { r#type: "hidden", name: "repository_id", value: repository_id().to_string() }
         MarkdownEditor { id: "review-body", initial: body, rows: 6, required: false, initial_preview: preview, references }
     }
 }
@@ -469,7 +499,11 @@ pub(in crate::webui::pages::repos) fn reviewers_panel(
                 for reviewer in reviewers {
                     li { class: "collaboration-reviewer",
                         span { class: reviewer_mark_class(reviewer.status), "aria-hidden": "true", {reviewer_glyph(reviewer.status)} }
-                        {author_link(&reviewer.username)}
+                        if let Some((org, team)) = reviewer.username.strip_prefix('@').and_then(|name| name.split_once('/')) {
+                            a { href: format!("/orgs/{}/teams/{}", encode_component(org), encode_component(team)), "{reviewer.username}" }
+                        } else {
+                            {author_link(&reviewer.username)}
+                        }
                         span { class: "collaboration-muted", "{reviewer_status(reviewer.status)}" }
                         if reviewer.stale { span { class: "collaboration-badge", "Stale" } }
                         if reviewer.pending && reviewer.status != ReviewerStatus::Requested { span { class: "collaboration-badge", "Review requested" } }
@@ -648,6 +682,11 @@ fn LineComposer(
     };
     let view = if split { "?view=split" } else { "" };
     let reply = target.in_reply_to.is_some();
+    let first_side = if target.start_side.is_empty() {
+        target.side.as_str()
+    } else {
+        target.start_side.as_str()
+    };
     let start = if review == Some(true) {
         "Add to review"
     } else {
@@ -659,6 +698,18 @@ fn LineComposer(
             input { r#type: "hidden", name: "path", value: target.path.clone() }
             input { r#type: "hidden", name: "side", value: target.side.clone() }
             input { r#type: "hidden", name: "line", value: target.line.clone() }
+            if !reply && !target.line.is_empty() {
+                div { class:"collaboration-actions",
+                    label { r#for:"comment-range-start", "Range start (optional)" }
+                    input { id:"comment-range-start",r#type:"number",name:"start_line",min:"1",value:target.start_line.clone(),class:"input",aria_label:"First line of the comment range" }
+                    label { r#for:"comment-range-side", "Start side" }
+                    select { id: "comment-range-side", name: "start_side", class: "input",
+                        option { value: "LEFT", selected: first_side == "LEFT", "Base (LEFT)" }
+                        option { value: "RIGHT", selected: first_side == "RIGHT", "Head (RIGHT)" }
+                    }
+                }
+                p {class:"collaboration-muted","Leave the start blank for one line. A range must run forward within the same diff hunk."}
+            }
             if let Some(root) = target.in_reply_to { input { r#type: "hidden", name: "in_reply_to", value: root.to_string() } }
             input { r#type: "hidden", name: "commit_sha", value: commit() }
             input { r#type: "hidden", name: "base_sha", value: comparison_base() }
@@ -707,10 +758,15 @@ pub(super) fn thread_block(
     // A reaction sent from the diff comes back to the diff, in the same view.
     let view = if split { "&view=split" } else { "" };
     let react = format!("{url}/react?from=diff{view}");
+    let range = thread
+        .start_line
+        .zip(thread.line)
+        .map(|(start, end)| format!("{} {start}–{} {end}", thread.start_side, thread.side));
     rsx! {
         div { class: "collaboration-panel collaboration-diff-thread", id: format!("thread-{}", root.id),
             header { class: "collaboration-thread-header", id: format!("comment-{}", root.id),
                 {author_link(&root.author)} " commented " {ago(&root.created)}
+                if let Some(range)=&range {span {class:"collaboration-muted collaboration-comment-range","Lines {range}"}}
                 if thread.pending { span { class: "collaboration-badge collaboration-pending", title: "Only you can see this comment until you submit your review.", "Pending" } }
                 if let Some(conversation) = &root.conversation { {conversation_badges(conversation)} }
             }

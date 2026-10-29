@@ -1,0 +1,20 @@
+# https://github.com/dorny/paths-filter/tree/0e4a8c6effa4802afeda77dc8d303f8176d7dfad
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo changed > changed.txt; git add changed.txt; git -c user.name=Compat -c user.email=compat@example.invalid -c commit.gpgsign=false commit -m Change
+      - id: action
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          base: "HEAD~1"
+          filters: "text:\n  - \"**/*.txt\""
+      - name: Assert documented effect
+        env:
+          TEXT_CHANGED: ${{ steps.action.outputs.text }}
+        run: |
+          test "$TEXT_CHANGED" = true
+          echo compat:ok

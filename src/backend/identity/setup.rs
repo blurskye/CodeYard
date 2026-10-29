@@ -88,7 +88,7 @@ pub async fn complete_setup(
     if input
         .account
         .email
-        .is_some_and(|email| validate_email(email).is_err())
+        .is_some_and(|email| !email.trim().is_empty() && validate_email(email).is_err())
         || input.admin_secret.is_some_and(|secret| secret.len() > 4096)
     {
         return Err(SetupError::InputBounds);

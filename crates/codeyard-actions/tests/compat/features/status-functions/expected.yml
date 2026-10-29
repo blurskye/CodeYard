@@ -1,0 +1,14 @@
+{
+  "exit_code": 1,
+  "jobs": {
+    "test": "failure"
+  },
+  "contains": [
+    "compat:failure",
+    "compat:always"
+  ],
+  "absent": [
+    "compat:must-not-run",
+    "compat:must-not-succeed"
+  ]
+}

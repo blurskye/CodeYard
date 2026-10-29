@@ -1,0 +1,33 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    name: ${{ format('test-{0}-{1}', matrix.fruit, matrix.animal) }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        fruit: [apple, pear]
+        animal: [cat, dog]
+        exclude:
+          - fruit: pear
+            animal: dog
+        include:
+          - fruit: apple
+            color: green
+          - fruit: banana
+            animal: owl
+            color: yellow
+    steps:
+      - env:
+          FRUIT: ${{ matrix.fruit }}
+          ANIMAL: ${{ matrix.animal }}
+          COLOR: ${{ matrix.color }}
+        run: |
+          case "$FRUIT/$ANIMAL/$COLOR" in
+            apple/cat/green|apple/dog/green|pear/cat/|banana/owl/yellow) ;;
+            *) exit 1 ;;
+          esac
+          echo "compat:matrix:$FRUIT/$ANIMAL/$COLOR"

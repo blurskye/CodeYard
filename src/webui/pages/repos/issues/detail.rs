@@ -8,17 +8,19 @@ use super::{
 use crate::webui::{
     components::{
         compact_date, confirm_dialog, count_label, references::References, short_sha, Avatar,
-        LiveTime, Markdown,
+        DraftInput, DraftTextarea, LiveTime, Markdown,
     },
     encode_component,
     navigation::NavLink,
     pages::repos::pulls::review::{self, Entry, Reviewer},
-    pages::repos::{self, chrome::csrf, ref_path::file_url},
+    pages::repos::{self, chrome::csrf, ref_path::branch_url},
 };
 use dioxus::prelude::*;
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DetailDraft {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<Box<super::SuggestionDraft>>,
     pub title: Option<String>,
     pub body: Option<String>,
     pub comment: String,
@@ -35,6 +37,10 @@ pub struct DetailDraft {
     pub preview: bool,
     /// The merge method that the submitted merge form chose, kept when the merge is refused.
     pub merge_method: String,
+    #[serde(default)]
+    pub commit_title: String,
+    #[serde(default)]
+    pub commit_message: String,
     /// The reviewer name a refused request was typed with, kept in the request form.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub reviewer: String,
@@ -136,10 +142,11 @@ pub(in crate::webui::pages::repos) fn author_link(username: &str) -> Element {
     rsx! {
         if username == "Deleted user" { span { "Deleted user" } }
         else {
-            NavLink { class: "collaboration-author", href: format!("/{}", encode_component(username)),
+            NavLink { class: "collaboration-author", href: crate::webui::profile_path(username),
                 Avatar { name: username.to_owned(), size: 20 }
                 "{username}"
             }
+            if username == "github-actions[bot]" { span { class: "collaboration-badge", "bot" } }
         }
     }
 }
@@ -203,7 +210,7 @@ pub(in crate::webui::pages::repos) fn pull_summary(
                     NavLink { class: "collaboration-branch", href: href.clone(), "{compare.head_label}" }
                 } else { span { class: "collaboration-branch", "{compare.head_label}" } }
                 " → "
-                NavLink { class: "collaboration-branch", href: file_url(&repo.url(), "tree", &compare.base, ""), "{compare.base}" }
+                NavLink { class: "collaboration-branch", href: branch_url(&repo.url(), "tree", &compare.base, ""), "{compare.base}" }
                 if compare.draft { span { class: "collaboration-muted", " · Draft pull request" } }
             }
         }
@@ -644,7 +651,7 @@ fn participants_panel(item: &Item, comments: &CommentPage) -> Element {
             ul { class: "collaboration-participants",
                 for name in names {
                     li { key: "{name}",
-                        NavLink { class: "collaboration-participant", href: format!("/{}", encode_component(name)), title: Some(name.to_owned()), aria_label: Some(name.to_owned()),
+                        NavLink { class: "collaboration-participant", href: crate::webui::profile_path(name), title: Some(name.to_owned()), aria_label: Some(name.to_owned()),
                             Avatar { name: name.to_owned(), size: 24 }
                         }
                     }
@@ -664,6 +671,11 @@ fn event_row(event: &Event, kind: Kind) -> Element {
             item_icon(kind, "open"),
             "Reopened",
             rsx! { "reopened this" },
+        ),
+        "converted" => (
+            item_icon(Kind::Pull, "open"),
+            "Converted",
+            rsx! { "converted this issue into a pull request" },
         ),
         "merged" => (
             item_icon(Kind::Pull, "merged"),
@@ -704,6 +716,27 @@ fn event_row(event: &Event, kind: Kind) -> Element {
             glyph(Glyph::Milestone),
             "Milestone removed",
             rsx! { "removed this from the " strong { "{detail}" } " milestone" },
+        ),
+        "issue_type_added" | "issue_type_changed" => {
+            let name = serde_json::from_str::<serde_json::Value>(detail)
+                .ok()
+                .and_then(|v| v["name"].as_str().map(str::to_owned))
+                .unwrap_or_default();
+            (
+                glyph(Glyph::Tag),
+                "Issue type",
+                rsx! {"set the issue type to " strong{"{name}"}},
+            )
+        }
+        "issue_type_removed" => (
+            glyph(Glyph::Tag),
+            "Issue type removed",
+            rsx! {"removed the issue type"},
+        ),
+        "issue_field_changed" => (
+            glyph(Glyph::Pencil),
+            "Issue fields",
+            rsx! {"updated issue fields"},
         ),
         _ => (glyph(Glyph::Pending), "Update", rsx! { "updated this" }),
     };
@@ -812,6 +845,13 @@ pub(in crate::webui::pages::repos) fn comment_entry(
             }
             {reaction_bar(repo, &react_action(url, page, review_comments), Some(("comment", comment.id)), &comment.reactions)}
             if comment.can_edit || comment.can_delete { {comment_controls(repo, url, comment, references, page)} }
+            if repo.can_write && !repo.chrome.is_archived && comment.location.is_none() {
+                form { method: "post", action: format!("{url}/comments/{}/pin",comment.id), class: "collaboration-actions",
+                    {csrf(&repo.csrf)}
+                    input { r#type: "hidden", name: "pinned", value: "true" }
+                    button { r#type: "submit", class: "btn btn-secondary btn-sm", "Pin comment" }
+                }
+            }
             if let Some(conversation) = &comment.conversation {
                 if conversation.can_resolve { {review::resolve_form(repo, url, comment.id, conversation, false, false, (page, review_comments))} }
             }
@@ -830,10 +870,11 @@ fn merge_box(
     url: &str,
     item: &Item,
     compare: &Comparison,
-    default_method: Option<&str>,
+    draft: &DetailDraft,
     reviewers: &[Reviewer],
     events: &[Event],
 ) -> Element {
+    let default_method = preselected_merge_method(compare, &draft.merge_method);
     if item.state != "open" {
         if item.state == "merged" {
             // A layer merged through a stack keeps its own base; the timeline names the branch
@@ -932,6 +973,14 @@ fn merge_box(
                     if compare.merge_commit_refused {
                         p { class: "collaboration-muted", {MERGE_COMMIT_REFUSED} }
                     }
+                    details {
+                        summary { "Customize commit message" }
+                        p { class: "collaboration-muted", "Optional for merge and squash. Rebase keeps each commit's message." }
+                        label { r#for: "merge-commit-title", "Commit title" }
+                        DraftInput { id: "merge-commit-title", name: "commit_title", initial_value: draft.commit_title.clone(), class: "collaboration-input", maxlength: Some(8192) }
+                        label { r#for: "merge-commit-message", "Commit description" }
+                        DraftTextarea { id: "merge-commit-message", name: "commit_message", initial_value: draft.commit_message.clone(), class: "collaboration-textarea", rows: 3, maxlength: Some(8192) }
+                    }
                     label { class: "collaboration-checkbox", input { r#type: "checkbox", name: "confirm", value: "merge", required: true } " Confirm merge into {compare.merge_target}" }
                 }
                 div { class: "collaboration-card-footer",
@@ -985,9 +1034,6 @@ pub fn detail(
     let url = format!("{}/{}", repo.family_url(kind), item.number);
     let page = comments.page;
     let has_more = comments.has_more;
-    let default_method = item.comparison.as_ref().and_then(|compare| {
-        preselected_merge_method(compare, &draft.merge_method).map(str::to_owned)
-    });
     let head = item
         .comparison
         .as_ref()
@@ -1017,14 +1063,30 @@ pub fn detail(
         .filter(|name| *name != &item.author)
         .cloned()
         .collect();
+    let unsaved_edit = draft.editing.is_some_and(|id| {
+        !comments
+            .comments
+            .iter()
+            .chain(
+                comments
+                    .reviews
+                    .iter()
+                    .flat_map(|review| review.comments.iter()),
+            )
+            .any(|comment| comment.id == id && comment.can_edit)
+    });
+    // A locked or archived conversation shows no composer, so a refused comment is shown here.
+    let unposted_comment = draft.editing.is_none()
+        && !draft.comment.is_empty()
+        && (comments.locked || repo.chrome.is_archived);
     repos::chrome::chrome(
         &repo.chrome,
         rsx! {
             section { class: "collaboration-page collaboration-detail",
                 {notice(error)}
-                if draft.editing.is_some_and(|id| !comments.comments.iter().any(|comment| comment.id == id && comment.can_edit)) {
+                if unsaved_edit || unposted_comment {
                     section { class: "collaboration-panel collaboration-form-fields", aria_label: "Comment text that was not saved",
-                        p { "Your edit was not saved. Copy your text before leaving this page." }
+                        p { if unsaved_edit { "Your edit was not saved." } else { "Your comment was not posted." } " Copy your text before leaving this page." }
                         label { r#for: "unsaved-comment", class: "sr-only", "Comment text that was not saved" }
                         crate::webui::components::DraftTextarea { id: "unsaved-comment", name: "unsaved-comment", initial_value: draft.comment.clone(), readonly: true, class: "collaboration-textarea" }
                     }
@@ -1066,7 +1128,7 @@ pub fn detail(
                                 }
                                 p { class: "collaboration-stack-base",
                                     span { class: "collaboration-muted", "Base" }
-                                    NavLink { class: "collaboration-branch", href: file_url(&repo.url(), "tree", &stack.trunk, ""), "{stack.trunk}" }
+                                    NavLink { class: "collaboration-branch", href: branch_url(&repo.url(), "tree", &stack.trunk, ""), "{stack.trunk}" }
                                 }
                                 if repo.can_write {
                                     if stack.restack {
@@ -1112,6 +1174,27 @@ pub fn detail(
                                 }
                             }
                         }
+                        if let Some(pin) = &comments.pinned {
+                            section { class: "collaboration-panel collaboration-comment", aria_label: "Pinned comment",
+                                header { class: "collaboration-panel-header", strong { "Pinned comment" }
+                                    if let Some(pinner)=&pin.pinned_by { {author_link(pinner)} }
+                                    {ago(&pin.pinned_at)}
+                                }
+                                div { class: "collaboration-markdown", {author_link(&pin.author)}
+                                    Markdown { content: pin.body.clone(), references: references.clone() }
+                                }
+                                div { class: "collaboration-actions",
+                                    NavLink { class: "btn btn-secondary btn-sm", href: pin.href.clone(), "View comment" }
+                                    if repo.can_write && !repo.chrome.is_archived {
+                                        form { method: "post", action: format!("{url}/comments/{}/pin",pin.id),
+                                            {csrf(&repo.csrf)}
+                                            input { r#type: "hidden", name: "pinned", value: "false" }
+                                            button { r#type: "submit", class: "btn btn-secondary btn-sm", "Unpin comment" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         section { class: "collaboration-discussion", aria_label: "Discussion",
                             div { class: "collaboration-thread",
                                 article { class: "collaboration-panel collaboration-comment",
@@ -1149,10 +1232,19 @@ pub fn detail(
                             }
                             if let Some(compare) = &item.comparison {
                                 if kind == Kind::Pull {
-                                    {merge_box(repo, &url, item, compare, default_method.as_deref(), reviewers, &comments.events)}
+                                    {merge_box(repo, &url, item, compare, draft, reviewers, &comments.events)}
                                 }
                             }
-                            if !repo.chrome.is_archived {
+                            if comments.locked {
+                                p { class: "collaboration-panel collaboration-form-fields", role: "note",
+                                    "This conversation is locked."
+                                    if let Some(reason) = &comments.lock_reason { span { "Reason: {reason}" } }
+                                }
+                                // Without a composer, the state button stands alone.
+                                if let Some(label) = composer_state {
+                                    button { r#type: "submit", form: state_form, class: "btn btn-secondary", "{label}" }
+                                }
+                            } else if !repo.chrome.is_archived {
                                 if repo.signed_in {
                                     {review::composer(repo, &url, head, item.id, draft, composer_state, references)}
                                 } else { p { class: "collaboration-sign-in", NavLink { href: "/login", "Sign in" } " to join the discussion." } }
@@ -1168,9 +1260,11 @@ pub fn detail(
                         }
                     }
                     aside { class: "collaboration-sidebar", aria_label: if kind == Kind::Issue { "Issue details" } else { "Pull request details" },
+                        {crate::webui::pages::projects::sidebar(repo, item, kind)}
                         {assignees_panel(repo, &url, item, kind, assignable)}
                         {labels_panel(repo, &url, item, kind, available_labels)}
                         {milestone_panel(repo, &url, item, milestones)}
+                        if let Some(controls) = &comments.issue_management { {super::management::panel(repo, &url, item, controls)} }
                         if let Some(compare) = &item.comparison {
                             section { class: "collaboration-sidebar-section",
                                 dl { class: "collaboration-metadata",
@@ -1187,6 +1281,29 @@ pub fn detail(
                             {review::reviewers_panel(repo, &url, reviewers, &requestable, &draft.reviewer, item.state == "open" && repo.can_write)}
                         }
                         {participants_panel(item, comments)}
+                        if kind==Kind::Issue {{super::relationships::panel(repo,&url,comments)}}
+                        if let Some(attributes)=&comments.attributes {{super::attributes::panel(repo,&url,attributes)}}
+                        if comments.suggestions.is_some() || draft.suggestion.is_some() {{super::suggestions::panel(repo,&url,comments.suggestions.as_deref(),draft.suggestion.as_deref())}}
+                        if repo.can_write && !repo.chrome.is_archived {
+                            section { class: "collaboration-sidebar-section",
+                                h3 { "Conversation" }
+                                form { method: "post", action: format!("{url}/lock"), class: "collaboration-form-fields",
+                                    {csrf(&repo.csrf)}
+                                    input { r#type: "hidden", name: "locked", value: if comments.locked { "false" } else { "true" } }
+                                    if !comments.locked {
+                                        label { r#for: "lock-reason", "Lock reason" }
+                                        select { id: "lock-reason", name: "lock_reason", class: "collaboration-input",
+                                            option { value: "", "No reason" }
+                                            option { value: "off-topic", "Off-topic" }
+                                            option { value: "too heated", "Too heated" }
+                                            option { value: "resolved", "Resolved" }
+                                            option { value: "spam", "Spam" }
+                                        }
+                                    }
+                                    button { r#type: "submit", class: "btn btn-secondary btn-sm", if comments.locked { "Unlock conversation" } else { "Lock conversation" } }
+                                }
+                            }
+                        }
                     }
                 }
             }

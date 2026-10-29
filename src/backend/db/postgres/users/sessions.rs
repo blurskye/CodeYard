@@ -504,25 +504,46 @@ pub async fn list_user_sessions(pool: &PgPool, user_id: i64) -> Result<Vec<Sessi
     .await?)
 }
 
-pub async fn revoke_user_session(pool: &PgPool, user_id: i64, session_id: &str) -> Result<bool> {
-    Ok(
-        sqlx::query("DELETE FROM sessions WHERE user_id=$1 AND id=$2")
-            .bind(user_id)
-            .bind(session_id)
-            .execute(pool)
-            .await?
-            .rows_affected()
-            > 0,
-    )
+/// Revokes one session on behalf of `current`, which must still be a live session of the
+/// same account; a request from a session revoked meanwhile changes nothing.
+pub async fn revoke_user_session(
+    pool: &PgPool,
+    user_id: i64,
+    session_id: &str,
+    current: &str,
+) -> Result<bool> {
+    // The account row orders concurrent revocations, so the later one sees the earlier one's
+    // deletion and a session revoked meanwhile changes nothing.
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT 1 FROM users WHERE id=$1 FOR UPDATE")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    let revoked = sqlx::query("DELETE FROM sessions WHERE user_id=$1 AND id=$2 AND EXISTS (SELECT 1 FROM sessions WHERE user_id=$1 AND id=$3 AND expires_at > clock_timestamp())")
+        .bind(user_id)
+        .bind(session_id)
+        .bind(current)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+        > 0;
+    tx.commit().await?;
+    Ok(revoked)
 }
 
 pub async fn revoke_other_user_sessions(pool: &PgPool, user_id: i64, keep: &str) -> Result<u64> {
-    Ok(
-        sqlx::query("DELETE FROM sessions WHERE user_id=$1 AND id<>$2")
-            .bind(user_id)
-            .bind(keep)
-            .execute(pool)
-            .await?
-            .rows_affected(),
-    )
+    // Locked like `revoke_user_session`: of two sessions revoking each other, one survives.
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT 1 FROM users WHERE id=$1 FOR UPDATE")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    let revoked = sqlx::query("DELETE FROM sessions WHERE user_id=$1 AND id<>$2 AND EXISTS (SELECT 1 FROM sessions WHERE user_id=$1 AND id=$2 AND expires_at > clock_timestamp())")
+        .bind(user_id)
+        .bind(keep)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    tx.commit().await?;
+    Ok(revoked)
 }

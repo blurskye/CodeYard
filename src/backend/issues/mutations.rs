@@ -11,15 +11,18 @@ pub struct CreateIssueRequest {
     pub body: Option<String>,
     #[serde(default)]
     pub repository_id: Option<i64>,
+    #[serde(default)]
+    pub parent_issue_id: Option<i64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct UpdateIssueRequest {
     pub expected_state: String,
     pub expected_updated: String,
     pub title: Option<String>,
     pub body: Option<String>,
     pub state: Option<String>,
+    pub state_reason: Option<String>,
 }
 
 pub async fn create_issue(
@@ -59,9 +62,13 @@ pub async fn create_issue(
     }
 
     let body = req.body.as_deref().unwrap_or("");
-    let issue = db::issues::create_issue(pool, repository.id, user.id, &req.title, body)
-        .await
-        .map_err(super::write_error)?;
+    let issue = if let Some(parent) = req.parent_issue_id {
+        db::relationships::create_child(pool, user.id, repository.id, parent, &req.title, body)
+            .await
+    } else {
+        db::issues::create_issue(pool, repository.id, user.id, &req.title, body).await
+    }
+    .map_err(super::write_error)?;
 
     let link = format!("/{owner}/{repo}/issues/{}", issue.number);
     let notified = notify_watchers(
@@ -120,7 +127,8 @@ pub async fn create_issue(
                 },
             )
         },
-    );
+    )
+    .await;
     Ok(issue)
 }
 
@@ -143,7 +151,7 @@ pub async fn update_issue(
             message: "Repository not found".to_owned(),
         })?;
 
-    super::require_write(pool, &user, &repository).await?;
+    super::require_read(pool, &user, &repository).await?;
 
     let existing = db::issues::get_issue(pool, repository.id, number)
         .await
@@ -152,7 +160,22 @@ pub async fn update_issue(
             code: "not_found",
             message: "Issue not found".to_owned(),
         })?;
+    // An issue's author edits and closes it with read access, as on GitHub.
+    if existing.author_id != user.id {
+        super::require_write(pool, &user, &repository).await?;
+    }
 
+    if req.state_reason.as_deref().is_some_and(|reason| {
+        !matches!(
+            reason,
+            "completed" | "not_planned" | "reopened" | "duplicate"
+        )
+    }) {
+        return Err(OperationError::Invalid {
+            code: "validation_error",
+            message: "Invalid state reason".into(),
+        });
+    }
     let requested_state = match req.state.as_deref() {
         Some("open") | Some("closed") => req.state.as_deref(),
         Some(_) => {
@@ -187,7 +210,7 @@ pub async fn update_issue(
             message: "Invalid title, body, or expected state".to_owned(),
         });
     }
-    let issue = db::issues::update_issue(
+    let issue = db::issues::update_issue_with_reason(
         pool,
         existing.id,
         db::discussions::DiscussionEdit {
@@ -198,6 +221,7 @@ pub async fn update_issue(
             body: req.body.as_deref(),
             state: requested_state,
         },
+        req.state_reason.as_deref(),
     )
     .await
     .map_err(|_| {
@@ -274,6 +298,14 @@ pub async fn update_issue(
         (false, _) => "reopened",
     };
     let (author_id, sender_id) = (issue.author_id, user.id);
+    // An edited event names the previous value of each field that changed.
+    let mut changes = serde_json::Map::new();
+    if issue.title != existing.title {
+        changes.insert("title".into(), serde_json::json!({"from": existing.title}));
+    }
+    if issue.body != existing.body {
+        changes.insert("body".into(), serde_json::json!({"from": existing.body}));
+    }
     let issue_for_hook = issue.clone();
     let repository_for_hook = repository.clone();
     webhooks::emit(
@@ -283,7 +315,7 @@ pub async fn update_issue(
         vec![author_id, sender_id],
         move |owner, people| {
             let (author, sender) = (people.get(author_id), people.get(sender_id));
-            payloads::issues(
+            let mut payload = payloads::issues(
                 action,
                 &issue_for_hook,
                 &author,
@@ -292,8 +324,63 @@ pub async fn update_issue(
                     owner,
                     sender: &sender,
                 },
-            )
+            );
+            if action == "edited" {
+                payload["changes"] = serde_json::Value::Object(changes.clone());
+            }
+            payload
         },
-    );
+    )
+    .await;
     Ok(issue)
+}
+
+/// Saves an edit from the GitHub API, which carries no form revision: the caller passes the
+/// state and time it just read. A concurrent change, such as gh adding labels while it saves the
+/// title, moves that time, so read the issue again and retry instead of refusing.
+pub async fn update_issue_latest(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor_id: i64,
+    owner: String,
+    repo: String,
+    number: i32,
+    mut req: UpdateIssueRequest,
+) -> Result<db::models::Issue, OperationError> {
+    for _ in 0..3 {
+        let refused = match update_issue(
+            pool,
+            broadcaster,
+            actor_id,
+            owner.clone(),
+            repo.clone(),
+            number,
+            req.clone(),
+        )
+        .await
+        {
+            Err(error @ OperationError::Conflict { .. }) => error,
+            result => return result,
+        };
+        let latest = match db::repositories::records::get_repository(pool, &owner, &repo)
+            .await
+            .map_err(database_error)?
+        {
+            Some(repository) => db::issues::get_issue(pool, repository.id, number)
+                .await
+                .map_err(database_error)?,
+            None => None,
+        };
+        match latest {
+            Some(latest)
+                if latest.state != req.expected_state
+                    || latest.updated_at.to_rfc3339() != req.expected_updated =>
+            {
+                req.expected_state = latest.state;
+                req.expected_updated = latest.updated_at.to_rfc3339();
+            }
+            _ => return Err(refused),
+        }
+    }
+    update_issue(pool, broadcaster, actor_id, owner, repo, number, req).await
 }

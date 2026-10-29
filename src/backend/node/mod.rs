@@ -5,5 +5,5 @@ mod roles;
 mod runtime;
 
 pub use config::ServeConfig;
-pub use roles::{NodeRole, NodeRoles};
+pub use roles::{describe_roles, NodeRole, NodeRoles, SINGLE_NODE_ROLES};
 pub use runtime::{serve, serve_worker};

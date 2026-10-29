@@ -51,8 +51,18 @@ impl NodeContext {
                     break;
                 }
                 if copy == self.node_id {
-                    // Admission comes first, so a copy this node cannot serve leaves the
-                    // streams untouched for the next one.
+                    // The permit comes before admission, so a key revoked while this waited
+                    // is refused. Admission comes before the streams are touched, so a copy
+                    // this node cannot serve leaves them for the next one.
+                    let Ok(permit) = tokio::time::timeout_at(
+                        attempt_deadline(deadline),
+                        git_process::session_permit(),
+                    )
+                    .await
+                    else {
+                        continue;
+                    };
+                    let _permit = permit?;
                     if let Ok(Ok((store, checkout))) =
                         tokio::time::timeout_at(attempt_deadline(deadline), self.own_copy(&request))
                             .await
@@ -61,7 +71,6 @@ impl NodeContext {
                             return Err(unavailable().into());
                         };
                         session.allow_unreachable = checkout;
-                        let _permit = git_process::session_permit().await?;
                         // Boxed: the store's remote variant leads back to this function.
                         let status = Box::pin(store.git_session(session, None, streams)).await?;
                         return Ok((Value::Null, status));

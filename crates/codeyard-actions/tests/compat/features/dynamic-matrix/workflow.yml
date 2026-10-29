@@ -1,0 +1,21 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        run: echo 'matrix={"include":[{"project":"alpha"},{"project":"beta"}]}' >> "$GITHUB_OUTPUT"
+  test:
+    needs: generate
+    name: ${{ format('test-{0}', matrix.project) }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJSON(needs.generate.outputs.matrix) }}
+    steps:
+      - env:
+          PROJECT: ${{ matrix.project }}
+        run: echo "compat:project:$PROJECT"

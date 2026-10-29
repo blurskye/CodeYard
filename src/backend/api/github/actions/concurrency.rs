@@ -1,0 +1,220 @@
+//! Concurrency reads expose live leases and retained workflow configuration separately.
+use super::run;
+use crate::backend::{
+    api::github::{repo_url, repository, Error, Result},
+    app::AppState,
+    db,
+};
+use axum::{
+    extract::{OriginalUri, Path, Query, State},
+    http::{header, HeaderMap, Uri},
+    routing::{get, MethodRouter},
+    Json,
+};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::sync::Arc;
+
+#[derive(Default, Deserialize)]
+struct Page {
+    per_page: Option<usize>,
+    after: Option<String>,
+    before: Option<String>,
+}
+fn decode(value: &str) -> Result<String> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(value)
+        .map_err(|_| Error::invalid("Invalid concurrency cursor"))?;
+    let text =
+        String::from_utf8(bytes).map_err(|_| Error::invalid("Invalid concurrency cursor"))?;
+    text.strip_prefix("concurrency:v1:")
+        .map(str::to_owned)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| Error::invalid("Invalid concurrency cursor"))
+}
+fn page(
+    groups: Vec<db::action_concurrency::Group>,
+    query: &Page,
+    uri: &Uri,
+) -> Result<(HeaderMap, Vec<db::action_concurrency::Group>)> {
+    if query.after.is_some() && query.before.is_some() {
+        return Err(Error::invalid("Use either before or after"));
+    }
+    let after = query.after.as_deref().map(decode).transpose()?;
+    let before = query.before.as_deref().map(decode).transpose()?;
+    let limit = query.per_page.unwrap_or(30).clamp(1, 100);
+    let mut groups: Vec<_> = groups
+        .into_iter()
+        .filter(|group| {
+            after
+                .as_ref()
+                .is_none_or(|after| group.name.to_lowercase() > *after)
+                && before
+                    .as_ref()
+                    .is_none_or(|before| group.name.to_lowercase() < *before)
+        })
+        .collect();
+    if before.is_some() {
+        groups.reverse();
+    }
+    let more = groups.len() > limit;
+    groups.truncate(limit);
+    if before.is_some() {
+        groups.reverse();
+    }
+    let mut headers = HeaderMap::new();
+    let mut links = Vec::new();
+    for (group, key, relation, include) in [
+        (
+            groups.last(),
+            "after",
+            "next",
+            if before.is_some() { true } else { more },
+        ),
+        (groups.first(), "before", "prev", before.is_some() && more),
+    ] {
+        if let Some(group) = group.filter(|_| include) {
+            let cursor =
+                URL_SAFE_NO_PAD.encode(format!("concurrency:v1:{}", group.name.to_lowercase()));
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair(key, &cursor)
+                .append_pair("per_page", &limit.to_string())
+                .finish();
+            links.push(format!(
+                "<{}{}?{}>; rel=\"{}\"",
+                crate::backend::api::http::config::link_origin(),
+                uri.path(),
+                query,
+                relation
+            ));
+        }
+    }
+    if !links.is_empty() {
+        headers.insert(
+            header::LINK,
+            links.join(", ").parse().map_err(Error::unavailable)?,
+        );
+    }
+    Ok((headers, groups))
+}
+fn group_url(owner: &str, repo: &str, group: &str) -> String {
+    format!(
+        "{}/actions/concurrency_groups/{}",
+        repo_url(owner, repo),
+        crate::webui::encode_component(group)
+    )
+}
+fn member(member: &db::action_concurrency::Member, owner: &str, repo: &str) -> Value {
+    let run = &member.run;
+    let id = run.workflow_run_id.unwrap_or(run.id);
+    json!({"run_id":id,"run_name":run.pipeline,"run_url":format!("{}/actions/runs/{id}",repo_url(owner,repo)),"run_html_url":format!("{}/{}/{}/actions?job={}",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(repo),run.run_id),"status":if member.holding{"in_progress"}else{"pending"}})
+}
+
+async fn list(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    Query(query): Query<Page>,
+    OriginalUri(uri): OriginalUri,
+) -> Result<(HeaderMap, Json<Value>)> {
+    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
+    if query.before.is_some() {
+        return Err(Error::invalid(
+            "Use after for repository concurrency groups",
+        ));
+    }
+    let groups = db::action_concurrency::groups(&state.pool, repo.id, None)
+        .await
+        .map_err(Error::unavailable)?;
+    let total = groups.len();
+    let (headers, groups) = page(groups, &query, &uri)?;
+    Ok((
+        headers,
+        Json(
+            json!({"total_count":total,"concurrency_groups":groups.into_iter().map(|group|json!({"group_name":group.name,"group_url":group_url(&owner,&name,&group.name),"last_acquired_at":group.last_acquired_at})).collect::<Vec<_>>()}),
+        ),
+    ))
+}
+#[derive(Default, Deserialize)]
+struct Ahead {
+    ahead_of_run: Option<i64>,
+    ahead_of_job: Option<i64>,
+}
+async fn get_one(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, name, group)): Path<(String, String, String)>,
+    Query(query): Query<Ahead>,
+) -> Result<Json<Value>> {
+    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
+    let mut members = db::action_concurrency::members(&state.pool, repo.id, &group)
+        .await
+        .map_err(Error::unavailable)?;
+    if members.is_empty() {
+        return Err(Error::missing());
+    }
+    if query.ahead_of_job.is_some() {
+        return Err(Error::invalid("Job is not in this concurrency group"));
+    }
+    if let Some(id) = query.ahead_of_run {
+        let position = members
+            .iter()
+            .position(|member| member.run.workflow_run_id.unwrap_or(member.run.id) == id)
+            .ok_or_else(|| Error::invalid("Run is not in this concurrency group"))?;
+        members.truncate(position + 1);
+    }
+    Ok(Json(
+        json!({"group_name":group,"group_url":group_url(&owner,&name,&group),"total_count":members.len(),"group_members":members.iter().map(|item|member(item,&owner,&name)).collect::<Vec<_>>()}),
+    ))
+}
+async fn for_run(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, name, id)): Path<(String, String, i64)>,
+    Query(query): Query<Page>,
+    OriginalUri(uri): OriginalUri,
+) -> Result<(HeaderMap, Json<Value>)> {
+    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
+    let run = run(&state, repo.id, id).await?;
+    let id = run.workflow_run_id.unwrap_or(run.id);
+    let groups = db::action_concurrency::groups(&state.pool, repo.id, Some(id))
+        .await
+        .map_err(Error::unavailable)?;
+    let total = groups.len();
+    let (headers, groups) = page(groups, &query, &uri)?;
+    let mut values = Vec::new();
+    for group in groups {
+        let url = group_url(&owner, &name, &group.name);
+        let members = db::action_concurrency::members(&state.pool, repo.id, &group.name)
+            .await
+            .map_err(Error::unavailable)?;
+        let values_in_group: Vec<_> = members
+            .iter()
+            .enumerate()
+            .filter(|(_, member)| member.run.workflow_run_id.unwrap_or(member.run.id) == id)
+            .map(|(index, item)| {
+                let mut value = member(item, &owner, &name);
+                value["position"] = json!(if item.holding { 0 } else { index.max(1) });
+                value["position_url"] = json!(format!("{url}?ahead_of_run={id}"));
+                value
+            })
+            .collect();
+        values
+            .push(json!({"group_name":group.name,"group_url":url,"group_members":values_in_group}));
+    }
+    Ok((
+        headers,
+        Json(json!({"total_count":total,"concurrency_groups":values})),
+    ))
+}
+pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+    vec![
+        ("actions/list-concurrency-groups-for-repository", get(list)),
+        ("actions/get-concurrency-group-for-repository", get(get_one)),
+        (
+            "actions/list-concurrency-groups-for-workflow-run",
+            get(for_run),
+        ),
+    ]
+}

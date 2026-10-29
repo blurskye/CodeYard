@@ -70,6 +70,18 @@ fn sqlite_memory(database_url: &str) -> bool {
             .any(|(name, value)| name == "mode" && value == "memory")
 }
 
+/// The database file a `sqlite:` URL names, or `None` for PostgreSQL and in-memory SQLite.
+pub fn sqlite_file(database_url: &str) -> Result<Option<std::path::PathBuf>> {
+    if !database_url.starts_with("sqlite:") || sqlite_memory(database_url) {
+        return Ok(None);
+    }
+    Ok(Some(
+        SqliteConnectOptions::from_str(database_url)?
+            .get_filename()
+            .to_owned(),
+    ))
+}
+
 #[cfg(unix)]
 fn sqlite_file_path(
     database_url: &str,

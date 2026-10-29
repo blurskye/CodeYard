@@ -1,56 +1,14 @@
-use crate::backend::api::auth::errors;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session::extract_session_id;
 use crate::backend::api::user::profile::{settings_response, settings_result};
-use crate::backend::api::user::responses::{
-    field, mutation_guard, within_bounds, AuthResponse, AuthUserResponse as UserResponse, Fields,
-};
+use crate::backend::api::user::responses::{field, mutation_guard, within_bounds, Fields};
 use crate::backend::api::{auth, http::session};
 use crate::backend::app::AppState;
 use crate::backend::identity;
 use crate::backend::identity::accounts::PasswordChange;
 use axum::extract::{Form, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
-use axum::response::{IntoResponse, Response};
-use axum::Json;
-use serde::Deserialize;
+use axum::response::Response;
 use std::sync::Arc;
-
-#[derive(Debug, Deserialize)]
-pub struct ChangePasswordRequest {
-    pub current_password: String,
-    pub new_password: String,
-}
-
-pub async fn change_password(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<ChangePasswordRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
-    let session_id = extract_session_id(&headers);
-    let user = identity::accounts::change_password(
-        &state.pool,
-        session_id.as_deref(),
-        PasswordChange {
-            current_password: &req.current_password,
-            new_password: &req.new_password,
-        },
-    )
-    .await
-    .map_err(errors::password_change_failure)?;
-    // Every session is revoked, including this one, so the cookie goes too.
-    Ok((
-        [(header::SET_COOKIE, session::build_logout_cookie())],
-        Json(AuthResponse {
-            success: true,
-            user: Some(UserResponse::from(user)),
-            message: Some(
-                "Password updated. Sign in again; prior sessions were revoked.".to_owned(),
-            ),
-        }),
-    ))
-}
 
 pub(crate) async fn password_post(
     State(state): State<Arc<AppState>>,

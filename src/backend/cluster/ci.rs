@@ -23,8 +23,7 @@ mod tests {
         cluster::{IrohDialer, NodeKey, Relay},
     };
 
-    #[tokio::test]
-    async fn draining_refuses_claims_but_still_accepts_heartbeats_and_finishes() {
+    async fn test_context() -> (tempfile::TempDir, db::DbPool, NodeContext) {
         let root = tempfile::tempdir().unwrap();
         let pool = db::init_db(&format!(
             "sqlite://{}",
@@ -38,7 +37,8 @@ mod tests {
             &pool,
             &key.public_hex(),
             "core",
-            &["actions-worker".into()],
+            // Claims need web or ssh, which may read repositories held by other nodes.
+            &["web".into(), "runner".into()],
             "test",
         )
         .await
@@ -53,6 +53,12 @@ mod tests {
             unreachable: Default::default(),
             ci_replicas: Default::default(),
         };
+        (root, pool, context)
+    }
+
+    #[tokio::test]
+    async fn draining_refuses_claims_but_still_accepts_heartbeats_and_finishes() {
+        let (_root, pool, context) = test_context().await;
         let queue = RunQueue::Database {
             pool: pool.clone(),
             config: Arc::new(CiConfig::default()),
@@ -115,9 +121,128 @@ mod tests {
             .is_ok());
         pool.close().await;
     }
+
+    #[tokio::test]
+    async fn oversized_environment_claim_fails_instead_of_leaving_an_undeliverable_lease() {
+        use crate::backend::{
+            crypto::SecretEncryptor,
+            db::environment_values::{self as values, Kind, Save},
+            notifications::NotificationBroadcaster,
+            repositories::lifecycle,
+        };
+        let (root, pool, context) = test_context().await;
+        let owner = db::users::accounts::create_user(&pool, "owner", None)
+            .await
+            .unwrap();
+        let repo = lifecycle::provision(
+            (&pool, None),
+            root.path(),
+            db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            "project",
+            None,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+        let blob=git2::Repository::open_bare(&repo.disk_path).unwrap().blob(b"on: push\njobs:\n  deploy:\n    runs-on: linux\n    environment: production\n    steps: [{run: 'true'}]\n").unwrap().to_string();
+        let encryptor = Arc::new(SecretEncryptor::new(&[0x63; 32]));
+        values::create(&pool, owner.id, repo.id, "production")
+            .await
+            .unwrap();
+        let value = "\u{1}".repeat(20 * 1024);
+        // Both source sets are within their 1 MiB limits, but JSON escapes expand the reply.
+        for index in 0..50 {
+            let name = format!("SECRET_{index}");
+            db::secrets::create_or_update_secret(
+                &pool,
+                &encryptor,
+                repo.id,
+                &name,
+                &value,
+                Some(owner.id),
+            )
+            .await
+            .unwrap();
+            values::save(
+                &pool,
+                Some(&encryptor),
+                owner.id,
+                repo.id,
+                "production",
+                &Save {
+                    kind: Kind::Secret,
+                    previous: None,
+                    name: &name,
+                    value: Some(&value),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let run = db::ci::enqueue_ci_run(
+            &pool,
+            db::ci::NewCiRun {
+                repo_id: repo.id,
+                triggered_by_id: owner.id,
+                pipeline: "ci",
+                event: "push",
+                pull_request_id: None,
+                branch: "main",
+                head_sha: &"1".repeat(40),
+                workflow_path: ".github/workflows/ci.yml",
+                workflow_blobs: &serde_json::json!({".github/workflows/ci.yml":blob}),
+                workflow_inputs: None,
+                environment: Some("production"),
+                manual: false,
+            },
+            &[owner.id],
+        )
+        .await
+        .unwrap();
+        let queue = RunQueue::Database {
+            pool: pool.clone(),
+            config: Arc::new(CiConfig {
+                mode: CiExecutionMode::Local,
+                trusted_actor_ids: std::collections::BTreeSet::from([owner.id]),
+                ..CiConfig::default()
+            }),
+            secrets: Some(encryptor),
+            context: None,
+            notifications: Arc::new(NotificationBroadcaster::new(&pool)),
+        };
+        let handler = CiHandler::new(context.clone(), queue);
+        let error = handler
+            .execute(
+                context.key.public_key(),
+                Request {
+                    worker: "worker/1".into(),
+                    operation: Operation::Claim {
+                        mode: CiExecutionMode::Local,
+                    },
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), CLAIM_TOO_LARGE);
+        let current = db::ci::get_ci_run_by_run_id(&pool, run.run_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.status, "failed");
+        assert_eq!(current.error_message.as_deref(), Some(CLAIM_TOO_LARGE));
+        assert!(handler
+            .queue
+            .claim("another-worker", CiExecutionMode::Local)
+            .await
+            .unwrap()
+            .is_none());
+        pool.close().await;
+    }
 }
 
 const REFUSED: &str = "CI queue request refused";
+const CLAIM_TOO_LARGE: &str = "CI claim exceeds the RPC response limit";
 
 #[derive(Clone)]
 pub struct CiHandler {
@@ -143,8 +268,22 @@ impl CiHandler {
         }
     }
 
+    /// Opens claim admission once the node is published. A claim assigns runs to repositories
+    /// placed on this node, and this node's address must be recorded before it can hand them out.
+    pub(super) fn start_claiming(&self) {
+        self.accepting_claims.store(true, Ordering::Release);
+    }
+
     pub(super) fn stop_claiming(&self) {
         self.accepting_claims.store(false, Ordering::Release);
+    }
+
+    /// Whether this core's node may read repositories held by other nodes. Only web and ssh
+    /// nodes may, and claim preparation reads each run's workflow that way.
+    async fn may_read_repositories(&self) -> Result<bool> {
+        let node =
+            db::cluster::get_node_by_id(self.context.database()?, self.context.node_id).await?;
+        Ok(node.is_some_and(|node| node.roles.iter().any(|role| role == "web" || role == "ssh")))
     }
 
     async fn execute(&self, peer: iroh::PublicKey, request: Request) -> Result<serde_json::Value> {
@@ -164,11 +303,26 @@ impl CiHandler {
                     self.accepting_claims.load(Ordering::Acquire),
                     CORE_UNAVAILABLE
                 );
+                // Refuse before dequeuing: a run claimed here could not be prepared, and the
+                // worker would then fail it instead of asking another core.
+                ensure!(self.may_read_repositories().await?, CORE_UNAVAILABLE);
                 let mut claim = self.queue.claim(&worker, mode).await?;
                 if let Some(claim) = &mut claim {
                     claim.storage_node_id = claim.storage_node_id.or(Some(self.context.node_id));
                 }
-                serde_json::to_value(claim)?
+                let value = serde_json::to_value(&claim)?;
+                let bytes = serde_json::to_vec(&Reply {
+                    result: Ok(value.clone()),
+                })?;
+                if bytes.len() > rpc::MAX_JSON {
+                    if let Some(claim) = &claim {
+                        self.queue
+                            .finish(&worker, claim.run.id, "failed", Some(CLAIM_TOO_LARGE))
+                            .await?;
+                    }
+                    anyhow::bail!(CLAIM_TOO_LARGE);
+                }
+                value
             }
             Operation::Storage { run_id } => {
                 let pool = self.context.database()?;
@@ -196,6 +350,39 @@ impl CiHandler {
                 };
                 serde_json::to_value((id, peer))?
             }
+            Operation::Progress {
+                id,
+                generation,
+                workflow,
+                event,
+            } => serde_json::to_value(
+                self.queue
+                    .progress(&worker, id, &generation, &workflow, &event)
+                    .await?,
+            )?,
+            Operation::JobState {
+                id,
+                generation,
+                workflow,
+                state,
+            } => serde_json::to_value(
+                self.queue
+                    .job_state(&worker, id, &generation, &workflow, &state)
+                    .await?,
+            )?,
+            Operation::AdmitJob {
+                id,
+                generation,
+                workflow,
+                job,
+            } => serde_json::to_value(
+                self.queue
+                    .admit_job(&worker, id, &generation, &workflow, job)
+                    .await?,
+            )?,
+            Operation::FinishJob { id, job } => {
+                serde_json::to_value(self.queue.finish_job(&worker, id, &job).await?)?
+            }
             Operation::Heartbeat { id } => {
                 serde_json::to_value(self.queue.heartbeat(&worker, id).await?)?
             }
@@ -216,7 +403,7 @@ impl CiHandler {
     }
 
     /// Why this node refuses a CI request from `peer` now, or `None` when it may answer. This
-    /// node must be an active member with its own key, and the caller an active actions-worker.
+    /// node must be an active member with its own key, and the caller an active runner.
     /// A check that cannot read the database refuses too.
     async fn refusal(&self, peer: iroh::PublicKey) -> Option<&'static str> {
         let checked = async {
@@ -229,14 +416,13 @@ impl CiHandler {
             let worker = db::cluster::get_node_by_public_key(pool, &peer.to_string())
                 .await?
                 .is_some_and(|node| {
-                    node.status == "active"
-                        && node.roles.iter().any(|role| role == "actions-worker")
+                    node.status == "active" && node.roles.iter().any(|role| role == "runner")
                 });
             Ok::<_, anyhow::Error>((serving, worker))
         };
         match checked.await {
             Ok((true, true)) => None,
-            Ok((true, false)) => Some("not an active actions-worker"),
+            Ok((true, false)) => Some("not an active runner"),
             Ok((false, _)) => Some(CORE_UNAVAILABLE),
             Err(error) => {
                 tracing::warn!(%error, "CI queue membership check failed");

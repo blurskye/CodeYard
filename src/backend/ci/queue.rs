@@ -13,6 +13,11 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use uuid::Uuid;
 
+/// The core answered and refused the request, so sending it again cannot succeed.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct CoreRefusal(String);
+
 /// The pull request a `pull_request` run belongs to. It becomes `github.event`.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PullRequestEvent {
@@ -23,16 +28,58 @@ pub struct PullRequestEvent {
     pub base_sha: String,
 }
 
+/// The variables a run sees: its repository's, then inherited organization values that the
+/// repository does not set. Admission and claiming both read them, so they agree.
+pub(super) async fn run_variables(pool: &DbPool, repo: i64) -> Result<Vec<(String, String)>> {
+    let variables = db::variables::for_run(pool, repo).await?;
+    db::variables::validate_all(&variables)?;
+    let mut variables: std::collections::BTreeMap<_, _> = variables.into_iter().collect();
+    let mut bytes: usize = variables
+        .iter()
+        .map(|(name, value)| name.len() + value.len())
+        .sum();
+    for (name, value) in db::organization_values::variables_for_run(pool, repo).await? {
+        if variables.contains_key(&name) {
+            continue;
+        }
+        if bytes + name.len() + value.len() > 256 * 1024 {
+            break;
+        }
+        bytes += name.len() + value.len();
+        variables.insert(name, value);
+    }
+    Ok(variables.into_iter().collect())
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RunActor {
+    pub id: i64,
+    pub login: String,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ClaimedRun {
     pub run: CiRun,
+    /// The core's canonical forge origin, which workflow URLs are built from on any runner.
+    #[serde(default)]
+    pub forge_origin: String,
     pub storage_node_id: Option<i64>,
     pub repository: Uuid,
     pub repository_name: String,
     pub owner: String,
     /// Login of the user who started the run; empty when no account did.
     pub actor: String,
+    #[serde(default)]
+    pub original_actor: Option<RunActor>,
+    #[serde(default)]
+    pub replay: Option<codeyard_actions::progress::Replay>,
+    #[serde(default)]
+    pub debug: bool,
     pub secrets: Vec<(String, String)>,
+    #[serde(default)]
+    pub variables: Vec<(String, String)>,
+    #[serde(default)]
+    pub environment_values: super::environment_values::EnvironmentValues,
     #[serde(default)]
     pub pull_request: Option<PullRequestEvent>,
     pub storage_peer: Option<cluster::CorePeer>,
@@ -40,6 +87,10 @@ pub struct ClaimedRun {
     pub storage_replicas: Vec<(i64, cluster::CorePeer)>,
     #[serde(default)]
     pub limits: RunLimits,
+    #[serde(default)]
+    pub runtime: super::runtime::RuntimeCredentials,
+    #[serde(default)]
+    pub github_tokens: super::tokens::GithubTokens,
     // Used only by a database worker; never sent to a remote worker.
     #[serde(skip)]
     pub(crate) store: Option<RepoStore>,
@@ -61,11 +112,15 @@ pub enum RunQueue {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LogLine {
     pub stage: String,
     pub line: String,
     pub level: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_number: Option<i32>,
 }
 
 /// Replaces each control byte except tab, CR and LF with `?`. PostgreSQL cannot store NUL.
@@ -93,12 +148,18 @@ pub(crate) fn prepare_logs(lines: &[LogLine]) -> Result<Vec<LogLine>> {
             stage: printable_log_text(&line.stage),
             line: printable_log_text(&line.line),
             level: line.level.clone(),
+            job_id: line.job_id,
+            step_number: line.step_number,
         })
         .collect();
     ensure!(
         lines.iter().all(|line| line.stage.len() <= 255
             && line.line.len() <= 16 * 1024
-            && matches!(line.level.as_str(), "info" | "warn" | "error" | "debug")),
+            && matches!(line.level.as_str(), "info" | "warn" | "error" | "debug")
+            && line.job_id.is_none_or(|id| id > 0)
+            && line
+                .step_number
+                .is_none_or(|number| line.job_id.is_some() && (1..=10000).contains(&number))),
         "CI log input exceeds ingestion limits"
     );
     ensure!(
@@ -119,6 +180,28 @@ pub(crate) enum Operation {
     },
     Heartbeat {
         id: i64,
+    },
+    FinishJob {
+        id: i64,
+        job: String,
+    },
+    Progress {
+        id: i64,
+        generation: String,
+        workflow: String,
+        event: codeyard_actions::progress::Event,
+    },
+    JobState {
+        id: i64,
+        generation: String,
+        workflow: String,
+        state: codeyard_actions::progress::State,
+    },
+    AdmitJob {
+        id: i64,
+        generation: String,
+        workflow: String,
+        job: i64,
     },
     Storage {
         run_id: Uuid,
@@ -150,6 +233,52 @@ pub(crate) struct Reply {
 pub(crate) const CORE_UNAVAILABLE: &str = "core node unavailable";
 
 impl RunQueue {
+    /// The service a database queue sends workflow webhooks through.
+    fn events(&self) -> Option<super::CiRuns> {
+        let Self::Database {
+            pool,
+            config,
+            context,
+            notifications,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        Some(super::CiRuns::new(
+            pool.clone(),
+            config.clone(),
+            Arc::new(tokio::sync::Notify::new()),
+            context.clone(),
+            notifications.clone(),
+        ))
+    }
+
+    pub(super) async fn emit_workflow_run(&self, run: &CiRun, action: &str) {
+        if let Some(ci) = self.events() {
+            ci.emit_workflow_run(run, action).await;
+        }
+    }
+
+    /// Fails runs whose worker stopped heartbeating. Each finished run emits its completion
+    /// event, as a run finished by its worker does.
+    pub(super) async fn fail_stale(&self, stale_seconds: i64) -> Result<()> {
+        let Self::Database {
+            pool,
+            notifications,
+            ..
+        } = self
+        else {
+            return Ok(());
+        };
+        let (finished, created) = db::ci::fail_stale_ci_runs(pool, stale_seconds).await?;
+        notifications.send_created(&created).await;
+        for run in &finished {
+            self.emit_workflow_run(run, "completed").await;
+        }
+        Ok(())
+    }
+
     pub fn store(&self, claim: &ClaimedRun) -> Result<RepoStore> {
         match self {
             Self::Database { .. } => claim
@@ -269,9 +398,11 @@ impl RunQueue {
                     // A database without cluster membership has no node rows to check.
                     None => db::ci::claim_ci_run(pool, worker, mode.as_str(), &trusted).await?,
                 };
-                let Some(run) = claimed else {
+                let Some(mut run) = claimed else {
                     return Ok(None);
                 };
+                let mut load_error = "CI could not load the repository or secrets";
+                let run_id = run.id;
                 let loaded = async {
                     let repository =
                         db::repositories::records::get_repository_by_id(pool, run.repo_id)
@@ -288,19 +419,70 @@ impl RunQueue {
                             .unwrap_or_default(),
                         None => String::new(),
                     };
+                    let original_actor =
+                        if let Some(root) = run.workflow_run_id.filter(|root| *root != run.id) {
+                            let source = db::ci::get_ci_run_by_id(pool, run.repo_id, root)
+                                .await?
+                                .context("original workflow run is unavailable")?;
+                            let user = db::users::accounts::get_user_by_id(
+                                pool,
+                                source
+                                    .triggered_by_id
+                                    .context("original actor is unavailable")?,
+                            )
+                            .await?
+                            .context("original actor is unavailable")?;
+                            Some(RunActor {
+                                id: user.id,
+                                login: user.username,
+                            })
+                        } else {
+                            run.triggered_by_id.map(|id| RunActor {
+                                id,
+                                login: actor.clone(),
+                            })
+                        };
+                    let options = db::ci::ci_run_options(pool, run.id)
+                        .await?
+                        .unwrap_or_default();
                     let pull_request = run
                         .pull_request_event
                         .clone()
                         .map(serde_json::from_value)
                         .transpose()?;
+                    let secrets_encryptor = secrets.as_deref();
                     let secrets = match secrets {
                         Some(encryptor) if !run.is_fork => {
-                            db::secrets::decrypt_repository_secrets(pool, encryptor, run.repo_id)
-                                .await?
+                            let mut values = db::organization_values::secrets_for_run(
+                                pool,
+                                encryptor,
+                                run.repo_id,
+                            )
+                            .await?;
+                            let repository = db::secrets::decrypt_repository_secrets(
+                                pool,
+                                encryptor,
+                                run.repo_id,
+                            )
+                            .await?;
+                            let names: std::collections::BTreeSet<_> = repository
+                                .iter()
+                                .map(|(name, _)| name.to_ascii_uppercase())
+                                .collect();
+                            values.retain(|(name, _)| !names.contains(name));
+                            values.extend(repository);
+                            values
                         }
                         None if !run.is_fork => {
                             ensure!(
-                                !db::secrets::repository_has_secrets(pool, run.repo_id).await?,
+                                !db::secrets::repository_has_secrets(pool, run.repo_id).await?
+                                    && db::organization_values::workflow_values(
+                                        pool,
+                                        run.repo_id,
+                                        db::organization_values::Kind::Secret
+                                    )
+                                    .await?
+                                    .is_empty(),
                                 "repository secrets cannot be decrypted without SECRETS_MASTER_KEY"
                             );
                             Vec::new()
@@ -309,7 +491,9 @@ impl RunQueue {
                     };
                     // The whole set goes out in one RPC reply and into one secret file, so it
                     // is bounded before the run is handed out.
-                    db::secrets::validate_repository_secrets(&secrets)?;
+                    db::secrets::validate_workflow_secrets(&secrets)?;
+                    let variables = run_variables(pool, run.repo_id).await?;
+                    db::variables::validate_workflow_variables(&variables)?;
                     let storage_id = repository
                         .storage_node_id
                         .or_else(|| context.as_ref().map(|c| c.node_id));
@@ -355,13 +539,91 @@ impl RunQueue {
                             ));
                         }
                     }
+                    load_error = "CI could not run";
+                    let store = repo_store(&repository, context.as_ref()).for_ci_run(
+                        run.id,
+                        run.worker.as_deref().context("the CI run has no worker")?,
+                    );
+                    let mut definitions = std::collections::BTreeMap::new();
+                    for (path, sha) in run
+                        .workflow_blobs
+                        .as_object()
+                        .context("the run has no workflow files")?
+                    {
+                        let bytes = if let Some(content) = super::reusable::content(sha) {
+                            let called_id = sha
+                                .get("repository_id")
+                                .and_then(serde_json::Value::as_i64)
+                                .context("invalid called workflow repository")?;
+                            let called =
+                                db::repositories::records::get_repository_by_id(pool, called_id)
+                                    .await?
+                                    .context("called workflow repository unavailable")?;
+                            super::reusable::authorize(
+                                pool,
+                                &repository,
+                                run.triggered_by_id.context("run has no actor")?,
+                                &called,
+                            )
+                            .await?;
+                            content.as_bytes().to_vec()
+                        } else {
+                            store
+                                .blob_by_id(sha.as_str().context("invalid workflow blob")?)
+                                .await?
+                        };
+                        definitions.insert(path.clone(), bytes);
+                    }
+                    let environment_values = super::environment_values::load(
+                        pool,
+                        secrets_encryptor,
+                        &run,
+                        &definitions,
+                    )
+                    .await?;
+                    let site = db::actions::get_actions_settings(pool).await?;
+                    run.engine = Some(
+                        db::actions::record_ci_engine(
+                            pool,
+                            run.id,
+                            worker,
+                            site.effective_engine(repository.actions_engine.as_deref()),
+                        )
+                        .await?,
+                    );
+                    let (repo_policy, org_policy) =
+                        db::action_settings::effective(pool, run.repo_id).await?;
+                    let github_tokens = super::tokens::issue_selected(
+                        pool,
+                        &run,
+                        &definitions,
+                        db::action_settings::workflow_write(
+                            &repo_policy,
+                            &org_policy,
+                            site.default_workflow_permissions == "permissive",
+                        ),
+                        options.replay.as_ref().map(|replay| &replay.0),
+                    )
+                    .await?;
+                    let runtime = super::runtime::issue(pool, &run, &site).await?;
+                    if run.engine.as_deref() == Some("codeyard-actions") {
+                        for workflow in run.workflow_path.split(',') {
+                            db::action_jobs::save_state(
+                                pool,
+                                worker,
+                                run.id,
+                                &super::runtime::token_hash(&runtime.token),
+                                workflow,
+                                &Default::default(),
+                            )
+                            .await?;
+                        }
+                    }
                     let limits = RunLimits::new(
-                        &db::actions::get_actions_settings(pool).await?,
+                        &site,
                         &db::actions::get_repo_actions_settings(pool, run.repo_id).await?,
                     );
-                    let worker = run.worker.as_deref().context("the CI run has no worker")?;
-                    let store =
-                        Some(repo_store(&repository, context.as_ref()).for_ci_run(run.id, worker));
+                    let store = Some(store);
                     Ok::<_, anyhow::Error>(ClaimedRun {
                         run: run.clone(),
                         storage_node_id: repository.storage_node_id,
@@ -369,25 +631,168 @@ impl RunQueue {
                         repository_name: repository.name,
                         owner,
                         actor,
+                        original_actor,
+                        forge_origin: crate::backend::api::http::config::link_origin(),
+                        replay: options.replay.map(|data| data.0),
+                        debug: options.debug,
                         secrets,
+                        variables,
+                        environment_values,
                         pull_request,
                         storage_peer,
                         storage_replicas,
                         limits,
+                        runtime,
+                        github_tokens,
                         store,
                     })
-                }
-                .await;
+                };
+                // Preparing can wait on remote storage for longer than the stale-run sweep
+                // allows, so the lease is renewed meanwhile. A lease taken back stops it.
+                let renew = async {
+                    let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+                    tick.tick().await;
+                    loop {
+                        tick.tick().await;
+                        if let Ok(None) = db::ci::heartbeat_ci_run(pool, run_id, worker).await {
+                            return;
+                        }
+                    }
+                };
+                let loaded = tokio::select! {
+                    loaded = loaded => loaded,
+                    () = renew => Err(anyhow::anyhow!("the CI run was taken back while it was prepared")),
+                };
                 if loaded.is_err() {
-                    self.finish(
-                        worker,
-                        run.id,
-                        "failed",
-                        Some("CI could not load the repository or secrets"),
-                    )
-                    .await?;
+                    self.finish(worker, run.id, "failed", Some(load_error))
+                        .await?;
+                } else {
+                    self.emit_workflow_run(&run, "in_progress").await;
                 }
                 loaded.map(Some)
+            }
+        }
+    }
+
+    pub async fn progress(
+        &self,
+        worker: &str,
+        id: i64,
+        generation: &str,
+        workflow: &str,
+        event: &codeyard_actions::progress::Event,
+    ) -> Result<i64> {
+        ensure!(
+            serde_json::to_vec(event)?.len() <= 16 * 1024,
+            "progress exceeds native limits"
+        );
+        match self {
+            Self::Database { pool, .. } => {
+                use codeyard_actions::progress::Update;
+                let job =
+                    db::action_jobs::apply(pool, worker, id, generation, workflow, event).await?;
+                let action = match event.update {
+                    Update::Queued { .. } => Some("queued"),
+                    Update::Started => Some("in_progress"),
+                    Update::Finished { .. } => Some("completed"),
+                    _ => None,
+                };
+                if let (Some(action), Some(ci)) = (action, self.events()) {
+                    ci.emit_workflow_job(id, job, action).await;
+                }
+                Ok(job)
+            }
+            Self::Remote { .. } => {
+                self.call(
+                    worker,
+                    Operation::Progress {
+                        id,
+                        generation: generation.into(),
+                        workflow: workflow.into(),
+                        event: event.clone(),
+                    },
+                    None,
+                )
+                .await
+            }
+        }
+    }
+    pub async fn job_state(
+        &self,
+        worker: &str,
+        id: i64,
+        generation: &str,
+        workflow: &str,
+        state: &codeyard_actions::progress::State,
+    ) -> Result<()> {
+        ensure!(
+            serde_json::to_vec(state)?.len() <= 8 * 1024 * 1024,
+            "job state exceeds native limits"
+        );
+        match self {
+            Self::Database { pool, .. } => {
+                db::action_jobs::save_state(pool, worker, id, generation, workflow, state).await
+            }
+            Self::Remote { .. } => {
+                self.call(
+                    worker,
+                    Operation::JobState {
+                        id,
+                        generation: generation.into(),
+                        workflow: workflow.into(),
+                        state: state.clone(),
+                    },
+                    None,
+                )
+                .await
+            }
+        }
+    }
+
+    /// Whether a job waiting for its concurrency group may start: `Some(true)` once it holds
+    /// the group, `Some(false)` once a newer job cancelled it, `None` while it waits.
+    pub async fn admit_job(
+        &self,
+        worker: &str,
+        id: i64,
+        generation: &str,
+        workflow: &str,
+        job: i64,
+    ) -> Result<Option<bool>> {
+        match self {
+            Self::Database { pool, .. } => {
+                db::action_jobs::admit(pool, worker, id, generation, workflow, job).await
+            }
+            Self::Remote { .. } => {
+                self.call(
+                    worker,
+                    Operation::AdmitJob {
+                        id,
+                        generation: generation.into(),
+                        workflow: workflow.into(),
+                        job,
+                    },
+                    None,
+                )
+                .await
+            }
+        }
+    }
+
+    pub async fn finish_job(&self, worker: &str, id: i64, job: &str) -> Result<()> {
+        ensure!(job.len() <= 1024, "invalid job id");
+        match self {
+            Self::Database { pool, .. } => db::ci_tokens::finish_job(pool, id, worker, job).await,
+            Self::Remote { .. } => {
+                self.call(
+                    worker,
+                    Operation::FinishJob {
+                        id,
+                        job: job.into(),
+                    },
+                    None,
+                )
+                .await
             }
         }
     }
@@ -430,8 +835,9 @@ impl RunQueue {
                 ..
             } => {
                 let finished = db::ci::finish_ci_run(pool, id, worker, status, message).await?;
-                if let Some((_, created)) = &finished {
+                if let Some((run, created)) = &finished {
                     notifications.send_created(created).await;
+                    self.emit_workflow_run(run, "completed").await;
                 }
                 Ok(finished.is_some())
             }
@@ -530,7 +936,7 @@ impl RunQueue {
                     Err(error) if error == CORE_UNAVAILABLE => {
                         last = anyhow::anyhow!(CORE_UNAVAILABLE)
                     }
-                    Err(error) => return Err(anyhow::Error::msg(error)),
+                    Err(error) => return Err(CoreRefusal(error).into()),
                 },
                 Ok(Err(error)) => {
                     if !replay_safe {

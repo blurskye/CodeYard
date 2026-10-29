@@ -10,16 +10,14 @@ use crate::backend::api::repos::paging::{
 };
 use crate::backend::api::repos::responses::{AuthorInfo, CommitResponse};
 use crate::backend::app::AppState;
-use crate::backend::db;
 use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::store::{repo_store, CommitFilter};
 use crate::webui::pages::repos as view;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Json;
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Deserialize)]
@@ -48,10 +46,14 @@ pub async fn list_commits(
     let git_ref = if let Some(ref git_ref) = query.git_ref {
         git_ref.clone()
     } else {
-        crate::backend::repositories::reads::default_branch(
-            &refs,
-            &repository_default_branch(&state, &repository).await?,
-            &repository.default_branch,
+        // Qualified, so a branch named like `refs/topic` is not read as a full reference.
+        format!(
+            "refs/heads/{}",
+            crate::backend::repositories::reads::default_branch(
+                &refs,
+                &repository_default_branch(&state, &repository).await?,
+                &repository.default_branch,
+            )
         )
     };
 
@@ -69,13 +71,10 @@ pub async fn list_commits(
         .iter()
         .map(|commit| commit.author_email.clone())
         .collect();
-    let users = db::users::accounts::get_users_by_emails(&state.pool, &emails)
+    // The same lookup as a single commit, so both name the account behind a noreply address.
+    let user_map = crate::backend::repositories::reads::commit_authors(&state.pool, &emails)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?;
-    let user_map: HashMap<String, &db::models::User> = users
-        .iter()
-        .filter_map(|user| user.email.clone().map(|email| (email, user)))
-        .collect();
 
     let responses = commits
         .into_iter()
@@ -138,6 +137,7 @@ fn history_filter(
         since: day_bound(ctx, &since, false)?,
         until: day_bound(ctx, &until, true)?,
         message: None,
+        author_emails: Vec::new(),
     };
     Ok((
         filter,
@@ -253,15 +253,26 @@ pub(super) async fn page(
 }
 
 /// GitHub addresses a branch's history as `/commits/<branch>`. The list takes the branch
-/// as `?ref=`.
+/// as `?ref=` and keeps the other filters.
 pub(super) async fn ref_redirect(
     Path((owner, repo, git_ref)): Path<(String, String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Response {
     let mut url = url::Url::parse("http://localhost/").expect("static base address");
     url.path_segments_mut()
         .expect("http base address has path segments")
         .extend([owner.as_str(), repo.as_str(), "commits"]);
-    url.query_pairs_mut().append_pair("ref", &git_ref);
+    {
+        let mut pairs = url.query_pairs_mut();
+        pairs.append_pair("ref", &git_ref);
+        for (name, value) in
+            url::form_urlencoded::parse(query.as_deref().unwrap_or_default().as_bytes())
+        {
+            if name != "ref" {
+                pairs.append_pair(&name, &value);
+            }
+        }
+    }
     let target = format!("{}?{}", url.path(), url.query().unwrap_or_default());
     crate::backend::api::http::render::redirect_response(&target)
 }

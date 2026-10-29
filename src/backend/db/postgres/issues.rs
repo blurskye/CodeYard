@@ -1,10 +1,11 @@
+pub(crate) mod management;
 use super::models::{Issue, IssueComment};
 use crate::backend::db::discussions::{contains_pattern, ListFilter, StateCounts};
 use crate::backend::db::issues::IssueCommentEntry;
 use crate::backend::db::issues::IssueListEntry;
 use crate::backend::db::issues::{IssueRelation, ViewerIssueEntry};
 use anyhow::Result;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 
 pub async fn create_issue(
     pool: &PgPool,
@@ -15,6 +16,17 @@ pub async fn create_issue(
 ) -> Result<Issue> {
     let mut tx = pool.begin().await?;
     super::discussions::require_contribution_authority(&mut tx, author_id, repo_id).await?;
+    let issue = insert_in_transaction(&mut tx, repo_id, author_id, title, body).await?;
+    tx.commit().await?;
+    Ok(issue)
+}
+pub(crate) async fn insert_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    repo_id: i64,
+    author_id: i64,
+    title: &str,
+    body: &str,
+) -> Result<Issue> {
     let issue = sqlx::query_as::<_, Issue>(
         r#"
         INSERT INTO issues (repo_id, number, author_id, title, body)
@@ -26,9 +38,8 @@ pub async fn create_issue(
     .bind(author_id)
     .bind(title)
     .bind(body)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
-    tx.commit().await?;
     Ok(issue)
 }
 
@@ -94,6 +105,73 @@ pub async fn list_repo_issues(
 }
 
 /// Counts by state for the items the filter picks; its state, sort and offset are ignored.
+/// Issues and pull requests share one ordered page in GitHub's issue collection.
+pub async fn list_repository_items(
+    pool: &PgPool,
+    repo_id: i64,
+    filter: &ListFilter<'_>,
+    options: &crate::backend::db::issues::RepositoryItemOptions<'_>,
+    limit: i64,
+) -> Result<Vec<(i64, bool)>> {
+    let (mut assignee_mode, assignee_id) = filter.assignee.binding();
+    if options.any_assignee {
+        assignee_mode = 3;
+    }
+    let (mut milestone_mode, milestone_id) = filter.milestone.binding();
+    if options.any_milestone {
+        milestone_mode = 3;
+    }
+    let labels = if filter.labels.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(filter.labels)?)
+    };
+    let order = crate::backend::db::issues::repository_item_order(filter.sort);
+    let (mut type_mode, type_id) = options.issue_type.binding();
+    if options.any_type {
+        type_mode = 3;
+    }
+    let mentioned = options.mentioned.map(|v| {
+        format!(
+            "(?i)(^|[^A-Za-z0-9_])@{}([^A-Za-z0-9_-]|$)",
+            crate::backend::db::discussion_search::escape(v)
+        )
+    });
+    Ok(sqlx::query_as(&format!(r"WITH items AS (
+        SELECT id, number, author_id, state, milestone_id, created_at, updated_at, body, false AS pull_request,
+            (SELECT COUNT(*) FROM issue_comments c WHERE c.issue_id=issues.id) AS comments FROM issues WHERE repo_id=$1
+        UNION ALL
+        SELECT id, number, author_id, CASE WHEN state='open' THEN 'open' ELSE 'closed' END, milestone_id, created_at, updated_at, body, true,
+            (SELECT COUNT(*) FROM pr_comments c WHERE c.pull_request_id=pull_requests.id AND c.path IS NULL AND c.review_id IS NULL) FROM pull_requests WHERE repo_id=$1
+        ), assignments AS (
+            SELECT issue_id AS item_id, user_id, false AS pull_request FROM issue_assignees
+            UNION ALL SELECT pull_request_id, user_id, true FROM pr_assignees
+        ), item_labels AS (
+            SELECT issue_id AS item_id, label_id, false AS pull_request FROM issue_labels
+            UNION ALL SELECT pull_request_id, label_id, true FROM pr_labels
+        ), item_types AS (
+            SELECT s.issue_id,s.attribute_id FROM issue_type_assignments s JOIN issue_attributes t ON t.id=s.attribute_id JOIN repositories r ON r.id=$1 WHERE t.owner_user_id=r.owner_user_id OR t.owner_org_id=r.owner_org_id
+        ), discussion_comments AS (
+            SELECT issue_id AS item_id,body,false AS pull_request FROM issue_comments
+            UNION ALL SELECT c.pull_request_id,c.body,true FROM pr_comments c LEFT JOIN pr_reviews v ON v.id=c.review_id WHERE c.review_id IS NULL OR v.state<>'pending'
+            UNION ALL SELECT pull_request_id,body,true FROM pr_reviews WHERE state<>'pending'
+        ) SELECT i.id,i.pull_request FROM items i
+        WHERE ($2::TEXT IS NULL OR i.state=$2) AND ($3::BIGINT IS NULL OR i.author_id=$3)
+        AND ($4=0 OR ($4=1 AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.item_id=i.id AND a.pull_request=i.pull_request))
+            OR ($4=2 AND EXISTS (SELECT 1 FROM assignments a WHERE a.item_id=i.id AND a.pull_request=i.pull_request AND a.user_id=$5))
+            OR ($4=3 AND EXISTS (SELECT 1 FROM assignments a WHERE a.item_id=i.id AND a.pull_request=i.pull_request)))
+        AND ($6=0 OR ($6=1 AND i.milestone_id IS NULL) OR ($6=2 AND i.milestone_id=$7) OR ($6=3 AND i.milestone_id IS NOT NULL))
+        AND ($8::TEXT IS NULL OR (SELECT COUNT(DISTINCT lower(l.name)) FROM item_labels il JOIN labels l ON l.id=il.label_id
+            WHERE il.item_id=i.id AND il.pull_request=i.pull_request AND lower(l.name) IN (SELECT lower(value) FROM jsonb_array_elements_text($8::jsonb)))
+            = (SELECT COUNT(DISTINCT lower(value)) FROM jsonb_array_elements_text($8::jsonb)))
+        AND ($9::TIMESTAMPTZ IS NULL OR i.updated_at>$9)
+        AND ($12=0 OR (NOT i.pull_request AND (($12=1 AND NOT EXISTS(SELECT 1 FROM item_types t WHERE t.issue_id=i.id)) OR ($12=2 AND EXISTS(SELECT 1 FROM item_types t WHERE t.issue_id=i.id AND t.attribute_id=$13)) OR ($12=3 AND EXISTS(SELECT 1 FROM item_types t WHERE t.issue_id=i.id)))))
+        AND ($14::TEXT IS NULL OR i.body ~ $14 OR EXISTS(SELECT 1 FROM discussion_comments c WHERE c.item_id=i.id AND c.pull_request=i.pull_request AND c.body ~ $14))
+        ORDER BY {order}, i.number DESC LIMIT $10 OFFSET $11"))
+        .bind(repo_id).bind(filter.state).bind(filter.author_id).bind(assignee_mode).bind(assignee_id).bind(milestone_mode).bind(milestone_id).bind(labels)
+        .bind(options.since).bind(limit).bind(filter.offset).bind(type_mode).bind(type_id).bind(mentioned).fetch_all(pool).await?)
+}
+
 pub async fn count_repo_issues(
     pool: &PgPool,
     repo_id: i64,
@@ -132,6 +210,22 @@ pub async fn update_issue(
     issue_id: i64,
     edit: crate::backend::db::discussions::DiscussionEdit<'_>,
 ) -> Result<Option<Issue>> {
+    update_issue_with_reason(pool, issue_id, edit, None).await
+}
+
+pub async fn update_issue_with_reason(
+    pool: &PgPool,
+    issue_id: i64,
+    edit: crate::backend::db::discussions::DiscussionEdit<'_>,
+    state_reason: Option<&str>,
+) -> Result<Option<Issue>> {
+    anyhow::ensure!(
+        state_reason.is_none_or(|reason| matches!(
+            reason,
+            "completed" | "not_planned" | "reopened" | "duplicate"
+        )),
+        "Invalid state reason"
+    );
     if !edit.has_exact_revision() {
         return Ok(None);
     }
@@ -144,12 +238,35 @@ pub async fn update_issue(
         return Ok(None);
     };
     if !super::discussions::lock_write_authority(&mut tx, edit.actor_id, repo).await? {
-        return Ok(None);
+        // The issue's author may still edit and close it with read access.
+        let author: Option<i64> = sqlx::query_scalar("SELECT author_id FROM issues WHERE id = $1")
+            .bind(issue_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if author != Some(edit.actor_id)
+            || !super::discussions::lock_contribution_authority(&mut tx, edit.actor_id, repo)
+                .await?
+        {
+            return Ok(None);
+        }
     }
+    let issue = update_issue_in_transaction(&mut tx, repo, issue_id, edit, state_reason).await?;
+    tx.commit().await?;
+    Ok(issue)
+}
+/// Caller retains live issue-metadata authority and the issue revision through commit.
+pub(crate) async fn update_issue_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    repo: i64,
+    issue_id: i64,
+    edit: crate::backend::db::discussions::DiscussionEdit<'_>,
+    state_reason: Option<&str>,
+) -> Result<Option<Issue>> {
     let issue = sqlx::query_as::<_, Issue>(
         r#"UPDATE issues SET
             title = COALESCE($2, title), body = COALESCE($3, body),
             state = COALESCE($4, state),
+            state_reason = CASE WHEN $4 IS NULL OR $4=state THEN state_reason WHEN $4='open' THEN 'reopened' WHEN $4='closed' THEN COALESCE($9,'completed') ELSE state_reason END,
             closed_at = CASE WHEN $4 = 'open' THEN NULL WHEN $4 = 'closed' AND state <> 'closed' THEN clock_timestamp() ELSE closed_at END,
             closed_by_id = CASE WHEN $4 = 'open' THEN NULL WHEN $4 = 'closed' AND state <> 'closed' THEN $7 ELSE closed_by_id END,
             updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond')
@@ -157,9 +274,8 @@ pub async fn update_issue(
             AND ($4::TEXT IS NULL OR $4 IN ('open', 'closed'))
         RETURNING *"#,
     ).bind(issue_id).bind(edit.title).bind(edit.body).bind(edit.state)
-        .bind(edit.expected_state).bind(edit.expected_updated).bind(edit.actor_id).bind(repo)
-        .fetch_optional(&mut *tx).await?;
-    tx.commit().await?;
+        .bind(edit.expected_state).bind(edit.expected_updated).bind(edit.actor_id).bind(repo).bind(state_reason)
+        .fetch_optional(&mut **tx).await?;
     Ok(issue)
 }
 
@@ -350,7 +466,7 @@ pub async fn edit_issue_comment(
     }
     let author: Option<i64> = sqlx::query_scalar(
         "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
-         WHERE c.id = $1 AND c.issue_id = $2 AND i.repo_id = $3 AND NOT i.locked FOR UPDATE OF c",
+         WHERE c.id = $1 AND c.issue_id = $2 AND i.repo_id = $3 AND NOT i.locked FOR UPDATE OF i, c",
     )
     .bind(comment_id)
     .bind(issue_id)
@@ -389,7 +505,7 @@ pub async fn delete_issue_comment(
     }
     let author: Option<i64> = sqlx::query_scalar(
         "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
-         WHERE c.id = $1 AND c.issue_id = $2 AND i.repo_id = $3 AND NOT i.locked FOR UPDATE OF c",
+         WHERE c.id = $1 AND c.issue_id = $2 AND i.repo_id = $3 AND NOT i.locked FOR UPDATE OF i, c",
     )
     .bind(comment_id)
     .bind(issue_id)
@@ -423,6 +539,19 @@ pub async fn delete_issue_comment(
         .await?;
     tx.commit().await?;
     Ok(removed.rows_affected() == 1)
+}
+
+pub async fn list_repository_comments(
+    pool: &PgPool,
+    repo_id: i64,
+    filter: &crate::backend::db::issues::CommentFilter,
+) -> Result<Vec<(i64, bool)>> {
+    let order = crate::backend::db::issues::repository_item_order(filter.sort);
+    Ok(sqlx::query_as(&format!(r"WITH comments AS (
+        SELECT c.id,false AS pull_request,i.number,c.created_at,c.updated_at FROM issue_comments c JOIN issues i ON i.id=c.issue_id WHERE i.repo_id=$1
+        UNION ALL SELECT c.id,true,p.number,c.created_at,c.updated_at FROM pr_comments c JOIN pull_requests p ON p.id=c.pull_request_id WHERE p.repo_id=$1 AND c.path IS NULL AND c.review_id IS NULL
+        ) SELECT i.id,i.pull_request FROM comments i WHERE ($2::INTEGER IS NULL OR i.number=$2) AND ($3::TIMESTAMPTZ IS NULL OR i.updated_at>$3) ORDER BY {order},i.id,i.pull_request LIMIT $4 OFFSET $5"))
+        .bind(repo_id).bind(filter.number).bind(filter.since).bind(filter.limit).bind(filter.offset).fetch_all(pool).await?)
 }
 
 pub async fn get_issue_comment(pool: &PgPool, comment_id: i64) -> Result<Option<IssueComment>> {

@@ -252,7 +252,8 @@ fn PageRouteView(target: String) -> Element {
                     return;
                 }
             };
-            let scroll = (target != current.peek().location).then(history_scroll);
+            let navigation = target != current.peek().location;
+            let scroll = navigation.then(history_scroll);
             let signal = controller.signal();
             let timeout_controller = controller.clone();
             let next = *generation.peek() + 1;
@@ -263,7 +264,7 @@ fn PageRouteView(target: String) -> Element {
             let read_appearance = *appearance.peek();
             let request_active = active.clone();
             let task = spawn(async move {
-                let request = load::load_page(&request_target, &signal);
+                let request = load::load_page(&request_target, &signal, navigation);
                 let timeout = gloo_timers::future::TimeoutFuture::new(MODEL_TIMEOUT_MS);
                 futures_util::pin_mut!(request, timeout);
                 let result = match futures_util::future::select(request, timeout).await {

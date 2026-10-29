@@ -81,7 +81,10 @@ async fn revoke_one(ctx: &PageContext, actor: i64, key: &str) -> Result<bool, Ap
     else {
         return Ok(false);
     };
-    db::users::sessions::revoke_user_session(&ctx.state.pool, actor, &target.id)
+    let Some(current) = session::extract_session_id(&ctx.headers) else {
+        return Ok(false);
+    };
+    db::users::sessions::revoke_user_session(&ctx.state.pool, actor, &target.id, &current)
         .await
         .map_err(|_| database_failure())
 }

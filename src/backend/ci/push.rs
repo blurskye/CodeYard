@@ -1,12 +1,73 @@
 //! `push` runs for refs the server moves itself: web editor and file API saves,
 //! merges, and new branches and tags. Receive hooks share the same filtering policy.
 use super::{
-    infer_pipeline_from_workflow_path, list_workflows_for_ref, workflows::WorkflowMatchBudget,
+    infer_pipeline_from_workflow_path, list_workflows_for_ref,
+    workflows::{should_skip_run_from_message, WorkflowMatchBudget},
     CiRunRequest, CiRuns, WorkflowDefinition,
 };
 use crate::backend::db::models::Repository;
-use crate::backend::repositories::store::{repo_store, RepoStore};
-use anyhow::Result;
+use crate::backend::git::CommitInfo;
+use crate::backend::repositories::store::{repo_store, RepoStore, MAX_COMMIT_PAGE_SIZE};
+use crate::backend::webhooks::payloads;
+use anyhow::{Context, Result};
+
+const ZERO_OID: &str = "0000000000000000000000000000000000000000";
+
+fn is_zero_oid(id: &str) -> bool {
+    id == ZERO_OID
+}
+
+/// The push document a run's `github.event` reads: the document the push webhook sends, built
+/// through the repository store so a repository on another node works too.
+pub(crate) async fn push_document(
+    pool: &crate::backend::db::DbPool,
+    store: &RepoStore,
+    repo: &Repository,
+    owner: &str,
+    actor_id: i64,
+    update: &RefUpdate,
+) -> Result<serde_json::Value> {
+    let sender = crate::backend::db::users::accounts::get_user_by_id(pool, actor_id)
+        .await?
+        .context("push sender is unavailable")?;
+    let sender = payloads::Person::of(&sender);
+    let head = store.commit(&update.new).await?;
+    // The webhook lists at most 20 commits, newest first.
+    let (commits, forced) = match update.old.as_deref().filter(|old| !is_zero_oid(old)) {
+        Some(old) => (
+            store.commits_between(old, &head.sha, 20).await?,
+            !store.is_ancestor(old, &head.sha).await?,
+        ),
+        None => (vec![head.clone()], false),
+    };
+    // Bounded as in the push webhook, so a huge message cannot outgrow the run's claim.
+    let pushed = |commit: &CommitInfo| payloads::PushedCommit {
+        id: commit.sha.clone(),
+        tree_id: commit.tree_sha.clone(),
+        message: payloads::bounded_text(&commit.message, 4096),
+        time: commit.timestamp,
+        author_name: payloads::bounded_text(&commit.author_name, 256),
+        author_email: payloads::bounded_text(&commit.author_email, 256),
+        committer_name: payloads::bounded_text(&commit.committer_name, 256),
+        committer_email: payloads::bounded_text(&commit.committer_email, 256),
+        committer_time: commit.committer_timestamp,
+    };
+    let commits = payloads::PushedCommits {
+        commits: commits.iter().map(pushed).collect(),
+        head: Some(pushed(&head)),
+        forced,
+    };
+    let old = update.old.clone().unwrap_or_else(|| ZERO_OID.to_owned());
+    Ok(payloads::push(
+        &update.reference,
+        &old,
+        &head.sha,
+        &commits,
+        repo,
+        owner,
+        &sender,
+    ))
+}
 
 /// A branch or tag the server has just created or moved.
 pub struct RefUpdate {
@@ -81,28 +142,74 @@ impl CiRuns {
                 return;
             }
         };
+        if matched.is_empty() {
+            return;
+        }
+        // A run's github.event is the push document the webhook sends.
+        let update = RefUpdate {
+            new: commit.sha.clone(),
+            ..update
+        };
+        let event = match push_document(&self.pool, &store, repo, owner, actor_id, &update).await {
+            Ok(event) => event,
+            Err(error) => {
+                tracing::warn!(repo_id = repo.id, %error, "push runs skipped: push document unavailable");
+                return;
+            }
+        };
         for workflow in matched {
             let pipeline = infer_pipeline_from_workflow_path(&workflow.path);
             let result = self
-                .trigger_run(CiRunRequest {
-                    repo_id: repo.id,
-                    repo_owner: owner.to_owned(),
-                    repo_name: repo.name.clone(),
-                    branch: update.reference.clone(),
-                    head_sha: Some(commit.sha.clone()),
-                    event: "push".to_owned(),
-                    pull_request_id: None,
-                    pipeline,
-                    workflow_paths: vec![workflow.path.clone()],
-                    environment: None,
-                    inputs: None,
-                    triggered_by_id: actor_id,
-                    manual: false,
-                })
+                .trigger_event_run(
+                    CiRunRequest {
+                        repo_id: repo.id,
+                        repo_owner: owner.to_owned(),
+                        repo_name: repo.name.clone(),
+                        branch: update.reference.clone(),
+                        head_sha: Some(commit.sha.clone()),
+                        event: "push".to_owned(),
+                        pull_request_id: None,
+                        pipeline,
+                        workflow_paths: vec![workflow.path.clone()],
+                        environment: None,
+                        inputs: None,
+                        triggered_by_id: actor_id,
+                        manual: false,
+                    },
+                    crate::backend::db::models::AccessLevel::Owner,
+                    event.clone(),
+                )
                 .await;
             if let Err(error) = result {
                 tracing::debug!(repo_id = repo.id, workflow = %workflow.path, %error, "push run not queued");
             }
+        }
+    }
+}
+
+/// Like GitHub, a push is skipped when its tip or any commit it introduces asks for it. A new
+/// ref checks its tip only, since what it introduces is unbounded.
+async fn push_asks_to_skip(
+    store: &RepoStore,
+    update: &RefUpdate,
+    tip_message: Option<&str>,
+) -> bool {
+    if tip_message.is_some_and(should_skip_run_from_message) {
+        return true;
+    }
+    let Some(old) = update.old.as_deref().filter(|old| !is_zero_oid(old)) else {
+        return false;
+    };
+    match store
+        .commits_between(old, &update.new, MAX_COMMIT_PAGE_SIZE)
+        .await
+    {
+        Ok(commits) => commits
+            .iter()
+            .any(|commit| should_skip_run_from_message(&commit.message)),
+        Err(error) => {
+            tracing::warn!(%error, "push skip check could not read the pushed commits");
+            false
         }
     }
 }
@@ -116,7 +223,7 @@ pub(crate) async fn matching_push_workflows(
     budget: &mut WorkflowMatchBudget,
 ) -> Result<Vec<WorkflowDefinition>> {
     // A skipped push needs neither the ref filters nor the changed paths.
-    if message.is_some_and(super::workflows::should_skip_run_from_message) {
+    if push_asks_to_skip(store, update, message).await {
         return Ok(Vec::new());
     }
     let mut candidates = Vec::new();

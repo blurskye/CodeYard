@@ -5,21 +5,66 @@ use crate::backend::db::sqlite::search::contains;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
-pub async fn watch_repo(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Result<bool> {
-    let result = sqlx::query(
-        r#"
-        INSERT INTO watches (user_id, repo_id, level)
-        VALUES (?1, ?2, 'watching')
-        ON CONFLICT (user_id, repo_id)
-        DO UPDATE SET level = 'watching', events = ''
-        WHERE watches.level <> 'watching'
-        "#,
-    )
-    .bind(user_id)
-    .bind(repo_id)
-    .execute(pool)
-    .await?;
+pub async fn list_star_history(
+    pool: &SqlitePool,
+    repo_id: i64,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<crate::backend::db::repositories::engagement::StarHistoryWeek>> {
+    let sums=(0..7).map(|day|format!("SUM(CASE WHEN CAST(strftime('%w',day) AS INTEGER)={day} THEN stars ELSE 0 END) AS day{day}")).collect::<Vec<_>>().join(",");
+    let sql=format!("SELECT date(day,'-' || strftime('%w',day) || ' days') AS week,{sums} FROM repository_star_days WHERE repo_id=?1 GROUP BY week ORDER BY week DESC LIMIT ?2 OFFSET ?3");
+    Ok(sqlx::query_as(&sql)
+        .bind(repo_id)
+        .bind(limit.clamp(1, 31))
+        .bind(offset)
+        .fetch_all(pool)
+        .await?)
+}
 
+pub async fn get_repo_watch(
+    pool: &SqlitePool,
+    user_id: i64,
+    repo_id: i64,
+) -> Result<Option<Watch>> {
+    Ok(
+        sqlx::query_as("SELECT * FROM watches WHERE user_id=?1 AND repo_id=?2")
+            .bind(user_id)
+            .bind(repo_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+pub async fn list_repo_watchers(
+    pool: &SqlitePool,
+    repo_id: i64,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<User>> {
+    Ok(sqlx::query_as("SELECT u.* FROM watches w JOIN users u ON u.id=w.user_id WHERE w.repo_id=?1 AND w.level IN ('watching','custom') ORDER BY w.created_at DESC,w.user_id DESC LIMIT ?2 OFFSET ?3").bind(repo_id).bind(limit).bind(offset).fetch_all(pool).await?)
+}
+pub async fn list_watched_repositories(
+    pool: &SqlitePool,
+    user_id: i64,
+    viewer: Option<i64>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Repository>> {
+    let sql=format!("SELECT r.* FROM watches w JOIN repositories r ON r.id=w.repo_id LEFT JOIN users u ON u.id=?2 WHERE w.user_id=?1 AND w.level IN ('watching','custom') AND {} ORDER BY w.created_at DESC,w.repo_id DESC LIMIT ?3 OFFSET ?4",readable_condition());
+    Ok(sqlx::query_as(&sql)
+        .bind(user_id)
+        .bind(viewer)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?)
+}
+
+pub async fn watch_repo(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
+    let result = sqlx::query("INSERT INTO watches (user_id, repo_id, level) VALUES (?1,?2,'watching') ON CONFLICT (user_id,repo_id) DO UPDATE SET level='watching',events='' WHERE watches.level<>'watching'")
+        .bind(user_id).bind(repo_id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -35,7 +80,7 @@ pub async fn unwatch_repo(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Resu
 
 pub async fn is_repo_watched(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Result<bool> {
     let watch = sqlx::query_as::<_, Watch>(
-        "SELECT * FROM watches WHERE user_id = ?1 AND repo_id = ?2 AND level != 'ignoring'",
+        "SELECT * FROM watches WHERE user_id = ?1 AND repo_id = ?2 AND level IN ('watching','custom')",
     )
     .bind(user_id)
     .bind(repo_id)
@@ -46,13 +91,15 @@ pub async fn is_repo_watched(pool: &SqlitePool, user_id: i64, repo_id: i64) -> R
 }
 
 pub async fn star_repo(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
     let result =
         sqlx::query("INSERT INTO stars (user_id, repo_id) VALUES (?1, ?2) ON CONFLICT DO NOTHING")
             .bind(user_id)
             .bind(repo_id)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
-
+    tx.commit().await?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -64,6 +111,20 @@ pub async fn unstar_repo(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Resul
         .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+pub async fn starred_at(
+    pool: &SqlitePool,
+    user_id: i64,
+    repo_id: i64,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+    Ok(
+        sqlx::query_scalar("SELECT created_at FROM stars WHERE user_id = ?1 AND repo_id = ?2")
+            .bind(user_id)
+            .bind(repo_id)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
 
 pub async fn is_repo_starred(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Result<bool> {
@@ -117,6 +178,9 @@ pub async fn list_starred_repositories(
     anyhow::ensure!(offset >= 0, "Result offset must be nonnegative");
     let order = match sort {
         StarSort::Recent => "s.created_at DESC, s.repo_id DESC",
+        StarSort::Oldest => "s.created_at, s.repo_id",
+        StarSort::Updated => "r.updated_at DESC, r.id DESC",
+        StarSort::UpdatedOldest => "r.updated_at, r.id",
         StarSort::Stars => "r.stars_count DESC, s.created_at DESC, s.repo_id DESC",
         StarSort::Name => "LOWER(r.name), r.id",
     };
@@ -169,6 +233,8 @@ pub async fn set_watch_level(
     events: &str,
 ) -> Result<()> {
     let events = if level == "custom" { events } else { "" };
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
     sqlx::query(
         r#"
         INSERT INTO watches (user_id, repo_id, level, events)
@@ -181,8 +247,9 @@ pub async fn set_watch_level(
     .bind(repo_id)
     .bind(level)
     .bind(events)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }
 

@@ -207,6 +207,7 @@ fn collaboration_chrome_refresh_preserves_controlled_values_and_complete_edit_sn
             check_count: 0,
             review_state: None,
             check_state: None,
+            projects: vec![],
             reactions: Vec::new(),
         },
         comments: codeyard::webui::pages::repos::issues::CommentPage::default(),

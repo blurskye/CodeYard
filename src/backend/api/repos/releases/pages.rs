@@ -6,7 +6,10 @@ use crate::backend::api::repos::chrome;
 use crate::backend::api::repos::code::upload::READ_TIMEOUT as UPLOAD_READ_TIMEOUT;
 use crate::backend::api::repos::forms::{authorize_post, field, with_status};
 use crate::backend::app::AppState;
-use crate::backend::db::models::{ReleaseAsset, ReleaseRow};
+use crate::backend::db::{
+    self,
+    models::{ReleaseAsset, ReleaseRow},
+};
 use crate::backend::files::{DownloadError, UploadError};
 use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::refs::RefError;
@@ -45,6 +48,7 @@ fn release_item(row: &ReleaseRow) -> ReleaseItem {
         created_at: release.created_at.to_rfc3339(),
         published_at: release.published_at.map(|date| date.to_rfc3339()),
         draft: release.is_draft,
+        immutable: release.is_immutable,
         prerelease: release.is_prerelease,
         latest: release.is_latest,
     }
@@ -100,6 +104,7 @@ pub(super) fn refused(error: &ReleaseError) -> (StatusCode, String) {
             StatusCode::FORBIDDEN,
             "You do not have permission to manage releases here.",
         ),
+        ReleaseError::Git(error)|ReleaseError::Ref(RefError::Git(error)) if matches!(error.kind,ErrorKind::Invalid|ErrorKind::Conflict) && !error.is_response_too_large() => (if error.kind==ErrorKind::Invalid {StatusCode::UNPROCESSABLE_ENTITY}else{StatusCode::CONFLICT},error.message.as_str()),
         ReleaseError::Ref(_) => (
             StatusCode::SERVICE_UNAVAILABLE,
             "The tag could not be created. Try again.",
@@ -161,6 +166,8 @@ fn submitted_draft(form: &HashMap<String, String>) -> ReleaseDraft {
         draft: form.contains_key("draft"),
         latest: form.contains_key("latest"),
         preview: field(form, "intent") == "preview",
+        previous_tag: field(form, "previous_tag"),
+        configuration_path: field(form, "configuration_path"),
     }
 }
 
@@ -206,6 +213,7 @@ async fn new_form(
             repo.clone(),
             ReleasePage::Form {
                 editing: None,
+                immutable: false,
                 draft,
                 tags,
                 branches,
@@ -218,7 +226,8 @@ async fn new_form(
 }
 
 /// The edit form of a release, with the assets as they are stored. A refused edit passes the
-/// draft the writer typed, so nothing they entered is lost.
+/// draft the writer typed, so nothing they entered is lost. Only a conflict renews the draft's
+/// revision: the writer has been told the release changed, so submitting again overwrites it.
 async fn edit_form(
     ctx: &PageContext,
     repo: &RepoChrome,
@@ -226,8 +235,10 @@ async fn edit_form(
     name: &str,
     id: i64,
     draft: Option<ReleaseDraft>,
-    error: Option<String>,
+    failure: Option<&ReleaseError>,
 ) -> Response {
+    let conflict = matches!(failure, Some(ReleaseError::Conflict));
+    let error = failure.map(|failure| refused(failure).1);
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to edit a release.");
     };
@@ -247,11 +258,12 @@ async fn edit_form(
         draft: found.release.release.is_draft,
         latest: found.release.release.is_latest,
         preview: false,
+        ..Default::default()
     });
     // The form shows the tag as fixed text, so a submitted draft carries none.
     draft.tag = tag.clone();
     draft.target = found.release.release.target_commitish.clone();
-    if error.is_some() {
+    if conflict {
         draft.revision = crate::backend::db::releases::release_revision(&found.release.release);
     }
     let assets = found
@@ -265,6 +277,7 @@ async fn edit_form(
             repo.clone(),
             ReleasePage::Form {
                 editing: Some(id),
+                immutable: found.release.release.is_immutable,
                 draft,
                 tags: Vec::new(),
                 branches: Vec::new(),
@@ -350,6 +363,30 @@ pub(crate) async fn detail(
                 .iter()
                 .map(|asset| asset_item(&base, &release.tag, asset))
                 .collect();
+            let counts = match db::reactions::reaction_counts(
+                &ctx.state.pool,
+                "release",
+                &[release.id],
+                viewer.unwrap_or(0),
+            )
+            .await
+            {
+                Ok(counts) => counts,
+                Err(_) => {
+                    return ctx.error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "The reactions could not be loaded.",
+                    )
+                }
+            };
+            let reactions = counts
+                .into_iter()
+                .map(|count| crate::webui::pages::repos::issues::Reaction {
+                    content: count.content,
+                    count: count.count,
+                    mine: count.mine,
+                })
+                .collect();
             let title = release.title.clone();
             ctx.page_model(
                 &title,
@@ -358,6 +395,7 @@ pub(crate) async fn detail(
                     ReleasePage::Detail {
                         release,
                         assets,
+                        reactions,
                         can_write: found.can_write,
                     },
                 ),
@@ -423,11 +461,49 @@ pub(crate) async fn create(
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to publish a release.");
     };
+    if field(&form, "intent") == "generate-notes" {
+        let generated = releases::generate_notes(
+            &ctx.state.pool,
+            ctx.state.cluster.as_ref(),
+            actor,
+            repo.id,
+            &releases::NotesInput {
+                tag: draft.tag.trim(),
+                target: (!draft.target.trim().is_empty()).then_some(draft.target.trim()),
+                previous_tag: (!draft.previous_tag.trim().is_empty())
+                    .then_some(draft.previous_tag.trim()),
+                configuration_path: (!draft.configuration_path.trim().is_empty())
+                    .then_some(draft.configuration_path.trim()),
+            },
+        )
+        .await;
+        let notes = match generated {
+            Ok(notes) => notes,
+            Err(error) => {
+                let (status, message) = refused(&error);
+                return with_status(new_form(&ctx, &repo, draft, Some(message)).await, status);
+            }
+        };
+        let body = match notes.with_preface(Some(&draft.body)) {
+            Ok(body) => body,
+            Err(error) => {
+                let (status, message) = refused(&error);
+                return with_status(new_form(&ctx, &repo, draft, Some(message)).await, status);
+            }
+        };
+        let mut draft = draft;
+        draft.body = body;
+        if draft.title.trim().is_empty() {
+            draft.title = notes.name;
+        }
+        return new_form(&ctx, &repo, draft, None).await;
+    }
     let input = ReleaseInput {
         repository_id: repo.id,
         tag: draft.tag.trim().to_owned(),
         target: draft.target.trim().to_owned(),
         fields: fields_of(&draft),
+        new_tag_denied: false,
     };
     match releases::create(
         &ctx.state.pool,
@@ -499,6 +575,8 @@ pub(crate) async fn update(
     changes.expected_revision = Some(draft.revision.clone());
     match releases::update(
         &ctx.state.pool,
+        ctx.state.cluster.as_ref(),
+        &ctx.state.ci_runs,
         &ctx.state.notification_broadcaster,
         actor,
         &owner,
@@ -514,9 +592,9 @@ pub(crate) async fn update(
             crate::webui::encode_component(&release.tag_name)
         )),
         Err(error) => {
-            let (status, message) = refused(&error);
+            let (status, _) = refused(&error);
             with_status(
-                edit_form(&ctx, &repo, &owner, &name, id, Some(draft), Some(message)).await,
+                edit_form(&ctx, &repo, &owner, &name, id, Some(draft), Some(&error)).await,
                 status,
             )
         }
@@ -659,6 +737,46 @@ pub(crate) async fn upload_asset(
     {
         Ok(_) => ctx.redirect(&format!("{}/releases/edit/{id}", repo.base())),
         Err(error) => refusal(&ctx, &repo, error),
+    }
+}
+
+pub(crate) async fn update_asset(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, id, asset)): Path<(String, String, i64, i64)>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    if let Err(response) = authorize_post(&ctx, &form) {
+        return response;
+    }
+    let loaded = match chrome::load_database(&ctx, &owner, &name).await {
+        Ok(loaded) => loaded,
+        Err(response) => return response,
+    };
+    let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
+        return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to edit an asset.");
+    };
+    match db::releases::get_repository_release_asset(&ctx.state.pool, loaded.repository.id, asset)
+        .await
+    {
+        Ok(Some(asset)) if asset.release_id == id => {}
+        Ok(_) => return ctx.error(StatusCode::NOT_FOUND, "Asset not found."),
+        Err(_) => return refusal(&ctx, &loaded.chrome, ReleaseError::Unavailable),
+    }
+    let label = field(&form, "label");
+    let label = label.trim();
+    let changes = db::releases::AssetChanges {
+        name: Some(field(&form, "name").to_owned()),
+        label: Some((!label.is_empty()).then(|| label.to_owned())),
+    };
+    match releases::update_asset(&ctx.state.pool, actor, &owner, &name, asset, &changes).await {
+        Ok(_) => ctx.redirect(&format!("{}/releases/edit/{id}", loaded.chrome.base())),
+        Err(error) => refusal(&ctx, &loaded.chrome, error),
     }
 }
 

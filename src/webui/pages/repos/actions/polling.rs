@@ -1,7 +1,5 @@
 //! Live run metadata and cursor-based log updates; normal navigation still loads the full page.
-#[cfg(any(target_arch = "wasm32", test))]
-use super::ActionsPage;
-use super::{logs::LogLine, run::RunProgress, Deployment};
+use super::{logs::LogLine, run::RunProgress, ActionsPage, Deployment, Run};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +12,17 @@ pub struct RunLogUpdate {
     pub workflow_sha: Option<String>,
     pub progress: RunProgress,
     pub deployment: Option<Deployment>,
+}
+
+pub(super) fn log_url(model: &ActionsPage, run: &Run) -> Option<String> {
+    let (owner, repo) = model.repository.as_ref()?;
+    Some(format!(
+        "/api/v3/repos/{}/{}/actions/runs/{}/attempts/{}/logs",
+        crate::webui::encode_component(owner),
+        crate::webui::encode_component(repo),
+        run.api_id,
+        run.api_attempt
+    ))
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -78,7 +87,7 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
             async move {
                 loop {
                     gloo_timers::future::TimeoutFuture::new(2000).await;
-                    let (location, cursor) = {
+                    let (location, url) = {
                         let page = current.peek();
                         let crate::webui::app::Page::Actions(
                             crate::webui::pages::ci::Page::Actions(model),
@@ -93,12 +102,15 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
                         else {
                             break;
                         };
+                        let Some(url) = log_url(model, &selected.run) else {
+                            break;
+                        };
+                        let cursor = selected.logs.last().map_or(0, |line| line.id);
                         (
                             page.location.clone(),
-                            selected.logs.last().map_or(0, |line| line.id),
+                            format!("{url}?after={cursor}&limit=500"),
                         )
                     };
-                    let url = format!("/api/ci/jobs/{run_id}/history?after={cursor}&limit=500");
                     let request = async {
                         let response = gloo_net::http::Request::get(&url)
                             .abort_signal(Some(&controller.signal()))

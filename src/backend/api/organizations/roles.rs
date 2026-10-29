@@ -1,0 +1,190 @@
+use super::organization::{self, Fields};
+use crate::backend::{
+    api::http::context::PageContext,
+    db::organizations::{
+        roles::{self, RoleTarget},
+        OrganizationOutcome,
+    },
+};
+use crate::webui::pages::orgs as view;
+use axum::{http::StatusCode, response::Response};
+
+pub(super) struct Command {
+    target: RoleTarget,
+    role: Option<i64>,
+    assigned: bool,
+}
+impl Command {
+    pub(super) fn parse(form: &Fields) -> Result<Self, &'static str> {
+        let action = organization::field(form, "action");
+        let assigned = action.starts_with("assign-");
+        if !assigned && organization::field(form, "confirm") != "true" {
+            return Err("Confirm removing the directly assigned organization roles.");
+        }
+        let target = if matches!(
+            action,
+            "assign-user-role" | "revoke-user-role" | "revoke-all-user-roles"
+        ) {
+            RoleTarget::User(
+                organization::username(form).map_err(|_| "Enter an existing account username.")?,
+            )
+        } else if matches!(
+            action,
+            "assign-team-role" | "revoke-team-role" | "revoke-all-team-roles"
+        ) {
+            let slug = organization::field(form, "team_slug").trim();
+            // Team handles allow 255 characters in up to 1024 bytes.
+            if slug.is_empty() || slug.len() > 1024 || slug.chars().count() > 255 {
+                return Err("Enter an existing team handle.");
+            }
+            RoleTarget::Team(slug.to_owned())
+        } else {
+            return Err("Invalid organization role operation.");
+        };
+        let role = if action.starts_with("revoke-all-") {
+            None
+        } else {
+            Some(organization::id(form, "role_id").map_err(|_| "Choose an organization role.")?)
+        };
+        Ok(Self {
+            target,
+            role,
+            assigned,
+        })
+    }
+}
+fn project<T>(
+    ctx: &PageContext,
+    result: anyhow::Result<OrganizationOutcome<T>>,
+) -> Result<T, Response> {
+    match result {
+        Ok(OrganizationOutcome::Applied(value)) => Ok(value),
+        Ok(OrganizationOutcome::Missing) => Err(organization::not_found(ctx)),
+        Ok(OrganizationOutcome::Denied) => {
+            Err(ctx.error(StatusCode::FORBIDDEN, "Organization role access denied."))
+        }
+        _ => Err(organization::unavailable(ctx)),
+    }
+}
+fn team_view(team: crate::backend::db::models::Team) -> view::RoleTeam {
+    view::RoleTeam {
+        id: team.id,
+        name: team.name,
+        slug: team.slug,
+    }
+}
+pub(super) async fn panel(
+    ctx: &PageContext,
+    actor: i64,
+    org: i64,
+) -> Result<view::RolePanel, Response> {
+    let definitions = project(ctx, roles::catalog(&ctx.state.pool, actor, org).await)?;
+    let selected = if let Some(value) = ctx.query.get("role") {
+        value
+            .parse::<i64>()
+            .ok()
+            .filter(|id| *id > 0)
+            .ok_or_else(|| organization::invalid(ctx))?
+    } else {
+        definitions
+            .first()
+            .map(|role| role.id)
+            .ok_or_else(|| organization::unavailable(ctx))?
+    };
+    if !definitions.iter().any(|role| role.id == selected) {
+        return Err(organization::not_found(ctx));
+    }
+    let (user_after, _) =
+        organization::cursor(ctx, "role_users_after").ok_or_else(|| organization::invalid(ctx))?;
+    let (team_after, _) =
+        organization::cursor(ctx, "role_teams_after").ok_or_else(|| organization::invalid(ctx))?;
+    let limit = organization::PAGE_LIMIT;
+    let mut users = project(
+        ctx,
+        roles::users(
+            &ctx.state.pool,
+            actor,
+            org,
+            selected,
+            user_after,
+            (0, limit + 1),
+        )
+        .await,
+    )?;
+    let more_users = users.len() as i64 > limit;
+    users.truncate(limit as usize);
+    let mut teams = project(
+        ctx,
+        roles::teams(
+            &ctx.state.pool,
+            actor,
+            org,
+            selected,
+            team_after,
+            (0, limit + 1),
+        )
+        .await,
+    )?;
+    let more_teams = teams.len() as i64 > limit;
+    teams.truncate(limit as usize);
+    let base = format!("/settings/organizations/{org}?tab=roles&role={selected}");
+    let users_next = if more_users {
+        users.last().map(|user| {
+            format!(
+                "{base}&role_users_after={}&role_teams_after={team_after}",
+                user.user.id
+            )
+        })
+    } else {
+        None
+    };
+    let teams_next = if more_teams {
+        teams.last().map(|team| {
+            format!(
+                "{base}&role_users_after={user_after}&role_teams_after={}",
+                team.id
+            )
+        })
+    } else {
+        None
+    };
+    Ok(view::RolePanel {
+        definitions: definitions
+            .into_iter()
+            .map(|role| view::RoleDefinition {
+                id: role.id,
+                name: role.name,
+                description: role.description,
+            })
+            .collect(),
+        selected,
+        users: users
+            .into_iter()
+            .map(|user| view::RoleUser {
+                id: user.user.id,
+                username: user.user.username,
+                direct: user.direct,
+                teams: user.inherited_from.into_iter().map(team_view).collect(),
+            })
+            .collect(),
+        teams: teams.into_iter().map(team_view).collect(),
+        users_next,
+        teams_next,
+    })
+}
+pub(super) async fn apply(
+    ctx: &PageContext,
+    actor: i64,
+    org: i64,
+    command: Command,
+) -> anyhow::Result<OrganizationOutcome<()>> {
+    roles::change(
+        &ctx.state.pool,
+        actor,
+        org,
+        &command.target,
+        command.role,
+        command.assigned,
+    )
+    .await
+}

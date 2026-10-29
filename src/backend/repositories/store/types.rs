@@ -143,6 +143,34 @@ pub fn allowed_merge_methods(repository: &Repository) -> Vec<MergeMethod> {
     .collect()
 }
 
+/// The old tip remains part of the result when syncing a fork from its upstream.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpstreamMerge {
+    pub old: String,
+    pub sha: String,
+    pub merge_type: UpstreamMergeType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpstreamMergeType {
+    None,
+    FastForward,
+    Merge,
+}
+
+/// Merge the readable source's `base` into an existing writable head branch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PullBranchUpdate {
+    pub pull_request_id: i64,
+    pub base_branch: String,
+    pub branch: String,
+    pub head: String,
+    pub base: String,
+    pub name: String,
+    pub email: String,
+}
+
 /// Merge `head_branch` into `base_branch`, as approved when the branches were at
 /// `head` and `base`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,15 +179,54 @@ pub struct MergeRequest {
     pub base_branch: String,
     pub head: String,
     pub base: String,
-    /// The message of a merge or squash commit. A rebase keeps each commit's own message.
+    /// The merge message or squash title. A rebase keeps each commit's own message.
     pub message: String,
+    /// A supplied squash description replaces the default list of commit subjects.
+    #[serde(default)]
+    pub squash_body: Option<String>,
     /// The committer: the person who merges.
     pub name: String,
     pub email: String,
     pub method: MergeMethod,
-    /// The author of a squash commit. Without one, the committer is the author.
+    /// The author of a merge or squash commit. Without one, the committer is the author.
     pub author_name: Option<String>,
     pub author_email: Option<String>,
+}
+
+/// Reverse the merged tree's change from `before` on top of the current base.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevertRequest {
+    pub current: String,
+    pub merged: String,
+    pub before: String,
+    pub message: String,
+    pub name: String,
+    pub email: String,
+}
+
+/// An asynchronous publication carries the original credential and durable request identity
+/// all the way to the owning storage node. Older peers must reject, not ignore, this authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AsyncMergePublication {
+    pub uuid: String,
+    pub token_id: i64,
+    pub pull_request_id: i64,
+    pub heads: Vec<(String, String)>,
+    pub base_branch: String,
+    pub base: String,
+    pub result: String,
+    pub method: MergeMethod,
+}
+
+/// A prepared, direct branch merge. Both mutable branches are pinned independently of the
+/// merge commit's identity. Unlike pull-request publication, this must pass direct-write policy.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchMergePublication {
+    pub base_branch: String,
+    pub base: String,
+    pub head_branch: Option<String>,
+    pub head: String,
+    pub result: String,
 }
 
 /// One branch that a restack moves: the commit it must still be at, and the commit it moves to.

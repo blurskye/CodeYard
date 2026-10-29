@@ -10,6 +10,10 @@ pub const MAX_COMMENT_PATH_BYTES: usize = 4 * 1024;
 /// limit. Reads paginate comments separately from their reviews.
 pub const MAX_REVIEW_COMMENTS: i64 = 200;
 
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::converted_issue_comment,
+    crate::backend::db::sqlite::pull_requests::reviews::converted_issue_comment,
+    fn converted_issue_comment(pool: &DbPool, pr_id: i64, source_comment: i64) -> Result<Option<i64>>);
+
 pub struct NewPullRequestComment<'a> {
     pub pr_id: i64,
     pub author_id: i64,
@@ -17,6 +21,8 @@ pub struct NewPullRequestComment<'a> {
     pub path: Option<&'a str>,
     pub line: Option<i32>,
     pub side: Option<&'a str>,
+    pub start_line: Option<i32>,
+    pub start_side: Option<&'a str>,
     pub commit_sha: Option<&'a str>,
     pub in_reply_to_comment_id: Option<i64>,
     /// The diff validated for a new inline thread, as (head, base).
@@ -29,6 +35,10 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull
     pool: &DbPool,
     input: NewPullRequestComment<'_>,
 ) -> Result<PullRequestComment>);
+
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_comment_to_pending_review,
+    crate::backend::db::sqlite::pull_requests::reviews::add_comment_to_pending_review,
+    fn add_comment_to_pending_review(pool: &DbPool, input: NewPullRequestComment<'_>, review_id: i64) -> Result<PullRequestComment>);
 
 // Files a comment in the author's pending review, which is started if there is none. The comment
 // stays private to the author until the review is submitted.
@@ -115,6 +125,18 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::discard_
     author_id: i64,
 ) -> Result<bool>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::pull_request_comment_counts,
+    crate::backend::db::sqlite::pull_requests::reviews::pull_request_comment_counts,
+    fn pull_request_comment_counts(pool: &DbPool, pr_id: i64) -> Result<(i64, i64)>);
+
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pull_request_conversation_comments,
+    crate::backend::db::sqlite::pull_requests::reviews::list_pull_request_conversation_comments,
+    fn list_pull_request_conversation_comments(pool: &DbPool, pr_id: i64, limit: i64, offset: i64) -> Result<Vec<PullRequestCommentEntry>>);
+
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pull_request_conversation_comments,
+    crate::backend::db::sqlite::pull_requests::reviews::count_pull_request_conversation_comments,
+    fn count_pull_request_conversation_comments(pool: &DbPool, pr_id: i64) -> Result<i64>);
+
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pull_request_comments,
     crate::backend::db::sqlite::pull_requests::reviews::count_pull_request_comments,
     fn count_pull_request_comments(pool: &DbPool, pr_id: i64) -> Result<i64>);
@@ -122,6 +144,16 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pu
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pull_request_comments_for,
     crate::backend::db::sqlite::pull_requests::reviews::count_pull_request_comments_for,
     fn count_pull_request_comments_for(pool: &DbPool, pr_ids: &[i64]) -> Result<Vec<(i64, i64)>>);
+
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::get_visible_pull_request_comment,
+    crate::backend::db::sqlite::pull_requests::reviews::get_visible_pull_request_comment,
+    /// The comment as `viewer` may read it, in one statement: a comment in a pending review is
+    /// visible only to that review's author, and one whose review is gone is not visible.
+    fn get_visible_pull_request_comment(
+    pool: &DbPool,
+    comment_id: i64,
+    viewer: i64,
+) -> Result<Option<PullRequestComment>>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::get_pull_request_comment_by_id,
     crate::backend::db::sqlite::pull_requests::reviews::get_pull_request_comment_by_id,
@@ -168,6 +200,19 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::delete_p
     comment_id: i64,
 ) -> Result<bool>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::create_pending_review,
+    crate::backend::db::sqlite::pull_requests::reviews::create_pending_review,
+    fn create_pending_review(pool: &DbPool, pr_id: i64, author_id: i64, body: Option<&str>, commit_sha: &str) -> Result<PullRequestReview>);
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::edit_review_body,
+    crate::backend::db::sqlite::pull_requests::reviews::edit_review_body,
+    fn edit_review_body(pool: &DbPool, pr_id: i64, author_id: i64, review_id: i64, body: &str) -> Result<Option<PullRequestReview>>);
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::delete_pending_review_by_id,
+    crate::backend::db::sqlite::pull_requests::reviews::delete_pending_review_by_id,
+    fn delete_pending_review_by_id(pool: &DbPool, pr_id: i64, author_id: i64, review_id: i64) -> Result<Option<PullRequestReview>>);
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::save_pull_request_review,
+    crate::backend::db::sqlite::pull_requests::reviews::save_pull_request_review,
+    fn save_pull_request_review(pool: &DbPool, pr_id: i64, author_id: i64, state: &str, body: Option<&str>, commit_sha: Option<&str>, expected_pending: Option<i64>) -> Result<PullRequestReview>);
+
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull_request_review,
     crate::backend::db::sqlite::pull_requests::reviews::add_pull_request_review,
     fn add_pull_request_review(
@@ -178,6 +223,62 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull
     body: Option<&str>,
     commit_sha: Option<&str>,
 ) -> Result<PullRequestReview>);
+
+pub struct ReviewCommentFilter {
+    pub repo_id: i64,
+    pub pull_id: Option<i64>,
+    pub review_id: Option<i64>,
+    pub viewer: Option<i64>,
+    pub updated: bool,
+    pub ascending: bool,
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_visible_review_comments,
+    crate::backend::db::sqlite::pull_requests::reviews::list_visible_review_comments,
+    fn list_visible_review_comments(pool: &DbPool, filter: &ReviewCommentFilter) -> Result<Vec<PullRequestComment>>);
+
+#[derive(Default)]
+pub struct ReviewQuery {
+    pub pull_id: i64,
+    pub viewer: Option<i64>,
+    pub author: Option<String>,
+    pub states: Vec<String>,
+    pub latest: bool,
+}
+impl ReviewQuery {
+    pub(crate) fn sql(postgres: bool, count: bool) -> String {
+        let select = if count { "COUNT(*)" } else { "v.*" };
+        let array = if postgres {
+            "jsonb_array_elements_text(CAST($3 AS JSONB))"
+        } else {
+            "json_each($3)"
+        };
+        let length = if postgres {
+            "jsonb_array_length(CAST($3 AS JSONB))"
+        } else {
+            "json_array_length($3)"
+        };
+        let page = if count {
+            ""
+        } else {
+            " ORDER BY v.created_at,v.id LIMIT $6 OFFSET $7"
+        };
+        format!("SELECT {select} FROM pr_reviews v JOIN users u ON u.id=v.author_id WHERE v.pull_request_id=$1 AND (v.state<>'pending' OR v.author_id=CAST($2 AS BIGINT)) AND ({length}=0 OR v.state IN (SELECT value FROM {array} AS value)) AND (CAST($4 AS TEXT) IS NULL OR LOWER(u.username)=LOWER($4)) AND (NOT $5 OR (v.state<>'pending' AND NOT EXISTS(SELECT 1 FROM pr_reviews newer WHERE newer.pull_request_id=v.pull_request_id AND newer.author_id=v.author_id AND newer.state<>'pending' AND (newer.created_at>v.created_at OR (newer.created_at=v.created_at AND newer.id>v.id))))){page}")
+    }
+}
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::filter_reviews,
+    crate::backend::db::sqlite::pull_requests::reviews::filter_reviews,
+    fn filter_reviews(pool:&DbPool,query:&ReviewQuery,limit:i64,offset:i64)->Result<Vec<PullRequestReview>>);
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_filtered_reviews,
+    crate::backend::db::sqlite::pull_requests::reviews::count_filtered_reviews,
+    fn count_filtered_reviews(pool:&DbPool,query:&ReviewQuery)->Result<i64>);
+
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_visible_pull_request_reviews,
+    crate::backend::db::sqlite::pull_requests::reviews::list_visible_pull_request_reviews,
+    fn list_visible_pull_request_reviews(pool: &DbPool, pr_id: i64, viewer: Option<i64>, limit: i64, offset: i64) -> Result<Vec<PullRequestReview>>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pull_request_reviews,
     crate::backend::db::sqlite::pull_requests::reviews::list_pull_request_reviews,
@@ -236,6 +337,17 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::remove_p
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pull_request_reviewers,
     crate::backend::db::sqlite::pull_requests::reviews::list_pull_request_reviewers,
     fn list_pull_request_reviewers(pool: &DbPool, pr_id: i64) -> Result<Vec<User>>);
+
+#[derive(sqlx::FromRow)]
+pub struct ReviewRequestOrigin {
+    pub user_id: Option<i64>,
+    pub team_id: Option<i64>,
+    pub as_code_owner: bool,
+}
+
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::review_request_origins,
+    crate::backend::db::sqlite::pull_requests::reviews::review_request_origins,
+    fn review_request_origins(pool: &DbPool, pull: i64) -> Result<Vec<ReviewRequestOrigin>>);
 
 #[derive(Debug, Clone)]
 pub struct PullRequestCommentEntry {

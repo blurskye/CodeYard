@@ -146,6 +146,8 @@ pub(super) fn input_field(
 pub(super) struct DispatchMenu<'a> {
     pub base_path: &'a str,
     pub csrf_token: &'a str,
+    /// Sent back, so the form cannot run another repository's workflow after a rename.
+    pub repository_id: Option<i64>,
     /// Sent back so a successful run returns to this list view; absent on the refusal page.
     pub return_query: Option<String>,
     pub branch: &'a str,
@@ -172,6 +174,9 @@ pub(super) fn dispatch_menu(menu: DispatchMenu<'_>) -> Element {
             } else {
                 form { method: "post", action: format!("{}/dispatch", menu.base_path), class: "actions-dispatch-menu",
                     {csrf(menu.csrf_token)}
+                    if let Some(id) = menu.repository_id {
+                        input { r#type: "hidden", name: "repository_id", value: id.to_string() }
+                    }
                     if let Some(return_query) = menu.return_query.clone() {
                         input { r#type: "hidden", name: "return_query", value: return_query }
                     }
@@ -213,6 +218,7 @@ pub(in crate::webui::pages) fn recovery(
                     {dispatch_menu(DispatchMenu {
                         base_path,
                         csrf_token,
+                        repository_id: repo.map(|repo| repo.id),
                         return_query: None,
                         branch: &draft.branch,
                         workflow: &draft.workflow,
@@ -265,6 +271,7 @@ pub(super) fn dispatch_form(model: &ActionsPage) -> Element {
     dispatch_menu(DispatchMenu {
         base_path: &model.base_path,
         csrf_token: &model.csrf_token,
+        repository_id: model.repo_chrome.as_ref().map(|repo| repo.id),
         return_query: Some(model.url(&[])),
         branch: &model.dispatch_branch,
         workflow: model.value("workflow"),

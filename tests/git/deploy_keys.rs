@@ -133,6 +133,9 @@ async fn multiplexed_slot_wait_keeps_the_active_channel_readable(
 async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     bundle::install();
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     db::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
@@ -344,6 +347,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     );
     let listed = success(git(&reader, &["ls-remote", "origin"], None, &read_key).await);
     assert!(listed.contains("refs/heads/from-writer"), "{listed}");
+    assert!(!listed.contains("refs/codeyard/"), "{listed}");
 
     // Neither key reaches the other repository.
     let other = git(&work, &["ls-remote", &url("other")], None, &write_key).await;
@@ -358,6 +362,22 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
             .await
             .unwrap()
             .unwrap();
+    let physical = root.path().join("storage/repos").join(format!(
+        "{}.git",
+        codeyard::backend::cluster::rpc::repository_uuid(&project.disk_path).unwrap()
+    ));
+    let provenance = codeyard::backend::repositories::store::RepoStore::from_disk_path(
+        &physical.to_string_lossy(),
+    )
+    .branch_publication(project.id, "refs/heads/from-writer")
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        provenance.publication.actor,
+        codeyard::backend::git::PublicationActor::DeployKey(writer_id)
+    );
+    assert_eq!(provenance.publication.actor.user_id(), None);
     db::repositories::protection::upsert_branch_protection_rule(
         &database.pool,
         db::repositories::BranchProtectionRuleUpsert {
@@ -489,4 +509,42 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     assert!(!revoked.status.success());
     let still_reads = git(&reader, &["fetch", "-q", "origin"], None, &read_key).await;
     assert!(still_reads.status.success());
+    use codeyard::backend::repositories::traffic;
+    let observed = traffic::summary(
+        &database.pool,
+        Some(&owner),
+        &project,
+        traffic::Kind::Clones,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        observed.totals.count, 1,
+        "SSH advertisements, slot waits, failed reads and fetches are not clones"
+    );
+    assert_eq!(observed.totals.uniques, 1);
+    success(
+        git(
+            &work,
+            &["clone", "-q", &url("project"), "reader-again"],
+            None,
+            &read_key,
+        )
+        .await,
+    );
+    let observed = traffic::summary(
+        &database.pool,
+        Some(&owner),
+        &project,
+        traffic::Kind::Clones,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(observed.totals.count, 2);
+    assert_eq!(
+        observed.totals.uniques, 1,
+        "The same deploy key is one visitor across connections"
+    );
 }

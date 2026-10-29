@@ -19,6 +19,8 @@ pub struct ReleaseItem {
     pub created_at: String,
     pub published_at: Option<String>,
     pub draft: bool,
+    #[serde(default)]
+    pub immutable: bool,
     pub prerelease: bool,
     pub latest: bool,
 }
@@ -48,6 +50,10 @@ pub struct ReleaseDraft {
     pub latest: bool,
     /// The Preview button was used, so the form opens on the rendered notes.
     pub preview: bool,
+    #[serde(default)]
+    pub previous_tag: String,
+    #[serde(default)]
+    pub configuration_path: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -62,11 +68,15 @@ pub enum Page {
     Detail {
         release: ReleaseItem,
         assets: Vec<AssetItem>,
+        #[serde(default)]
+        reactions: Vec<crate::webui::pages::repos::issues::Reaction>,
         can_write: bool,
     },
     /// The new-release form (`editing` is `None`) or the edit form of a release.
     Form {
         editing: Option<i64>,
+        #[serde(default)]
+        immutable: bool,
         draft: ReleaseDraft,
         /// The tags a new release can publish, offered as suggestions.
         tags: Vec<String>,
@@ -125,10 +135,12 @@ pub fn render(repo: &RepoChrome, page: Page) -> Element {
         Page::Detail {
             release,
             assets,
+            reactions,
             can_write,
-        } => detail(repo, &release, &assets, can_write),
+        } => detail(repo, &release, &assets, &reactions, can_write),
         Page::Form {
             editing,
+            immutable,
             draft,
             tags,
             branches,
@@ -138,6 +150,7 @@ pub fn render(repo: &RepoChrome, page: Page) -> Element {
         } => form(
             repo,
             editing,
+            immutable,
             &draft,
             &tags,
             &branches,
@@ -163,6 +176,7 @@ fn badges(release: &ReleaseItem) -> Element {
         if release.latest { span { class: "release-badge release-badge-latest", "Latest" } }
         if release.prerelease { span { class: "release-badge", "Pre-release" } }
         if release.draft { span { class: "release-badge release-badge-draft", "Draft" } }
+        if release.immutable {span {class:"release-badge",{icon("lock")} " Immutable"}}
     }
 }
 
@@ -263,6 +277,7 @@ fn detail(
     repo: &RepoChrome,
     release: &ReleaseItem,
     assets: &[AssetItem],
+    reactions: &[crate::webui::pages::repos::issues::Reaction],
     can_write: bool,
 ) -> Element {
     let base = repo.base();
@@ -288,6 +303,12 @@ fn detail(
                     }
                 }
             }
+            if release.immutable {
+                p {class:"collaboration-muted", "This release's Git tag and assets are locked. Notes, title, pre-release and latest status remain editable. "
+                    a {href:format!("{base}/releases/{}/attestation",release.id),"Download signed release attestation"}
+                    ". The DSSE signature uses this forge node's Ed25519 key, not GitHub/Sigstore; verify it against a separately trusted node key."
+                }
+            }
             div { class: "collaboration-markdown releases-notes",
                 if release.body.trim().is_empty() {
                     p { class: "collaboration-muted", "No release notes." }
@@ -295,6 +316,7 @@ fn detail(
                     Markdown { content: release.body.clone() }
                 }
             }
+            {crate::webui::pages::repos::issues::reactions::reaction_form(&repo.csrf_token,repo.signed_in && !repo.is_archived,&format!("{base}/releases/{}/react",release.id),None,reactions,Some(&["+1","laugh","heart","hooray","rocket","eyes"]))}
             section { class: "releases-assets", aria_label: "Downloads",
                 h3 { "Downloads" }
                 ul { class: "releases-asset-list",
@@ -330,6 +352,7 @@ fn detail(
 fn form(
     repo: &RepoChrome,
     editing: Option<i64>,
+    immutable: bool,
     draft: &ReleaseDraft,
     tags: &[String],
     branches: &[String],
@@ -358,6 +381,8 @@ fn form(
                 h2 { "{title}" }
             }
             {notice(error)}
+            if immutable {p {class:"collaboration-muted",{icon("lock")} " The tag and assets are immutable. " NavLink {href:release_url(repo,&draft.tag),"View locked assets and attestation"}}}
+            if editing.is_none(){p {class:"collaboration-muted","When immutable releases is enabled, save a draft and attach all assets before publishing. Publication permanently reserves the tag name."}}
             form { method: "post", action: action.clone(), class: "releases-form", id: "release-form",
                 {csrf(&repo.csrf_token)}
                 {repository_id(repo.id)}
@@ -385,10 +410,21 @@ fn form(
                     div { class: "collaboration-form-field", "Release notes"
                         MarkdownEditor { id: "release-body".to_owned(), initial: draft.body.clone(), rows: 12, required: false, initial_preview: draft.preview, placeholder: "Describe what changed".to_owned() }
                     }
+                    if editing.is_none() {
+                        details {class:"release-notes-options",summary {"Automatic release notes"}
+                            label {class:"collaboration-form-field","Previous tag (automatic when empty)"
+                                input {r#type:"text",name:"previous_tag",maxlength:"255",value:draft.previous_tag.clone(),list:"release-tag-choices"}
+                            }
+                            label {class:"collaboration-form-field","Configuration file (optional)"
+                                input {r#type:"text",name:"configuration_path",maxlength:"1024",value:draft.configuration_path.clone(),placeholder:".github/release.yml"}
+                            }
+                            button {class:"btn btn-secondary",r#type:"submit",name:"intent",value:"generate-notes","Append generated notes"}
+                        }
+                    }
                     div { class: "releases-flags",
                         label { class: "repo-check-label", input { r#type: "checkbox", name: "prerelease", checked: draft.prerelease } " Pre-release" }
                         label { class: "repo-check-label", input { r#type: "checkbox", name: "latest", checked: draft.latest } " Set as the latest release" }
-                        label { class: "repo-check-label", input { r#type: "checkbox", name: "draft", checked: draft.draft } " Save as draft (only writers see it)" }
+                        label { class: "repo-check-label", input { r#type: "checkbox", name: "draft", checked: draft.draft,disabled:immutable } " Save as draft (only writers see it)" }
                     }
                 }
                 div { class: "releases-form-actions",
@@ -396,7 +432,7 @@ fn form(
                     button { class: "btn btn-primary", r#type: "submit", name: "intent", value: "save", if draft.draft { "Save draft" } else if editing.is_some() { "Save release" } else { "Publish release" } }
                 }
             }
-            if let Some(id) = editing {
+            if let Some(id) = editing.filter(|_|!immutable) {
                 section { class: "releases-assets", aria_label: "Assets",
                     h3 { "Assets" }
                     p { class: "collaboration-muted", "Files up to 100 MiB. Each name is used once per release." }
@@ -408,6 +444,15 @@ fn form(
                                 span { class: "collaboration-muted", "{format_bytes(asset.size)}" }
                                 span { class: "collaboration-muted", "{asset.downloads} downloads" }
                                 a { class: "btn btn-danger btn-sm", href: format!("#delete-asset-{}", asset.id), {icon("trash")} " Remove" }
+                                details { class: "releases-asset-edit",
+                                    summary { class: "btn btn-secondary btn-sm", "Edit asset" }
+                                    form { method: "post", action: format!("{base}/releases/{id}/assets/{}/edit", asset.id), class: "releases-upload",
+                                        {csrf(&repo.csrf_token)}
+                                        input { r#type: "text", name: "name", value: asset.name.clone(), maxlength: "255", required: true, class: "collaboration-input", aria_label: "Asset name" }
+                                        input { r#type: "text", name: "label", value: asset.label.clone(), maxlength: "255", class: "collaboration-input", aria_label: "Asset label" }
+                                        button { r#type: "submit", class: "btn btn-secondary btn-sm", "Save asset" }
+                                    }
+                                }
                             }
                         }
                     }

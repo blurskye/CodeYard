@@ -1,0 +1,9 @@
+
+		mutation PullRequestCreate($input: CreatePullRequestInput!) {
+			createPullRequest(input: $input) {
+				pullRequest {
+					id
+					url
+				}
+			}
+	}

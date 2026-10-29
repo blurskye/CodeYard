@@ -1,13 +1,22 @@
 //! CI/Actions: workflow triggers queue runs; worker nodes run them with `act`.
 pub mod admission;
+mod concurrency;
 mod config;
 pub mod dispatch_inputs;
+pub mod environment_values;
+pub(crate) mod events;
 pub mod logs;
+pub mod oidc;
 mod process;
 pub(crate) mod push;
 pub mod queue;
+mod reusable;
+pub mod runner_credentials;
 mod runner_labels;
 pub mod runs;
+pub mod runtime;
+pub(crate) mod schedule;
+pub mod tokens;
 pub mod workers;
 
 mod worker;

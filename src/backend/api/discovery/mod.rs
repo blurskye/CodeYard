@@ -5,36 +5,21 @@ mod home;
 pub(crate) mod search;
 pub(crate) mod stars;
 
-use crate::backend::api::http::error::ApiError;
-use crate::backend::{
-    api::{http::context::PageContext, http::csrf, http::middleware},
-    app::AppState,
-    db,
-};
+use crate::backend::{api::http::context::PageContext, app::AppState, db};
 use crate::webui::{components::languages::LanguageShare, pages::discovery::RepositoryCard};
-use axum::{
-    extract::DefaultBodyLimit, http::StatusCode, middleware::from_fn, response::Response,
-    routing::get, Json, Router,
-};
+use axum::{extract::DefaultBodyLimit, http::StatusCode, response::Response, routing::get, Router};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
 };
 
 pub fn router() -> Router<Arc<AppState>> {
-    let api = Router::new()
-        .route("/api/explore", get(explore::explore_repos))
-        .route("/api/search", get(search::search))
-        .route_layer(from_fn(middleware::require_node_access))
-        .route_layer(from_fn(csrf::cookie_api_submission))
-        .layer(from_fn(middleware::private_api_response));
-    let pages = Router::new()
+    Router::new()
         .route("/", get(home::home))
         .route("/explore", get(explore::explore_page))
         .route("/search", get(search::search_page))
         .route("/stars", get(stars::stars_page))
-        .layer(DefaultBodyLimit::max(16 * 1024));
-    api.merge(pages)
+        .layer(DefaultBodyLimit::max(16 * 1024))
 }
 
 #[derive(Debug)]
@@ -43,26 +28,6 @@ pub(crate) enum DiscoveryReadError {
     InvalidOwner,
     MissingOwner,
     MissingRepository,
-}
-
-fn database_error(_: anyhow::Error) -> (StatusCode, Json<ApiError>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ApiError::new(
-            "database_error",
-            "Discovery storage is temporarily unavailable",
-        )),
-    )
-}
-
-fn missing_owner() -> (StatusCode, Json<ApiError>) {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(ApiError::new(
-            "unavailable",
-            "Repository owner is unavailable",
-        )),
-    )
 }
 
 fn unavailable(ctx: &PageContext, operation: &'static str) -> Response {
@@ -206,6 +171,7 @@ mod tests {
     ) -> db::models::Repository {
         let now = chrono::Utc::now();
         db::models::Repository {
+            actions_engine: None,
             id,
             owner_kind: kind.into(),
             owner_user_id: user_id,
@@ -214,8 +180,10 @@ mod tests {
             description: Some("Fixture description".into()),
             website: None,
             is_private: false,
+            is_gist: false,
             is_archived: false,
             is_fork: false,
+            is_template: false,
             forked_from_id: None,
             default_branch: "main".into(),
             allow_merge_commit: true,
@@ -269,14 +237,5 @@ mod tests {
                 Err(DiscoveryReadError::InvalidOwner)
             ));
         }
-    }
-
-    #[test]
-    fn discovery_database_errors_do_not_disclose_driver_details() {
-        let (status, Json(body)) =
-            database_error(anyhow::anyhow!("private SQL, password and storage path"));
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(body.error, "database_error");
-        assert_eq!(body.message, "Discovery storage is temporarily unavailable");
     }
 }

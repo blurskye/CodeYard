@@ -1,0 +1,16 @@
+# https://github.com/docker/login-action/tree/c94ce9fb468520275223c153574b00df6fe4bcc9
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: "${{ secrets.DOCKERHUB_USERNAME }}"
+          password: "${{ secrets.DOCKERHUB_TOKEN }}"
+      - name: Assert documented effect
+        run: |
+          test -s "$HOME/.docker/config.json"
+          echo compat:ok

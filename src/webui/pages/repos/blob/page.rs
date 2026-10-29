@@ -2,7 +2,7 @@ use crate::webui::pages::repos::{
     chrome::{chrome, icon, RepoChrome},
     commits::{latest_commit_bar, Commit},
     ref_path::{file_url, is_markdown_path, link_base},
-    ref_switcher::{ref_options, RefOption, RefSwitcher},
+    ref_switcher::{RefLinks, RefSwitcher},
     tree::{breadcrumbs, sort_entries, TreeEntry},
 };
 use crate::webui::{
@@ -15,6 +15,12 @@ use crate::webui::{
     navigation::NavLink,
 };
 use dioxus::prelude::*;
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CodeOwnerError {
+    pub line: usize,
+    pub kind: String,
+}
 
 /// The raw endpoint's full-response limit; larger files support byte ranges or Git clone.
 pub const MAX_DOWNLOAD_BYTES: u64 = 32 * 1024 * 1024;
@@ -61,6 +67,10 @@ pub struct BlobPage {
     /// server does not provide one.
     #[serde(default)]
     pub permalink: String,
+    #[serde(default)]
+    pub codeowners_errors: Option<Vec<CodeOwnerError>>,
+    #[serde(default)]
+    pub codeowners_notice: Option<String>,
 }
 
 /// The entries of one folder at the file's revision.
@@ -195,6 +205,15 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
                     {more_menu(&page.path, &page.permalink, delete_link, downloadable.then_some((raw.as_str(), name)))}
                 }
             }
+            if let Some(errors)=&page.codeowners_errors {
+                aside {class:"panel p-3",h3 {"CODEOWNERS diagnostics"}
+                    if errors.is_empty() {p {"No CODEOWNERS errors found."}}
+                    else {p {"Owners must exist and have write access. Teams must be visible."}
+                        ul {for error in errors {li {NavLink {href:format!("{url}#L{}",error.line),"{error.kind} on line {error.line}"}}}}
+                    }
+                }
+            }
+            if let Some(notice)=&page.codeowners_notice {p {class:"p-3 text-muted-foreground","{notice}"}}
             {body}
         }
         if !downloadable { p { class: "text-sm text-muted-foreground", "This file exceeds the 32 MiB download limit. Clone the repository or use HTTP byte-range requests on the raw URL to retrieve it." } }
@@ -244,12 +263,15 @@ pub(in crate::webui::pages::repos) fn file_layout(
 ) -> Element {
     let base = repo.base();
     let directory = path.rsplit_once('/').map_or("", |(parent, _)| parent);
-    let branch_options = ref_options(&base, "blob", path, branches, "");
-    let tag_options = ref_options(&base, "blob", path, tags, "refs/tags/");
+    let links = RefLinks::Files {
+        base: base.clone(),
+        kind: "blob",
+        path: path.to_owned(),
+    };
     rsx! {
         div { class: "repo-blob-layout",
             input { r#type: "checkbox", id: "repo-files-toggle", class: "sr-only repo-files-toggle" }
-            FilesPanel { key: "{reference}/{path}", base: base.clone(), reference: reference.to_owned(), path: path.to_owned(), directory: directory.to_owned(), folders: folders.to_vec(), branches: branch_options, tags: tag_options, can_write: can_commit_on(repo, reference, branches), default_branch: repo.default_branch.clone() }
+            FilesPanel { key: "{reference}/{path}", base: base.clone(), reference: reference.to_owned(), path: path.to_owned(), directory: directory.to_owned(), folders: folders.to_vec(), branches: branches.to_vec(), tags: tags.to_vec(), links, can_write: can_commit_on(repo, reference, branches), default_branch: repo.default_branch.clone() }
             div { class: "repo-blob-main", {content} }
         }
     }
@@ -268,8 +290,9 @@ pub fn FilesPanel(
     path: String,
     directory: String,
     folders: Vec<FolderListing>,
-    branches: Vec<RefOption>,
-    tags: Vec<RefOption>,
+    branches: Vec<String>,
+    tags: Vec<String>,
+    links: RefLinks,
     can_write: bool,
     default_branch: String,
 ) -> Element {
@@ -280,7 +303,7 @@ pub fn FilesPanel(
                 span { class: "repo-files-title", "Files" }
             }
             div { class: "repo-files-tools",
-                RefSwitcher { base: base.clone(), current: reference.clone(), branches: branches, tags: tags, default_branch: default_branch.clone() }
+                RefSwitcher { base: base.clone(), current: reference.clone(), branches: branches, tags: tags, links: links, default_branch: default_branch.clone() }
                 if can_write {
                     {add_file_menu(&base, &reference, &directory, rsx! { summary { class: "repo-icon-button icon-tooltip", "aria-label": "Add file", {icon("plus")} } })}
                 }

@@ -13,6 +13,8 @@ pub struct Release {
     pub name: Option<String>,
     pub body: Option<String>,
     pub is_draft: bool,
+    #[serde(default)]
+    pub is_immutable: bool,
     pub is_prerelease: bool,
     pub is_latest: bool,
     pub author_id: i64,

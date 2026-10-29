@@ -1,0 +1,15 @@
+# https://github.com/azure/setup-helm/tree/b9e51907a09c216f16ebe8536097933489208112
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: "v3.17.1"
+      - name: Assert documented effect
+        run: |
+          helm version --short | grep 'v3\.17\.1'
+          echo compat:ok

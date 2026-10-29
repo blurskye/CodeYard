@@ -1,0 +1,17 @@
+# https://github.com/docker/setup-buildx-action/tree/8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          version: "v0.21.0"
+          driver: "docker"
+          install: "true"
+      - name: Assert documented effect
+        run: |
+          docker buildx version
+          echo compat:ok

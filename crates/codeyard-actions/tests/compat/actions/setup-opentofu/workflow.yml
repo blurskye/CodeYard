@@ -1,0 +1,16 @@
+# https://github.com/opentofu/setup-opentofu/tree/9d84900f3238fab8cd84ce47d658d25dd008be2f
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1
+        with:
+          tofu_version: "1.9.0"
+          tofu_wrapper: "false"
+      - name: Assert documented effect
+        run: |
+          tofu version | grep 'OpenTofu v1\.9\.0'
+          echo compat:ok

@@ -1,0 +1,18 @@
+# https://github.com/docker/metadata-action/tree/c299e40c65443455700f0fdfc63efafe5b349051
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: "compat/example"
+          tags: "type=raw,value=compat"
+      - name: Assert documented effect
+        env:
+          TAGS: ${{ steps.action.outputs.tags }}
+        run: |
+          test "$TAGS" = compat/example:compat
+          echo compat:ok

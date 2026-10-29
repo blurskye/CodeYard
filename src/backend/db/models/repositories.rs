@@ -36,6 +36,9 @@ pub struct SharedRepository {
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct Repository {
+    #[serde(default)]
+    #[sqlx(default)]
+    pub actions_engine: Option<String>,
     pub id: i64,
     pub owner_kind: String,
     pub owner_user_id: Option<i64>,
@@ -44,8 +47,12 @@ pub struct Repository {
     pub description: Option<String>,
     pub website: Option<String>,
     pub is_private: bool,
+    #[serde(default)]
+    pub is_gist: bool,
     pub is_archived: bool,
     pub is_fork: bool,
+    #[serde(default)]
+    pub is_template: bool,
     pub forked_from_id: Option<i64>,
     pub default_branch: String,
     pub allow_merge_commit: bool,
@@ -128,6 +135,9 @@ pub struct BranchProtectionRule {
     pub block_deletions: bool,
     pub restrict_pushes: bool,
     pub push_allowances: Vec<i64>,
+    /// Organization teams whose current members may push, without granting repository access.
+    #[serde(default)]
+    pub push_team_allowances: Vec<i64>,
     /// Users who may force push although `block_force_pushes` refuses everyone else.
     pub force_push_allowances: Vec<i64>,
     /// When false, administrators skip this rule's direct-write and merge checks.
@@ -135,12 +145,30 @@ pub struct BranchProtectionRule {
     pub require_conversation_resolution: bool,
     /// Each changed file with code owners needs an approval from one of its owners.
     pub require_code_owner_review: bool,
+    #[serde(default)]
+    pub github_settings: BranchProtectionSettings,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
+/// REST settings without a native enforcement equivalent are retained with the rule.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BranchProtectionSettings {
+    pub required_signatures: bool,
+    pub block_creations: bool,
+    pub lock_branch: bool,
+    pub allow_fork_syncing: bool,
+    pub require_last_push_approval: bool,
+    pub dismissal_restrictions: Option<serde_json::Value>,
+    pub bypass_pull_request_allowances: Option<serde_json::Value>,
+    pub push_apps: Vec<i64>,
+    pub checks: Vec<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct Label {
+    pub updated_at: Option<DateTime<Utc>>,
     pub id: i64,
     pub repo_id: i64,
     pub name: String,
@@ -194,6 +222,9 @@ pub enum AccessLevel {
 impl AccessLevel {
     pub fn can_read(&self) -> bool {
         *self >= AccessLevel::Read
+    }
+    pub fn can_triage(&self) -> bool {
+        *self >= AccessLevel::Triage
     }
     pub fn can_write(&self) -> bool {
         *self >= AccessLevel::Write

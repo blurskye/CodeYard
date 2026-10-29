@@ -1,34 +1,34 @@
 //! Event names a webhook can subscribe to. The names are GitHub's, so receivers that
-//! already branch on them keep working.
+//! already branch on them keep working. The form's EVENT_OPTIONS is the list a hook can
+//! subscribe to.
+use crate::webui::components::webhooks::EVENT_OPTIONS;
 
+pub const REPOSITORY: &str = "repository";
 pub const PUSH: &str = "push";
 pub const CREATE: &str = "create";
 pub const DELETE: &str = "delete";
 pub const FORK: &str = "fork";
 pub const STAR: &str = "star";
 pub const RELEASE: &str = "release";
+pub const DEPLOYMENT: &str = "deployment";
+pub const DEPLOYMENT_STATUS: &str = "deployment_status";
+pub const DEPLOYMENT_PROTECTION_RULE: &str = "deployment_protection_rule";
 pub const ISSUES: &str = "issues";
 pub const ISSUE_COMMENT: &str = "issue_comment";
+pub const COMMIT_COMMENT: &str = "commit_comment";
+pub const CODE_SCANNING_ALERT: &str = "code_scanning_alert";
+pub const SECRET_SCANNING_ALERT: &str = "secret_scanning_alert";
+pub const SECRET_SCANNING_ALERT_LOCATION: &str = "secret_scanning_alert_location";
 pub const PULL_REQUEST: &str = "pull_request";
 pub const PULL_REQUEST_REVIEW: &str = "pull_request_review";
 pub const PULL_REQUEST_REVIEW_COMMENT: &str = "pull_request_review_comment";
+pub const CHECK_RUN: &str = "check_run";
+pub const CHECK_SUITE: &str = "check_suite";
+pub const REPOSITORY_DISPATCH: &str = "repository_dispatch";
+pub const WORKFLOW_RUN: &str = "workflow_run";
+pub const WORKFLOW_JOB: &str = "workflow_job";
 /// Sent when a hook is created or tested. Not a subscription: every hook gets it.
 pub const PING: &str = "ping";
-
-/// The events a form offers, in display order.
-pub const SELECTABLE: [&str; 11] = [
-    PUSH,
-    CREATE,
-    DELETE,
-    FORK,
-    STAR,
-    RELEASE,
-    ISSUES,
-    ISSUE_COMMENT,
-    PULL_REQUEST,
-    PULL_REQUEST_REVIEW,
-    PULL_REQUEST_REVIEW_COMMENT,
-];
 
 /// The stored subscription for "send me everything".
 pub const EVERYTHING: &str = "*";
@@ -39,9 +39,9 @@ pub fn subscription(chosen: &[String]) -> Result<String, &'static str> {
     if chosen.iter().any(|name| name == EVERYTHING) {
         return Ok(EVERYTHING.to_owned());
     }
-    let mut names: Vec<&str> = SELECTABLE
+    let mut names: Vec<&str> = EVENT_OPTIONS
         .iter()
-        .copied()
+        .map(|(name, _)| *name)
         .filter(|name| chosen.iter().any(|picked| picked == name))
         .collect();
     if names.is_empty() {
@@ -79,6 +79,38 @@ mod tests {
             Err("Choose only events from the list")
         );
         assert_eq!(subscription(&picked(&["push", "*"])), Ok("*".to_owned()));
+    }
+
+    #[test]
+    fn every_event_can_be_subscribed() {
+        for event in [
+            REPOSITORY,
+            PUSH,
+            CREATE,
+            DELETE,
+            FORK,
+            STAR,
+            RELEASE,
+            DEPLOYMENT,
+            DEPLOYMENT_STATUS,
+            DEPLOYMENT_PROTECTION_RULE,
+            ISSUES,
+            ISSUE_COMMENT,
+            COMMIT_COMMENT,
+            CODE_SCANNING_ALERT,
+            SECRET_SCANNING_ALERT,
+            SECRET_SCANNING_ALERT_LOCATION,
+            PULL_REQUEST,
+            PULL_REQUEST_REVIEW,
+            PULL_REQUEST_REVIEW_COMMENT,
+            CHECK_RUN,
+            CHECK_SUITE,
+            REPOSITORY_DISPATCH,
+            WORKFLOW_RUN,
+            WORKFLOW_JOB,
+        ] {
+            assert_eq!(subscription(&picked(&[event])).as_deref(), Ok(event));
+        }
     }
 
     #[test]

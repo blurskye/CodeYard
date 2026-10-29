@@ -1,0 +1,15 @@
+# https://github.com/ashutoshvarma/setup-ninja/tree/93f8b9763516f1fb9b4d9840b12d844bee17791f
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: ashutoshvarma/setup-ninja@93f8b9763516f1fb9b4d9840b12d844bee17791f # v1.1
+        with:
+          version: "1.12.1"
+      - name: Assert documented effect
+        run: |
+          ninja --version | grep '^1\.12\.1'
+          echo compat:ok

@@ -7,7 +7,7 @@ use aws_sdk_s3::{
     config::{BehaviorVersion, Builder as S3ConfigBuilder, Region},
     presigning::PresigningConfig,
     primitives::ByteStream,
-    types::{BucketLocationConstraint, CreateBucketConfiguration},
+    types::{BucketLocationConstraint, CorsConfiguration, CorsRule, CreateBucketConfiguration},
     Client,
 };
 use aws_smithy_types::timeout::TimeoutConfig;
@@ -221,6 +221,31 @@ impl S3Store {
         })
     }
 
+    pub async fn read_range(&self, key: &str, offset: u64, length: usize) -> Result<Vec<u8>> {
+        ensure!(
+            valid_key(key) && length > 0 && length <= 1024 * 1024,
+            "invalid range"
+        );
+        // The operation timeout ends when the response starts, so one deadline also covers the
+        // body.
+        let read = async {
+            let result = self
+                .client
+                .get_object()
+                .bucket(self.bucket())
+                .key(key)
+                .range(format!("bytes={offset}-{}", offset + length as u64 - 1))
+                .send()
+                .await?;
+            anyhow::Ok(result.body.collect().await?.into_bytes().to_vec())
+        };
+        let bytes = tokio::time::timeout(Duration::from_secs(60), read)
+            .await
+            .map_err(|_| anyhow::anyhow!("object range read timed out"))??;
+        ensure!(bytes.len() == length, "short object range");
+        Ok(bytes)
+    }
+
     pub fn bucket(&self) -> &str {
         &self.config.bucket
     }
@@ -243,7 +268,14 @@ impl S3Store {
             );
         }
         match create.send().await {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                // Browsers upload straight to the bucket from PUBLIC_URL's origin. Some
+                // S3-compatible stores do not implement bucket CORS, so a refusal is logged.
+                if let Err(error) = self.allow_browser_uploads().await {
+                    tracing::warn!(%error, "S3 bucket CORS rule not set; browser uploads need one for PUBLIC_URL");
+                }
+                Ok(())
+            }
             // Another node created it first.
             Err(error)
                 if error
@@ -254,6 +286,28 @@ impl S3Store {
             }
             Err(error) => Err(anyhow::Error::new(error).context("create the S3 bucket")),
         }
+    }
+
+    async fn allow_browser_uploads(&self) -> Result<()> {
+        let Some(public_url) = optional_env("PUBLIC_URL")? else {
+            return Ok(());
+        };
+        let origin = url::Url::parse(&public_url)?.origin().ascii_serialization();
+        let rule = CorsRule::builder()
+            .allowed_origins(origin)
+            .allowed_methods("PUT")
+            .allowed_methods("GET")
+            .allowed_headers("*")
+            .expose_headers("ETag")
+            .max_age_seconds(3600)
+            .build()?;
+        self.client
+            .put_bucket_cors()
+            .bucket(self.bucket())
+            .cors_configuration(CorsConfiguration::builder().cors_rules(rule).build()?)
+            .send()
+            .await?;
+        Ok(())
     }
 
     /// Size, type and SHA-256 are signed into the URL, so S3 rejects any other
@@ -319,7 +373,7 @@ impl S3Store {
     pub async fn put_object(&self, upload: &Upload<'_>, bytes: Vec<u8>) -> Result<()> {
         ensure!(valid_key(upload.key), "invalid object key");
         ensure!(
-            (1..=MAX_OBJECT_BYTES).contains(&upload.bytes),
+            (0..=MAX_OBJECT_BYTES).contains(&upload.bytes),
             "invalid upload size"
         );
         ensure!(

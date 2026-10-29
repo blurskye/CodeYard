@@ -1,0 +1,16 @@
+# https://github.com/goreleaser/goreleaser-action/tree/e435ccd777264be153ace6237001ef4d979d3a7a
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          version: "v2.7.0"
+          install-only: "true"
+      - name: Assert documented effect
+        run: |
+          goreleaser --version | grep '2\.7\.0'
+          echo compat:ok

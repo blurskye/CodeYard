@@ -92,6 +92,12 @@ pub fn file_url(base: &str, kind: &str, reference: &str, path: &str) -> String {
     format!("{base}/{kind}/{}{tail}", encode_path(reference))
 }
 
+/// `file_url` for a branch given by its short name. The name is always qualified, so a branch
+/// called `refs/heads/topic` is not read as the branch `topic`.
+pub fn branch_url(base: &str, kind: &str, branch: &str, path: &str) -> String {
+    file_url(base, kind, &format!("refs/heads/{branch}"), path)
+}
+
 fn qualified_ref(reference: &str) -> String {
     if reference.starts_with("refs/")
         || (reference.len() == 40 && reference.bytes().all(|byte| byte.is_ascii_hexdigit()))
@@ -153,6 +159,18 @@ pub fn link_base(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn branch_links_keep_a_branch_named_like_a_ref() {
+        assert_eq!(
+            branch_url("/a/r", "upload", "refs/heads/topic", "docs"),
+            "/a/r/upload/refs/heads/refs/heads/topic/docs"
+        );
+        assert_eq!(
+            branch_url("/a/r", "tree", "main", ""),
+            "/a/r/tree/refs/heads/main"
+        );
+    }
+
     #[test]
     fn full_commit_ids_precede_named_ref_prefixes() {
         let sha = "0123456789abcdef0123456789abcdef01234567";

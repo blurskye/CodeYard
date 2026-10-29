@@ -36,6 +36,16 @@ pub fn compare(
         encode_component(head),
         repo.chrome.id
     );
+    let can_open_pull = branches.iter().any(|branch| branch == base)
+        && branches.iter().any(|branch| branch == head);
+    let mut selectable = branches.to_vec();
+    for reference in [base, head] {
+        let pinned = reference.contains(':')
+            || (reference.len() == 40 && reference.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        if pinned && !selectable.iter().any(|choice| choice == reference) {
+            selectable.push(reference.to_owned());
+        }
+    }
     repos::chrome::chrome(
         &repo.chrome,
         rsx! {
@@ -43,9 +53,9 @@ pub fn compare(
                 header { class: "collaboration-page-heading", h2 { "Comparing changes" } }
                 form { method: "get", action: url, class: "collaboration-panel collaboration-comparison-controls",
                     div { class: "collaboration-compare-row",
-                        div { class: "collaboration-compare-side", {branch_select("base", "Base branch", base, branches)} }
+                        div { class: "collaboration-compare-side", {branch_select("base", "Base branch", base, &selectable)} }
                         span { class: "collaboration-compare-arrow", aria_hidden: "true", "←" }
-                        div { class: "collaboration-compare-side", {branch_select("head", "Compare branch", head, branches)} }
+                        div { class: "collaboration-compare-side", {branch_select("head", "Compare branch", head, &selectable)} }
                         button { r#type: "submit", class: "btn btn-secondary", "Compare" }
                     }
                 }
@@ -56,7 +66,7 @@ pub fn compare(
                             if let Some(pull) = open_pull {
                                 NavLink { class: "btn btn-secondary", href: format!("{}/{}", repo.family_url(Kind::Pull), pull.number), "View pull request #{pull.number}" }
                                 span { class: "collaboration-compare-title", "{pull.title}" }
-                            } else {
+                            } else if can_open_pull {
                                 NavLink { class: "btn btn-primary", href: new_pull, "Create pull request" }
                             }
                         }
@@ -105,12 +115,28 @@ mod tests {
                 &repo,
                 "main",
                 "topic",
-                &[],
+                &["main".into(), "topic".into()],
                 Some(&diff),
                 None,
                 false,
             ))
         });
         assert!(html.contains("head_repo=42&#38;intent=compare"), "{html}");
+        for head in ["a".repeat(40), "forker:topic".into()] {
+            let html = crate::webui::tests::in_scope(|| {
+                dioxus_ssr::render_element(compare(
+                    &repo,
+                    "main",
+                    &head,
+                    &["main".into()],
+                    Some(&diff),
+                    None,
+                    false,
+                ))
+            });
+            assert!(html.contains(&format!("value=\"{head}\"")), "{html}");
+            assert!(!html.contains("(unavailable)"), "{html}");
+            assert!(!html.contains("Create pull request"), "{html}");
+        }
     }
 }

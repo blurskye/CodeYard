@@ -107,18 +107,51 @@ pub fn editor_text(bytes: &[u8], is_binary: bool) -> Result<&str, WriteError> {
 // Form submissions normalize line breaks. Use the original file's first newline
 // style; new files and files without a newline use LF.
 fn native_file_bytes(content: String, original: &str) -> Vec<u8> {
+    native_text(content, original).into_bytes()
+}
+
+pub(crate) fn native_text(content: String, original: &str) -> String {
     let content = content.replace("\r\n", "\n").replace('\r', "\n");
     let newline = original.find(['\r', '\n']).map(|index| &original[index..]);
     match newline {
-        Some(rest) if rest.starts_with("\r\n") => content.replace('\n', "\r\n").into_bytes(),
-        Some(rest) if rest.starts_with('\r') => content.replace('\n', "\r").into_bytes(),
-        _ => content.into_bytes(),
+        Some(rest) if rest.starts_with("\r\n") => content.replace('\n', "\r\n"),
+        Some(rest) if rest.starts_with('\r') => content.replace('\n', "\r"),
+        _ => content,
     }
 }
 
 enum FileContent {
     Text(String),
     Bytes(Vec<u8>),
+}
+#[derive(Clone, Copy)]
+enum CommitOrigin {
+    Web,
+    Api,
+}
+
+async fn check_web_signoff(
+    pool: &db::DbPool,
+    repository: &db::models::Repository,
+    user: &db::models::User,
+    message: &str,
+) -> Result<(), WriteError> {
+    let required =
+        db::organizations::settings::repository_requires_web_signoff(pool, repository.id)
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or(WriteError {
+                kind: WriteFailure::NotFound,
+                message: "Repository not found.".into(),
+            })?;
+    let email = user.commit_email();
+    if required && !db::organizations::settings::has_signoff(message, &user.username, &email) {
+        return Err(WriteError {
+            kind: WriteFailure::Invalid,
+            message: db::organizations::settings::required_signoff_message(&user.username, &email),
+        });
+    }
+    Ok(())
 }
 
 /// Save from the HTML editor, whose text is a string.
@@ -155,6 +188,7 @@ pub async fn write_file(
         input,
         FileContent::Text(content),
         new_branch,
+        CommitOrigin::Web,
     )
     .await
     .map(|saved| saved.commit.sha)
@@ -216,15 +250,15 @@ fn check_new_branch_name(name: &str) -> Result<(), WriteError> {
     Ok(())
 }
 
-/// Refuses a repository the actor cannot read. A missing repository and an unreadable one get
-/// the same answer, so no refusal reveals which private names exist. The JSON handlers call
-/// this before they decode the body.
+/// Refuses a repository the actor cannot read and returns the id of one it can. A missing
+/// repository and an unreadable one get the same answer, so no refusal reveals which private
+/// names exist. The JSON handlers call this before they decode the body.
 pub async fn ensure_readable(
     pool: &db::DbPool,
     user: &db::models::User,
     owner: &str,
     name: &str,
-) -> Result<(), WriteError> {
+) -> Result<i64, WriteError> {
     let repository = db::repositories::records::get_repository(pool, owner, name)
         .await
         .map_err(|_| unavailable())?
@@ -241,7 +275,7 @@ pub async fn ensure_readable(
             message: "Repository not found.".into(),
         });
     }
-    Ok(())
+    Ok(repository.id)
 }
 
 /// The repository at `owner/name`. A missing one is refused like an unreadable one, by the
@@ -271,21 +305,22 @@ pub async fn write_file_bytes(
     ci: &CiRuns,
     actor_id: i64,
     owner: &str,
-    name: &str,
+    repository_id: i64,
     input: FileWrite,
     content: Vec<u8>,
 ) -> Result<FileSave, WriteError> {
-    let repository = named_repository(pool, owner, name).await?;
+    // The caller passes the repository it authorized, so a rename cannot retarget the write.
     save_file(
         pool,
         cluster,
         ci,
         actor_id,
         owner,
-        repository.id,
+        repository_id,
         input,
         FileContent::Bytes(content),
         None,
+        CommitOrigin::Api,
     )
     .await
 }
@@ -316,6 +351,37 @@ pub async fn delete_file(
         input,
         FileContent::Bytes(Vec::new()),
         new_branch,
+        CommitOrigin::Api,
+    )
+    .await
+}
+
+/// Native deletion retains byte-safe handling while applying web-only organization policies.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Explicit actor and resources keep operations HTTP-free."
+)]
+pub async fn delete_file_web(
+    pool: &db::DbPool,
+    cluster: Option<&NodeContext>,
+    ci: &CiRuns,
+    actor_id: i64,
+    owner: &str,
+    repository_id: i64,
+    input: FileWrite,
+    new_branch: Option<&str>,
+) -> Result<FileSave, WriteError> {
+    save_file(
+        pool,
+        cluster,
+        ci,
+        actor_id,
+        owner,
+        repository_id,
+        input,
+        FileContent::Bytes(Vec::new()),
+        new_branch,
+        CommitOrigin::Web,
     )
     .await
 }
@@ -411,6 +477,7 @@ async fn save_file(
     mut input: FileWrite,
     content: FileContent,
     new_branch: Option<&str>,
+    origin: CommitOrigin,
 ) -> Result<FileSave, WriteError> {
     if input.message.trim().is_empty() {
         input.message = default_commit_message(&input);
@@ -447,6 +514,9 @@ async fn save_file(
         },
     )
     .await?;
+    if matches!(origin, CommitOrigin::Web) {
+        check_web_signoff(pool, &repository, &user, &input.message).await?;
+    }
     let store = repo_store(&repository, cluster);
     let content = match content {
         FileContent::Bytes(bytes) => bytes,
@@ -482,7 +552,7 @@ async fn save_file(
         });
     }
     let email = user.commit_email();
-    let prepared = store
+    let mut prepared = store
         .prepare_file(&input, &content, &user.username, &email)
         .await
         .map_err(|error| {
@@ -492,6 +562,7 @@ async fn save_file(
                 write_error(error)
             }
         })?;
+    prepared.web_commit = matches!(origin, CommitOrigin::Web);
     publish_commit(
         pool,
         &store,
@@ -539,11 +610,16 @@ async fn publish_commit(
                     message: format!("Branch `{name}` already exists. Choose another name."),
                 });
             }
-            store
-                .create_branch_as(pool, repository.id, user.id, name, &prepared.commit.sha)
+            let mut publication = prepared.clone();
+            publication.branch = name.to_owned();
+            publication.reference = format!("refs/heads/{name}");
+            publication.expected = None;
+            publication.new_branch = true;
+            let commit = store
+                .publish_file_as(pool, repository.id, user.id, &publication)
                 .await
                 .map_err(write_error)?;
-            (name, prepared.commit.clone(), None)
+            (name, commit, None)
         }
     };
     // The branch moved: pull requests that use it follow, and push workflows run.
@@ -619,7 +695,8 @@ pub async fn upload_files(
     .await?;
     let store = repo_store(&repository, cluster);
     let email = user.commit_email();
-    let prepared = store
+    check_web_signoff(pool, &repository, &user, &write.message).await?;
+    let mut prepared = store
         .prepare_upload(&write, &content, &user.username, &email)
         .await
         .map_err(|error| {
@@ -629,6 +706,7 @@ pub async fn upload_files(
                 write_error(error)
             }
         })?;
+    prepared.web_commit = true;
     publish_commit(
         pool,
         &store,

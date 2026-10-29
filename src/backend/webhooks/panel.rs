@@ -42,6 +42,7 @@ pub async fn build(
             .get("hook_after")
             .and_then(|id| id.parse().ok())
             .unwrap_or(0),
+        false,
     )
     .await
     .map_err(|_| HookError::Unavailable)?
@@ -85,6 +86,10 @@ pub async fn build(
                 active: true,
                 ssl_verify: true,
                 has_secret: false,
+                username: String::new(),
+                has_password: false,
+                clear_secret: false,
+                clear_password: false,
             });
         }
         Some(id) => {
@@ -128,6 +133,10 @@ fn draft_of(hook: &Webhook) -> HookDraft {
         active: hook.active,
         ssl_verify: hook.ssl_verify,
         has_secret: hook.encrypted_secret.is_some(),
+        username: hook.username.clone().unwrap_or_default(),
+        has_password: hook.username.is_some(),
+        clear_secret: false,
+        clear_password: false,
     }
 }
 
@@ -211,6 +220,22 @@ fn status_text(delivery: &WebhookDelivery) -> String {
     }
 }
 
+/// A refused save shows the credentials the hook still has, so removing them stays on offer.
+async fn with_saved_credentials(
+    pool: &DbPool,
+    owner: HookOwner,
+    mut draft: HookDraft,
+) -> HookDraft {
+    let Some(id) = draft.id else {
+        return draft;
+    };
+    if let Ok(Some(hook)) = hooks::get_webhook(pool, owner, id).await {
+        draft.has_secret = hook.encrypted_secret.is_some();
+        draft.has_password = hook.username.is_some();
+    }
+    draft
+}
+
 /// The hook a posted settings form describes. The secret is not part of the draft: it is read
 /// from the form only when saving.
 pub fn draft_from_form(pairs: &[(String, String)]) -> HookDraft {
@@ -238,6 +263,10 @@ pub fn draft_from_form(pairs: &[(String, String)]) -> HookDraft {
         active: checked("active"),
         ssl_verify: checked("ssl_verify"),
         has_secret: false,
+        username: field("username"),
+        has_password: false,
+        clear_secret: checked("clear_secret"),
+        clear_password: checked("clear_password"),
     }
 }
 
@@ -259,10 +288,13 @@ pub async fn apply(
         "webhook-save" => {
             let draft = draft_from_form(pairs);
             let submitted = form_of(&draft, pairs);
-            settings::save(pool, encryptor, owner, actor, draft.id, &submitted)
-                .await
-                .map(|_| "saved")
-                .map_err(|error| (error, Some(draft)))
+            match settings::save(pool, encryptor, owner, actor, draft.id, &submitted).await {
+                Ok(_) => Ok("saved"),
+                Err(error) => Err((
+                    error,
+                    Some(with_saved_credentials(pool, owner, draft).await),
+                )),
+            }
         }
         "webhook-delete" => {
             if form.get("confirm").map(String::as_str) != Some("yes") {
@@ -315,11 +347,23 @@ pub fn refusal(error: &HookError) -> (axum::http::StatusCode, &'static str) {
 /// The save a posted form asks for. The draft's secret text is the form's `secret` field.
 pub fn form_of(draft: &HookDraft, pairs: &[(String, String)]) -> HookForm {
     HookForm {
+        username: (!draft.username.is_empty()).then(|| draft.username.clone()),
+        password: pairs
+            .iter()
+            .find(|(key, _)| key == "password")
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(_, value)| value.clone()),
+        clear_password: pairs
+            .iter()
+            .any(|(key, value)| key == "clear_password" && value == "yes"),
         payload_url: draft.payload_url.clone(),
         content_type: draft.content_type.clone(),
         events: draft.events.clone(),
         active: draft.active,
         ssl_verify: draft.ssl_verify,
+        clear_secret: pairs
+            .iter()
+            .any(|(key, value)| key == "clear_secret" && value == "yes"),
         secret: pairs
             .iter()
             .find(|(key, _)| key == "secret")

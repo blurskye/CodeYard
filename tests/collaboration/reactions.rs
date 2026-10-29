@@ -135,15 +135,16 @@ async fn sqlite_reactions_toggle_and_count() {
 /// The reaction bar of the form that names `field` (`comment` or `review`) with `id`.
 fn bar<'a>(page: &'a str, field: &str, id: i64) -> &'a str {
     let needle = format!("name=\"{field}\" value=\"{id}\"");
-    let at = page
-        .find(needle.as_str())
-        .unwrap_or_else(|| panic!("{needle} is not in the page"));
-    let start = page[..at].rfind("<form").expect("the bar's form");
-    let end = at
-        + page[at..]
-            .find("</form>")
-            .expect("the end of the bar's form");
-    &page[start..end]
+    // Other forms, such as the task boxes of the author's own comment, name the comment too.
+    page.match_indices(needle.as_str())
+        .find_map(|(at, _)| {
+            let start = page[..at].rfind("<form")?;
+            let tag = &page[start..start + page[start..].find('>')?];
+            let end = at + page[at..].find("</form>")?;
+            tag.contains("collaboration-reactions")
+                .then_some(&page[start..end])
+        })
+        .unwrap_or_else(|| panic!("the reaction bar of {needle} is not in the page"))
 }
 
 /// Reactions on a review and on the inline comments in it, and on a reply in a diff thread. A

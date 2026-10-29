@@ -1,0 +1,16 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: failed
+        run: exit 1
+      - run: echo compat:must-not-run
+      - if: failure()
+        run: echo compat:failure
+      - if: success()
+        run: echo compat:must-not-succeed
+      - if: always() && !cancelled()
+        run: echo compat:always

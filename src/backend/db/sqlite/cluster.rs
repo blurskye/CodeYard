@@ -157,6 +157,7 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(node) = inserted {
+        super::runners::bind_registration(&mut tx, request.token_hash, &node).await?;
         tx.commit().await?;
         return Ok(JoinOutcome::Joined(node));
     }
@@ -359,6 +360,38 @@ pub async fn get_repository_by_uuid(
     )
 }
 
+pub async fn cluster_enabled(pool: &SqlitePool) -> Result<bool> {
+    Ok(
+        sqlx::query_scalar("SELECT cluster_enabled FROM node_configuration WHERE id = 1")
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(false),
+    )
+}
+
+pub async fn enable_cluster(pool: &SqlitePool) -> Result<bool> {
+    Ok(sqlx::query(&format!(
+        "INSERT INTO node_configuration (id, cluster_enabled) VALUES (1, 1)
+         ON CONFLICT (id) DO UPDATE SET cluster_enabled = 1, updated_at = {NOW}
+         WHERE NOT node_configuration.cluster_enabled"
+    ))
+    .execute(pool)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
+pub async fn is_admitted_node(pool: &SqlitePool, public_key: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM nodes WHERE public_key = ?1 AND status = 'active'
+            AND (roles = '[\"runner\"]'
+                 OR COALESCE((SELECT cluster_enabled FROM node_configuration WHERE id = 1), 0)))",
+    )
+    .bind(public_key)
+    .fetch_one(pool)
+    .await?)
+}
+
 pub async fn get_replicas(pool: &SqlitePool) -> Result<String> {
     Ok(
         sqlx::query_scalar("SELECT replicas FROM node_configuration WHERE id = 1")
@@ -398,6 +431,11 @@ pub async fn bump_write_version(
     if node_id.is_some_and(|expected| held_by != expected) {
         return Ok(false);
     }
+    // Contributor evidence also changes for standalone repositories, which have no replication version.
+    sqlx::query("UPDATE repositories SET contribution_version=contribution_version+1 WHERE id=?1")
+        .bind(repo_id)
+        .execute(&mut *tx)
+        .await?;
     // A repository that no storage node holds has no replicas, so its changes are not counted.
     if held_by.is_some() {
         sqlx::query("UPDATE repositories SET write_version = write_version + 1 WHERE id = ?1")

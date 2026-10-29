@@ -1,0 +1,15 @@
+# https://github.com/arduino/setup-task/tree/b91d5d2c96a56797b48ac1e0e89220bf64044611
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2
+        with:
+          version: "3.41.0"
+      - name: Assert documented effect
+        run: |
+          task --version | grep 'v3\.41\.0'
+          echo compat:ok

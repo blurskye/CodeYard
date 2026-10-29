@@ -376,6 +376,10 @@ pub fn actions_page(mut model: ActionsPage) -> Element {
         .iter()
         .filter(|run| matches_filters(run, &model.query))
         .collect();
+    // The server applies the filters too, so an empty list under a filter is an empty search.
+    let searching = ["q", "workflow", "event", "status", "branch", "actor"]
+        .iter()
+        .any(|key| !model.value(key).is_empty());
     let heading = model
         .workflows
         .iter()
@@ -387,10 +391,14 @@ pub fn actions_page(mut model: ActionsPage) -> Element {
             "Workflow runs"
         });
     // The events a workflow can run on, so the filter has choices before any run exists.
-    let mut events: std::collections::BTreeSet<&str> =
-        ["pull_request", "push", "workflow_dispatch"]
-            .into_iter()
-            .collect();
+    let mut events: std::collections::BTreeSet<&str> = [
+        "pull_request",
+        "push",
+        "workflow_dispatch",
+        "repository_dispatch",
+    ]
+    .into_iter()
+    .collect();
     events.extend(model.runs.iter().map(|run| run.event.as_str()));
     if !model.value("event").is_empty() {
         events.insert(model.value("event"));
@@ -415,6 +423,7 @@ pub fn actions_page(mut model: ActionsPage) -> Element {
                     aside { class: "actions-sidebar", "aria-label": "Workflows",
                         h2 { class: "actions-sidebar-heading", {icon("actions")} "Actions" }
                         NavLink { class: if model.value("workflow").is_empty() { "actions-nav-item is-selected" } else { "actions-nav-item" }, href: model.url(&[("workflow", ""), ("before", "")]), {workflow_icon()} "All workflows" }
+                        if model.repo_chrome.as_ref().is_some_and(|repo|repo.can_write) {NavLink {class:"actions-nav-item",href:format!("{}/dispatch-event",model.base_path),"Send repository event"}}
                         div { class: "actions-sidebar-divider" }
                         for workflow in &model.workflows {
                             NavLink { class: if model.value("workflow") == workflow.path { "actions-nav-item is-selected" } else { "actions-nav-item" }, href: model.url(&[("workflow", &workflow.path), ("before", "")]), "{workflow.name}" }
@@ -477,8 +486,8 @@ pub fn actions_page(mut model: ActionsPage) -> Element {
                                 if filtered.is_empty() {
                                     div { class: "actions-empty",
                                         {workflow_icon()}
-                                        h2 { if model.runs.is_empty() { "No workflow runs yet" } else { "No matching workflow runs" } }
-                                        p { if model.runs.is_empty() { "Workflow runs will appear here when they are queued." } else { "Try changing your search or filters." } }
+                                        h2 { if model.runs.is_empty() && !searching { "No workflow runs yet" } else { "No matching workflow runs" } }
+                                        p { if model.runs.is_empty() && !searching { "Workflow runs will appear here when they are queued." } else { "Try changing your search or filters." } }
                                     }
                                 } else {
                                     ul {

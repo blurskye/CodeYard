@@ -81,10 +81,32 @@ fn streams_upload(request: &Request) -> bool {
     request
         .extensions()
         .get::<MatchedPath>()
-        .is_some_and(|path| {
-            (*request.method() == Method::PUT && path.as_str() == files::CONTENT_ROUTE)
+        .is_some_and(|matched| {
+            let path = matched
+                .as_str()
+                .strip_prefix(crate::backend::api::repos::LEGACY_PREFIX)
+                .unwrap_or(matched.as_str());
+            (*request.method() == Method::PUT
+                && matches!(
+                    path,
+                    files::CONTENT_ROUTE | crate::backend::api::github::SARIF_ACTION_ROUTE
+                ))
                 || (*request.method() == Method::POST
-                    && matches!(path.as_str(), upload::ROUTE | releases::ASSET_ROUTE))
+                    && matches!(
+                        path,
+                        upload::ROUTE
+                            | releases::ASSET_ROUTE
+                            | crate::backend::api::github::BLOB_ROUTE
+                            | crate::backend::api::github::SARIF_ROUTE
+                            | crate::backend::api::github::CODEQL_UPLOAD_ROUTE
+                            | crate::backend::api::github::CODEQL_API_UPLOAD_ROUTE
+                            | crate::backend::api::github::CODEQL_HOST_UPLOAD_ROUTE
+                            | crate::backend::api::github::RELEASE_ASSET_UPLOAD_ROUTE
+                            | crate::backend::api::github::GISTS_ROUTE
+                            | crate::backend::api::github::GIST_ROUTE
+                    ))
+                || (*request.method() == Method::PATCH
+                    && path == crate::backend::api::github::GIST_ROUTE)
         })
 }
 
@@ -101,6 +123,28 @@ pub(crate) async fn bounded_form_body(
     request: Request,
     next: Next,
 ) -> Response {
+    // Nested legacy routes have not selected their leaf yet. Their own layer applies this
+    // same policy after matching, so streaming uploads remain streaming, not 4 MiB forms.
+    if request
+        .extensions()
+        .get::<MatchedPath>()
+        .is_some_and(|path| {
+            path.as_str()
+                .starts_with(crate::backend::api::repos::LEGACY_PREFIX)
+        })
+    {
+        return next.run(request).await;
+    }
+    bounded_mutation_body(state, request, next).await
+}
+pub(crate) async fn bounded_legacy_repository_body(
+    Extension(state): Extension<Arc<AppState>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    bounded_mutation_body(state, request, next).await
+}
+async fn bounded_mutation_body(state: Arc<AppState>, request: Request, next: Next) -> Response {
     if !matches!(
         *request.method(),
         Method::POST | Method::PUT | Method::PATCH | Method::DELETE
@@ -193,11 +237,18 @@ pub(crate) fn download_body(
         let started = tokio::time::Instant::now();
         let mut sent = 0_u64;
         loop {
+            // A stalled source loses the download too, so it cannot hold the permit.
             let chunk = tokio::select! {
                 _ = sender.closed() => return Ok(()),
-                chunk = stream.next() => match chunk {
-                    Some(chunk) => chunk?,
-                    None => return Ok(()),
+                chunk = tokio::time::timeout(Duration::from_secs(30), stream.next()) => match chunk {
+                    Ok(Some(chunk)) => chunk?,
+                    Ok(None) => return Ok(()),
+                    Err(_) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "Download source stalled",
+                        ))
+                    }
                 },
             };
             let allowed = Duration::from_secs(30 + sent / MIN_DOWNLOAD_RATE);
@@ -340,7 +391,7 @@ pub(crate) async fn no_ai_html(
             .await
             .unwrap_or(true)
     {
-        response.headers_mut().insert(
+        response.headers_mut().append(
             header::HeaderName::from_static("x-robots-tag"),
             "noai, noimageai".parse().expect("static robots policy"),
         );

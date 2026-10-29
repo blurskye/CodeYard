@@ -19,6 +19,12 @@ impl<'r> FromRow<'r, sqlx::postgres::PgRow> for BranchProtectionRule {
             block_deletions: row.try_get("block_deletions")?,
             restrict_pushes: row.try_get("restrict_pushes")?,
             push_allowances: row.try_get("push_allowances")?,
+            push_team_allowances: row.try_get("push_team_allowances")?,
+            github_settings: serde_json::from_str(&row.try_get::<String, _>("github_settings")?)
+                .map_err(|error| sqlx::Error::ColumnDecode {
+                    index: "github_settings".into(),
+                    source: Box::new(error),
+                })?,
             force_push_allowances: row.try_get("force_push_allowances")?,
             enforce_admins: row.try_get("enforce_admins")?,
             require_conversation_resolution: row.try_get("require_conversation_resolution")?,
@@ -51,11 +57,23 @@ impl<'r> FromRow<'r, sqlx::sqlite::SqliteRow> for BranchProtectionRule {
             block_force_pushes: row.try_get("block_force_pushes")?,
             block_deletions: row.try_get("block_deletions")?,
             restrict_pushes: row.try_get("restrict_pushes")?,
+            github_settings: serde_json::from_str(&row.try_get::<String, _>("github_settings")?)
+                .map_err(|error| sqlx::Error::ColumnDecode {
+                    index: "github_settings".into(),
+                    source: Box::new(error),
+                })?,
             push_allowances: serde_json::from_str(&row.try_get::<String, _>("push_allowances")?)
                 .map_err(|error| sqlx::Error::ColumnDecode {
                     index: "push_allowances".into(),
                     source: Box::new(error),
                 })?,
+            push_team_allowances: serde_json::from_str(
+                &row.try_get::<String, _>("push_team_allowances")?,
+            )
+            .map_err(|error| sqlx::Error::ColumnDecode {
+                index: "push_team_allowances".into(),
+                source: Box::new(error),
+            })?,
             force_push_allowances: serde_json::from_str(
                 &row.try_get::<String, _>("force_push_allowances")?,
             )

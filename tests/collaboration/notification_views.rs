@@ -145,6 +145,7 @@ async fn bounded_previews_and_current_targets(pg: bool) {
     ));
     codeyard::backend::repositories::lifecycle::transfer(
         w.database.pool(),
+        None,
         w.alice_id,
         w.proj,
         "moved_org",
@@ -196,6 +197,88 @@ async fn postgres_notification_previews_actors_and_renamed_targets() {
     bounded_previews_and_current_targets(true).await;
 }
 
+async fn notification_socket_admission(pg: bool) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut w = setup(pg).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = w.alice.router.clone();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let origin = format!("Origin: http://{address}\r\n");
+    let cookie = format!("Cookie: session_id={}\r\n", w.alice.session);
+    for (path, origins, credential, status) in [
+        ("/api/notifications/ws", origin.clone(), cookie.clone(), 404),
+        (
+            "/api/v3/notifications/ws",
+            String::new(),
+            cookie.clone(),
+            403,
+        ),
+        (
+            "/api/v3/notifications/ws",
+            "Origin: https://attacker.invalid\r\n".into(),
+            cookie.clone(),
+            403,
+        ),
+        (
+            "/api/v3/notifications/ws",
+            origin.repeat(2),
+            cookie.clone(),
+            403,
+        ),
+        (
+            "/api/v3/notifications/ws",
+            origin.clone(),
+            String::new(),
+            401,
+        ),
+        (
+            "/api/v3/notifications/ws",
+            origin.clone(),
+            "Authorization: Bearer fixture-token\r\n".into(),
+            401,
+        ),
+    ] {
+        let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+        socket.write_all(format!("GET {path} HTTP/1.1\r\nHost: {address}\r\n{origins}{credential}Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n").as_bytes()).await.unwrap();
+        let mut headers = Vec::new();
+        while !headers.ends_with(b"\r\n\r\n") {
+            headers.push(socket.read_u8().await.unwrap());
+            assert!(headers.len() < 8192);
+        }
+        assert!(
+            String::from_utf8_lossy(&headers).starts_with(&format!("HTTP/1.1 {status}")),
+            "{path}: {}",
+            String::from_utf8_lossy(&headers)
+        );
+    }
+    db::users::sessions::delete_session(w.database.pool(), &w.alice.session)
+        .await
+        .unwrap();
+    let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+    socket.write_all(format!("GET /api/v3/notifications/ws HTTP/1.1\r\nHost: {address}\r\n{origin}{cookie}Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n").as_bytes()).await.unwrap();
+    let mut headers = Vec::new();
+    while !headers.ends_with(b"\r\n\r\n") {
+        headers.push(socket.read_u8().await.unwrap());
+        assert!(headers.len() < 8192);
+    }
+    assert!(headers.starts_with(b"HTTP/1.1 401"));
+    drop(socket);
+    server.abort();
+    assert!(server.await.unwrap_err().is_cancelled());
+    w.database.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_notification_socket_extension_keeps_browser_admission() {
+    notification_socket_admission(false).await;
+}
+
+#[tokio::test]
+async fn postgres_notification_socket_extension_keeps_browser_admission() {
+    notification_socket_admission(true).await;
+}
+
 #[tokio::test]
 async fn idle_notification_socket_closes_without_a_pong() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -205,7 +288,7 @@ async fn idle_notification_socket_closes_without_a_pong() {
     let router = w.alice.router.clone();
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
-    socket.write_all(format!("GET /api/notifications/ws HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nCookie: session_id={}\r\n\r\n",w.alice.session).as_bytes()).await.unwrap();
+    socket.write_all(format!("GET /api/v3/notifications/ws HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nCookie: session_id={}\r\n\r\n",w.alice.session).as_bytes()).await.unwrap();
     let mut handshake = Vec::new();
     while !handshake.ends_with(b"\r\n\r\n") {
         handshake.push(socket.read_u8().await.unwrap());

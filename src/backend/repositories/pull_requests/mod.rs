@@ -1,19 +1,63 @@
 use crate::backend::db;
 use crate::backend::repositories::access;
+pub mod async_merge;
+pub mod auto_merge;
 pub mod branches;
 pub mod code_owners;
 pub mod comments;
+pub(crate) mod maintainer_edit;
 pub mod merge;
 pub mod mutations;
 pub mod restack;
+pub mod revert;
 pub mod reviews;
 pub mod stacks;
+pub mod team_reviewers;
+pub mod update_branch;
+
 pub mod workflows;
 
 pub use branches::{
     branches_moved, head_repository, refresh_open_pull_request, refresh_open_pull_requests,
 };
 pub use workflows::queue_pull_request_ci;
+
+/// The `pull_request` webhook payload with the diff and commit counts, which the pull request row
+/// does not keep. It runs in a webhook builder, which is a blocking task.
+pub(crate) fn webhook_payload(
+    action: &str,
+    pull: &db::models::PullRequest,
+    author: &crate::backend::webhooks::payloads::Person,
+    scope: crate::backend::webhooks::payloads::Scope,
+    store: &crate::backend::repositories::store::RepoStore,
+) -> serde_json::Value {
+    let mut payload = crate::backend::webhooks::payloads::pull_request(action, pull, author, scope);
+    let base = pull.diff_base();
+    let (diff, commits) = tokio::runtime::Handle::current().block_on(async {
+        tokio::join!(
+            store.diff_stats(base, &pull.head_sha),
+            store.pull_request_commits(base, &pull.head_sha)
+        )
+    });
+    let document = &mut payload["pull_request"];
+    match diff {
+        Ok(diff) => {
+            document["additions"] = diff.additions.into();
+            document["deletions"] = diff.deletions.into();
+            document["changed_files"] = diff.changed_files.into();
+        }
+        Err(error) => {
+            tracing::warn!(pull_id = pull.id, %error, "could not count pull request changes")
+        }
+    }
+    match commits {
+        Ok((count, _)) => document["commits"] = count.into(),
+        Err(error) => {
+            tracing::warn!(pull_id = pull.id, %error, "could not count pull request commits")
+        }
+    }
+    payload
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum OperationError {
@@ -135,8 +179,22 @@ pub(super) async fn require_admin(
     }
 }
 
-pub(super) fn write_error(error: anyhow::Error) -> OperationError {
+pub(crate) fn write_error(error: anyhow::Error) -> OperationError {
+    if error.is::<db::pull_caps::PullCapReached>() {
+        return OperationError::Invalid {
+            code: "pull_request_creation_cap",
+            message: error.to_string(),
+        };
+    }
     use db::discussions::DiscussionWriteRefusal;
+    if let Some(refusal) =
+        error.downcast_ref::<db::pull_requests::records::IssueConversionRefusal>()
+    {
+        return OperationError::Invalid {
+            code: "invalid_issue_conversion",
+            message: refusal.to_string(),
+        };
+    }
     match error.downcast_ref::<DiscussionWriteRefusal>() {
         Some(DiscussionWriteRefusal::Denied) => OperationError::Denied {
             code: "forbidden",

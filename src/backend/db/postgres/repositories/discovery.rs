@@ -16,7 +16,7 @@ pub async fn create_forked_repository(
         r#"
         INSERT INTO repositories (owner_kind, owner_user_id, name, description, is_private, disk_path, is_fork, forked_from_id, default_branch, created_by_id)
         SELECT 'user', $1, $2, $3, ($4 OR source.is_private OR source.visibility_locked), $5, true, $6, $7, $1
-        FROM repositories source WHERE source.id=$6
+        FROM repositories source WHERE source.id=$6 AND NOT source.is_gist
         RETURNING *
         "#,
     )
@@ -38,15 +38,25 @@ pub async fn get_user_fork(
     user_id: i64,
     forked_from: i64,
 ) -> Result<Option<Repository>> {
-    let repo = sqlx::query_as::<_, Repository>(
-        "SELECT * FROM repositories WHERE owner_kind = 'user' AND owner_user_id = $1 AND forked_from_id = $2",
+    get_owner_fork(
+        pool,
+        crate::backend::db::repositories::creation::RepositoryTarget::Personal(user_id),
+        forked_from,
     )
-    .bind(user_id)
-    .bind(forked_from)
-    .fetch_optional(pool)
-    .await?;
+    .await
+}
 
-    Ok(repo)
+pub async fn get_owner_fork(
+    pool: &PgPool,
+    owner: crate::backend::db::repositories::creation::RepositoryTarget,
+    forked_from: i64,
+) -> Result<Option<Repository>> {
+    use crate::backend::db::repositories::creation::RepositoryTarget;
+    let (kind, user, org) = match owner {
+        RepositoryTarget::Personal(id) => ("user", Some(id), None),
+        RepositoryTarget::Organization(id) => ("org", None, Some(id)),
+    };
+    Ok(sqlx::query_as("SELECT * FROM repositories WHERE owner_kind=$1 AND (owner_user_id=$2 OR owner_org_id=$3) AND forked_from_id=$4 AND NOT is_gist").bind(kind).bind(user).bind(org).bind(forked_from).fetch_optional(pool).await?)
 }
 
 pub async fn list_forks(
@@ -57,7 +67,7 @@ pub async fn list_forks(
 ) -> Result<Vec<Repository>> {
     anyhow::ensure!(offset >= 0, "Page offset must be nonnegative");
     let repos = sqlx::query_as::<_, Repository>(
-        "SELECT * FROM repositories WHERE forked_from_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3",
+        "SELECT * FROM repositories WHERE forked_from_id = $1 AND NOT is_gist ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3",
     )
     .bind(repo_id)
     .bind(limit.clamp(1, 100))
@@ -148,7 +158,9 @@ pub async fn count_repositories(
     Ok(statement.bind(cap).fetch_one(pool).await?)
 }
 
-async fn search_connection(pool: &PgPool) -> Result<sqlx::Transaction<'_, sqlx::Postgres>> {
+pub(crate) async fn search_connection(
+    pool: &PgPool,
+) -> Result<sqlx::Transaction<'_, sqlx::Postgres>> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET LOCAL statement_timeout='1s'")
         .execute(&mut *tx)

@@ -50,13 +50,28 @@ async fn answer(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
+    // The page names the offer it shows, since one account can hold several from an organization.
+    let invitation = match form.get("invitation_id").map(|id| id.parse::<i64>()) {
+        Some(Ok(id)) => Some(id),
+        Some(Err(_)) => {
+            return organization::respond(
+                &ctx,
+                None,
+                StatusCode::NOT_FOUND,
+                Some("This invitation no longer exists.".into()),
+                Fields::new(),
+            )
+            .await
+        }
+        None => None,
+    };
     let pool = &ctx.state.pool;
     let outcome = if accept {
-        organizations::accept_organization_invitation(pool, actor, org)
+        organizations::accept_organization_invitation(pool, actor, org, invitation)
             .await
             .map(unit)
     } else {
-        organizations::decline_organization_invitation(pool, actor, org).await
+        organizations::decline_organization_invitation(pool, actor, org, invitation).await
     };
     let outcome = match outcome {
         Ok(outcome) => outcome,

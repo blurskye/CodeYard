@@ -3,7 +3,7 @@ use crate::webui::pages::auth::password_field;
 use dioxus::prelude::*;
 use std::collections::HashMap;
 
-pub(in crate::webui::pages) const FIELD: &str = "w-full bg-background border border-border text-sm text-foreground focus:border-primary focus:outline-none";
+pub(in crate::webui) const FIELD: &str = "w-full bg-background border border-border text-sm text-foreground focus:border-primary focus:outline-none";
 pub(in crate::webui::pages) const SUBMIT: &str = "btn btn-primary";
 pub(in crate::webui::pages) const PANEL: &str =
     "panel rounded-md border border-border bg-card p-6 space-y-5";
@@ -19,6 +19,10 @@ pub struct FormValues {
     pub bio: String,
     pub location: String,
     pub website: String,
+    pub company: String,
+    pub twitter_username: String,
+    pub hireable: bool,
+    pub is_admin: bool,
     pub name: String,
     pub public_key: String,
     pub scope: String,
@@ -40,6 +44,10 @@ pub fn preserved_values(form: &HashMap<String, String>) -> FormValues {
         bio: get("bio"),
         location: get("location"),
         website: get("website"),
+        company: get("company"),
+        twitter_username: get("twitter_username"),
+        hireable: get("hireable") == "yes",
+        is_admin: get("is_admin") == "on",
         name: get("name"),
         scope: get("scope"),
         expiry: get("expiry"),
@@ -54,7 +62,7 @@ pub fn preserved_values(form: &HashMap<String, String>) -> FormValues {
     }
 }
 
-pub(in crate::webui::pages) fn csrf(token: &str) -> Element {
+pub(in crate::webui) fn csrf(token: &str) -> Element {
     rsx! { input { r#type: "hidden", name: "csrf_token", value: token.to_owned() } }
 }
 pub(in crate::webui::pages) fn notice(message: Option<&str>, error: bool) -> Element {
@@ -94,7 +102,7 @@ pub(in crate::webui::pages) fn managed_account_form(
             {text_field("email", "Email (optional)", values.email.clone(), "email", false, 320)}
             {password_field("password", "Temporary password", true)}
             label { class: "identity-check",
-                input { r#type: "checkbox", name: "is_admin" }
+                input { r#type: "checkbox", name: "is_admin", checked: values.is_admin }
                 " Make administrator"
             }
             p { class: "identity-form-hint", "The new user will be asked to change this password when they sign in." }

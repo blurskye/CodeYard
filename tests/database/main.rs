@@ -1,4 +1,6 @@
 mod copy;
+mod dependency_security;
+mod migrations;
 mod native;
 mod ops;
 mod queries;

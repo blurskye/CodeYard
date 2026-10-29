@@ -1,0 +1,15 @@
+# https://github.com/pulumi/setup-pulumi/tree/b374ceb6168550de27c6eba92e01c1a774040e11
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: pulumi/setup-pulumi@b374ceb6168550de27c6eba92e01c1a774040e11 # v2
+        with:
+          pulumi-version: "3.151.0"
+      - name: Assert documented effect
+        run: |
+          pulumi version | grep 'v3\.151\.0'
+          echo compat:ok

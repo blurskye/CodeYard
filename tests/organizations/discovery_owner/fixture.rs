@@ -100,6 +100,22 @@ impl Database {
                 .unwrap(),
         }
     }
+    /// Real fork ownership permits only one fork of a source per organization.
+    pub async fn distinct_fork_organization(&self, repo: i64) -> String {
+        let org = 720000 + repo;
+        self.execute(
+            "INSERT INTO organizations(id,name) VALUES($1,'fork_fixture_' || $2)",
+            &[org, repo],
+        )
+        .await;
+        self.execute("INSERT INTO org_memberships(org_id,user_id,role) SELECT $1,user_id,'owner' FROM org_memberships WHERE org_id=$2 AND role='owner' LIMIT 1",&[org,COLLISION]).await;
+        self.execute(
+            "UPDATE repositories SET owner_org_id=$1 WHERE id=$2",
+            &[org, repo],
+        )
+        .await;
+        format!("fork_fixture_{repo}")
+    }
     pub async fn set_disk_path(&self, repo: i64, path: &std::path::Path) {
         let sql = "UPDATE repositories SET disk_path=$1 WHERE id=$2";
         match self {

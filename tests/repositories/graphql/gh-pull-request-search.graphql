@@ -1,0 +1,8 @@
+# cli/cli 5056c0a8ef34512be1d5b4120d4e4b30412ada8b
+# pkg/cmd/pr/list/http.go PullRequestSearch, with api.PullRequestGraphQL field substitutions.
+fragment pr on PullRequest { id number title state url author { login ... on User { id name } } }
+query PullRequestSearch($q: String!, $type: SearchType!, $limit: Int!, $endCursor: String) {
+  search(query: $q, type: $type, first: $limit, after: $endCursor) {
+    issueCount nodes { ...pr } pageInfo { hasNextPage endCursor }
+  }
+}

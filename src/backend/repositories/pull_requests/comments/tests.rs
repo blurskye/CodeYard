@@ -40,6 +40,8 @@ async fn discarded_review_cannot_authorize_comment_publication() {
             base_branch: "main",
             base_sha: &head,
             is_draft: false,
+            maintainer_can_modify: false,
+            issue: None,
         },
     )
     .await
@@ -50,6 +52,8 @@ async fn discarded_review_cannot_authorize_comment_publication() {
             pr_id: pull.id,
             author_id: user.id,
             body: "Private draft",
+            start_line: None,
+            start_side: None,
             path: Some("file"),
             line: Some(1),
             side: Some("RIGHT"),
@@ -77,6 +81,8 @@ async fn discarded_review_cannot_authorize_comment_publication() {
             pr_id: pull.id,
             author_id: user.id,
             body: "Submitted comment",
+            start_line: None,
+            start_side: None,
             path: Some("file"),
             line: Some(1),
             side: Some("RIGHT"),

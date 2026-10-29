@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 IMAGE=${IMAGE:-localhost/codeyard-backend}
-TAG=${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)}
+TAG=${1:-$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')}
 if [[ $TAG == latest ]]; then
     echo "Give a version tag; latest is tagged after the image has started." >&2
     exit 1
@@ -34,25 +34,41 @@ if [[ $dirty == 1 && ${ALLOW_DIRTY:-} != 1 ]]; then
     exit 1
 fi
 
+ACT_BINARY=$(command -v "${ACT_BINARY:-act}") || {
+    echo "Release needs the pinned act from the Codeyard Nix environment." >&2
+    exit 1
+}
+if [[ $("$ACT_BINARY" --version) != *0.2.89-codeyard.1 ]] || ! "$ACT_BINARY" --help | grep -F -- '--environment-values-file' >/dev/null; then
+    echo "Release needs act 0.2.89-codeyard.1 with job-scoped environment values." >&2
+    exit 1
+fi
+
 echo "== Build dist/release"
 rm -rf dist/release
 mkdir -p dist/release
 WEBUI_DIST="$PWD/dist/release/webui" bash scripts/build-webui.sh release
-cargo build --release --locked --bin codeyard --message-format=json >dist/release/cargo-artifacts.json
-executable=$(python3 -I -c '
+cargo build --release --locked --workspace --bins --message-format=json >dist/release/cargo-artifacts.json
+for binary in codeyard codeyard-actions; do
+    executable=$(python3 -I -c '
 import json, sys
 paths = [m["executable"] for line in sys.stdin if (m := json.loads(line)).get("reason") == "compiler-artifact"
-         and m["target"]["name"] == "codeyard" and "bin" in m["target"]["kind"] and m.get("executable")]
+         and m["target"]["name"] == sys.argv[1] and "bin" in m["target"]["kind"] and m.get("executable")]
 if len(paths) != 1:
-    sys.exit("Expected one codeyard executable from Cargo")
+    sys.exit(f"Expected one {sys.argv[1]} executable from Cargo")
 print(paths[0])
-' <dist/release/cargo-artifacts.json)
+' "$binary" <dist/release/cargo-artifacts.json)
+    install -m 0755 "$executable" "dist/release/$binary"
+done
 rm dist/release/cargo-artifacts.json
-install -m 0755 "$executable" dist/release/codeyard
+install -m 0755 "$ACT_BINARY" dist/release/act
 # A binary built in a Nix shell loads its interpreter and libraries from /nix/store, and the
 # image has none of those paths. Ship their closure in the archive the image unpacks. A binary
 # that names no store path gets an empty archive.
-store_roots=$(python3 -I scripts/elf-store-paths.py dist/release/codeyard)
+store_roots=$(
+    for binary in codeyard codeyard-actions act; do
+        python3 -I scripts/elf-store-paths.py "dist/release/$binary"
+    done | sort -u
+)
 store_paths=$PWD/dist/store-paths.txt
 : >"$store_paths"
 if [[ -n $store_roots ]]; then
@@ -68,7 +84,7 @@ tar -czf dist/release/runtime-nix.tar.gz --owner=0 --group=0 --numeric-owner \
 (
     cd dist/release
     {
-        sha256sum codeyard runtime-nix.tar.gz
+        sha256sum codeyard codeyard-actions act runtime-nix.tar.gz
         find webui -type f | LC_ALL=C sort | xargs sha256sum
     } > SHA256SUMS
 )
@@ -83,5 +99,11 @@ podman run --rm "$IMAGE:$TAG" codeyard --version >/dev/null || {
     echo "codeyard does not run in $IMAGE:$TAG; see the error above. A file it needs may be missing from the image." >&2
     exit 1
 }
+podman run --rm "$IMAGE:$TAG" codeyard-actions --version >/dev/null || {
+    echo "codeyard-actions does not run in $IMAGE:$TAG; see the error above." >&2
+    exit 1
+}
+podman run --rm "$IMAGE:$TAG" act --version >/dev/null
+podman run --rm "$IMAGE:$TAG" act --help | grep -F -- '--environment-values-file' >/dev/null
 podman tag "$IMAGE:$TAG" "$IMAGE:latest"
 podman image inspect "$IMAGE:$TAG" --format 'built {{.Id}} ({{.Size}} bytes)'

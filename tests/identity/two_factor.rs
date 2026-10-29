@@ -623,14 +623,19 @@ async fn submit(
     for (name, value) in fields {
         body.append_pair(name, value);
     }
+    let origin = std::env::var("PUBLIC_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "http://forge.example.test".into());
+    let authority = url::Url::parse(&origin).unwrap().authority().to_owned();
     let response = router
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
                 .uri(path)
-                .header(header::HOST, "forge.example.test")
-                .header(header::ORIGIN, "http://forge.example.test")
+                .header(header::HOST, authority)
+                .header(header::ORIGIN, origin)
                 .header(header::ACCEPT, "text/html")
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .header(header::COOKIE, format!("session_id={session}"))

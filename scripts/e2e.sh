@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end check of the real codeyard server, on SQLite, PostgreSQL and a cluster.
 #
-# Needs Rust, Git, OpenSSH (ssh and ssh-keygen), Python 3, act and the Dioxus CLI, plus a
+# Needs Rust, Git, OpenSSH (ssh and ssh-keygen), Python 3 with jsonschema, gh, OpenSSL,
+# Node.js 24, act and the Dioxus CLI, plus a
 # PostgreSQL server for the PostgreSQL and cluster rounds:
 #
 #   GITSERV_TEST_DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/DATABASE bash scripts/e2e.sh
@@ -10,13 +11,17 @@
 #
 # It builds the browser bundle and the server binary, then, for each database,
 # starts `codeyard serve` (built-in SSH, local CI with act) on free localhost ports
-# and drives it like a user would. The cluster round uses web/SSH, two storage
-# nodes and a database-free CI worker, paired by ticket, declared key and token.
-# Checks use the HTML forms with their CSRF tokens (no
+# and drives it like a user would. Each single-node round ends with a backup under load,
+# a restore into an empty installation, a kept deletion and a rebuild; the PostgreSQL
+# round also pairs two separate runners and restores the database to before newer Git.
+# The cluster round turns on cluster mode and uses web/SSH, two storage nodes and a
+# database-free runner, paired by ticket, declared key and token. Checks use the HTML forms with their CSRF tokens (no
 # JavaScript), the JSON API, and git over SSH and HTTP (the ssh client only talks to
-# that local server). Every step prints PASS or FAIL. The exit status is non-zero
+# that local server). Unmodified gh uses a test-owned TLS GHES tunnel to these same
+# servers; pinned actions/github-script runs on the native runner, and signed webhook
+# deliveries are checked against the vendored schemas. Every step prints PASS or FAIL. The exit status is non-zero
 # when any step failed or was skipped. A cold build takes several minutes; with the
-# build done, the single-node rounds take about a minute each.
+# build done, the SQLite round takes a few minutes and the PostgreSQL round about ten.
 #
 # Settings (environment):
 #   E2E_DATABASES   rounds to run, default "sqlite postgres cluster". PostgreSQL
@@ -25,6 +30,7 @@
 #   E2E_PROFILE     release (default) or debug, for the server and the bundle.
 #   E2E_SKIP_BUILD  1: use the artifacts of an earlier run, build nothing.
 #   E2E_BUILD_ONLY  1: build, then stop.
+#   E2E_GITHUB_ONLY 1: run only the real GitHub clients and their single-node fixtures.
 #   E2E_KEEP        1: keep the temporary directory (server log, repositories).
 #   E2E_VERBOSE     1: print the log of passing steps as well.
 #   E2E_TIMEOUT     seconds after which the whole run is stopped (default 1500), so a
@@ -60,7 +66,12 @@ case $E2E_PROFILE in
     debug) CARGO_PROFILE=() ;;
     *) echo "E2E_PROFILE must be release or debug" >&2; exit 2 ;;
 esac
-BIN=$TARGET_DIR/$E2E_PROFILE/codeyard
+# Cargo puts the binaries for an explicit build target under a directory of its name.
+PROFILE_DIR=$TARGET_DIR/${CARGO_BUILD_TARGET:+$CARGO_BUILD_TARGET/}$E2E_PROFILE
+BIN=$PROFILE_DIR/codeyard
+ACTIONS_BIN=$PROFILE_DIR/codeyard-actions
+GITHUB_HELPER=$ROOT/scripts/e2e-github.py
+GITHUB_PYTHON=${CODEYARD_E2E_PYTHON:-python3}
 
 # ssh and ssh-keygen may be outside PATH (NixOS keeps them in the system profile).
 find_tool() {
@@ -84,14 +95,16 @@ PG_DB=''
 RUN=''
 STARTED=$SECONDS
 
-drop_pg() {
+drop_pg() { # drops the round's database and the one a restore made
     [[ -n $PG_DB ]] || return 0
-    local dropdb
-    if ! dropdb=$(pg_tool dropdb) || ! pg_command "$GITSERV_TEST_DATABASE_URL" \
-        "$dropdb" --maintenance-db --if-exists --force "$PG_DB"; then
-        echo "Failed to drop disposable PostgreSQL database $PG_DB" >&2
-        return 1
-    fi
+    local dropdb name
+    for name in "$PG_DB" "${PG_DB}_r"; do
+        if ! dropdb=$(pg_tool dropdb) || ! pg_command "$GITSERV_TEST_DATABASE_URL" \
+            "$dropdb" --maintenance-db --if-exists --force "$name"; then
+            echo "Failed to drop disposable PostgreSQL database $name" >&2
+            return 1
+        fi
+    done
     PG_DB=''
     return 0
 }
@@ -255,18 +268,25 @@ build_bundle() {
 }
 
 build_server() {
-    cargo build --locked "${CARGO_PROFILE[@]}" -p codeyard --bin codeyard
-    [[ -x $BIN ]]
-    ls -l "$BIN"
+    cargo build --locked "${CARGO_PROFILE[@]}" -p codeyard --bin codeyard -p codeyard-actions --bin codeyard-actions
+    [[ -x $BIN && -x $ACTIONS_BIN ]]
+    ls -l "$BIN" "$ACTIONS_BIN"
 }
 
 check_build_artifacts() {
     [[ -x $BIN ]] || { echo "no server binary at $BIN: run without E2E_SKIP_BUILD" >&2; return 1; }
+    [[ -x $ACTIONS_BIN ]] || { echo "no native runner at $ACTIONS_BIN: run without E2E_SKIP_BUILD" >&2; return 1; }
     [[ -f $WEBUI_DIST/index.html ]] || { echo "no bundle at $WEBUI_DIST: run without E2E_SKIP_BUILD" >&2; return 1; }
     ls -l "$BIN" "$WEBUI_DIST/index.html"
 }
 
 # ------------------------------------------------------- server lifecycle ---
+
+pg_url() { # pg_url NAME: GITSERV_TEST_DATABASE_URL pointed at the database NAME
+    E2E_PG_DATABASE="$1" "$PYTHON" -I -c 'import os, urllib.parse as u
+parts = u.urlsplit(os.environ["GITSERV_TEST_DATABASE_URL"])
+print(parts._replace(path="/" + os.environ["E2E_PG_DATABASE"]).geturl())'
+}
 
 prepare_database() {
     drop_pg || return 1
@@ -282,9 +302,8 @@ prepare_database() {
             createdb=$(pg_tool createdb) || { echo "createdb not found" >&2; return 1; }
             PG_DB=gitserv_e2e_$(date +%s)_$$
             pg_command "$GITSERV_TEST_DATABASE_URL" "$createdb" --maintenance-db "$PG_DB" || return 1
-            DATABASE_URL=$(E2E_PG_DATABASE="$PG_DB" "$PYTHON" -I -c 'import os, urllib.parse as u
-parts = u.urlsplit(os.environ["GITSERV_TEST_DATABASE_URL"])
-print(parts._replace(path="/" + os.environ["E2E_PG_DATABASE"]).geturl())') || return 1
+            PG_CURRENT=$PG_DB
+            DATABASE_URL=$(pg_url "$PG_DB") || return 1
             echo "PostgreSQL database $PG_DB"
             ;;
         *) echo "unknown database '$ROUND'" >&2; return 1 ;;
@@ -295,36 +314,51 @@ server_dir() {
     if [[ ${1:-server} == server ]]; then printf '%s\n' "$RUN"; else printf '%s/nodes/%s\n' "$RUN" "$1"; fi
 }
 
-# Shared environment for serve and operator commands; ci1 never gets DATABASE_URL.
+is_runner() { [[ $1 == ci1 || $1 == r1 || $1 == r2 ]]; }
+
+# Shared environment for serve and operator commands; runners never get DATABASE_URL.
 configure_node() {
-    local node=$1 roles=web,storage,ssh,actions-worker
+    local node=$1 roles=${SERVER_ROLES:-server,runner}
     NODE_DIR=$(server_dir "$node")
     mkdir -p "$NODE_DIR/home" "$NODE_DIR/repos"
     : >"$RUN/.env"
     case $node in
         web1) roles=web,ssh ;;
         store1 | store2) roles=storage ;;
-        ci1) roles=actions-worker ;;
+        ci1 | r1 | r2) roles=runner ;;
     esac
     NODE_ENV=(
-        "PATH=$PATH" "HOME=$NODE_DIR/home" "LANG=C.UTF-8" "NO_COLOR=1" "RUST_LOG=${RUST_LOG:-info}"
+        "PATH=${PG_BIN:+$PG_BIN:}$PATH" "HOME=$NODE_DIR/home" "LANG=C.UTF-8" "NO_COLOR=1" "RUST_LOG=${RUST_LOG:-info}"
         "GITSERV_STATE_DIR=$NODE_DIR/state" "REPOS_PATH=$NODE_DIR/repos" "HOST_KEY_PATH=$NODE_DIR/host_key"
         "HTTP_ADDR=127.0.0.1:${HTTP_PORTS[$node]:-0}" "SSH_ADDR=127.0.0.1:${SSH_PORTS[$node]:-0}" "SSH_MODE=builtin"
         "GITSERV_NODE_ROLES=$roles"
         "PUBLIC_URL=$BASE" "PUBLIC_HTTP_CLONE_BASE=$BASE" "COOKIE_SECURE=false"
         "WEBUI_DIST=$WEBUI_DIST"
-        "CI_EXECUTION_MODE=local" "CI_ACT_BINARY=$ACT" "CI_MAX_ACTIVE_RUNS=2" "CI_RUN_TIMEOUT_SECONDS=300"
+        "CI_EXECUTION_MODE=local" "CI_ACT_BINARY=$ACT" "CI_ACTIONS_BINARY=$ACTIONS_BIN"
+        "CI_MAX_ACTIVE_RUNS=2" "CI_RUN_TIMEOUT_SECONDS=300" "WEBHOOKS_ALLOW_PRIVATE=true"
     )
-    if [[ -n $DATABASE_URL && $node != ci1 ]]; then NODE_ENV+=("DATABASE_URL=$DATABASE_URL"); fi
+    if [[ -n $DATABASE_URL ]] && ! is_runner "$node"; then NODE_ENV+=("DATABASE_URL=$DATABASE_URL"); fi
+    if ! is_runner "$node"; then NODE_ENV+=("SECRETS_MASTER_KEY=$(get master_key)"); fi
+    # A single server opens the node connection only for runners on other processes.
+    if [[ $node == server && -n ${SERVER_IROH:-} ]]; then
+        NODE_ENV+=("NODE_NAME=server" "IROH_BIND=127.0.0.1:$SERVER_IROH" "IROH_ADVERTISE=127.0.0.1:$SERVER_IROH")
+    fi
     if [[ $node != server ]]; then
         NODE_ENV+=("NODE_NAME=$node" "IROH_BIND=127.0.0.1:${IROH_PORTS[$node]}" "IROH_ADVERTISE=127.0.0.1:${IROH_PORTS[$node]}")
-        if [[ $node != ci1 ]]; then NODE_ENV+=("SECRETS_MASTER_KEY=$(get master_key)"); fi
         case $node in
             web1) NODE_ENV+=("CLUSTER_NODES=$(get store2_public):storage:store2") ;;
             store2) NODE_ENV+=("NODE_KEY=$(get store2_key)") ;;
             ci1) NODE_ENV+=("CLUSTER_JOIN_TOKEN=$(get worker_token)") ;;
+            # One run at a time each, so queued runs spread over both runners.
+            r1 | r2) NODE_ENV+=("CLUSTER_JOIN_TOKEN=$(get runner_token)" "CI_MAX_ACTIVE_RUNS=1") ;;
         esac
     fi
+}
+
+# server_cli ARGS...: an operator command with the single server's environment.
+server_cli() {
+    configure_node server
+    (cd "$NODE_DIR" && exec env -i "${NODE_ENV[@]}" timeout 900 "$BIN" "$@" < /dev/null)
 }
 
 cluster_cli() {
@@ -373,7 +407,7 @@ start_server() { # inline: starts a node and waits for its actual services
                     grep -q '"status":"ok"' "$dir/health.json" && ready=1
                 fi ;;
             store1 | store2) tail -n +"$first_line" "$dir/server.log" | grep 'starting codeyard' >/dev/null && ready=1 ;;
-            ci1) tail -n +"$first_line" "$dir/server.log" | grep 'database-free actions-worker ready' >/dev/null && ready=1 ;;
+            ci1 | r1 | r2) tail -n +"$first_line" "$dir/server.log" | grep 'database-free runner ready' >/dev/null && ready=1 ;;
         esac
         ((ready)) && break
         waited=$((waited + 1))
@@ -452,20 +486,18 @@ t_keys() { # throwaway key pairs for the users and one nobody registered
 }
 
 t_setup() {
-    # Before setup every page leads to /setup, and the JSON status agrees.
+    # Before setup every page leads to the native setup form.
     as anon req GET / --status 303 --location /setup
     as anon req GET /login --status 303 --location /setup
-    as anon req GET /api/auth/setup-status --accept json --json-eq setup_completed=false
+    as anon req GET /setup --accept model --json-eq page.model.Auth.mode=Setup
     # The real form with the CSRF token it carries; no JavaScript involved.
     as alice form /setup --action /setup --has node_mode \
         --set username=alice --set email=alice@example.test \
         --set "password=$PW_ALICE" --set "confirm_password=$PW_ALICE" --set node_mode=public \
         --status 303 --location /
     as alice req GET / --contains 'Account menu for alice'
-    as alice req GET /api/auth/me --accept json \
-        --json-eq success=true --json-eq user.username=alice --json-eq user.is_admin=true
-    as anon req GET /api/auth/setup-status --accept json \
-        --json-eq setup_completed=true --json-eq node_mode=public
+    as alice req GET /settings --accept model \
+        --json-eq chrome.username=alice --json-eq chrome.is_admin=true
     # Setup does not run twice.
     as anon req GET /setup --status 409 --contains 'already complete'
 }
@@ -476,7 +508,7 @@ t_users() {
         --set username=bob --set email=bob@example.test \
         --set "password=$PW_BOB" --set "confirm_password=$PW_BOB" --location /
     as bob req GET / --contains 'Account menu for bob'
-    as bob req GET /api/auth/me --accept json --json-eq user.username=bob --json-eq user.is_admin=false
+    as bob req GET /settings --accept model --json-eq chrome.username=bob --json-eq chrome.is_admin=false
     # Refusals redisplay the form with what was typed.
     as dup form /register --action /register --has username \
         --set username=bob --set "password=$PW_BOB" --set "confirm_password=$PW_BOB" \
@@ -487,17 +519,15 @@ t_users() {
     # Sign out through the form, then in again through the login form.
     as bob form /logout --action /logout --location /login
     as bob req GET / --lacks 'Account menu for bob'
-    as bob req GET /api/auth/me --accept json --json-eq success=false
+    as bob req GET /login --accept model --json-eq chrome.username=null
     as bob form /login --action /login --has username \
         --set username=bob --set password=not-the-password \
         --status 401 --contains 'Invalid username or password' --field-eq username=bob
     as bob form /login --action /login --has username \
         --set username=bob --set "password=$PW_BOB" --location /
     as bob req GET / --contains 'Account menu for bob'
-    # The JSON login is a second way in.
-    as bobapi req POST /api/auth/login --accept json \
-        --json "{\"username\":\"bob\",\"password\":\"$PW_BOB\"}" \
-        --json-eq success=true --json-eq user.username=bob
+    # Hydrated navigation reads the same signed-in presentation model.
+    as bob req GET /settings --accept model --json-eq chrome.username=bob
 }
 
 t_csrf() {
@@ -580,8 +610,6 @@ t_ssh_keys() {
             --location '/settings?tab=keys&saved=key'
         as "$user" req GET '/settings?tab=keys&saved=key' \
             --contains "e2e $user key" --contains "$fingerprint" --contains 'SSH key added'
-        as "$user" req GET /api/user/keys --accept json \
-            --json-eq "0.fingerprint=$fingerprint" --json-eq "0.name=e2e $user key"
     done
     # A private key pasted by mistake is refused and never echoed back.
     as alice form '/settings?tab=keys' --action /settings/keys --has public_key \
@@ -592,16 +620,16 @@ t_ssh_keys() {
 
 t_tokens() {
     local read write
-    read=$(as alice req POST /api/user/tokens --accept json --status 201 \
-        --json '{"name":"e2e read","scope":"read"}' --print json:value)
+    read=$(as alice form '/settings?tab=tokens' --action /settings/tokens --has name \
+        --set 'name=e2e read' --set scope=read --set expiry=never --status 200 \
+        --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?(cy_pat_[0-9a-f]{64})')
     write=$(as alice form '/settings?tab=tokens' --action /settings/tokens --has name \
-        --set 'name=e2e write' --set scope=write --status 200 \
-        --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?([0-9a-f]{64})')
+        --set 'name=e2e write' --set scope=write --set expiry=never --status 200 \
+        --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?(cy_pat_[0-9a-f]{64})')
     put read_token "$read"
     put write_token "$write"
     as alice req GET '/settings?tab=tokens' --contains 'e2e read' --contains 'e2e write' \
         --lacks "$read" --lacks "$write"
-    as alice req GET /api/user/tokens --accept json --lacks "$read" --lacks "$write"
 }
 
 git_with_token() {
@@ -757,6 +785,9 @@ t_clone() {
 
 t_ci_push() {
     local work=$RUN/work/ci-demo
+    # Keep the original act coverage; the real github-script repository uses the native engine.
+    as alice form '/alice/ci-demo/settings?tab=actions' --action /alice/ci-demo/_forms/actions-settings \
+        --has engine --set engine=act --location '/alice/ci-demo/settings?tab=actions'
     rm -rf "$work"
     mkdir -p "$work/.github/workflows"
     cd "$work"
@@ -1223,6 +1254,9 @@ t_pr_stack() {
 t_pr_review_pages() {
     local tip head pr cid
     read -r tip head pr <<<"$(open_pull review-page review-page.txt)"
+    head=$(as alice req POST /api/repos/alice/proj/contents/range.txt --accept json --status 201 \
+        --json "{\"content\":\"$(printf 'one\ntwo\nthree\nfour\n' | base64 -w0)\",\"message\":\"Add range fixture\",\"branch\":\"review-page\",\"expected_revision\":\"$head\"}" \
+        --print json:sha)
     # Reviewers must be able to write; grant it here rather than rely on an earlier step.
     as alice req POST /api/repos/alice/proj/collaborators --accept json --status 200,201 \
         --json '{"username":"bob","access_level":"write"}'
@@ -1257,6 +1291,7 @@ t_pr_review_pages() {
     as alice req GET "/alice/proj/pulls/$pr" --lacks 'Remove the review request for bob' \
         --contains 'Ask bob to review again'
     as alice req GET "/api/repos/alice/proj/pulls/$pr/requested_reviewers" --accept json --contains-raw '[]'
+    as bob review-range "/alice/proj/pulls/$pr/diff" --path range.txt
 }
 
 # A mention notifies the mentioned user and links on the page; a commit SHA and a #number
@@ -1355,31 +1390,8 @@ open(sys.argv[1], "wb").write(png)' "$png"
     as bob req GET "/api/files/$note_id/download" --accept any --status 404
     as anon req GET "/api/files/$note_id/download" --accept any --status 404
     as bob req GET "/api/files/$note_id/dl" --accept json --status 404
-}
-
-# A picture is set from a confirmed upload of the user's own, made for a picture.
-t_avatar_api() {
-    local png=$RUN/avatar.png note=$RUN/note.txt id other bobs sha
-    sha=$(sha256sum "$png" | cut -d' ' -f1)
-    id=$(upload_as_alice avatar.png image/png avatar public "$png" | tail -n 1)
-    as alice req PUT /api/user/avatar --accept json --json "{\"file_id\":\"$id\"}" \
-        --json-eq "avatar_url=/api/files/$id/download"
-    as alice req GET /api/auth/me --accept json --json-eq "user.avatar_url=/api/files/$id/download"
-    as anon req GET "/api/files/$id/download" --accept any --header-eq 'content-type: image/png' --body-sha256 "$sha"
-    as bob req GET /alice --contains "/api/files/$id/download"
-    # Another user's picture, a file made for something else, and strangers are refused.
-    other=$(upload_as_alice note.txt text/plain other owner "$note" | tail -n 1)
-    bobs=$(upload_as bob bob.png image/png avatar public "$png" | tail -n 1)
-    as alice req PUT /api/user/avatar --accept json --status 422 --json "{\"file_id\":\"$other\"}" \
-        --json-eq error=unusable_file
-    as alice req PUT /api/user/avatar --accept json --status 422 --json "{\"file_id\":\"$bobs\"}" \
-        --json-eq error=unusable_file
-    as anon req PUT /api/user/avatar --accept json --status 401 --json "{\"file_id\":\"$id\"}"
-    as alice req GET /api/auth/me --accept json --json-eq "user.avatar_url=/api/files/$id/download"
-    # Removing it deletes the file.
-    as alice req DELETE /api/user/avatar --status 204
-    as alice req GET /api/auth/me --accept json --json-eq user.avatar_url=null
-    as anon req GET "/api/files/$id/download" --accept any --status 404
+    put note_id "$note_id"
+    put note_sha "$(sha256sum "$note" | cut -d' ' -f1)"
 }
 
 # The profile settings form sends the picture itself; it works without JavaScript.
@@ -1389,7 +1401,7 @@ t_avatar_profile_form() {
     as alice req GET '/settings?tab=profile' --contains 'Profile picture' --lacks 'Remove picture'
     as alice form '/settings?tab=profile' --action /settings/avatar --file "picture=$png" \
         --location '/settings?tab=profile&saved=avatar'
-    url=$(as alice req GET /api/auth/me --accept json --print json:user.avatar_url)
+    url=$(as alice req GET /settings --accept model --print json:page.model.Settings.model.profile.avatar_url)
     [[ $url == /api/files/*/download ]]
     as anon req GET "$url" --accept any --header-eq 'content-type: image/png' --body-sha256 "$sha"
     as alice req GET '/settings?tab=profile&saved=avatar' --contains 'Profile picture updated.' \
@@ -1398,11 +1410,11 @@ t_avatar_profile_form() {
     # Bytes that are not a picture are refused and the picture stays.
     as alice form '/settings?tab=profile' --action /settings/avatar --file "picture=$fake" \
         --status 422 --contains 'Choose a PNG, JPEG, GIF or WebP picture'
-    as alice req GET /api/auth/me --accept json --json-eq "user.avatar_url=$url"
+    as alice req GET /settings --accept model --json-eq "page.model.Settings.model.profile.avatar_url=$url"
     # The remove form clears it and deletes the file.
     as alice form '/settings?tab=profile' --action /settings/avatar/remove \
         --location '/settings?tab=profile&saved=avatar-removed'
-    as alice req GET /api/auth/me --accept json --json-eq user.avatar_url=null
+    as alice req GET /settings --accept model --json-eq page.model.Settings.model.profile.avatar_url=null
     as anon req GET "$url" --accept any --status 404
 }
 
@@ -1477,7 +1489,7 @@ PAGES
 t_pages() {
     check_pages
     local target_id
-    target_id=$(as alice req GET /api/users/bob --accept json --print json:id)
+    target_id=$(as alice req GET '/admin/users?q=bob' --print 're:action="/admin/accounts/([0-9]+)/ban"')
     as alice page /admin/users --user alice --lane Identity --contains 'Ban bob'
     as bob req GET /admin/users --status 403
     as alice form /admin/users \
@@ -1486,15 +1498,15 @@ t_pages() {
     # The data client navigation fetches: same page, as typed JSON.
     as alice req GET /alice/proj --accept model --header-eq 'content-type: application/vnd.codeyard.page+json' \
         --json-eq page.lane=Repositories --json-eq location=/alice/proj --json-eq chrome.username=alice
-    # Native assets and the health/config endpoints.
+    # Native assets, health and the repository's clone endpoints.
     as anon req GET /assets/tailwind.css --header-has 'content-type: text/css'
     as anon req GET /assets/logo.svg --header-has 'content-type: image/svg+xml'
     as anon req GET /assets/fonts/mona-sans.woff2 --header-has 'content-type: font/woff2'
     as anon req GET /health --accept json --json-eq status=ok
     as anon req GET /ready --accept json --json-eq status=ready
     as bob req GET /admin/nodes --status 403
-    as anon req GET /api/config --accept json --json-eq ssh_mode=builtin \
-        --json-eq "http_clone_base=$BASE" --json-has "ssh_clone_base=:$SSH_PORT"
+    as anon req GET /alice/proj --contains-raw "$BASE/alice/proj.git" \
+        --contains-raw "ssh://git@localhost:$SSH_PORT/alice/proj.git"
     as anon req GET /no/such/page --status 404
 }
 
@@ -1513,7 +1525,7 @@ wait_ci_run() {
     if [[ $status != success ]]; then
         echo "run $id ended '$status'" >&2
         as alice req GET "/api/ci/jobs/$id" --accept json --print json:error_message >&2 || true
-        as alice req GET "/api/ci/jobs/$id/logs" --accept json --print json:logs >&2 || true
+        as alice req GET "/alice/ci-demo/actions?job=$id&view=logs&log_limit=5000" >&2 || true
         return 1
     fi
 }
@@ -1539,10 +1551,10 @@ t_ci_result() {
     wait_ci_run "$id" "$deadline"
     # The claiming worker stored its mode; a queued run is still `unassigned` until then.
     as alice req GET "/api/ci/jobs/$id" --accept json --json-eq mode=local
-    as alice req GET "/api/ci/jobs/$id/logs" --accept json --json-has 'logs.*.line=| hello'
+    as alice req GET "/alice/ci-demo/actions?job=$id&view=logs" --contains '| hello'
     # The workflow sees the real branch, repository and pusher, not act's defaults.
-    as alice req GET "/api/ci/jobs/$id/logs" --accept json \
-        --json-has 'logs.*.line=| context refs/heads/main alice/ci-demo alice'
+    as alice req GET "/alice/ci-demo/actions?job=$id&view=logs" \
+        --contains '| context refs/heads/main alice/ci-demo alice'
     as alice req GET "/alice/ci-demo/actions?job=$id" --contains '| hello' --contains 'gitserv/workflow/.github/workflows/ci.yml'
     as alice req GET "/api/repos/alice/ci-demo/commits/$sha/status" --accept json \
         --json-eq state=success --json-eq total_count=1 --json-eq statuses.0.context=gitserv/workflow/.github/workflows/ci.yml
@@ -1564,10 +1576,34 @@ t_ci_api_save() {
     wait_ci_run "$id" "$deadline"
 }
 
+# The GHES TLS tunnel and webhook receiver belong to this helper and stop before it returns.
+t_github_clients() {
+    local token id engine rc=0
+    token=$(as bob form '/settings?tab=tokens' --action /settings/tokens --has name \
+        --set 'name=real gh client' --set scope=write --set expiry=never --status 200 \
+        --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?(cy_pat_[0-9a-f]{64})')
+    put gh_bob_token "$token"
+    "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" || rc=$?
+    id=$(get gh_run_id)
+    [[ $id =~ ^[0-9a-f-]{36}$ ]]
+    if [[ $ROUND == sqlite ]]; then
+        engine=$("$PYTHON" -I - "$RUN/state/gitserv.db" "$id" <<'PY'
+import sqlite3, sys, uuid
+with sqlite3.connect(sys.argv[1]) as connection:
+    print(connection.execute("SELECT engine FROM ci_runs WHERE run_id=?", (uuid.UUID(sys.argv[2]).bytes,)).fetchone()[0])
+PY
+)
+    else
+        engine=$(pg_query "SELECT engine FROM ci_runs WHERE run_id='$id'")
+    fi
+    expect_eq 'github-script ran on the native engine' "$engine" codeyard-actions
+    return "$rc"
+}
+
 t_after_restart() {
     local head
     # Sessions, accounts, repositories and CI history live in the database/disk.
-    as alice req GET /api/auth/me --accept json --json-eq user.username=alice
+    as alice req GET /settings --accept model --json-eq chrome.username=alice
     as alice req GET /alice/proj --contains README.md
     as alice req GET "/api/ci/jobs/$(get ci_run)" --accept json --json-eq status=success
     as alice req GET "/api/repos/alice/proj/pulls/$(get pr_number)" --accept json --json-eq state=merged
@@ -1595,6 +1631,355 @@ t_log_clean() {
         return 1
     fi
     echo "$log: warnings: $(grep -c ' WARN ' "$log" || true), errors: $(grep -c ' ERROR ' "$log" || true) (negative checks log some on purpose)"
+}
+
+# ------------------------------------------------------------- runner steps --
+
+runners_restart_server() { # inline: the server keeps no runner of its own and opens the node connection
+    local udp
+    local -a tcp ports
+    stop_server || return 1
+    read -r udp < <(free_ports 1 udp) || return 1
+    SERVER_ROLES=server
+    SERVER_IROH=$udp
+    start_server || return 1
+    read -r -a tcp < <(free_ports 4) || return 1
+    read -r -a ports < <(free_ports 2 udp) || return 1
+    HTTP_PORTS[r1]=${tcp[0]} SSH_PORTS[r1]=${tcp[1]} IROH_PORTS[r1]=${ports[0]}
+    HTTP_PORTS[r2]=${tcp[2]} SSH_PORTS[r2]=${tcp[3]} IROH_PORTS[r2]=${ports[1]}
+    mkdir -p "$(server_dir r1)" "$(server_dir r2)"
+}
+
+t_runner_token() {
+    # A single-node installation invites runners only.
+    must_fail 'a storage invite in single-node mode' 'codeyard cluster enable' \
+        server_cli cluster invite --roles storage
+    put runner_token "$(server_cli cluster invite --reusable --roles runner)"
+}
+
+t_runners_repo() {
+    local work=$RUN/work/runners
+    as alice req POST /api/repos --accept json --status 201 \
+        --json '{"name":"runners","description":"Runs for the runner checks"}' --json-eq full_name=alice/runners
+    as alice form '/alice/runners/settings?tab=actions' --action /alice/runners/_forms/actions-settings \
+        --has engine --set engine=act --location '/alice/runners/settings?tab=actions'
+    rm -rf "$work"
+    mkdir -p "$work/.github/workflows"
+    cd "$work"
+    git_as alice init -q -b main
+    # Each run appends its commit to one file, so a run that ran twice shows up.
+    cat >.github/workflows/ci.yml <<YAML
+name: Runners
+on: [push]
+jobs:
+  slow:
+    runs-on: self-hosted
+    steps:
+      - run: sleep 12
+      - run: echo "\${{ github.sha }}" >>"$RUN/runner-marks"
+YAML
+    git_as alice add -A
+    git_as alice commit -q -m 'Add the slow workflow'
+    git_as alice remote add origin "$BASE/alice/runners.git"
+}
+
+runners_push() { # runners_push MESSAGE: one commit to alice/runners; prints "run commit"
+    local sha id deadline=$((SECONDS + 45))
+    cd "$RUN/work/runners"
+    git_as alice commit -q --allow-empty -m "$1"
+    git_with_token write push -q origin main
+    sha=$(git_as alice rev-parse HEAD)
+    until id=$(pg_query "SELECT run_id FROM ci_runs WHERE head_sha='$sha' AND event='push'") \
+        && [[ $id =~ ^[0-9a-f-]{36}$ ]]; do
+        ((SECONDS < deadline)) || { echo "no run was queued for $sha" >&2; return 1; }
+        sleep 1
+    done
+    echo "$id $sha"
+}
+
+runner_of() { # runner_of RUN: the runner node that claimed RUN
+    local key node
+    key=$(pg_query "SELECT split_part(worker, '/', 1) FROM ci_runs WHERE run_id='$1'")
+    for node in r1 r2; do
+        if [[ -n $key && $(pg_query "SELECT public_key FROM nodes WHERE name='$node'") == "$key" ]]; then
+            echo "$node"
+            return 0
+        fi
+    done
+    echo "run $1 was claimed by no runner ('$key')" >&2
+    return 1
+}
+
+t_runners_share() {
+    local n run sha taken=''
+    for n in 1 2 3 4; do
+        read -r run sha < <(runners_push "Shared run $n")
+        [[ -n $sha ]]
+        put "shared_$n" "$run $sha"
+    done
+    for n in 1 2 3 4; do
+        # put stores no final newline, so read from a here-string.
+        read -r run sha <<<"$(get "shared_$n")"
+        wait_ci_run "$run" $((SECONDS + 300))
+        taken+=" $(runner_of "$run")"
+        # One claim ran it once.
+        [[ $(grep -c "^$sha\$" "$RUN/runner-marks") == 1 ]] \
+            || { echo "run $run for $sha left $(grep -c "^$sha\$" "$RUN/runner-marks") marks" >&2; return 1; }
+    done
+    echo "claimed by:$taken"
+    [[ $taken == *r1* && $taken == *r2* ]]
+}
+
+t_runner_revoked() {
+    local n run sha first_line deadline=$((SECONDS + 60))
+    first_line=$(( $(wc -l <"$RUN/nodes/r1/server.log") + 1 ))
+    server_cli cluster revoke r1
+    for n in 1 2; do
+        read -r run sha < <(runners_push "While r1 is revoked $n")
+        [[ -n $sha ]]
+        wait_ci_run "$run" $((SECONDS + 150))
+        [[ $(runner_of "$run") == r2 ]]
+    done
+    until tail -n +"$first_line" "$RUN/nodes/r1/server.log" | grep 'CI worker could not claim a run' >/dev/null; do
+        ((SECONDS < deadline)) || { echo 'r1 did not attempt a refused claim' >&2; return 1; }
+        sleep 1
+    done
+    kill -0 "${SERVER_PIDS[r1]}"
+    server_cli cluster approve r1
+}
+
+t_runner_killed() { # inline: kill -9 the runner that is running a job
+    local run sha node other status message started deadline=$((SECONDS + 90))
+    read -r run sha < <(runners_push 'Killed mid-job') || return 1
+    [[ -n $run ]] || return 1
+    until [[ $(pg_query "SELECT status FROM ci_runs WHERE run_id='$run'") == running ]] \
+        && node=$(runner_of "$run" 2>/dev/null); do
+        ((SECONDS < deadline)) || { echo "run $run never started" >&2; return 1; }
+        sleep 1
+    done
+    sleep 3
+    echo "kill -9 $node (pid ${SERVER_PIDS[$node]}) while it runs $run"
+    kill -KILL "${SERVER_PIDS[$node]}" || return 1
+    wait "${SERVER_PIDS[$node]}" 2>/dev/null
+    unset "SERVER_PIDS[$node]"
+    started=$SECONDS
+    deadline=$((SECONDS + 200))
+    while status=$(pg_query "SELECT status FROM ci_runs WHERE run_id='$run'") \
+        && [[ $status == running || $status == queued ]]; do
+        ((SECONDS < deadline)) || { echo "run $run is still $status" >&2; return 1; }
+        sleep 2
+    done
+    message=$(as alice req GET "/api/ci/jobs/$run" --accept json --print json:error_message) || return 1
+    echo "run $run ended '$status' $((SECONDS - started)) s after the kill: $message"
+    [[ $status == failed && $message == *'stopped before the run finished'* ]] || return 1
+    # The other runner keeps working.
+    other=r1
+    [[ $node == r1 ]] && other=r2
+    read -r run sha < <(runners_push 'After the kill') || return 1
+    wait_ci_run "$run" $((SECONDS + 150)) || return 1
+    [[ $(runner_of "$run") == "$other" ]] || return 1
+    echo "$other ran $run"
+}
+
+runners_stop() { # inline
+    local node failed=0
+    for node in r1 r2; do
+        if [[ -n ${SERVER_PIDS[$node]:-} ]]; then stop_server "$node" || failed=1; fi
+        t_log_clean "$node" || failed=1
+    done
+    ((failed == 0))
+}
+
+# ------------------------------------------------------------- backup steps --
+
+# The database goes back to the copy in BACKUP; Git and uploads stay as they are.
+restore_database_only() {
+    local backup=$1 dropdb createdb pg_restore
+    if [[ -n $DATABASE_URL ]]; then
+        dropdb=$(pg_tool dropdb)
+        createdb=$(pg_tool createdb)
+        pg_restore=$(pg_tool pg_restore)
+        pg_command "$GITSERV_TEST_DATABASE_URL" "$dropdb" --maintenance-db --force "$PG_CURRENT"
+        pg_command "$GITSERV_TEST_DATABASE_URL" "$createdb" --maintenance-db "$PG_CURRENT"
+        pg_command "$DATABASE_URL" "$pg_restore" --dbname --exit-on-error --single-transaction \
+            --no-owner --no-privileges "$backup/database.pgdump"
+    else
+        rm -f "$RUN/state/gitserv.db" "$RUN/state/gitserv.db-wal" "$RUN/state/gitserv.db-shm"
+        cp "$backup/database.sqlite" "$RUN/state/gitserv.db"
+    fi
+}
+
+t_backup_under_load() {
+    local loop
+    # The README as backed up; earlier steps edited it, and the load only pushes another branch.
+    put readme_sha "$(as alice req GET /alice/proj/raw/main/README.md --print sha256)"
+    server_cli backup "$RUN/backup"
+    rm -f "$RUN/stop-load"
+    git_with_token write clone -q "$BASE/alice/proj.git" "$RUN/clone-load"
+    (
+        cd "$RUN/clone-load"
+        git_as alice checkout -q -b load
+        n=0
+        until [[ -e $RUN/stop-load ]]; do
+            n=$((n + 1))
+            git_as alice commit -q --allow-empty -m "Load $n"
+            git_with_token write push -q origin load
+            as alice req POST /api/repos/alice/proj/issues --accept json --status 201 \
+                --json "{\"title\":\"Load issue $n\"}" >/dev/null
+        done
+        echo "$n pushes and issues"
+    ) >"$RUN/load.log" 2>&1 &
+    loop=$!
+    sleep 3
+    # The second run into the same directory copies only what changed.
+    server_cli backup "$RUN/backup"
+    touch "$RUN/stop-load"
+    wait "$loop"
+    cat "$RUN/load.log"
+    ls -l "$RUN/backup"
+}
+
+t_restore_into_empty() { # inline: the data moves aside, as on a new machine
+    local createdb
+    mv "$RUN/state" "$RUN/state.before-restore" || return 1
+    mv "$RUN/repos" "$RUN/repos.before-restore" || return 1
+    if [[ -n $DATABASE_URL ]]; then
+        createdb=$(pg_tool createdb) || return 1
+        pg_command "$GITSERV_TEST_DATABASE_URL" "$createdb" --maintenance-db "${PG_DB}_r" || return 1
+        PG_CURRENT=${PG_DB}_r
+        DATABASE_URL=$(pg_url "$PG_CURRENT") || return 1
+    fi
+    server_cli restore "$RUN/backup"
+}
+
+readme_matches() { # readme_matches FILE: FILE is alice/proj's README as backed up
+    local sha
+    sha=$(sha256sum <"$1" | cut -d' ' -f1)
+    [[ $sha == "$(get readme_sha)" ]] || { echo "$1 has sha256 $sha, not the backed-up README" >&2; return 1; }
+}
+
+t_restored_works() {
+    server_cli repo verify | tee "$RUN/verify.out"
+    grep -q 'No problems found.' "$RUN/verify.out"
+    git_with_token read clone -q "$BASE/alice/proj.git" "$RUN/clone-restored"
+    readme_matches "$RUN/clone-restored/README.md"
+    as alice req GET "/api/repos/alice/proj/issues/$(get issue_number)" --accept json --json-eq 'title=E2E issue'
+    as alice req GET "/alice/proj/issues/$(get issue_number)" --contains 'First comment from the web form'
+    cd "$RUN/clone-restored"
+    git_with_token read fetch -q origin "refs/pull/$(get pr_number)/head:restored-pull"
+    git_as alice checkout -q restored-pull
+    grep -q 'feature work' feature.txt || { echo "the pull request checkout lacks feature.txt" >&2; return 1; }
+    as alice req GET "/alice/ci-demo/actions?job=$(get ci_run)&view=logs" --contains '| hello'
+    as alice req GET "/api/files/$(get note_id)/download" --accept any --body-sha256 "$(get note_sha)"
+}
+
+t_delete_kept() {
+    local work=$RUN/work/doomed
+    as alice req POST /api/repos --accept json --status 201 --json '{"name":"doomed"}'
+    rm -rf "$work"
+    mkdir -p "$work"
+    cd "$work"
+    git_as alice init -q -b main
+    printf 'kept for a week\n' >kept.txt
+    git_as alice add -A
+    git_as alice commit -q -m 'Before the delete'
+    git_with_token write push -q "$BASE/alice/doomed.git" main
+    server_cli backup "$RUN/backup-before-delete"
+    as alice req DELETE /api/repos/alice/doomed --status 204
+    as alice req GET /api/repos/alice/doomed --accept json --status 404
+    ls -d "$RUN"/repos/deleted/*.git
+}
+
+t_database_before_delete() {
+    restore_database_only "$RUN/backup-before-delete"
+    must_fail 'verify with the repository only in deleted/' 'a deleted copy is kept' server_cli repo verify
+    server_cli repo verify --repair
+    server_cli repo verify | grep 'No problems found.'
+}
+
+t_deleted_repo_back() {
+    git_with_token read clone -q "$BASE/alice/doomed.git" "$RUN/clone-doomed"
+    grep -q 'kept for a week' "$RUN/clone-doomed/kept.txt"
+}
+
+t_git_newer_prepare() {
+    local tip head number late moved
+    read -r tip head number < <(open_pull pitr-topic pitr.txt)
+    [[ $number =~ ^[0-9]+$ ]]
+    server_cli backup "$RUN/backup-t"
+    # After time T: the pull request's branch moves and another pull request opens.
+    moved=$(as alice req POST /api/repos/alice/proj/contents/pitr-more.txt --accept json --status 201 \
+        --json "{\"content\":\"$(printf 'after T\n' | base64 -w0)\",\"message\":\"After T\",\"branch\":\"pitr-topic\",\"expected_revision\":\"$head\"}" \
+        --print json:sha)
+    local deadline=$((SECONDS + 30))
+    until [[ $(as alice req GET "/api/repos/alice/proj/pulls/$number" --accept json --print json:head_sha) == "$moved" ]]; do
+        ((SECONDS < deadline)) || { echo "pull request #$number did not follow its branch" >&2; return 1; }
+        sleep 1
+    done
+    read -r tip head late < <(open_pull pitr-late late.txt)
+    [[ $late =~ ^[0-9]+$ ]]
+    put pitr_pull "$number"
+    put pitr_head "$moved"
+    put pitr_late "$late"
+}
+
+t_git_newer_repair() {
+    restore_database_only "$RUN/backup-t"
+    must_fail 'verify with Git newer than the database' "pull request #$(get pitr_pull) records" \
+        server_cli repo verify
+    server_cli repo verify --repair
+    server_cli repo verify | grep 'No problems found.'
+}
+
+t_git_newer_works() {
+    as alice req GET "/api/repos/alice/proj/pulls/$(get pitr_pull)" --accept json \
+        --json-eq state=open --json-eq "head_sha=$(get pitr_head)"
+    as alice req GET "/api/repos/alice/proj/pulls/$(get pitr_late)" --accept json --status 404
+    [[ -z $(git_as alice ls-remote "$BASE/alice/proj.git" "refs/pull/$(get pitr_late)/*") ]]
+    git_with_token read clone -q "$BASE/alice/proj.git" "$RUN/clone-after-t"
+    git_as alice -C "$RUN/clone-after-t" log -1 --format=%H origin/pitr-topic | grep -q "$(get pitr_head)"
+}
+
+language_rows() {
+    if [[ -n $DATABASE_URL ]]; then
+        pg_query 'SELECT count(*) FROM repo_languages'
+    else
+        "$PYTHON" -I -c 'import sqlite3, sys
+print(sqlite3.connect(sys.argv[1]).execute("SELECT count(*) FROM repo_languages").fetchone()[0])' "$RUN/state/gitserv.db"
+    fi
+}
+
+t_drop_derived() {
+    local pack
+    shopt -s nullglob
+    echo "language rows before: $(language_rows)"
+    rm -f "$RUN"/repos/*.git/objects/pack/*.idx "$RUN"/repos/*.git/objects/info/commit-graph
+    rm -rf "$RUN"/repos/*.git/objects/info/commit-graphs
+    if [[ -n $DATABASE_URL ]]; then
+        pg_query 'DELETE FROM repo_language_cache; DELETE FROM repo_languages'
+    else
+        "$PYTHON" -I -c 'import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.execute("DELETE FROM repo_language_cache")
+db.execute("DELETE FROM repo_languages")
+db.commit()' "$RUN/state/gitserv.db"
+    fi
+    [[ $(language_rows) == 0 ]]
+    server_cli repo rebuild
+    for pack in "$RUN"/repos/*.git/objects/pack/*.pack; do [[ -e ${pack%.pack}.idx ]]; done
+    (($(language_rows) > 0))
+}
+
+t_rebuilt_works() {
+    # The README text t_editor saved, rendered on the repository page.
+    as alice req GET /alice/proj --contains README.md --contains 'Edited in the web editor'
+    as alice req GET /alice/proj/raw/main/README.md --body-sha256 "$(get readme_sha)"
+    as alice req GET /api/repos/alice/proj/languages --accept json --contains-raw '"Rust"'
+    as alice req GET '/search?q=proj&type=repos' --contains alice/proj
+    as alice req GET '/search?q=Edited&type=code' --contains README.md
+    git_with_token read clone -q "$BASE/alice/proj.git" "$RUN/clone-rebuilt"
+    readme_matches "$RUN/clone-rebuilt/README.md"
+    git_as alice -C "$RUN/clone-rebuilt" fsck --no-progress
 }
 
 # ------------------------------------------------------------ cluster steps --
@@ -1633,7 +2018,7 @@ t_cluster_join_store() {
 }
 
 t_cluster_worker_token() {
-    put worker_token "$(cluster_cli web1 invite --reusable --roles actions-worker)"
+    put worker_token "$(cluster_cli web1 invite --reusable --roles runner)"
 }
 
 t_cluster_membership() {
@@ -1641,7 +2026,7 @@ t_cluster_membership() {
     listing=$(cluster_cli web1 list)
     printf '%s\n' "$listing"
     for node in "${CLUSTER_NODES[@]}"; do
-        case $node in web1) roles=web,ssh ;; ci1) roles=actions-worker ;; *) roles=storage ;; esac
+        case $node in web1) roles=web,ssh ;; ci1) roles=runner ;; *) roles=storage ;; esac
         grep -Eq "^$node +active +$roles +" <<<"$listing"
         [[ $(pg_query "SELECT status FROM nodes WHERE name='$node'") == active ]]
         if [[ $node != web1 ]]; then
@@ -1750,17 +2135,17 @@ t_cluster_fork_ci() {
     as alice req GET "/alice/ci-demo/pulls/$pr" --contains 'Run workflows'
     as bob req POST "/api/repos/alice/ci-demo/pulls/$pr/workflows" --accept json --status 404 \
         --json "{\"expected_head\":\"$head\"}"
-    # A pending approval is not a queued job. Give the worker several polls.
+    # The fork run is kept waiting for approval and no worker claims it. Give the worker several polls.
     sleep 7
-    count=$(pg_query "SELECT count(*) FROM ci_runs WHERE head_sha='$head' AND event='pull_request'")
-    [[ $count == 0 ]]
+    count=$(pg_query "SELECT count(*) || '/' || count(*) FILTER (WHERE approval_required AND worker IS NULL) FROM ci_runs WHERE head_sha='$head' AND event='pull_request'")
+    expect_eq 'one fork run waits for approval, unclaimed' "$count" 1/1
     as alice req POST "/api/repos/alice/ci-demo/pulls/$pr/workflows" --accept json \
         --json "{\"expected_head\":\"$head\"}"
     id=$(pg_query "SELECT run_id FROM ci_runs WHERE head_sha='$head' AND event='pull_request' AND is_fork")
     [[ $id =~ ^[0-9a-f-]{36}$ ]]
     wait_ci_run "$id"
     assert_ci_worker "$id"
-    as alice req GET "/api/ci/jobs/$id/logs" --accept json --json-has 'logs.*.line=CLUSTER_FORK_NO_SECRETS'
+    as alice req GET "/alice/ci-demo/actions?job=$id&view=logs" --contains 'CLUSTER_FORK_NO_SECRETS'
     as alice req GET "/alice/ci-demo/actions?job=$id&view=logs" --no-scripts --contains CLUSTER_FORK_NO_SECRETS
     as alice req GET "/api/repos/alice/ci-demo/commits/$head/status" --accept json \
         --json-eq state=success --json-eq total_count=1 --json-eq statuses.0.context=gitserv/workflow/.github/workflows/ci.yml
@@ -1937,7 +2322,7 @@ t_cluster_approve_worker() {
         id=$(get "revoked_run_$n")
         wait_ci_run "$id"
         assert_ci_worker "$id"
-        as alice req GET "/api/ci/jobs/$id/logs" --accept json --json-has 'logs.*.line=| hello'
+        as alice req GET "/alice/ci-demo/actions?job=$id&view=logs" --contains '| hello'
         as alice req GET "/alice/ci-demo/actions?job=$id&view=logs" --no-scripts --contains hello --contains success
     done
 }
@@ -1965,21 +2350,35 @@ run_round() {
     BASE=''
     SSH_URL=''
     DATABASE_URL=''
+    SERVER_ROLES=''
+    SERVER_IROH=''
     mkdir -p "$RUN/home" "$RUN/keys" "$RUN/work" "$STATE"
     PW_ALICE=Alice-e2e-$(random_hex)
     PW_BOB=Bob-e2e-$(random_hex)
+    put master_key "$("$PYTHON" -I -c 'import secrets; print(secrets.token_hex(32))')"
 
     step -f -i 'database is ready' prepare_database
     step -f -i 'server starts and /health answers' start_server
     step -f 'ssh and test keys are generated' t_keys
     step -f 'setup: first-run admin through the HTML form' t_setup
     step -f 'users: sign up, sign out and sign in through HTML forms' t_users
+    if [[ ${E2E_GITHUB_ONLY:-0} == 1 ]]; then
+        step -f 'organization: created for real GitHub clients' t_org
+        step -f 'tokens: created for real GitHub clients' t_tokens
+        step 'real clients: GHES gh commands, native github-script and schema-checked webhooks' t_github_clients
+        ROUND_BLOCKED=0
+        step 'log: the server log has no panic' t_log_clean
+        step -i 'shutdown: SIGTERM exits with status 0' stop_server
+        terminate_servers
+        step -i 'disposable database removed' drop_pg
+        return
+    fi
     step 'csrf: forged token and foreign origin refused, profile saves' t_csrf
     step -f 'repositories: web form, JSON API, private repository hidden' t_repos
     step 'organization: created through the HTML form' t_org
     step 'organization: repository owned by it, created in the /new form' t_org_repo
     step 'ssh keys: added through the settings form' t_ssh_keys
-    step 'tokens: JSON creation and native settings form; values shown once' t_tokens
+    step 'tokens: created through the settings form; values shown once' t_tokens
     step 'git: initial commit pushed over SSH, visible in web and API' t_push
     step 'git: anonymous and token clones; chunked HTTP push; read token refused' t_clone
     if [[ $db == sqlite ]]; then
@@ -2001,16 +2400,48 @@ run_round() {
     step 'mentions: notification, links for a mention, reference and SHA, plain unknown name' t_mentions_and_references
     step 'issues: create and comment (HTML forms and API)' t_issues
     step 'avatar: reserve, PUT bytes, confirm, download' t_avatar
-    step 'avatar: set through the API; other files refused' t_avatar_api
     step 'avatar: profile settings form sends it, remove deletes it' t_avatar_profile_form
     step 'avatar: organization page form sends it, remove deletes it' t_avatar_org_form
     step 'pages: server HTML carries the hydration contract' t_pages
     step 'bundle: generated JS and WASM are served intact' t_bundle
     step 'ci: act ran the workflow, run succeeded, logs contain hello' t_ci_result
     step 'ci: an API file save queues the push workflow' t_ci_api_save
+    step 'real clients: GHES gh commands, native github-script and schema-checked webhooks' t_github_clients
     step -i 'restart: SIGTERM stops the server cleanly' stop_server
     step -f -i 'restart: server starts again on the same data' start_server
     step 'restart: sessions, repositories, CI history and SSH host key survive' t_after_restart
+    if [[ $db == postgres ]]; then
+        step -f -i 'runners: the server restarts with the node connection and no runner of its own' runners_restart_server
+        step -f 'runners: single-node mode invites runners only; one reusable runner invite' t_runner_token
+        step -f -i 'runners: r1 joins with the invite' start_server r1
+        step -f -i 'runners: r2 joins with the same invite' start_server r2
+        step -f 'runners: a repository with a slow workflow' t_runners_repo
+        step 'runners: queued runs are shared by both runners and none runs twice' t_runners_share
+        step 'runners: a revoked runner cannot claim and the other keeps working' t_runner_revoked
+        step -i 'runners: kill -9 mid-job fails the run after the heartbeat timeout; the other runner keeps working' t_runner_killed
+        step -i 'runners: the remaining runners stop cleanly' runners_stop
+    fi
+    step -f 'backup: a full backup, then a second one while pushes and new issues keep arriving' t_backup_under_load
+    step -f -i 'restore: the server stops' stop_server
+    step -f -i 'restore: an empty installation is restored from the backup' t_restore_into_empty
+    step -f -i 'restore: the restored server starts' start_server
+    step 'restore: verify finds nothing; clone, issues, pull request checkout, run log and attachment work' t_restored_works
+    step -f 'kept deletion: a repository is deleted after a backup' t_delete_kept
+    step -f -i 'kept deletion: the server stops' stop_server
+    step -f 'kept deletion: the database goes back to before the delete; verify --repair puts the repository back' t_database_before_delete
+    step -f -i 'kept deletion: the server starts' start_server
+    step 'kept deletion: the repository clones again' t_deleted_repo_back
+    if [[ $db == postgres ]]; then
+        step -f 'git newer: a pull request moves and another opens after time T' t_git_newer_prepare
+        step -f -i 'git newer: the server stops' stop_server
+        step -f 'git newer: PostgreSQL goes back to T; verify --repair follows Git' t_git_newer_repair
+        step -f -i 'git newer: the server starts' start_server
+        step 'git newer: the pull request has its new head, the later one is gone, clones work' t_git_newer_works
+    fi
+    step -f -i 'rebuild: the server stops' stop_server
+    step -f 'rebuild: pack indexes, commit graphs and language rows deleted, then rebuilt' t_drop_derived
+    step -f -i 'rebuild: the server starts' start_server
+    step 'rebuild: pages, languages, search and clones work' t_rebuilt_works
     step 'log: the server log has no panic' t_log_clean
     step -i 'shutdown: SIGTERM exits with status 0' stop_server
     terminate_servers
@@ -2035,6 +2466,7 @@ run_cluster_round() {
 
     step -f -i 'database is ready' prepare_database
     step -f -i 'cluster: isolated ports and declared store2 key' prepare_cluster
+    step -f 'cluster: `codeyard cluster enable` turns on cluster mode' cluster_cli web1 enable
     step -f -i 'cluster: web1 starts first (web,ssh)' start_server web1
     step -f 'cluster: store1 pairs with an invite and cluster join' t_cluster_join_store
     step -f -i 'cluster: store1 starts (storage only)' start_server store1
@@ -2043,12 +2475,12 @@ run_cluster_round() {
     step -f 'users: register and sign in through HTML forms' t_users
     step -f 'repositories: created through web1 with store1 as the only live store' t_repos
     step -f -i 'cluster: declared store2 starts (storage only)' start_server store2
-    step -f 'cluster: reusable actions-worker token' t_cluster_worker_token
+    step -f 'cluster: reusable runner token' t_cluster_worker_token
     step -f -i 'cluster: ci1 starts without database credentials' start_server ci1
     step 'membership: CLI, admin nodes page, readiness and roles' t_cluster_membership
     step -f 'placement: database and disks name store1; control repo on store2' t_cluster_placement
     step -f 'ssh keys: added through settings' t_ssh_keys
-    step -f 'tokens: created through JSON and settings' t_tokens
+    step -f 'tokens: created through settings' t_tokens
     step -f 'git: SSH push through web1 to store1' t_push
     step -f 'git: SSH and HTTP clones, token HTTP push, access refusals' t_clone
     step -f 'git: HTTP push to store1 and fresh clones see it' t_cluster_http_push
@@ -2060,6 +2492,8 @@ run_cluster_round() {
     step -f 'ci: workflow pushed through web1 with a disposable secret' t_cluster_ci_push
     step -f 'ci: ci1 runs it; logs, page and commit status reach web1' t_cluster_ci_result
     step 'ci: fork waits for approval, runs on ci1 without secrets' t_cluster_fork_ci
+    step 'organization: created for real GitHub clients' t_org
+    step 'real clients: GHES gh, native github-script and webhooks through web1 and remote storage' t_github_clients
     step -f 'replica: setting 2 keeps a current copy on store2' t_replica_create
     step -i 'failure: store1 exits cleanly on SIGTERM' stop_server store1
     # Before the minute is over: no node has taken the repository over yet.
@@ -2093,15 +2527,16 @@ run_cluster_round() {
 
 preflight() {
     local missing=0 name
-    for name in cargo python3 git curl sha256sum base64 timeout stat awk; do
+    for name in cargo python3 git curl sha256sum base64 timeout stat awk gh openssl node; do
         command -v "$name" >/dev/null || { echo "missing tool: $name"; missing=1; }
     done
+    "$GITHUB_PYTHON" -I -c 'import jsonschema, referencing' || missing=1
     PYTHON=$(command -v python3)
     SSH=$(find_tool ssh) || { echo "missing tool: ssh"; missing=1; }
     SSH_KEYGEN=$(find_tool ssh-keygen) || { echo "missing tool: ssh-keygen"; missing=1; }
     [[ -x $ACT ]] || { echo "act not found at $ACT (set E2E_ACT_BINARY)"; missing=1; }
     [[ -x ${DX:-$(command -v dx || true)} || $E2E_SKIP_BUILD == 1 ]] || { echo "dx not found (set DX)"; missing=1; }
-    echo "git $(git --version | cut -d' ' -f3), $("$SSH" -V 2>&1), act $("$ACT" --version 2>/dev/null | awk '{print $3}'), $("$PYTHON" -V)"
+    echo "git $(git --version | cut -d' ' -f3), $("$SSH" -V 2>&1), act $("$ACT" --version 2>/dev/null | awk '{print $3}'), $("$PYTHON" -V), $(gh --version | head -n 1)"
     ((missing == 0))
 }
 

@@ -28,6 +28,7 @@ pub struct CiWorkers {
     pub(super) cleanup_dir: PathBuf,
     pub(super) names: Arc<worker::WorkflowNames>,
     run_workers: bool,
+    configuration_error: Option<String>,
     workers: Arc<Workers>,
 }
 
@@ -59,13 +60,19 @@ impl CiWorkers {
         queued: Arc<Notify>,
         state_dir: &Path,
     ) -> Self {
+        let (work_root, configuration_error) = match super::runner_credentials::work_root(state_dir)
+        {
+            Ok(root) => (root, None),
+            Err(error) => (state_dir.to_owned(), Some(error.to_string())),
+        };
         Self {
             queue,
             config,
             run_workers,
             queued,
             cleanups: Arc::new(Mutex::new(JoinSet::new())),
-            cleanup_dir: state_dir.join("ci-containers"),
+            cleanup_dir: work_root.join("ci-containers"),
+            configuration_error,
             names: Arc::new(worker::WorkflowNames::default()),
             workers: Arc::new(Workers {
                 stop: watch::channel(false).0,
@@ -76,8 +83,15 @@ impl CiWorkers {
 
     /// Database nodes sweep abandoned runs even when they execute no jobs.
     pub async fn startup(&self) -> Result<()> {
+        ensure!(
+            self.configuration_error.is_none(),
+            "Invalid saved runner configuration"
+        );
         let workers = &self.workers;
         let recover = self.run_workers || self.cleanup_dir.is_dir();
+        // Workers claim only after abandoned containers are gone. When the startup pass does not
+        // finish, each worker recovers again before its first claim.
+        let mut recovered = true;
         if recover {
             use std::os::unix::fs::DirBuilderExt;
             std::fs::DirBuilder::new()
@@ -93,8 +107,14 @@ impl CiWorkers {
             .await
             {
                 Ok(Ok(())) => {}
-                Ok(Err(error)) => tracing::warn!(%error, "CI container recovery will be retried"),
-                Err(_) => tracing::warn!("CI container recovery did not finish during startup"),
+                Ok(Err(error)) => {
+                    recovered = false;
+                    tracing::warn!(%error, "CI container recovery will be retried")
+                }
+                Err(_) => {
+                    recovered = false;
+                    tracing::warn!("CI container recovery did not finish during startup")
+                }
             }
         }
         // The node name, as the rest of the node setup reads it. An empty value counts
@@ -111,15 +131,9 @@ impl CiWorkers {
             })
             .unwrap_or_else(|| "node".into());
         let mut tasks = workers.tasks.lock().unwrap_or_else(|e| e.into_inner());
-        if let RunQueue::Database {
-            pool,
-            notifications,
-            ..
-        } = &self.queue
-        {
+        if let RunQueue::Database { .. } = &self.queue {
             tasks.spawn(worker::fail_stale_runs(
-                pool.clone(),
-                notifications.clone(),
+                self.queue.clone(),
                 workers.stop.subscribe(),
             ));
         }
@@ -143,7 +157,12 @@ impl CiWorkers {
         };
         for slot in 0..self.config.max_active_runs {
             let id = format!("{owner}{node}/{}/{slot}", Uuid::new_v4().simple());
-            tasks.spawn(worker::run(self.clone(), id, workers.stop.subscribe()));
+            tasks.spawn(worker::run(
+                self.clone(),
+                id,
+                workers.stop.subscribe(),
+                !recovered,
+            ));
         }
         tracing::info!(
             workers = self.config.max_active_runs,

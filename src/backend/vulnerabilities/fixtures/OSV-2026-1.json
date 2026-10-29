@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.6.0",
+  "id": "OSV-2026-1",
+  "aliases": ["GHSA-2345-6789-cfgh", "CVE-2026-12345"],
+  "published": "2026-01-01T00:00:00Z",
+  "modified": "2026-01-02T00:00:00Z",
+  "summary": "Example dependency permits unsafe input",
+  "details": "Upgrade to 1.2.0 to reject unsafe input.",
+  "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+  "affected": [{
+    "package": {"ecosystem": "crates.io", "name": "example"},
+    "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "1.2.0"}]}]
+  }],
+  "references": [{"type": "ADVISORY", "url": "https://example.test/advisory"}]
+}

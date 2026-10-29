@@ -18,6 +18,12 @@ pub struct Collaborator {
     pub username: String,
     pub access: String,
 }
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PendingInvitation {
+    pub id: i64,
+    pub username: String,
+    pub access: String,
+}
 /// A branch protection rule as the settings page shows and edits it. A saved rule and a refused
 /// submission have the same shape, so a refused form comes back with what was typed.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -38,6 +44,8 @@ pub struct BranchRule {
     pub allow_deletions: bool,
     pub restrict_pushes: bool,
     pub push_allowances: Vec<String>,
+    #[serde(default)]
+    pub push_team_allowances: Vec<String>,
     pub force_push_allowances: Vec<String>,
 }
 /// A new rule starts with the settings the JSON API defaults to.
@@ -59,6 +67,7 @@ impl Default for BranchRule {
             allow_deletions: false,
             restrict_pushes: false,
             push_allowances: Vec::new(),
+            push_team_allowances: Vec::new(),
             force_push_allowances: Vec::new(),
         }
     }
@@ -73,6 +82,18 @@ pub struct RuleDraft {
 /// was typed, and the site's limits they apply within.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RepoActions {
+    #[serde(default)]
+    pub oidc_use_default: bool,
+    #[serde(default)]
+    pub oidc_claim_keys: String,
+    pub effective_cache_size_gib: Option<i64>,
+    pub effective_cache_retention_days: Option<i32>,
+    pub engine: String,
+    pub site_engine: String,
+    pub enabled_engines: Vec<String>,
+    pub engine_fallback: bool,
+    pub cache_size_gib: String,
+    pub cache_retention_days: String,
     pub enabled: bool,
     pub run_timeout_minutes: String,
     pub job_cpus: String,
@@ -92,6 +113,11 @@ pub struct Settings {
     /// Other users with write access, offered as the rest of that list.
     pub force_push_suggestions: Vec<Collaborator>,
     pub collaborators: Vec<Collaborator>,
+    pub invitations: Vec<PendingInvitation>,
+    #[serde(default)]
+    pub immutable_releases: Option<bool>,
+    #[serde(default)]
+    pub autolinks: Vec<crate::webui::components::references::Autolink>,
     /// Every branch, for the default-branch picker, and the branch the repository opens on.
     pub branches: Vec<String>,
     pub default_branch: String,
@@ -108,26 +134,51 @@ pub struct Settings {
     /// The deploy keys section, on the deploy-keys tab only.
     pub deploy_keys: Option<Box<DeployKeyPanel>>,
     /// The Actions section, on the actions tab only.
-    pub actions: Option<RepoActions>,
+    pub actions: Option<Box<RepoActions>>,
+    #[serde(default)]
+    pub interactions: Option<crate::webui::components::interactions::InteractionPanel>,
+    pub secrets: Vec<super::secrets::Secret>,
+    #[serde(default)]
+    pub dependabot_secrets: Vec<super::secrets::Secret>,
+    pub secrets_enabled: bool,
+    pub variables: Vec<super::secrets::Variable>,
+    #[serde(default)]
+    pub environments: Vec<String>,
+    pub environment: Option<Box<super::environments::Environment>>,
+    pub properties: Option<Box<super::properties::Properties>>,
+    #[serde(default)]
+    pub secret_scanning: bool,
+    #[serde(default)]
+    pub push_protection: bool,
+    #[serde(default)]
+    pub secret_patterns: Vec<super::super::secret_scanning::CustomPattern>,
 }
 
 pub fn settings(repo: &RepoChrome, settings: &Settings) -> Element {
-    rsx! { SettingsView { key: "{repo.id}", repo: repo.clone(), settings: settings.clone() } }
+    let environment = settings
+        .environment
+        .as_ref()
+        .map_or("", |value| value.name.as_str());
+    let key = format!("{}:{}:{environment}", repo.id, settings.tab);
+    rsx! { SettingsView { key: "{key}", repo: repo.clone(), settings: settings.clone() } }
 }
 
-// A component, so the inputs are built inside the renderer, as they need to be. The key starts the
-// forms over when another repository's settings replace this page.
+// A component, so the inputs are built inside the renderer. Reset drafts when the repository,
+// section or environment changes; a value from another scope must not follow a reused input.
 #[component]
 fn SettingsView(repo: RepoChrome, settings: Settings) -> Element {
     let repo = &repo;
     let settings = &settings;
-    let tab = settings_tab(&settings.tab, repo.can_manage_collaborators);
+    let tab = settings_tab(
+        &settings.tab,
+        repo.can_manage_collaborators || repo.can_manage_invitations,
+    );
     let sections = sections(repo);
     chrome(
         repo,
         rsx! {
             section { class: "repo-settings-page",
-                header { class: "repo-page-heading", div { h2 { "Repository settings" } p { "Manage this repository's details and access." } } }
+                header { class: "repo-page-heading", div { h2 { "Repository settings" } p { "Manage this repository's details and access." } } NavLink {href:format!("{}/settings/pages",repo.base()),"Pages"} }
                 if settings.saved { div { class: "repo-alert repo-alert-success", role: "status", "Settings saved." } }
                 div { class: "repo-settings-layout",
                     nav { class: "repo-settings-nav", aria_label: "Settings sections",
@@ -151,7 +202,10 @@ fn SettingsView(repo: RepoChrome, settings: Settings) -> Element {
 fn tab_content(repo: &RepoChrome, settings: &Settings, tab: &str) -> Element {
     match tab {
         "merging" => merging_section(repo, settings),
+        "releases" => immutable_releases_section(repo, settings),
+        "autolinks" => autolinks_section(repo, settings),
         "branches" => branch_protection(repo, settings),
+        "security" => security_section(repo, settings),
         "actions" => match &settings.actions {
             Some(actions) => actions_section(repo, actions),
             None => rsx! {},
@@ -164,12 +218,27 @@ fn tab_content(repo: &RepoChrome, settings: &Settings, tab: &str) -> Element {
             Some(panel) => rsx! { DeployKeySection { panel: panel.as_ref().clone() } },
             None => rsx! {},
         },
-        "collaborators" => collaborators_section(repo, settings),
+        "properties" => match &settings.properties {
+            Some(properties) => super::properties::section(repo, properties),
+            None => rsx! {},
+        },
+        "secrets" => super::environments::section(repo, settings),
+        "dependabot-secrets" => super::secrets::secret_section(
+            repo,
+            &settings.dependabot_secrets,
+            settings.secrets_enabled,
+            "dependabot",
+        ),
+        "collaborators" => {
+            rsx! { {collaborators_section(repo, settings)} {pending_invitations(repo, settings)} }
+        }
         "danger" => danger_zone(repo),
         _ => rsx! {
             {visibility_section(repo)}
+            {template_section(repo)}
             {default_branch_section(repo, settings)}
             {rename_section(repo)}
+            if let Some(panel) = &settings.interactions {crate::webui::components::interactions::InteractionSettings {panel:panel.clone()}}
         },
     }
 }
@@ -179,10 +248,16 @@ fn tab_content(repo: &RepoChrome, settings: &Settings, tab: &str) -> Element {
 pub fn settings_tab(name: &str, can_manage_collaborators: bool) -> &'static str {
     match name {
         "merging" => "merging",
+        "releases" => "releases",
+        "autolinks" => "autolinks",
         "branches" => "branches",
         "actions" => "actions",
+        "security" => "security",
+        "secrets" => "secrets",
+        "dependabot-secrets" => "dependabot-secrets",
         "webhooks" => "webhooks",
         "deploy-keys" => "deploy-keys",
+        "properties" => "properties",
         "collaborators" if can_manage_collaborators => "collaborators",
         "danger" => "danger",
         _ => "general",
@@ -193,13 +268,22 @@ pub fn settings_tab(name: &str, can_manage_collaborators: bool) -> &'static str 
 /// Other repository forms return to their own pages, so they have no section.
 pub fn settings_section(action: &str) -> Option<&'static str> {
     Some(match action {
-        "settings" | "rename" | "default-branch" => "general",
+        "settings" | "rename" | "default-branch" | "template" => "general",
         "merge-methods" => "merging",
         "protection-save" | "protection-delete" => "branches",
-        "actions-settings" => "actions",
+        "actions-settings" | "oidc-settings" => "actions",
+        "immutable-releases" => "releases",
+        "autolink-add" | "autolink-delete" => "autolinks",
+        "code-security" | "secret-pattern-publish" => "security",
+        "secret-save" | "secret-delete" | "variable-save" | "variable-delete" => "secrets",
         "webhook-save" | "webhook-delete" | "webhook-ping" | "webhook-redeliver" => "webhooks",
         "deploy-key-add" | "deploy-key-delete" => "deploy-keys",
-        "collaborator" | "remove-collaborator" => "collaborators",
+        "repository-property-set" | "repository-property-unset" => "properties",
+        "collaborator"
+        | "remove-collaborator"
+        | "invite-collaborator"
+        | "cancel-invitation"
+        | "remove-invited-collaborator" => "collaborators",
         "archive" | "unarchive" | "delete" => "danger",
         _ => return None,
     })
@@ -211,17 +295,73 @@ fn sections(repo: &RepoChrome) -> Vec<(&'static str, &'static str)> {
     let mut sections = vec![
         ("general", "General"),
         ("merging", "Merging"),
+        ("releases", "Releases"),
         ("branches", "Branch protection"),
         ("actions", "Actions"),
+        ("security", "Code security"),
+        ("secrets", "Secrets and variables > Actions"),
+        ("dependabot-secrets", "Secrets > Dependabot"),
         ("webhooks", "Webhooks"),
         ("deploy-keys", "Deploy keys"),
+        ("properties", "Properties"),
+        ("autolinks", "Autolinks"),
     ];
-    if repo.can_manage_collaborators {
+    if repo.can_manage_collaborators || repo.can_manage_invitations {
         sections.push(("collaborators", "Collaborators"));
     }
     sections.push(("labels", "Labels"));
     sections.push(("danger", "Danger zone"));
     sections
+}
+
+fn immutable_releases_section(repo: &RepoChrome, settings: &Settings) -> Element {
+    rsx! {section {class:"panel repo-settings-section",
+        header {class:"repo-section-heading",h3 {"Immutable releases"} p {"Protect the Git tag and uploaded assets of future published releases."}}
+        form {method:"post",action:repo.action("immutable-releases"),class:"repo-form-body",
+            {csrf(&repo.csrf_token)} {repository_id(repo.id)}
+            label {class:"repo-check-label",DraftCheckbox{name:"enabled",initial_checked:settings.immutable_releases.unwrap_or(false)} "Enable immutable releases"}
+            p {"Only future publications are affected. Save a draft, attach all assets, then publish. A signed DSSE attestation binds the tag, commit and SHA-256 asset digests to this forge node's signing key."}
+            p {"Notes, title, pre-release and latest status stay editable. Published immutable releases cannot return to drafts. Disabling this setting never unlocks existing immutable releases."}
+            p {"You may delete an immutable release. Its tag can then be deleted, but the tag name stays permanently reserved, including when the repository is recreated."}
+            label {class:"repo-check-label",input {r#type:"checkbox",name:"confirm",value:"yes",required:true,disabled:repo.is_archived} "I understand that future immutable publications permanently reserve their tag names"}
+            button {r#type:"submit",class:"btn btn-primary",disabled:repo.is_archived,"Save release settings"}
+        }
+    }}
+}
+
+fn security_section(repo: &RepoChrome, settings: &Settings) -> Element {
+    rsx! {
+        section { class: "repo-settings-section panel",style:"min-width: 0; overflow-wrap: anywhere;",
+            header { class: "repo-section-heading", h3 { "Code security" } }
+            form { method: "post", action: repo.action("code-security"), class: "repo-form-body",
+                {csrf(&repo.csrf_token)}
+                {repository_id(repo.id)}
+                label { class: "repo-check-label", DraftCheckbox { name: "secret_scanning", initial_checked: settings.secret_scanning } span { "Secret scanning" } }
+                p { "Find credentials in Git history and new pushes. Detected credentials are visible only to repository administrators." }
+                label { class: "repo-check-label", DraftCheckbox { name: "push_protection", initial_checked: settings.push_protection } span { "Push protection" } }
+                p { "Block pushes that introduce credentials. Requires secret scanning." }
+                div { class: "repo-form-actions", button { class: "btn btn-primary", r#type: "submit", "Save changes" } }
+            }
+            div { class: "repo-form-body",
+                h3 { "Custom patterns" }
+                p { "Create and edit custom patterns with the secret scanning REST API. Publish a reviewed pattern here to scan history and protect pushes." }
+                for pattern in &settings.secret_patterns {
+                    div { class: "panel repo-form-body",
+                        strong { "{pattern.name}" }
+                        p { "{pattern.state}" }
+                        if pattern.state == "unpublished" {
+                            form { method: "post", action: repo.action("secret-pattern-publish"),
+                                {csrf(&repo.csrf_token)} {repository_id(repo.id)}
+                                input { r#type: "hidden", name: "pattern_id", value: pattern.id.to_string() }
+                                input { r#type: "hidden", name: "organization", value: pattern.organization.to_string() }
+                                button { class: "btn btn-secondary", r#type: "submit", "Publish and enable push protection" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn section_href(repo: &RepoChrome, section: &str) -> String {
@@ -281,6 +421,21 @@ fn visibility_section(repo: &RepoChrome) -> Element {
     }
 }
 
+fn template_control(enabled: bool) -> Element {
+    rsx! {label {class:"repo-check-label",DraftCheckbox {name:"is_template",initial_checked:enabled} span {"Use this repository as a template"}} p {"Readers can generate independent repositories from its current files, without copying its commit history."}}
+}
+fn template_section(repo: &RepoChrome) -> Element {
+    rsx! {section {class:"repo-settings-section panel",
+        header {class:"repo-section-heading",h3 {"Template repository"}}
+        form {method:"post",action:repo.action("template"),class:"repo-form-body",
+            {csrf(&repo.csrf_token)} {repository_id(repo.id)}
+            fieldset {disabled:repo.is_archived,{template_control(repo.is_template)}
+                div {class:"repo-form-actions",button {r#type:"submit",class:"btn btn-primary","Save template setting"}}
+            }
+        }
+    }}
+}
+
 /// The default branch picker.
 fn default_branch_section(repo: &RepoChrome, settings: &Settings) -> Element {
     rsx! {
@@ -332,7 +487,35 @@ fn rename_section(repo: &RepoChrome) -> Element {
 }
 
 /// The people with access, and the form that adds one.
+fn autolinks_section(repo: &RepoChrome, settings: &Settings) -> Element {
+    rsx! {section {class:"panel repo-settings-section",
+        header {class:"repo-section-heading",h3 {"Autolink references"} p {"Link external identifiers in repository Markdown. URLs must contain <num>. Up to 50 references."}}
+        for link in &settings.autolinks {
+            div {class:"repo-settings-row",div {strong {"{link.key_prefix}"} code {"{link.url_template}"} p {if link.is_alphanumeric {"Alphanumeric, case-insensitive"} else {"Numeric, case-sensitive"}}}
+                form {method:"post",action:repo.action("autolink-delete"),
+                    {csrf(&repo.csrf_token)} {repository_id(repo.id)}
+                    input {r#type:"hidden",name:"autolink_id",value:link.id.to_string()}
+                    label {class:"repo-check-label",input {r#type:"checkbox",name:"confirm",value:"yes",required:true,disabled:repo.is_archived} "Confirm removal"}
+                    button {r#type:"submit",class:"btn btn-secondary",disabled:repo.is_archived,"Remove"}
+                }
+            }
+        }
+        form {method:"post",action:repo.action("autolink-add"),class:"repo-form-body",
+            {csrf(&repo.csrf_token)} {repository_id(repo.id)}
+            label {class:"repo-field",span {"Key prefix"} DraftInput {name:"key_prefix",required:true,initial_value:String::new(),maxlength:Some(20),placeholder:"TICKET-"}}
+            label {class:"repo-field",span {"URL template"} DraftInput {name:"url_template",required:true,initial_value:String::new(),maxlength:Some(4096),placeholder:"https://tracker.example/tickets/<num>"}}
+            label {class:"repo-check-label",DraftCheckbox {name:"is_alphanumeric",initial_checked:true} "Alphanumeric identifiers"}
+            button {r#type:"submit",class:"btn btn-primary",disabled:repo.is_archived,"Add autolink"}
+        }
+    }}
+}
+
 fn collaborators_section(repo: &RepoChrome, settings: &Settings) -> Element {
+    let remove_action = if repo.can_manage_collaborators {
+        "remove-collaborator"
+    } else {
+        "remove-invited-collaborator"
+    };
     rsx! {
         section { class: "repo-settings-section panel",
             header { class: "repo-section-heading",
@@ -346,29 +529,56 @@ fn collaborators_section(repo: &RepoChrome, settings: &Settings) -> Element {
                 for collaborator in &settings.collaborators {
                     div { key: "{collaborator.username}", class: "repo-settings-row",
                         div { class: "repo-settings-row-main", Avatar { name: collaborator.username.clone(), size: 32 } div { strong { "{collaborator.username}" } p { "{collaborator.access} access" } } }
-                        details { class: "native-menu repo-delete-menu",
-                            summary { class: "btn btn-secondary", "Remove" span { class: "sr-only", " {collaborator.username}" } }
-                            {confirm_dialog(None, &format!("Remove {} from this repository", collaborator.username), &format!("{}/settings?tab=collaborators", repo.base()), &repo.action("remove-collaborator"), rsx! {
-                                {csrf(&repo.csrf_token)}
-                                {repository_id(repo.id)}
-                                input { r#type: "hidden", name: "username", value: collaborator.username.clone() }
-                                strong { "Remove {collaborator.username}?" }
-                                label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } " They lose access to this repository." }
-                            }, "Remove")}
+                        if !repo.is_archived {
+                            details { class: "native-menu repo-delete-menu",
+                                summary { class: "btn btn-secondary", "Remove" span { class: "sr-only", " {collaborator.username}" } }
+                                {confirm_dialog(None, &format!("Remove {} from this repository", collaborator.username), &format!("{}/settings?tab=collaborators", repo.base()), &repo.action(remove_action), rsx! {
+                                    {csrf(&repo.csrf_token)}
+                                    {repository_id(repo.id)}
+                                    input { r#type: "hidden", name: "username", value: collaborator.username.clone() }
+                                    strong { "Remove {collaborator.username}?" }
+                                    label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } " They lose access to this repository." }
+                                }, "Remove")}
+                            }
                         }
                     }
                 }
             }
-            form { method: "post", action: repo.action("collaborator"), class: "repo-form-body repo-add-row",
-                {csrf(&repo.csrf_token)}
-                {repository_id(repo.id)}
-                label { class: "repo-field", span { "Username" } DraftInput { name: "username", required: true, initial_value: String::new(), placeholder: "Username" } }
-                label { class: "repo-field", span { "Access" } DraftSelect { name: "access", initial_value: "write".to_owned(), options: vec![
-                    SelectOption { value: "read".into(), label: "Read".into() },
-                    SelectOption { value: "write".into(), label: "Write".into() },
-                    SelectOption { value: "admin".into(), label: "Admin".into() }
-                ] } }
-                button { r#type: "submit", class: "btn btn-primary", "Add collaborator" }
+            if repo.can_manage_collaborators {{collaborator_form(repo,false)}}
+            {collaborator_form(repo,true)}
+        }
+    }
+}
+
+fn collaborator_form(repo: &RepoChrome, invitation: bool) -> Element {
+    let mut choices = vec![("read", "Read"), ("write", "Write"), ("admin", "Admin")];
+    if invitation {
+        choices.insert(1, ("triage", "Triage"));
+        choices.insert(3, ("maintain", "Maintain"));
+    }
+    rsx! {form {method:"post",action:repo.action(if invitation {"invite-collaborator"} else {"collaborator"}),class:"repo-form-body repo-add-row",
+        {csrf(&repo.csrf_token)} {repository_id(repo.id)}
+        label {class:"repo-field",span {"Username"} DraftInput {name:"username",required:true,initial_value:String::new(),placeholder:"Username"}}
+        label {class:"repo-field",span {"Access"} DraftSelect {name:"access",initial_value:"write".to_owned(),options:choices.into_iter().map(|(value,label)|SelectOption::new(value,label)).collect::<Vec<_>>()}}
+        button {r#type:"submit",class:"btn btn-primary",disabled:repo.is_archived,if invitation {"Invite collaborator"} else {"Add collaborator"}}
+    }}
+}
+
+fn pending_invitations(repo: &RepoChrome, settings: &Settings) -> Element {
+    rsx! {
+        if !settings.invitations.is_empty() {
+            section { class: "repo-settings-section panel",
+                header { class: "repo-section-heading", div { h3 { "Pending invitations" } p { "Access is granted when the recipient accepts. Invitations expire after seven days." } } }
+                for invitation in &settings.invitations {
+                    div { class: "repo-settings-row",
+                        div { class: "repo-settings-row-main", strong { "{invitation.username}" } span { "{invitation.access} access" } }
+                        form { method: "post", action: repo.action("cancel-invitation"),
+                            {csrf(&repo.csrf_token)} {repository_id(repo.id)}
+                            input { r#type: "hidden", name: "invitation_id", value: invitation.id.to_string() }
+                            button { r#type: "submit", class: "btn btn-secondary", disabled:repo.is_archived, "Cancel invitation" }
+                        }
+                    }
+                }
             }
         }
     }
@@ -484,18 +694,47 @@ fn actions_hints(actions: &RepoActions) -> [String; 3] {
     ]
 }
 
+fn cache_fields(size: &str, days: &str) -> Element {
+    rsx! {
+        label { class: "repo-field", span { "Cache size in GiB" } DraftInput { name: "cache_size_gib", initial_value: size.to_owned(), input_type: "number" } small { "Empty inherits the organization and site limits." } }
+        label { class: "repo-field", span { "Expire caches after days without use" } DraftInput { name: "cache_retention_days", initial_value: days.to_owned(), input_type: "number" } small { "Empty inherits the organization and site expiry." } }
+    }
+}
+
 /// Whether workflows run for this repository, and the limits on each run.
 fn actions_section(repo: &RepoChrome, actions: &RepoActions) -> Element {
     rsx! {
         section { class: "repo-settings-section panel",
+            header { class: "repo-section-heading", div { h3 { "OpenID Connect" } p { "Customize the subject trusted by your cloud provider. Jobs must grant id-token: write." } } }
+            form { method: "post", action: repo.action("oidc-settings"), class: "repo-form-body",
+                {csrf(&repo.csrf_token)}
+                {repository_id(repo.id)}
+                label { class: "repo-check-label", DraftCheckbox { name: "use_default", initial_checked: actions.oidc_use_default } "Use the default subject" }
+                label { class: "repo-field", span { "Subject claim keys, in order" }
+                    DraftInput { name: "include_claim_keys", initial_value: actions.oidc_claim_keys.clone() }
+                    small { "Separate keys with commas, for example: repo, context, job_workflow_ref. Leave blank with default disabled to inherit the organization template." }
+                }
+                div { class: "repo-form-actions", button { class: "btn btn-primary", r#type: "submit", "Save OIDC settings" } }
+            }
+        }
+        section { class: "repo-settings-section panel",
             header { class: "repo-section-heading", div { h3 { "Actions" } p { "Whether workflows run for this repository, and what each run may use." } } }
+            a {href:format!("/settings/actions/runners?repo={}",repo.id),class:"btn", "Manage self-hosted runners"}
             if !actions.site_enabled {
                 div { class: "repo-alert", role: "status", "An administrator has turned off Actions on this site, so no workflows run until it is turned back on." }
             }
             form { method: "post", action: repo.action("actions-settings"), class: "repo-form-body",
                 {csrf(&repo.csrf_token)}
                 {repository_id(repo.id)}
+                label { class: "repo-field", span { "CI engine" }
+                    DraftSelect { name: "engine", initial_value: actions.engine.clone(), options: std::iter::once(SelectOption { value: String::new(), label: format!("Site default ({})", actions.site_engine) }).chain(actions.enabled_engines.iter().map(|engine| SelectOption { value: engine.clone(), label: engine.clone() })).collect::<Vec<_>>() }
+                    if actions.engine_fallback { small { "The saved {actions.engine} engine is disabled. Runs use the site default, {actions.site_engine}." } }
+                }
                 {actions_fields(actions.enabled, [&actions.run_timeout_minutes, &actions.job_cpus, &actions.job_memory_gib], actions_hints(actions))}
+                {cache_fields(&actions.cache_size_gib, &actions.cache_retention_days)}
+                if let (Some(size),Some(days))=(actions.effective_cache_size_gib,actions.effective_cache_retention_days) {
+                    p { class: "subtle", "Current effective cache limits: {size} GiB and {days} days. Organization and site ceilings apply to saved overrides." }
+                }
                 div { class: "repo-form-actions", button { class: "btn btn-primary", r#type: "submit", "Save changes" } }
             }
         }
@@ -674,12 +913,16 @@ fn BranchRuleForm(
                     span { class: "repo-option-text", "Do not allow deletions" small { "Pushes that delete the branch are refused. The default branch can never be deleted." } }
                 }
                 label { class: "repo-option", DraftCheckbox { name: "restrict_pushes", initial_checked: rule.restrict_pushes }
-                    span { class: "repo-option-text", "Restrict who can push" small { "Only the users listed below may push or merge. Listing a user does not skip the pull request rule." } }
+                    span { class: "repo-option-text", "Restrict who can push" small { "Only listed users and members of listed teams may push or merge. An allowance does not skip the pull request rule." } }
                 }
                 div { class: "repo-rule-nested",
                     label { class: "repo-field", span { "Users allowed to push" }
                         DraftInput { name: "push_allowances", initial_value: rule.push_allowances.join(", ") }
                         small { "Usernames separated by commas or spaces. Each needs write access to this repository." }
+                    }
+                    label { class: "repo-field", span { "Teams allowed to push" }
+                        DraftInput { name: "push_team_allowances", initial_value: rule.push_team_allowances.join(", ") }
+                        small { "Organization team slugs separated by commas or spaces. Each team needs repository write access; membership and access are checked again on every push." }
                     }
                 }
             }
@@ -850,12 +1093,18 @@ fn rule_summary(rule: &BranchRule) -> Vec<String> {
         parts.push("No deletions".to_owned());
     }
     if rule.restrict_pushes {
-        let users = if rule.push_allowances.is_empty() {
+        let mut actors = rule.push_allowances.clone();
+        actors.extend(
+            rule.push_team_allowances
+                .iter()
+                .map(|team| format!("{team} (team)")),
+        );
+        let actors = if actors.is_empty() {
             "no one".to_owned()
         } else {
-            rule.push_allowances.join(", ")
+            actors.join(", ")
         };
-        parts.push(format!("Pushes limited to {users}"));
+        parts.push(format!("Pushes limited to {actors}"));
     }
     parts.push(
         if rule.enforce_admins {
@@ -898,8 +1147,16 @@ pub fn rejected_form(
                     div { class: "repo-form-body",
                         if action == "merge-methods" {
                             {merge_method_checks(checked("allow_merge_commit"), checked("allow_squash_merge"), checked("allow_rebase_merge"))}
+                        } else if action == "template" {
+                            {template_control(checked("is_template"))}
+                        } else if action == "oidc-settings" {
+                            label { class: "repo-check-label", DraftCheckbox { name: "use_default", initial_checked: checked("use_default") } "Use the default subject" }
+                            label { class: "repo-field", span { "Subject claim keys, in order" } DraftInput { name: "include_claim_keys", initial_value: values.get("include_claim_keys").cloned().unwrap_or_default() } }
                         } else if action == "actions-settings" {
+                            // The engine list is not on this page, so the chosen engine is kept as sent.
+                            input { r#type: "hidden", name: "engine", value: values.get("engine").cloned().unwrap_or_default() }
                             {actions_fields(checked("enabled"), ["run_timeout_minutes", "job_cpus", "job_memory_gib"].map(|name| values.get(name).map_or("", String::as_str)), Default::default())}
+                            {cache_fields(values.get("cache_size_gib").map_or("", String::as_str), values.get("cache_retention_days").map_or("", String::as_str))}
                         } else if action == "watch-level" {
                             label { class: "repo-field", span { "Watch level" }
                                 select { name: "level",

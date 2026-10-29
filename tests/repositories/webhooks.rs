@@ -273,6 +273,9 @@ async fn flow(pg: bool, receiver: &Receiver, url: &str) {
         hex::encode(hmac_sha256(SECRET.as_bytes(), ping.body.as_bytes()))
     );
     assert_eq!(ping.header("x-hub-signature-256"), Some(expected.as_str()));
+    assert!(ping
+        .header("x-hub-signature")
+        .is_some_and(|value| value.starts_with("sha1=") && value.len() == 45));
     let body: Value = serde_json::from_str(&ping.body).unwrap();
     assert!(body["zen"].is_string());
     assert_eq!(body["repository"]["full_name"], json!("alice/proj"));
@@ -366,7 +369,9 @@ async fn flow(pg: bool, receiver: &Receiver, url: &str) {
     let rows = deliveries(&database, hook, 3).await;
     assert_eq!(rows[0].event, "issues");
     assert_eq!(rows[0].request_body, rows[1].request_body);
-    assert_ne!(rows[0].guid, rows[1].guid);
+    assert_eq!(rows[0].guid, rows[1].guid);
+    assert!(rows[0].redelivery);
+    assert!(!rows[1].redelivery);
 
     // Server errors are retried: two 500s, then a 200 on the third try.
     receiver.replies.lock().unwrap().extend([500, 500]);
@@ -524,6 +529,8 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
     let receiver = Receiver::default();
     *receiver.response_body.lock().unwrap() = Some(b"ok\0binary".to_vec());
     let mut fields = WebhookFields {
+        username: None,
+        password: None,
         payload_url: receiver.start().await,
         content_type: "application/json".into(),
         events: "push".into(),
@@ -613,6 +620,8 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
         .unwrap();
     let actor = repo.owner_user_id.unwrap();
     let fields = WebhookFields {
+        username: None,
+        password: None,
         payload_url: url.into(),
         content_type: "application/json".into(),
         events: "push,create,delete,release".into(),
@@ -701,7 +710,8 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
     codeyard::backend::webhooks::emit(pool, &repo, "push", vec![], move |_, _| {
         seen.store(true, std::sync::atomic::Ordering::SeqCst);
         json!({"private": "new owner's issue body"})
-    });
+    })
+    .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!built.load(std::sync::atomic::Ordering::SeqCst));
     assert_eq!(
@@ -817,6 +827,7 @@ async fn server_ref_events(pg: bool, url: &str) {
             head: head.sha.clone(),
             base: first.sha.clone(),
             message: "merge".into(),
+            squash_body: None,
             name: "Alice".into(),
             email: "alice@example.invalid".into(),
             method: MergeMethod::Merge,
@@ -879,6 +890,96 @@ async fn server_ref_events(pg: bool, url: &str) {
     assert_eq!(first_push["repository"]["default_branch"], "trunk");
 }
 
+async fn repository_creation_is_not_a_ref_event(pg: bool, url: &str) {
+    use codeyard::backend::repositories::{
+        lifecycle,
+        store::{repo_store, FileWrite},
+    };
+    let mut database = Database::new(pg).await;
+    database.complete_setup().await;
+    let actor = database.actor("creator").await;
+    let pool = database.pool();
+    let OrganizationOutcome::Applied(org) = orgs::create_organization(
+        pool,
+        actor,
+        &orgs::NewOrganization::new(
+            "creation_org",
+            orgs::OrganizationProfile::new(None, None).unwrap(),
+        )
+        .unwrap(),
+    )
+    .await
+    .unwrap() else {
+        panic!("organization creation failed");
+    };
+    let hook = db::webhooks::insert_webhook(
+        pool,
+        HookOwner::Organization(org.id),
+        actor,
+        &WebhookFields {
+            username: None,
+            password: None,
+            payload_url: url.into(),
+            content_type: "application/json".into(),
+            events: "repository,create,push".into(),
+            active: true,
+            ssl_verify: true,
+        },
+        None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let repo = lifecycle::provision(
+        (pool, None),
+        root.path(),
+        db::repositories::creation::RepositoryCreationOwner {
+            actor_id: actor,
+            target: db::repositories::creation::RepositoryTarget::Organization(org.id),
+        },
+        "new-repo",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let rows = deliveries(&database, hook, 1).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].event, "repository");
+    assert_eq!(rows[0].action.as_deref(), Some("created"));
+    let body: Value = serde_json::from_str(&rows[0].request_body).unwrap();
+    assert_eq!(body["repository"]["id"], repo.id);
+    assert!(body.get("ref_type").is_none());
+    repo_store(&repo, None)
+        .save_file_as(
+            pool,
+            repo.id,
+            actor,
+            &FileWrite {
+                branch: "main".into(),
+                path: "README.md".into(),
+                message: "Initial commit".into(),
+                expected_revision: "unborn".into(),
+                creating: true,
+                deleting: false,
+            },
+            b"first commit",
+            "Creator",
+            "creator@example.test",
+        )
+        .await
+        .unwrap();
+    let rows = deliveries(&database, hook, 3).await;
+    assert_eq!(rows.len(), 3);
+    let created = rows.iter().find(|row| row.event == "create").unwrap();
+    let body: Value = serde_json::from_str(&created.request_body).unwrap();
+    assert_eq!(body["ref_type"], "branch");
+    assert_eq!(body["ref"], "main");
+    database.finish().await;
+}
+
 /// One test runs both engines, because the receiver needs `WEBHOOKS_ALLOW_PRIVATE` for the
 /// whole process and the refusal checks need it unset.
 #[tokio::test]
@@ -898,6 +999,7 @@ async fn webhooks_on_sqlite_and_postgres() {
         stale_hooks_and_binary_responses(pg).await;
         api_ref_hooks_and_release_authors(pg, &url).await;
         server_ref_events(pg, &url).await;
+        repository_creation_is_not_a_ref_event(pg, &url).await;
     }
 }
 
@@ -951,6 +1053,8 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
         panic!("the first owner was not demoted");
     };
     let fields = WebhookFields {
+        username: None,
+        password: None,
         payload_url: "https://example.com/hooks".to_owned(),
         content_type: "application/json".to_owned(),
         events: "push".to_owned(),

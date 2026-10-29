@@ -7,7 +7,7 @@ use crate::webui::pages::repos::{
         Item, Kind, Repository,
     },
 };
-use crate::webui::{navigation::NavLink, pages::repos::ref_path::file_url};
+use crate::webui::{navigation::NavLink, pages::repos::ref_path::branch_url};
 use dioxus::prelude::*;
 
 /// A commit status an outside service reported on the head commit.
@@ -26,15 +26,16 @@ pub fn checks_page(
     item: &Item,
     runs: &[Run],
     statuses: &[CheckStatus],
+    code_scanning: &[repos::security::Check],
 ) -> Element {
     let url = format!("{}/{}", repo.family_url(Kind::Pull), item.number);
     let actions_url = format!("{}/actions", repo.url());
     // A workflow file goes on the head branch, because the checks run on that branch's commit. Only
     // a writer gets the link, and only when the head branch is in this repository.
     let add_workflow = item.comparison.as_ref().and_then(|compare| {
-        let own_branch = file_url(&repo.url(), "tree", &compare.head, "");
+        let own_branch = branch_url(&repo.url(), "tree", &compare.head, "");
         (repo.can_write && compare.head_url.as_ref() == Some(&own_branch))
-            .then(|| file_url(&repo.url(), "new", &compare.head, ".github/workflows"))
+            .then(|| branch_url(&repo.url(), "new", &compare.head, ".github/workflows"))
     });
     repos::chrome::chrome(
         &repo.chrome,
@@ -45,7 +46,7 @@ pub fn checks_page(
                     {pull_summary(repo, item, Kind::Pull)}
                     {pull_tabs(&url, item, PullTab::Checks)}
                 }
-                if runs.is_empty() && statuses.is_empty() {
+                if runs.is_empty() && statuses.is_empty() && code_scanning.is_empty() {
                     p { class: "collaboration-panel collaboration-muted collaboration-checks-empty",
                         "No workflow runs have started on this commit."
                         if let Some(href) = &add_workflow {
@@ -54,6 +55,7 @@ pub fn checks_page(
                         }
                     }
                 }
+                {repos::security::check_list(code_scanning)}
                 if !runs.is_empty() {
                     // The Actions page scopes its run row styles to this class.
                     div { class: "actions-page",

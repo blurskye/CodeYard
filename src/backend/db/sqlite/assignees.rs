@@ -8,10 +8,21 @@ const CANDIDATES: &str = "u.id IN (
     UNION SELECT user_id FROM repo_access WHERE repo_id=?1 AND access_level BETWEEN 1 AND 5
     UNION SELECT m.user_id FROM repositories r JOIN org_memberships m ON m.org_id=r.owner_org_id
         WHERE r.id=?1 AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS (
-            SELECT 1 FROM teams t JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=m.user_id
+            SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=m.user_id
             JOIN team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id
             WHERE t.org_id=m.org_id AND t.privacy IN ('visible','secret')
                 AND tm.role IN ('member','maintainer') AND a.permission BETWEEN 1 AND 5)))
+    UNION SELECT m.user_id FROM repositories r JOIN org_memberships m ON m.org_id=r.owner_org_id
+        JOIN organization_settings s ON s.org_id=m.org_id AND s.default_repository_permission IN (1,3,5)
+        WHERE r.id=?1 AND m.role IN ('owner','admin','member')
+    UNION SELECT m.user_id FROM repositories r JOIN org_memberships m ON m.org_id=r.owner_org_id
+        JOIN organization_role_assignments a ON a.org_id=m.org_id
+        JOIN organization_roles role ON role.id=a.role_id AND role.base_level BETWEEN 1 AND 5
+        WHERE r.id=?1 AND m.role IN ('owner','admin','member')
+            AND ((a.user_id=m.user_id AND a.team_id IS NULL) OR (a.user_id IS NULL AND EXISTS(
+                SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id
+                WHERE t.id=a.team_id AND t.org_id=a.org_id AND t.privacy IN ('visible','secret')
+                    AND tm.user_id=m.user_id AND tm.role IN ('member','maintainer'))))
 )";
 
 /// The table of the item, its assignee link table and the link column that names the item.
@@ -35,7 +46,7 @@ async fn begin_write(
 ) -> Result<Transaction<'_, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?,
+        super::discussions::lock_triage_authority(&mut tx, actor_id, repo_id).await?,
         AssignmentRefusal::Denied
     );
     Ok(tx)
@@ -68,7 +79,17 @@ pub async fn assign_user(
     user_id: i64,
 ) -> Result<bool> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
-    let (link, column) = locate_item(&mut tx, repo_id, item).await?;
+    let added = assign_in_transaction(&mut tx, repo_id, item, user_id).await?;
+    tx.commit().await?;
+    Ok(added)
+}
+
+/// Caller retains live item-metadata authority and the transaction through commit.
+pub(crate) async fn candidate(
+    tx: &mut Transaction<'_, Sqlite>,
+    repo_id: i64,
+    user_id: i64,
+) -> Result<()> {
     let assignable: bool = sqlx::query_scalar(&format!(
         "SELECT EXISTS (SELECT 1 FROM repositories r JOIN users u ON u.id=?2
          WHERE r.id=?1 AND {CANDIDATES} AND ({})>=1)",
@@ -76,22 +97,32 @@ pub async fn assign_user(
     ))
     .bind(repo_id)
     .bind(user_id)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
     anyhow::ensure!(assignable, AssignmentRefusal::Unassignable);
+    Ok(())
+}
+pub(crate) async fn assign_in_transaction(
+    tx: &mut Transaction<'_, Sqlite>,
+    repo_id: i64,
+    item: AssignedItem,
+    user_id: i64,
+) -> Result<bool> {
+    let (link, column) = locate_item(tx, repo_id, item).await?;
+    candidate(tx, repo_id, user_id).await?;
     let assigned: bool = sqlx::query_scalar(&format!(
         "SELECT EXISTS (SELECT 1 FROM {link} WHERE {column} = ?1 AND user_id = ?2)"
     ))
     .bind(item_id(item))
     .bind(user_id)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
     let mut added = false;
     if !assigned {
         let count: i64 =
             sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {link} WHERE {column} = ?1"))
                 .bind(item_id(item))
-                .fetch_one(&mut *tx)
+                .fetch_one(&mut **tx)
                 .await?;
         anyhow::ensure!(count < MAX_ASSIGNEES, AssignmentRefusal::TooMany);
         // A row that a concurrent request inserted first is not a new assignment.
@@ -100,12 +131,14 @@ pub async fn assign_user(
         ))
         .bind(item_id(item))
         .bind(user_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?
         .rows_affected()
             == 1;
     }
-    tx.commit().await?;
+    if added {
+        super::labels::touch_subject(tx, tables(item).0, item_id(item)).await?;
+    }
     Ok(added)
 }
 
@@ -126,6 +159,9 @@ pub async fn unassign_user(
     .bind(username)
     .execute(&mut *tx)
     .await?;
+    if result.rows_affected() > 0 {
+        super::labels::touch_subject(&mut tx, tables(item).0, item_id(item)).await?;
+    }
     tx.commit().await?;
     Ok(result.rows_affected() > 0)
 }

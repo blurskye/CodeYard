@@ -1,0 +1,17 @@
+# https://github.com/DamianReeves/write-file-action/tree/6929a9a6d1807689191dcc8bbe62b54d70a32b42
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: DamianReeves/write-file-action@6929a9a6d1807689191dcc8bbe62b54d70a32b42 # v1.3
+        with:
+          path: "written.txt"
+          contents: "compat file"
+          write-mode: "overwrite"
+      - name: Assert documented effect
+        run: |
+          test "$(cat written.txt)" = 'compat file'
+          echo compat:ok

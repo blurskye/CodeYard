@@ -13,9 +13,70 @@ use crate::webui::pages::repos::pulls::{
     checks_page, commits_page, diff_page, Conversation, Diff, DiffFile, LineComment, PullSummary,
     Review, ReviewDraft, Reviewer, ReviewerStatus, Thread, Viewed,
 };
-use crate::webui::pages::repos::{self, ref_path::file_url};
+use crate::webui::pages::repos::{self, ref_path::branch_url};
 use crate::webui::pages::repos::{labels, milestones};
 use dioxus::prelude::*;
+
+#[test]
+fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
+    use super::page::{IssueAttribute, IssueAttributes};
+    let opaque = "\n</textarea><script>alert(1)</script>";
+    let kind = IssueAttribute {
+        id: 1,
+        kind: "type".into(),
+        name: "Bug".into(),
+        description: Some(opaque.into()),
+        data_type: String::new(),
+        visibility: "all".into(),
+        is_enabled: true,
+        color: Some("blue".into()),
+        options: Vec::new(),
+        value: None,
+    };
+    let number = IssueAttribute {
+        id: 2,
+        kind: "field".into(),
+        name: "Estimate".into(),
+        description: None,
+        data_type: "number".into(),
+        visibility: "all".into(),
+        is_enabled: true,
+        color: None,
+        options: Vec::new(),
+        value: Some(serde_json::json!(1.25)),
+    };
+    let text = IssueAttribute {
+        id: 3,
+        name: "Details".into(),
+        data_type: "text".into(),
+        value: Some(serde_json::json!(opaque)),
+        ..number.clone()
+    };
+    let data = IssueAttributes {
+        selected_type: Some(1),
+        types: vec![kind],
+        fields: vec![number, text],
+        can_configure: true,
+        organization: true,
+    };
+    let html = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(super::attributes::panel(
+            &repository(),
+            "/alice/repo/issues/1",
+            &data,
+        ))
+    });
+    assert!(
+        html.contains("\n\n&lt;/textarea&gt;&lt;script&gt;alert(1)&lt;/script&gt;"),
+        "{html}"
+    );
+    assert!(!html.contains("</textarea><script>"));
+    assert!(html.contains("step=\"any\""));
+    assert!(html.contains("value=\"1.25\""));
+    assert!(html.contains("value=\"blue\" selected"));
+    assert!(html.contains("name=\"confirm\""));
+    assert!(html.contains("csrf-sentinel"));
+}
 
 #[test]
 fn new_issue_textareas_have_repository_and_template_draft_identity() {
@@ -70,9 +131,11 @@ fn refused_orphaned_replies_keep_their_text_in_a_recovery_composer() {
         Some(&draft),
         None,
         0,
+        None,
         Some("Parent comment not found"),
         &References::default(),
         false,
+        &[],
     ));
     assert!(html.contains("keep this orphaned reply"));
     assert!(html.contains("name=\"in_reply_to\" value=\"999\""));
@@ -205,11 +268,12 @@ fn item() -> Item {
         check_count: 0,
         review_state: None,
         check_state: None,
+        projects: vec![],
         reactions: Vec::new(),
         comparison: Some(Comparison {
             head: "topic".into(),
             head_label: "topic".into(),
-            head_url: Some(file_url(&repository().url(), "tree", "topic", "")),
+            head_url: Some(branch_url(&repository().url(), "tree", "topic", "")),
             can_run_workflows: false,
             base: "main".into(),
             head_sha: "abc".into(),
@@ -305,6 +369,13 @@ fn page_modes() -> Vec<Page> {
             kind,
             item: entry,
             comments: CommentPage {
+                issue_management: None,
+                suggestions: None,
+                attributes: None,
+                relationships: Vec::new(),
+                pinned: None,
+                locked: false,
+                lock_reason: None,
                 events_next: None,
                 comments: vec![Comment {
                     revision: "comment-revision".into(),
@@ -332,6 +403,7 @@ fn page_modes() -> Vec<Page> {
                 description: String::new(),
             }],
             draft: DetailDraft {
+                suggestion: None,
                 title: Some("preserved & title".into()),
                 body: Some("</textarea><script>edit()</script>".into()),
                 comment: "preserved comment".into(),
@@ -342,6 +414,8 @@ fn page_modes() -> Vec<Page> {
                 label: "11".into(),
                 preview: true,
                 merge_method: String::new(),
+                commit_title: String::new(),
+                commit_message: String::new(),
                 reviewer: String::new(),
             },
             error: Some("Stale revision; review your preserved submission.".into()),
@@ -369,11 +443,13 @@ fn page_modes() -> Vec<Page> {
         repository: repository_at(Kind::Pull, "/7/diff"),
         item: item(),
         diff,
+        code_scanning: Vec::new(),
         threads: Vec::new(),
         truncated: false,
         composer: None,
         review: None,
         pending_comments: 0,
+        pending_review: None,
         error: None,
         references: Default::default(),
         split: false,
@@ -398,6 +474,7 @@ fn page_modes() -> Vec<Page> {
         item: item(),
         runs: vec![run_fixture("<script>run</script>", "success")],
         statuses: Vec::new(),
+        code_scanning: Vec::new(),
     });
     let hostile = "<script>alert(1)</script>";
     modes.push(Page::Milestones {
@@ -606,11 +683,13 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     repository,
                     item,
                     diff,
+                    code_scanning,
                     threads,
                     truncated,
                     composer,
                     review,
                     pending_comments,
+                    pending_review,
                     error,
                     references,
                     split,
@@ -623,9 +702,11 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     composer.as_ref(),
                     review.as_ref(),
                     *pending_comments,
+                    *pending_review,
                     error.as_deref(),
                     references,
                     *split,
+                    code_scanning,
                 ),
                 Page::PullCommits {
                     repository,
@@ -637,7 +718,8 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     item,
                     runs,
                     statuses,
-                } => checks_page(repository, item, runs, statuses),
+                    code_scanning,
+                } => checks_page(repository, item, runs, statuses, code_scanning),
             };
             let html = dioxus_ssr::render_element(render(decoded));
             assert_eq!(html, dioxus_ssr::render_element(plain));
@@ -801,6 +883,13 @@ fn editor_preserves_text_and_has_native_csrf_forms() {
 fn discussion_pages_link_to_the_neighbouring_pages() {
     let render = |page, has_more| {
         let comments = CommentPage {
+            issue_management: None,
+            suggestions: None,
+            attributes: None,
+            relationships: Vec::new(),
+            pinned: None,
+            locked: false,
+            lock_reason: None,
             events_next: None,
             comments: vec![Comment {
                 revision: "comment-revision".into(),
@@ -974,6 +1063,13 @@ fn stack_card_marks_the_current_layer_and_puts_base_on_its_own_line() {
 fn timeline_rail_marks_only_discussion_entries() {
     crate::webui::tests::in_scope(|| {
         let comments = CommentPage {
+            issue_management: None,
+            suggestions: None,
+            attributes: None,
+            relationships: Vec::new(),
+            pinned: None,
+            locked: false,
+            lock_reason: None,
             events_next: None,
             comments: vec![comment_at(1, "2026-10-02T12:00:00+00:00")],
             reviews: vec![review(5, "approved", "2026-10-02T13:00:00+00:00")],
@@ -1100,6 +1196,9 @@ fn merge_box_shows_blockers_to_writers_and_a_status_to_everyone_else() {
         assert!(!ready.contains("Some checks were not successful"));
         assert!(!ready.contains("Merging is blocked"));
         assert!(!ready.contains("collaboration-blockers"));
+        assert!(ready.contains("name=\"commit_title\""));
+        assert!(ready.contains("name=\"commit_message\""));
+        assert!(ready.contains("Customize commit message"));
 
         // A failed check is not a green check: the count and a link to the Checks tab say why.
         let mut failing = item();
@@ -1262,9 +1361,11 @@ fn files_html(
         None,
         review,
         pending,
+        (pending > 0).then_some(41),
         None,
         &Default::default(),
         false,
+        &[],
     ))
 }
 
@@ -1463,7 +1564,7 @@ fn every_issue_mutation_form_has_csrf_and_labels_are_scoped_links() {
             assert!(form.contains("csrf-sentinel"));
         }
     }
-    assert_eq!(count, 6); // edit, state, remove label, apply label, comment, react
+    assert_eq!(count, 8); // edit, state, labels, comment, react, lock, relationships
     assert!(html.contains("/alice/repo/issues/7/labels/11/remove"));
     assert!(html.contains("&#60;bug&#62;"));
 }
@@ -2022,7 +2123,12 @@ fn recorded_comparison_branches_link_to_real_encoded_tree_routes() {
         let comparison = pull.comparison.as_mut().unwrap();
         comparison.head = "topic/a & b".into();
         comparison.head_label = comparison.head.clone();
-        comparison.head_url = Some(file_url(&repository().url(), "tree", &comparison.head, ""));
+        comparison.head_url = Some(branch_url(
+            &repository().url(),
+            "tree",
+            &comparison.head,
+            "",
+        ));
         comparison.base = "release/v1".into();
         let html = dioxus_ssr::render_element(detail(
             &repository_at(Kind::Pull, "/7"),
@@ -2035,8 +2141,8 @@ fn recorded_comparison_branches_link_to_real_encoded_tree_routes() {
             &Default::default(),
             &[],
         ));
-        assert!(html.contains("href=\"/alice/repo/tree/topic/a%20%26%20b\""));
-        assert!(html.contains("href=\"/alice/repo/tree/release/v1\""));
+        assert!(html.contains("href=\"/alice/repo/tree/refs/heads/topic/a%20%26%20b\""));
+        assert!(html.contains("href=\"/alice/repo/tree/refs/heads/release/v1\""));
         assert!(!html.contains("Recorded revisions"));
         assert!(html.contains("<h3>Revisions</h3>"));
         assert!(html.contains("aria-label=\"Pull request details\""));
@@ -2072,8 +2178,10 @@ fn diff_is_escaped_native_html() {
         None,
         0,
         None,
+        None,
         &Default::default(),
         false,
+        &[],
     ));
     assert!(html.contains("&#60;script&#62;evil()&#60;/script&#62;"));
     assert!(!html.contains("<img src=x"));
@@ -2239,6 +2347,8 @@ fn diff_threads_show_reaction_bars_that_return_to_the_diff_except_while_pending(
         path: "src/lib.rs".into(),
         line: Some(2),
         side: "RIGHT".into(),
+        start_line: None,
+        start_side: String::new(),
         replies: vec![reply],
         pending: false,
     };
@@ -2247,6 +2357,8 @@ fn diff_threads_show_reaction_bars_that_return_to_the_diff_except_while_pending(
         path: "src/lib.rs".into(),
         line: Some(2),
         side: "RIGHT".into(),
+        start_line: None,
+        start_side: String::new(),
         replies: Vec::new(),
         pending: true,
     };
@@ -2260,8 +2372,10 @@ fn diff_threads_show_reaction_bars_that_return_to_the_diff_except_while_pending(
         None,
         0,
         None,
+        None,
         &Default::default(),
         false,
+        &[],
     ));
     assert!(html.contains("name=\"comment\" value=\"5\""), "{html}");
     assert!(html.contains("name=\"comment\" value=\"6\""), "{html}");
@@ -2283,6 +2397,13 @@ fn comment_controls_show_only_the_rights_the_viewer_has() {
     moderated.can_delete = true;
     let other = comment_at(33, "today");
     let comments = CommentPage {
+        issue_management: None,
+        suggestions: None,
+        attributes: None,
+        relationships: Vec::new(),
+        pinned: None,
+        locked: false,
+        lock_reason: None,
         events_next: None,
         comments: vec![mine, moderated, other],
         reviews: Vec::new(),
@@ -2356,6 +2477,8 @@ fn review_changes_menu_keeps_a_refused_review_and_counts_pending_comments() {
         body: "Needs tests".into(),
         preview: false,
         commit: String::new(),
+        repository_id: None,
+        pending_review: None,
     };
     let html = files_html(&repo, &item(), Some(&refused), 2);
     assert!(html.contains("action=\"/alice/repo/pulls/7/reviews\""));
@@ -2368,6 +2491,11 @@ fn review_changes_menu_keeps_a_refused_review_and_counts_pending_comments() {
     assert!(html.contains("Comments waiting in your pending review"));
     assert!(html.contains(">2</span>"));
     assert!(html.contains("action=\"/alice/repo/pulls/7/reviews/pending/discard\""));
+    // Both forms name the pending review they showed, so neither acts on a later one.
+    assert_eq!(
+        html.matches("name=\"pending_review\" value=\"41\"").count(),
+        2
+    );
     // Discard review asks first, in the same centred dialog as the other destructive confirmations.
     assert!(html.contains("class=\"repo-confirm-modal\""));
     assert!(html.contains("This deletes 2 pending comments."));
@@ -2376,6 +2504,7 @@ fn review_changes_menu_keeps_a_refused_review_and_counts_pending_comments() {
     let html = files_html(&repo, &item(), None, 0);
     assert!(!html.contains("Comments waiting in your pending review"));
     assert!(!html.contains("/reviews/pending/discard"));
+    assert!(!html.contains("name=\"pending_review\""));
 }
 
 #[test]
@@ -2392,8 +2521,10 @@ fn discarding_a_review_from_the_split_view_returns_to_the_split_view() {
         None,
         2,
         None,
+        None,
         &Default::default(),
         true,
+        &[],
     ));
     assert!(html.contains("action=\"/alice/repo/pulls/7/reviews/pending/discard?view=split\""));
     // Cancel returns to the same view.
@@ -2411,6 +2542,13 @@ fn discussion_merges_reviews_by_time_and_marks_stale_and_dismissed_reviews() {
         dismissed.can_dismiss = true;
         dismissed.dismissed_reason = Some("Superseded".into());
         let comments = CommentPage {
+            issue_management: None,
+            suggestions: None,
+            attributes: None,
+            relationships: Vec::new(),
+            pinned: None,
+            locked: false,
+            lock_reason: None,
             events_next: None,
             comments: vec![
                 comment_at(1, "2026-10-02T12:00:00+00:00"),
@@ -2613,6 +2751,8 @@ fn diff_places_threads_under_their_line_and_gutters_open_the_composer() {
         path: "src/lib.rs".into(),
         line: Some(2),
         side: "RIGHT".into(),
+        start_line: None,
+        start_side: String::new(),
         replies: vec![comment_at(6, "2026-10-02T12:10:00+00:00")],
         pending: false,
     };
@@ -2623,6 +2763,8 @@ fn diff_places_threads_under_their_line_and_gutters_open_the_composer() {
         line: "2".into(),
         in_reply_to: None,
         body: "draft words".into(),
+        start_line: String::new(),
+        start_side: String::new(),
         preview: false,
         commit: String::new(),
         base: String::new(),
@@ -2637,8 +2779,10 @@ fn diff_places_threads_under_their_line_and_gutters_open_the_composer() {
         None,
         0,
         None,
+        None,
         &Default::default(),
         false,
+        &[],
     ));
     let at = |needle: &str| {
         html.find(needle)
@@ -2679,6 +2823,8 @@ fn a_refused_reply_is_drawn_once_inside_its_thread() {
         path: "src/lib.rs".into(),
         line: Some(2),
         side: "RIGHT".into(),
+        start_line: None,
+        start_side: String::new(),
         replies: Vec::new(),
         pending: false,
     };
@@ -2689,6 +2835,8 @@ fn a_refused_reply_is_drawn_once_inside_its_thread() {
         line: "2".into(),
         in_reply_to: Some(5),
         body: "reply words".into(),
+        start_line: String::new(),
+        start_side: String::new(),
         preview: false,
         commit: String::new(),
         base: String::new(),
@@ -2703,8 +2851,10 @@ fn a_refused_reply_is_drawn_once_inside_its_thread() {
         None,
         0,
         None,
+        None,
         &Default::default(),
         false,
+        &[],
     ));
     assert_eq!(html.matches("id=\"reply-body-5\"").count(), 1);
     assert!(html.contains("reply words"));
@@ -2722,6 +2872,8 @@ fn a_closed_pull_request_shows_the_refused_review_text_read_only() {
             body: "Kept closed text".into(),
             preview: false,
             commit: String::new(),
+            repository_id: None,
+            pending_review: None,
         };
         let repo = repository_at(Kind::Pull, "/7/diff");
         let html = files_html(&repo, &closed, Some(&draft), 0);
@@ -2744,8 +2896,10 @@ fn a_closed_pull_request_shows_the_refused_review_text_read_only() {
             Some(&draft),
             0,
             None,
+            None,
             &Default::default(),
             false,
+            &[],
         ));
         let at = pre.find("Kept closed text").unwrap();
         let start = pre[..at].rfind("<textarea").unwrap();
@@ -2819,7 +2973,14 @@ fn empty_search_results_name_the_search_and_offer_a_way_out() {
 /// A workflow run with the given ID and status, as the Checks tab lists it.
 fn run_fixture(id: &str, status: &str) -> Run {
     Run {
+        approval_required: false,
+        approval_pull: None,
+        concurrency_groups: Vec::new(),
+        waiting_for_concurrency: false,
+        artifacts: Vec::new(),
         id: id.into(),
+        api_id: 42,
+        api_attempt: 1,
         repository: "repo".into(),
         status: status.into(),
         workflow_path: ".github/workflows/ci.yml".into(),
@@ -2828,6 +2989,7 @@ fn run_fixture(id: &str, status: &str) -> Run {
         event: "pull_request".into(),
         pipeline: "ci".into(),
         mode: "act".into(),
+        engine: Some("act".into()),
         head_sha: Some("a".repeat(40)),
         created_at: 1,
         started_at: None,
@@ -2932,6 +3094,7 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             item: shown.clone(),
             runs: vec![run_fixture("real-run", "success")],
             statuses: Vec::new(),
+            code_scanning: Vec::new(),
         }));
         assert_eq!(html.matches("class=\"actions-run-row\"").count(), 1);
         assert!(html.contains("/alice/repo/actions?job=real-run"));
@@ -2941,6 +3104,7 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             item: shown,
             runs: Vec::new(),
             statuses: Vec::new(),
+            code_scanning: Vec::new(),
         }));
         assert!(empty.contains("No workflow runs have started on this commit."));
         assert!(!empty.contains("actions-run-row"));
@@ -2953,6 +3117,7 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             item: item(),
             runs: Vec::new(),
             statuses: Vec::new(),
+            code_scanning: Vec::new(),
         }));
         assert!(read_only.contains("No workflow runs have started on this commit."));
         assert!(!read_only.contains(".github/workflows"));
@@ -2960,6 +3125,7 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             repository: repository_at(Kind::Pull, "/7/checks"),
             item: item(),
             runs: Vec::new(),
+            code_scanning: Vec::new(),
             statuses: vec![crate::webui::pages::repos::pulls::CheckStatus {
                 context: "external/compiler".into(),
                 state: "failure".into(),
@@ -3198,8 +3364,10 @@ fn files_list_each_file_and_offer_viewed_marks_to_signed_in_viewers() {
             None,
             0,
             None,
+            None,
             &Default::default(),
             false,
+            &[],
         ));
         assert!(html.contains("aria-label=\"Changed files\""));
         assert!(html.contains("href=\"#diff-file-0\""));
@@ -3239,8 +3407,10 @@ fn files_list_each_file_and_offer_viewed_marks_to_signed_in_viewers() {
             None,
             0,
             None,
+            None,
             &Default::default(),
             false,
+            &[],
         ));
         assert!(html.contains("href=\"#diff-file-0\""));
         assert!(!html.contains("role=\"checkbox\""));
@@ -3337,8 +3507,10 @@ fn diff_lines_offer_a_plus_that_opens_the_composer_to_signed_in_readers() {
             None,
             0,
             None,
+            None,
             &Default::default(),
             split,
+            &[],
         ))
     };
     // A context line is commented on at its new number and a removed line at its old one. The
@@ -3439,6 +3611,13 @@ fn timeline_events_show_a_badge_for_their_kind_and_threads_link_to_the_files_tab
             commit: "abc".into(),
         });
         let comments = CommentPage {
+            issue_management: None,
+            suggestions: None,
+            attributes: None,
+            relationships: Vec::new(),
+            pinned: None,
+            locked: false,
+            lock_reason: None,
             events_next: None,
             comments: vec![thread],
             reviews: Vec::new(),
@@ -3606,6 +3785,7 @@ fn sidebar_lists_each_participant_once_and_skips_deleted_accounts() {
             edit: None,
         };
         let comments = CommentPage {
+            issue_management: None,
             events_next: None,
             comments: vec![
                 comment(1, "bob"),
@@ -4042,8 +4222,10 @@ fn split_files_changed_pairs_lines_and_links_both_views() {
         None,
         0,
         None,
+        None,
         &Default::default(),
         true,
+        &[],
     ));
     assert!(split.contains("class=\"collaboration-split patch-lines\""));
     // The added line with no removed partner has an empty left side; the context lines mirror.
@@ -4068,8 +4250,10 @@ fn split_files_changed_pairs_lines_and_links_both_views() {
         None,
         0,
         None,
+        None,
         &Default::default(),
         true,
+        &[],
     ));
     assert!(author.contains("You opened this pull request"));
 
@@ -4083,8 +4267,10 @@ fn split_files_changed_pairs_lines_and_links_both_views() {
         None,
         0,
         None,
+        None,
         &Default::default(),
         false,
+        &[],
     ));
     // The inline stylesheet names the split classes too, so check the markup only.
     assert!(!unified.contains("class=\"collaboration-split"));
@@ -4123,8 +4309,10 @@ fn split_view_skips_git_header_lines_and_comments_return_to_it() {
         None,
         0,
         None,
+        None,
         &Default::default(),
         true,
+        &[],
     ));
     assert!(!split.contains("index 1111111"));
     assert!(!split.contains("--- a/src/lib.rs"));

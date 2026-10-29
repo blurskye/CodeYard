@@ -1,0 +1,1 @@
+mutation DeleteField($input:DeleteProjectV2FieldInput!){deleteProjectV2Field(input:$input){projectV2Field{__typename,... on ProjectV2Field{id,name,dataType},... on ProjectV2IterationField{id,name,dataType},... on ProjectV2SingleSelectField{id,name,dataType,options{id,name}}}}}

@@ -61,6 +61,8 @@ fn fixtures() -> Vec<Page> {
         branches: vec!["feature/x".into()],
         tags: vec!["v1/release".into()],
         permalink: "https://example.invalid/alice/project/blob/0123456789/a%20%23%3F.rs".into(),
+        codeowners_errors: None,
+        codeowners_notice: None,
     };
     let rows = vec![RefRow {
         name: "feature/x".into(),
@@ -88,10 +90,25 @@ fn fixtures() -> Vec<Page> {
         description: String::new(),
     };
     let insights_repo = repo.clone();
+    let security_alert = super::security::Alert {
+        number: 1,
+        rule: "<script>alert(1)</script>".into(),
+        message: "Unsafe call".into(),
+        tool: "Semgrep".into(),
+        severity: "high".into(),
+        state: "open".into(),
+        branch: "refs/heads/main".into(),
+        path: "src/lib.rs".into(),
+        line: 1,
+        help: "Avoid unsafe calls".into(),
+        snippet: "<script>alert(1)</script>".into(),
+        code_url: "/alice/project/blob/abc/src/lib.rs#L1".into(),
+    };
     let mut pages = vec![
         Page::Tree {
             repo: repo.clone(),
             page: TreePage {
+                migration_status: None,
                 languages: Vec::new(),
                 releases: None,
                 reference: "feature/x".into(),
@@ -195,6 +212,8 @@ fn fixtures() -> Vec<Page> {
             branches: vec!["feature/x".into()],
             tags: vec!["v1/release".into()],
             split: false,
+            discussion: Default::default(),
+            related_pulls: Default::default(),
         },
         Page::Refs {
             repo: repo.clone(),
@@ -258,13 +277,27 @@ fn fixtures() -> Vec<Page> {
         },
         Page::Settings {
             repo: repo.clone(),
-            settings: Settings {
+            settings: Box::new(Settings {
+                properties: None,
+                interactions: None,
                 webhooks: None,
                 deploy_keys: None,
                 actions: None,
+                secrets: Vec::new(),
+                dependabot_secrets: Vec::new(),
+                secrets_enabled: false,
+                secret_scanning: false,
+                push_protection: false,
+                secret_patterns: Vec::new(),
+                variables: Vec::new(),
+                environments: Vec::new(),
+                environment: None,
                 tab: "general".into(),
                 branches: Vec::new(),
                 default_branch: String::new(),
+                invitations: Vec::new(),
+                autolinks: Vec::new(),
+                immutable_releases: None,
                 collaborators: vec![Collaborator {
                     username: "bob".into(),
                     access: "write".into(),
@@ -278,10 +311,31 @@ fn fixtures() -> Vec<Page> {
                 saved: false,
                 viewer: String::new(),
                 force_push_suggestions: Vec::new(),
-            },
+            }),
+        },
+        Page::BranchMerge {
+            repo: repo.clone(),
+            form: Box::new(super::merge::MergeForm {
+                repository_id: repo.id.to_string(),
+                base: format!("{} main", "a".repeat(40)),
+                head: format!("{} topic", "b".repeat(40)),
+                choices: vec![
+                    crate::webui::components::SelectOption::new(
+                        format!("{} main", "a".repeat(40)),
+                        "main",
+                    ),
+                    crate::webui::components::SelectOption::new(
+                        format!("{} topic", "b".repeat(40)),
+                        "topic",
+                    ),
+                ],
+                message: "</textarea><script>alert(1)</script>".into(),
+                error: Some("<script>invalid</script>".into()),
+                can_merge: true,
+            }),
         },
         Page::RejectedForm {
-            repo,
+            repo: repo.clone(),
             action: "create-tag".into(),
             message: "Check the source revision.".into(),
             values: std::collections::HashMap::from([
@@ -309,18 +363,204 @@ fn fixtures() -> Vec<Page> {
                     created_at: "2026-10-01T00:00:00Z".into(),
                     published_at: Some("2026-10-02T00:00:00Z".into()),
                     draft: false,
+                    immutable: false,
                     prerelease: false,
                     latest: true,
                 },
                 assets: Vec::new(),
+                reactions: Vec::new(),
                 can_write: false,
             },
         },
     ];
+    pages.push(Page::Check {
+        repo: repo.clone(),
+        check: Box::new(super::checks::Check {
+            id: 1,
+            name: "<script>check</script>".into(),
+            sha: "a".repeat(40),
+            status: "completed".into(),
+            conclusion: Some("failure".into()),
+            title: Some("<script>title</script>".into()),
+            summary: Some("**Summary**".into()),
+            text: None,
+            details_url: Some("https://example.com/check".into()),
+            annotations: vec![super::checks::Annotation {
+                path: "<script>path</script>".into(),
+                location: "line 1".into(),
+                level: "warning".into(),
+                title: None,
+                message: "<script>message</script>".into(),
+                details: Some("<script>details</script>".into()),
+            }],
+            total: 31,
+            page: 2,
+            has_more: true,
+            can_rerequest: true,
+        }),
+    });
     pages.extend(insight_pages().into_iter().map(|page| Page::Insights {
         repo: insights_repo.clone(),
         page,
     }));
+    pages.push(Page::DependencyGraph {
+        repo: insights_repo.clone(),
+        page: super::dependency_graph::Page {
+            sha: "a".repeat(40),
+            packages: vec![super::dependency_graph::Dependency {
+                name: "<script>".into(),
+                version: "1.0.0".into(),
+                manifest: "package-lock.json".into(),
+                ecosystem: "npm".into(),
+                scope: "runtime".into(),
+            }],
+        },
+    });
+    let hostile = "</h3><script>alert(1)</script>";
+    pages.push(Page::Dependabot {
+        repo: insights_repo.clone(),
+        page: super::dependabot::Page {
+            alerts: ["open", "dismissed", "fixed"]
+                .into_iter()
+                .enumerate()
+                .map(|(i, state)| super::dependabot::Alert {
+                    number: i as i64 + 1,
+                    summary: hostile.into(),
+                    description: hostile.into(),
+                    ghsa_id: "GHSA-2345-6789-cfgh".into(),
+                    package: hostile.into(),
+                    version: "1.0.0".into(),
+                    manifest: hostile.into(),
+                    severity: "high".into(),
+                    state: state.into(),
+                    reason: Some("not_used".into()),
+                    comment: Some(hostile.into()),
+                    patched: Some("2.0.0".into()),
+                })
+                .collect(),
+            state: "all".into(),
+            page: 2,
+            more: true,
+            can_import: true,
+        },
+    });
+    pages.push(Page::Pages {
+        repo: insights_repo.clone(),
+        page: super::pages::Page {
+            exists: true,
+            settings: super::pages::Settings {
+                build_type: "workflow".into(),
+                branch: hostile.into(),
+                path: "/docs".into(),
+                cname: hostile.into(),
+                https_enforced: true,
+                public: false,
+            },
+            builds: vec![super::pages::Build {
+                commit: hostile.into(),
+                status: "errored".into(),
+                error: hostile.into(),
+            }],
+            error: Some(hostile.into()),
+        },
+    });
+    for detail in [false, true] {
+        let row = super::advisories::Row {
+            ghsa: "GHSA-2345-6789-cfgh".into(),
+            summary: hostile.into(),
+            state: "draft".into(),
+            severity: "high".into(),
+        };
+        pages.push(Page::Advisories {
+            repo: insights_repo.clone(),
+            page: Box::new(super::advisories::Page {
+                rows: vec![row.clone()],
+                detail: detail.then(|| super::advisories::Detail {
+                    row,
+                    description: hostile.into(),
+                    vulnerabilities: vec![super::advisories::Vulnerability {
+                        ecosystem: hostile.into(),
+                        name: hostile.into(),
+                        range: hostile.into(),
+                        patched: hostile.into(),
+                    }],
+                    cve: None,
+                    cve_requested: true,
+                    fork_url: None,
+                    report_url: None,
+                }),
+                draft: super::advisories::Draft {
+                    summary: hostile.into(),
+                    description: hostile.into(),
+                    ..Default::default()
+                },
+                error: Some(hostile.into()),
+                more: true,
+                page: 2,
+            }),
+        });
+    }
+    pages.push(Page::RepositoryEvent {
+        repo: insights_repo.clone(),
+        page: Box::new(super::actions::RepositoryEventForm {
+            event_type: "rebuild<untrusted>".into(),
+            client_payload: r#"{"data":"</textarea><script>alert(1)</script>"}"#.into(),
+            error: Some("An event <error>".into()),
+        }),
+    });
+    pages.push(Page::DisclosureSecurity {
+        repo: insights_repo.clone(),
+        page: Box::new(super::disclosure::Page::Index {
+            enabled: true,
+            rows: vec![super::disclosure::ReportRow {
+                id: 1,
+                title: hostile.into(),
+                reporter: hostile.into(),
+                date: hostile.into(),
+                state: "open".into(),
+            }],
+            page: 1,
+            more: false,
+            error: Some(hostile.into()),
+            title: hostile.into(),
+            body: hostile.into(),
+        }),
+    });
+    pages.push(Page::DisclosureSecurity {
+        repo: insights_repo,
+        page: Box::new(super::disclosure::Page::Thread {
+            id: 1,
+            title: hostile.into(),
+            report: super::disclosure::Message {
+                author: hostile.into(),
+                date: hostile.into(),
+                body: hostile.into(),
+            },
+            state: "open".into(),
+            replies: Vec::new(),
+            page: 1,
+            more: false,
+            error: None,
+            reply: hostile.into(),
+            references: Default::default(),
+        }),
+    });
+    for selected in [false, true] {
+        pages.push(Page::Security {
+            repo: repo.clone(),
+            page: super::security::Page {
+                alerts: if selected {
+                    Vec::new()
+                } else {
+                    vec![security_alert.clone()]
+                },
+                selected: selected.then(|| security_alert.clone()),
+                filters: Default::default(),
+                page_number: 1,
+                has_next: !selected,
+            },
+        });
+    }
     pages
 }
 
@@ -328,6 +568,24 @@ fn fixtures() -> Vec<Page> {
 fn insight_pages() -> Vec<InsightsPage> {
     let hostile = "</h3><script>alert(1)</script>";
     vec![
+        InsightsPage::Activity {
+            page: Box::new(insights::activity::Page {
+                rows: vec![insights::activity::Row {
+                    reference: format!("refs/heads/{hostile}"),
+                    kind: "push".into(),
+                    actor: Some(hostile.into()),
+                    date: "2026-10-01T00:00:00Z".into(),
+                    commit: "1".repeat(40),
+                }],
+                previous: None,
+                next: Some("/alice/proj/insights/activity?after=opaque".into()),
+                reference: hostile.into(),
+                actor: hostile.into(),
+                kind: String::new(),
+                direction: "desc".into(),
+                time_period: String::new(),
+            }),
+        },
         InsightsPage::Pulse {
             days: 7,
             activity: vec![
@@ -392,6 +650,55 @@ fn insight_pages() -> Vec<InsightsPage> {
             page: 2,
             has_more: true,
         },
+        InsightsPage::Traffic {
+            page: Box::new(insights::traffic::Page {
+                weekly: false,
+                views: insights::traffic::Series {
+                    count: 17,
+                    uniques: 3,
+                    buckets: vec![
+                        insights::traffic::Bucket {
+                            timestamp: "2026-10-01T00:00:00Z".into(),
+                            count: 10,
+                            uniques: 2,
+                        },
+                        insights::traffic::Bucket {
+                            timestamp: "2026-10-02T00:00:00Z".into(),
+                            count: 7,
+                            uniques: 2,
+                        },
+                    ],
+                },
+                clones: insights::traffic::Series {
+                    count: 3,
+                    uniques: 1,
+                    buckets: vec![insights::traffic::Bucket {
+                        timestamp: "2026-10-01T00:00:00Z".into(),
+                        count: 3,
+                        uniques: 1,
+                    }],
+                },
+                paths: vec![
+                    insights::traffic::Path {
+                        path: "/alice/project/blob/main/README.md".into(),
+                        title: hostile.into(),
+                        count: 13,
+                        uniques: 2,
+                    },
+                    insights::traffic::Path {
+                        path: "javascript:alert(1)".into(),
+                        title: hostile.into(),
+                        count: 4,
+                        uniques: 1,
+                    },
+                ],
+                referrers: vec![insights::traffic::Referrer {
+                    referrer: hostile.into(),
+                    count: 8,
+                    uniques: 2,
+                }],
+            }),
+        },
     ]
 }
 
@@ -436,6 +743,7 @@ fn typed_dispatch_matches_pure_views_and_escapes_all_variants() {
         for page in fixtures() {
             let expected = match &page {
                 Page::Tree { repo, page } => tree(repo, page),
+                Page::BranchMerge { repo, form } => super::merge::merge(repo, form),
                 Page::Blob { repo, page } => blob(repo, page),
                 Page::Blame { repo, page } => blame(repo, page),
                 Page::Find { repo, page } => find(repo, page),
@@ -459,7 +767,24 @@ fn typed_dispatch_matches_pure_views_and_escapes_all_variants() {
                     branches,
                     tags,
                     split,
-                } => commit_detail(repo, commit, diff, branches, tags, *split),
+                    discussion,
+                    related_pulls,
+                } => commit_detail(
+                    repo,
+                    commit,
+                    diff,
+                    branches,
+                    tags,
+                    *split,
+                    discussion,
+                    related_pulls,
+                ),
+                Page::CommitCommentDraft {
+                    repo,
+                    sha,
+                    draft,
+                    message,
+                } => super::commits::comments::rejected(repo, sha, draft, message),
                 Page::Refs {
                     repo,
                     rows,
@@ -489,6 +814,20 @@ fn typed_dispatch_matches_pure_views_and_escapes_all_variants() {
                     crate::webui::pages::repos::releases::render(repo, page.clone())
                 }
                 Page::Insights { repo, page } => insights::render(repo, page.clone()),
+                Page::Security { repo, page } => super::security::render(repo, page.clone()),
+                Page::Dependabot { repo, page } => super::dependabot::render(repo, page),
+                Page::SecretSecurity { repo, page } => {
+                    super::secret_scanning::render(repo, page.clone())
+                }
+                Page::Dependencies { repo, page } => super::dependencies::render(repo, page),
+                Page::DependencyGraph { repo, page } => super::dependency_graph::render(repo, page),
+                Page::Pages { repo, page } => super::pages::render(repo, page),
+                Page::Advisories { repo, page } => super::advisories::render(repo, page),
+                Page::DisclosureSecurity { repo, page } => super::disclosure::security(repo, page),
+                Page::Check { repo, check } => super::checks::render(repo, check),
+                Page::RepositoryEvent { repo, page } => {
+                    super::actions::repository_event(repo, page)
+                }
             };
             let expected = dioxus_ssr::render_element(expected);
             let decoded: Page =
@@ -626,7 +965,7 @@ fn parent_refresh_preserves_editor_revision_and_settings_drafts() {
     dom.in_runtime(|| {
         page.set(Page::Settings {
             repo: repo.clone(),
-            settings: Settings::default(),
+            settings: Box::default(),
         })
     });
     dom.render_immediate_to_vec();
@@ -637,13 +976,78 @@ fn parent_refresh_preserves_editor_revision_and_settings_drafts() {
                 is_private: true,
                 ..repo.clone()
             },
-            settings: Settings::default(),
+            settings: Box::default(),
         })
     });
     dom.render_immediate_to_vec();
     let html = dioxus_ssr::render(&dom);
     assert!(html.contains("settings draft"));
     assert!(!html.contains("new stored description</textarea>"));
+    // A location change resets editable drafts and their target identity together.
+    for mut initial in fixtures() {
+        let mut next = initial.clone();
+        match (&mut initial, &mut next) {
+            (
+                Page::Pages {
+                    repo: first,
+                    page: first_page,
+                },
+                Page::Pages {
+                    repo: second,
+                    page: second_page,
+                },
+            ) => {
+                first.id = 41;
+                second.id = 42;
+                first_page.settings.cname = "first-target-edit".into();
+                second_page.settings.cname = "second-target-edit".into();
+            }
+            (Page::Advisories { page: first, .. }, Page::Advisories { page: second, .. }) => {
+                let (Some(first_detail), Some(second_detail)) =
+                    (&mut first.detail, &mut second.detail)
+                else {
+                    continue;
+                };
+                first_detail.row.ghsa = "GHSA-2345-6789-cfgh".into();
+                second_detail.row.ghsa = "GHSA-2345-6789-jmpq".into();
+                first.draft.summary = "first-target-edit".into();
+                second.draft.summary = "second-target-edit".into();
+            }
+            (
+                Page::DisclosureSecurity { page: first, .. },
+                Page::DisclosureSecurity { page: second, .. },
+            ) => {
+                let (
+                    super::disclosure::Page::Thread {
+                        id: first_id,
+                        reply: first_reply,
+                        ..
+                    },
+                    super::disclosure::Page::Thread {
+                        id: second_id,
+                        reply: second_reply,
+                        ..
+                    },
+                ) = (first.as_mut(), second.as_mut())
+                else {
+                    continue;
+                };
+                *first_id = 41;
+                *second_id = 42;
+                *first_reply = "first-target-edit".into();
+                *second_reply = "second-target-edit".into();
+            }
+            _ => continue,
+        }
+        dom.in_runtime(|| page.set(initial));
+        dom.render_immediate_to_vec();
+        assert!(dioxus_ssr::render(&dom).contains("first-target-edit"));
+        dom.in_runtime(|| page.set(next));
+        dom.render_immediate_to_vec();
+        let html = dioxus_ssr::render(&dom);
+        assert!(html.contains("second-target-edit"), "{html}");
+        assert!(!html.contains("first-target-edit"), "{html}");
+    }
 }
 
 #[test]
@@ -1009,6 +1413,122 @@ fn rendered_settings_and_ref_deletion_require_confirmation() {
 }
 
 #[test]
+fn actions_secret_and_variable_forms_keep_secret_values_out_of_page_data() {
+    let repo = RepoChrome {
+        id: 42,
+        owner: "alice".into(),
+        name: "project".into(),
+        csrf_token: "csrf-fixture".into(),
+        can_admin: true,
+        signed_in: true,
+        ..Default::default()
+    };
+    let mut model = Settings {
+        tab: "secrets".into(),
+        secrets_enabled: true,
+        secrets: vec![super::settings::secrets::Secret {
+            name: "DEPLOY_TOKEN".into(),
+            updated_at: "2026-10-22".into(),
+        }],
+        variables: vec![super::settings::secrets::Variable {
+            name: "PUBLIC_VALUE".into(),
+            value: "</textarea><script>unsafe()</script>".into(),
+        }],
+        ..Default::default()
+    };
+    let html = dioxus_ssr::render_element(settings(&repo, &model));
+    for action in [
+        "secret-save",
+        "secret-delete",
+        "variable-save",
+        "variable-delete",
+    ] {
+        assert!(
+            html.contains(&format!("action=\"/alice/project/_forms/{action}\"")),
+            "{html}"
+        );
+    }
+    assert!(html.contains("name=\"csrf_token\""));
+    assert!(html.contains("name=\"repository_id\" value=\"42\""));
+    assert!(html.contains("DEPLOY_TOKEN"));
+    assert!(!html.contains("<script>unsafe()</script>"));
+    assert!(!serde_json::to_value(&model).unwrap()["secrets"][0]
+        .as_object()
+        .unwrap()
+        .contains_key("value"));
+    model.secrets_enabled = false;
+    let html = dioxus_ssr::render_element(settings(&repo, &model));
+    assert!(!html.contains("action=\"/alice/project/_forms/secret-save\""));
+    assert!(html.contains("action=\"/alice/project/_forms/variable-save\""));
+}
+
+#[test]
+fn environment_values_forms_keep_scopes_and_secret_metadata_separate() {
+    let repo = RepoChrome {
+        id: 42,
+        owner: "alice".into(),
+        name: "project".into(),
+        csrf_token: "csrf-fixture".into(),
+        can_admin: true,
+        signed_in: true,
+        ..Default::default()
+    };
+    let model = Settings {
+        tab: "secrets".into(),
+        secrets_enabled: true,
+        environments: vec!["Production".into()],
+        secrets: vec![super::settings::secrets::Secret {
+            name: "REPOSITORY_ONLY".into(),
+            updated_at: "2026-10-22".into(),
+        }],
+        environment: Some(Box::new(super::settings::environments::Environment {
+            name: "Production".into(),
+            secrets: vec![super::settings::secrets::Secret {
+                name: "ENVIRONMENT_ONLY".into(),
+                updated_at: "2026-10-22".into(),
+            }],
+            variables: vec![super::settings::secrets::Variable {
+                name: "COLOR".into(),
+                value: "</textarea><script>unsafe()</script>".into(),
+            }],
+        })),
+        ..Default::default()
+    };
+    let html = dioxus_ssr::render_element(settings(&repo, &model));
+    assert!(html.contains("method=\"get\""));
+    assert!(html.contains("name=\"environment\" value=\"Production\""));
+    assert!(html.contains("ENVIRONMENT_ONLY"));
+    assert!(!html.contains("REPOSITORY_ONLY"));
+    assert!(!html.contains("<script>unsafe()</script>"));
+    for action in [
+        "environment-create",
+        "environment-secret-save",
+        "environment-secret-delete",
+        "environment-variable-save",
+        "environment-variable-delete",
+    ] {
+        assert!(
+            html.contains(&format!("action=\"/alice/project/_forms/{action}\"")),
+            "{html}"
+        );
+    }
+    let encoded = serde_json::to_value(&model).unwrap();
+    assert!(!encoded["environment"]["secrets"][0]
+        .as_object()
+        .unwrap()
+        .contains_key("value"));
+    assert_eq!(
+        serde_json::from_value::<Settings>(encoded.clone()).unwrap(),
+        model
+    );
+    let mut legacy = encoded;
+    legacy.as_object_mut().unwrap().remove("environments");
+    legacy.as_object_mut().unwrap().remove("environment");
+    let legacy: Settings = serde_json::from_value(legacy).unwrap();
+    assert!(legacy.environments.is_empty() && legacy.environment.is_none());
+}
+
+#[test]
 fn settings_destructive_actions_ask_in_centred_dialogs() {
     let repo = RepoChrome {
         owner: "alice".into(),
@@ -1114,6 +1634,7 @@ fn each_settings_tab_renders_only_its_section_and_marks_itself_current() {
         ("general", "_forms/settings\""),
         ("merging", "_forms/merge-methods\""),
         ("branches", "_forms/protection-save\""),
+        ("secrets", "_forms/variable-save\""),
         ("collaborators", "_forms/collaborator\""),
         ("danger", "repo-danger-zone"),
     ];
@@ -1517,6 +2038,8 @@ fn commit_summary_shows_parents_the_full_id_and_refs_at_the_commit() {
         &["main".into()],
         &["v1".into()],
         false,
+        &Default::default(),
+        &Default::default(),
     ));
     assert!(html.contains("repo-commit-parents"), "{html}");
     assert!(html.contains("ppppppp</a>"), "{html}");
@@ -1529,6 +2052,49 @@ fn commit_summary_shows_parents_the_full_id_and_refs_at_the_commit() {
         html.contains("main</a>") && html.contains("v1</a>"),
         "{html}"
     );
+}
+
+#[test]
+fn associated_pull_links_are_native_and_unavailable_reads_are_not_empty_results() {
+    use super::commits::pulls::{related_pulls, RelatedPull, RelatedPulls};
+    let repo = RepoChrome {
+        owner: "alice".into(),
+        name: "proj".into(),
+        ..Default::default()
+    };
+    let rows = RelatedPulls {
+        rows: vec![RelatedPull {
+            number: 42,
+            title: "<script>title</script>".into(),
+            state: "Merged".into(),
+        }],
+        previous: None,
+        next: Some("/alice/proj/commit/abc?pulls_page=2&view=split#related-pull-requests".into()),
+        error: None,
+    };
+    let html = dioxus_ssr::render_element(related_pulls(&repo, &rows));
+    assert!(html.contains("href=\"/alice/proj/pulls/42\""), "{html}");
+    let escaped = html.replace("&#60;", "&lt;").replace("&#62;", "&gt;");
+    assert!(
+        escaped.contains("&lt;script&gt;title&lt;/script&gt;"),
+        "{html}"
+    );
+    assert!(!html.contains("<script>title"));
+    assert!(html.contains("Next pull requests") && html.contains("pulls_page=2"));
+    assert!(html.contains("Merged"));
+    let unavailable = dioxus_ssr::render_element(related_pulls(&repo, &RelatedPulls::default()));
+    assert!(unavailable.contains("have not been loaded"));
+    assert!(!unavailable.contains("No associated pull requests"));
+    let empty = dioxus_ssr::render_element(related_pulls(
+        &repo,
+        &RelatedPulls {
+            rows: Vec::new(),
+            previous: None,
+            next: None,
+            error: None,
+        },
+    ));
+    assert!(empty.contains("No associated pull requests"));
 }
 
 #[test]
@@ -1555,6 +2121,8 @@ fn commit_page_prints_the_subject_once_and_the_rest_of_the_message_below_it() {
             &[],
             &[],
             false,
+            &Default::default(),
+            &Default::default(),
         ))
     };
     let html = render(&commit);
@@ -2096,6 +2664,7 @@ fn protocol_links_use_existing_archive_and_slash_ref_raw_adapter() {
         ..Default::default()
     };
     let page = TreePage {
+        migration_status: None,
         languages: Vec::new(),
         releases: None,
         reference: "feature/x".into(),
@@ -2124,6 +2693,7 @@ fn a_tag_view_downloads_the_tag_by_its_full_ref_unless_a_branch_has_its_name() {
         ..Default::default()
     };
     let view = |branches: Vec<String>| TreePage {
+        migration_status: None,
         languages: Vec::new(),
         releases: None,
         reference: "v1".into(),
@@ -2152,6 +2722,7 @@ fn a_tag_view_downloads_the_tag_by_its_full_ref_unless_a_branch_has_its_name() {
 #[test]
 fn empty_repository_quick_setup_is_shown_only_to_writers() {
     let mut page = TreePage {
+        migration_status: None,
         languages: Vec::new(),
         releases: None,
         reference: "main".into(),
@@ -3039,12 +3610,30 @@ fn commit_file_header_names_a_new_file_and_hides_git_header_lines() {
         deletions: 0,
         viewed: None,
     };
-    let html = dioxus_ssr::render_element(commit_detail(&repo, &commit, &diff, &[], &[], false));
+    let html = dioxus_ssr::render_element(commit_detail(
+        &repo,
+        &commit,
+        &diff,
+        &[],
+        &[],
+        false,
+        &Default::default(),
+        &Default::default(),
+    ));
     assert!(html.contains("aria-label=\"Diff view\""), "{html}");
     assert!(html.contains("view=split"), "{html}");
     assert!(!html.contains("collaboration-split-row"), "{html}");
     // The side-by-side view draws the same patch in two columns.
-    let side = dioxus_ssr::render_element(commit_detail(&repo, &commit, &diff, &[], &[], true));
+    let side = dioxus_ssr::render_element(commit_detail(
+        &repo,
+        &commit,
+        &diff,
+        &[],
+        &[],
+        true,
+        &Default::default(),
+        &Default::default(),
+    ));
     assert!(side.contains("collaboration-split-row"), "{side}");
     assert!(side.contains("+hello"), "{side}");
     assert!(html.contains("class=\"patch-badge\""));
@@ -3092,7 +3681,16 @@ fn file_header_names_the_code_owners_of_a_changed_file() {
         deletions: 2,
         viewed: None,
     };
-    let html = dioxus_ssr::render_element(commit_detail(&repo, &commit, &diff, &[], &[], false));
+    let html = dioxus_ssr::render_element(commit_detail(
+        &repo,
+        &commit,
+        &diff,
+        &[],
+        &[],
+        false,
+        &Default::default(),
+        &Default::default(),
+    ));
     assert!(html.contains("Owned by @alice, @org/docs"), "{html}");
     assert_eq!(html.matches("Owned by").count(), 1, "{html}");
 }
@@ -3354,6 +3952,7 @@ fn upload_links_are_offered_to_writers_only() {
         ..Default::default()
     };
     let directory = TreePage {
+        migration_status: None,
         languages: Vec::new(),
         releases: None,
         reference: "main".into(),
@@ -3486,6 +4085,7 @@ fn repository_root_bar_counts_refs_and_opens_go_to_file() {
         ..Default::default()
     };
     let page = TreePage {
+        migration_status: None,
         languages: Vec::new(),
         releases: None,
         reference: "main".into(),
@@ -3663,14 +4263,30 @@ fn insights_sections_link_each_other_and_show_their_numbers() {
         name: "project".into(),
         default_branch: "main".into(),
         current_path: "/alice/project/insights/contributors".into(),
+        can_view_traffic: true,
         ..Default::default()
     };
     let html = |page: InsightsPage| dioxus_ssr::render_element(insights::render(&repo, page));
-    let [pulse, contributors, frequency, actions, forks]: [InsightsPage; 5] =
+    let [activity, pulse, contributors, frequency, actions, forks, traffic]: [InsightsPage; 7] =
         insight_pages().try_into().unwrap();
+    let output = html(traffic);
+    assert!(output.contains("17 total") && !output.contains("<script>"));
 
+    let output = html(activity);
+    assert!(output.contains("after=opaque"));
+    assert!(output.contains("refs/heads/"));
+    assert!(!output.contains("<script>"));
     let output = html(pulse);
-    for suffix in ["", "/contributors", "/code-frequency", "/actions", "/forks"] {
+    for suffix in [
+        "",
+        "/activity",
+        "/community",
+        "/contributors",
+        "/code-frequency",
+        "/actions",
+        "/forks",
+        "/traffic",
+    ] {
         assert!(output.contains(&format!("href=\"/alice/project/insights{suffix}\"")));
     }
     // The section list and the phone menu each mark the current section.
@@ -3705,6 +4321,34 @@ fn insights_sections_link_each_other_and_show_their_numbers() {
     assert!(output.contains("href=\"/alice/project/insights/forks?page=1\""));
     assert!(output.contains("href=\"/alice/project/insights/forks?page=3\""));
     assert!(!output.contains("<script>"));
+}
+
+#[test]
+fn traffic_controls_and_private_navigation_are_plain_and_safe() {
+    let page = insight_pages()
+        .into_iter()
+        .find(|page| matches!(page, InsightsPage::Traffic { .. }))
+        .unwrap();
+    let repo = RepoChrome {
+        owner: "alice".into(),
+        name: "project".into(),
+        can_view_traffic: true,
+        ..Default::default()
+    };
+    let output = dioxus_ssr::render_element(insights::render(&repo, page.clone()));
+    assert!(output.contains("method=\"get\""));
+    assert!(output.contains("action=\"/alice/project/insights/traffic\""));
+    assert!(output.contains("name=\"per\"") && output.contains("value=\"week\""));
+    assert!(output.contains("17 total") && output.contains("3 unique visitors across the period"));
+    assert!(output.contains("href=\"/alice/project/blob/main/README.md\""));
+    assert!(!output.contains("href=\"javascript:"));
+    assert!(!output.contains("<script>"));
+    let reader = RepoChrome {
+        can_view_traffic: false,
+        ..repo
+    };
+    let output = dioxus_ssr::render_element(insights::render(&reader, page));
+    assert!(!output.contains("href=\"/alice/project/insights/traffic\""));
 }
 
 #[test]

@@ -1,7 +1,45 @@
-use crate::backend::db::timeline::TimelineEvent;
+use crate::backend::db::assignees::AssignedItem;
+use crate::backend::db::timeline::{Event, TimelineEvent};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
+
+pub async fn get_event(pool: &PgPool, repo_id: i64, id: i64) -> Result<Option<Event>> {
+    Ok(
+        sqlx::query_as("SELECT * FROM timeline_events WHERE id=$1 AND repo_id=$2")
+            .bind(id)
+            .bind(repo_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+pub async fn list_entries(
+    pool: &PgPool,
+    repo_id: i64,
+    item: Option<AssignedItem>,
+    timeline: bool,
+    descending: bool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<(String, i64)>> {
+    let (subject, id) = match item {
+        Some(AssignedItem::Issue(id)) => (Some("issue"), Some(id)),
+        Some(AssignedItem::PullRequest(id)) => (Some("pull_request"), Some(id)),
+        None => (None, None),
+    };
+    Ok(
+        sqlx::query_as(&crate::backend::db::timeline::entries_query(descending))
+            .bind(repo_id)
+            .bind(subject)
+            .bind(id)
+            .bind(timeline)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?,
+    )
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn record_event(

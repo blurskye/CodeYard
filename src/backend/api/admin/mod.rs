@@ -1,5 +1,4 @@
 //! Site administration routes; endpoint operations retain their current authority.
-pub(crate) mod accounts;
 pub(crate) mod actions;
 pub(crate) mod ai_crawlers;
 pub(crate) mod audit;
@@ -10,46 +9,16 @@ pub(crate) mod signup_requests;
 pub(crate) mod storage;
 pub(crate) mod users;
 
-use crate::backend::{
-    api::{http::csrf, http::middleware},
-    app::AppState,
-};
+use crate::backend::app::AppState;
 use axum::{
     extract::DefaultBodyLimit,
-    middleware::from_fn,
-    routing::{get, patch, post},
+    routing::{get, post},
     Router,
 };
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
-    // Administration JSON has the auth router's submission/cache policy, not
-    // the ordinary API node-access policy. Each handler checks live admin access.
-    let api = Router::new()
-        .route("/api/auth/admin/users", post(users::admin_create_user))
-        .route(
-            "/api/auth/admin/accounts",
-            get(accounts::admin_list_accounts),
-        )
-        .route(
-            "/api/auth/admin/accounts/:user_id/ban",
-            patch(accounts::admin_set_user_ban),
-        )
-        .route(
-            "/api/auth/admin/signup-requests",
-            get(signup_requests::admin_list_signup_requests),
-        )
-        .route(
-            "/api/auth/admin/signup-requests/resolve",
-            post(signup_requests::admin_resolve_signup_request),
-        )
-        .route(
-            "/api/auth/admin/ai-crawlers",
-            get(ai_crawlers::admin_get_ai_crawlers).put(ai_crawlers::admin_set_ai_crawlers),
-        )
-        .route_layer(from_fn(csrf::auth_submission))
-        .layer(from_fn(middleware::private_api_response));
-    let pages = Router::new()
+    Router::new()
         .route("/admin", get(overview::admin_get))
         .route(
             "/admin/users",
@@ -71,8 +40,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/admin/accounts/:user_id/two-factor/reset",
             post(users::two_factor_reset_post),
         )
-        .layer(DefaultBodyLimit::max(16 * 1024));
-    api.merge(pages)
+        .layer(DefaultBodyLimit::max(16 * 1024))
         .merge(actions::router())
         .merge(email::router())
         .merge(nodes::router())

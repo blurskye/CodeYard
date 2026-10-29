@@ -18,7 +18,7 @@ pub async fn create_forked_repository(
     // preserve/narrow descendants after source changes; no HTTP backend branch.
     Ok(sqlx::query_as(r#"INSERT INTO repositories(owner_kind,owner_user_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,created_by_id)
         SELECT 'user',?1,?2,?3,(?4 OR source.is_private OR source.visibility_locked),?5,1,?6,?7,?1
-        FROM repositories source WHERE source.id=?6 RETURNING *"#)
+        FROM repositories source WHERE source.id=?6 AND NOT source.is_gist RETURNING *"#)
         .bind(input.owner_id).bind(input.name).bind(input.description).bind(input.is_private)
         .bind(input.disk_path).bind(input.forked_from).bind(input.default_branch).fetch_one(pool).await?)
 }
@@ -28,8 +28,25 @@ pub async fn get_user_fork(
     user_id: i64,
     forked_from: i64,
 ) -> Result<Option<Repository>> {
-    Ok(sqlx::query_as("SELECT * FROM repositories WHERE owner_kind='user' AND owner_user_id=?1 AND forked_from_id=?2")
-        .bind(user_id).bind(forked_from).fetch_optional(pool).await?)
+    get_owner_fork(
+        pool,
+        crate::backend::db::repositories::creation::RepositoryTarget::Personal(user_id),
+        forked_from,
+    )
+    .await
+}
+
+pub async fn get_owner_fork(
+    pool: &SqlitePool,
+    owner: crate::backend::db::repositories::creation::RepositoryTarget,
+    forked_from: i64,
+) -> Result<Option<Repository>> {
+    use crate::backend::db::repositories::creation::RepositoryTarget;
+    let (kind, user, org) = match owner {
+        RepositoryTarget::Personal(id) => ("user", Some(id), None),
+        RepositoryTarget::Organization(id) => ("org", None, Some(id)),
+    };
+    Ok(sqlx::query_as("SELECT * FROM repositories WHERE owner_kind=?1 AND (owner_user_id=?2 OR owner_org_id=?3) AND forked_from_id=?4 AND NOT is_gist").bind(kind).bind(user).bind(org).bind(forked_from).fetch_optional(pool).await?)
 }
 
 pub async fn list_forks(
@@ -40,7 +57,7 @@ pub async fn list_forks(
 ) -> Result<Vec<Repository>> {
     ensure!(offset >= 0, "Page offset must be nonnegative");
     Ok(sqlx::query_as(
-        "SELECT * FROM repositories WHERE forked_from_id=?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
+        "SELECT * FROM repositories WHERE forked_from_id=?1 AND NOT is_gist ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3",
     )
     .bind(repo_id)
     .bind(limit.clamp(1, 100))
@@ -124,7 +141,7 @@ pub async fn count_repositories(
     Ok(statement.bind(cap).fetch_one(pool).await?)
 }
 
-struct SearchConnection(Option<sqlx::pool::PoolConnection<sqlx::Sqlite>>);
+pub(crate) struct SearchConnection(Option<sqlx::pool::PoolConnection<sqlx::Sqlite>>);
 
 impl std::ops::Deref for SearchConnection {
     type Target = sqlx::SqliteConnection;
@@ -138,7 +155,7 @@ impl std::ops::DerefMut for SearchConnection {
     }
 }
 impl SearchConnection {
-    async fn finish(mut self) -> Result<()> {
+    pub(crate) async fn finish(mut self) -> Result<()> {
         self.lock_handle().await?.remove_progress_handler();
         self.0.take();
         Ok(())
@@ -153,7 +170,7 @@ impl Drop for SearchConnection {
     }
 }
 
-async fn search_connection(pool: &SqlitePool) -> Result<SearchConnection> {
+pub(crate) async fn search_connection(pool: &SqlitePool) -> Result<SearchConnection> {
     let mut connection = SearchConnection(Some(pool.acquire().await?));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     connection

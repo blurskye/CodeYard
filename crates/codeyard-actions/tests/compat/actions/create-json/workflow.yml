@@ -1,0 +1,16 @@
+# https://github.com/jsdaniell/create-json/tree/b8e77fa01397ca39cc4a6198cc29a3be5481afef
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: jsdaniell/create-json@b8e77fa01397ca39cc4a6198cc29a3be5481afef # v1.2.3
+        with:
+          name: "created.json"
+          json: "{\"answer\":42}"
+      - name: Assert documented effect
+        run: |
+          grep -q '"answer":42' created.json
+          echo compat:ok

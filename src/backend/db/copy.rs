@@ -13,22 +13,28 @@ use anyhow::{bail, Result};
 use futures_util::{Stream, TryStreamExt};
 use sqlx::{Postgres, Sqlite, Transaction};
 
-/// Rows the baseline migration inserts. A migrated destination that was never used
+/// Rows the migrations insert. A migrated destination that was never used
 /// may hold exactly these rows, and the copy replaces them with the source's rows.
-const MIGRATION_SEEDS: &[(&str, &str, &[&str])] = &[(
-    "file_reason_limits",
-    "reason",
-    &[
-        "avatar",
-        "org_avatar",
-        "release_asset",
-        "issue_attachment",
-        "pr_attachment",
-        "readme_image",
-        "repo_asset",
-        "other",
-    ],
-)];
+const MIGRATION_SEEDS: &[(&str, &str, &[&str])] = &[
+    (
+        "file_reason_limits",
+        "reason",
+        &[
+            "avatar",
+            "org_avatar",
+            "release_asset",
+            "issue_attachment",
+            "pr_attachment",
+            "readme_image",
+            "repo_asset",
+            "other",
+        ],
+    ),
+    ("issue_attribute_guard", "id", &["1"]),
+    ("issue_relation_guard", "id", &["1"]),
+    ("organization_roles", "id", &["1", "2", "3", "4", "5", "6"]),
+    ("vulnerability_settings", "id", &["1"]),
+];
 
 /// Rows travel as JSON arrays of about this many bytes, so a large table never sits in
 /// memory whole.

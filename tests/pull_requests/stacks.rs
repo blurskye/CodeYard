@@ -242,6 +242,14 @@ async fn stacks_join_refusals_contract(pg: bool) {
         StatusCode::OK,
     )
     .await;
+    // A pull request needs a commit that the base lacks.
+    bob.expect(
+        "POST",
+        "/api/repos/bob/proj/contents/fork.txt",
+        json!({"content": "Zm9yawo=", "message": "Add fork.txt", "branch": "fork-feature", "expected_revision": main0}),
+        StatusCode::CREATED,
+    )
+    .await;
     let forked = bob
         .expect(
             "POST",
@@ -367,6 +375,14 @@ async fn stack_merge_and_retarget_contract(pg: bool) {
         "/api/repos/bob/proj/branches",
         json!({"name": "fork-feature", "sha": main0}),
         StatusCode::OK,
+    )
+    .await;
+    // A pull request needs a commit that the base lacks.
+    bob.expect(
+        "POST",
+        "/api/repos/bob/proj/contents/fork.txt",
+        json!({"content": "Zm9yawo=", "message": "Add fork.txt", "branch": "fork-feature", "expected_revision": main0}),
+        StatusCode::CREATED,
     )
     .await;
     let forked = bob
@@ -556,6 +572,9 @@ async fn stack_publish_order_contract(pg: bool) {
         runs.alice,
         ("alice".to_owned(), "proj".to_owned(), 2),
         merge::MergeRequest {
+            commit_title: None,
+            commit_message: None,
+            author_email: None,
             expected_head: pulls::text(&two, "head_sha").to_owned(),
             expected_base: pulls::text(&two, "base_sha").to_owned(),
             expected_base_branch: None,
@@ -1319,6 +1338,9 @@ async fn prepare_merge(
         runs.alice,
         ("alice".to_owned(), "proj".to_owned(), number as i32),
         merge::MergeRequest {
+            commit_title: None,
+            commit_message: None,
+            author_email: None,
             expected_head: pulls::text(&pull, "head_sha").to_owned(),
             expected_base: pulls::text(&pull, "base_sha").to_owned(),
             expected_base_branch: None,

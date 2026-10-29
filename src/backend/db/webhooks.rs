@@ -41,11 +41,42 @@ pub struct WebhookSummary {
 /// Settings a webhook form saves. The secret is sealed separately by the caller.
 #[derive(Debug, Clone)]
 pub struct WebhookFields {
+    pub username: Option<String>,
+    pub password: Option<SealedSecret>,
     pub payload_url: String,
     pub content_type: String,
     pub events: String,
     pub active: bool,
     pub ssl_verify: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WebhookPatch {
+    pub username: Option<String>,
+    pub password: Option<SealedSecret>,
+    pub clear_password: bool,
+    pub payload_url: Option<String>,
+    pub content_type: Option<String>,
+    pub events: Option<String>,
+    pub active: Option<bool>,
+    pub ssl_verify: Option<bool>,
+    pub clear_secret: bool,
+}
+
+impl From<&WebhookFields> for WebhookPatch {
+    fn from(fields: &WebhookFields) -> Self {
+        Self {
+            username: fields.username.clone(),
+            password: fields.password.clone(),
+            clear_password: false,
+            payload_url: Some(fields.payload_url.clone()),
+            content_type: Some(fields.content_type.clone()),
+            events: Some(fields.events.clone()),
+            active: Some(fields.active),
+            ssl_verify: Some(fields.ssl_verify),
+            clear_secret: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +88,7 @@ pub struct SealedSecret {
 /// One delivery attempt to record. It keeps what was sent and what came back.
 #[derive(Debug, Clone)]
 pub struct NewDelivery {
+    pub redelivery: bool,
     pub guid: String,
     pub event: String,
     pub action: Option<String>,
@@ -78,7 +110,12 @@ pub struct HookSettings {
 }
 
 native_operation!(crate::backend::db::postgres::webhooks::read_settings, crate::backend::db::sqlite::webhooks::read_settings,
-    fn read_settings(pool: &DbPool, owner: HookOwner, actor_id: i64, hook: Option<i64>, delivery: Option<i64>, after: i64) -> Result<Option<HookSettings>>);
+    fn read_settings(pool: &DbPool, owner: HookOwner, actor_id: i64, hook: Option<i64>, delivery: Option<i64>, after: i64, full_deliveries: bool) -> Result<Option<HookSettings>>);
+
+native_operation!(crate::backend::db::postgres::webhooks::list_managed_webhooks, crate::backend::db::sqlite::webhooks::list_managed_webhooks,
+    fn list_managed_webhooks(pool: &DbPool, owner: HookOwner, actor: i64, offset: i64, limit: i64) -> Result<Option<Vec<Webhook>>>);
+native_operation!(crate::backend::db::postgres::webhooks::patch_webhook, crate::backend::db::sqlite::webhooks::patch_webhook,
+    fn patch_webhook(pool: &DbPool, owner: HookOwner, actor: i64, id: i64, patch: &WebhookPatch, secret: Option<&SealedSecret>) -> Result<Option<bool>>);
 
 native_operation!(crate::backend::db::postgres::webhooks::list_webhooks, crate::backend::db::sqlite::webhooks::list_webhooks,
     fn list_webhooks(pool: &DbPool, owner: HookOwner) -> Result<Vec<Webhook>>);
@@ -100,6 +137,9 @@ native_operation!(crate::backend::db::postgres::webhooks::update_webhook, crate:
 // `Some(false)` means the webhook is not on `owner`.
 native_operation!(crate::backend::db::postgres::webhooks::delete_webhook, crate::backend::db::sqlite::webhooks::delete_webhook,
     fn delete_webhook(pool: &DbPool, owner: HookOwner, actor_id: i64, id: i64) -> Result<Option<bool>>);
+
+native_operation!(crate::backend::db::postgres::webhooks::prune_expired_deliveries, crate::backend::db::sqlite::webhooks::prune_expired_deliveries,
+    fn prune_expired_deliveries(pool: &DbPool) -> Result<u64>);
 
 // Records a delivery and drops the hook's deliveries past 30 days or beyond the newest 100.
 native_operation!(crate::backend::db::postgres::webhooks::insert_delivery, crate::backend::db::sqlite::webhooks::insert_delivery,

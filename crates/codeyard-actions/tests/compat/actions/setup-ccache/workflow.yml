@@ -1,0 +1,16 @@
+# https://github.com/hendrikmuhs/ccache-action/tree/5ebbd400eff9e74630f759d94ddd7b6c26299639
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639 # v1.2
+        with:
+          key: "compat-${{ env.COMPAT_CACHE_KEY }}"
+          max-size: "10M"
+      - name: Assert documented effect
+        run: |
+          ccache --version
+          echo compat:ok

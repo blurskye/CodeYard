@@ -1,5 +1,7 @@
 //! Repository insights: daily activity, contributors, weekly code frequency, workflow usage and
 //! forks, each on its own page beside a section list, as GitHub lays them out.
+pub mod activity;
+pub mod traffic;
 use crate::webui::components::charts::{
     activity_series, chart_grid, lines, timeframe_links, DailyActivity, Series,
 };
@@ -12,12 +14,22 @@ use dioxus::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Page {
+    Traffic {
+        page: Box<traffic::Page>,
+    },
+    Activity {
+        page: Box<activity::Page>,
+    },
     Pulse {
         days: i32,
         activity: Vec<DailyActivity>,
     },
     Contributors {
         rows: Vec<Contributor>,
+    },
+    Community {
+        health_percentage: usize,
+        checks: Vec<CommunityCheck>,
     },
     CodeFrequency {
         weeks: Vec<Week>,
@@ -26,11 +38,23 @@ pub enum Page {
         days: i32,
         workflows: Vec<WorkflowUsage>,
     },
+    Dependencies {
+        rows: Vec<DependencyRow>,
+        page: i64,
+        has_more: bool,
+    },
     Forks {
         rows: Vec<Fork>,
         page: i64,
         has_more: bool,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CommunityCheck {
+    pub name: String,
+    pub present: bool,
+    pub href: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -67,26 +91,43 @@ pub struct Fork {
     pub updated_at: String,
 }
 
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DependencyRow {
+    pub manifest: String,
+    pub name: String,
+    pub version: String,
+    pub ecosystem: String,
+    pub scope: String,
+}
+
 /// Contributors shown on the page; the rest are counted below the list.
 pub const CONTRIBUTORS_SHOWN: usize = 100;
 pub const FORKS_PER_PAGE: i64 = 30;
 
-const SECTIONS: [(&str, &str); 5] = [
+const SECTIONS: [(&str, &str); 9] = [
     ("", "Pulse"),
+    ("/activity", "Repository activity"),
+    ("/traffic", "Traffic"),
     ("/contributors", "Contributors"),
     ("/code-frequency", "Code frequency"),
     ("/actions", "Actions usage"),
     ("/forks", "Forks"),
+    ("/dependencies", "Dependency graph"),
+    ("/community", "Community standards"),
 ];
 
 impl Page {
     fn suffix(&self) -> &'static str {
         match self {
             Page::Pulse { .. } => "",
+            Page::Activity { .. } => "/activity",
+            Page::Traffic { .. } => "/traffic",
             Page::Contributors { .. } => "/contributors",
             Page::CodeFrequency { .. } => "/code-frequency",
             Page::Actions { .. } => "/actions",
             Page::Forks { .. } => "/forks",
+            Page::Dependencies { .. } => "/dependencies",
+            Page::Community { .. } => "/community",
         }
     }
 }
@@ -94,13 +135,34 @@ impl Page {
 pub fn render(repo: &RepoChrome, page: Page) -> Element {
     let base = format!("{}/insights", repo.base());
     let current = page.suffix();
-    let links: Vec<(String, &str, bool)> = SECTIONS
+    let mut links: Vec<(String, &str, bool)> = SECTIONS
         .iter()
+        .filter(|(suffix, _)| *suffix != "/traffic" || repo.can_view_traffic)
         .map(|(suffix, label)| (format!("{base}{suffix}"), *label, *suffix == current))
         .collect();
+    links.push((
+        format!("{}/attestations", repo.base()),
+        "Attestations",
+        false,
+    ));
+    links.push((
+        format!("{}/dependency-graph", repo.base()),
+        "Dependency graph",
+        false,
+    ));
     let path = format!("{base}{current}");
     let body = match page {
         Page::Pulse { days, activity } => pulse(&path, days, &activity),
+        Page::Activity { page } => activity::render(repo, &path, &page),
+        Page::Traffic { page } => traffic::render(repo, &path, &page),
+        Page::Community {
+            health_percentage,
+            checks,
+        } => rsx! {section {class:"panel p-4",
+            h2 {"Community standards"} p {"{health_percentage}% of recommended community standards are present."}
+            ul {for check in checks {li {class:"repo-settings-row",strong {"{check.name}"} span {if check.present {"Present"} else {"Missing"}} if let Some(href)=check.href {NavLink {href,"View file"}}}}}
+            p {"Add missing files with the repository editor. Public .github repositories can supply shared community files."}
+        }},
         Page::Contributors { rows } => contributors(&rows),
         Page::CodeFrequency { weeks } => code_frequency(repo, &weeks),
         Page::Actions { days, workflows } => actions(repo, &path, days, &workflows),
@@ -109,6 +171,11 @@ pub fn render(repo: &RepoChrome, page: Page) -> Element {
             page,
             has_more,
         } => forks(&path, &rows, page, has_more),
+        Page::Dependencies {
+            rows,
+            page,
+            has_more,
+        } => dependencies(repo, &path, &rows, page, has_more),
     };
     chrome(
         repo,
@@ -126,6 +193,36 @@ pub fn render(repo: &RepoChrome, page: Page) -> Element {
             }
         },
     )
+}
+
+fn dependencies(
+    repo: &RepoChrome,
+    path: &str,
+    rows: &[DependencyRow],
+    page: i64,
+    has_more: bool,
+) -> Element {
+    rsx! {
+        {heading("Dependency graph", "Dependencies submitted for the default branch. This list is not a vulnerability scan.", None)}
+        p { a { href: format!("/api/v3/repos/{}/{}/dependency-graph/sbom", encode_component(&repo.owner), encode_component(&repo.name)), "Export SPDX SBOM" } }
+        if rows.is_empty() {
+            {empty("No dependencies have been submitted for this page.")}
+        } else {
+            ul { class: "repo-insights-list panel",
+                for (index, row) in rows.iter().enumerate() {
+                    li { key: "{index}", class: "repo-insights-dependency",
+                        strong { "{row.name}" }
+                        span { " {row.version}" }
+                        p { "{row.ecosystem} · {row.scope} · {row.manifest}" }
+                    }
+                }
+            }
+        }
+        nav { class: "repo-pagination", aria_label: "Dependency pages",
+            if page > 1 { NavLink { href: format!("{path}?page={}", page - 1), "Previous" } }
+            if has_more { NavLink { href: format!("{path}?page={}", page + 1), "Next" } }
+        }
+    }
 }
 
 fn heading(title: &str, intro: &str, controls: Option<Element>) -> Element {
@@ -162,7 +259,7 @@ fn contributors(rows: &[Contributor]) -> Element {
                     li { key: "{index}", class: "repo-insights-contributor",
                         span { class: "repo-insights-rank", "{index + 1}" }
                         if let Some(username) = &row.username {
-                            NavLink { href: format!("/{}", encode_component(username)), class: "repo-insights-who",
+                            NavLink { href: crate::webui::profile_path(username), class: "repo-insights-who",
                                 Avatar { name: username.clone(), size: 20 }
                                 span { "{row.name}" }
                             }
@@ -255,7 +352,7 @@ fn forks(path: &str, rows: &[Fork], page: i64, has_more: bool) -> Element {
                     li { key: "{fork.owner}/{fork.name}", class: "repo-insights-fork",
                         div { class: "repo-insights-who",
                             Avatar { name: fork.owner.clone(), size: 20 }
-                            NavLink { href: format!("/{}/{}", encode_component(&fork.owner), encode_component(&fork.name)), "{fork.owner}/{fork.name}" }
+                            NavLink { href: crate::webui::repository_path(&fork.owner,&fork.name), "{fork.owner}/{fork.name}" }
                         }
                         if !fork.description.is_empty() {
                             p { class: "repo-insights-description", "{fork.description}" }

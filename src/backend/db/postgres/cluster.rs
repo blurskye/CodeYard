@@ -115,6 +115,7 @@ pub async fn place_fork_family(
 pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<JoinOutcome> {
     // Every early return below drops the transaction, which rolls it back.
     let mut tx = pool.begin().await?;
+    super::users::transitions::lock_membership_shared(&mut tx).await?;
     // A key that is registered already gets its standing back and keeps the token unused.
     let known = sqlx::query_as::<_, ClusterNode>(
         "SELECT *, NOW() AS observed_at FROM nodes WHERE public_key = $1",
@@ -163,6 +164,7 @@ pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(node) = inserted {
+        super::runners::bind_registration(&mut tx, request.token_hash, &node).await?;
         tx.commit().await?;
         return Ok(JoinOutcome::Joined(node));
     }
@@ -390,6 +392,38 @@ pub async fn set_replicas(pool: &PgPool, value: &str) -> Result<bool> {
     )
 }
 
+pub async fn cluster_enabled(pool: &PgPool) -> Result<bool> {
+    Ok(
+        sqlx::query_scalar("SELECT cluster_enabled FROM node_configuration WHERE id = 1")
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(false),
+    )
+}
+
+pub async fn enable_cluster(pool: &PgPool) -> Result<bool> {
+    Ok(sqlx::query(
+        "INSERT INTO node_configuration (id, cluster_enabled) VALUES (1, TRUE)
+         ON CONFLICT (id) DO UPDATE SET cluster_enabled = TRUE, updated_at = NOW()
+         WHERE NOT node_configuration.cluster_enabled",
+    )
+    .execute(pool)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
+pub async fn is_admitted_node(pool: &PgPool, public_key: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM nodes WHERE public_key = $1 AND status = 'active'
+            AND (roles = ARRAY['runner']
+                 OR COALESCE((SELECT cluster_enabled FROM node_configuration WHERE id = 1), FALSE)))",
+    )
+    .bind(public_key)
+    .fetch_one(pool)
+    .await?)
+}
+
 pub async fn bump_write_version(
     pool: &PgPool,
     repo_id: i64,
@@ -408,6 +442,11 @@ pub async fn bump_write_version(
     if node_id.is_some_and(|expected| held_by != expected) {
         return Ok(false);
     }
+    // Contributor evidence also changes for standalone repositories, which have no replication version.
+    sqlx::query("UPDATE repositories SET contribution_version=contribution_version+1 WHERE id=$1")
+        .bind(repo_id)
+        .execute(&mut *tx)
+        .await?;
     // A repository that no storage node holds has no replicas, so its changes are not counted.
     if held_by.is_some() {
         sqlx::query("UPDATE repositories SET write_version = write_version + 1 WHERE id = $1")

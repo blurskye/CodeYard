@@ -237,6 +237,9 @@ async fn request_through(
 #[tokio::test]
 async fn tcp_only_nodes_answer_repository_calls_without_an_iroh_socket() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     db::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
@@ -259,6 +262,9 @@ async fn tcp_only_nodes_answer_repository_calls_without_an_iroh_socket() {
 #[tokio::test]
 async fn pairing_over_tcp_admits_a_valid_ticket_and_refuses_a_bad_one() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let ticket = cluster::create_invite(
@@ -303,6 +309,9 @@ async fn pairing_over_tcp_admits_a_valid_ticket_and_refuses_a_bad_one() {
 #[tokio::test]
 async fn unknown_keys_are_closed_on_rpc_and_events_before_any_answer() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let stranger = NodeKey::generate();
@@ -328,6 +337,9 @@ async fn unknown_keys_are_closed_on_rpc_and_events_before_any_answer() {
 #[tokio::test]
 async fn revoked_member_is_refused_on_its_next_connection() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let member = NodeKey::generate();
@@ -359,6 +371,9 @@ async fn revoked_member_is_refused_on_its_next_connection() {
 #[tokio::test]
 async fn dialer_refuses_a_node_that_presents_another_key() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let node = start_tcp(&database, root.path(), "core-1", "storage").await;
     let impostor = NodeKey::generate().public_key();
@@ -371,6 +386,9 @@ async fn dialer_refuses_a_node_that_presents_another_key() {
 #[tokio::test]
 async fn a_client_that_cannot_sign_for_a_members_key_is_refused() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     // The client presents the key of an active member, but signs with a key it holds.
@@ -385,6 +403,9 @@ async fn a_client_that_cannot_sign_for_a_members_key_is_refused() {
 #[tokio::test]
 async fn an_unlisted_protocol_name_fails_the_handshake() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let address = address_of(&core);
@@ -449,6 +470,9 @@ async fn hold_every_pairing_slot(address: SocketAddr, node: iroh::PublicKey) -> 
 #[tokio::test]
 async fn pairing_over_tcp_refuses_a_seventeenth_idle_peer_and_frees_slots_on_drop() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let address = address_of(&core);
@@ -493,6 +517,9 @@ async fn pairing_over_tcp_refuses_a_seventeenth_idle_peer_and_frees_slots_on_dro
 #[tokio::test]
 async fn pairing_slots_are_shared_between_tcp_and_iroh() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_node(
         &database,
@@ -531,6 +558,9 @@ async fn pairing_slots_are_shared_between_tcp_and_iroh() {
 #[tokio::test]
 async fn garbage_and_stalled_clients_do_not_stop_the_listener() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let address = address_of(&core);
@@ -600,6 +630,9 @@ fn unused_udp_address() -> SocketAddr {
 #[tokio::test]
 async fn a_client_limited_to_tls_1_2_fails_the_handshake() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let address = address_of(&core);
@@ -620,6 +653,9 @@ async fn a_client_limited_to_tls_1_2_fails_the_handshake() {
 #[tokio::test]
 async fn a_key_of_another_algorithm_is_refused() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     // A P-256 key presented with an ed25519 signature. The node checks the presented key first.
@@ -641,6 +677,9 @@ async fn a_key_of_another_algorithm_is_refused() {
 #[tokio::test]
 async fn a_client_without_a_key_gets_no_answer() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let config = client_with(&[&TLS13], None, &[ALPN_RPC]);
@@ -654,6 +693,9 @@ async fn a_client_without_a_key_gets_no_answer() {
 #[tokio::test]
 async fn a_client_that_names_no_protocol_gets_no_answer() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let client = NodeKey::generate();
@@ -672,6 +714,9 @@ async fn a_client_that_names_no_protocol_gets_no_answer() {
 #[tokio::test]
 async fn a_tcp_dial_opens_no_iroh_socket() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let dialer = IrohDialer::new(Relay::Off, NodeKey::generate());
@@ -688,6 +733,9 @@ async fn a_tcp_dial_opens_no_iroh_socket() {
 #[tokio::test]
 async fn a_tcp_only_dialer_reaches_an_iroh_only_node_and_opens_iroh_for_it() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_node(&database, root.path(), "core-1", "storage", &["IROH_BIND"]).await;
     let endpoint = core.endpoint().expect("the node listens on iroh");
@@ -706,6 +754,9 @@ async fn a_tcp_only_dialer_reaches_an_iroh_only_node_and_opens_iroh_for_it() {
 #[tokio::test]
 async fn a_dial_falls_back_from_tcp_to_iroh_and_then_uses_tcp_again() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_node(
         &database,
@@ -744,6 +795,9 @@ async fn a_dial_falls_back_from_tcp_to_iroh_and_then_uses_tcp_again() {
 #[tokio::test]
 async fn shutdown_closes_the_connections_the_listener_holds() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     // A pairing peer that connects and says nothing. Pairing would wait fifteen seconds.
@@ -770,6 +824,9 @@ async fn shutdown_closes_the_connections_the_listener_holds() {
 #[tokio::test]
 async fn a_membership_check_that_stalls_keeps_its_handshake_slot() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let address = address_of(&core);
@@ -840,9 +897,13 @@ async fn silent_tcp_address() -> SocketAddr {
 #[tokio::test]
 async fn a_ci_claim_moves_on_from_a_tcp_address_that_never_answers() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let core = start_tcp(&database, root.path(), "core-1", "storage").await;
-    let worker = start_tcp(&database, root.path(), "ci-1", "actions-worker").await;
+    // Only a core with web or ssh answers claims, since preparing a run reads its repository.
+    let core = start_tcp(&database, root.path(), "core-1", "web,storage").await;
+    let worker = start_tcp(&database, root.path(), "ci-1", "runner").await;
     let queue = RunQueue::Remote {
         context: worker.context.clone(),
         peers: vec![cluster::CorePeer {
@@ -866,18 +927,21 @@ async fn a_ci_claim_moves_on_from_a_tcp_address_that_never_answers() {
 #[tokio::test]
 async fn a_ci_claim_reaches_the_core_over_iroh_after_a_tcp_address_never_answers() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_node(
         &database,
         root.path(),
         "core-1",
-        "storage",
+        "web,storage",
         &["CLUSTER_TCP_BIND", "IROH_BIND"],
     )
     .await;
     let endpoint = core.endpoint().expect("the node listens on iroh");
     cluster::wait_for_address(endpoint).await;
-    let worker = start_tcp(&database, root.path(), "ci-1", "actions-worker").await;
+    let worker = start_tcp(&database, root.path(), "ci-1", "runner").await;
     let queue = RunQueue::Remote {
         context: worker.context.clone(),
         peers: vec![cluster::CorePeer {
@@ -900,6 +964,9 @@ async fn a_ci_claim_reaches_the_core_over_iroh_after_a_tcp_address_never_answers
 #[tokio::test]
 async fn shutdown_frees_the_tcp_port_before_it_returns() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_tcp(&database, root.path(), "core-1", "storage").await;
     let address = address_of(&core);
@@ -943,6 +1010,9 @@ async fn many_silent_tcp_addresses_share_one_dial_budget() {
 #[tokio::test]
 async fn a_dial_reaches_iroh_after_many_silent_tcp_addresses() {
     let database = native::PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let core = start_node(&database, root.path(), "core-1", "storage", &["IROH_BIND"]).await;
     let endpoint = core.endpoint().expect("the node listens on iroh");

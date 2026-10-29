@@ -30,6 +30,10 @@ fn rejected_settings_preserve_nonsecret_fields_but_not_passwords_or_private_keys
         let output = html(settings_page(
             Settings {
                 two_factor: Default::default(),
+                signing_keys: vec![],
+                gpg_keys: vec![],
+                blocked: Default::default(),
+                emails: vec![],
                 theme: crate::webui::document::Theme::System,
                 profile: Profile::default(),
                 email: String::new(),
@@ -63,6 +67,10 @@ fn settings_primary_actions_share_one_class_and_deletes_are_outlined() {
     crate::webui::tests::in_scope(|| {
         let settings_for = |tab: &str, keys: Vec<Key>| Settings {
             two_factor: Default::default(),
+            signing_keys: vec![],
+            gpg_keys: vec![],
+            blocked: Default::default(),
+            emails: vec![],
             theme: crate::webui::document::Theme::System,
             profile: Profile {
                 username: "alice".into(),
@@ -113,6 +121,10 @@ fn ssh_key_and_token_deletion_ask_in_a_centred_dialog() {
     crate::webui::tests::in_scope(|| {
         let settings_for = |tab: &str| Settings {
             two_factor: Default::default(),
+            signing_keys: vec![],
+            gpg_keys: vec![],
+            blocked: Default::default(),
+            emails: vec![],
             theme: crate::webui::document::Theme::System,
             profile: Profile {
                 username: "alice".into(),
@@ -177,6 +189,10 @@ fn settings_use_a_current_left_nav_and_keep_native_credential_forms() {
         let output = html(settings_page(
             Settings {
                 two_factor: Default::default(),
+                signing_keys: vec![],
+                gpg_keys: vec![],
+                blocked: Default::default(),
+                emails: vec![],
                 theme: crate::webui::document::Theme::System,
                 profile: Profile {
                     username: "alice".into(),
@@ -200,7 +216,7 @@ fn settings_use_a_current_left_nav_and_keep_native_credential_forms() {
         ));
         assert!(output.contains("class=\"identity-settings-layout\""));
         assert!(output.contains("identity-settings-nav-current"));
-        assert!(output.contains("SSH keys, current page"));
+        assert!(output.contains("SSH and GPG keys, current page"));
         assert!(output.contains("action=\"/settings/keys\""));
         assert!(output.contains("name=\"public_key\""));
         assert!(output.contains("value=\"settings-csrf\""));
@@ -214,6 +230,10 @@ fn prerendered_bio_and_public_key_keep_native_escaped_text() {
         for (tab, name) in [("profile", "bio"), ("keys", "public_key")] {
             let model = Settings {
                 two_factor: Default::default(),
+                signing_keys: vec![],
+                gpg_keys: vec![],
+                blocked: Default::default(),
+                emails: vec![],
                 theme: crate::webui::document::Theme::System,
                 profile: Profile::default(),
                 email: String::new(),
@@ -272,6 +292,10 @@ fn token_expiry_defaults_to_thirty_days_and_takes_a_calendar_day() {
             html(settings_page(
                 Settings {
                     two_factor: Default::default(),
+                    signing_keys: vec![],
+                    gpg_keys: vec![],
+                    blocked: Default::default(),
+                    emails: vec![],
                     theme: crate::webui::document::Theme::System,
                     profile: Profile {
                         username: "alice".into(),
@@ -333,6 +357,10 @@ fn appearance_tab_sits_after_the_profile_and_marks_the_saved_theme() {
             html(settings_page(
                 Settings {
                     two_factor: Default::default(),
+                    signing_keys: vec![],
+                    gpg_keys: vec![],
+                    blocked: Default::default(),
+                    emails: vec![],
                     profile: Profile {
                         username: "alice".into(),
                         ..Profile::default()
@@ -397,6 +425,10 @@ fn picture_preview_shows_the_account_picture_or_the_uploaded_file_at_72_pixels()
             html(settings_page(
                 Settings {
                     two_factor: Default::default(),
+                    signing_keys: vec![],
+                    gpg_keys: vec![],
+                    blocked: Default::default(),
+                    emails: vec![],
                     profile: Profile {
                         username: "alice".into(),
                         avatar_url: avatar_url.map(str::to_owned),
@@ -433,6 +465,10 @@ fn picture_preview_shows_the_account_picture_or_the_uploaded_file_at_72_pixels()
 fn settings_for(tab: &str, sessions: Vec<AccountSession>) -> Settings {
     Settings {
         two_factor: Default::default(),
+        signing_keys: vec![],
+        gpg_keys: vec![],
+        blocked: Default::default(),
+        emails: vec![],
         theme: crate::webui::document::Theme::System,
         profile: Profile::default(),
         email: "alice@example.test".into(),
@@ -567,5 +603,60 @@ fn sessions_tab_hides_sign_out_everywhere_else_when_no_other_session_exists() {
             false,
         ));
         assert!(!output.contains("/settings/sessions/revoke-others"));
+    });
+}
+
+#[test]
+fn secondary_emails_have_native_add_remove_verification_and_publication_forms() {
+    crate::webui::tests::in_scope(|| {
+        let mut settings = settings_for("email", vec![]);
+        settings.emails = vec![
+            SecondaryEmail {
+                email: "work@example.test".into(),
+                verified: true,
+            },
+            SecondaryEmail {
+                email: "pending@example.test".into(),
+                verified: false,
+            },
+        ];
+        settings.profile.public_email = "work@example.test".into();
+        let output = html(settings_page(settings, "csrf-marker", None, false));
+        for action in [
+            "/settings/secondary-emails",
+            "/settings/secondary-emails/verify",
+            "/settings/email-verification/code",
+            "/settings/email-visibility",
+        ] {
+            assert!(
+                output.contains(&format!("method=\"post\" action=\"{action}\"")),
+                "{output}"
+            );
+        }
+        assert!(output.contains("name=\"secondary_email\""));
+        assert!(output.contains("name=\"public_address\" value=\"work@example.test\""));
+        assert!(output.contains("name=\"remove\" value=\"yes\""));
+        assert!(output.contains("Hide public email"));
+        assert!(output.contains("csrf-marker"));
+    });
+}
+
+#[test]
+fn blocked_accounts_have_private_native_forms_and_page_links() {
+    crate::webui::tests::in_scope(|| {
+        let mut settings = settings_for("blocked", vec![]);
+        settings.blocked = BlockedAccounts {
+            interaction: None,
+            users: vec!["bob".into()],
+            page: 2,
+            more: true,
+        };
+        let output = html(settings_page(settings, "block-csrf", None, false));
+        assert!(output.contains("method=\"post\" action=\"/settings/blocks\""));
+        assert!(output.contains("name=\"unblock\" value=\"yes\""));
+        assert!(output.contains("name=\"username\" value=\"bob\""));
+        assert!(output.contains("tab=blocked&#38;page=1"));
+        assert!(output.contains("tab=blocked&#38;page=3"));
+        assert!(output.contains("block-csrf"));
     });
 }

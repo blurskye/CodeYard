@@ -8,8 +8,14 @@ use crate::backend::db::models::Repository;
 use crate::backend::repositories::store::{repo_store, BlobRange, ErrorKind, RepoError};
 use std::collections::{HashMap, HashSet};
 
+mod diagnostics;
+pub use diagnostics::{diagnose, load_diagnostics, Diagnostic};
+
 /// Where GitHub looks, in its order. The first file found is the one used.
 const LOCATIONS: [&str; 3] = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"];
+pub fn is_codeowners_file(path: &str) -> bool {
+    LOCATIONS.contains(&path)
+}
 /// GitHub reads at most this many bytes of the file.
 const MAX_BYTES: usize = 3 * 1024 * 1024;
 /// Lines past this one are ignored.
@@ -76,6 +82,9 @@ impl Rules {
 
 impl Entry {
     fn compile(pattern: &str, owners: Vec<String>) -> Option<Self> {
+        if pattern_error(pattern).is_some() {
+            return None;
+        }
         let dir_only = pattern.ends_with('/');
         let body = pattern.trim_end_matches('/');
         // A slash anywhere but the end makes the pattern relative to the root, as in gitignore.
@@ -145,39 +154,73 @@ fn segments_match(
     Ok(next[0])
 }
 
+fn split_line(source: &str) -> Option<(&str, &str)> {
+    let line = source.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+    let mut escaped = false;
+    let end = line
+        .char_indices()
+        .find_map(|(index, ch)| {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch.is_whitespace() {
+                return Some(index);
+            }
+            None
+        })
+        .unwrap_or(line.len());
+    Some((&line[..end], &line[end..]))
+}
+
+fn pattern_error(pattern: &str) -> Option<&'static str> {
+    if pattern.trim_matches('/').is_empty() {
+        return Some("The pattern `/` will never match anything, did you mean `*` instead?");
+    }
+    if pattern.starts_with('!') {
+        return Some("Negated patterns are not supported in CODEOWNERS");
+    }
+    if pattern.starts_with("\\#") {
+        return Some("Escaping a leading # is not supported in CODEOWNERS");
+    }
+    let mut escaped = false;
+    for ch in pattern.chars() {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '[' {
+            return Some("Character ranges are not supported in CODEOWNERS");
+        }
+    }
+    None
+}
+
 /// Reads a CODEOWNERS file. A line with no owners removes them, and a line that names no path is
 /// skipped. Owners are the tokens with an `@` in them, before any `#` that starts a comment.
 pub fn parse(text: &str) -> anyhow::Result<Rules> {
+    // Keeping the first lines of a longer file would drop later owners, so the whole file is
+    // refused and merges fail closed.
+    anyhow::ensure!(
+        text.lines().count() <= MAX_LINES,
+        "CODEOWNERS exceeds its line limit"
+    );
     let mut entries = Vec::new();
     let mut owner_count = 0usize;
-    for line in text
-        .lines()
-        .take(MAX_LINES)
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    {
-        let mut escaped = false;
-        let end = line
-            .char_indices()
-            .find_map(|(index, ch)| {
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if ch.is_whitespace() {
-                    return Some(index);
-                }
-                None
-            })
-            .unwrap_or(line.len());
-        let pattern = &line[..end];
+    for source in text.lines() {
+        let Some((pattern, owner_text)) = split_line(source) else {
+            continue;
+        };
         anyhow::ensure!(
             pattern.len() <= MAX_PATTERN_BYTES,
             "CODEOWNERS pattern exceeds its size limit"
         );
         let mut owners = Vec::new();
         let mut seen = HashSet::new();
-        for owner in line[end..]
+        for owner in owner_text
             .split_whitespace()
             .take_while(|token| !token.starts_with('#'))
             .filter(|token| token.contains('@'))
@@ -222,8 +265,15 @@ pub async fn load_rules(
             .await
         {
             Ok(blob) => {
-                let end = blob.bytes.len().min(MAX_BYTES);
-                return parse(&String::from_utf8_lossy(&blob.bytes[..end])).map_err(|_| {
+                // The window holds only the first MAX_BYTES, so a larger file is refused rather
+                // than enforced in part.
+                if blob.size > MAX_BYTES as u64 {
+                    return Err(RepoError::new(
+                        ErrorKind::Invalid,
+                        "CODEOWNERS exceeds its size or work limit",
+                    ));
+                }
+                return parse(&String::from_utf8_lossy(&blob.bytes)).map_err(|_| {
                     RepoError::new(
                         ErrorKind::Invalid,
                         "CODEOWNERS exceeds its size or work limit",
@@ -275,19 +325,21 @@ pub async fn resolve_owners<'a>(
         }
     }
     for emails in emails.chunks(500) {
-        for user in db::users::accounts::get_users_by_emails(pool, emails).await? {
-            if !user.email_verified {
-                continue;
-            }
-            if let Some(ids) = user
-                .email
-                .as_ref()
-                .and_then(|email| resolved.get_mut(email))
-            {
-                ids.push(user.id);
+        for (email, id) in db::users::accounts::get_verified_email_owners(pool, emails).await? {
+            if let Some(ids) = resolved.get_mut(&email) {
+                ids.push(id);
             }
         }
     }
+    let review_teams: std::collections::HashSet<String> = if teams.is_empty() {
+        std::collections::HashSet::new()
+    } else {
+        db::pull_requests::team_reviewers::list(pool, repository.id, None, None)
+            .await?
+            .into_iter()
+            .map(|team| team.team.slug)
+            .collect()
+    };
     let mut members = 0;
     for teams in teams.chunks(500) {
         let Some(org_id) = repository.owner_org_id else {
@@ -296,6 +348,12 @@ pub async fn resolve_owners<'a>(
         for (team, id) in
             db::organizations::teams::team_members_by_names(pool, org_id, teams).await?
         {
+            if !team
+                .split_once('/')
+                .is_some_and(|(_, slug)| review_teams.contains(slug))
+            {
+                continue;
+            }
             members += 1;
             anyhow::ensure!(
                 members <= MAX_REVIEWERS,
@@ -350,6 +408,13 @@ mod tests {
             .owners_for(path, &mut WorkflowMatchBudget::new())
             .unwrap()
             .to_vec()
+    }
+
+    #[test]
+    fn unsupported_patterns_do_not_override_valid_owners() {
+        let text = "* @default\n!src/ @bad\nsrc/[ab] @bad\n\\#literal @bad\n/ @bad\n";
+        assert_eq!(owners_of(text, "src/a"), vec!["@default"]);
+        assert_eq!(owners_of(text, "#literal"), vec!["@default"]);
     }
 
     #[test]
@@ -424,13 +489,14 @@ mod tests {
     }
 
     #[test]
-    fn only_lines_within_the_line_cap_count() {
+    fn a_file_beyond_the_line_cap_is_refused_not_truncated() {
         let mut text = String::new();
         for _ in 0..MAX_LINES {
             text.push_str("# filler\n");
         }
+        assert!(parse(&text).is_ok());
         text.push_str("/late.txt @late\n");
-        assert!(owners_of(&text, "late.txt").is_empty());
+        assert!(parse(&text).is_err());
     }
 
     #[test]

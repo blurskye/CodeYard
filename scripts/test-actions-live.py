@@ -14,7 +14,7 @@ import os
 import re
 import time
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -48,9 +48,15 @@ def wait_for_job(request, job_url, predicate, timeout=180):
 
 
 def read_logs(request, logs_url):
-    response = request.get(logs_url)
-    assert response.ok, f"Log read failed: {response.status} {response.text()}"
-    return response.json()["logs"]
+    logs, after = [], 0
+    while True:
+        response = request.get(f"{logs_url}?after={after}")
+        assert response.ok, f"Log read failed: {response.status} {response.text()}"
+        page = response.json()
+        logs.extend(page["logs"])
+        if not page["has_more"]:
+            return logs
+        after = page["next_cursor"]
 
 
 def wait_for_log(request, logs_url, text, timeout=180):
@@ -71,9 +77,14 @@ with sync_playwright() as playwright:
     browser = playwright.chromium.launch(**options)
     try:
         context = browser.new_context(viewport={"width": 1440, "height": 1100})
+        sign_in = context.request.get(base + "/login", headers={"Accept": "application/vnd.codeyard.page+json"})
+        assert sign_in.ok, f"Login page failed: {sign_in.status}"
+        csrf = sign_in.json()["page"]["model"]["Auth"]["csrf_token"]
         login = context.request.post(
-            base + "/api/auth/login",
-            data={
+            base + "/login",
+            headers={"Origin": base},
+            form={
+                "csrf_token": csrf,
                 "username": args.username,
                 "password": args.password_file.read_text().rstrip("\r\n"),
             },
@@ -107,7 +118,14 @@ with sync_playwright() as playwright:
         run_id = parse_qs(urlparse(page.url).query)["job"][0]
         deep_url = page.url
         job_url = base + "/api/ci/jobs/" + run_id
-        logs_url = job_url + "/logs"
+        # The page links the log history only for long runs, so build its address from the page data.
+        model = context.request.get(deep_url, headers={"Accept": "application/vnd.codeyard.page+json"})
+        assert model.ok, f"Run page data failed: {model.status}"
+        selected = model.json()["page"]["model"]["Actions"]["Actions"]["selected"]["run"]
+        logs_url = (
+            f"{base}/api/v3/repos/{quote(args.owner, safe='')}/{quote(args.repo, safe='')}"
+            f"/actions/runs/{selected['api_id']}/attempts/{selected['api_attempt']}/logs"
+        )
         print("Started real run:", run_id, flush=True)
 
         # The dispatch redirect is already a genuine deep link. Capture it before
@@ -189,7 +207,7 @@ with sync_playwright() as playwright:
             page.screenshot(path=str(args.output_dir / "failure.png"), full_page=True)
         if run_id:
             print("Run at failure:", context.request.get(base + "/api/ci/jobs/" + run_id).text())
-            print("Logs at failure:", context.request.get(base + "/api/ci/jobs/" + run_id + "/logs").text())
+            print("Logs at failure:", context.request.get(base + f"/{args.owner}/{args.repo}/actions?job={run_id}&view=logs&log_limit=5000").text())
         raise
     finally:
         browser.close()

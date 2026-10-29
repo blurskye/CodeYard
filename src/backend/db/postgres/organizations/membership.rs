@@ -65,7 +65,9 @@ pub async fn add_organization_member(
     if !can_change_member(actor_role, None, Some(role)) {
         return Ok(Denied);
     }
-    if !active(&mut tx, target).await? {
+    if !active(&mut tx, target).await?
+        || super::blocks::target_blocked(&mut tx, org, target).await?
+    {
         return Ok(Denied);
     }
     if membership_role(&mut tx, org, target).await?.is_some() {
@@ -95,10 +97,31 @@ pub async fn update_organization_member_role(
     target: i64,
     role: OrgRole,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
+    update_member_role(pool, actor, org, target, role, false).await
+}
+
+pub async fn update_organization_member_role_by_owner(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    target: i64,
+    role: OrgRole,
+) -> Result<OrganizationOutcome<OrgMembership>> {
+    update_member_role(pool, actor, org, target, role, true).await
+}
+
+async fn update_member_role(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    target: i64,
+    role: OrgRole,
+    owner_only: bool,
+) -> Result<OrganizationOutcome<OrgMembership>> {
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     let actor_role = require_org!(tx, actor, org);
-    if !administers(actor_role) {
+    if !administers(actor_role) || (owner_only && actor_role != OrgRole::Owner) {
         return Ok(Denied);
     }
     let target_active = active(&mut tx, target).await?;
@@ -148,31 +171,95 @@ pub async fn remove_organization_member(
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
+    remove_member(pool, actor, org, target, false, Removal::Remove).await
+}
+
+pub async fn remove_organization_member_by_owner(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    target: i64,
+) -> Result<OrganizationOutcome<()>> {
+    remove_member(pool, actor, org, target, true, Removal::Remove).await
+}
+
+pub async fn convert_to_outside_collaborator(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    target: i64,
+) -> Result<OrganizationOutcome<()>> {
+    remove_member(pool, actor, org, target, true, Removal::Convert).await
+}
+
+pub async fn prepare_outside_conversion(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    target: i64,
+) -> Result<OrganizationOutcome<()>> {
+    remove_member(pool, actor, org, target, true, Removal::ValidateConversion).await
+}
+
+#[derive(PartialEq)]
+enum Removal {
+    Remove,
+    Convert,
+    ValidateConversion,
+}
+
+async fn remove_member(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    target: i64,
+    owner_only: bool,
+    mode: Removal,
+) -> Result<OrganizationOutcome<()>> {
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     let actor_role = require_org!(tx, actor, org);
-    if !administers(actor_role) {
+    // Any member may leave on their own; the last-owner check below still applies.
+    let leaving = actor == target && mode == Removal::Remove && !owner_only;
+    if !leaving && (!administers(actor_role) || (owner_only && actor_role != OrgRole::Owner)) {
         return Ok(Denied);
     }
     // Lock target activity even though cleanup does not require it to be active.
     active(&mut tx, target).await?;
     let Some(old) = membership_role(&mut tx, org, target).await? else {
-        return Ok(Missing);
+        return Ok(if mode == Removal::Remove {
+            Missing
+        } else {
+            Denied
+        });
     };
     // A role this build does not recognize is refused; it cannot be removed here.
     let Ok(old) = old.parse::<OrgRole>() else {
         return Ok(Denied);
     };
-    if !can_change_member(actor_role, Some(old), None) {
+    if !leaving && !can_change_member(actor_role, Some(old), None) {
         return Ok(Denied);
     }
     if old == OrgRole::Owner && !remaining_active_owner(&mut tx, org, target).await? {
         return Ok(Conflict);
     }
+    if mode == Removal::ValidateConversion {
+        tx.commit().await?;
+        return Ok(Applied(()));
+    }
+    if mode == Removal::Convert {
+        sqlx::query("INSERT INTO repo_access(user_id,repo_id,access_level) SELECT $1,r.id,MAX(role.base_level) FROM repositories r JOIN organization_role_assignments a ON a.org_id=r.owner_org_id AND a.user_id IS NULL JOIN organization_roles role ON role.id=a.role_id AND role.base_level BETWEEN 1 AND 5 JOIN teams t ON t.id=a.team_id AND t.org_id=a.org_id AND t.privacy IN ('visible','secret') JOIN effective_team_memberships m ON m.team_id=t.id AND m.user_id=$1 AND m.role IN ('member','maintainer') WHERE r.owner_kind='org' AND r.owner_org_id=$2 AND r.owner_user_id IS NULL GROUP BY r.id ON CONFLICT(user_id,repo_id) DO UPDATE SET access_level=CASE WHEN repo_access.access_level BETWEEN 1 AND 5 THEN GREATEST(repo_access.access_level,excluded.access_level) ELSE excluded.access_level END").bind(target).bind(org).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO repo_access(user_id,repo_id,access_level) SELECT $1,a.repo_id,MAX(a.permission) FROM team_repo_access a JOIN teams t ON t.id=a.team_id JOIN effective_team_memberships m ON m.team_id=t.id JOIN repositories r ON r.id=a.repo_id WHERE m.user_id=$1 AND m.role IN ('member','maintainer') AND t.org_id=$2 AND t.privacy IN ('visible','secret') AND r.owner_kind='org' AND r.owner_org_id=$2 AND r.owner_user_id IS NULL AND a.permission BETWEEN 1 AND 5 GROUP BY a.repo_id ON CONFLICT(user_id,repo_id) DO UPDATE SET access_level=CASE WHEN repo_access.access_level BETWEEN 1 AND 5 THEN GREATEST(repo_access.access_level,excluded.access_level) ELSE excluded.access_level END")
+            .bind(target).bind(org).execute(&mut *tx).await?;
+    }
+    sqlx::query("INSERT INTO organization_member_history(org_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(org_id,user_id) DO UPDATE SET role=excluded.role,removed_at=NOW()")
+        .bind(org).bind(target).bind(old.as_str()).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM team_memberships WHERE user_id=$1 AND team_id IN (SELECT id FROM teams WHERE org_id=$2)")
         .bind(target).bind(org).execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM repo_access WHERE user_id=$1 AND repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$2)")
-        .bind(target).bind(org).execute(&mut *tx).await?;
+    if mode == Removal::Remove {
+        sqlx::query("DELETE FROM repo_access WHERE user_id=$1 AND repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$2)")
+            .bind(target).bind(org).execute(&mut *tx).await?;
+    }
     cancel_actor(&mut tx, org, target).await?;
     sqlx::query("DELETE FROM org_memberships WHERE org_id=$1 AND user_id=$2")
         .bind(org)

@@ -1,0 +1,154 @@
+use super::{
+    arg, db, missing, node_id, unavailable, url, Arguments, RequestContext, Result, Value,
+};
+use serde_json::json;
+
+pub(super) fn object(user: &db::models::User, viewer: i64) -> Value {
+    json!({"__typename":"User","id":node_id::encode("U",user.id),"databaseId":user.id,
+        "login":user.username,"name":user.display_name,
+        "url":url(&format!("/{}",user.username)),"avatarUrl":url(&format!("/avatars/{}",user.username)),"createdAt":user.created_at,
+        "bio":user.bio,"company":null,"location":user.location,"websiteUrl":user.website,
+        "isViewer":viewer==user.id,"viewerCanFollow":viewer!=user.id})
+}
+
+pub(super) fn organization(org: &db::models::Organization) -> Value {
+    json!({"__typename":"Organization","id":node_id::encode("O",org.id),"databaseId":org.id,
+        "login":org.name,"name":org.display_name,"email":null,"url":url(&format!("/{}",org.name)),
+        "avatarUrl":url(&format!("/avatars/{}",org.name)),"createdAt":org.created_at,
+        "description":org.description,"websiteUrl":null})
+}
+
+pub(super) async fn by_id(id: i64, request: &RequestContext) -> Result<Value> {
+    let user = db::users::accounts::get_user_by_id(&request.state.pool, id)
+        .await
+        .map_err(unavailable)?
+        .filter(|user| !user.is_banned)
+        .ok_or_else(missing)?;
+    Ok(object(&user, request.auth.user.id))
+}
+
+fn actor_value(mut value: Value) -> Value {
+    if value["login"] == db::ci_tokens::BOT {
+        value["__typename"] = json!("Bot");
+    }
+    value
+}
+pub(super) fn actor_object(user: &db::models::User, viewer: i64) -> Value {
+    actor_value(object(user, viewer))
+}
+pub(super) async fn actor_by_id(id: i64, request: &RequestContext) -> Result<Value> {
+    Ok(actor_value(by_id(id, request).await?))
+}
+
+/// Authored content keeps its author after the account is suspended; a suspended author reads as null.
+pub(super) async fn retained_author(id: i64, request: &RequestContext) -> Result<Value> {
+    let user = db::users::accounts::get_user_by_id(&request.state.pool, id)
+        .await
+        .map_err(unavailable)?;
+    Ok(match user.filter(|user| !user.is_banned) {
+        Some(user) => actor_object(&user, request.auth.user.id),
+        None => Value::Null,
+    })
+}
+
+/// An organization as another object's projection, such as a repository owner. The standalone
+/// organization queries check the read:org grant themselves.
+pub(super) async fn organization_by_id(id: i64, request: &RequestContext) -> Result<Value> {
+    let org = db::organizations::profiles::get_public_organization_by_id(&request.state.pool, id)
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(missing)?;
+    Ok(organization(&org))
+}
+
+pub(super) async fn resolve(
+    ty: &str,
+    field: &str,
+    ctx: &Arguments,
+    request: &RequestContext,
+    parent: &Value,
+) -> Result<Value> {
+    if let Some(value) = parent.get(field) {
+        return Ok(value.clone());
+    }
+    let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
+    match field {
+        "team" if ty == "Organization" => {
+            super::team::by_slug(id, &super::arg(ctx, "slug")?, request).await
+        }
+        "email" if ty == "User" => {
+            // The profile's public email, as REST shows it, never the primary address.
+            let user = db::users::accounts::get_user_by_id(&request.state.pool, id)
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
+            let settings = db::users::profiles::get_profile_settings(&request.state.pool, id)
+                .await
+                .map_err(unavailable)?;
+            Ok(json!(settings.public_email(&user).unwrap_or("")))
+        }
+        "repositories" => super::repository_list::list(ctx, request, parent).await,
+        "gists" if ty == "User" => super::gists::list(ctx, request, parent).await,
+        "viewerIsFollowing" => Ok(serde_json::json!(
+            crate::backend::identity::following::status(
+                &request.state.pool,
+                id,
+                Some(request.auth.user.id)
+            )
+            .await
+            .map_err(unavailable)?
+            .following
+        )),
+        _ => Err(async_graphql::Error::new(format!(
+            "Codeyard does not support {ty}.{field} yet"
+        ))),
+    }
+}
+
+pub(super) async fn query(field: &str, ctx: &Arguments, request: &RequestContext) -> Result<Value> {
+    if field == "viewer" {
+        return by_id(request.auth.user.id, request).await;
+    }
+    if request.auth.is_job() {
+        return Err(missing());
+    }
+    let login = arg(ctx, "login")?;
+    if field == "repositoryOwner" {
+        if let Some(user) = db::users::accounts::get_user_by_username(&request.state.pool, &login)
+            .await
+            .map_err(unavailable)?
+            .filter(|user| !user.is_banned)
+        {
+            return Ok(object(&user, request.auth.user.id));
+        }
+    }
+    if field == "user" {
+        let user = db::users::accounts::get_user_by_username(&request.state.pool, &login)
+            .await
+            .map_err(unavailable)?
+            .filter(|user| !user.is_banned)
+            .ok_or_else(missing)?;
+        Ok(object(&user, request.auth.user.id))
+    } else if field == "repositoryOwner" {
+        if let Some(user) = db::users::accounts::get_user_by_username(&request.state.pool, &login)
+            .await
+            .map_err(unavailable)?
+            .filter(|user| !user.is_banned)
+        {
+            return Ok(object(&user, request.auth.user.id));
+        }
+        request.require_oauth_scope("read:org")?;
+        let org = db::organizations::profiles::get_public_organization(&request.state.pool, &login)
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(missing)?;
+        Ok(organization(&org))
+    } else {
+        request.require_oauth_scope("read:org")?;
+        let org = db::organizations::profiles::get_public_organization(&request.state.pool, &login)
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(missing)?;
+        Ok(organization(&org))
+    }
+}

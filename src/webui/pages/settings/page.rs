@@ -24,11 +24,19 @@ const APPEARANCE_CHOICES: [(Theme, &str, &str); 3] = [
 pub struct Settings {
     pub profile: Profile,
     pub email: String,
+    #[serde(default)]
+    pub emails: Vec<SecondaryEmail>,
+    #[serde(default)]
+    pub blocked: BlockedAccounts,
     /// Whether notifications are also sent by email.
     pub email_notifications: bool,
     pub email_verification: EmailVerification,
     pub tab: String,
     pub keys: Vec<Key>,
+    #[serde(default)]
+    pub signing_keys: Vec<Key>,
+    #[serde(default)]
+    pub gpg_keys: Vec<Key>,
     pub tokens: Vec<Token>,
     pub sessions: Vec<AccountSession>,
     pub new_token: Option<String>,
@@ -38,6 +46,21 @@ pub struct Settings {
     /// The theme saved on this device, read from the same cookie as the header toggle.
     pub theme: Theme,
     pub two_factor: TwoFactor,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BlockedAccounts {
+    #[serde(default)]
+    pub interaction: Option<crate::webui::components::interactions::InteractionPanel>,
+    pub users: Vec<String>,
+    pub page: u32,
+    pub more: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SecondaryEmail {
+    pub email: String,
+    pub verified: bool,
 }
 
 /// Whether the account's address is confirmed, and if not, whether the server can ask for it.
@@ -163,7 +186,7 @@ pub fn settings_nav(current: &str) -> Element {
             vec![
                 (
                     "/settings?tab=keys",
-                    "SSH keys",
+                    "SSH and GPG keys",
                     "keys",
                     ProfileIcon::Terminal,
                 ),
@@ -178,6 +201,18 @@ pub fn settings_nav(current: &str) -> Element {
                     "Sessions",
                     "sessions",
                     ProfileIcon::Layers,
+                ),
+                (
+                    "/settings/invitations",
+                    "Repository invitations",
+                    "invitations",
+                    ProfileIcon::User,
+                ),
+                (
+                    "/settings?tab=blocked",
+                    "Blocked users",
+                    "blocked",
+                    ProfileIcon::Shield,
                 ),
                 (
                     "/settings/organizations",
@@ -273,9 +308,30 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                 }
                                 {text_field("location", "Location", values.location.clone(), "text", false, 200)}
                                 {text_field("website", "Website", values.website.clone(), "url", false, 255)}
+                                {text_field("company", "Company", values.company.clone(), "text", false, 255)}
+                                {text_field("twitter_username", "Twitter username", values.twitter_username.clone(), "text", false, 255)}
+                                input { r#type: "hidden", name: "profile_details", value: "yes" }
+                                label { class: "identity-check", input { r#type: "checkbox", name: "hireable", value: "yes", checked: values.hireable } " Available for hire" }
                                 div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Save profile" } }
                             }
                             p { class: "identity-account-meta", "Signed in as @{model.profile.username} · {model.email}" }
+                        }
+                        section { class: "identity-settings-section", aria_labelledby: "settings-social-title",
+                            header { class: "identity-section-header", h2 { id: "settings-social-title", "Social accounts" } p { "Add up to four links to your public profile." } }
+                            for (provider, url) in &model.profile.social_accounts {
+                                form { method: "post", action: "/settings/social-accounts", class: "identity-form",
+                                    {csrf(token)}
+                                    input { r#type: "hidden", name: "url", value: url.clone() }
+                                    input { r#type: "hidden", name: "remove", value: "yes" }
+                                    a { href: url.clone(), rel: "nofollow me", class: "identity-profile-bio", "{provider}: {url}" }
+                                    button { r#type: "submit", class: "btn btn-danger", "Remove social account" }
+                                }
+                            }
+                            form { method: "post", action: "/settings/social-accounts", class: "identity-form",
+                                {csrf(token)}
+                                {text_field("url", "Social account URL", String::new(), "url", true, 255)}
+                                div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Add social account" } }
+                            }
                         }
                         section { class: "identity-settings-section", aria_labelledby: "settings-avatar-title",
                             header { class: "identity-section-header",
@@ -355,11 +411,62 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                 div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Add SSH key" } }
                             }
                         }
+                        section { class: "identity-settings-section", aria_labelledby: "settings-signing-keys-title",
+                            header { class: "identity-section-header", h2 { id: "settings-signing-keys-title", "SSH signing keys" } p { "Public keys used to sign Git commits and tags. These do not grant Git access." } }
+                            div { class: "identity-row-list",
+                                if model.signing_keys.is_empty() { div { class: "identity-empty", h3 { "No SSH signing keys" } } }
+                                for key in &model.signing_keys {
+                                    article { class: "identity-row",
+                                        div { class: "identity-row-main", h3 { "{key.name}" } code { "{key.fingerprint}" } p { "{key.kind} · Added {compact_date(&key.created)}" } }
+                                        details { class: "native-menu repo-delete-menu",
+                                            summary { class: "btn btn-danger btn-sm", "Delete" span { class: "site-sr-only", " signing key {key.name}" } }
+                                            {confirm_dialog(None, &format!("Delete SSH signing key {}", key.name), "/settings?tab=keys", &format!("/settings/signing-keys/{}/delete", key.id), rsx! {
+                                                {csrf(token)} strong { "Delete SSH signing key {key.name}?" }
+                                                p { "This key will no longer be associated with your account." }
+                                            }, "Delete signing key")}
+                                        }
+                                    }
+                                }
+                            }
+                            if model.signing_keys.len() == 100 {
+                                if let Some(last) = model.signing_keys.last() { NavLink { href: format!("/settings?tab=keys&signing_after={}",last.id), class: "identity-button", "Next signing keys" } }
+                            }
+                            form { method: "post", action: "/settings/signing-keys", class: "identity-form",
+                                {csrf(token)}
+                                div { class: "space-y-2", label { r#for: "signing_name", "Signing key title" } input { id: "signing_name", name: "name", "value": values.name.clone(), maxlength: "100", required: true, class: FIELD } }
+                                div { class: "space-y-2", label { r#for: "signing_public_key", "Public signing key" }
+                                    DraftTextarea { id: Some("signing_public_key".to_owned()), name: "public_key", initial_value: values.public_key.clone(), required: true, rows: 5, maxlength: Some(16384), class: FIELD }
+                                    p { class: "identity-form-hint", "Paste only the public key. Never share a private key." }
+                                }
+                                div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Add signing key" } }
+                            }
+                        }
+                        section { class: "identity-settings-section", aria_labelledby: "settings-gpg-title",
+                            header { class: "identity-section-header", h2 { id: "settings-gpg-title", "GPG keys" } p { "Public OpenPGP keys and certified signing subkeys. Key identities are public; never upload a private key." } }
+                            for key in &model.gpg_keys {
+                                article { class: "identity-row",
+                                    div { class: "identity-row-main", h3 { "{key.name}" } p { "{key.kind} · Created {compact_date(&key.created)}" } code { "{key.fingerprint}" } }
+                                    details { class: "collaboration-edit native-menu repo-delete-menu",
+                                        summary { class: "btn btn-danger", "Delete" span { class: "site-sr-only", " {key.name}" } }
+                                        {confirm_dialog(None,&format!("Delete GPG key {}",key.name),"/settings?tab=keys",&format!("/settings/gpg-keys/{}/delete",key.id),rsx! {{csrf(token)} strong { "Delete GPG key {key.name}?" } p { "The key and its subkeys will no longer be associated with your account." }},"Delete GPG key")}
+                                    }
+                                }
+                            }
+                            if model.gpg_keys.is_empty() { p { class: "identity-empty", "No GPG keys." } }
+                            form { method: "post", action: "/settings/gpg-keys", class: "identity-form",
+                                {csrf(token)}
+                                {text_field("gpg_name","GPG key title",String::new(),"text",false,100)}
+                                div { class: "space-y-2", label { r#for: "gpg_public_key", "Armored public key" } DraftTextarea { id: Some("gpg_public_key".to_owned()), name: "armored_public_key", initial_value: String::new(), required:true, rows:8,maxlength:Some(65536),class:FIELD } }
+                                div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Add GPG key" } }
+                            }
+                        }
                     } else if model.tab == "tokens" {
                         section { class: "identity-settings-section", aria_labelledby: "settings-tokens-title",
                             header { class: "identity-section-header",
                                 h2 { id: "settings-tokens-title", "Personal access tokens" }
                                 p { "Use a token as your password for Git over HTTPS." }
+                                NavLink { href: "/settings/applications", "OAuth applications" }
+                                NavLink { href: "/settings/apps", "GitHub Apps" }
                             }
                             if let Some(value) = &model.new_token {
                                 div { class: "identity-token-reveal", role: "status",
@@ -388,6 +495,11 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                         }
                                     }
                                 }
+                            }
+                        }
+                        if model.tokens.len() == 100 {
+                            if let Some(last) = model.tokens.last() {
+                                NavLink { href: format!("/settings?tab=tokens&tokens_before={}",last.id), class: "identity-button", "Older tokens" }
                             }
                         }
                         section { class: "identity-settings-section", aria_labelledby: "settings-create-token-title",
@@ -498,6 +610,36 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                 div { class: "identity-empty", h3 { "Email changes aren't available" } p { "This account uses OAuth and does not support email changes." } }
                             }
                         }
+                        section { class: "identity-settings-section", aria_labelledby: "settings-secondary-emails-title",
+                            header { class: "identity-section-header", h2 { id: "settings-secondary-emails-title", "Additional email addresses" } p { "Each address needs its own verification code before it can appear on your profile." } }
+                            for email in &model.emails {
+                                div { class: "identity-row",
+                                    div { class: "identity-row-main", h3 { "{email.email}" } p { if email.verified { "Verified" } else { "Not verified" } } }
+                                    form { method: "post", action: "/settings/secondary-emails", {csrf(token)} input { r#type: "hidden", name: "email", value: email.email.clone() } input { r#type: "hidden", name: "remove", value: "yes" } button { r#type: "submit", class: "btn btn-danger btn-sm", "Remove" } }
+                                }
+                                if email.verified {
+                                    form { method: "post", action: "/settings/email-visibility", class: "identity-form", {csrf(token)} input { r#type: "hidden", name: "public_address", value: email.email.clone() } div { class: "identity-form-actions", button { r#type: "submit", class: "btn", "Use on public profile" } } }
+                                }
+                                if !email.verified {
+                                    form { method: "post", action: "/settings/secondary-emails/verify", class: "identity-form", {csrf(token)} input { r#type: "hidden", name: "email", value: email.email.clone() } div { class: "identity-form-actions", button { r#type: "submit", class: "btn", "Send verification code" } } }
+                                }
+                            }
+                            if !model.profile.public_email.is_empty() {
+                                form { method: "post", action: "/settings/email-visibility", class: "identity-form", {csrf(token)} input { r#type: "hidden", name: "public_address", value: "" } div { class: "identity-form-actions", button { r#type: "submit", class: "btn", "Hide public email" } } }
+                            }
+                            form { method: "post", action: "/settings/secondary-emails", class: "identity-form", {csrf(token)} {text_field("secondary_email", "Additional email address", String::new(), "email", true, 255)} div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Add email address" } } }
+                            if model.emails.iter().any(|email| !email.verified) {
+                                form { method: "post", action: "/settings/email-verification/code", class: "identity-form", {csrf(token)} {code_field("secondary-verify-code")} div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Verify email address" } } }
+                            }
+                        }
+                        section { class: "identity-settings-section", aria_labelledby: "settings-email-visibility-title",
+                            header { class: "identity-section-header", h2 { id: "settings-email-visibility-title", "Email privacy" } p { "Only a verified email address can appear on your public profile." } }
+                            form { method: "post", action: "/settings/email-visibility", class: "identity-form",
+                                {csrf(token)}
+                                label { class: "identity-check", input { r#type: "checkbox", name: "public_email", value: "yes", checked: model.profile.primary_email_visibility == "public" } " Show my primary email on my public profile" }
+                                div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Save email privacy" } }
+                            }
+                        }
                         section { class: "identity-settings-section", aria_labelledby: "settings-email-notifications-title",
                             header { class: "identity-section-header",
                                 h2 { id: "settings-email-notifications-title", "Email notifications" }
@@ -511,6 +653,25 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                 }
                                 div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Save" } }
                             }
+                        }
+                    } else if model.tab == "blocked" {
+                        if let Some(panel) = &model.blocked.interaction {crate::webui::components::interactions::InteractionSettings {panel:panel.clone()}}
+                        section { class: "identity-settings-section", aria_labelledby: "settings-blocked-title",
+                            header { class: "identity-section-header", h2 { id: "settings-blocked-title", "Blocked users" } p { "Blocking removes follows, stars, watches, collaborator access and assignments between your personal repositories. Shared organization repositories remain accessible. Unblocking does not restore removed relationships." } }
+                            for username in &model.blocked.users {
+                                div { class: "identity-row",
+                                    div { class: "identity-row-main", h3 { a { href: crate::webui::profile_path(username), "{username}" } } }
+                                    form { method: "post", action: "/settings/blocks", {csrf(token)} input { r#type: "hidden", name: "username", value: username.clone() } input { r#type: "hidden", name: "unblock", value: "yes" } button { r#type: "submit", class: "btn", "Unblock" } }
+                                }
+                            }
+                            if model.blocked.users.is_empty() { p { class: "identity-empty", "No blocked users on this page." } }
+                            if model.blocked.page>1 || model.blocked.more {
+                                nav { aria_label: "Blocked users pages",
+                                    if model.blocked.page>1 { a { href: format!("/settings?tab=blocked&page={}",model.blocked.page-1), "Previous" } }
+                                    if model.blocked.more { a { href: format!("/settings?tab=blocked&page={}",model.blocked.page+1), "Next" } }
+                                }
+                            }
+                            form { method: "post", action: "/settings/blocks", class: "identity-form", {csrf(token)} {text_field("username", "Username to block", String::new(), "text", true, 255)} div { class: "identity-form-actions", button { r#type: "submit", class: "btn btn-danger", "Block user" } } }
                         }
                     } else if model.tab == "sessions" {
                         section { class: "identity-settings-section", aria_labelledby: "settings-sessions-title",
@@ -578,6 +739,7 @@ pub fn settings_tab(raw: Option<&str>) -> &'static str {
         Some("two-factor") => "two-factor",
         Some("email") => "email",
         Some("sessions") => "sessions",
+        Some("blocked") => "blocked",
         _ => "profile",
     }
 }

@@ -1,0 +1,501 @@
+//! Dependabot alerts use the same live database authority as native security forms.
+use super::{advisories::failure, auth, orgs, repo_url, repos, repository, Error, Result};
+use crate::backend::{
+    app::AppState,
+    db::{
+        self,
+        dependabot_alerts::{self as store, Alert, Update},
+    },
+    webhooks::payloads,
+};
+use axum::{
+    extract::{OriginalUri, Path, Query, State},
+    http::{header, HeaderMap, StatusCode, Uri},
+    response::{IntoResponse, Response},
+    routing::{get, patch, MethodRouter},
+    Json,
+};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use serde_json::{json, Value};
+use std::{collections::HashMap, sync::Arc};
+type Params = HashMap<String, String>;
+
+pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+    vec![
+        ("security-advisories/list-global-advisories", get(global)),
+        (
+            "security-advisories/get-global-advisory",
+            get(global_detail),
+        ),
+        ("dependabot/list-alerts-for-repo", get(list)),
+        ("dependabot/list-alerts-for-org", get(list)),
+        ("dependabot/get-alert", get(detail)),
+        ("dependabot/update-alert", patch(update)),
+    ]
+}
+pub(super) async fn import(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(value): Json<Value>,
+) -> Result<Response> {
+    let actor = auth::authenticate(&state, &headers, true)
+        .await?
+        .ok_or_else(auth::required)?;
+    actor.require_write()?;
+    let value = store::import(&state.pool, actor.user.id, &value)
+        .await
+        .map_err(failure)?;
+    Ok((StatusCode::CREATED, Json(value)).into_response())
+}
+async fn global(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<Params>,
+    OriginalUri(uri): OriginalUri,
+) -> Result<Response> {
+    auth::authenticate(&state, &headers, false).await?;
+    validate(&query, true)?;
+    let rows = store::global(&state.pool)
+        .await
+        .map_err(failure)?
+        .into_iter()
+        .filter(|a| global_matches(a, &query))
+        .collect();
+    page(rows, &query, &uri, true)
+}
+async fn global_detail(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    auth::authenticate(&state, &headers, false).await?;
+    let value = store::global_one(&state.pool, &id)
+        .await
+        .map_err(failure)?
+        .ok_or_else(Error::missing)?;
+    Ok(Json(value))
+}
+fn csv(query: &Params, key: &str, value: &str) -> bool {
+    query
+        .get(key)
+        .is_none_or(|s| s.split(',').any(|s| s == value))
+}
+fn global_matches(a: &Value, q: &Params) -> bool {
+    for key in ["ghsa_id", "cve_id", "severity"] {
+        if !csv(q, key, a[key].as_str().unwrap_or("")) {
+            return false;
+        }
+    }
+    if a["type"] != q.get("type").map_or("reviewed", String::as_str) {
+        return false;
+    }
+    if q.get("is_withdrawn")
+        .is_some_and(|v| (v == "true") == a["withdrawn_at"].is_null())
+    {
+        return false;
+    }
+    if let Some(ecosystem) = q.get("ecosystem") {
+        if !a["vulnerabilities"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|v| v["package"]["ecosystem"] == *ecosystem)
+        {
+            return false;
+        }
+    }
+    if let Some(affects) = q.get("affects") {
+        if !affects.split(',').any(|p| {
+            let (name, version) = p
+                .rsplit_once('@')
+                .filter(|(n, _)| !n.is_empty())
+                .map_or((p, None), |(n, v)| (n, Some(v)));
+            a["vulnerabilities"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|v| {
+                    v["package"]["name"] == name
+                        && version.is_none_or(|version| {
+                            store::affected(
+                                version,
+                                v["vulnerable_version_range"].as_str().unwrap_or(""),
+                            )
+                        })
+                })
+        }) {
+            return false;
+        }
+    }
+    if let Some(cwes) = q.get("cwes") {
+        if !a["cwes"].as_array().into_iter().flatten().any(|v| {
+            cwes.split(',')
+                .any(|c| v["cwe_id"] == format!("CWE-{}", c.trim_start_matches("CWE-")))
+        }) {
+            return false;
+        }
+    }
+    for (key, field) in [
+        ("published", "published_at"),
+        ("updated", "updated_at"),
+        ("modified", "updated_at"),
+    ] {
+        if let Some(range) = q.get(key) {
+            if !date_matches(a[field].as_str().unwrap_or(""), range) {
+                return false;
+            }
+        }
+    }
+    true
+}
+fn date_matches(value: &str, range: &str) -> bool {
+    let Some(date) = value.get(..10) else {
+        return false;
+    };
+    if let Some((start, end)) = range.split_once("..") {
+        return (start == "*" || date >= start) && (end == "*" || date <= end);
+    }
+    for op in [">=", "<=", ">", "<"] {
+        if let Some(rhs) = range.strip_prefix(op) {
+            return match op {
+                ">=" => date >= rhs,
+                "<=" => date <= rhs,
+                ">" => date > rhs,
+                _ => date < rhs,
+            };
+        }
+    }
+    date == range
+}
+fn validate(q: &Params, global: bool) -> Result<()> {
+    let allowed = if global {
+        &[
+            "ghsa_id",
+            "type",
+            "cve_id",
+            "ecosystem",
+            "severity",
+            "cwes",
+            "is_withdrawn",
+            "affects",
+            "published",
+            "updated",
+            "modified",
+            "sort",
+            "direction",
+            "per_page",
+            "page",
+            "before",
+            "after",
+        ][..]
+    } else {
+        &[
+            "state",
+            "severity",
+            "ecosystem",
+            "package",
+            "manifest",
+            "scope",
+            "sort",
+            "direction",
+            "per_page",
+            "page",
+            "before",
+            "after",
+            "classification",
+        ][..]
+    };
+    if q.keys().any(|k| !allowed.contains(&k.as_str()))
+        || q.get("direction")
+            .is_some_and(|s| !matches!(s.as_str(), "asc" | "desc"))
+        || q.contains_key("before") && q.contains_key("after")
+    {
+        return Err(Error::invalid("Invalid list options"));
+    }
+    let sorts = if global {
+        &["published", "updated"][..]
+    } else {
+        &["created", "updated", "severity"][..]
+    };
+    if q.get("sort").is_some_and(|s| !sorts.contains(&s.as_str())) {
+        return Err(Error::invalid("Invalid sort"));
+    }
+    if q.get("is_withdrawn")
+        .is_some_and(|s| !matches!(s.as_str(), "true" | "false"))
+    {
+        return Err(Error::invalid("Invalid withdrawal filter"));
+    }
+    Ok(())
+}
+fn sort_key(v: &Value, sort: &str, global: bool) -> (String, String) {
+    let value = match sort {
+        "severity" => match v["security_advisory"]["severity"].as_str().unwrap_or("") {
+            "critical" => "4",
+            "high" => "3",
+            "medium" => "2",
+            _ => "1",
+        }
+        .into(),
+        "published" => v["published_at"].as_str().unwrap_or("").into(),
+        "updated" => v["updated_at"].as_str().unwrap_or("").into(),
+        _ => v["created_at"].as_str().unwrap_or("").into(),
+    };
+    let id = if global {
+        v["ghsa_id"].as_str().unwrap_or("").to_owned()
+    } else {
+        format!(
+            "{:020}:{:020}",
+            v["repository"]["id"].as_i64().unwrap_or(0),
+            v["number"].as_i64().unwrap_or(0)
+        )
+    };
+    (value, id)
+}
+fn page(mut rows: Vec<Value>, q: &Params, uri: &Uri, global: bool) -> Result<Response> {
+    let sort = q
+        .get("sort")
+        .map_or(if global { "published" } else { "created" }, String::as_str);
+    let ascending = q.get("direction").is_some_and(|s| s == "asc");
+    let limit = q
+        .get("per_page")
+        .map(|s| s.parse::<usize>())
+        .transpose()
+        .map_err(|_| Error::invalid("Invalid page size"))?
+        .unwrap_or(30)
+        .clamp(1, 100);
+    rows.sort_by_cached_key(|v| sort_key(v, sort, global));
+    if !ascending {
+        rows.reverse();
+    }
+    let offset = if let Some(cursor) = q.get("after").or(q.get("before")) {
+        if cursor.len() > 2048 {
+            return Err(Error::invalid("Invalid cursor"));
+        }
+        let decoded = URL_SAFE_NO_PAD
+            .decode(cursor)
+            .map_err(|_| Error::invalid("Invalid cursor"))?;
+        let (cursor_sort, cursor_ascending, key): (String, bool, (String, String)) =
+            serde_json::from_slice(&decoded).map_err(|_| Error::invalid("Invalid cursor"))?;
+        if cursor_sort != sort || cursor_ascending != ascending {
+            return Err(Error::invalid("Invalid cursor"));
+        }
+        if q.contains_key("before") {
+            let end = rows.partition_point(|v| {
+                if ascending {
+                    sort_key(v, sort, global) < key
+                } else {
+                    sort_key(v, sort, global) > key
+                }
+            });
+            rows.truncate(end);
+            end.saturating_sub(limit)
+        } else {
+            rows.partition_point(|v| {
+                if ascending {
+                    sort_key(v, sort, global) <= key
+                } else {
+                    sort_key(v, sort, global) >= key
+                }
+            })
+        }
+    } else {
+        let page = q
+            .get("page")
+            .map(|s| s.parse::<usize>())
+            .transpose()
+            .map_err(|_| Error::invalid("Invalid page"))?
+            .unwrap_or(1);
+        if !(1..=10000).contains(&page) {
+            return Err(Error::invalid("Invalid page"));
+        }
+        (page - 1) * limit
+    };
+    let more = offset.saturating_add(limit) < rows.len();
+    let selected: Vec<_> = rows.into_iter().skip(offset).take(limit).collect();
+    let mut links = Vec::new();
+    for (rel, row, include) in [
+        (
+            "prev",
+            selected.first(),
+            offset > 0 || q.contains_key("after"),
+        ),
+        ("next", selected.last(), more || q.contains_key("before")),
+    ] {
+        if !include {
+            continue;
+        }
+        if let Some(row) = row {
+            let cursor = URL_SAFE_NO_PAD.encode(
+                serde_json::to_vec(&(sort, ascending, sort_key(row, sort, global)))
+                    .map_err(Error::unavailable)?,
+            );
+            let mut params = q.clone();
+            for k in ["page", "before", "after"] {
+                params.remove(k);
+            }
+            params.insert(
+                if rel == "prev" { "before" } else { "after" }.into(),
+                cursor,
+            );
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(params)
+                .finish();
+            links.push(format!(
+                "<{}{}?{}>; rel=\"{rel}\"",
+                crate::backend::api::http::config::link_origin(),
+                uri.path(),
+                query
+            ));
+        }
+    }
+    let mut headers = HeaderMap::new();
+    if !links.is_empty() {
+        headers.insert(
+            header::LINK,
+            links.join(", ").parse().map_err(Error::unavailable)?,
+        );
+    }
+    Ok((headers, Json(selected)).into_response())
+}
+
+pub(crate) async fn document(
+    state: &AppState,
+    row: &Alert,
+    owner: &str,
+    name: &str,
+) -> Result<Value> {
+    let global: Value = serde_json::from_str(&row.advisory).map_err(Error::unavailable)?;
+    let vulnerability = |v: &Value| json!({"package":v["package"],"severity":global["severity"],"vulnerable_version_range":v["vulnerable_version_range"],"first_patched_version":v["first_patched_version"].as_str().map(|s|json!({"identifier":s}))});
+    let vulnerabilities: Vec<_> = global["vulnerabilities"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(vulnerability)
+        .collect();
+    let v: Value = serde_json::from_str(&row.vulnerability).map_err(Error::unavailable)?;
+    let cvss = global
+        .get("cvss")
+        .filter(|v| !v.is_null())
+        .cloned()
+        .unwrap_or(json!({"score":0.0,"vector_string":null}));
+    let advisory = json!({"ghsa_id":global["ghsa_id"],"cve_id":global["cve_id"],"summary":global["summary"],"description":global["description"].as_str().unwrap_or(""),"severity":global["severity"],"classification":if global["type"]=="malware" {"malware"} else {"general"},"cvss":cvss,"cwes":global["cwes"].as_array().cloned().unwrap_or_default(),"identifiers":global["identifiers"],"references":global["references"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|s|json!({"url":s})).collect::<Vec<_>>(),"vulnerabilities":vulnerabilities,"published_at":global["published_at"],"updated_at":global["updated_at"],"withdrawn_at":global["withdrawn_at"]});
+    let dismissed_by = if let Some(id) = row.dismissed_by {
+        db::users::accounts::get_user_by_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?
+            .as_ref()
+            .map(payloads::user)
+    } else {
+        None
+    };
+    Ok(
+        json!({"number":row.number,"state":row.state,"dependency":{"package":{"ecosystem":row.ecosystem,"name":row.package},"manifest_path":row.manifest,"version_requirement":row.version,"scope":if row.scope=="unknown" {None} else {Some(&row.scope)},"relationship":"unknown"},"security_advisory":advisory,"security_vulnerability":vulnerability(&v),"url":format!("{}/dependabot/alerts/{}",repo_url(owner,name),row.number),"html_url":format!("{}/{}/{}/security/dependabot",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(name)),"created_at":row.created_at,"updated_at":row.updated_at,"fixed_at":row.fixed_at,"dismissed_at":row.dismissed_at,"dismissed_by":dismissed_by,"dismissed_reason":row.dismissed_reason,"dismissed_comment":row.dismissed_comment,"auto_dismissed_at":null,"assignees":[]}),
+    )
+}
+fn alert_matches(v: &Value, q: &Params) -> bool {
+    [
+        ("state", v["state"].as_str()),
+        ("severity", v["security_advisory"]["severity"].as_str()),
+        (
+            "classification",
+            v["security_advisory"]["classification"].as_str(),
+        ),
+        (
+            "ecosystem",
+            v["dependency"]["package"]["ecosystem"].as_str(),
+        ),
+        ("package", v["dependency"]["package"]["name"].as_str()),
+        ("manifest", v["dependency"]["manifest_path"].as_str()),
+        ("scope", v["dependency"]["scope"].as_str()),
+    ]
+    .into_iter()
+    .all(|(key, value)| csv(q, key, value.unwrap_or("")))
+}
+async fn list(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(params): Path<Params>,
+    Query(query): Query<Params>,
+    OriginalUri(uri): OriginalUri,
+) -> Result<Response> {
+    validate(&query, false)?;
+    let org = params.get("org");
+    let (ids, actor) = if let Some(org) = org {
+        let actor = auth::authenticate(&state, &headers, false)
+            .await?
+            .ok_or_else(auth::required)?;
+        let org = orgs::target(&state, org).await?;
+        let ids = store::organization_repositories(&state.pool, actor.user.id, org.id)
+            .await
+            .map_err(failure)?;
+        (ids, actor)
+    } else {
+        let (repo, actor) =
+            repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
+        (vec![repo.id], actor.ok_or_else(auth::required)?)
+    };
+    let mut documents = Vec::new();
+    for id in ids {
+        let rows = match store::alerts(&state.pool, actor.user.id, id).await {
+            Ok(rows) => rows,
+            // A repository with alerts disabled is left out of an organization listing.
+            Err(error)
+                if org.is_some()
+                    && matches!(
+                        error.downcast_ref::<db::advisories::Refusal>(),
+                        Some(db::advisories::Refusal::Missing)
+                    ) =>
+            {
+                continue
+            }
+            Err(error) => return Err(failure(error)),
+        };
+        let repo = db::repositories::records::get_repository_by_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+        let owner = db::repositories::records::repository_owner_name(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+        for row in rows {
+            let mut doc = document(&state, &row, &owner, &repo.name).await?;
+            if !alert_matches(&doc, &query) {
+                continue;
+            }
+            if org.is_some() {
+                doc["repository"] = repos::document(&state, &repo, Some(&actor.user)).await?;
+            }
+            documents.push(doc);
+        }
+    }
+    page(documents, &query, &uri, false)
+}
+async fn detail(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, name, number)): Path<(String, String, i64)>,
+) -> Result<Json<Value>> {
+    let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
+    let actor = actor.ok_or_else(auth::required)?;
+    let row = store::alerts(&state.pool, actor.user.id, repo.id)
+        .await
+        .map_err(failure)?
+        .into_iter()
+        .find(|r| r.number == number)
+        .ok_or_else(Error::missing)?;
+    Ok(Json(document(&state, &row, &owner, &name).await?))
+}
+async fn update(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, name, number)): Path<(String, String, i64)>,
+    Json(input): Json<Update>,
+) -> Result<Json<Value>> {
+    let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
+    let actor = actor.ok_or_else(auth::required)?;
+    let row = store::update(&state.pool, actor.user.id, repo.id, number, &input)
+        .await
+        .map_err(failure)?;
+    Ok(Json(document(&state, &row, &owner, &name).await?))
+}

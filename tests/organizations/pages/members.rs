@@ -375,7 +375,7 @@ pub async fn invitations(f: &Fixture) {
     assert!(page
         .pending_invitations
         .iter()
-        .any(|pending| pending.user_id == invitee.id && pending.role == "member"));
+        .any(|pending| pending.user_id == Some(invitee.id) && pending.role == "member"));
     assert!(!page
         .members
         .iter()
@@ -402,7 +402,7 @@ pub async fn invitations(f: &Fixture) {
         .organization()
         .pending_invitations
         .iter()
-        .any(|pending| pending.user_id == invitee.id));
+        .any(|pending| pending.user_id == Some(invitee.id)));
     f.form(&f.owner, &path, &invite).await.redirect(&path);
     f.form(
         &invitee,
@@ -438,7 +438,7 @@ pub async fn invitations(f: &Fixture) {
         .organization()
         .pending_invitations
         .iter()
-        .any(|pending| pending.user_id == short.id));
+        .any(|pending| pending.user_id == Some(short.id)));
 }
 
 pub async fn contracts(f: &Fixture) {
@@ -529,7 +529,7 @@ pub async fn contracts(f: &Fixture) {
     .redirect(&f.path());
     // The invitation makes the owner a member only when they accept it.
     applied(
-        accept_organization_invitation(pool, target.id, f.org)
+        accept_organization_invitation(pool, target.id, f.org, None)
             .await
             .unwrap(),
     );

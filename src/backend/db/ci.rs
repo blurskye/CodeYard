@@ -7,6 +7,8 @@ use uuid::Uuid;
 /// Policy refusals from the native CI enqueue and cancellation transactions.
 #[derive(Debug, thiserror::Error)]
 pub enum CiAdmissionRefusal {
+    #[error("Workflow is disabled")]
+    WorkflowDisabled,
     #[error("{0}")]
     Missing(&'static str),
     #[error("{0}")]
@@ -15,6 +17,27 @@ pub enum CiAdmissionRefusal {
     Conflict(&'static str),
     #[error("{0}")]
     Invalid(&'static str),
+}
+
+#[derive(Clone, Copy)]
+pub enum CiRunDeletion {
+    Run,
+    Logs,
+}
+
+/// A pull request run repeats the latest one for its head and base when it describes the
+/// same event. Every `synchronize` for one head is the same event: Codeyard also sends one
+/// when an unchanged head moves to a new base.
+pub(crate) fn repeats_pull_request_event(
+    latest: Option<&serde_json::Value>,
+    next: Option<&serde_json::Value>,
+) -> bool {
+    let Some(next) = next else {
+        return true;
+    };
+    latest == Some(next)
+        || (next["action"] == "synchronize"
+            && latest.is_some_and(|latest| latest["action"] == "synchronize"))
 }
 
 pub(crate) fn may_cancel_run(
@@ -48,13 +71,78 @@ pub struct NewCiRun<'a> {
     pub manual: bool,
 }
 
+/// A deliberate execution of a stored workflow snapshot, not a newly discovered revision.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CiReplaySelection {
+    All,
+    Failed,
+    Job(i64),
+}
+
+pub struct NewCiAttempt {
+    pub source: i64,
+    pub source_uuid: Uuid,
+    pub credential: Option<i64>,
+    /// Native forms retain their explicit duplicate/reuse behavior; REST attempts require idle roots.
+    pub allow_active: bool,
+    pub selection: CiReplaySelection,
+    pub definition: Option<String>,
+    pub debug: bool,
+}
+
+pub(crate) fn validate_ci_attempt(
+    source: &CiRun,
+    input: &NewCiRun<'_>,
+    attempt: &NewCiAttempt,
+) -> Result<()> {
+    anyhow::ensure!(
+        input.manual
+            && (!attempt.allow_active || attempt.selection == CiReplaySelection::All)
+            && source.pull_request_id == input.pull_request_id
+            && source.run_id == attempt.source_uuid
+            && source.repo_id == input.repo_id
+            && source.workflow_path == input.workflow_path
+            && source.branch == input.branch
+            && source.head_sha.as_deref() == Some(input.head_sha)
+            && source.event == input.event
+            && source.environment.as_deref() == input.environment
+            && source.pipeline == input.pipeline
+            && &source.workflow_blobs == input.workflow_blobs
+            && source.workflow_inputs.as_ref() == input.workflow_inputs,
+        CiAdmissionRefusal::Conflict("Rerun source changed")
+    );
+    anyhow::ensure!(
+        source.workflow_run_number.is_some_and(|number| number > 0),
+        CiAdmissionRefusal::Conflict("Source workflow metadata is unavailable")
+    );
+    anyhow::ensure!(
+        attempt.selection == CiReplaySelection::All
+            || source.engine.as_deref() == Some("codeyard-actions"),
+        CiAdmissionRefusal::Conflict(
+            "Partial re-runs require native job observations and dependency outputs"
+        )
+    );
+    Ok(())
+}
+
+#[derive(Default, sqlx::FromRow)]
+pub struct CiRunOptions {
+    pub replay: Option<sqlx::types::Json<codeyard_actions::progress::Replay>>,
+    pub debug: bool,
+}
+native_operation!(crate::backend::db::postgres::ci::ci_run_options,crate::backend::db::sqlite::ci::ci_run_options,
+    fn ci_run_options(pool:&DbPool,run:i64)->Result<Option<CiRunOptions>>);
+
 /// Recorded on queued runs that are cancelled because the person who started them
 /// lost access, and shown to the person who looks at the run.
 pub const ACCESS_LOST_MESSAGE: &str = "The person who started this run no longer has access";
 
-/// How many queued runs one claim looks at, so a long run of cancellations cannot
-/// keep one transaction open for long. The worker asks again.
-pub const CLAIM_SCAN_LIMIT: usize = 64;
+native_operation!(crate::backend::db::postgres::ci::scheduled_repositories,
+    crate::backend::db::sqlite::ci::scheduled_repositories,
+    fn scheduled_repositories(pool: &DbPool, after: i64) -> Result<Vec<i64>>);
+native_operation!(crate::backend::db::postgres::ci::schedule_actor,
+    crate::backend::db::sqlite::ci::schedule_actor,
+    fn schedule_actor(pool: &DbPool, repo: i64, reference: &str, sha: &str) -> Result<Option<i64>>);
 
 // Commits retained by recorded runs, including runs whose branch no longer exists.
 native_operation!(crate::backend::db::postgres::ci::retained_ci_commits,
@@ -64,6 +152,13 @@ native_operation!(crate::backend::db::postgres::ci::retained_ci_commits,
 native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run,
     crate::backend::db::sqlite::ci::enqueue_ci_run,
     fn enqueue_ci_run(pool: &DbPool, input: NewCiRun<'_>, trusted_ids: &[i64]) -> Result<CiRun>);
+
+native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run_attempt,
+    crate::backend::db::sqlite::ci::enqueue_ci_run_attempt,
+    fn enqueue_ci_run_attempt(pool:&DbPool,input:NewCiRun<'_>,trusted_ids:&[i64],attempt:NewCiAttempt,scheduling:&super::runners::Scheduling,event_payload:Option<&serde_json::Value>)->Result<CiRun>);
+native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run_for_runners,
+    crate::backend::db::sqlite::ci::enqueue_ci_run_for_runners,
+    fn enqueue_ci_run_for_runners(pool: &DbPool, input: NewCiRun<'_>, trusted_ids: &[i64], scheduling: &super::runners::Scheduling, event_payload: Option<&serde_json::Value>) -> Result<CiRun>);
 
 native_operation!(crate::backend::db::postgres::ci::claim_ci_run,
     crate::backend::db::sqlite::ci::claim_ci_run,
@@ -118,15 +213,48 @@ native_operation!(crate::backend::db::postgres::ci::finish_ci_run,
 
 native_operation!(crate::backend::db::postgres::ci::fail_stale_ci_runs,
     crate::backend::db::sqlite::ci::fail_stale_ci_runs,
-    fn fail_stale_ci_runs(pool: &DbPool, stale_seconds: i64) -> Result<(usize, Vec<(i64, i64)>)>);
+    fn fail_stale_ci_runs(pool: &DbPool, stale_seconds: i64) -> Result<(Vec<CiRun>, Vec<(i64, i64)>)>);
 
 native_operation!(crate::backend::db::postgres::ci::request_ci_cancellation,
     crate::backend::db::sqlite::ci::request_ci_cancellation,
     fn request_ci_cancellation(pool: &DbPool, run_id: Uuid, actor_id: i64) -> Result<(bool, Vec<(i64, i64)>)>);
 
+native_operation!(crate::backend::db::postgres::ci::request_ci_cancellation_with_token,
+    crate::backend::db::sqlite::ci::request_ci_cancellation_with_token,
+    fn request_ci_cancellation_with_token(pool: &DbPool, run_id: Uuid, actor_id: i64, token_id: i64) -> Result<(bool, Vec<(i64,i64)>)>);
+native_operation!(crate::backend::db::postgres::ci::delete_ci_run_data,
+    crate::backend::db::sqlite::ci::delete_ci_run_data,
+    fn delete_ci_run_data(pool: &DbPool, actor: i64, repo: i64, id: i64, kind: CiRunDeletion) -> Result<bool>);
+native_operation!(crate::backend::db::postgres::ci::get_ci_run_by_id,
+    crate::backend::db::sqlite::ci::get_ci_run_by_id,
+    fn get_ci_run_by_id(pool: &DbPool, repo_id: i64, id: i64) -> Result<Option<CiRun>>);
+native_operation!(crate::backend::db::postgres::ci::get_ci_run,
+    crate::backend::db::sqlite::ci::get_ci_run,
+    fn get_ci_run(pool: &DbPool, id: i64) -> Result<Option<CiRun>>);
 native_operation!(crate::backend::db::postgres::ci::get_ci_run_by_run_id,
     crate::backend::db::sqlite::ci::get_ci_run_by_run_id,
     fn get_ci_run_by_run_id(pool: &DbPool, run_id: Uuid) -> Result<Option<CiRun>>);
+
+/// REST filters use GitHub's status and conclusion names and inclusive creation bounds.
+#[derive(Debug, Default)]
+pub struct RestRunFilter {
+    pub workflow: Option<String>,
+    pub branch: Option<String>,
+    pub actor: Option<String>,
+    pub event: Option<String>,
+    pub status: Option<String>,
+    pub head_sha: Option<String>,
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    pub until: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+native_operation!(crate::backend::db::postgres::ci::list_rest_ci_runs,
+    crate::backend::db::sqlite::ci::list_rest_ci_runs,
+    fn list_rest_ci_runs(pool: &DbPool, repo_id: i64, filter: &RestRunFilter, limit: i64, offset: i64) -> Result<(i64, Vec<CiRun>)>);
+
+native_operation!(crate::backend::db::postgres::ci::ci_workflow_paths,
+    crate::backend::db::sqlite::ci::ci_workflow_paths,
+    fn ci_workflow_paths(pool: &DbPool, repo_id: i64) -> Result<Vec<String>>);
 
 #[derive(Debug, Default)]
 pub struct CiRunFilter {

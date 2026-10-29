@@ -1,58 +1,15 @@
 //! Public profile activity: pushes, issues, pull requests and comments, newest first.
-use crate::backend::api::{http::error::ApiError, http::session::get_optional_user};
-use crate::backend::app::AppState;
-use crate::backend::db::{self, activity::ActivityRow};
-use crate::backend::identity::activity::{self, ActivityPage};
+use crate::backend::db::activity::ActivityRow;
+use crate::backend::identity::activity::ActivityPage;
 use crate::webui::pages::users::{ProfileActivity, ProfileActivityItem};
-use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
-use axum::Json;
 use serde::Deserialize;
-use std::sync::Arc;
 
 #[derive(Deserialize)]
 pub(crate) struct ActivityQuery {
     pub page: Option<i64>,
 }
 
-pub(crate) async fn list_user_activity(
-    State(state): State<Arc<AppState>>,
-    Path(username): Path<String>,
-    Query(query): Query<ActivityQuery>,
-    headers: HeaderMap,
-) -> Result<Json<ProfileActivity>, (StatusCode, Json<ApiError>)> {
-    let viewer = get_optional_user(&state.pool, &headers).await?;
-    let user = db::users::accounts::get_user_by_username(&state.pool, &username)
-        .await
-        .map_err(|_| activity_unavailable())?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "User not found")),
-            )
-        })?;
-    let page = activity::profile_activity(
-        &state.pool,
-        viewer.as_ref(),
-        user.id,
-        query.page.unwrap_or(1),
-    )
-    .await
-    .map_err(|_| activity_unavailable())?;
-    Ok(Json(profile_activity_view(page)))
-}
-
-fn activity_unavailable() -> (StatusCode, Json<ApiError>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ApiError::new(
-            "database_error",
-            "Activity storage is temporarily unavailable",
-        )),
-    )
-}
-
-/// The presentation of one page, shared by the profile page and the JSON endpoint.
+/// The presentation of one page of profile activity.
 pub(crate) fn profile_activity_view(page: ActivityPage) -> ProfileActivity {
     ProfileActivity {
         items: page.items.into_iter().map(activity_item).collect(),

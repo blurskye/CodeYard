@@ -12,7 +12,7 @@ pub async fn user_access(
     user: &User,
     repository: &Repository,
 ) -> Result<db::models::AccessLevel> {
-    if user.is_banned || user.must_change_password {
+    if repository.is_gist || user.is_banned || user.must_change_password {
         return Ok(db::models::AccessLevel::None);
     }
     if repository.owner_kind == "user" && user.is_admin {
@@ -21,11 +21,51 @@ pub async fn user_access(
     db::repositories::access::get_user_repo_access(pool, user.id, repository.id).await
 }
 
+/// Gists use a distinct clone namespace and never grant ordinary repository access.
+pub async fn user_git_access(
+    pool: &db::DbPool,
+    user: &User,
+    repository: &Repository,
+) -> Result<db::models::AccessLevel> {
+    if !repository.is_gist {
+        return user_access(pool, user, repository).await;
+    }
+    if user.is_banned || user.must_change_password {
+        return Ok(db::models::AccessLevel::None);
+    }
+    let gist = db::gists::by_repository(pool, repository.id)
+        .await?
+        .filter(|gist| gist.ready && Some(gist.owner_id) == repository.owner_user_id);
+    Ok(match gist {
+        Some(gist) if gist.owner_id == user.id => db::models::AccessLevel::Owner,
+        Some(_) => db::models::AccessLevel::Read,
+        None => db::models::AccessLevel::None,
+    })
+}
+pub async fn can_read_git(
+    pool: &db::DbPool,
+    user: Option<&User>,
+    repository: &Repository,
+) -> Result<bool> {
+    if !repository.is_gist {
+        return can_read(pool, user, repository).await;
+    }
+    match user {
+        Some(user) => Ok(user_git_access(pool, user, repository).await?.can_read()),
+        None => Ok(db::gists::by_repository(pool, repository.id)
+            .await?
+            .is_some_and(|gist| gist.ready)),
+    }
+}
+
 pub async fn can_read(
     pool: &db::DbPool,
     user: Option<&User>,
     repository: &Repository,
 ) -> Result<bool> {
+    if repository.is_gist {
+        return Ok(false);
+    }
     if !repository.is_private {
         return Ok(true);
     }
@@ -42,8 +82,36 @@ pub async fn can_read(
     )
 }
 
+/// The author's current relationship to a repository, shared by API presentations.
+pub async fn author_association(
+    pool: &db::DbPool,
+    repository: &Repository,
+    user_id: i64,
+) -> Result<&'static str> {
+    if repository.is_personal_owner(user_id) {
+        return Ok("OWNER");
+    }
+    let member = match repository.owner_org_id {
+        Some(org) => matches!(
+            db::organizations::membership::get_organization_role(pool, user_id, org).await?,
+            db::organizations::OrganizationOutcome::Applied(_)
+        ),
+        None => false,
+    };
+    let writer = db::repositories::access::get_user_repo_access(pool, user_id, repository.id)
+        .await?
+        .can_write();
+    Ok(if member {
+        "MEMBER"
+    } else if writer {
+        "COLLABORATOR"
+    } else {
+        "NONE"
+    })
+}
+
 pub async fn can_admin(pool: &db::DbPool, user: &User, repository: &Repository) -> Result<bool> {
-    if user.must_change_password {
+    if repository.is_gist || user.is_banned || user.must_change_password {
         return Ok(false);
     }
     if repository.owner_kind == "user" && (user.is_admin || repository.is_personal_owner(user.id)) {
@@ -59,7 +127,12 @@ pub async fn can_admin(pool: &db::DbPool, user: &User, repository: &Repository) 
 /// Write permission for code and metadata: owners and site admins of personal
 /// repositories, plus collaborators/teams with write access.
 pub async fn can_write(pool: &db::DbPool, user: &User, repository: &Repository) -> Result<bool> {
-    if repository.is_archived || user.is_banned || user.must_change_password {
+    if repository.is_gist
+        || repository.is_archived
+        || user.is_banned
+        || user.must_change_password
+        || db::repository_exports::locked(pool, repository.id).await?
+    {
         return Ok(false);
     }
     if repository.owner_kind == "user" && (user.is_admin || repository.is_personal_owner(user.id)) {
@@ -72,10 +145,35 @@ pub async fn can_write(pool: &db::DbPool, user: &User, repository: &Repository) 
     )
 }
 
+/// Triage sets labels, assignees and milestones on issues and pull requests; it cannot edit the repository.
+pub async fn can_triage(pool: &db::DbPool, user: &User, repository: &Repository) -> Result<bool> {
+    if repository.is_gist
+        || repository.is_archived
+        || user.is_banned
+        || user.must_change_password
+        || db::repository_exports::locked(pool, repository.id).await?
+    {
+        return Ok(false);
+    }
+    if repository.owner_kind == "user" && (user.is_admin || repository.is_personal_owner(user.id)) {
+        return Ok(true);
+    }
+    Ok(
+        db::repositories::access::get_user_repo_access(pool, user.id, repository.id)
+            .await?
+            .can_triage(),
+    )
+}
+
 /// Moderation of other people's comments: maintainers, owners and site administrators of personal
 /// repositories. Archived repositories take no moderation.
 pub async fn can_maintain(pool: &db::DbPool, user: &User, repository: &Repository) -> Result<bool> {
-    if repository.is_archived || user.is_banned || user.must_change_password {
+    if repository.is_gist
+        || repository.is_archived
+        || user.is_banned
+        || user.must_change_password
+        || db::repository_exports::locked(pool, repository.id).await?
+    {
         return Ok(false);
     }
     if repository.owner_kind == "user" && (user.is_admin || repository.is_personal_owner(user.id)) {
@@ -113,6 +211,9 @@ pub async fn check_read(
     actor: Option<i64>,
 ) -> std::result::Result<Repository, AccessError> {
     let repository = current_repository(pool, repo_id).await?;
+    if repository.is_gist {
+        return Err(AccessError::NotFound);
+    }
     if !repository.is_private {
         return Ok(repository);
     }

@@ -1,38 +1,28 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::{ApiError, ApiFailure};
-use crate::backend::api::http::session::{self, get_current_user};
+use crate::backend::api::http::session;
 use crate::backend::api::user::responses::{
     field, mutation_guard, public_api_message, require_account, within_bounds, Fields,
-    PublicUserResponse,
 };
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::backend::identity::profiles::{ProfileError, ProfileUpdate};
+use crate::backend::identity::profiles::ProfileError;
 use crate::backend::identity::{self, profiles};
 use crate::webui::pages::{
     account,
     fields::{preserved_values, FormValues},
-    settings::{settings_tab, EmailVerification, Key, Settings, Token, TwoFactor},
+    settings::{settings_tab, EmailVerification, Key, SecondaryEmail, Settings, Token, TwoFactor},
     users::Profile,
 };
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
-use serde::Deserialize;
 use std::sync::Arc;
-
-#[derive(Deserialize)]
-pub struct UpdateUserRequest {
-    pub display_name: Option<String>,
-    pub bio: Option<String>,
-    pub location: Option<String>,
-    pub website: Option<String>,
-}
 
 pub(crate) fn profile_failure(error: ProfileError) -> (StatusCode, Json<ApiError>) {
     let (status, code) = match error {
-        ProfileError::Invalid | ProfileError::Nul | ProfileError::Website => {
+        ProfileError::Invalid | ProfileError::Nul | ProfileError::Website | ProfileError::Email => {
             (StatusCode::BAD_REQUEST, "validation_error")
         }
         ProfileError::Denied => (StatusCode::FORBIDDEN, "forbidden"),
@@ -41,33 +31,31 @@ pub(crate) fn profile_failure(error: ProfileError) -> (StatusCode, Json<ApiError
     (status, Json(ApiError::new(code, &error.to_string())))
 }
 
-pub async fn update_user_profile(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<UpdateUserRequest>,
-) -> Result<Json<PublicUserResponse>, (StatusCode, Json<ApiError>)> {
-    let user = get_current_user(&state.pool, &headers).await?;
-    let updated = profiles::update(
-        &state.pool,
-        user.id,
-        session::extract_session_id(&headers)
-            .as_deref()
-            .unwrap_or_default(),
-        ProfileUpdate {
-            display_name: req.display_name.as_deref(),
-            bio: req.bio.as_deref(),
-            location: req.location.as_deref(),
-            website: req.website.as_deref(),
-        },
-    )
-    .await
-    .map_err(profile_failure)?;
-    Ok(Json(PublicUserResponse::from(updated)))
+pub(crate) async fn load_profile(
+    pool: &db::DbPool,
+    user: &db::models::User,
+) -> anyhow::Result<Profile> {
+    let settings = db::users::profiles::get_profile_settings(pool, user.id).await?;
+    let accounts = db::users::social_accounts::list_social_accounts(pool, user.id).await?;
+    Ok(profile_model(user, &settings, accounts))
 }
 
-pub(crate) fn profile_model(user: &db::models::User) -> Profile {
+pub(crate) fn profile_model(
+    user: &db::models::User,
+    settings: &db::users::profiles::ProfileSettings,
+    accounts: Vec<db::users::social_accounts::SocialAccount>,
+) -> Profile {
     Profile {
         username: user.username.clone(),
+        social_accounts: accounts
+            .into_iter()
+            .map(|account| (account.provider, account.url))
+            .collect(),
+        company: settings.company.clone().unwrap_or_default(),
+        twitter_username: settings.twitter_username.clone().unwrap_or_default(),
+        hireable: settings.hireable.unwrap_or(false),
+        public_email: settings.public_email(user).unwrap_or_default().to_owned(),
+        primary_email_visibility: settings.primary_visibility.clone(),
         display_name: user.display_name.clone().unwrap_or_default(),
         bio: user.bio.clone().unwrap_or_default(),
         location: user.location.clone().unwrap_or_default(),
@@ -76,6 +64,16 @@ pub(crate) fn profile_model(user: &db::models::User) -> Profile {
         avatar_url: user
             .avatar_file_id
             .map(|id| format!("/api/files/{id}/download")),
+    }
+}
+
+fn settings_key(key: db::users::ssh_keys::SshKeySummary) -> Key {
+    Key {
+        id: key.id,
+        name: key.name,
+        fingerprint: key.fingerprint,
+        kind: key.key_type,
+        created: key.created_at.format("%b %e, %Y").to_string(),
     }
 }
 
@@ -107,19 +105,72 @@ pub(crate) async fn load_settings(
             )
         })?
         .into_iter()
-        .map(|key| Key {
-            id: key.id,
-            name: key.name,
-            fingerprint: key.fingerprint,
-            kind: key.key_type,
-            created: key.created_at.format("%b %e, %Y").to_string(),
-        })
+        .map(settings_key)
+        .collect()
+    } else {
+        Vec::new()
+    };
+    let gpg_keys = if tab == "keys" {
+        db::users::gpg_keys::list_gpg_keys(&ctx.state.pool, user.id, 100, 0)
+            .await
+            .map_err(|_| {
+                ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to load your GPG keys.",
+                )
+            })?
+            .into_iter()
+            .map(|key| Key {
+                id: key.id,
+                name: key.name.unwrap_or(key.key_id),
+                fingerprint: key.fingerprint,
+                kind: if key.material.revoked {
+                    "Revoked GPG key"
+                } else if key
+                    .material
+                    .expires_at
+                    .is_some_and(|expiry| expiry <= chrono::Utc::now())
+                {
+                    "Expired GPG key"
+                } else {
+                    "GPG key"
+                }
+                .into(),
+                created: key.material.created_at.format("%b %e, %Y").to_string(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let signing_keys = if tab == "keys" {
+        db::users::signing_keys::list_signing_key_summaries(
+            &ctx.state.pool,
+            user.id,
+            ctx.query
+                .get("signing_after")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
+        )
+        .await
+        .map_err(|_| {
+            ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load your signing keys.",
+            )
+        })?
+        .into_iter()
+        .map(settings_key)
         .collect()
     } else {
         Vec::new()
     };
     let tokens = if tab == "tokens" {
-        db::users::tokens::list_tokens(&ctx.state.pool, user.id)
+        let before = ctx
+            .query
+            .get("tokens_before")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        db::users::tokens::list_tokens(&ctx.state.pool, user.id, before)
             .await
             .map_err(|_| {
                 ctx.error(
@@ -158,6 +209,70 @@ pub(crate) async fn load_settings(
     } else {
         Vec::new()
     };
+    let blocked = if tab == "blocked" {
+        let page = ctx
+            .query
+            .get("page")
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(1)
+            .clamp(1, 10001);
+        let mut users = db::users::blocks::list_blocks(
+            &ctx.state.pool,
+            user.id,
+            101,
+            i64::from(page - 1) * 100,
+        )
+        .await
+        .map_err(|_| {
+            ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load blocked users.",
+            )
+        })?;
+        let more = users.len() > 100;
+        users.truncate(100);
+        crate::webui::pages::settings::BlockedAccounts {
+            interaction: Some(
+                super::interactions::panel(
+                    &ctx.state.pool,
+                    user.id,
+                    db::interactions::InteractionScope::User(user.id),
+                    &ctx.csrf_token,
+                    true,
+                )
+                .await
+                .map_err(|_| {
+                    ctx.error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Unable to load interaction limits.",
+                    )
+                })?,
+            ),
+            users: users.into_iter().map(|user| user.username).collect(),
+            page,
+            more,
+        }
+    } else {
+        Default::default()
+    };
+    let emails = if tab == "email" {
+        db::users::emails::list_emails(&ctx.state.pool, user.id)
+            .await
+            .map_err(|_| {
+                ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to load your email addresses.",
+                )
+            })?
+            .into_iter()
+            .map(|email| SecondaryEmail {
+                email: email.email,
+                verified: email.verified,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let email_notifications = if tab == "email" {
         db::email::get_email_notifications(&ctx.state.pool, user.id)
             .await
@@ -179,7 +294,12 @@ pub(crate) async fn load_settings(
         } else {
             EmailVerification::Unavailable
         };
-    let profile = profile_model(user);
+    let profile = load_profile(&ctx.state.pool, user).await.map_err(|_| {
+        ctx.error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Unable to load your profile.",
+        )
+    })?;
     let values = if let Some(form) = submitted {
         preserved_values(form)
     } else {
@@ -188,6 +308,9 @@ pub(crate) async fn load_settings(
             bio: profile.bio.clone(),
             location: profile.location.clone(),
             website: profile.website.clone(),
+            company: profile.company.clone(),
+            twitter_username: profile.twitter_username.clone(),
+            hireable: profile.hireable,
             ..FormValues::default()
         }
     };
@@ -195,10 +318,14 @@ pub(crate) async fn load_settings(
         theme: ctx.chrome().theme,
         profile,
         email: user.email.clone().unwrap_or_default(),
+        emails,
+        blocked,
         email_notifications,
         email_verification,
         tab: tab.to_owned(),
         keys,
+        signing_keys,
+        gpg_keys,
         tokens,
         sessions,
         new_token: None,
@@ -257,15 +384,22 @@ pub(crate) async fn settings_get(
     let tab = settings_tab(ctx.query.get("tab").map(String::as_str));
     let message = match ctx.query.get("saved").map(String::as_str) {
         Some("profile") => Some("Profile updated."),
+        Some("social-accounts") => Some("Social accounts updated."),
         Some("avatar") => Some("Profile picture updated."),
         Some("avatar-removed") => Some("Profile picture removed."),
         Some("password") => Some("Password updated."),
         Some("two-factor-off") => Some("Two-factor authentication is off."),
         Some("key") => Some("SSH key added."),
+        Some("signing-key") => Some("SSH signing key added."),
+        Some("signing-key-deleted") => Some("SSH signing key deleted."),
+        Some("gpg-key") => Some("GPG keys updated."),
         Some("deleted") => Some("SSH key deleted."),
         Some("token-deleted") => Some("Access token deleted."),
         Some("email") => Some("Email address updated."),
         Some("email-notifications") => Some("Notification setting saved."),
+        Some("email-visibility") => Some("Email visibility saved."),
+        Some("secondary-email") => Some("Email addresses updated."),
+        Some("blocks") => Some("Blocked users updated."),
         Some("verification-sent") => {
             Some("Verification email sent. Paste its code here; it works for 24 hours.")
         }
@@ -298,6 +432,67 @@ pub(crate) async fn settings_result<T>(
     }
 }
 
+pub(crate) async fn social_accounts_post(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<Fields>,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    if let Err(response) = mutation_guard(&ctx, &form, false) {
+        return response;
+    }
+    let user = match require_account(&ctx, false) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    let account = match profiles::social_account(field(&form, "url")) {
+        Ok(account) => account,
+        Err(_) => {
+            return settings_response(
+                &ctx,
+                "profile",
+                None,
+                StatusCode::BAD_REQUEST,
+                Some("Enter an HTTP or HTTPS social account URL."),
+            )
+            .await
+        }
+    };
+    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
+    match db::users::social_accounts::change_social_accounts(
+        &ctx.state.pool,
+        user.id,
+        &db::users::accounts::AccountCredential::Session(&session),
+        &[account],
+        field(&form, "remove") != "yes",
+    )
+    .await
+    {
+        Ok(_) => ctx.redirect("/settings?tab=profile&saved=social-accounts"),
+        Err(error) if error.is::<db::users::social_accounts::TooManyAccounts>() => {
+            settings_response(
+                &ctx,
+                "profile",
+                None,
+                StatusCode::BAD_REQUEST,
+                Some("At most four social accounts may be added."),
+            )
+            .await
+        }
+        Err(error) if error.is::<db::users::accounts::AccountRestricted>() => {
+            ctx.error(StatusCode::FORBIDDEN, "Account is restricted.")
+        }
+        Err(_) => ctx.error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Unable to save your social accounts.",
+        ),
+    }
+}
+
 pub(crate) async fn profile_post(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -326,17 +521,22 @@ pub(crate) async fn profile_post(
         .as_ref()
         .expect("mutation guard checked account")
         .id;
-    let result = profiles::update(
+    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let result = profiles::save(
         &ctx.state.pool,
         actor,
-        session::extract_session_id(&ctx.headers)
-            .as_deref()
-            .unwrap_or_default(),
-        ProfileUpdate {
+        &db::users::accounts::AccountCredential::Session(&session),
+        &db::users::profiles::ProfilePatch {
             display_name: Some(field(&form, "display_name")),
             bio: Some(field(&form, "bio")),
             location: Some(field(&form, "location")),
             website: Some(field(&form, "website")),
+            company: form.get("company").map(String::as_str),
+            twitter_username: form.get("twitter_username").map(String::as_str),
+            hireable: form
+                .contains_key("profile_details")
+                .then(|| field(&form, "hireable") == "yes"),
+            ..db::users::profiles::ProfilePatch::default()
         },
     )
     .await

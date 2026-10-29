@@ -6,6 +6,32 @@ use crate::backend::{
 };
 use std::collections::HashMap;
 
+/// Accounts associated with Git email metadata, including Codeyard's generated noreply addresses.
+/// Association is not signature verification and grants no repository authority.
+pub async fn commit_authors(
+    pool: &db::DbPool,
+    emails: &[String],
+) -> anyhow::Result<HashMap<String, db::models::User>> {
+    anyhow::ensure!(emails.len() <= 512, "Too many commit email addresses");
+    let usernames = emails
+        .iter()
+        .filter_map(|email| email.strip_suffix("@users.noreply").map(str::to_owned))
+        .collect::<Vec<_>>();
+    let mut users = db::users::accounts::get_users_by_emails(pool, emails).await?;
+    users.extend(db::users::accounts::get_users_by_usernames(pool, &usernames).await?);
+    let mut result = HashMap::new();
+    for user in &users {
+        if let Some(email) = &user.email {
+            result.insert(email.clone(), user.clone());
+        }
+    }
+    // The generated namespace belongs to the account, not to someone claiming it as an email.
+    for user in users {
+        result.insert(format!("{}@users.noreply", user.username), user);
+    }
+    Ok(result)
+}
+
 /// Prefer `stored` when Git has that branch, then `database`, then `main`, `master`, or the
 /// first branch by name.
 pub fn default_branch(refs: &HashMap<String, String>, stored: &str, database: &str) -> String {
@@ -36,6 +62,32 @@ pub async fn refs_and_default(
     cluster: Option<&NodeContext>,
 ) -> Result<(HashMap<String, String>, String), RepoError> {
     repo_store(repository, cluster).refs_and_default().await
+}
+
+/// Repositories in one fork network may be compared, including sibling and nested forks.
+pub async fn same_fork_network(
+    pool: &db::DbPool,
+    left: &db::models::Repository,
+    right: &db::models::Repository,
+) -> anyhow::Result<bool> {
+    async fn root(pool: &db::DbPool, repository: &db::models::Repository) -> anyhow::Result<i64> {
+        let mut current = repository.clone();
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..100 {
+            anyhow::ensure!(seen.insert(current.id), "Cyclic fork network");
+            let Some(parent) = current.forked_from_id else {
+                return Ok(current.id);
+            };
+            current = db::repositories::records::get_repository_by_id(pool, parent)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Fork parent not found"))?;
+        }
+        anyhow::bail!("Fork network exceeds its limit")
+    }
+    if left.id == right.id {
+        return Ok(true);
+    }
+    Ok(root(pool, left).await? == root(pool, right).await?)
 }
 
 #[cfg(test)]

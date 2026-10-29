@@ -474,7 +474,7 @@ async fn account_admission_and_existing_identity(database: &Database, actor: i64
         .execute("UPDATE node_configuration SET node_mode='public' WHERE id=1")
         .await;
 
-    // Bounded suffix exhaustion returns a real Conflict with no orphan identity.
+    // Taken numbered names cannot block a sign-in: after them come random suffixes.
     for suffix in 0..32 {
         let name = if suffix == 0 {
             "exhausted".to_owned()
@@ -483,18 +483,20 @@ async fn account_admission_and_existing_identity(database: &Database, actor: i64
         };
         database.org(actor, &name).await;
     }
-    assert!(matches!(
+    let user = admitted(
         transitions::admit_oauth_account(
             &database.pool,
             "github",
             "exhausted-subject",
             "exhausted",
-            None
+            None,
         )
         .await
         .unwrap(),
-        AccountAdmission::Conflict
-    ));
+    );
+    // Numbered suffixes have at most two digits; the random ones have eight.
+    let suffix = user.username.strip_prefix("exhausted_").unwrap();
+    assert_eq!(suffix.len(), 8, "{}", user.username);
     assert_eq!(
         database
             .count(
@@ -502,7 +504,7 @@ async fn account_admission_and_existing_identity(database: &Database, actor: i64
                 "exhausted-subject"
             )
             .await,
-        0
+        1
     );
 }
 

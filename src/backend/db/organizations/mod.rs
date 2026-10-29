@@ -12,6 +12,18 @@ pub enum OrganizationOutcome<T> {
     Applied(T),
 }
 
+impl<T> OrganizationOutcome<T> {
+    pub fn map<U>(self, project: impl FnOnce(T) -> U) -> OrganizationOutcome<U> {
+        match self {
+            Self::Missing => OrganizationOutcome::Missing,
+            Self::Denied => OrganizationOutcome::Denied,
+            Self::Conflict => OrganizationOutcome::Conflict,
+            Self::Suspended => OrganizationOutcome::Suspended,
+            Self::Applied(value) => OrganizationOutcome::Applied(project(value)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrganizationInputError {
     Slug,
@@ -19,6 +31,7 @@ pub enum OrganizationInputError {
     Description,
     Role,
     Privacy,
+    Parent,
     Permission,
     Page,
 }
@@ -51,11 +64,20 @@ pub(crate) fn can_change_member(
 }
 
 pub mod access;
+pub mod blocks;
 pub mod deletion;
+pub mod discovery;
+pub mod external_properties;
+pub mod immutable_releases;
 pub mod invitations;
 pub mod membership;
+pub mod outside;
 pub mod profiles;
+pub mod properties;
 pub mod recovery;
+pub mod roles;
+pub mod settings;
+pub mod team_invitations;
 pub mod teams;
 
 pub use access::*;
@@ -64,4 +86,5 @@ pub use invitations::*;
 pub use membership::*;
 pub use profiles::*;
 pub use recovery::*;
+pub use team_invitations::*;
 pub use teams::*;

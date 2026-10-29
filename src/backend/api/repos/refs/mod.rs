@@ -9,6 +9,7 @@ use std::sync::Arc;
 pub mod branches;
 pub mod commits;
 pub mod compare;
+mod merge;
 pub mod references;
 pub mod tags;
 
@@ -20,6 +21,7 @@ async fn repository_id(state: &AppState, owner: &str, name: &str) -> super::chro
 
 pub fn json_router() -> Router<Arc<AppState>> {
     Router::new()
+        .merge(merge::json_routes())
         .route(
             "/api/repos/:owner/:repo/branches",
             get(branches::list_branches).post(branches::create_branch),
@@ -40,6 +42,7 @@ pub fn json_router() -> Router<Arc<AppState>> {
 
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
+        .merge(merge::pages())
         .route("/:owner/:repo/branches", get(branches::page))
         .route("/:owner/:repo/compare", get(compare::native_compare_page))
         .route(

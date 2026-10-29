@@ -5,7 +5,7 @@ use crate::webui::pages::repos::{
         Diff,
     },
     ref_path::file_url,
-    ref_switcher::{RefOption, RefSwitcher},
+    ref_switcher::{RefLinks, RefSwitcher},
 };
 use crate::webui::{
     components::{compact_date, short_sha, Avatar, CopyButton, LiveTime},
@@ -160,22 +160,11 @@ pub fn commits(
 ) -> Element {
     let base = repo.base();
     // Switching the ref keeps the path and the filters, so the list stays on the same history.
-    let option = |name: &String| RefOption {
-        name: name.clone(),
-        href: format!("{}{}", history_url(&base, name, path), filter_query(filter)),
+    let links = RefLinks::History {
+        base: base.clone(),
+        path: path.to_owned(),
+        query: filter_query(filter),
     };
-    let branch_options: Vec<RefOption> = branches.iter().map(&option).collect();
-    let tag_options: Vec<RefOption> = tags
-        .iter()
-        .map(|name| RefOption {
-            name: name.clone(),
-            href: format!(
-                "{}{}",
-                history_url(&base, &format!("refs/tags/{name}"), path),
-                filter_query(filter)
-            ),
-        })
-        .collect();
     let heading = if path.is_empty() {
         "Commits".to_owned()
     } else {
@@ -195,7 +184,7 @@ pub fn commits(
                             if !path.is_empty() { span { " · " NavLink { href: history_url(&base, reference, ""), "Show all commits" } } }
                         }
                     }
-                    RefSwitcher { base: base.clone(), current: reference.to_owned(), branches: branch_options, tags: tag_options, default_branch: repo.default_branch.clone() }
+                    RefSwitcher { base: base.clone(), current: reference.to_owned(), branches: branches.to_vec(), tags: tags.to_vec(), links, default_branch: repo.default_branch.clone() }
                 }
                 {history_filters(&base, reference, path, filter, rows)}
                 if rows.is_empty() {
@@ -361,6 +350,10 @@ fn history_filters(
 
 /// The commit with its parents, its full ID and the branches and tags that point at it, then the
 /// files it changed.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The commit page combines Git detail, discussion and related pull requests."
+)]
 pub fn commit_detail(
     repo: &RepoChrome,
     commit: &Commit,
@@ -368,6 +361,8 @@ pub fn commit_detail(
     branches: &[String],
     tags: &[String],
     split: bool,
+    discussion: &super::comments::Discussion,
+    related: &super::pulls::RelatedPulls,
 ) -> Element {
     let base = repo.base();
     let browse = file_url(&base, "tree", &commit.sha, "");
@@ -406,6 +401,8 @@ pub fn commit_detail(
                 div { class: "collaboration-actions", {view_toggle(&format!("{base}/commit/{}", commit.sha), split)} }
             }
             {diff_view(diff, split)}
+            {super::pulls::related_pulls(repo, related)}
+            {super::comments::discussion(repo, &commit.sha, discussion, split)}
         },
     )
 }

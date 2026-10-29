@@ -17,6 +17,14 @@ pub enum EngagementError {
     ChangedCountUnavailable,
 }
 
+fn mutation_error(error: anyhow::Error) -> EngagementError {
+    if error.is::<db::users::blocks::InteractionBlocked>() {
+        EngagementError::Access(access::AccessError::WriteDenied)
+    } else {
+        EngagementError::Unavailable
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum Engagement {
     Star,
@@ -58,7 +66,35 @@ pub async fn set_level(
         }
         _ => return Err(EngagementError::Unavailable),
     };
-    saved.map_err(|_| EngagementError::Unavailable)
+    saved.map_err(mutation_error)
+}
+
+/// A REST subscription keeps an explicit participating preference and its creation time.
+pub async fn set_subscription(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor: i64,
+    repo_id: i64,
+    subscribed: bool,
+    ignored: bool,
+) -> Result<(), EngagementError> {
+    if subscribed && !ignored {
+        change(pool, broadcaster, actor, repo_id, Engagement::Watch, true).await?;
+    } else {
+        access::check_read(pool, repo_id, Some(actor))
+            .await
+            .map_err(EngagementError::Access)?;
+        db::repositories::engagement::set_watch_level(
+            pool,
+            actor,
+            repo_id,
+            if ignored { "ignoring" } else { "participating" },
+            "",
+        )
+        .await
+        .map_err(|_| EngagementError::Unavailable)?;
+    }
+    Ok(())
 }
 
 pub async fn change(
@@ -90,7 +126,7 @@ pub async fn change(
             db::repositories::engagement::unwatch_repo(pool, actor, repo_id).await
         }
     }
-    .map_err(|_| EngagementError::Unavailable)?;
+    .map_err(mutation_error)?;
     let updated = db::repositories::records::get_repository_by_id(pool, repo_id)
         .await
         .map_err(|_| EngagementError::ChangedCountUnavailable)?
@@ -115,11 +151,12 @@ pub async fn change(
                 let starrer = people.get(actor);
                 payloads::star(action, &starrer, &repository_for_hook, owner)
             },
-        );
+        )
+        .await;
     }
     if let Some(recipient) = repository
         .personal_owner_id()
-        .filter(|id| enabled && *id != actor && changed)
+        .filter(|_| enabled && changed)
     {
         if let Some(owner) = db::repositories::records::repository_owner_name(pool, repo_id)
             .await
@@ -139,19 +176,30 @@ pub async fn change(
                     json!({"repo_owner": owner, "repo_name": repository.name, "watchers_count": count, "subject": format!("{owner}/{}", repository.name)})
                 }
             };
-            let _ = create_and_broadcast_notification(
+            let link = format!("/{}/{}", owner, repository.name);
+            let notice = NotificationRequest {
+                user_id: recipient,
+                actor_id: Some(actor),
+                repo_id: Some(repo_id),
+                kind: event,
+                title: &title,
+                body: Some(&body),
+                link: Some(&link),
+                metadata,
+            };
+            let mut notified = Vec::new();
+            if recipient != actor
+                && create_and_broadcast_notification(pool, broadcaster, notice.clone())
+                    .await
+                    .is_ok()
+            {
+                notified.push(recipient);
+            }
+            crate::backend::notifications::create::notify_subscribers(
                 pool,
                 broadcaster,
-                NotificationRequest {
-                    user_id: recipient,
-                    actor_id: Some(actor),
-                    repo_id: Some(repo_id),
-                    kind: event,
-                    title: &title,
-                    body: Some(&body),
-                    link: Some(&format!("/{}/{}", owner, repository.name)),
-                    metadata,
-                },
+                notice,
+                &notified,
             )
             .await;
         }

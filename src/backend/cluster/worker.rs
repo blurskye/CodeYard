@@ -49,6 +49,8 @@ pub fn save_core(state_dir: &Path, ticket: &super::JoinTicket) -> Result<()> {
     file.write_all(&serde_json::to_vec(&peer)?)?;
     file.as_file().sync_all()?;
     file.persist(state_dir.join("cluster-peer.json"))?;
+    // The rename is durable only once the directory is synced.
+    std::fs::File::open(state_dir)?.sync_all()?;
     Ok(())
 }
 
@@ -58,7 +60,7 @@ pub async fn worker_context(
 ) -> Result<(NodeContext, Vec<CorePeer>)> {
     ensure!(
         settings.declared.is_empty(),
-        "CLUSTER_NODES belongs on core nodes, not a database-free actions-worker"
+        "CLUSTER_NODES belongs on core nodes, not a database-free runner"
     );
     let key = load_or_create(state_dir)?;
     let saved = state_dir.join("cluster-peer.json");
@@ -95,30 +97,38 @@ pub async fn worker_context(
         peer.endpoint_addr()?;
         Ok(peer)
     })();
-    if let Ok(peer) = saved_peer {
-        peers.push(peer);
-    } else if let Some(ticket) = &settings.join_ticket {
-        let membership = super::join(
+    // A join token joins every time: the saved address says a core was found, not that
+    // this key is enrolled, and joining again with an enrolled key changes nothing.
+    if let Some(ticket) = &settings.join_ticket {
+        let joined = super::join(
             ticket,
             &key,
             &settings.relay,
             &settings.name,
-            Some(&"actions-worker".parse()?),
+            Some(&"runner".parse()?),
         )
-        .await?;
-        ensure!(
-            membership.status != "revoked",
-            "this actions-worker was revoked"
-        );
-        save_core(state_dir, ticket)?;
-        peers.push(CorePeer {
-            public_key: ticket.node.to_string(),
-            address: ticket.address.clone(),
-        });
+        .await;
+        match (joined, saved_peer) {
+            (Ok(membership), _) => {
+                ensure!(membership.status != "revoked", "this runner was revoked");
+                save_core(state_dir, ticket)?;
+                peers.push(CorePeer {
+                    public_key: ticket.node.to_string(),
+                    address: ticket.address.clone(),
+                });
+            }
+            (Err(error), Ok(peer)) => {
+                tracing::warn!(%error, "cluster join failed; using the saved core address");
+                peers.push(peer);
+            }
+            (Err(error), Err(_)) => return Err(error),
+        }
+    } else if let Ok(peer) = saved_peer {
+        peers.push(peer);
     }
     ensure!(
         !peers.is_empty(),
-        "actions-worker needs CLUSTER_PEERS or the core address saved by cluster join"
+        "runner needs CLUSTER_PEERS or the core address saved by cluster join"
     );
     // The iroh endpoint opens only when a core node that needs it is dialed.
     Ok((

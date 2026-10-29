@@ -46,6 +46,7 @@ pub struct ReleaseResponse {
     name: Option<String>,
     body: Option<String>,
     draft: bool,
+    immutable: bool,
     prerelease: bool,
     latest: bool,
     author: Author,
@@ -136,6 +137,7 @@ fn release_response(
         name: release.name.clone(),
         body: release.body.clone(),
         draft: release.is_draft,
+        immutable: release.is_immutable,
         prerelease: release.is_prerelease,
         latest: release.is_latest,
         author: Author {
@@ -253,6 +255,7 @@ pub(super) async fn create(
             is_prerelease: request.prerelease.unwrap_or(false),
             make_latest: request.make_latest.unwrap_or(true),
         },
+        new_tag_denied: false,
     };
     let release = releases::create(
         &state.pool,
@@ -321,9 +324,12 @@ pub(super) async fn update(
         is_draft: request.draft,
         is_prerelease: request.prerelease,
         make_latest: request.make_latest,
+        new_tag_denied: false,
     };
     let release = releases::update(
         &state.pool,
+        state.cluster.as_ref(),
+        &state.ci_runs,
         &state.notification_broadcaster,
         actor.id,
         &owner,

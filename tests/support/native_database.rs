@@ -20,15 +20,20 @@ impl NativeDatabase {
         self._directory.path()
     }
     pub async fn new() -> Self {
+        let fixture = Self::unmigrated().await;
+        db::run_migrations(&fixture.pool)
+            .await
+            .expect("native SQLite migration");
+        fixture
+    }
+
+    pub async fn unmigrated() -> Self {
         let directory = tempfile::tempdir().expect("owned SQLite fixture directory");
         let url = format!(
             "sqlite://{}",
             directory.path().join("application.sqlite").display()
         );
         let pool = db::init_db(&url).await.expect("native SQLite open");
-        db::run_migrations(&pool)
-            .await
-            .expect("native SQLite migration");
         let options = SqliteConnectOptions::from_str(&url)
             .unwrap()
             .with_regexp()
@@ -103,6 +108,14 @@ impl PostgresDatabase {
     }
 
     pub async fn new() -> Self {
+        let fixture = Self::unmigrated().await;
+        db::run_migrations(&fixture.pool)
+            .await
+            .expect("native PostgreSQL migration");
+        fixture
+    }
+
+    pub async fn unmigrated() -> Self {
         let url = std::env::var("GITSERV_TEST_DATABASE_URL")
             .expect("set GITSERV_TEST_DATABASE_URL to a PostgreSQL URL");
         let parsed = url::Url::parse(&url).expect("fixture URL");
@@ -139,9 +152,6 @@ impl PostgresDatabase {
             ]);
         fixture.raw = PgPoolOptions::new().connect_with(options).await.unwrap();
         fixture.pool = fixture.raw.clone().into();
-        db::run_migrations(&fixture.pool)
-            .await
-            .expect("native PostgreSQL migration");
         fixture
     }
 

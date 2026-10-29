@@ -1,0 +1,19 @@
+# https://github.com/docker/bake-action/tree/5be5f02ff8819ecd3092ea6b2e6261c31774f2b4
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          printf 'FROM alpine:3.21\nCMD ["echo", "compat-bake"]\n' > Dockerfile
+          printf 'target "default" { tags = ["compat-bake:local"] }\n' > docker-bake.hcl
+      - id: action
+        uses: docker/bake-action@5be5f02ff8819ecd3092ea6b2e6261c31774f2b4 # v6
+        with:
+          files: "docker-bake.hcl"
+          load: "true"
+      - name: Assert documented effect
+        run: |
+          docker run --rm compat-bake:local | grep '^compat-bake$'
+          echo compat:ok

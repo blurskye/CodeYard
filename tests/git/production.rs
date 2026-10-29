@@ -19,6 +19,7 @@ fn merge_request(head: &str, base: &str, message: &str, name: &str, email: &str)
         head: head.into(),
         base: base.into(),
         message: message.into(),
+        squash_body: None,
         name: name.into(),
         email: email.into(),
         method: MergeMethod::Merge,

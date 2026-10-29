@@ -7,9 +7,16 @@
 //! The one exception is [`RepoStore::local_path_for_spawning_git`], used by the
 //! host OpenSSH gateway.
 mod editor;
+mod gists;
+pub(crate) use gists::PreparedGist;
+pub use gists::{
+    valid_gist_filename, GistCredential, GistEdit, GistFileChange, GistRevision, GistSnapshot,
+    MAX_GIST_BYTES, MAX_GIST_FILENAME_BYTES, MAX_GIST_FILES, MAX_GIST_REQUEST_BYTES,
+};
 mod error;
 mod local;
 mod remote;
+pub(crate) mod source;
 mod types;
 
 use crate::backend::{
@@ -19,15 +26,16 @@ use crate::backend::{
     },
     db::{self, models::Repository},
     git,
+    repositories::protection::WriteVia,
 };
 use std::{collections::HashMap, path::Path, time::Instant};
 
 pub(crate) use crate::backend::git::validate_merge_revision;
 pub use crate::backend::git::{
-    BlameHunk, BlobContent, BranchStatus, CiCommit, CiWorkflowFile, CiWorkflowSource, CommitFilter,
-    CommitInfo, ContributorInfo, DiffFileInfo, DiffInfo, FileBlame, FileList, LanguageStat,
-    RepoInfo, TagInfo, TreeEntry, WeekChanges, MAX_CI_CHANGED_PATHS, MAX_CI_WORKFLOW_BYTES,
-    MAX_DIFF_FILE_PATCH_BYTES, MAX_REPOSITORY_REFS, MAX_TREE_ENTRIES,
+    BlameHunk, BlobContent, BranchStatus, CiCommit, CiWorkflowFile, CiWorkflowSource,
+    CommitComparison, CommitFilter, CommitInfo, ContributorInfo, DiffFileInfo, DiffInfo, FileBlame,
+    FileList, LanguageStat, RepoInfo, TagInfo, TreeEntry, WeekChanges, MAX_CI_CHANGED_PATHS,
+    MAX_CI_WORKFLOW_BYTES, MAX_DIFF_FILE_PATCH_BYTES, MAX_REPOSITORY_REFS, MAX_TREE_ENTRIES,
     MAX_WORKFLOW_DIRECTORY_ENTRIES, MAX_WORKFLOW_FILE_NAME_BYTES,
 };
 pub use editor::{
@@ -39,9 +47,11 @@ pub use error::{ErrorKind, RepoError, RepoErrorReason, MERGE_METHOD_NOT_ALLOWED,
 pub(crate) use local::ensure_ref_room;
 pub use local::{begin_ref_change, RefChange};
 pub use types::{
-    allowed_merge_methods, BlobBytes, BlobRange, GitService, GitSession, GitStreams, MergeFailure,
-    MergeMethod, MergeRequest, RestackMove, MAX_ARCHIVE_RESPONSE_BYTES, MAX_BLOB_RESPONSE_BYTES,
-    MAX_COMMIT_OFFSET, MAX_COMMIT_PAGE_SIZE, MAX_CONTRIBUTOR_RESPONSE_BYTES,
+    allowed_merge_methods, AsyncMergePublication, BlobBytes, BlobRange, BranchMergePublication,
+    GitService, GitSession, GitStreams, MergeFailure, MergeMethod, MergeRequest, PullBranchUpdate,
+    RestackMove, RevertRequest, UpstreamMerge, UpstreamMergeType, MAX_ARCHIVE_RESPONSE_BYTES,
+    MAX_BLOB_RESPONSE_BYTES, MAX_COMMIT_OFFSET, MAX_COMMIT_PAGE_SIZE,
+    MAX_CONTRIBUTOR_RESPONSE_BYTES,
 };
 pub(crate) use types::{BlobMetadata, WorkflowPayloadEntry, MAX_WORKFLOW_PAYLOAD_BYTES};
 
@@ -99,6 +109,12 @@ impl RepoStore {
 #[derive(Clone, Debug)]
 pub struct RepoStore(Backend);
 
+pub struct CopyOptions {
+    pub default_branch: String,
+    pub template: bool,
+    pub default_branch_only: bool,
+}
+
 #[derive(Clone, Debug)]
 enum Backend {
     Local(local::LocalStore),
@@ -112,6 +128,227 @@ impl RepoStore {
             Backend::Remote(_) => Err(rpc::wire::invalid(
                 "fork source is not on the destination node",
             )),
+        }
+    }
+
+    /// Reads a tree object, optionally including its descendants, with bounded output.
+    pub async fn git_tree(
+        &self,
+        revision: &str,
+        recursive: bool,
+    ) -> Result<git::objects::TreeObject, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.git_tree(revision, recursive).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::GitTree {
+                            revision: revision.into(),
+                            recursive,
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    pub async fn git_object_kind(&self, sha: &str) -> Result<String, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.git_object_kind(sha).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(Operation::GitObjectKind { sha: sha.into() }, b"")
+                    .await
+            }
+        }
+    }
+
+    pub async fn git_tag(&self, sha: &str) -> Result<git::objects::TagObject, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.git_tag(sha).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(Operation::GitTag { sha: sha.into() }, b"")
+                    .await
+            }
+        }
+    }
+
+    pub async fn update_reference_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        reference: &str,
+        sha: &str,
+        force: bool,
+    ) -> Result<(String, String), RepoError> {
+        match &self.0 {
+            Backend::Local(local) => {
+                local
+                    .update_reference(pool, repo_id, actor, reference, sha, force)
+                    .await
+            }
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        actor,
+                        Operation::UpdateReference {
+                            reference: reference.into(),
+                            sha: sha.into(),
+                            force,
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    /// Writes an unattached Git object after checking live write authority on its storage node.
+    pub async fn write_git_object_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        input: git::objects::ObjectWrite,
+        bytes: &[u8],
+    ) -> Result<String, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => {
+                local
+                    .write_git_object(pool, repo_id, actor, input, bytes)
+                    .await
+            }
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(actor, Operation::WriteGitObject { input }, bytes)
+                    .await
+            }
+        }
+    }
+
+    pub async fn lock_migration_as(
+        &self,
+        pool: &db::DbPool,
+        repo: i64,
+        actor: i64,
+        migration: i64,
+    ) -> Result<(), RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.lock_migration(pool, repo, actor, migration).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(actor, Operation::LockMigration { migration }, b"")
+                    .await
+            }
+        }
+    }
+
+    pub async fn gist_snapshot(
+        &self,
+        pool: &db::DbPool,
+        id: i64,
+        revision: Option<&str>,
+    ) -> Result<GistSnapshot, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.gist_snapshot(pool, id, revision).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::GistSnapshot {
+                            revision: revision.map(str::to_owned),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+    pub async fn gist_history(
+        &self,
+        pool: &db::DbPool,
+        id: i64,
+        revision: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<GistRevision>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.gist_history(pool, id, revision, offset, limit).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::GistHistory {
+                            revision: revision.map(str::to_owned),
+                            offset,
+                            limit,
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+    pub async fn gist_write(
+        &self,
+        pool: &db::DbPool,
+        id: i64,
+        actor: i64,
+        credential: GistCredential,
+        input: GistEdit,
+    ) -> Result<GistSnapshot, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.gist_write(pool, id, actor, credential, input).await,
+            Backend::Remote(remote) => {
+                let bytes = serde_json::to_vec(&input)
+                    .map_err(|_| RepoError::new(ErrorKind::Invalid, "Invalid gist input"))?;
+                remote
+                    .call_as(actor, Operation::GistWrite { credential }, &bytes)
+                    .await
+            }
+        }
+    }
+
+    pub async fn migration_archive_as(
+        &self,
+        pool: &db::DbPool,
+        repo: i64,
+        actor: i64,
+    ) -> Result<Vec<u8>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.migration_archive(pool, repo, actor).await,
+            Backend::Remote(remote) => remote.bytes_as(actor, Operation::MigrationArchive).await,
+        }
+    }
+
+    pub async fn import_git_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        import: crate::backend::repositories::imports::GitImport,
+        pack: &[u8],
+    ) -> Result<(), RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.import_git(pool, repo_id, actor, import, pack).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(actor, Operation::ImportGit { import }, pack)
+                    .await
+            }
+        }
+    }
+
+    pub async fn cancel_import_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+    ) -> Result<(), RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.cancel_import(pool, repo_id, actor).await,
+            Backend::Remote(remote) => remote.call_as(actor, Operation::CancelImport, b"").await,
         }
     }
 
@@ -168,37 +405,33 @@ impl RepoStore {
         }
     }
 
-    /// Copies a fork privately, then checks live source access before publishing it.
-    pub async fn initialize_fork(
+    /// Copies privately, then checks live source read and destination write authority before publication.
+    pub async fn initialize_copy(
         &self,
         pool: &db::DbPool,
         repo_id: i64,
         source_repo_id: i64,
         actor: i64,
         source: &RepoStore,
-        default_branch: &str,
+        options: &CopyOptions,
     ) -> Result<(), RepoError> {
         match (&self.0, &source.0) {
             (Backend::Local(local), Backend::Local(from)) => {
                 local
-                    .initialize_fork(pool, repo_id, source_repo_id, actor, from, default_branch)
+                    .initialize_copy(pool, repo_id, source_repo_id, actor, from, options)
                     .await
             }
             (Backend::Remote(remote), Backend::Remote(from)) if remote.node_id == from.node_id => {
-                remote
-                    .call_as(
-                        actor,
-                        Operation::Initialize {
-                            source: Some(rpc::repository_uuid(&from.disk_path)?),
-                            default_branch: default_branch.into(),
-                        },
-                        b"",
-                    )
-                    .await
+                let source = rpc::repository_uuid(&from.disk_path)?;
+                let operation = Operation::InitializeCopy {
+                    source,
+                    default_branch: options.default_branch.clone(),
+                    template: options.template,
+                    default_branch_only: options.default_branch_only,
+                };
+                remote.call_as(actor, operation, b"").await
             }
-            _ => Err(rpc::wire::invalid(
-                "fork source is not on the destination node",
-            )),
+            _ => Err(rpc::wire::invalid("source is not on the destination node")),
         }
     }
 
@@ -219,6 +452,16 @@ impl RepoStore {
     pub async fn remove(&self) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.remove().await,
+            Backend::Remote(remote) => remote.call(Operation::Remove, b"").await,
+        }
+    }
+
+    /// Removes a deleted repository. A local repository moves to `deleted/` under its
+    /// parent directory and stays there for [`db::files::RESTORE_WINDOW_SECONDS`], so a database
+    /// restored to before the delete still finds its files. A remote store removes it.
+    pub async fn retire(&self) -> Result<(), RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.retire().await,
             Backend::Remote(remote) => remote.call(Operation::Remove, b"").await,
         }
     }
@@ -257,6 +500,28 @@ impl RepoStore {
         match &self.0 {
             Backend::Local(local) => local.refs().await,
             Backend::Remote(remote) => remote.call(Operation::PrimaryRefs, b"").await,
+        }
+    }
+
+    /// Primary-only server provenance, never inferred from commit authors or cached receipts.
+    pub async fn branch_publication(
+        &self,
+        repository_id: i64,
+        reference: &str,
+    ) -> Result<Option<git::PublicationRecord>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.branch_publication(repository_id, reference).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::BranchPublication {
+                            repository_id,
+                            reference: reference.into(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
         }
     }
 
@@ -504,6 +769,7 @@ impl RepoStore {
                         limit,
                         filter: filter.clone(),
                         walk_millis,
+                        raw_json: true,
                     }
                 } else {
                     Operation::CommitPage {
@@ -512,6 +778,7 @@ impl RepoStore {
                         limit,
                         filter: filter.clone(),
                         walk_millis,
+                        raw_json: true,
                     }
                 };
                 remote.call(operation, b"").await
@@ -545,6 +812,31 @@ impl RepoStore {
         }
     }
 
+    /// The full commit count and the first 250 commits of a pull request, oldest first.
+    pub async fn pull_request_commits(
+        &self,
+        base_ref: &str,
+        head_ref: &str,
+    ) -> Result<(u64, Vec<CommitInfo>), RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.pull_request_commits(base_ref, head_ref).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::CommitsBetween {
+                            base_ref: base_ref.into(),
+                            head_ref: head_ref.into(),
+                            limit: 250,
+                            raw_json: true,
+                            pull_request: true,
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
     /// Up to `limit` commits reachable from `head_ref` but not from `base_ref`, newest first. These
     /// are the commits of a pull request.
     pub async fn commits_between(
@@ -566,6 +858,7 @@ impl RepoStore {
                             head_ref: head_ref.into(),
                             limit,
                             raw_json: true,
+                            pull_request: false,
                         },
                         b"",
                     )
@@ -600,6 +893,7 @@ impl RepoStore {
                     offset,
                     limit,
                     filter: filter.clone(),
+                    raw_json: true,
                 };
                 remote.call(operation, b"").await
             }
@@ -642,6 +936,30 @@ impl RepoStore {
         }
     }
 
+    /// Object IDs and the actual previous tag used to generate release notes, read on the primary.
+    pub async fn release_history(
+        &self,
+        head: &str,
+        previous: Option<&str>,
+        exclude_tag: &str,
+    ) -> Result<git::ReleaseHistory, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.release_history(head, previous, exclude_tag).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::ReleaseHistory {
+                            head: head.into(),
+                            previous: previous.map(str::to_owned),
+                            exclude_tag: exclude_tag.into(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
     /// What one commit changed relative to its first parent.
     pub async fn commit_diff(&self, revision: &str) -> Result<DiffInfo, RepoError> {
         match &self.0 {
@@ -669,6 +987,27 @@ impl RepoStore {
                         Operation::Diff {
                             base_ref: base_ref.into(),
                             head_ref: head_ref.into(),
+                            stats: false,
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    /// The counts and files of [`Self::diff`] with empty patches, so a file whose patch is too
+    /// large to show does not stop them.
+    pub async fn diff_stats(&self, base_ref: &str, head_ref: &str) -> Result<DiffInfo, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.diff_stats(base_ref, head_ref).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::Diff {
+                            base_ref: base_ref.into(),
+                            head_ref: head_ref.into(),
+                            stats: true,
                         },
                         b"",
                     )
@@ -790,6 +1129,43 @@ impl RepoStore {
         }
     }
 
+    /// Comparison counts, merge base and an oldest-first commit page, including fork heads.
+    pub async fn comparison_from(
+        &self,
+        source: &RepoStore,
+        base_ref: &str,
+        head_ref: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<CommitComparison, RepoError> {
+        if offset > MAX_COMMIT_OFFSET || limit > 250 {
+            return Err(RepoError::response_too_large());
+        }
+        match (&self.0, &source.0) {
+            (Backend::Local(base), Backend::Local(from)) => {
+                base.comparison_from(from, base_ref, head_ref, offset, limit)
+                    .await
+            }
+            (Backend::Remote(base), Backend::Remote(from)) if base.node_id == from.node_id => {
+                base.call(
+                    Operation::ComparisonFrom {
+                        source: rpc::repository_uuid(&from.disk_path)?,
+                        base_ref: base_ref.into(),
+                        head_ref: head_ref.into(),
+                        offset,
+                        limit,
+                        raw_json: true,
+                    },
+                    b"",
+                )
+                .await
+            }
+            _ => Err(rpc::wire::invalid(
+                "comparison repositories are not on the same node",
+            )),
+        }
+    }
+
     /// Tags with the message of annotated ones.
     pub async fn tags(&self) -> Result<Vec<TagInfo>, RepoError> {
         match &self.0 {
@@ -885,6 +1261,26 @@ impl RepoStore {
         match &self.0 {
             Backend::Local(local) => local.contributors().await,
             Backend::Remote(remote) => remote.call(Operation::Contributors, b"").await,
+        }
+    }
+
+    /// Bounded, ref-cached commit and author statistics from this repository's storage node.
+    pub async fn commit_statistics(
+        &self,
+        branch: &str,
+    ) -> Result<git::CommitStatistics, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.commit_statistics(branch).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::CommitStatistics {
+                            branch: branch.into(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
         }
     }
 
@@ -1043,6 +1439,65 @@ impl RepoStore {
         }
     }
 
+    /// Renames a branch and follows it in protection and default-branch metadata.
+    pub async fn rename_branch_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        old: &str,
+        new: &str,
+    ) -> Result<String, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.rename_branch(pool, repo_id, actor, old, new).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        actor,
+                        Operation::RenameBranch {
+                            old: old.into(),
+                            new: new.into(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    /// Syncs a fork branch from its direct parent without discarding local commits.
+    pub async fn merge_upstream_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        source: (i64, &RepoStore),
+        branch: &str,
+    ) -> Result<UpstreamMerge, RepoError> {
+        match (&self.0, &source.1 .0) {
+            (Backend::Local(local), Backend::Local(from)) => {
+                local
+                    .merge_upstream(pool, repo_id, actor, (source.0, from), branch)
+                    .await
+            }
+            (Backend::Remote(remote), Backend::Remote(from)) if remote.node_id == from.node_id => {
+                remote
+                    .call_as(
+                        actor,
+                        Operation::MergeUpstream {
+                            source: rpc::repository_uuid(&from.disk_path)?,
+                            branch: branch.into(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+            _ => Err(rpc::wire::invalid(
+                "fork source is not on the destination node",
+            )),
+        }
+    }
+
     /// Creates a branch at the commit `sha`; returns that commit's ID.
     pub async fn create_branch_as(
         &self,
@@ -1064,6 +1519,135 @@ impl RepoStore {
                         Operation::CreateBranch {
                             name: name.into(),
                             sha: sha.into(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    pub async fn transfer_repository_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        new_owner: &str,
+    ) -> Result<db::models::Repository, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => {
+                local
+                    .transfer_repository(pool, repo_id, actor, new_owner)
+                    .await
+            }
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        actor,
+                        Operation::TransferRepository {
+                            new_owner: new_owner.into(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    pub(crate) async fn configure_dependency_security_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        feature: db::repositories::dependencies::Feature,
+        enabled: bool,
+        private_consent: bool,
+    ) -> Result<(), RepoError> {
+        match &self.0 {
+            Backend::Local(local) => {
+                local
+                    .configure_dependency_security(
+                        pool,
+                        repo_id,
+                        actor,
+                        feature,
+                        enabled,
+                        private_consent,
+                    )
+                    .await
+            }
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        actor,
+                        Operation::ConfigureDependencySecurity {
+                            feature,
+                            enabled,
+                            private_consent,
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    /// Publishes release metadata/proof while its tag is pinned by the primary Git lock.
+    pub(crate) async fn mutate_release_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        mutation: crate::backend::repositories::releases::immutable::Mutation,
+        attestation: Option<crate::backend::repositories::releases::integrity::Attestation>,
+    ) -> Result<(db::models::Release, bool), RepoError> {
+        match &self.0 {
+            Backend::Local(local) => {
+                local
+                    .mutate_release(pool, repo_id, actor, mutation, attestation)
+                    .await
+            }
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        actor,
+                        Operation::MutateRelease {
+                            mutation,
+                            attestation,
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    /// Changes the default and metadata under one Git lock and one guarded SQL transaction.
+    pub async fn patch_repository_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        name: &str,
+        changes: &db::repositories::records::RepositoryChanges<&str>,
+    ) -> Result<db::models::Repository, RepoError> {
+        if git::branch_ref(name).is_none() {
+            return Err(invalid_ref("branch"));
+        }
+        let changes = changes.owned();
+        match &self.0 {
+            Backend::Local(local) => {
+                local
+                    .patch_repository(pool, repo_id, actor, name, changes)
+                    .await
+            }
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        actor,
+                        Operation::PatchRepository {
+                            default_branch: name.into(),
+                            changes,
                         },
                         b"",
                     )
@@ -1235,7 +1819,9 @@ impl RepoStore {
         match &self.0 {
             Backend::Local(local) => {
                 let prepared = local.prepare_file(write, content, author, email).await?;
-                local.publish_file(pool, repo_id, actor, &prepared).await
+                local
+                    .publish_file(pool, repo_id, actor, &prepared, None)
+                    .await
             }
             Backend::Remote(remote) => {
                 remote
@@ -1289,13 +1875,111 @@ impl RepoStore {
         prepared: &PreparedFile,
     ) -> Result<CommitInfo, RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.publish_file(pool, repo_id, actor, prepared).await,
+            Backend::Local(local) => {
+                local
+                    .publish_file(pool, repo_id, actor, prepared, None)
+                    .await
+            }
             Backend::Remote(remote) => {
                 remote
                     .call_as(
                         actor,
                         Operation::PublishFile {
                             prepared: prepared.clone(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    pub(crate) async fn publish_dependency_update_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        prepared: &PreparedFile,
+        publication: &db::repositories::dependencies::Publication,
+    ) -> Result<CommitInfo, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => {
+                let (pool, local, prepared, publication) = (
+                    pool.clone(),
+                    local.clone(),
+                    prepared.clone(),
+                    publication.clone(),
+                );
+                tokio::spawn(async move {
+                    local
+                        .publish_file(&pool, repo_id, actor, &prepared, Some(&publication))
+                        .await
+                })
+                .await
+                .map_err(|_| {
+                    RepoError::new(
+                        ErrorKind::Unavailable,
+                        "Dependency update publication interrupted",
+                    )
+                })?
+            }
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        actor,
+                        Operation::PublishDependencyUpdate {
+                            prepared: prepared.clone(),
+                            publication: Box::new(publication.clone()),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    /// Updates a pull head from a readable base, enforcing direct-push protection and head CAS.
+    pub async fn update_pull_branch_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        source: (i64, &RepoStore),
+        request: &PullBranchUpdate,
+    ) -> Result<String, RepoError> {
+        match (&self.0, &source.1 .0) {
+            (Backend::Local(target), Backend::Local(from)) => {
+                target
+                    .update_pull_branch(pool, repo_id, actor, (source.0, from), request)
+                    .await
+            }
+            (Backend::Remote(target), Backend::Remote(from)) if target.node_id == from.node_id => {
+                target
+                    .call_as(
+                        actor,
+                        Operation::UpdatePullBranch {
+                            source: rpc::repository_uuid(&from.disk_path)?,
+                            request: request.clone(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+            _ => Err(rpc::wire::invalid(
+                "pull request source is not on the destination node",
+            )),
+        }
+    }
+
+    /// Builds an inverse change without touching refs. Publication uses normal branch authority.
+    pub async fn prepare_revert(&self, request: &RevertRequest) -> Result<String, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.prepare_revert(request).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::PrepareRevert {
+                            request: request.clone(),
                         },
                         b"",
                     )
@@ -1323,7 +2007,80 @@ impl RepoStore {
         }
     }
 
-    /// Publishes a prepared merge by moving `base_branch` to `result`,
+    /// Rechecks the durable request and original token under the owning repository lock.
+    pub async fn publish_async_merge_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        request: &AsyncMergePublication,
+    ) -> Result<(), RepoError> {
+        match &self.0 {
+            Backend::Local(local) => {
+                local
+                    .publish_async_merge(pool, repo_id, actor, request)
+                    .await
+            }
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        actor,
+                        Operation::PublishAsyncMerge {
+                            request: request.clone(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    /// Publishes a direct branch merge with live write policy and branch-tip CAS. A branch merge
+    /// cannot stand in for an approved pull request, even when its object has two parents.
+    pub async fn publish_branch_merge_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        publication: &BranchMergePublication,
+    ) -> Result<(), RepoError> {
+        match &self.0 {
+            Backend::Local(local) => {
+                let heads: Vec<_> = publication
+                    .head_branch
+                    .as_deref()
+                    .map(|branch| (branch, publication.head.as_str()))
+                    .into_iter()
+                    .collect();
+                local
+                    .publish_merge(
+                        pool,
+                        repo_id,
+                        actor,
+                        &heads,
+                        &publication.base_branch,
+                        &publication.base,
+                        &publication.result,
+                        MergeMethod::Merge,
+                        WriteVia::Direct,
+                    )
+                    .await
+            }
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        actor,
+                        Operation::PublishBranchMerge {
+                            publication: publication.clone(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    /// Publishes a prepared pull-request merge by moving `base_branch` to `result`,
     /// failing if either branch is no longer at `base` or `head`.
     #[expect(
         clippy::too_many_arguments,
@@ -1353,6 +2110,7 @@ impl RepoStore {
                         base,
                         result,
                         method,
+                        WriteVia::Merge,
                     )
                     .await
             }
@@ -1408,6 +2166,7 @@ impl RepoStore {
                         base,
                         result,
                         MergeMethod::Merge,
+                        WriteVia::Merge,
                     )
                     .await
             }
@@ -1523,6 +2282,12 @@ impl RepoStore {
         }
     }
 
+    /// Whether this store runs Git on this node. Its sessions take a local slot, and a remote
+    /// store's take a forwarding slot.
+    pub(crate) fn is_local(&self) -> bool {
+        matches!(self.0, Backend::Local(_))
+    }
+
     /// A slot for one Git session: a local one runs Git here, a remote one forwards it.
     pub(crate) async fn session_permit(&self) -> anyhow::Result<tokio::sync::OwnedSemaphorePermit> {
         use crate::backend::git::repository::process;
@@ -1572,9 +2337,9 @@ impl RepoStore {
     }
 
     /// Stores a pack from the primary in this copy.
-    pub async fn index_pack(&self, pack: &Path) -> Result<(), RepoError> {
+    pub async fn index_pack(&self, pack: &Path, strict: bool) -> Result<(), RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.index_pack(pack).await,
+            Backend::Local(local) => local.index_pack(pack, strict).await,
             Backend::Remote(_) => Err(rpc::wire::invalid("replica copies live on this node")),
         }
     }

@@ -1,0 +1,17 @@
+# https://github.com/actions/setup-node/tree/49933ea5288caeca8642d1e84afbd3f7d6820020
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+      - name: Assert documented effect
+        run: |
+          node --version | grep '^v20\.'
+          touch compat.ts
+          echo 'compat.ts(3,4): error TS2322: matcher diagnostic'
+          echo compat:ok

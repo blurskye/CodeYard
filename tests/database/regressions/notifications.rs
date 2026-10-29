@@ -47,14 +47,18 @@ async fn notification_batches_keep_order_visibility_and_continuation() {
         let reader = f.actor("inbox_reader").await;
         let visible = repo(&f, owner, "visible").await;
         let hidden = repo(&f, owner, "hidden").await;
-        db::repositories::access::grant_repo_access(
-            f.pool(),
-            reader,
-            visible.id,
-            AccessLevel::Read,
-        )
-        .await
-        .unwrap();
+        // Notifications are only created for readers, so the hidden ones belong to a
+        // repository the reader could read when they arrived and lost access to later.
+        for repository in [visible.id, hidden.id] {
+            db::repositories::access::grant_repo_access(
+                f.pool(),
+                reader,
+                repository,
+                AccessLevel::Read,
+            )
+            .await
+            .unwrap();
+        }
         let mut expected = Vec::new();
         for index in 0..205 {
             let row = notice(
@@ -70,6 +74,11 @@ async fn notification_batches_keep_order_visibility_and_continuation() {
             }
         }
         expected.reverse();
+        assert!(
+            db::repositories::access::revoke_repo_access(f.pool(), reader, hidden.id)
+                .await
+                .unwrap()
+        );
         let session = session(f.pool(), reader).await;
         let mut before = None;
         let mut listed = Vec::new();

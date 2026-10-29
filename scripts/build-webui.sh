@@ -96,15 +96,26 @@ args=(build --platform web --package codeyard --bin codeyard --no-default-featur
 if [[ $MODE == release ]]; then
     args+=(--release --debug-symbols false)
 fi
-"$DX" "${args[@]}"
-[[ -f $PUBLIC/index.html ]] || { echo "dx produced no $PUBLIC/index.html" >&2; exit 1; }
+if ! "$DX" "${args[@]}" || [[ ! -f $PUBLIC/index.html ]]; then
+    # Remove the partial output, so that a retry is not refused as unowned data.
+    rm -rf "$PUBLIC"
+    echo "dx did not produce $PUBLIC/index.html" >&2
+    exit 1
+fi
 touch "$PUBLIC/.codeyard-webui-bundle"
 
 echo "== publish to $OUT"
 if [[ $OUT != "$PUBLIC" ]]; then
     require_bundle "$OUT"
-    rm -rf "$OUT"
+    # Copy beside OUT and swap it in, so a failed copy leaves the previous bundle in place. The
+    # copies go into fresh directories, so no existing directory beside OUT is touched.
     mkdir -p "$(dirname "$OUT")"
-    cp -R "$PUBLIC" "$OUT"
+    staging=$(mktemp -d "$OUT.staging.XXXXXX")
+    cp -R "$PUBLIC" "$staging/bundle"
+    if [[ -e $OUT ]]; then
+        mv "$OUT" "$staging/previous"
+    fi
+    mv "$staging/bundle" "$OUT"
+    rm -rf "$staging"
 fi
 find "$OUT" -type f -printf '%10s  %P\n' | sort -k2

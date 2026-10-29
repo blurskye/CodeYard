@@ -14,6 +14,9 @@ pub struct Milestone {
     pub state: String,
     pub created_at: DateTime<Utc>,
     pub closed_at: Option<DateTime<Utc>>,
+    pub creator_id: Option<i64>,
+    pub updated_at: DateTime<Utc>,
+    pub due_on: Option<DateTime<Utc>>,
 }
 
 /// A milestone with its counts of open and closed issues and pull requests. The counts are read

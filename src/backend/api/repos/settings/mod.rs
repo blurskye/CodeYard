@@ -8,8 +8,10 @@ use std::sync::Arc;
 
 pub mod branch_protection;
 pub mod collaborators;
+pub(super) mod environment_values;
 pub mod permissions;
 pub mod secrets;
+pub(super) mod variables;
 
 pub fn json_router() -> Router<Arc<AppState>> {
     Router::new()

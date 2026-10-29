@@ -175,7 +175,7 @@ async fn contract(pg: bool) {
         &service,
         actor,
         "writer",
-        "project",
+        repo.id,
         FileWrite {
             branch: "main".into(),
             path: "src.txt".into(),
@@ -233,6 +233,7 @@ async fn contract(pg: bool) {
         pipeline: None,
         environment: None,
         inputs: None,
+        repo_id: None,
     };
     // Deleting the accepted branch must not reinterpret it as a same-named tag.
     {
@@ -268,13 +269,12 @@ async fn contract(pg: bool) {
     assert_eq!(run.workflow_path, path);
     for filename in ["unit test.yml", "テスト.yml"] {
         let path = format!(".github/workflows/{filename}");
-        assert!(!discovered.iter().any(|definition| definition.path == path));
-        assert!(matches!(
-            service
-                .dispatch_run(actor, dispatch("feature", "workflow_dispatch", &path))
-                .await,
-            Err(codeyard::backend::ci::admission::AdmissionError::InvalidRequest(_))
-        ));
+        assert!(discovered.iter().any(|definition| definition.path == path));
+        let run = service
+            .dispatch_run(actor, dispatch("feature", "workflow_dispatch", &path))
+            .await
+            .unwrap();
+        assert_eq!(run.workflow_path, path);
     }
     for reference in [
         "refs/heads/topic/c++".to_owned(),

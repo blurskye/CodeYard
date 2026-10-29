@@ -1,0 +1,1 @@
+query ViewerLoginAndOrgs($after:String){viewer{login,id,organizations(first: 100, after: $after){pageInfo{endCursor,hasNextPage},nodes{login,viewerCanCreateProjects,id}}}}

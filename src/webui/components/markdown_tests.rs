@@ -1,4 +1,5 @@
 use super::*;
+use crate::webui::components::references;
 
 /// Markdown for text that names no repository, so nothing links.
 fn parse_markdown(text: &str) -> String {
@@ -234,13 +235,33 @@ fn repository_comment_fragments_name_headings() {
 #[test]
 fn absolute_anchor_and_scheme_links_are_left_alone() {
     let parsed = parse_markdown(
-        "[a](https://example.test/x) [b](#section) [c](/explore) [d](mailto:a@example.test)",
+        "[a](https://example.test/x) [b](#section) [c](//example.test/x) [d](mailto:a@example.test)",
     );
     let html = base().rewrite(&parsed).unwrap();
     assert!(html.contains("href=\"https://example.test/x\" target=\"_blank\""));
     assert!(html.contains("href=\"#user-content-section\" class="));
-    assert!(html.contains("href=\"/explore\""));
+    // A protocol-relative address is never a link (see safe_url), so nothing rewrites it.
+    assert!(!html.contains("href=\"//"));
     assert!(html.contains("href=\"mailto:a@example.test\""));
+}
+
+#[test]
+fn leading_slash_paths_start_at_the_repository_root() {
+    let parsed = parse_markdown("[guide](/docs/guide.md) ![logo](/images/logo.png)");
+    let html = base().rewrite(&parsed).unwrap();
+    assert!(
+        html.contains("href=\"/alice/demo/blob/main/docs/guide.md\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("src=\"/alice/demo/raw/main/images/logo.png\""),
+        "{html}"
+    );
+    // The forge's own reference links name site paths and stay as they are.
+    let reference = base()
+        .rewrite("<a href=\"/bob\" class=\"markdown-reference\">@bob</a>")
+        .unwrap();
+    assert!(reference.contains("href=\"/bob\""), "{reference}");
 }
 
 #[test]
@@ -347,6 +368,51 @@ fn a_word_with_an_entity_or_escape_inside_it_stays_plain() {
     }
 }
 
+#[test]
+fn configured_autolinks_respect_code_links_escapes_and_numeric_modes() {
+    let mut references = page_references();
+    references.autolinks = vec![references::Autolink {
+        id: 1,
+        key_prefix: "TKT-".into(),
+        url_template: "https://tracker.test/<num>".into(),
+        is_alphanumeric: false,
+    }]
+    .into();
+    let html = super::parse_markdown(
+        "TKT-12 `TKT-12` [TKT-12](https://existing.test) TKT-a1 tkt-12 TKT-1&#50; TKT\\-12",
+        &references,
+    );
+    assert_eq!(
+        html.matches("href=\"https://tracker.test/12\"").count(),
+        1,
+        "{html}"
+    );
+    std::sync::Arc::make_mut(&mut references.autolinks)[0].is_alphanumeric = true;
+    let html = super::parse_markdown("tkt-a1 TKT-12", &references);
+    assert!(html.contains("https://tracker.test/a1"));
+    assert!(html.contains("https://tracker.test/12"));
+    std::sync::Arc::make_mut(&mut references.autolinks)[0].url_template =
+        "javascript:alert(<num>)".into();
+    let html = super::parse_markdown("TKT-12", &references);
+    assert!(!html.contains("href="));
+}
+#[test]
+fn configured_autolinks_share_the_reference_link_budget() {
+    let mut references = page_references();
+    references.autolinks = vec![references::Autolink {
+        id: 1,
+        key_prefix: "TKT-".into(),
+        url_template: "https://tracker.test/<num>".into(),
+        is_alphanumeric: false,
+    }]
+    .into();
+    let html = super::parse_markdown(&"TKT-1 ".repeat(MAX_REFERENCE_LINKS + 10), &references);
+    assert_eq!(
+        html.matches("class=\"markdown-reference\"").count(),
+        MAX_REFERENCE_LINKS
+    );
+}
+
 /// The references of a page in `alice/demo` whose latest number is 5, whose viewer can read
 /// `carol/other` (latest number 9), and where `bob` exists.
 fn page_references() -> References {
@@ -355,6 +421,7 @@ fn page_references() -> References {
         repo: "demo".into(),
         last_number: 5,
         users: vec!["bob".into()],
+        autolinks: Default::default(),
         repositories: vec![references::Repository {
             owner: "carol".into(),
             name: "other".into(),

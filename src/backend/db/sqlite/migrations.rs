@@ -1,7 +1,7 @@
 //! SQLite schema migrations.
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
+use sqlx::{pool::PoolConnection, Connection, Sqlite, SqliteConnection, SqlitePool};
 
 const MIGRATIONS: &[(i64, &str, &str)] = &[(
     1,
@@ -9,8 +9,45 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[(
     include_str!("../../../../schema/sqlite/0001.schema.sql"),
 )];
 
+// Cancellation must not return a connection with foreign keys disabled to the pool.
+struct ForeignKeysOff<'a>(&'a mut PoolConnection<Sqlite>);
+
+impl Drop for ForeignKeysOff<'_> {
+    fn drop(&mut self) {
+        self.0.close_on_drop();
+    }
+}
+
 pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut connection = pool.acquire().await?;
+    let guard = ForeignKeysOff(&mut connection);
+    // Rebuilding referenced tables with enforcement on would cascade deletes.
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut **guard.0)
+        .await?;
+    // A second process starting at the same time waits for the first one's migration,
+    // which on a slow disk takes longer than an ordinary query's lock wait.
+    let busy: i64 = sqlx::query_scalar("PRAGMA busy_timeout")
+        .fetch_one(&mut **guard.0)
+        .await?;
+    sqlx::query("PRAGMA busy_timeout = 60000")
+        .execute(&mut **guard.0)
+        .await?;
+    let result = apply_migrations(guard.0).await;
+    sqlx::query(&format!("PRAGMA busy_timeout = {busy}"))
+        .execute(&mut **guard.0)
+        .await?;
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut **guard.0)
+        .await?;
+    // ALTER TABLE can change the column count of cached SELECT * statements.
+    guard.0.clear_cached_statements().await?;
+    std::mem::forget(guard);
+    result
+}
+
+async fn apply_migrations(connection: &mut SqliteConnection) -> Result<()> {
+    let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
     sqlx::query("CREATE TABLE IF NOT EXISTS _gitserv_sqlite_migrations(version INTEGER PRIMARY KEY,name TEXT NOT NULL,sha256 TEXT NOT NULL,applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')))")
         .execute(&mut *tx).await?;
     let applied: Vec<(i64, String)> =

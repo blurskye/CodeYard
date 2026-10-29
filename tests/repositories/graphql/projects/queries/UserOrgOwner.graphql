@@ -1,0 +1,1 @@
+query UserOrgOwner($login:String!){user(login: $login){login,id},organization(login: $login){login,id}}

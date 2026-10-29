@@ -57,7 +57,7 @@ class Transport(unittest.TestCase):
                 selected.return_value.getresponse.return_value = raw
                 client = web.Client(base, None, None)
                 client.cookies["session_id"] = "secret"
-                response = client.request("POST", "/api/auth/login", body=b"password=secret")
+                response = client.request("POST", "/login", body=b"password=secret")
                 self.assertEqual(response.body, b"ok")
                 selected.assert_called_once_with("forge.example", port, timeout=60)
                 unused.assert_not_called()

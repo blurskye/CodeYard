@@ -9,15 +9,50 @@ async fn begin_label_write(
     repo_id: i64,
 ) -> Result<Transaction<'_, Postgres>> {
     let mut tx = pool.begin().await?;
-    // CI singleton FIRST, before any issue/label lock. Retain authority to commit.
+    // CI singleton FIRST, before any issue/label lock. Retain authority to commit. Catalog
+    // writers queue on the repository row, so a name check holds until the commit.
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor_id, repo_id).await?,
+        super::discussions::lock_exclusive_write_authority(&mut tx, actor_id, repo_id).await?,
         LabelWriteRefusal::Denied
     );
     Ok(tx)
 }
 
-async fn lock_item_labels(
+/// Label names are unique in a repository regardless of case, as lookups by name are.
+async fn ensure_name_free(
+    tx: &mut Transaction<'_, Postgres>,
+    repo_id: i64,
+    name: &str,
+    label_id: i64,
+) -> Result<()> {
+    let taken: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM labels WHERE repo_id=$1 AND lower(name)=lower($2) AND id<>$3)",
+    )
+    .bind(repo_id)
+    .bind(name)
+    .bind(label_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    anyhow::ensure!(!taken, LabelWriteRefusal::DuplicateName);
+    Ok(())
+}
+
+/// Labels on an issue or pull request need triage authority; the label catalog needs write.
+async fn begin_item_label_write(
+    pool: &PgPool,
+    actor_id: i64,
+    repo_id: i64,
+) -> Result<Transaction<'_, Postgres>> {
+    let mut tx = pool.begin().await?;
+    // CI singleton FIRST, before any issue/label lock. Retain authority to commit.
+    anyhow::ensure!(
+        super::discussions::lock_triage_authority(&mut tx, actor_id, repo_id).await?,
+        LabelWriteRefusal::Denied
+    );
+    Ok(tx)
+}
+
+pub(crate) async fn lock_item_labels(
     tx: &mut Transaction<'_, Postgres>,
     repo_id: i64,
     target: LabelTarget,
@@ -55,6 +90,7 @@ pub async fn create_label(
     description: Option<&str>,
 ) -> Result<Label> {
     let mut tx = begin_label_write(pool, actor_id, repo_id).await?;
+    ensure_name_free(&mut tx, repo_id, name, 0).await?;
     let label = sqlx::query_as::<_, Label>(
         r#"
         INSERT INTO labels (repo_id, name, color, description)
@@ -84,6 +120,18 @@ pub async fn list_repo_labels(pool: &PgPool, repo_id: i64) -> Result<Vec<Label>>
     Ok(labels)
 }
 
+pub async fn get_label_by_id(pool: &PgPool, id: i64) -> Result<Option<Label>> {
+    Ok(sqlx::query_as("SELECT * FROM labels WHERE id=$1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?)
+}
+
+pub async fn count_repo_labels(pool: &PgPool, repo_id: i64, query: &str) -> Result<i64> {
+    Ok(sqlx::query_scalar(r"SELECT COUNT(*) FROM labels l WHERE l.repo_id=$1 AND (l.name ILIKE $2::TEXT ESCAPE '\' OR COALESCE(l.description,'') ILIKE $2::TEXT ESCAPE '\')")
+        .bind(repo_id).bind(crate::backend::db::discussions::contains_pattern(query.trim())).fetch_one(pool).await?)
+}
+
 pub async fn list_repo_labels_page(
     pool: &PgPool,
     repo_id: i64,
@@ -99,16 +147,28 @@ pub async fn list_repo_labels_page(
     let order = match sort {
         "newest" => "l.id DESC",
         "oldest" => "l.id ASC",
+        "name-desc" => "LOWER(l.name COLLATE \"C\") DESC, l.id DESC",
         "most-used" => "((SELECT COUNT(*) FROM issue_labels il WHERE il.label_id=l.id) + (SELECT COUNT(*) FROM pr_labels pl WHERE pl.label_id=l.id)) DESC, LOWER(l.name COLLATE \"C\"), l.id",
         _ => "LOWER(l.name COLLATE \"C\"), l.id",
     };
-    Ok(sqlx::query_as(&format!(r#"SELECT l.id,l.repo_id,l.name,l.color,substr(l.description,1,1024) AS description,l.created_at FROM labels l WHERE l.repo_id=$1 AND (l.name ILIKE $2::TEXT ESCAPE '\' OR COALESCE(l.description,'') ILIKE $2::TEXT ESCAPE '\') ORDER BY {order} LIMIT $3 OFFSET $4"#))
+    Ok(sqlx::query_as(&format!(r#"SELECT l.id,l.repo_id,l.name,l.color,substr(l.description,1,1024) AS description,l.created_at,l.updated_at FROM labels l WHERE l.repo_id=$1 AND (l.name ILIKE $2::TEXT ESCAPE '\' OR COALESCE(l.description,'') ILIKE $2::TEXT ESCAPE '\') ORDER BY {order} LIMIT $3 OFFSET $4"#))
         .bind(repo_id).bind(crate::backend::db::discussions::contains_pattern(query.trim())).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
 /// Each label of the repository with the number of issues and pull requests it is on, as
 /// `(label id, count)`. The association tables are keyed by item, not by label, so the counts
 /// start from the repository's issues and pull requests, which are indexed by repository.
+pub async fn list_milestone_labels(
+    pool: &PgPool,
+    repo_id: i64,
+    milestone_id: i64,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Label>> {
+    Ok(sqlx::query_as("SELECT l.* FROM labels l WHERE l.repo_id=$1 AND (EXISTS (SELECT 1 FROM issue_labels il JOIN issues i ON i.id=il.issue_id WHERE il.label_id=l.id AND i.milestone_id=$2) OR EXISTS (SELECT 1 FROM pr_labels pl JOIN pull_requests p ON p.id=pl.pull_request_id WHERE pl.label_id=l.id AND p.milestone_id=$2)) ORDER BY lower(l.name),l.id LIMIT $3 OFFSET $4")
+        .bind(repo_id).bind(milestone_id).bind(limit).bind(offset).fetch_all(pool).await?)
+}
+
 pub async fn list_label_usage(pool: &PgPool, repo_id: i64) -> Result<Vec<(i64, i64)>> {
     let usage = sqlx::query_as::<_, (i64, i64)>(
         r"SELECT l.id, COUNT(u.label_id)
@@ -142,6 +202,9 @@ pub async fn update_label(
     description: Option<&str>,
 ) -> Result<Label> {
     let mut tx = begin_label_write(pool, actor_id, repo_id).await?;
+    if let Some(name) = name {
+        ensure_name_free(&mut tx, repo_id, name, label_id).await?;
+    }
     let label = sqlx::query_as::<_, Label>(
         r#"
         UPDATE labels SET
@@ -278,8 +341,8 @@ async fn remove_item_label(
     item_id: i64,
     label_id: i64,
 ) -> Result<bool> {
-    let (_, link, column) = target.tables();
-    let mut tx = begin_label_write(pool, actor_id, repo_id).await?;
+    let (subject, link, column) = target.tables();
+    let mut tx = begin_item_label_write(pool, actor_id, repo_id).await?;
     lock_item_labels(&mut tx, repo_id, target, item_id, &[label_id]).await?;
     let result = sqlx::query(&format!(
         "DELETE FROM {link} WHERE {column} = $1 AND label_id = $2"
@@ -288,8 +351,25 @@ async fn remove_item_label(
     .bind(label_id)
     .execute(&mut *tx)
     .await?;
+    if result.rows_affected() > 0 {
+        touch_subject(&mut tx, subject, item_id).await?;
+    }
     tx.commit().await?;
     Ok(result.rows_affected() > 0)
+}
+
+/// Moves an issue's or pull request's activity time forward when its labels or assignees
+/// change, so sorting and incremental sync see the change.
+pub(crate) async fn touch_subject(
+    tx: &mut Transaction<'_, Postgres>,
+    table: &str,
+    id: i64,
+) -> Result<()> {
+    sqlx::query(&format!("UPDATE {table} SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1"))
+        .bind(id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
 pub async fn get_issue_labels(pool: &PgPool, issue_id: i64) -> Result<Vec<Label>> {
@@ -332,6 +412,26 @@ pub async fn set_issue_labels(
     Ok(())
 }
 
+pub async fn set_pull_request_labels(
+    pool: &PgPool,
+    actor_id: i64,
+    repo_id: i64,
+    pull_request_id: i64,
+    label_ids: &[i64],
+) -> Result<()> {
+    write_item_labels(
+        pool,
+        actor_id,
+        repo_id,
+        LabelTarget::PullRequest,
+        pull_request_id,
+        label_ids,
+        true,
+    )
+    .await?;
+    Ok(())
+}
+
 async fn write_item_labels(
     pool: &PgPool,
     actor_id: i64,
@@ -341,33 +441,59 @@ async fn write_item_labels(
     label_ids: &[i64],
     replace: bool,
 ) -> Result<Vec<Label>> {
-    let (_, link, column) = target.tables();
-    let mut tx = begin_label_write(pool, actor_id, repo_id).await?;
-    // Validate the entire bounded, deduplicated batch before any effect.
-    let ids = lock_item_labels(&mut tx, repo_id, target, item_id, label_ids).await?;
-    if replace {
-        sqlx::query(&format!("DELETE FROM {link} WHERE {column}=$1"))
-            .bind(item_id)
-            .execute(&mut *tx)
+    let mut tx = begin_item_label_write(pool, actor_id, repo_id).await?;
+    let labels =
+        write_item_labels_transaction(&mut tx, repo_id, target, item_id, label_ids, replace)
             .await?;
+    tx.commit().await?;
+    Ok(labels)
+}
+
+/// Caller retains live item-metadata authority until this transaction commits.
+pub(crate) async fn write_item_labels_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    repo_id: i64,
+    target: LabelTarget,
+    item_id: i64,
+    label_ids: &[i64],
+    replace: bool,
+) -> Result<Vec<Label>> {
+    let (subject, link, column) = target.tables();
+    let ids = lock_item_labels(tx, repo_id, target, item_id, label_ids).await?;
+    let mut changed = false;
+    if replace {
+        changed |= sqlx::query(&format!("DELETE FROM {link} WHERE {column}=$1"))
+            .bind(item_id)
+            .execute(&mut **tx)
+            .await?
+            .rows_affected()
+            > 0;
     }
     for id in ids {
-        sqlx::query(&format!(
+        changed |= sqlx::query(&format!(
             "INSERT INTO {link}({column},label_id) VALUES ($1,$2) ON CONFLICT DO NOTHING"
         ))
         .bind(item_id)
         .bind(id)
-        .execute(&mut *tx)
-        .await?;
+        .execute(&mut **tx)
+        .await?
+        .rows_affected()
+            > 0;
+    }
+    if changed {
+        touch_subject(tx, subject, item_id).await?;
     }
     let labels = sqlx::query_as::<_, Label>(&format!(
         "SELECT l.* FROM labels l JOIN {link} il ON il.label_id=l.id WHERE il.{column}=$1 AND l.repo_id=$2 ORDER BY l.name"
     ))
     .bind(item_id)
     .bind(repo_id)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await?;
-    tx.commit().await?;
+    anyhow::ensure!(
+        labels.len() <= crate::backend::db::labels::MAX_ISSUE_LABELS,
+        LabelWriteRefusal::InvalidLabels
+    );
     Ok(labels)
 }
 

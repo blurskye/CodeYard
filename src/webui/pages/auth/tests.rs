@@ -205,7 +205,7 @@ fn oauth_links_keep_the_requested_return_target() {
         false,
     ));
     assert!(output.contains(
-        "href=\"/api/auth/oauth/github?redirect=%2Falice%2Fproject%2Fissues%2F7%3Ftab%3Dcomments\""
+        "href=\"/login/oauth/github?redirect=%2Falice%2Fproject%2Fissues%2F7%3Ftab%3Dcomments\""
     ));
 }
 
@@ -238,7 +238,7 @@ fn provider_controls_render_one_link_per_configured_provider() {
         let output = render(LINKS.iter().map(|(id, _)| id.to_string()).collect());
         for (id, label) in LINKS {
             assert!(
-                output.contains(&format!("href=\"/api/auth/oauth/{id}\"")),
+                output.contains(&format!("href=\"/login/oauth/{id}\"")),
                 "{id}"
             );
             assert!(output.contains(label), "{label}");
@@ -249,12 +249,12 @@ fn provider_controls_render_one_link_per_configured_provider() {
             for (other, other_label) in LINKS {
                 let linked = other == id;
                 assert_eq!(
-                    output.contains(&format!("href=\"/api/auth/oauth/{other}\"")),
+                    output.contains(&format!("href=\"/login/oauth/{other}\"")),
                     linked
                 );
                 assert_eq!(output.contains(other_label), linked, "{label}");
             }
-            assert!(!output.contains("/api/auth/oauth/unknown"));
+            assert!(!output.contains("/login/oauth/unknown"));
         }
         let output = render(vec!["unknown".to_owned()]);
         assert!(!output.contains("class=\"identity-auth-providers\""));
@@ -368,6 +368,10 @@ fn oauth_only_accounts_have_no_password_mutation_form() {
                 email: String::new(),
                 tab: "password".into(),
                 keys: vec![],
+                signing_keys: vec![],
+                gpg_keys: vec![],
+                blocked: Default::default(),
+                emails: vec![],
                 tokens: vec![],
                 sessions: vec![],
                 new_token: None,

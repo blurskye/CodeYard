@@ -28,10 +28,11 @@ pub(super) async fn catalog(tx: &mut Transaction<'static, Postgres>) -> Result<C
     .await?;
     let mut tables = Vec::with_capacity(names.len());
     for name in names {
+        // Generated columns are computed on both engines, and SQLite's table_info omits them.
         let columns: Vec<(String, String)> = sqlx::query_as(
             "SELECT a.attname::text, format_type(a.atttypid, NULL) FROM pg_attribute a \
              WHERE a.attrelid = format('%I', $1)::regclass AND a.attnum > 0 AND NOT a.attisdropped \
-             ORDER BY a.attnum",
+             AND a.attgenerated = '' ORDER BY a.attnum",
         )
         .bind(&name)
         .fetch_all(&mut **tx)

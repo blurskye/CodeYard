@@ -60,10 +60,26 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
-      - name: Build the OpenSSH test helper
-        run: cargo build --locked -p codeyard --bin codeyard
+      - name: Build the test helpers
+        # The OpenSSH tests run this CLI as a separate process, and the engine tests run the
+        # in-house workflow runner.
+        run: cargo build --locked -p codeyard -p codeyard-actions --bin codeyard --bin codeyard-actions
+      - name: Build the pinned patched act
+        # The engine tests need the act version that build.nix pins, with the patch that scopes
+        # environment values to each job. The tarball must match the pinned SHA-256 digest.
+        run: |
+          work="$RUNNER_TEMP/act"
+          mkdir -p "$work"
+          curl --proto '=https' --tlsv1.2 -sSfL -o "$work/act.tar.gz" https://codeload.github.com/nektos/act/tar.gz/refs/tags/v0.2.89
+          test "$(openssl dgst -sha256 -binary "$work/act.tar.gz" | base64)" = "ZJzVuRythwhx0ig/s62VyPodXO16HbjXs0bRp9zT7HE="
+          tar -xzf "$work/act.tar.gz" -C "$work"
+          cd "$work/act-0.2.89"
+          patch -p1 < "$GITHUB_WORKSPACE/patches/act-environment-values.patch"
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=0.2.89-codeyard.1" -o "$RUNNER_TEMP/bin/act" .
       - name: Test
         env:
           # The OpenSSH tests run this CLI as a separate process.
           GITSERV_TEST_OPENSSH_HELPER: ${{ github.workspace }}/target/debug/codeyard
+          CODEYARD_ACTIONS_BIN: ${{ github.workspace }}/target/debug/codeyard-actions
+          E2E_ACT_BINARY: ${{ runner.temp }}/bin/act
         run: cargo test --locked --all-targets

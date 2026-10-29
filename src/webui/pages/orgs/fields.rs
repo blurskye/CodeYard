@@ -23,6 +23,11 @@ pub(super) fn field_value(page: &Page, action: &str, name: &str) -> String {
                 ("team-edit", "name") => detail.team.name.clone(),
                 ("team-edit", "description") => detail.team.description.clone(),
                 ("team-edit", "privacy") => detail.team.privacy.clone(),
+                ("team-edit", "parent_team_id") => detail
+                    .team
+                    .parent_team_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_default(),
                 _ => String::new(),
             }
         } else {
@@ -39,14 +44,15 @@ pub(super) fn input(page: &Page, action: &str, name: &str, label: &str) -> Eleme
     let value = field_value(page, action, name);
     let limit = match name {
         "description" => 4096,
-        "user_id" | "team_id" | "repo_id" | "org_id" => 32,
+        "team_slugs" => 24 * 1024,
+        "user_id" | "team_id" | "repo_id" | "org_id" | "parent_team_id" => 32,
         _ => 1024,
     };
-    rsx! { label { span { "{label}" }
-        if name == "description" {
+    rsx! { label { class: if name == "team_slugs" { "org-invitation-teams" } else { "" }, span { "{label}" }
+        if matches!(name, "description" | "team_slugs") {
             // Each form has its own description, so the draft is keyed by the form as well.
-            DraftTextarea { class: FIELD, id: Some(format!("{action}-{name}")), name: name.to_owned(), initial_value: value, maxlength: Some(limit), rows: 4 }
-            small { "At most 4096 UTF-8 bytes." }
+            DraftTextarea { class: FIELD, id: Some(format!("{action}-{name}")), name: name.to_owned(), initial_value: value, maxlength: Some(limit), rows: if name == "team_slugs" { 2 } else { 4 } }
+            small { if name == "team_slugs" { "Comma-separated team handles, such as design, backend. Find handles in the teams tab. At most 1000 teams." } else { "At most 4096 UTF-8 bytes." } }
         } else {
             DraftInput { class: FIELD, name: name.to_owned(), initial_value: value, maxlength: Some(limit) }
         }

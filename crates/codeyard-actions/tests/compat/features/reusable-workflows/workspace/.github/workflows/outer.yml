@@ -1,0 +1,19 @@
+on:
+  workflow_call:
+    inputs:
+      message: {type: string, required: true}
+      enabled: {type: boolean, default: false}
+      count: {type: number, default: 0}
+    secrets:
+      credential: {required: true}
+    outputs:
+      message:
+        value: ${{ jobs.middle.outputs.message }}
+jobs:
+  middle:
+    uses: ./.github/workflows/middle.yml
+    with:
+      message: ${{ inputs.message }}
+      enabled: ${{ inputs.enabled }}
+      count: ${{ inputs.count }}
+    secrets: inherit

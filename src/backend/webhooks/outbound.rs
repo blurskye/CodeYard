@@ -126,8 +126,12 @@ fn is_private_v4(ip: Ipv4Addr) -> bool {
 }
 
 fn is_private_v6(ip: Ipv6Addr) -> bool {
-    let first = ip.segments()[0];
+    let segments = ip.segments();
+    let first = segments[0];
     ip.is_unspecified()
+        // The local-use NAT64 block (64:ff9b:1::/48) translates to any IPv4 address the
+        // operator chose, so it is never known to be public.
+        || segments[..3] == [0x64, 0xff9b, 1]
         || ip.is_loopback()
         || ip.is_multicast()
         // Unique local, link-local and deprecated site-local addresses.
@@ -159,6 +163,7 @@ mod tests {
             "http://240.0.0.1/hook",
             "http://[64:ff9b::7f00:1]/hook",
             "http://[64:ff9b::a00:1]/hook",
+            "http://[64:ff9b:1::a00:1]:8080/hook",
             "http://[2002:7f00:1::]/hook",
         ] {
             assert_eq!(

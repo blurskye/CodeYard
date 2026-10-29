@@ -1,0 +1,109 @@
+use crate::backend::db::{
+    models::User,
+    users::{
+        accounts::AccountCredential,
+        blocks::{BlockTargetMissing, InteractionBlocked, InvalidBlock},
+    },
+};
+use anyhow::Result;
+use sqlx::{PgConnection, PgPool};
+
+pub async fn list_blocks(pool: &PgPool, user: i64, limit: i64, offset: i64) -> Result<Vec<User>> {
+    Ok(sqlx::query_as("SELECT u.* FROM users u JOIN user_blocks b ON b.blocked_id=u.id WHERE b.user_id=$1 ORDER BY u.id LIMIT $2 OFFSET $3").bind(user).bind(limit).bind(offset).fetch_all(pool).await?)
+}
+pub async fn is_blocked(pool: &PgPool, user: i64, target: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM user_blocks WHERE user_id=$1 AND blocked_id=$2)",
+    )
+    .bind(user)
+    .bind(target)
+    .fetch_one(pool)
+    .await?)
+}
+
+pub(crate) async fn interaction_blocked(
+    connection: &mut PgConnection,
+    a: i64,
+    b: i64,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_blocks WHERE (user_id=$1 AND blocked_id=$2) OR (user_id=$2 AND blocked_id=$1))").bind(a).bind(b).fetch_one(connection).await?)
+}
+
+pub(crate) async fn repository_interaction_blocked(
+    connection: &mut PgConnection,
+    actor: i64,
+    repo: i64,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_blocks b JOIN repositories r ON (r.owner_user_id=b.user_id AND b.blocked_id=$1) OR (r.owner_user_id=b.blocked_id AND b.user_id=$1) WHERE r.id=$2 AND r.owner_kind='user') OR EXISTS(SELECT 1 FROM organization_blocks b JOIN repositories r ON r.owner_org_id=b.org_id WHERE r.id=$2 AND r.owner_kind='org' AND b.user_id=$1)").bind(actor).bind(repo).fetch_one(connection).await?)
+}
+
+/// Call before the first repository lock. Block changes take the membership lock exclusively.
+pub(crate) async fn require_repository_interaction(
+    connection: &mut PgConnection,
+    actor: i64,
+    repo: i64,
+) -> Result<()> {
+    super::transitions::lock_membership_shared(&mut *connection).await?;
+    let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut *connection).await?;
+    anyhow::ensure!(
+        active && !repository_interaction_blocked(connection, actor, repo).await?,
+        InteractionBlocked
+    );
+    Ok(())
+}
+
+pub async fn change_block(
+    pool: &PgPool,
+    user: i64,
+    credential: &AccountCredential<'_>,
+    target: i64,
+    blocked: bool,
+) -> Result<()> {
+    anyhow::ensure!(user != target, InvalidBlock);
+    let mut tx = pool.begin().await?;
+    // All contribution, follow, notification, and engagement effects retain the shared lock.
+    super::transitions::lock_membership(&mut tx).await?;
+    super::transitions::require_account(&mut tx, user, credential).await?;
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)")
+        .bind(target)
+        .fetch_one(&mut *tx)
+        .await?;
+    anyhow::ensure!(exists, BlockTargetMissing);
+    if !blocked {
+        sqlx::query("DELETE FROM user_blocks WHERE user_id=$1 AND blocked_id=$2")
+            .bind(user)
+            .bind(target)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        return Ok(());
+    }
+    sqlx::query("INSERT INTO user_blocks(user_id,blocked_id) VALUES($1,$2) ON CONFLICT DO NOTHING")
+        .bind(user)
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM follows WHERE (follower_id=$1 AND following_id=$2) OR (follower_id=$2 AND following_id=$1)").bind(user).bind(target).execute(&mut *tx).await?;
+    // Counter triggers and CI revocations share the normal repository-before-child lock order.
+    let repositories: Vec<(i64,i64)> = sqlx::query_as("SELECT id,owner_user_id FROM repositories WHERE owner_kind='user' AND owner_user_id IN ($1,$2) ORDER BY id FOR UPDATE").bind(user).bind(target).fetch_all(&mut *tx).await?;
+    for (repo, owner) in repositories {
+        let actor = if owner == user { target } else { user };
+        for table in ["stars", "watches", "repo_access", "gist_stars"] {
+            sqlx::query(&format!(
+                "DELETE FROM {table} WHERE repo_id=$1 AND user_id=$2"
+            ))
+            .bind(repo)
+            .bind(actor)
+            .execute(&mut *tx)
+            .await?;
+        }
+        sqlx::query("DELETE FROM issue_assignees WHERE user_id=$2 AND issue_id IN (SELECT id FROM issues WHERE repo_id=$1)").bind(repo).bind(actor).execute(&mut *tx).await?;
+        for table in ["pr_assignees", "pr_reviewers"] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE user_id=$2 AND pull_request_id IN (SELECT id FROM pull_requests WHERE repo_id=$1)")).bind(repo).bind(actor).execute(&mut *tx).await?;
+        }
+        crate::backend::db::postgres::ci::stop_actor_repo_ci_runs(&mut tx, actor, repo).await?;
+    }
+    sqlx::query("DELETE FROM notifications WHERE (user_id=$1 AND actor_id=$2) OR (user_id=$2 AND actor_id=$1)").bind(user).bind(target).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(())
+}

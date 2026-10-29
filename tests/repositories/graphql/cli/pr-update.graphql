@@ -1,0 +1,1 @@
+mutation PullRequestUpdateBranch($input:UpdatePullRequestBranchInput!){updatePullRequestBranch(input: $input){pullRequest{id}}}

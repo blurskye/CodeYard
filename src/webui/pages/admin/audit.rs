@@ -73,7 +73,7 @@ fn audit_url(action: &str, actor: &str, page: usize) -> String {
 }
 
 fn profile(name: &str) -> Element {
-    rsx! { NavLink { href: format!("/{}", crate::webui::encode_component(name)), class: "identity-account-name", "{name}" } }
+    rsx! { NavLink { href: crate::webui::profile_path(name), class: "identity-account-name", "{name}" } }
 }
 
 /// What the actor did, as the rest of a sentence: "banned bob".

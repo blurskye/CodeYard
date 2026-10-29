@@ -22,4 +22,6 @@ pub struct OutboxMessage {
     pub subject: String,
     pub body_text: String,
     pub attempts: i32,
+    /// The notification a notification email reports.
+    pub notification_id: Option<i64>,
 }

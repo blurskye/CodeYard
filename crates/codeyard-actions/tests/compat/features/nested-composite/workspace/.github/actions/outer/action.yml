@@ -1,0 +1,13 @@
+name: Outer
+description: Nested composite output forwarding
+outputs:
+  greeting:
+    description: Forwarded greeting
+    value: ${{ steps.inner.outputs.greeting }}
+runs:
+  using: composite
+  steps:
+    - id: inner
+      uses: ./.github/actions/greeter
+      with:
+        who: Nested

@@ -371,17 +371,21 @@ async fn sessions_belong_to_their_account(pg: bool) {
     );
 
     // Revoking another account's session does nothing.
-    assert!(!db::users::sessions::revoke_user_session(pool, a, "b-one")
-        .await
-        .unwrap());
+    assert!(
+        !db::users::sessions::revoke_user_session(pool, a, "b-one", "a-two")
+            .await
+            .unwrap()
+    );
     assert!(db::users::sessions::get_session(pool, "b-one")
         .await
         .unwrap()
         .is_some());
 
-    assert!(db::users::sessions::revoke_user_session(pool, a, "a-one")
-        .await
-        .unwrap());
+    assert!(
+        db::users::sessions::revoke_user_session(pool, a, "a-one", "a-two")
+            .await
+            .unwrap()
+    );
     // Sign out everywhere else keeps the named session and leaves the other account alone.
     assert_eq!(
         db::users::sessions::revoke_other_user_sessions(pool, a, "a-two")
@@ -403,6 +407,30 @@ async fn sessions_belong_to_their_account(pg: bool) {
         .unwrap();
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].id, "a-two");
+    // A request from a session that was revoked meanwhile cannot end the replacement login.
+    db::users::sessions::create_session(pool, "a-four", a, None, None, expires)
+        .await
+        .unwrap();
+    assert!(
+        db::users::sessions::revoke_user_session(pool, a, "a-two", "a-four")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        db::users::sessions::revoke_other_user_sessions(pool, a, "a-two")
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(
+        !db::users::sessions::revoke_user_session(pool, a, "a-four", "a-two")
+            .await
+            .unwrap()
+    );
+    assert!(db::users::sessions::get_session(pool, "a-four")
+        .await
+        .unwrap()
+        .is_some());
     assert_eq!(
         db::users::sessions::list_user_sessions(pool, b)
             .await
@@ -525,13 +553,13 @@ async fn invitations(pg: bool) {
 
     // Declining removes it, and a second answer finds nothing.
     assert!(matches!(
-        db::organizations::decline_organization_invitation(pool, invitee, org.id)
+        db::organizations::decline_organization_invitation(pool, invitee, org.id, None)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(())
     ));
     assert!(matches!(
-        db::organizations::decline_organization_invitation(pool, invitee, org.id)
+        db::organizations::decline_organization_invitation(pool, invitee, org.id, None)
             .await
             .unwrap(),
         OrganizationOutcome::Missing
@@ -565,7 +593,7 @@ async fn invitations(pg: bool) {
         .await
         .unwrap();
     assert!(matches!(
-        db::organizations::accept_organization_invitation(pool, invitee, org.id)
+        db::organizations::accept_organization_invitation(pool, invitee, org.id, None)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(member) if member.role == "member"
@@ -577,7 +605,7 @@ async fn invitations(pg: bool) {
         OrganizationOutcome::Applied(OrgRole::Member)
     ));
     assert!(matches!(
-        db::organizations::accept_organization_invitation(pool, invitee, org.id)
+        db::organizations::accept_organization_invitation(pool, invitee, org.id, None)
             .await
             .unwrap(),
         OrganizationOutcome::Missing
@@ -587,7 +615,7 @@ async fn invitations(pg: bool) {
     db::organizations::invite_organization_member(pool, owner, org.id, org_admin, OrgRole::Admin)
         .await
         .unwrap();
-    db::organizations::accept_organization_invitation(pool, org_admin, org.id)
+    db::organizations::accept_organization_invitation(pool, org_admin, org.id, None)
         .await
         .unwrap();
     assert!(matches!(

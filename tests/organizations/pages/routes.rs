@@ -191,9 +191,21 @@ pub async fn section_tabs(f: &Fixture) {
             assert_eq!(reply.body.contains(&format!("id=\"{id}\"")), tab == open);
         }
         let tabs = tab_links(&reply.body);
-        // Owners also see the webhooks tab.
-        assert_eq!(tabs.len(), 4, "{query}");
-        for tab in ["overview", "members", "teams", "webhooks"] {
+        // Owners also see Dependabot, private registries, properties, roles, settings,
+        // webhooks, actions and code security.
+        assert_eq!(tabs.len(), 11, "{query}");
+        for tab in [
+            "overview",
+            "members",
+            "teams",
+            "dependabot",
+            "private-registries",
+            "properties",
+            "roles",
+            "settings",
+            "webhooks",
+            "actions",
+        ] {
             let link = tabs
                 .iter()
                 .find(|link| link.contains(&format!("tab={tab}\"")))
@@ -204,6 +216,11 @@ pub async fn section_tabs(f: &Fixture) {
                 "{tab} tab at {query}"
             );
         }
+        let security = tabs
+            .iter()
+            .find(|link| link.contains("/security\""))
+            .unwrap_or_else(|| panic!("code security link at {query}"));
+        assert!(!security.contains("aria-current=\"page\""), "{query}");
     }
 }
 

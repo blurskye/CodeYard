@@ -1,0 +1,22 @@
+name: compat
+on: workflow_dispatch
+permissions:
+  id-token: write
+jobs:
+  writer:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          test "$ACTIONS_ID_TOKEN_REQUEST_URL" = 'https://codeyard.example/actions/oidc/token?api-version=2.0'
+          test "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" = "$GITHUB_TOKEN"
+          test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+          echo compat:oidc-authorized
+  reader:
+    needs: writer
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          test -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
+          test -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
+          echo compat:oidc-denied

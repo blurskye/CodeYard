@@ -136,6 +136,15 @@ pub async fn get_public_organization(
     .fetch_optional(pool)
     .await?)
 }
+pub async fn get_public_organization_by_id(
+    pool: &PgPool,
+    id: i64,
+) -> Result<Option<crate::backend::db::models::Organization>> {
+    Ok(sqlx::query_as(
+        "SELECT o.* FROM organizations o WHERE o.id=$1 AND EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)",
+    ).bind(id).fetch_optional(pool).await?)
+}
+
 pub async fn get_organization_metadata(
     pool: &PgPool,
     actor: i64,
@@ -174,7 +183,7 @@ pub async fn list_repository_creation_organizations(
     }
     // Role and usable governance filter BEFORE LIMIT in the same read snapshot.
     // Never enumerate memberships or apply a site-administrator exception.
-    let rows = sqlx::query_as("SELECT o.id,o.name,o.display_name,o.description,o.is_verified,FALSE AS governance_suspended FROM organizations o JOIN org_memberships m ON m.org_id=o.id WHERE m.user_id=$1 AND m.role IN ('owner','admin') AND o.id>$2 AND EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=o.id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) ORDER BY o.id LIMIT $3")
+    let rows = sqlx::query_as("SELECT o.id,o.name,o.display_name,o.description,o.is_verified,FALSE AS governance_suspended FROM organizations o JOIN org_memberships m ON m.org_id=o.id WHERE m.user_id=$1 AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM organization_settings s WHERE s.org_id=o.id AND (s.members_can_create_public_repositories OR s.members_can_create_private_repositories)))) AND o.id>$2 AND EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=o.id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) ORDER BY o.id LIMIT $3")
         .bind(actor).bind(page.after).bind(page.limit).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(rows))

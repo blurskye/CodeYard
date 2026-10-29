@@ -1,0 +1,15 @@
+# https://github.com/azure/setup-kubectl/tree/776406bce94f63e41d621b960d78ee25c8b76ede
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4
+        with:
+          version: "v1.32.2"
+      - name: Assert documented effect
+        run: |
+          kubectl version --client -o yaml | grep 'v1\.32\.2'
+          echo compat:ok

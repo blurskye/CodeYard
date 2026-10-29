@@ -1,7 +1,7 @@
 use crate::webui::pages::repos::{
     chrome::{chrome, csrf, icon, repository_id, RepoChrome},
     commits::commit_target,
-    ref_path::{file_url, is_markdown_path, link_base},
+    ref_path::{branch_url, is_markdown_path, link_base},
 };
 use crate::webui::{
     components::{
@@ -57,7 +57,7 @@ pub fn editor(repo: &RepoChrome, editor: &Editor) -> Element {
 fn preview_base(base: &str, branch: &str, path: &str) -> crate::webui::components::LinkBase {
     link_base(
         base,
-        branch,
+        &format!("refs/heads/{branch}"),
         path.rsplit_once('/').map_or("", |(directory, _)| directory),
     )
 }
@@ -187,15 +187,15 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
     let mut preview = use_signal(|| editor.preview);
     let previewing = preview() && offer_preview;
     let cancel_url = if editor.creating {
-        file_url(&repo.base(), "tree", &editor.branch, "")
+        branch_url(&repo.base(), "tree", &editor.branch, "")
     } else {
-        file_url(&repo.base(), "blob", &editor.branch, &editor.path)
+        branch_url(&repo.base(), "blob", &editor.branch, &editor.path)
     };
     // A rejected save is shown at this POST-only URL; `from` lets a GET there find the editor.
     let write_action = format!(
         "{}?from={}",
         repo.action("write-file"),
-        crate::webui::encode_component(&file_url(
+        crate::webui::encode_component(&branch_url(
             &repo.base(),
             if editor.creating { "new" } else { "edit" },
             &editor.branch,

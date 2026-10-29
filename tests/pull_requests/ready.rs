@@ -247,10 +247,18 @@ async fn request_with_headers(
     tokens: &[&str],
     extra: &[(&str, &str)],
 ) -> (StatusCode, HeaderMap, Value) {
+    let native = !path.starts_with("/api/");
     let mut request = Request::builder()
         .method(method)
         .uri(path)
-        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::CONTENT_TYPE,
+            if native {
+                "application/x-www-form-urlencoded"
+            } else {
+                "application/json"
+            },
+        )
         .header(header::HOST, "forge.example.test");
     if let Some(cookie) = cookie {
         request = request.header(header::COOKIE, format!("session_id={cookie}"));
@@ -263,7 +271,17 @@ async fn request_with_headers(
     }
     let response = router
         .clone()
-        .oneshot(request.body(Body::empty()).unwrap())
+        .oneshot(
+            request
+                .body(Body::from(if native {
+                    url::form_urlencoded::Serializer::new(String::new())
+                        .extend_pairs(tokens.iter().map(|token| ("csrf_token", *token)))
+                        .finish()
+                } else {
+                    String::new()
+                }))
+                .unwrap(),
+        )
         .await
         .unwrap();
     let status = response.status();
@@ -308,6 +326,8 @@ async fn cookie_bound_mutations(pg: bool) {
     let mut bob = Client::login(&router, fixture.pool(), bob_id).await;
     let head = alice.save("main", "README.md", "unborn").await;
     alice.branch("topic", &head).await;
+    // A pull request needs a commit that the base lacks.
+    alice.save("topic", "topic.txt", &head).await;
     bob.open_draft("Draft", "topic", "main").await;
     let issue = bob
         .expect(
@@ -507,10 +527,11 @@ async fn cookie_bound_mutations(pg: bool) {
         (None, vec![], vec![("origin", "http://forge.example.test")]),
     ] {
         let (status, headers, _) =
-            request_with_headers(&router, "POST", "/api/auth/logout", cookie, &tokens, &extra)
-                .await;
+            request_with_headers(&router, "POST", "/logout", cookie, &tokens, &extra).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
-        assert!(headers.get(header::SET_COOKIE).is_none());
+        if cookie.is_some() {
+            assert!(headers.get(header::SET_COOKIE).is_none());
+        }
         assert!(
             db::users::sessions::get_session_user(fixture.pool(), &bob.session)
                 .await
@@ -521,27 +542,25 @@ async fn cookie_bound_mutations(pg: bool) {
     let (status, headers, body) = request_with_headers(
         &router,
         "POST",
-        "/api/auth/logout",
+        "/logout",
         Some(&bob.session),
         &[&bob.csrf],
         &[("origin", "http://forge.example.test")],
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(headers.get(header::SET_COOKIE).is_some());
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(headers[header::LOCATION], "/login");
+    assert!(headers[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .contains("Max-Age=0"));
     assert!(
         db::users::sessions::get_session_user(fixture.pool(), &bob.session)
             .await
             .unwrap()
             .is_none()
     );
-    for path in [
-        "/api/auth/session",
-        "/api/auth/login",
-        "/api/auth/register",
-        "/api/auth/setup",
-        "/api/auth/logout",
-    ] {
+    for path in ["/login", "/register", "/setup", "/logout"] {
         let (status, headers, body) = request_with_headers(
             &router,
             "POST",
@@ -552,46 +571,77 @@ async fn cookie_bound_mutations(pg: bool) {
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {body}");
-        assert!(headers.get(header::SET_COOKIE).is_none());
+        assert_eq!(headers[header::CACHE_CONTROL], "no-store, private");
     }
-    let (status, headers, _) = request_with_headers(
+    // A native sign-in starts with the page's anonymous session and synchronizer.
+    let (status, _, _) = request_with_headers(
         &router,
         "POST",
-        "/api/auth/session",
+        "/login",
         None,
         &[],
         &[("origin", "http://forge.example.test")],
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert!(headers.get(header::SET_COOKIE).is_some());
-    let request = Request::builder()
-        .method("POST")
-        .uri("/api/auth/login")
-        .header(header::CONTENT_TYPE, "application/json")
-        .header("origin", "http://forge.example.test")
-        .header(header::HOST, "forge.example.test")
-        .body(Body::from(
-            serde_json::json!({"username":"newcomer", "password":"first-login-password"})
-                .to_string(),
-        ))
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/login")
+                .header(header::ACCEPT, "application/vnd.codeyard.page+json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
         .unwrap();
-    let response = router.clone().oneshot(request).await.unwrap();
-    assert_eq!(
-        response.status(),
-        StatusCode::OK,
-        "initial login without a prior session"
-    );
-    assert!(response.headers().get(header::SET_COOKIE).is_some());
-    let (status, _, body) = request_with_headers(
-        &router,
-        "POST",
-        "/api/auth/session",
-        Some(&alice.session),
-        &[],
-        &[],
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let envelope: codeyard::webui::app::PageEnvelope = serde_json::from_slice(
+        &to_bytes(response.into_body(), 2 * 1024 * 1024)
+            .await
+            .unwrap(),
     )
-    .await;
+    .unwrap();
+    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Auth {
+        csrf_token,
+        ..
+    }) = envelope.page
+    else {
+        panic!("sign-in model")
+    };
+    let form = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs([
+            ("username", "newcomer"),
+            ("password", "first-login-password"),
+            ("csrf_token", csrf_token.as_str()),
+        ])
+        .finish();
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/login")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(header::COOKIE, cookie)
+                .header(header::ORIGIN, "http://forge.example.test")
+                .header(header::HOST, "forge.example.test")
+                .body(Body::from(form))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert!(response.headers().get(header::SET_COOKIE).is_some());
+    let (status, _, body) =
+        request_with_headers(&router, "POST", "/login", Some(&alice.session), &[], &[]).await;
     assert_eq!(
         status,
         StatusCode::FORBIDDEN,
@@ -600,28 +650,47 @@ async fn cookie_bound_mutations(pg: bool) {
     let (status, _, body) = request_with_headers(
         &router,
         "POST",
-        "/api/auth/session",
+        "/login",
         Some(&alice.session),
         &[&alice.csrf],
         &[("origin", "http://forge.example.test")],
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, headers, body) = request_with_headers(
-        &router,
-        "GET",
-        "/api/auth/me",
-        Some(&alice.session),
-        &[],
-        &[],
-    )
-    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "credentials are required: {body}"
+    );
+    let (status, headers, body) =
+        request_with_headers(&router, "GET", "/settings", Some(&alice.session), &[], &[]).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(headers[header::CACHE_CONTROL], "no-store, private");
     let (status, headers, body) =
-        request_with_headers(&router, "GET", "/api/auth/setup-status", None, &[], &[]).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(headers.get(header::CACHE_CONTROL).is_none());
+        request_with_headers(&router, "GET", "/setup", None, &[], &[]).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store, private");
+    for (method, path) in [
+        ("POST", "/api/auth/session"),
+        ("GET", "/api/auth/setup-status"),
+        ("POST", "/api/auth/setup"),
+        ("POST", "/api/auth/register"),
+        ("POST", "/api/auth/login"),
+        ("POST", "/api/auth/logout"),
+        ("GET", "/api/auth/me"),
+        ("POST", "/api/auth/change-password"),
+        ("GET", "/api/config"),
+    ] {
+        let (status, _, _) = request_with_headers(
+            &router,
+            method,
+            path,
+            Some(&alice.session),
+            &[&alice.csrf],
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
+    }
     fixture.finish().await;
 }
 

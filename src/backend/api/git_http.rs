@@ -2,10 +2,10 @@
 use crate::backend::api::http::session;
 use crate::backend::db::models::{AccessLevel, Repository};
 use crate::backend::identity::tokens::token_hash;
-use crate::backend::repositories::git_sessions::ReceiveCredential;
 use crate::backend::repositories::store::{
     repo_store, GitService, GitSession, GitStreams, RepoError,
 };
+use crate::backend::repositories::{git_sessions::ReceiveCredential, traffic};
 use crate::backend::{
     app::AppState, db, git::repository::process as git_process, identity::admission,
 };
@@ -113,14 +113,21 @@ async fn authenticate(
     }
 }
 
+#[derive(Debug)]
+struct AuthorizedRepository {
+    repo: Repository,
+    token_id: Option<i64>,
+    actor_id: Option<i64>,
+}
+
 async fn repository(
     state: &AppState,
     owner: &str,
     name: &str,
     headers: &HeaderMap,
     write: bool,
-) -> Result<(Repository, Option<i64>), Response> {
-    let found = db::repositories::records::get_repository(
+) -> Result<AuthorizedRepository, Response> {
+    let found = db::repositories::records::get_git_repository(
         &state.pool,
         owner,
         name.strip_suffix(".git").unwrap_or(name),
@@ -135,7 +142,7 @@ async fn authorize_repository(
     found: Option<Repository>,
     headers: &HeaderMap,
     write: bool,
-) -> Result<(Repository, Option<i64>), Response> {
+) -> Result<AuthorizedRepository, Response> {
     let config = db::node_config::get_node_configuration(&state.pool)
         .await
         .map_err(|_| unavailable())?
@@ -145,12 +152,60 @@ async fn authorize_repository(
     let Some((token, user)) = token else {
         // A repository that does not exist looks like a private one, so names are not revealed.
         return match found {
-            Some(repo) if !(write || repo.is_private || config.is_private()) => Ok((repo, None)),
+            Some(repo) if !(write || repo.is_private || config.is_private()) => {
+                Ok(AuthorizedRepository {
+                    repo,
+                    token_id: None,
+                    actor_id: None,
+                })
+            }
             _ => Err(challenge()),
         };
     };
     let repo = found.ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
-    let access = crate::backend::repositories::access::user_access(&state.pool, &user, &repo)
+    // Gist repositories need the gist scope; every other repository needs repo.
+    if !crate::backend::identity::oauth_apps::allows_git(&state.pool, token.id, repo.is_gist)
+        .await
+        .map_err(|_| unavailable())?
+    {
+        return Err((StatusCode::FORBIDDEN, "Resource not accessible by token").into_response());
+    }
+    if let Some(bounds) = crate::backend::identity::github_apps::authority(&state.pool, token.id)
+        .await
+        .map_err(|_| unavailable())?
+    {
+        if !bounds
+            .contains(&state.pool, user.id, repo.id)
+            .await
+            .map_err(|_| unavailable())?
+            || !crate::backend::identity::github_apps::allows(
+                &bounds.permissions,
+                "contents",
+                write,
+            )
+        {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Resource not accessible by integration",
+            )
+                .into_response());
+        }
+    }
+    if user.username == db::ci_tokens::BOT {
+        let credential = db::ci_tokens::get(&state.pool, token.id)
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or_else(challenge)?;
+        if credential.repo_id != repo.id {
+            return Err(StatusCode::NOT_FOUND.into_response());
+        }
+        let permissions: crate::backend::ci::tokens::Permissions =
+            serde_json::from_str(&credential.permissions).map_err(|_| unavailable())?;
+        if !permissions.allows("contents", write) {
+            return Err((StatusCode::FORBIDDEN, "Resource not accessible by token").into_response());
+        }
+    }
+    let access = crate::backend::repositories::access::user_git_access(&state.pool, &user, &repo)
         .await
         .map_err(|_| unavailable())?;
     if access < AccessLevel::Read {
@@ -163,7 +218,18 @@ async fn authorize_repository(
     if write && (access < AccessLevel::Write || repo.is_archived) {
         return Err((StatusCode::FORBIDDEN, "Repository access denied").into_response());
     }
-    Ok((repo, Some(token.id)))
+    if write
+        && crate::backend::db::repository_exports::locked(&state.pool, repo.id)
+            .await
+            .map_err(|_| unavailable())?
+    {
+        return Err((StatusCode::FORBIDDEN, "Repository is locked for migration").into_response());
+    }
+    Ok(AuthorizedRepository {
+        repo,
+        token_id: Some(token.id),
+        actor_id: Some(user.id),
+    })
 }
 
 pub async fn info_refs(
@@ -178,10 +244,11 @@ pub async fn info_refs(
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
     let write = matches!(service, GitService::ReceivePack);
-    let (repo, _) = match repository(&state, &owner, &name, &headers, write).await {
-        Ok(repo) => repo,
-        Err(response) => return response,
-    };
+    let AuthorizedRepository { repo, .. } =
+        match repository(&state, &owner, &name, &headers, write).await {
+            Ok(repo) => repo,
+            Err(response) => return response,
+        };
     let Some(permit) = super::http::middleware::wait_for_slot(&state.repository_downloads).await
     else {
         return unavailable();
@@ -277,10 +344,11 @@ async fn rpc(
     {
         return (StatusCode::BAD_REQUEST, "Invalid content type").into_response();
     }
-    let (repo, _) = match repository(&state, &owner, &name, &parts.headers, write).await {
-        Ok(repo) => repo,
-        Err(response) => return response,
-    };
+    let AuthorizedRepository { repo, .. } =
+        match repository(&state, &owner, &name, &parts.headers, write).await {
+            Ok(repo) => repo,
+            Err(response) => return response,
+        };
     let permit = match repo_store(&repo, state.cluster.as_ref())
         .session_permit()
         .await
@@ -313,7 +381,11 @@ async fn rpc(
         Ok(found) => found,
         Err(_) => return unavailable(),
     };
-    let (repo, token_id) = match authorize_repository(&state, found, &parts.headers, write).await {
+    let AuthorizedRepository {
+        repo,
+        token_id,
+        actor_id,
+    } = match authorize_repository(&state, found, &parts.headers, write).await {
         Ok(authorized) => authorized,
         Err(response) => return response,
     };
@@ -329,7 +401,24 @@ async fn rpc(
     if write {
         options.owner = owner;
     }
-    let (mut output, reader) = tokio::io::duplex(git_process::CHUNK);
+    let visitor = if write {
+        None
+    } else {
+        match actor_id {
+            Some(id) => traffic::Identity::account(id),
+            None => super::http::session::client_address(&parts.headers).and_then(|address| {
+                traffic::Identity::client(
+                    address,
+                    parts
+                        .headers
+                        .get(header::USER_AGENT)
+                        .and_then(|header| header.to_str().ok())
+                        .unwrap_or(""),
+                )
+            }),
+        }
+    };
+    let (output, reader) = tokio::io::duplex(git_process::CHUNK);
     let (finished, result) = oneshot::channel();
     let response_state = state.clone();
     let repository_id = repo.id;
@@ -338,6 +427,15 @@ async fn rpc(
     let git_tasks = state.git_tasks.clone();
     if !git_tasks.spawn(async move {
         let _permit = permit;
+        let observation = traffic::clone::Observation::default();
+        if !write {
+            input = Box::new(observation.input(input));
+        }
+        let mut output: Box<dyn tokio::io::AsyncWrite + Unpin + Send> = if write {
+            Box::new(output)
+        } else {
+            Box::new(observation.output(output))
+        };
         let store = repo_store(&repo, state.cluster.as_ref());
         let status = store
             .git_session(
@@ -356,6 +454,17 @@ async fn rpc(
             });
         if let Err(error) = &status {
             tracing::warn!(%error, "Git HTTP session failed");
+        }
+        if status.is_ok() && !write && observation.initial_transfer() {
+            if let Some(visitor) = visitor {
+                traffic::observe(
+                    &state.pool,
+                    repo.id,
+                    &visitor,
+                    &traffic::Metric::clone_transfer(),
+                )
+                .await;
+            }
         }
         let _ = finished.send(status);
     }) {

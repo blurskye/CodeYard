@@ -3,6 +3,17 @@ use crate::backend::db::DbPool;
 use anyhow::Result;
 
 #[derive(Debug, sqlx::FromRow)]
+pub struct RepositoryDocumentFacts {
+    pub open_items: i64,
+    pub pushed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub language: Option<String>,
+}
+
+native_operation!(crate::backend::db::postgres::repository_stats::repository_document_facts,
+    crate::backend::db::sqlite::repository_stats::repository_document_facts,
+    fn repository_document_facts(pool: &DbPool, repo: i64) -> Result<RepositoryDocumentFacts>);
+
+#[derive(Debug, sqlx::FromRow)]
 pub struct LanguageSource {
     pub repo_id: i64,
     pub default_branch: String,
@@ -13,6 +24,11 @@ pub struct LanguageSource {
 native_operation!(crate::backend::db::postgres::repository_stats::language_source,
     crate::backend::db::sqlite::repository_stats::language_source,
     fn language_source(pool: &DbPool, repo_id: i64) -> Result<Option<LanguageSource>>);
+
+native_operation!(crate::backend::db::postgres::repository_stats::forget_languages,
+    crate::backend::db::sqlite::repository_stats::forget_languages,
+    /// Drops a repository's language cache marker, so its next scan reads Git again.
+    fn forget_languages(pool: &DbPool, repo_id: i64) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::repository_stats::languages_computed,
     crate::backend::db::sqlite::repository_stats::languages_computed,

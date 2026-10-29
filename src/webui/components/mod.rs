@@ -5,6 +5,7 @@ mod confirm;
 mod copy;
 pub mod deploy_keys;
 mod forms;
+pub mod interactions;
 pub mod languages;
 mod markdown;
 mod markdown_html;
@@ -14,6 +15,7 @@ mod markdown_toolbar;
 pub mod menu;
 mod patch;
 pub mod references;
+pub mod repository_properties;
 mod shell;
 pub mod task_lists;
 mod theme;
@@ -26,6 +28,8 @@ pub use copy::CopyButton;
 pub use forms::{
     submit_form, DraftCheckbox, DraftInput, DraftSelect, DraftTextarea, FieldError, SelectOption,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use markdown::EMOJI;
 pub use markdown::{
     document_html, escape_html, markdown_tab_class, outline_of_html, parse_markdown, LinkBase,
     Markdown, OutlineEntry, RepoMarkdown,

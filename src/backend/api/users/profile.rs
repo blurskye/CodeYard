@@ -1,8 +1,6 @@
 use crate::backend::api::discovery::stars::{star_order_and_text, star_sort, starred_page};
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
-use crate::backend::api::user::profile::profile_model;
-use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
+use crate::backend::api::user::profile::load_profile;
 use crate::backend::api::users::activity::ActivityQuery;
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -10,33 +8,7 @@ use crate::webui::pages::{account, users};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
-use axum::Json;
 use std::sync::Arc;
-
-pub async fn get_user(
-    State(state): State<Arc<AppState>>,
-    Path(username): Path<String>,
-) -> Result<Json<UserResponse>, (StatusCode, Json<ApiError>)> {
-    let user = db::users::accounts::get_user_by_username(&state.pool, &username)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Account storage is temporarily unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "User not found")),
-            )
-        })?;
-
-    Ok(Json(UserResponse::from(user)))
-}
 
 /// The Stars tab: how many of the user's stars the viewer can read, and the open page of them when
 /// that tab is the open one. The list is read only for the open tab.
@@ -205,8 +177,8 @@ pub(crate) async fn profile_response(
     };
     let repository_href = |page: usize| {
         format!(
-            "/{}?repo_page={page}&q={}",
-            crate::webui::encode_component(&target.username),
+            "{}?repo_page={page}&q={}",
+            crate::webui::profile_path(&target.username),
             crate::webui::encode_component(repository_query)
         )
     };
@@ -215,12 +187,21 @@ pub(crate) async fn profile_response(
     let repositories_older = (!stars_tab
         && repositories_page.saturating_mul(30) < repository_count)
         .then(|| repository_href(repositories_page.saturating_add(1)));
+    let profile = match load_profile(&ctx.state.pool, &target).await {
+        Ok(profile) => profile,
+        Err(_) => {
+            return ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load this user's profile.",
+            )
+        }
+    };
     let title = format!("{}'s profile", target.username);
     ctx.page_model_status(
         status,
         &title,
         crate::webui::app::Page::Identity(account::Page::Profile {
-            profile: profile_model(&target),
+            profile,
             repositories,
             repository_count,
             repositories_newer,

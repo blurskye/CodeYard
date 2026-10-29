@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "jobs": {
+    "test": "success"
+  },
+  "contains": [
+    "compat:node-pre",
+    "compat:node-main",
+    "compat:node-post",
+    "compat:ok"
+  ]
+}

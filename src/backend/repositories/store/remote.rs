@@ -100,6 +100,10 @@ impl RemoteStore {
             Operation::FilePaths { .. }
                 | Operation::CommitsBetween { .. }
                 | Operation::Blame { .. }
+                | Operation::Commits { .. }
+                | Operation::CommitPage { .. }
+                | Operation::PathCommits { .. }
+                | Operation::ComparisonFrom { .. }
         );
         let (reply, body) = self.exchange(operation, body).await?;
         let value = reply.result.map_err(|failure| match failure {
@@ -123,6 +127,26 @@ impl RemoteStore {
             Failure::Merge(_) => rpc::wire::invalid("unexpected merge failure"),
         })?;
         serde_json::from_value(value).map_err(|_| rpc::unavailable())
+    }
+
+    pub(super) async fn bytes_as(
+        &self,
+        actor: i64,
+        operation: Operation,
+    ) -> Result<Vec<u8>, RepoError> {
+        let (reply, body) = self
+            .exchange_with_actor_and_limit(
+                Some(actor),
+                operation,
+                b"",
+                crate::backend::storage::MAX_OBJECT_BYTES as usize,
+            )
+            .await?;
+        match reply.result {
+            Ok(_) => Ok(body),
+            Err(Failure::Repository(error)) => Err(error),
+            Err(Failure::Merge(_)) => Err(rpc::wire::invalid("unexpected merge failure")),
+        }
     }
 
     pub(super) async fn bytes(

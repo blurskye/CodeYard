@@ -47,9 +47,11 @@ pub async fn own_address(pool: &DbPool, key: &NodeKey) -> Result<NodeAddress> {
 pub enum Command {
     /// Print a new secret key and its public key
     Keygen,
-    /// Print a ticket that lets another machine join this cluster
+    /// Turn on cluster mode, which allows the web, storage and ssh roles on separate machines
+    Enable,
+    /// Print a ticket that lets another machine join: a runner, or in cluster mode any role
     Invite {
-        /// Roles the new node may run, e.g. storage or web,ssh
+        /// Roles the new machine may run: runner, or in cluster mode also web, storage and ssh
         #[arg(long)]
         roles: NodeRoles,
         /// Let any number of nodes join until the ticket expires (for autoscaling)
@@ -148,13 +150,21 @@ pub async fn run_offline(
             );
             let ticket = JoinTicket::decode(ticket)?;
             let relay = Relay::parse(std::env::var("IROH_RELAY").ok().as_deref())?;
-            let name = match name {
-                Some(name) => name.clone(),
-                None => hostname()?,
+            let jit = crate::backend::ci::runner_credentials::jit_from_env()?;
+            let name = match (name, &jit) {
+                (Some(name), _) => name.clone(),
+                (None, Some(config)) => config.node_name.clone(),
+                (None, None) => hostname()?,
             };
             let key = load_or_create(state_dir)?;
             let membership = join(&ticket, &key, &relay, &name, None).await?;
             crate::backend::cluster::worker::save_core(state_dir, &ticket)?;
+            if let Some(config) = jit {
+                crate::backend::ci::runner_credentials::save_work_folder(
+                    state_dir,
+                    &config.work_folder,
+                )?;
+            }
             print_membership(&membership, &key);
             Ok(())
         }
@@ -193,12 +203,24 @@ pub async fn run(
     }
     require_postgres(pool)?;
     match command {
+        Command::Enable => {
+            if db::cluster::enable_cluster(pool).await? {
+                println!("Cluster mode is on: machines can now join with the web, storage and ssh roles (see docs/CLUSTER.md).");
+            } else {
+                println!("Cluster mode was already on.");
+            }
+            Ok(())
+        }
         Command::Invite {
             roles,
             reusable,
             expires,
             approve,
         } => {
+            ensure!(
+                roles.worker_only() || db::cluster::cluster_enabled(pool).await?,
+                "this installation is in single-node mode, where an invite admits only runners (`--roles runner`); run `codeyard cluster enable` first to invite web, storage or ssh machines"
+            );
             let key = load_existing(state_dir)?.ok_or_else(|| {
                 anyhow!(
                     "this node has no key yet; start `codeyard serve` with cluster settings first"
@@ -224,7 +246,11 @@ pub async fn run(
                     ""
                 },
             );
-            eprintln!("On the new machine, load the ticket into CLUSTER_JOIN_TOKEN and run `codeyard cluster join`.");
+            if options.roles.worker_only() {
+                eprintln!("On the runner machine, load the ticket into CLUSTER_JOIN_TOKEN and run `codeyard serve --roles runner`.");
+            } else {
+                eprintln!("On the new machine, load the ticket into CLUSTER_JOIN_TOKEN and run `codeyard cluster join`.");
+            }
             println!("{}", ticket.encode());
             Ok(())
         }
@@ -479,7 +505,7 @@ async fn list(pool: &DbPool) -> Result<()> {
             "{:<20} {:<8} {:<28} {:<10} {:<10} {}",
             node.name,
             node.status,
-            node.roles.join(","),
+            crate::backend::node::describe_roles(&node.roles),
             node.last_seen.map_or("never".to_owned(), ago),
             node.version.as_deref().unwrap_or("-"),
             node.public_key,
@@ -502,7 +528,7 @@ async fn invites(pool: &DbPool) -> Result<()> {
         println!(
             "{:<6} {:<28} {:<9} {:<9} {:<5} {}",
             invite.id,
-            invite.roles.join(","),
+            crate::backend::node::describe_roles(&invite.roles),
             if invite.reusable {
                 "reusable"
             } else {

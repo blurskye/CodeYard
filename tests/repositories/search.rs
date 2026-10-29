@@ -84,15 +84,19 @@ async fn repository(
     repo
 }
 
-async fn router(f: &Database, root: &Path) -> axum::Router {
-    create_router(AppState::new(
+async fn state(f: &Database, root: &Path) -> AppState {
+    AppState::new(
         f.pool().clone(),
         root.to_owned(),
         Arc::new(ObjectStore::open(root, None).await.unwrap()),
         None,
         CiConfig::default(),
         None,
-    ))
+    )
+}
+
+async fn router(f: &Database, root: &Path) -> axum::Router {
+    create_router(state(f, root).await)
 }
 
 /// The address of a code hit in `owner/name`'s `notes.txt` on `main`.
@@ -195,31 +199,25 @@ async fn visibility_contract(pg: bool) {
         assert!(html.contains("/search_alice/open/commit/"), "{who}");
     }
 
-    // The repository list follows the same rule, and so does the JSON search.
+    // The repository list follows the same rule in HTML and hydrated page models.
     let (status, html) = bob_client.page("/search?q=secret&type=repos").await;
     assert_eq!(status, StatusCode::OK, "{html}");
     assert!(html.contains("href=\"/search_alice/secret\""), "{html}");
     let (status, html) = anonymous.page("/search?q=secret&type=repos").await;
     assert_eq!(status, StatusCode::OK, "{html}");
     assert!(!html.contains("href=\"/search_alice/secret\""), "{html}");
-    let (status, body) = bob_client
-        .api(
-            "GET",
-            "/api/search?q=secret&type=repos",
-            serde_json::Value::Null,
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["repos_count"], 1, "{body}");
-    let (status, body) = anonymous
-        .api(
-            "GET",
-            "/api/search?q=secret&type=repos",
-            serde_json::Value::Null,
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["repos_count"], 0, "{body}");
+    for (client, count) in [(&bob_client, 1), (&anonymous, 0)] {
+        let (status, page) = client.model("/search?q=secret&type=repos").await;
+        assert_eq!(status, StatusCode::OK);
+        let codeyard::webui::app::Page::Discovery(codeyard::webui::pages::discovery::Page::Search(
+            model,
+        )) = page
+        else {
+            panic!("repository search")
+        };
+        assert_eq!(model.counts.repositories, count);
+        assert_eq!(model.repositories.len(), count);
+    }
     f.finish().await;
 }
 
@@ -235,7 +233,8 @@ async fn postgres_search_follows_repository_visibility() {
 
 /// Thirty-five public repositories hold one matching line each. Every one of them is searched:
 /// the first page holds thirty of the hits and the second the other five, and the links between
-/// them follow the page order.
+/// them follow the page order. The walk gets a long time budget because the whole test binary
+/// shares one Git operation limit, and this test checks paging, not the budget.
 async fn paging_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
@@ -253,7 +252,9 @@ async fn paging_contract(pg: bool) {
         )
         .await;
     }
-    let router = router(&f, root.path()).await;
+    let mut state = state(&f, root.path()).await;
+    state.search_time_budget = std::time::Duration::from_secs(600);
+    let router = create_router(state);
     let anonymous = http::Client::anonymous(&router);
 
     let (status, first) = anonymous.page("/search?q=pager-token&type=code").await;
@@ -428,6 +429,8 @@ async fn buckets_contract(pg: bool) {
                 base_branch: "main",
                 base_sha: "0000000000000000000000000000000000000000",
                 is_draft: false,
+                maintainer_can_modify: false,
+                issue: None,
             },
         )
         .await

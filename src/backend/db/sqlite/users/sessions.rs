@@ -478,15 +478,19 @@ pub async fn list_user_sessions(pool: &SqlitePool, user_id: i64) -> Result<Vec<S
     .await?)
 }
 
+/// Revokes one session on behalf of `current`, which must still be a live session of the
+/// same account; a request from a session revoked meanwhile changes nothing.
 pub async fn revoke_user_session(
     pool: &SqlitePool,
     user_id: i64,
     session_id: &str,
+    current: &str,
 ) -> Result<bool> {
     Ok(
-        sqlx::query("DELETE FROM sessions WHERE user_id=?1 AND id=?2")
+        sqlx::query("DELETE FROM sessions WHERE user_id=?1 AND id=?2 AND EXISTS (SELECT 1 FROM sessions WHERE user_id=?1 AND id=?3 AND expires_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now'))")
             .bind(user_id)
             .bind(session_id)
+            .bind(current)
             .execute(pool)
             .await?
             .rows_affected()
@@ -500,7 +504,7 @@ pub async fn revoke_other_user_sessions(
     keep: &str,
 ) -> Result<u64> {
     Ok(
-        sqlx::query("DELETE FROM sessions WHERE user_id=?1 AND id<>?2")
+        sqlx::query("DELETE FROM sessions WHERE user_id=?1 AND id<>?2 AND EXISTS (SELECT 1 FROM sessions WHERE user_id=?1 AND id=?2 AND expires_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now'))")
             .bind(user_id)
             .bind(keep)
             .execute(pool)

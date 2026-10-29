@@ -1,0 +1,19 @@
+# https://github.com/stCarolas/setup-maven/tree/d6af6abeda15e98926a57b5aa970a96bb37f97d1
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - id: action
+        uses: stCarolas/setup-maven@d6af6abeda15e98926a57b5aa970a96bb37f97d1 # v5
+        with:
+          maven-version: "3.9.9"
+      - name: Assert documented effect
+        run: |
+          mvn --version | grep 'Apache Maven 3\.9\.9'
+          echo compat:ok

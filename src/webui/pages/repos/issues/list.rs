@@ -346,6 +346,14 @@ pub fn list(
                     NavLink { class: "btn btn-secondary", href: format!("{}/milestones", repo.url()), "Milestones" }
                     {contribute(repo, kind)}
                 }
+                if !filters.pinned_issues.is_empty() {
+                    section { class: "collaboration-panel", aria_label: "Pinned issues",
+                        h2 { "Pinned issues" }
+                        for issue in &filters.pinned_issues {
+                            p { NavLink { href: issue.href.clone(), "{issue.title} {issue.reference}" } }
+                        }
+                    }
+                }
                 div { class: "collaboration-panel collaboration-list-panel",
                     header { class: "collaboration-panel-header collaboration-list-header",
                         nav { class: "collaboration-state-filters", aria_label: "Entry state",

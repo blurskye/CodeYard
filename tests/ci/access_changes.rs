@@ -348,7 +348,7 @@ async fn postgres_repository_lock_holder_takes_run_while_stale_sweep_waits() {
         .expect("the stale sweep must complete")
         .unwrap()
         .unwrap();
-    assert_eq!(failed.0, 1);
+    assert_eq!(failed.0.len(), 1);
     let status: String = sqlx::query_scalar("SELECT status FROM ci_runs WHERE id = $1")
         .bind(run_id)
         .fetch_one(raw)

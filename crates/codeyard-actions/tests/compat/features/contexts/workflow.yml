@@ -1,0 +1,24 @@
+# https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          ACTOR: ${{ github.actor }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          EVENT: ${{ github.event_name }}
+          MESSAGE: ${{ inputs.message }}
+          SENDER: ${{ github.event.sender.login }}
+          OS: ${{ runner.os }}
+          JOB: ${{ github.job }}
+          NUMBER: ${{ github.run_number }}
+        run: |
+          test "$ACTOR/$REPO/$REF/$EVENT" = compat-actor/compat/example/refs/heads/main/workflow_dispatch
+          test "$MESSAGE/$SENDER/$OS/$JOB/$NUMBER" = hello/compat-actor/Linux/test/7
+          test "$GITHUB_WORKSPACE" = "$PWD"
+          test -n "$GITHUB_SHA"
+          test -d "$RUNNER_TEMP"
+          echo compat:ok

@@ -250,17 +250,16 @@ async fn authority_matrix(pg: bool) {
         .await
         .unwrap()
         .is_empty());
-    for actor in [owner, direct_admin, site] {
+    for actor in [owner, direct_admin, site, writer] {
         accepted(&f, actor, personal, personal_issue, personal_label).await;
     }
-    for actor in [owner, admin, direct_admin] {
+    for actor in [owner, admin, direct_admin, writer] {
         accepted(&f, actor, repo, issue, label).await;
     }
-    for actor in [member, writer, site, unknown, outsider, -1] {
+    for actor in [member, site, unknown, outsider, -1] {
         denied(&f, actor, repo, issue, label).await;
     }
-    denied(&f, writer, personal, personal_issue, personal_label).await;
-    // Team Admin is canonical Admin; team Write is not enough.
+    // Team write access permits the same label operations as direct write access.
     let team = f
         .scalar(
             "INSERT INTO teams(org_id,name,slug) VALUES($1,'Label team','label-team') RETURNING id",
@@ -277,7 +276,7 @@ async fn authority_matrix(pg: bool) {
         &[team, repo],
     )
     .await;
-    denied(&f, member, repo, issue, label).await;
+    accepted(&f, member, repo, issue, label).await;
     f.execute(
         "UPDATE team_repo_access SET permission=5 WHERE team_id=$1 AND repo_id=$2",
         &[team, repo],

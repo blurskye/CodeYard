@@ -1,0 +1,30 @@
+name: compat
+on: workflow_dispatch
+jobs:
+  wrong_type:
+    uses: ./.github/workflows/called.yml
+    with:
+      enabled: not-a-boolean
+    secrets:
+      password: value
+  missing_input:
+    uses: ./.github/workflows/called.yml
+  missing_secret:
+    uses: ./.github/workflows/called.yml
+    with:
+      enabled: true
+  unknown_input:
+    uses: ./.github/workflows/called.yml
+    with:
+      unknown: true
+  verify:
+    if: always()
+    needs: [wrong_type, missing_input, missing_secret, unknown_input]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          test '${{ needs.wrong_type.result }}' = failure
+          test '${{ needs.missing_input.result }}' = failure
+          test '${{ needs.missing_secret.result }}' = failure
+          test '${{ needs.unknown_input.result }}' = failure
+          echo refused-invalid-calls

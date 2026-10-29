@@ -1,7 +1,13 @@
 pub mod accounts;
 pub mod admission;
+pub mod blocks;
+pub mod emails;
+pub mod gpg_keys;
+pub mod profiles;
 pub mod sessions;
+pub mod signing_keys;
 pub mod signup_requests;
+pub mod social_accounts;
 pub mod ssh_keys;
 pub mod tokens;
 pub mod transitions;
@@ -18,29 +24,36 @@ const RESERVED_NAMES: &[&str] = &[
     "_forms",
     "admin",
     "api",
+    "apps",
     "assets",
     "avatars",
     "ci",
     "demo",
+    "emojis",
     "enter",
     "explore",
     "health",
+    "gists",
     "help",
     "forgot-password",
     "issues",
     "login",
     "logout",
+    "migration-archives",
     "new",
     "notifications",
     "orgs",
     "pulls",
     "ready",
     "register",
+    "repos",
     "reset-password",
     "search",
     "settings",
     "setup",
     "stars",
+    "twirp",
+    "users",
     "verify-email",
     "wasm",
 ];
@@ -67,6 +80,8 @@ mod tests {
             "forgot-password",
             "reset-password",
             "verify-email",
+            "apps",
+            "users",
         ] {
             assert!(is_reserved_name(name), "{name}");
         }

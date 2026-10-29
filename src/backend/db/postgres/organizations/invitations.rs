@@ -1,14 +1,16 @@
+use super::authority::*;
+use crate::backend::db::organizations::invitations::InvitationOffer;
 use crate::backend::db::{
-    models::{OrgInvitation, OrgMembership, OrgRole, ReceivedInvitation},
+    models::{OrgInvitation, OrgMembership, OrgRole, ReceivedInvitation, Team},
     organizations::*,
 };
 use anyhow::Result;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing, Suspended};
 
-use super::authority::*;
+pub(super) const RECIPIENT: &str = "((i.email IS NULL AND i.user_id=$1) OR EXISTS(SELECT 1 FROM users u WHERE u.id=$1 AND ((u.email_verified AND lower(u.email)=i.email) OR EXISTS(SELECT 1 FROM user_emails e WHERE e.user_id=u.id AND e.verified AND lower(e.email)=i.email))))";
+pub(super) const LIVE: &str = "i.failed_at IS NULL AND i.expires_at>NOW()";
 
-/// Records a pending invitation. A member, or someone already invited, is a Conflict.
 pub async fn invite_organization_member(
     pool: &PgPool,
     actor: i64,
@@ -16,31 +18,199 @@ pub async fn invite_organization_member(
     target: i64,
     role: OrgRole,
 ) -> Result<OrganizationOutcome<OrgInvitation>> {
+    save(
+        pool,
+        actor,
+        org,
+        &NewInvitation::user(target, role),
+        false,
+        false,
+    )
+    .await
+}
+pub async fn set_organization_invitation_by_owner(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    target: i64,
+    role: OrgRole,
+) -> Result<OrganizationOutcome<OrgInvitation>> {
+    save(
+        pool,
+        actor,
+        org,
+        &NewInvitation::user(target, role),
+        true,
+        true,
+    )
+    .await
+}
+pub async fn create_organization_invitation(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    input: &NewInvitation,
+    owner_only: bool,
+) -> Result<OrganizationOutcome<OrgInvitation>> {
+    save(pool, actor, org, input, owner_only, false).await
+}
+async fn save(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    input: &NewInvitation,
+    owner_only: bool,
+    replace: bool,
+) -> Result<OrganizationOutcome<OrgInvitation>> {
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    let policy = if replace {
+        InvitationOffer::Replace
+    } else {
+        InvitationOffer::Create
+    };
+    let result = save_in_transaction(&mut tx, actor, org, input, owner_only, policy).await?;
+    if matches!(result, Applied(_)) {
+        tx.commit().await?;
+    }
+    Ok(result)
+}
+// The caller holds the membership transition lock and owns commit or rollback.
+pub(super) async fn save_in_transaction(
+    mut tx: &mut PgConnection,
+    actor: i64,
+    org: i64,
+    input: &NewInvitation,
+    owner_only: bool,
+    policy: InvitationOffer,
+) -> Result<OrganizationOutcome<OrgInvitation>> {
+    let replace = matches!(policy, InvitationOffer::Replace);
     let actor_role = require_org!(tx, actor, org);
+    if !administers(actor_role)
+        || (owner_only && actor_role != OrgRole::Owner)
+        || (!input.reinstate && !can_change_member(actor_role, None, Some(input.role)))
+    {
+        return Ok(Denied);
+    }
+    if !input.valid() {
+        return Ok(Conflict);
+    }
+    let target = if let Some(email) = &input.email {
+        sqlx::query_scalar("SELECT u.id FROM users u WHERE (u.email_verified AND lower(u.email)=$1) OR EXISTS(SELECT 1 FROM user_emails e WHERE e.user_id=u.id AND e.verified AND lower(e.email)=$1) LIMIT 1").bind(email).fetch_optional(&mut *tx).await?
+    } else {
+        input.user_id
+    };
+    if let Some(target) = target {
+        if !active(tx, target).await? || super::blocks::target_blocked(tx, org, target).await? {
+            return Ok(Denied);
+        }
+        if membership_role(tx, org, target).await?.is_some() {
+            return Ok(Conflict);
+        }
+        if matches!(policy, InvitationOffer::Retain) {
+            let sql=format!("SELECT i.* FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=$2 AND {LIVE} ORDER BY i.id LIMIT 1 FOR UPDATE");
+            let previous: Option<OrgInvitation> = sqlx::query_as(&sql)
+                .bind(target)
+                .bind(org)
+                .fetch_optional(&mut *tx)
+                .await?;
+            if let Some(previous) = previous {
+                if !previous
+                    .role
+                    .parse::<OrgRole>()
+                    .ok()
+                    .is_some_and(|role| can_change_member(actor_role, None, Some(role)))
+                {
+                    return Ok(Denied);
+                }
+                return Ok(Applied(previous));
+            }
+        }
+    }
+    let role = if input.reinstate {
+        let Some(target) = target else {
+            return Ok(Conflict);
+        };
+        let old: Option<String> = sqlx::query_scalar(
+            "SELECT role FROM organization_member_history WHERE org_id=$1 AND user_id=$2",
+        )
+        .bind(org)
+        .bind(target)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(role) = old.and_then(|role| role.parse::<OrgRole>().ok()) else {
+            return Ok(Conflict);
+        };
+        role
+    } else {
+        input.role
+    };
     if !can_change_member(actor_role, None, Some(role)) {
         return Ok(Denied);
     }
-    if !active(&mut tx, target).await? {
-        return Ok(Denied);
-    }
-    if membership_role(&mut tx, org, target).await?.is_some() {
-        return Ok(Conflict);
-    }
-    let invitation = sqlx::query_as(
-        "INSERT INTO organization_invitations(org_id,user_id,role,invited_by_id) VALUES($1,$2,$3,$4) ON CONFLICT(org_id,user_id) DO NOTHING RETURNING *",
-    )
-    .bind(org)
-    .bind(target)
-    .bind(role.as_str())
-    .bind(actor)
-    .fetch_optional(&mut *tx)
-    .await?;
-    let Some(invitation) = invitation else {
-        return Ok(Conflict);
+    let team_ids = match &input.teams {
+        None if !replace => Some(Vec::new()),
+        None => None,
+        Some(InvitationTeams::Ids(ids)) => Some(ids.clone()),
+        Some(InvitationTeams::Slugs(names)) => {
+            let mut ids = Vec::new();
+            for name in names {
+                let id: Option<i64> = sqlx::query_scalar(
+                    "SELECT id FROM teams WHERE org_id=$1 AND slug=$2 FOR KEY SHARE",
+                )
+                .bind(org)
+                .bind(name)
+                .fetch_optional(&mut *tx)
+                .await?;
+                let Some(id) = id else {
+                    return Ok(Conflict);
+                };
+                ids.push(id);
+            }
+            Some(ids)
+        }
     };
-    tx.commit().await?;
+    if let Some(ids) = &team_ids {
+        for id in ids {
+            let valid: Option<i64> =
+                sqlx::query_scalar("SELECT id FROM teams WHERE id=$1 AND org_id=$2 FOR KEY SHARE")
+                    .bind(id)
+                    .bind(org)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            if valid.is_none() {
+                return Ok(Conflict);
+            }
+        }
+    }
+    let mut previous: Vec<OrgInvitation> = sqlx::query_as("SELECT * FROM organization_invitations WHERE org_id=$1 AND (($2::bigint IS NOT NULL AND user_id=$2) OR ($3::text IS NOT NULL AND email=$3)) ORDER BY id LIMIT 2 FOR UPDATE")
+        .bind(org).bind(target).bind(&input.email).fetch_all(&mut *tx).await?;
+    if previous.len() > 1 {
+        return Ok(Conflict);
+    }
+    let invitation: OrgInvitation = if let Some(previous) = previous.pop() {
+        if !replace && previous.failed_at.is_none() && previous.expires_at > chrono::Utc::now() {
+            return Ok(Conflict);
+        }
+        sqlx::query("DELETE FROM email_outbox WHERE organization_invitation_id=$1")
+            .bind(previous.id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query_as("UPDATE organization_invitations SET user_id=$2,email=$3,role=$4,invited_by_id=$5,created_at=NOW(),expires_at=NOW()+INTERVAL '7 days',failed_at=NULL,failed_reason=NULL WHERE id=$1 RETURNING *")
+            .bind(previous.id).bind(target).bind(&input.email).bind(role.as_str()).bind(actor).fetch_one(&mut *tx).await?
+    } else {
+        sqlx::query_as("INSERT INTO organization_invitations(org_id,user_id,email,role,invited_by_id) VALUES($1,$2,$3,$4,$5) RETURNING *")
+            .bind(org).bind(target).bind(&input.email).bind(role.as_str()).bind(actor).fetch_one(&mut *tx).await?
+    };
+    if let Some(ids) = &team_ids {
+        sqlx::query("DELETE FROM team_invitations WHERE invitation_id=$1")
+            .bind(invitation.id)
+            .execute(&mut *tx)
+            .await?;
+        for id in ids {
+            sqlx::query("INSERT INTO team_invitations(invitation_id,team_id,role) SELECT $1,t.id,'member' FROM teams t WHERE t.id=$2 AND t.org_id=$3 ON CONFLICT DO NOTHING").bind(invitation.id).bind(id).bind(org).execute(&mut *tx).await?;
+        }
+    }
     Ok(Applied(invitation))
 }
 
@@ -55,50 +225,144 @@ pub async fn list_organization_invitations(
     if !administers(role) {
         return Ok(Denied);
     }
-    let rows = sqlx::query_as(
-        "SELECT * FROM organization_invitations WHERE org_id=$1 AND id>$2 ORDER BY id LIMIT $3",
-    )
-    .bind(org)
-    .bind(page.after)
-    .bind(page.limit)
-    .fetch_all(&mut *tx)
-    .await?;
+    let sql = format!("SELECT i.* FROM organization_invitations i WHERE i.org_id=$1 AND i.id>$2 AND {LIVE} ORDER BY i.id LIMIT $3");
+    let rows = sqlx::query_as(&sql)
+        .bind(org)
+        .bind(page.after)
+        .bind(page.limit)
+        .fetch_all(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(Applied(rows))
 }
+pub async fn invitation_page(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    filter: &InvitationFilter,
+    window: (i64, i64),
+) -> Result<OrganizationOutcome<Vec<OrgInvitation>>> {
+    let mut tx = begin_read(pool).await?;
+    let role = require_read_org!(tx, actor, org);
+    if !administers(role) || (filter.owner_only && role != OrgRole::Owner) {
+        return Ok(Denied);
+    }
+    if filter.empty {
+        return Ok(Applied(Vec::new()));
+    }
+    let rows = sqlx::query_as("SELECT id,org_id,user_id,email,role,invited_by_id,created_at,expires_at,CASE WHEN failed_at IS NOT NULL THEN failed_at WHEN expires_at<=NOW() THEN expires_at END AS failed_at,CASE WHEN failed_at IS NOT NULL THEN failed_reason WHEN expires_at<=NOW() THEN 'Invitation expired' END AS failed_reason FROM organization_invitations WHERE org_id=$1 AND (failed_at IS NOT NULL OR expires_at<=NOW())=$2 AND ($3::text IS NULL OR role=$3 OR ($3='member' AND role='admin')) AND id>$6 ORDER BY id LIMIT $4 OFFSET $5")
+        .bind(org).bind(filter.failed).bind(filter.role.as_ref().map(OrgRole::as_str)).bind(window.1).bind(window.0).bind(filter.after).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Applied(rows))
+}
+pub async fn invitation_teams(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    id: i64,
+    window: (i64, i64),
+) -> Result<OrganizationOutcome<Vec<Team>>> {
+    let mut tx = begin_read(pool).await?;
+    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+        return Ok(Denied);
+    }
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM organization_invitations WHERE org_id=$1 AND id=$2)",
+    )
+    .bind(org)
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !exists {
+        return Ok(Missing);
+    }
+    let rows = sqlx::query_as("SELECT t.* FROM team_invitations i JOIN teams t ON t.id=i.team_id WHERE i.invitation_id=$1 AND t.org_id=$2 ORDER BY t.id LIMIT $3 OFFSET $4").bind(id).bind(org).bind(window.1).bind(window.0).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Applied(rows))
+}
+pub async fn invitation_team_counts(
+    pool: &PgPool,
+    ids: &[i64],
+) -> Result<std::collections::HashMap<i64, i64>> {
+    let rows: Vec<(i64,i64)> = sqlx::query_as("SELECT invitation_id,COUNT(*) FROM team_invitations WHERE invitation_id=ANY($1) GROUP BY invitation_id").bind(ids).fetch_all(pool).await?;
+    Ok(rows.into_iter().collect())
+}
 
-/// Withdraws a pending invitation. An administrator cannot withdraw an offer of a role
-/// they could not have granted.
 pub async fn cancel_organization_invitation(
     pool: &PgPool,
     actor: i64,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
+    cancel(pool, actor, org, target, false, false).await
+}
+pub async fn cancel_organization_invitation_by_owner(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    target: i64,
+) -> Result<OrganizationOutcome<()>> {
+    cancel(pool, actor, org, target, false, true).await
+}
+pub async fn cancel_invitation_id(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    id: i64,
+    owner_only: bool,
+) -> Result<OrganizationOutcome<()>> {
+    cancel(pool, actor, org, id, true, owner_only).await
+}
+async fn cancel(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    target: i64,
+    by_id: bool,
+    owner_only: bool,
+) -> Result<OrganizationOutcome<()>> {
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     let actor_role = require_org!(tx, actor, org);
-    let Some(invited) = sqlx::query_scalar::<_, String>(
-        "SELECT role FROM organization_invitations WHERE org_id=$1 AND user_id=$2",
-    )
-    .bind(org)
-    .bind(target)
-    .fetch_optional(&mut *tx)
-    .await?
-    else {
-        return Ok(Missing);
-    };
-    let Ok(invited) = invited.parse::<OrgRole>() else {
-        return Ok(Denied);
-    };
-    if !can_change_member(actor_role, None, Some(invited)) {
+    if !administers(actor_role) || (owner_only && actor_role != OrgRole::Owner) {
         return Ok(Denied);
     }
-    sqlx::query("DELETE FROM organization_invitations WHERE org_id=$1 AND user_id=$2")
+    // A username also matches a verified email offer; an invitation id is exact.
+    let matches = if by_id {
+        "i.id=$2".to_owned()
+    } else {
+        RECIPIENT.replace("$1", "$2")
+    };
+    // Every offer the recipient holds goes, so none is left to grant membership.
+    let sql = format!(
+        "SELECT i.* FROM organization_invitations i WHERE i.org_id=$1 AND {matches} ORDER BY i.id FOR UPDATE"
+    );
+    let invitations: Vec<OrgInvitation> = sqlx::query_as(&sql)
         .bind(org)
         .bind(target)
-        .execute(&mut *tx)
+        .fetch_all(&mut *tx)
         .await?;
+    if invitations.is_empty() {
+        return Ok(Missing);
+    }
+    for invited in &invitations {
+        let Ok(role) = invited.role.parse::<OrgRole>() else {
+            return Ok(Denied);
+        };
+        if !can_change_member(actor_role, None, Some(role)) {
+            return Ok(Denied);
+        }
+    }
+    for invited in &invitations {
+        sqlx::query("DELETE FROM email_outbox WHERE organization_invitation_id=$1")
+            .bind(invited.id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM organization_invitations WHERE id=$1")
+            .bind(invited.id)
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
     Ok(Applied(()))
 }
@@ -108,40 +372,50 @@ pub async fn list_received_organization_invitations(
     actor: i64,
     page: OrganizationPage,
 ) -> Result<Vec<ReceivedInvitation>> {
-    Ok(sqlx::query_as(
-        "SELECT i.id,i.org_id,o.name AS org_name,o.display_name AS org_display_name,i.role,i.created_at FROM organization_invitations i JOIN organizations o ON o.id=i.org_id WHERE i.user_id=$1 AND i.id>$2 ORDER BY i.id LIMIT $3",
-    )
-    .bind(actor).bind(page.after).bind(page.limit)
-    .fetch_all(pool)
-    .await?)
+    let sql = format!("SELECT i.id,i.org_id,o.name AS org_name,o.display_name AS org_display_name,i.role,i.created_at FROM organization_invitations i JOIN organizations o ON o.id=i.org_id WHERE {RECIPIENT} AND i.id>$2 AND {LIVE} ORDER BY i.id LIMIT $3");
+    Ok(sqlx::query_as(&sql)
+        .bind(actor)
+        .bind(page.after)
+        .bind(page.limit)
+        .fetch_all(pool)
+        .await?)
 }
-
-/// Turns the invitation into membership in one transaction. An inactive invitee, or an
-/// organization with no active owner, cannot take the seat.
+/// Accepts `invitation`, or the oldest live offer when it is `None`. Every offer from the
+/// organization ends once the account is a member.
 pub async fn accept_organization_invitation(
     pool: &PgPool,
     actor: i64,
     org: i64,
+    invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
-    let Some(role) = sqlx::query_scalar::<_, String>(
-        "SELECT role FROM organization_invitations WHERE org_id=$1 AND user_id=$2 FOR UPDATE",
-    )
-    .bind(org)
-    .bind(actor)
-    .fetch_optional(&mut *tx)
-    .await?
+    // Hold the account lock before testing verified address ownership. Address removal and
+    // primary-address changes lock the same row and cannot revoke proof under acceptance.
+    let actor_active = active(&mut tx, actor).await?;
+    let sql = format!("SELECT i.id FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=$2 ORDER BY i.id FOR UPDATE");
+    sqlx::query(&sql)
+        .bind(actor)
+        .bind(org)
+        .execute(&mut *tx)
+        .await?;
+    let sql = format!("SELECT i.* FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=$2 AND ($3 IS NULL OR i.id=$3) AND {LIVE} ORDER BY i.id LIMIT 1");
+    let Some(invitation): Option<OrgInvitation> = sqlx::query_as(&sql)
+        .bind(actor)
+        .bind(org)
+        .bind(invitation)
+        .fetch_optional(&mut *tx)
+        .await?
     else {
         return Ok(Missing);
     };
-    if !active(&mut tx, actor).await? {
+    if !actor_active || super::blocks::target_blocked(&mut tx, org, actor).await? {
         return Ok(Denied);
     }
     if !remaining_active_owner(&mut tx, org, -1).await? {
         return Ok(Suspended);
     }
-    let Ok(role) = role.parse::<OrgRole>() else {
+    let Ok(role) = invitation.role.parse::<OrgRole>() else {
         return Ok(Denied);
     };
     if membership_role(&mut tx, org, actor).await?.is_some() {
@@ -155,26 +429,56 @@ pub async fn accept_organization_invitation(
     .bind(role.as_str())
     .fetch_one(&mut *tx)
     .await?;
-    sqlx::query("DELETE FROM organization_invitations WHERE org_id=$1 AND user_id=$2")
-        .bind(org)
+    sqlx::query("INSERT INTO team_memberships(team_id,user_id,role) SELECT ti.team_id,$1,ti.role FROM team_invitations ti JOIN teams t ON t.id=ti.team_id WHERE ti.invitation_id=$2 AND t.org_id=$3 AND ti.role IN ('member','maintainer') ON CONFLICT(team_id,user_id) DO UPDATE SET role=EXCLUDED.role")
+        .bind(actor).bind(invitation.id).bind(org).execute(&mut *tx).await?;
+    let sql = format!("DELETE FROM email_outbox WHERE organization_invitation_id IN (SELECT i.id FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=$2)");
+    sqlx::query(&sql)
         .bind(actor)
+        .bind(org)
+        .execute(&mut *tx)
+        .await?;
+    let sql =
+        format!("DELETE FROM organization_invitations AS i WHERE {RECIPIENT} AND i.org_id=$2");
+    sqlx::query(&sql)
+        .bind(actor)
+        .bind(org)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
     Ok(Applied(member))
 }
-
+/// Declines `invitation`, or every offer from the organization when it is `None`.
 pub async fn decline_organization_invitation(
     pool: &PgPool,
     actor: i64,
     org: i64,
+    invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<()>> {
-    let deleted =
-        sqlx::query("DELETE FROM organization_invitations WHERE org_id=$1 AND user_id=$2")
-            .bind(org)
-            .bind(actor)
-            .execute(pool)
-            .await?
-            .rows_affected();
+    let mut tx = begin(pool).await?;
+    // Serialize consumption with acceptance before either path locks the recipient.
+    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    let _ = active(&mut tx, actor).await?;
+    let sql = format!("SELECT i.id FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=$2 ORDER BY i.id FOR UPDATE");
+    sqlx::query(&sql)
+        .bind(actor)
+        .bind(org)
+        .execute(&mut *tx)
+        .await?;
+    let sql = format!("DELETE FROM email_outbox WHERE organization_invitation_id IN (SELECT i.id FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=$2 AND ($3 IS NULL OR i.id=$3))");
+    sqlx::query(&sql)
+        .bind(actor)
+        .bind(org)
+        .bind(invitation)
+        .execute(&mut *tx)
+        .await?;
+    let sql = format!("DELETE FROM organization_invitations AS i WHERE {RECIPIENT} AND i.org_id=$2 AND ($3 IS NULL OR i.id=$3)");
+    let deleted = sqlx::query(&sql)
+        .bind(actor)
+        .bind(org)
+        .bind(invitation)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    tx.commit().await?;
     Ok(if deleted == 0 { Missing } else { Applied(()) })
 }

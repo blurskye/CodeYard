@@ -67,20 +67,29 @@ async fn post(
     csrf: Option<&str>,
     origin: &str,
     body: Value,
-) -> (StatusCode, HeaderMap, Value) {
-    let mut request = Request::builder()
+) -> (StatusCode, HeaderMap, String) {
+    let mut form = url::form_urlencoded::Serializer::new(String::new());
+    if let Some(fields) = body.as_object() {
+        for (name, value) in fields {
+            if let Some(value) = value.as_str() {
+                form.append_pair(name, value);
+            }
+        }
+    }
+    if let Some(csrf) = csrf {
+        form.append_pair("csrf_token", csrf);
+    }
+    let request = Request::builder()
         .method("POST")
         .uri(path)
         .header(header::HOST, "forge.example.test")
         .header(header::ORIGIN, origin)
-        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "text/html")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .header(header::COOKIE, format!("session_id={session}"));
-    if let Some(csrf) = csrf {
-        request = request.header("x-csrf-token", csrf);
-    }
     let response = router
         .clone()
-        .oneshot(request.body(Body::from(body.to_string())).unwrap())
+        .oneshot(request.body(Body::from(form.finish())).unwrap())
         .await
         .unwrap();
     let status = response.status();
@@ -88,12 +97,12 @@ async fn post(
     let bytes = to_bytes(response.into_body(), 2 * 1024 * 1024)
         .await
         .unwrap();
-    let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-    (status, headers, body)
+    (status, headers, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
 async fn contract(pg: bool) {
     let _serial = SERIAL.lock().await;
+    fake_webui_bundle::install();
     let mut fixture = Database::new(pg).await;
     // The shared PostgreSQL fixture normally provisions a CI owner and repository.
     // This contract needs the real first-run state instead.
@@ -108,19 +117,20 @@ async fn contract(pg: bool) {
         "username": "root_admin",
         "email": "root_admin@example.test",
         "password": "setup-password",
+        "confirm_password": "setup-password",
         "node_mode": "private",
         "admin_secret": std::env::var("ADMIN_SECRET").ok(),
     });
     let (status, _, body) = post(
         &router,
-        "/api/auth/setup",
+        "/setup",
         &setup_session,
         Some(&setup_csrf),
         "http://forge.example.test",
         setup,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED, "setup: {body}");
+    assert_eq!(status, StatusCode::SEE_OTHER, "setup: {body}");
 
     let password_hash = codeyard::backend::identity::passwords::hash_password("current-password")
         .await
@@ -141,7 +151,7 @@ async fn contract(pg: bool) {
     let credentials = json!({"username": login_user.username, "password": "current-password"});
     let (status, _, body) = post(
         &router,
-        "/api/auth/login",
+        "/login",
         &login_session,
         Some(&login_csrf),
         "https://attacker.invalid",
@@ -149,17 +159,17 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "cross-origin login: {body}");
-    assert_eq!(body["error"], "csrf_error");
+    assert!(body.contains("The form expired or came from another site."));
     let (status, _, body) = post(
         &router,
-        "/api/auth/login",
+        "/login",
         &login_session,
         Some(&login_csrf),
         "http://forge.example.test",
         credentials,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "private login: {body}");
+    assert_eq!(status, StatusCode::SEE_OTHER, "private login: {body}");
 
     // A temporary-password session may submit only the operation that removes its restriction.
     let forced_user = db::users::accounts::create_user_with_password_and_flags(
@@ -174,11 +184,11 @@ async fn contract(pg: bool) {
     .unwrap();
     let (forced_session, forced_csrf) =
         session_with_csrf(fixture.pool(), Some(forced_user.id)).await;
-    let password_change =
-        json!({"current_password": "current-password", "new_password": "replacement-password"});
+    let password_change = json!({"current_password": "current-password",
+        "new_password": "replacement-password", "confirm_password": "replacement-password"});
     let (status, _, body) = post(
         &router,
-        "/api/auth/change-password",
+        "/settings/password",
         &forced_session,
         None,
         "http://forge.example.test",
@@ -186,17 +196,21 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "missing token: {body}");
-    assert_eq!(body["error"], "csrf_error");
+    assert!(body.contains("The form expired or came from another site."));
     let (status, headers, body) = post(
         &router,
-        "/api/auth/change-password",
+        "/settings/password",
         &forced_session,
         Some(&forced_csrf),
         "http://forge.example.test",
         password_change,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "required password change: {body}");
+    assert_eq!(
+        status,
+        StatusCode::SEE_OTHER,
+        "required password change: {body}"
+    );
     // The session is gone, so the client is told to drop its cookie.
     let cookie = headers[header::SET_COOKIE].to_str().unwrap();
     assert!(cookie.contains("Max-Age=0"), "{cookie}");
@@ -214,7 +228,7 @@ async fn contract(pg: bool) {
         .await;
     let (status, _, body) = post(
         &router,
-        "/api/auth/logout",
+        "/logout",
         &logout_session,
         Some(&logout_csrf),
         "http://forge.example.test",
@@ -237,14 +251,14 @@ async fn contract(pg: bool) {
     assert_ne!(fresh_csrf, logout_csrf);
     let (status, headers, body) = post(
         &router,
-        "/api/auth/logout",
+        "/logout",
         &logout_session,
         Some(&fresh_csrf),
         "http://forge.example.test",
         Value::Null,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "logout: {body}");
+    assert_eq!(status, StatusCode::SEE_OTHER, "logout: {body}");
     assert!(headers.get(header::SET_COOKIE).is_some());
     assert!(
         db::users::sessions::get_session_account(fixture.pool(), &logout_session)
@@ -253,12 +267,12 @@ async fn contract(pg: bool) {
             .is_none()
     );
 
-    // Revoked cookies are expired on refusal, but a live session with a bad token is not.
+    // Revoked cookies get a fresh anonymous session, but a live session is not replaced.
     let (stale, old_csrf) = session_with_csrf(fixture.pool(), Some(admin.id)).await;
     fixture
         .execute("DELETE FROM sessions WHERE user_id=$1", &[admin.id])
         .await;
-    for path in ["/api/auth/session", "/api/auth/login"] {
+    for path in ["/login", "/logout"] {
         let (status, headers, _) = post(
             &router,
             path,
@@ -269,15 +283,14 @@ async fn contract(pg: bool) {
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
-        assert!(headers[header::SET_COOKIE]
-            .to_str()
-            .unwrap()
-            .contains("Max-Age=0"));
+        let cookie = headers[header::SET_COOKIE].to_str().unwrap();
+        assert!(cookie.starts_with("session_id="));
+        assert!(!cookie.contains(&stale));
     }
     let (live, _) = session_with_csrf(fixture.pool(), Some(admin.id)).await;
     let (status, headers, _) = post(
         &router,
-        "/api/auth/session",
+        "/logout",
         &live,
         Some(&native::token()),
         "http://forge.example.test",
@@ -482,6 +495,7 @@ async fn temporary_password_settings_contract(pg: bool) {
 
 async fn setup_name_contract(pg: bool) {
     let _serial = SERIAL.lock().await;
+    fake_webui_bundle::install();
     let mut fixture = Database::new(pg).await;
     fixture.execute("DELETE FROM repositories", &[]).await;
     fixture.execute("DELETE FROM users", &[]).await;
@@ -492,6 +506,7 @@ async fn setup_name_contract(pg: bool) {
         json!({
             "username": username,
             "password": "setup-password",
+            "confirm_password": "setup-password",
             "node_mode": "private",
             "admin_secret": std::env::var("ADMIN_SECRET").ok(),
         })
@@ -500,7 +515,7 @@ async fn setup_name_contract(pg: bool) {
     // Creating a new account named `admin` is refused, and setup stays incomplete.
     let (status, _, body) = post(
         &router,
-        "/api/auth/setup",
+        "/setup",
         &session,
         Some(&csrf),
         "http://forge.example.test",
@@ -508,8 +523,7 @@ async fn setup_name_contract(pg: bool) {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["error"], "validation_error");
-    assert_eq!(body["message"], "That username is reserved");
+    assert!(body.contains("That username is reserved."));
     assert!(!db::node_config::get_node_configuration(fixture.pool())
         .await
         .unwrap()
@@ -530,14 +544,14 @@ async fn setup_name_contract(pg: bool) {
     .unwrap();
     let (status, _, body) = post(
         &router,
-        "/api/auth/setup",
+        "/setup",
         &session,
         Some(&csrf),
         "http://forge.example.test",
         setup("admin"),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED, "recovery: {body}");
+    assert_eq!(status, StatusCode::SEE_OTHER, "recovery: {body}");
     assert!(db::node_config::get_node_configuration(fixture.pool())
         .await
         .unwrap()
@@ -590,11 +604,11 @@ async fn native_auth_forms_contract(pg: bool) {
         let (status, _, body) = get(&router, path, Some(&session)).await;
         assert_eq!(status, StatusCode::OK, "{path}");
         for provider in ["gitlab", "discord", "bitbucket"] {
-            let link = format!("href=\"/api/auth/oauth/{provider}\"");
+            let link = format!("href=\"/login/oauth/{provider}\"");
             assert!(body.contains(&link), "{path} missing {provider}");
         }
         for provider in ["github", "google"] {
-            let link = format!("href=\"/api/auth/oauth/{provider}\"");
+            let link = format!("href=\"/login/oauth/{provider}\"");
             assert!(
                 !body.contains(&link),
                 "{path} shows unconfigured {provider}"

@@ -1,0 +1,17 @@
+# https://github.com/actions/github-script/tree/f28e40c7f34bde8b3046d885e986cb6290c5673b
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: "core.setOutput('answer', 6 * 7); return 'hello';"
+      - name: Assert documented effect
+        env:
+          ANSWER: ${{ steps.action.outputs.answer }}
+        run: |
+          test "$ANSWER" = 42
+          echo compat:ok

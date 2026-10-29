@@ -1,0 +1,644 @@
+//! File and stdout commands following actions/runner's `Runner.Worker/FileCommandManager.cs` and `ActionCommandManager.cs`.
+use crate::progress::{Event, Update};
+use anyhow::{bail, Result};
+use base64::Engine;
+use std::collections::BTreeMap;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+    Arc, Mutex,
+};
+
+#[derive(Clone, Default)]
+pub(super) struct Masker {
+    masks: Arc<Mutex<Vec<String>>>,
+    /// Bytes of the masks that steps asked for. The job's own secrets do not count.
+    requested: Arc<AtomicUsize>,
+    /// Set when a requested mask did not fit, after which no output is shown.
+    hidden: Arc<AtomicBool>,
+}
+
+/// The masks a workflow's steps add are held in memory, so they may total this much.
+const MAX_MASK_BYTES: usize = 1 << 20;
+
+impl Masker {
+    /// Adds a mask a step asked for, unless the steps' masks would pass their budget.
+    pub fn add_requested(&self, value: &str) -> bool {
+        let total = self
+            .requested
+            .fetch_add(value.len(), Ordering::Relaxed)
+            .saturating_add(value.len());
+        if total > MAX_MASK_BYTES {
+            return false;
+        }
+        self.add(value);
+        true
+    }
+
+    /// Hides all later output. A value whose mask was refused could otherwise be printed.
+    pub fn hide_all(&self) {
+        self.hidden.store(true, Ordering::Relaxed);
+    }
+
+    pub fn add(&self, value: &str) {
+        let mut masks = self.masks.lock().unwrap_or_else(|error| error.into_inner());
+        for part in std::iter::once(value).chain(value.lines()) {
+            if part.trim().is_empty() {
+                continue;
+            }
+            let json = serde_json::to_string(part).unwrap_or_default();
+            let json = json
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .unwrap_or(part);
+            let uri: String = part
+                .bytes()
+                .map(|byte| {
+                    if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+                        (byte as char).to_string()
+                    } else {
+                        format!("%{byte:02X}")
+                    }
+                })
+                .collect();
+            for encoded in [
+                part.to_owned(),
+                json.to_owned(),
+                uri,
+                base64::engine::general_purpose::STANDARD.encode(part),
+            ] {
+                if !masks.contains(&encoded) {
+                    masks.push(encoded);
+                }
+            }
+        }
+        masks.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    }
+
+    pub fn mask(&self, value: &str) -> String {
+        if self.hidden.load(Ordering::Relaxed) {
+            return "***".into();
+        }
+        let mut value = value.to_owned();
+        let masks = self.masks.lock().unwrap_or_else(|error| error.into_inner());
+        for mask in masks.iter() {
+            value = value.replace(mask, "***");
+        }
+        value
+    }
+
+    pub fn contains(&self, value: &str) -> bool {
+        self.mask(value) != value
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct Progress {
+    pub nonce: Arc<str>,
+    pub job: String,
+    pub variant: u32,
+    pub step: Arc<AtomicU32>,
+    pub active: Arc<Mutex<Option<(u32, std::time::Instant)>>>,
+}
+impl Progress {
+    pub fn emit(&self, update: Update) {
+        let at_ms = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock is before the epoch")
+                .as_millis(),
+        )
+        .expect("system clock is out of range");
+        let event = Event {
+            job: self.job.clone(),
+            variant: self.variant,
+            at_ms,
+            update,
+        };
+        println!(
+            "::codeyard-progress::{}:{}",
+            self.nonce,
+            serde_json::to_string(&event).expect("runner progress is serializable")
+        );
+    }
+}
+/// The longest prefix of `text` within `max` bytes, cut on a character boundary.
+fn bounded(text: &str, max: usize) -> String {
+    let mut end = text.len().min(max);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_owned()
+}
+
+#[derive(Clone, Default)]
+pub(super) struct Log {
+    pub prefix: String,
+    pub masker: Masker,
+    pub progress: Option<Progress>,
+}
+
+impl Log {
+    pub fn emit(&self, update: Update) {
+        if let Some(progress) = &self.progress {
+            progress.emit(update);
+        }
+    }
+    pub fn start_step(&self, number: u32, name: &str) {
+        if let Some(progress) = &self.progress {
+            progress.step.store(number, Ordering::Relaxed);
+            *progress
+                .active
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) =
+                Some((number, std::time::Instant::now()));
+            progress.emit(Update::StepStarted {
+                number,
+                name: self.masker.mask(name),
+            });
+        }
+    }
+    pub fn finish_step(
+        &self,
+        number: u32,
+        conclusion: crate::progress::Conclusion,
+        started: std::time::Instant,
+    ) {
+        if let Some(progress) = &self.progress {
+            progress
+                .active
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take();
+            progress.emit(Update::StepFinished {
+                number,
+                conclusion,
+                duration_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+            });
+            progress.step.store(0, Ordering::Relaxed);
+        }
+    }
+    pub fn interrupt_step(&self, conclusion: crate::progress::Conclusion) {
+        let active = self.progress.as_ref().and_then(|progress| {
+            progress
+                .active
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take()
+        });
+        if let Some((number, started)) = active {
+            self.finish_step(number, conclusion, started);
+        }
+    }
+    pub fn line(&self, text: &str) {
+        let text = self.masker.mask(text);
+        let prefix = self.masker.mask(&self.prefix);
+        for line in text.split('\n') {
+            if let Some(progress) = &self.progress {
+                let number = progress.step.load(Ordering::Relaxed);
+                let step = (number > 0).then_some(number);
+                let mut rest = line;
+                loop {
+                    let mut end = rest.len().min(512);
+                    while !rest.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    progress.emit(Update::Log {
+                        step,
+                        text: format!("[{prefix}] {}", &rest[..end]),
+                    });
+                    rest = &rest[end..];
+                    if rest.is_empty() {
+                        break;
+                    }
+                }
+            } else {
+                println!("[{prefix}] {line}");
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct Commands {
+    stopped: Option<String>,
+    workspace: std::path::PathBuf,
+    pub matchers: super::matchers::Matchers,
+    pub failed: bool,
+    pub outputs: BTreeMap<String, String>,
+    pub env: BTreeMap<String, String>,
+    pub paths: Vec<String>,
+    pub state: BTreeMap<String, String>,
+}
+
+fn unescape(value: &str) -> String {
+    value
+        .replace("%0D", "\r")
+        .replace("%0A", "\n")
+        .replace("%25", "%")
+}
+
+impl Commands {
+    pub fn new(workspace: std::path::PathBuf, matchers: super::matchers::Matchers) -> Self {
+        Self {
+            workspace,
+            matchers,
+            ..Self::default()
+        }
+    }
+
+    fn output(&mut self, log: &Log, line: &str, literal: bool) {
+        if literal {
+            log.line(&format!("| {line}"));
+        } else {
+            log.line(line);
+        }
+        match self.matchers.matches(&log.masker.mask(line)) {
+            Ok(Some(issue)) => {
+                if let Some(command) = issue.command(&self.workspace, &log.masker) {
+                    log.line(&command);
+                    self.command_line(log, &command, false, true);
+                }
+            }
+            Ok(None) => {}
+            Err(_) => log.line("Warning: Problem matcher exceeded its regexp limit"),
+        }
+    }
+
+    pub fn line(&mut self, log: &Log, line: &str, allow_unsafe: bool) {
+        self.command_line(log, line, allow_unsafe, false);
+    }
+
+    /// `from_matcher` marks a command the runner generated for a problem matcher. Stop-commands
+    /// does not hold those back, and they take the same annotation path as `::error::`.
+    fn command_line(&mut self, log: &Log, line: &str, allow_unsafe: bool, from_matcher: bool) {
+        let command = line
+            .find("::")
+            .and_then(|start| line[start + 2..].split_once("::"))
+            .map(|(header, data)| (header, data, false))
+            .or_else(|| {
+                line.find("##[")
+                    .and_then(|start| line[start + 3..].split_once(']'))
+                    .map(|(header, data)| (header, data, true))
+            });
+        let Some((header, data, legacy)) = command else {
+            self.output(log, line, self.stopped.is_some());
+            return;
+        };
+        if let Some(token) = self.stopped.as_ref().filter(|_| !from_matcher) {
+            if header == token {
+                self.stopped = None;
+            } else {
+                self.output(log, line, true);
+            }
+            return;
+        }
+        let decode = |value: &str| {
+            if legacy {
+                unescape(&value.replace("%3B", ";").replace("%5D", "]"))
+            } else {
+                unescape(value)
+            }
+        };
+        let (name, properties) = header.split_once(' ').unwrap_or((header, ""));
+        let properties: BTreeMap<_, _> = properties
+            .split(if legacy { ';' } else { ',' })
+            .filter_map(|part| {
+                let (key, value) = part.split_once('=')?;
+                let value = if legacy {
+                    decode(value)
+                } else {
+                    unescape(&value.replace("%3A", ":").replace("%2C", ","))
+                };
+                Some((key.to_ascii_lowercase(), value))
+            })
+            .collect();
+        let data = decode(data);
+        let name = name.to_ascii_lowercase();
+        match name.as_str() {
+            "add-mask" => {
+                if !log.masker.add_requested(&data) {
+                    self.failed = true;
+                    log.line(
+                        "Error: The job added more masks than the runner holds, so its later output is hidden",
+                    );
+                    log.masker.hide_all();
+                }
+            }
+            "stop-commands" => {
+                if data.is_empty()
+                    || [
+                        "add-mask",
+                        "stop-commands",
+                        "pause-logging",
+                        "error",
+                        "warning",
+                        "notice",
+                        "debug",
+                        "group",
+                        "endgroup",
+                        "add-matcher",
+                        "remove-matcher",
+                    ]
+                    .contains(&data.as_str())
+                {
+                    self.failed = true;
+                    log.line("Error: Invalid stop-commands token");
+                } else {
+                    if data.len() > 6 && !log.masker.add_requested(&data) {
+                        self.failed = true;
+                        log.line(
+                            "Error: The job added more masks than the runner holds, so its later output is hidden",
+                        );
+                        log.masker.hide_all();
+                    }
+                    self.stopped = Some(data);
+                }
+            }
+            "set-env" | "add-path" if !allow_unsafe => {
+                self.failed = true;
+                log.line(&format!("Error: The `{name}` command is disabled. Please upgrade to using Environment Files."));
+            }
+            "set-env" => {
+                if let Some(key) = properties.get("name") {
+                    if !key.eq_ignore_ascii_case("NODE_OPTIONS") {
+                        self.env.insert(key.clone(), data);
+                    }
+                }
+            }
+            "add-path" => self.paths.push(data),
+            // The upstream runner still accepts set-output, with a deprecation warning.
+            "set-output" => {
+                log.line("Warning: The `set-output` command is deprecated. Please upgrade to using Environment Files.");
+                if let Some(key) = properties.get("name") {
+                    self.outputs.insert(key.clone(), data);
+                }
+            }
+            "add-matcher" | "remove-matcher" => {
+                let result = if name.eq_ignore_ascii_case("add-matcher") {
+                    self.matchers.add(&self.workspace.join(&data))
+                } else if let Some(owner) = properties.get("owner") {
+                    self.matchers.remove(owner);
+                    Ok(())
+                } else {
+                    self.matchers.remove_file(&self.workspace.join(&data))
+                };
+                if let Err(error) = result {
+                    self.failed = true;
+                    log.line(&format!("Error: {error:#}"));
+                }
+            }
+            "error" | "warning" | "notice" => {
+                let start_line = properties
+                    .get("line")
+                    .and_then(|line| line.parse::<u32>().ok())
+                    .filter(|line| *line > 0)
+                    .unwrap_or(1);
+                let end_line = properties
+                    .get("endline")
+                    .and_then(|line| line.parse::<u32>().ok())
+                    .filter(|line| *line >= start_line)
+                    .unwrap_or(start_line);
+                // The core reads each progress line at most 16 KiB, and JSON escaping can grow a field six-fold.
+                log.emit(Update::Annotation {
+                    annotation: crate::progress::Annotation {
+                        path: bounded(
+                            &log.masker
+                                .mask(properties.get("file").map_or("", String::as_str)),
+                            256,
+                        ),
+                        start_line,
+                        end_line,
+                        annotation_level: match name.as_str() {
+                            "error" => "failure",
+                            "warning" => "warning",
+                            _ => "notice",
+                        }
+                        .into(),
+                        message: bounded(&log.masker.mask(&data), 1536),
+                        title: properties
+                            .get("title")
+                            .map(|title| bounded(&log.masker.mask(title), 256)),
+                    },
+                });
+                let properties = properties
+                    .iter()
+                    .map(|(key, value)| {
+                        format!("{key}={}", super::matchers::escape(&log.masker.mask(value)))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let properties = if properties.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {properties}")
+                };
+                // A problem matcher's command is already in the log, verbatim. Printing it again
+                // would reorder its properties.
+                if !from_matcher {
+                    log.line(&format!(
+                        "::{name}{properties}::{}",
+                        super::matchers::escape_data(&log.masker.mask(&data))
+                    ));
+                }
+            }
+            "debug" => log.line(&format!("debug: {data}")),
+            "group" => log.line(&format!(
+                "::group::{}",
+                super::matchers::escape_data(&log.masker.mask(&data))
+            )),
+            "endgroup" => log.line("::endgroup::"),
+            "save-state" => {
+                log.line("Warning: The `save-state` command is deprecated. Use GITHUB_STATE.");
+                if let Some(key) = properties.get("name") {
+                    self.state.insert(key.clone(), data);
+                }
+            }
+            _ => self.output(log, line, false),
+        }
+    }
+}
+
+pub(super) fn pairs(text: &str) -> Result<BTreeMap<String, String>> {
+    let mut result = BTreeMap::new();
+    let mut lines = text.split_inclusive('\n');
+    while let Some(raw) = lines.next() {
+        let line = raw.strip_suffix('\n').unwrap_or(raw).trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+        let equals = line.find('=');
+        let heredoc = line.find("<<");
+        if let Some(index) = equals.filter(|index| heredoc.is_none_or(|h| *index < h)) {
+            if index == 0 {
+                bail!("Invalid format. Name must not be empty");
+            }
+            result.insert(line[..index].into(), line[index + 1..].into());
+        } else if let Some(index) = heredoc {
+            let key = &line[..index];
+            let delimiter = &line[index + 2..];
+            if key.is_empty() || delimiter.is_empty() {
+                bail!("Invalid format. Name and delimiter must not be empty");
+            }
+            let mut value = String::new();
+            loop {
+                let next = lines.next().ok_or_else(|| {
+                    anyhow::anyhow!("Invalid value. Matching delimiter not found '{delimiter}'")
+                })?;
+                if next.trim_end_matches('\n').trim_end_matches('\r') == delimiter {
+                    break;
+                }
+                if !next.ends_with('\n') {
+                    bail!("Invalid value. EOF marker missing new line.");
+                }
+                value.push_str(next);
+            }
+            if value.ends_with('\n') {
+                value.pop();
+                if value.ends_with('\r') {
+                    value.pop();
+                }
+            }
+            result.insert(key.into(), value);
+        } else {
+            bail!("Invalid environment file format");
+        }
+    }
+    Ok(result)
+}
+
+/// Split shell option strings without interpreting substitutions or executing a shell.
+pub(super) fn words(text: &str) -> Result<Vec<String>> {
+    let mut result = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut started = false;
+    for ch in text.chars() {
+        if escaped {
+            word.push(ch);
+            escaped = false;
+        } else if ch == '\\' && quote != Some('\'') {
+            escaped = true;
+            started = true;
+        } else if quote == Some(ch) {
+            quote = None;
+        } else if quote.is_none() && (ch == '\'' || ch == '"') {
+            quote = Some(ch);
+            started = true;
+        } else if quote.is_none() && ch.is_whitespace() {
+            if started {
+                result.push(std::mem::take(&mut word));
+                started = false;
+            }
+        } else {
+            word.push(ch);
+            started = true;
+        }
+    }
+    if escaped || quote.is_some() {
+        bail!("Unterminated quote in command options");
+    }
+    if started {
+        result.push(word);
+    }
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn poisoned_mask_storage_never_disables_redaction() {
+        let masker = Masker::default();
+        masker.add("private-credential");
+        let other = masker.clone();
+        assert!(std::thread::spawn(move || {
+            let _guard = other.masks.lock().unwrap();
+            panic!("simulated owner failure")
+        })
+        .join()
+        .is_err());
+        assert_eq!(masker.mask("private-credential"), "***");
+        masker.add("another-credential");
+        assert_eq!(masker.mask("another-credential"), "***");
+    }
+    #[test]
+    fn environment_files() {
+        let values = pairs("a=one=two\nb<<EOF\nline 1\nline 2\nEOF\nempty<<X\nX\n").unwrap();
+        assert_eq!(values["a"], "one=two");
+        assert_eq!(values["b"], "line 1\nline 2");
+        assert_eq!(values["empty"], "");
+        assert!(pairs("x<<EOF\nno end").is_err());
+        assert!(pairs("broken").is_err());
+    }
+    #[test]
+    fn masks_and_commands() {
+        let masker = Masker::default();
+        masker.add("long secret\nshort");
+        assert_eq!(masker.mask("long secret and short"), "*** and ***");
+        let log = Log {
+            prefix: "test".into(),
+            masker,
+            ..Default::default()
+        };
+        let mut commands = Commands::default();
+        commands.line(&log, "::add-mask::new%25secret", false);
+        assert_eq!(log.masker.mask("new%secret"), "***");
+        commands.line(&log, "::stop-commands::token", false);
+        commands.line(&log, "::set-output name=x::bad", false);
+        assert!(commands.outputs.is_empty());
+        commands.line(&log, "::token::", false);
+        commands.line(&log, "::set-output name=x::good%0Avalue", false);
+        assert_eq!(commands.outputs["x"], "good\nvalue");
+        commands.line(&log, "::set-env name=x::bad", false);
+        assert!(commands.failed);
+    }
+    #[test]
+    fn legacy_matchers_obey_escaping_stopped_commands_and_unsafe_command_guards() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("matcher];.json"),
+            r#"{"problemMatcher":[{"owner":"legacy;]","pattern":[{"regexp":"(diagnostic)","message":1}]}]}"#,
+        )
+        .unwrap();
+        let log = Log {
+            prefix: "test".into(),
+            masker: Masker::default(),
+            ..Default::default()
+        };
+        let mut commands = Commands::new(temp.path().into(), Default::default());
+        commands.line(&log, "##[add-matcher]matcher%5D%3B.json", false);
+        assert!(!commands.failed);
+        assert!(commands.matchers.matches("diagnostic").unwrap().is_some());
+        commands.line(&log, "::stop-commands::paused", false);
+        commands.line(&log, "##[remove-matcher OWNER=legacy%3B%5D;]", false);
+        assert!(commands.matchers.matches("diagnostic").unwrap().is_some());
+        commands.line(&log, "::paused::", false);
+        commands.line(&log, "##[remove-matcher OWNER=legacy%3B%5D;]", false);
+        assert!(commands.matchers.matches("diagnostic").unwrap().is_none());
+        commands.line(&log, "##[set-env name=X;]blocked", false);
+        assert!(commands.failed);
+        assert!(commands.env.is_empty());
+    }
+
+    #[test]
+    fn legacy_save_state_is_kept_for_the_action() {
+        let log = Log {
+            prefix: "test".into(),
+            masker: Masker::default(),
+            ..Default::default()
+        };
+        let mut commands = Commands::default();
+        commands.line(&log, "::save-state name=resource::abc", false);
+        assert_eq!(commands.state["resource"], "abc");
+    }
+
+    #[test]
+    fn splits_options() {
+        assert_eq!(
+            words("--label 'a=b c' --memory=2g \"\"").unwrap(),
+            ["--label", "a=b c", "--memory=2g", ""]
+        );
+        assert!(words("'unfinished").is_err());
+    }
+}

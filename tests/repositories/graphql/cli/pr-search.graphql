@@ -1,0 +1,18 @@
+fragment pr on PullRequest{number,title,state,url,headRefName,headRepositoryOwner{id,login,...on User{name}},isCrossRepository,isDraft,createdAt}
+		query PullRequestSearch(
+			$q: String!,
+			$type: SearchType!,
+			$limit: Int!,
+			$endCursor: String,
+		) {
+			search(query: $q, type: $type, first: $limit, after: $endCursor) {
+				issueCount
+				nodes {
+					...pr
+				}
+				pageInfo {
+					hasNextPage
+					endCursor
+				}
+			}
+		}

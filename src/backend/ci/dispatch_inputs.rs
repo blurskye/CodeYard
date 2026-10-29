@@ -83,7 +83,9 @@ pub fn validate_inputs(
         if input.required && submitted_value.is_some_and(String::is_empty) {
             return Err("a required workflow input is empty");
         }
-        let given = submitted_value.filter(|value| !value.is_empty());
+        // An explicit empty text value is the value. Typed inputs read an empty field as left out.
+        let given =
+            submitted_value.filter(|value| !value.is_empty() || input.kind == InputKind::Text);
         match given.or(input.default.as_ref()) {
             Some(value) => {
                 if input.required && value.is_empty() {
@@ -100,7 +102,9 @@ pub fn validate_inputs(
 }
 
 fn check_value(input: &DispatchInput, value: &str) -> Result<(), &'static str> {
-    if value.len() > MAX_VALUE_BYTES || value.chars().any(char::is_control) {
+    // Text can span lines, as a YAML block default or a pasted note does.
+    let whitespace = |c: char| input.kind == InputKind::Text && matches!(c, '\n' | '\r' | '\t');
+    if value.len() > MAX_VALUE_BYTES || value.chars().any(|c| c.is_control() && !whitespace(c)) {
         return Err("workflow input value is too long or contains control characters");
     }
     match input.kind {
@@ -155,9 +159,10 @@ mod tests {
             validate_inputs(&declared, &submitted(&[("debug", "true")])).unwrap(),
             submitted(&[("version", "1.0"), ("debug", "true")])
         );
+        // An explicit empty text value is kept; defaults apply only to inputs left out.
         assert_eq!(
             validate_inputs(&declared, &submitted(&[("version", "")])).unwrap(),
-            submitted(&[("version", "1.0"), ("debug", "false")])
+            submitted(&[("version", ""), ("debug", "false")])
         );
     }
 
@@ -249,5 +254,15 @@ mod tests {
         let mut count = input("count", InputKind::Number);
         count.default = Some("many".into());
         assert!(check_declaration(&count).is_err());
+    }
+
+    #[test]
+    fn text_inputs_can_span_lines() {
+        let mut notes = input("notes", InputKind::Text);
+        notes.default = Some("first line\r\n\tsecond line\n".into());
+        assert!(check_declaration(&notes).is_ok());
+        let declared = [notes];
+        assert!(validate_inputs(&declared, &submitted(&[("notes", "a\nb")])).is_ok());
+        assert!(validate_inputs(&declared, &submitted(&[("notes", "a\0b")])).is_err());
     }
 }

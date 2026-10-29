@@ -232,20 +232,19 @@ pub async fn get_blob(
 const PREVIEW_BYTES: u64 = 256 * 1024;
 const PREVIEW_LINES: usize = 2000;
 
-fn limit_lines(mut window: TextWindow) -> TextWindow {
-    let bytes = window.text.as_bytes();
+/// The source bytes up to the end of the preview's last line. Lines are cut before text
+/// conversion, which can change the length, so the next page starts at the right byte.
+fn limit_lines(bytes: &[u8]) -> &[u8] {
     let mut lines = 0;
     for (index, byte) in bytes.iter().enumerate() {
         if *byte == b'\n' || (*byte == b'\r' && bytes.get(index + 1) != Some(&b'\n')) {
             lines += 1;
             if lines == PREVIEW_LINES {
-                window.text.truncate(index + 1);
-                window.end = window.start + window.text.len() as u64;
-                break;
+                return &bytes[..=index];
             }
         }
     }
-    window
+    bytes
 }
 
 /// Scan bounded chunks, keeping only the window to display and its global line number.
@@ -259,6 +258,9 @@ async fn preview_at(
     let mut position = 0;
     let mut line = 1;
     let mut start = offset;
+    // Lines end at LF, CRLF or a lone CR, as in `limit_lines`. A CR that ends a chunk is a
+    // break unless the next chunk starts with LF.
+    let mut pending_cr = false;
     loop {
         if target.is_none() && position >= offset || target == Some(line) {
             break;
@@ -285,9 +287,23 @@ async fn preview_at(
             start = chunk.size;
             break;
         }
+        let bytes = &chunk.bytes;
         let mut found = false;
-        for (index, byte) in chunk.bytes.iter().enumerate() {
-            if *byte == b'\n' {
+        if std::mem::take(&mut pending_cr) && bytes.first() != Some(&b'\n') {
+            line += 1;
+            if target == Some(line) {
+                start = position;
+                found = true;
+            }
+        }
+        for (index, byte) in bytes.iter().enumerate() {
+            if found {
+                break;
+            }
+            let lone_cr = *byte == b'\r' && bytes.get(index + 1) != Some(&b'\n');
+            if lone_cr && index + 1 == bytes.len() {
+                pending_cr = true;
+            } else if *byte == b'\n' || lone_cr {
                 line += 1;
                 if target == Some(line) {
                     start = position + index as u64 + 1;
@@ -304,6 +320,10 @@ async fn preview_at(
             start = chunk.size;
             break;
         }
+    }
+    // The previous page ended after that CR, so it closed a line.
+    if pending_cr && target.is_none() {
+        line += 1;
     }
     let chunk = store
         .blob_range(
@@ -382,7 +402,7 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
     let (start, end, content) = if binary {
         (start, start + bytes.len() as u64, String::new())
     } else {
-        let window = limit_lines(text_window(start, &bytes, size));
+        let window = text_window(start, limit_lines(&bytes), size);
         (window.start, window.end, window.text)
     };
     let on_branch = is_branch(loaded, &resolved.reference);
@@ -438,7 +458,22 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         permalink: String::new(),
         folders: Vec::new(),
         latest_commit: None,
+        codeowners_errors: None,
+        codeowners_notice: None,
     };
+    if crate::backend::repositories::code_owners::is_codeowners_file(&page.path) {
+        if page.truncated || page.binary {
+            page.codeowners_notice = Some(
+                "CODEOWNERS diagnostics are unavailable for binary files or partial previews."
+                    .to_owned(),
+            );
+        } else {
+            match crate::backend::repositories::code_owners::diagnose(&ctx.state.pool,&loaded.repository,&page.path,&page.content).await {
+            Ok(errors)=>page.codeowners_errors=Some(errors.into_iter().map(|error|view::blob::CodeOwnerError {line:error.line,kind:error.kind}).collect()),
+            Err(_)=>page.codeowners_notice=Some("CODEOWNERS diagnostics are unavailable; the file may exceed its analysis limits.".to_owned()),
+        }
+        }
+    }
     let (folders, latest_commit, permalink) =
         file_context(ctx, loaded, &store, &head.sha, &page.path).await?;
     page.folders = folders;

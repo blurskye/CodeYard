@@ -13,7 +13,6 @@ use crate::backend::{
 };
 use crate::webui::pages::discovery::{CodeHit, CommitHit, SearchScan};
 use futures_util::{stream, StreamExt};
-use std::time::Duration;
 use tokio::time::{timeout_at, Instant};
 
 /// Hits one repository shows in a walk over several repositories. A repository with more says so.
@@ -22,8 +21,6 @@ const HITS_PER_REPOSITORY: usize = 5;
 const STEP: i64 = 50;
 /// Repository searches a request runs at once. Results are kept in walk order.
 const CONCURRENCY: usize = 4;
-/// Allow the primary and one replica their full transport admission budgets, plus search time.
-const TIME_BUDGET: Duration = crate::backend::cluster::DIAL_TIMEOUT.saturating_mul(7);
 /// Repository bytes one request may search, summed from the stored sizes. The first repository
 /// is always searched, so one larger than the budget can still be found.
 const BYTE_BUDGET: i64 = 512 * 1024 * 1024;
@@ -146,8 +143,16 @@ async fn page_hits(
             Hit::Commit(CommitHit {
                 owner: owner.to_owned(),
                 repo: repo.name.clone(),
-                summary: commit.message.lines().next().unwrap_or_default().to_owned(),
-                author: commit.author_name,
+                // Display only: a huge subject must not swell the page model.
+                summary: commit
+                    .message
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(300)
+                    .collect(),
+                author: commit.author_name.chars().take(100).collect(),
                 date: chrono::DateTime::from_timestamp(commit.timestamp, 0)
                     .map(|time| time.format("%Y-%m-%d").to_string())
                     .unwrap_or_default(),
@@ -216,7 +221,7 @@ async fn repository_page(
         Err(_) => return Err(DiscoveryReadError::Unavailable),
     }
     let store = repo_store(&repo, state.cluster.as_ref());
-    let deadline = Instant::now() + TIME_BUDGET;
+    let deadline = Instant::now() + state.search_time_budget;
     // One hit past the page shows that an older page has hits.
     let outcome = timeout_at(
         deadline,
@@ -267,7 +272,7 @@ async fn walk(
     skip: usize,
 ) -> Result<ContentPage, DiscoveryReadError> {
     let mut content = ContentPage::default();
-    let deadline = Instant::now() + TIME_BUDGET;
+    let deadline = Instant::now() + state.search_time_budget;
     let end = skip.saturating_add(RESULTS_PER_PAGE);
     let mut position = 0usize;
     let mut kept = Vec::new();

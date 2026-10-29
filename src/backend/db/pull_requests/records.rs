@@ -4,16 +4,56 @@ use crate::backend::db::models::PullRequest;
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
+native_operation!(crate::backend::db::postgres::pull_requests::records::commit_association_candidates,
+    crate::backend::db::sqlite::pull_requests::records::commit_association_candidates,
+    fn commit_association_candidates(pool: &DbPool, repo: i64, before: i64, limit: i64) -> Result<Vec<PullRequest>>);
+
 #[derive(Debug, thiserror::Error)]
 #[error("duplicate_open_pull_request")]
 pub struct DuplicateOpenPullRequest {
     pub number: i32,
 }
 
+#[derive(sqlx::FromRow)]
+pub struct StackMetadata {
+    pub id: i64,
+    pub repo_id: i64,
+    pub number: i32,
+    pub base_branch: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+native_operation!(crate::backend::db::postgres::pull_requests::records::list_pull_request_stacks,
+    crate::backend::db::sqlite::pull_requests::records::list_pull_request_stacks,
+    fn list_pull_request_stacks(pool: &DbPool, repo_id: i64, pull_number: Option<i32>, limit: i64, offset: i64) -> Result<Vec<StackMetadata>>);
+native_operation!(crate::backend::db::postgres::pull_requests::records::get_pull_request_stack,
+    crate::backend::db::sqlite::pull_requests::records::get_pull_request_stack,
+    fn get_pull_request_stack(pool: &DbPool, repo_id: i64, number: i32) -> Result<Option<StackMetadata>>);
+native_operation!(crate::backend::db::postgres::pull_requests::records::unstack_named_stack,
+    crate::backend::db::sqlite::pull_requests::records::unstack_named_stack,
+    fn unstack_named_stack(pool: &DbPool, actor_id: i64, repo_id: i64, stack_id: i64) -> Result<Option<Vec<PullRequest>>>);
+native_operation!(crate::backend::db::postgres::pull_requests::records::join_pull_request_stack_batch,
+    crate::backend::db::sqlite::pull_requests::records::join_pull_request_stack_batch,
+    fn join_pull_request_stack_batch(pool: &DbPool, actor_id: i64, repo_id: i64, root: i64, pulls: &[i64], creating: bool) -> Result<StackJoin>);
+
+#[derive(Debug, thiserror::Error)]
+pub enum IssueConversionRefusal {
+    #[error("Issue not found or already converted")]
+    Missing,
+    #[error("The issue state or metadata cannot be converted")]
+    Invalid,
+    #[error("Unlock the issue before converting it")]
+    Locked,
+    #[error("This discussion number already belongs to a pull request")]
+    NumberInUse,
+}
+
 pub struct NewPullRequest<'a> {
     pub repo_id: i64,
     pub head_repo_id: Option<i64>,
+    /// The requesting actor; conversion retains the existing issue's authorship.
     pub author_id: i64,
+    pub issue: Option<i32>,
     pub title: &'a str,
     pub body: &'a str,
     pub head_branch: &'a str,
@@ -21,6 +61,16 @@ pub struct NewPullRequest<'a> {
     pub base_branch: &'a str,
     pub base_sha: &'a str,
     pub is_draft: bool,
+    pub maintainer_can_modify: bool,
+}
+
+/// Only a personal fork's owner can delegate writes; the same-repository flag grants no new access.
+pub fn can_grant_maintainer_edit(
+    actor: i64,
+    base: i64,
+    head: &crate::backend::db::models::Repository,
+) -> bool {
+    head.id == base || (head.owner_kind == "user" && head.owner_user_id == Some(actor))
 }
 
 /// The commits a pull request records for its branches. Comparing them with the
@@ -31,6 +81,7 @@ pub struct PullRequestRevisions {
     pub repo_id: i64,
     pub number: i32,
     pub author_id: i64,
+    pub head_publisher_id: Option<i64>,
     pub head_repo_id: Option<i64>,
     pub head_branch: String,
     pub head_sha: String,
@@ -64,6 +115,10 @@ pub struct BranchPullRequest {
 native_operation!(crate::backend::db::postgres::pull_requests::records::find_open_pull_request_from_branches,
     crate::backend::db::sqlite::pull_requests::records::find_open_pull_request_from_branches,
     fn find_open_pull_request_from_branches(pool: &DbPool, repo_id: i64, base: &str, head: &str) -> Result<Option<BranchPullRequest>>);
+native_operation!(crate::backend::db::postgres::pull_requests::records::merged_above,
+    crate::backend::db::sqlite::pull_requests::records::merged_above,
+    /// Whether a pull request stacked on `head_branch` was merged in the same merge commit.
+    fn merged_above(pool: &DbPool, repo_id: i64, merge_sha: &str, head_branch: &str) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::records::list_open_pull_requests_from_branches,
     crate::backend::db::sqlite::pull_requests::records::list_open_pull_requests_from_branches,
@@ -120,6 +175,10 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::mark_pul
     crate::backend::db::sqlite::pull_requests::records::mark_pull_request_ready,
     fn mark_pull_request_ready(pool: &DbPool, pr_id: i64, actor_id: i64, expected: Option<&str>) -> Result<ReadyOutcome>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::records::set_pull_request_draft,
+    crate::backend::db::sqlite::pull_requests::records::set_pull_request_draft,
+    fn set_pull_request_draft(pool: &DbPool, pr_id: i64, actor_id: i64, expected: Option<&str>, is_draft: bool) -> Result<ReadyOutcome>);
+
 native_operation!(crate::backend::db::postgres::pull_requests::records::create_pull_request,
     crate::backend::db::sqlite::pull_requests::records::create_pull_request,
     fn create_pull_request(pool: &DbPool, input: NewPullRequest<'_>) -> Result<PullRequest>);
@@ -131,6 +190,11 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::get_pull
     repo_id: i64,
     number: i32,
 ) -> Result<Option<PullRequest>>);
+
+// A converted issue keeps its discussion number and native source provenance.
+native_operation!(crate::backend::db::postgres::pull_requests::records::get_converted_pull_request,
+    crate::backend::db::sqlite::pull_requests::records::get_converted_pull_request,
+    fn get_converted_pull_request(pool: &DbPool, repo_id: i64, number: i32) -> Result<Option<PullRequest>>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::records::get_pull_request_by_id,
     crate::backend::db::sqlite::pull_requests::records::get_pull_request_by_id,
@@ -144,6 +208,10 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::list_rep
     filter: &ListFilter<'_>,
     limit: i64,
 ) -> Result<Vec<PullRequestListEntry>>);
+
+native_operation!(crate::backend::db::postgres::pull_requests::records::count_repo_pull_requests_by_state,
+    crate::backend::db::sqlite::pull_requests::records::count_repo_pull_requests_by_state,
+    fn count_repo_pull_requests_by_state(pool: &DbPool, repo_id: i64, filter: &ListFilter<'_>) -> Result<Vec<(String, i64)>>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::records::count_repo_pull_requests,
     crate::backend::db::sqlite::pull_requests::records::count_repo_pull_requests,
@@ -179,6 +247,12 @@ pub struct NewBase<'a> {
     pub sha: &'a str,
 }
 
+#[derive(Default)]
+pub struct PullRequestUpdate<'a> {
+    pub base: Option<NewBase<'a>>,
+    pub maintainer_can_modify: Option<bool>,
+}
+
 // A pull request in a stack cannot change its base, so a base change never touches a stack.
 native_operation!(crate::backend::db::postgres::pull_requests::records::update_pull_request,
     crate::backend::db::sqlite::pull_requests::records::update_pull_request,
@@ -186,7 +260,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::update_p
     pool: &DbPool,
     pr_id: i64,
     edit: crate::backend::db::discussions::DiscussionEdit<'_>,
-    base: Option<NewBase<'_>>,
+    changes: PullRequestUpdate<'_>,
 ) -> Result<Option<PullRequest>>);
 
 // After `from` merged into `to`, moves the open members of stack `stack_id` that are based on
@@ -385,11 +459,16 @@ mod tests {
             repo_id: 1,
             number: id as i32,
             author_id: 1,
+            head_publisher_id: Some(1),
             title: String::new(),
             body: String::new(),
             state: "open".to_owned(),
+            locked: false,
+            lock_reason: None,
             head_repo_id: Some(1),
             workflows_approved_sha: None,
+            maintainer_can_modify: false,
+            maintainer_edit_granted_by_id: None,
             stack_id,
             milestone_id: None,
             head_branch: head.to_owned(),
@@ -488,6 +567,38 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::mark_pul
     actor_id: i64,
     merge_sha: &str,
 ) -> Result<bool>);
+
+/// Filters applied before pagination in the REST pull request list.
+pub struct PullRequestFilter<'a> {
+    /// This projection requires a currently readable head, before pagination.
+    pub viewer_id: Option<i64>,
+    pub state: Option<&'a str>,
+    pub base: Option<&'a str>,
+    pub head_owner: Option<&'a str>,
+    pub head_branch: Option<&'a str>,
+    pub sort: &'a str,
+    pub ascending: bool,
+    pub month_ago: chrono::DateTime<chrono::Utc>,
+}
+
+impl PullRequestFilter<'_> {
+    pub(crate) fn order(&self) -> String {
+        let column = match self.sort {
+            "updated" => "p.updated_at".to_owned(),
+            "popularity" => format!(
+                "(SELECT COUNT(*) FROM pr_comments c WHERE c.pull_request_id = p.id {})",
+                crate::backend::db::discussions::SHOWN_PR_COMMENT
+            ),
+            _ => "p.created_at".to_owned(),
+        };
+        let direction = if self.ascending { "ASC" } else { "DESC" };
+        format!("{column} {direction}, p.id {direction}")
+    }
+}
+
+native_operation!(crate::backend::db::postgres::pull_requests::records::list_filtered_pull_requests,
+    crate::backend::db::sqlite::pull_requests::records::list_filtered_pull_requests,
+    fn list_filtered_pull_requests(pool: &DbPool, repo_id: i64, filter: &PullRequestFilter<'_>, offset: i64, limit: i64) -> Result<Vec<PullRequest>>);
 
 #[derive(Debug, Clone)]
 pub struct PullRequestListEntry {

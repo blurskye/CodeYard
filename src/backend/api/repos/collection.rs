@@ -24,6 +24,7 @@ use axum::{Form, Json};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+mod properties;
 pub async fn list_repos(
     State(state): State<Arc<AppState>>,
     Query(query): Query<PageQuery>,
@@ -61,6 +62,8 @@ pub struct CreateRepoRequest {
     pub is_private: bool,
     /// Select an organization target, never an arbitrary personal owner.
     pub owner_org_id: Option<i64>,
+    pub custom_properties:
+        Option<HashMap<String, Option<db::organizations::properties::PropertyValue>>>,
 }
 
 pub async fn create_repo(
@@ -89,10 +92,24 @@ pub async fn create_repo(
     };
     lifecycle::validate_description(req.description.as_deref().unwrap_or(""))
         .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
-    let repo = lifecycle::provision(
+    let properties = req
+        .custom_properties
+        .unwrap_or_default()
+        .into_iter()
+        .map(
+            |(property_name, value)| db::organizations::properties::ValueInput {
+                property_name,
+                value,
+            },
+        )
+        .collect::<Vec<_>>();
+    let repo = lifecycle::provision_with_properties(
         (&pool, state.cluster.as_ref()),
         &state.repos_path,
-        creation_owner,
+        lifecycle::CreationInput {
+            owner: creation_owner,
+            properties: &properties,
+        },
         &req.name,
         req.description.as_deref(),
         req.is_private,
@@ -186,13 +203,31 @@ fn template_choice(
     find(raw).map(Some).ok_or((None, message))
 }
 
+fn source_name(raw: &str) -> Result<Option<(&str, &str)>, CreationRefusal> {
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    match raw.split_once('/') {
+        Some((owner, name))
+            if raw.len() <= 2048
+                && !raw.chars().any(|ch| ch.is_control() || ch.is_whitespace())
+                && !owner.is_empty()
+                && !name.is_empty()
+                && !name.contains('/') =>
+        {
+            Ok(Some((owner, name)))
+        }
+        _ => Err((Some("source"), "Use owner/repository for the source.")),
+    }
+}
+
 fn decode_creation(
     form: &HashMap<String, String>,
 ) -> (
     NewRepositoryForm,
     Result<(Option<i64>, InitialFiles), CreationRefusal>,
 ) {
-    let values = NewRepositoryForm {
+    let mut values = NewRepositoryForm {
         name: draft_value(form, "name", 256),
         description: draft_value(form, "description", 4096),
         is_private: form
@@ -202,8 +237,14 @@ fn decode_creation(
         readme: form.contains_key("readme"),
         gitignore: draft_value(form, "gitignore", 64),
         license: draft_value(form, "license", 64),
+        source: draft_value(form, "source", 2048),
+        fork_source: form.contains_key("fork_source"),
+        all_branches: form.contains_key("all_branches"),
+        ..Default::default()
     };
+    let metadata_validity = properties::drafts(form, &mut values);
     let validity = (|| {
+        metadata_validity?;
         let target =
             selected_organization(form.get("owner_org_id").map(String::as_str).unwrap_or(""))
                 .map_err(|message| (None, message))?;
@@ -219,6 +260,9 @@ fn decode_creation(
             Some("public" | "private")
         ) {
             return Err((None, "Choose public or private visibility."));
+        }
+        if source_name(form.get("source").map(String::as_str).unwrap_or(""))?.is_some() {
+            return Ok((target, InitialFiles::default()));
         }
         let files = InitialFiles {
             readme: values.readme,
@@ -238,7 +282,7 @@ fn decode_creation(
     (values, validity)
 }
 
-async fn load_choices(
+pub(super) async fn load_choices(
     ctx: &PageContext,
     actor: i64,
     after: i64,
@@ -313,16 +357,41 @@ pub(crate) async fn new_repository(
     };
     // No unscoped selected-target read. Paged-away/forbidden/missing targets all
     // receive the same honest unavailable option, without a name or permission claim.
+    let mut form = NewRepositoryForm {
+        owner_org_id: target.map(|id| id.to_string()).unwrap_or_default(),
+        source: draft_value(&ctx.query, "source", 2048),
+        fork_source: ctx
+            .query
+            .get("fork_source")
+            .is_some_and(|value| value == "true"),
+        ..Default::default()
+    };
+    if let Some(org) =
+        target.filter(|id| choices.organizations.iter().any(|choice| choice.id == *id))
+    {
+        match db::organizations::settings::get(&ctx.state.pool, org).await {
+            Ok(Some(settings)) => {
+                form.is_private = settings.members_can_create_private_repositories
+                    && !settings.members_can_create_public_repositories
+            }
+            _ => {
+                return ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Repository owner policies are temporarily unavailable.",
+                )
+            }
+        }
+    }
+    if let Err(status) = properties::populate(&ctx, &choices, &mut form).await {
+        return ctx.error(status, "Repository properties are temporarily unavailable.");
+    }
     ctx.page_model(
         "Create a new repository",
         AppPage::Discovery(view::Page::NewRepository {
             owner: user.username.clone(),
             csrf_token: ctx.csrf_token.clone(),
             choices,
-            form: NewRepositoryForm {
-                owner_org_id: target.map(|id| id.to_string()).unwrap_or_default(),
-                ..Default::default()
-            },
+            form,
             error: None,
         }),
     )
@@ -330,7 +399,7 @@ pub(crate) async fn new_repository(
 
 async fn creation_error(
     ctx: &PageContext,
-    form: NewRepositoryForm,
+    mut form: NewRepositoryForm,
     page: (i64, i64),
     status: StatusCode,
     field: Option<&'static str>,
@@ -350,6 +419,9 @@ async fn creation_error(
             "Repository owner choices are temporarily unavailable. Your bounded draft is retained; reload before retrying.",
             RepositoryCreationChoices::default()),
     };
+    if let Err(status) = properties::populate(ctx, &choices, &mut form).await {
+        return ctx.error(status, "Repository properties are temporarily unavailable.");
+    }
     ctx.page_model_status(
         status,
         "Create a new repository",
@@ -383,7 +455,7 @@ pub(crate) async fn create_repository(
         Ok(user) => user,
         Err(response) => return response,
     };
-    let (values, validity) = decode_creation(&form);
+    let (mut values, validity) = decode_creation(&form);
     let page = match choice_page(&ctx.query) {
         Ok(page) => page,
         Err(message) => {
@@ -400,7 +472,7 @@ pub(crate) async fn create_repository(
     };
     if form
         .get("intent")
-        .is_some_and(|intent| intent == "page-owners")
+        .is_some_and(|intent| matches!(intent.as_str(), "page-owners" | "load-properties"))
     {
         let choices = match load_choices(&ctx, user.id, page.0, page.1).await {
             Ok(choices) => choices,
@@ -416,6 +488,23 @@ pub(crate) async fn create_repository(
                 .await
             }
         };
+        if form.get("intent").map(String::as_str) == Some("load-properties")
+            && selected_organization(form.get("owner_org_id").map(String::as_str).unwrap_or(""))
+                .is_err()
+        {
+            return creation_error(
+                &ctx,
+                values,
+                page,
+                StatusCode::BAD_REQUEST,
+                None,
+                "Choose a valid repository owner.",
+            )
+            .await;
+        }
+        if let Err(status) = properties::populate(&ctx, &choices, &mut values).await {
+            return ctx.error(status, "Repository properties are temporarily unavailable.");
+        }
         return ctx.page_model(
             "Create a new repository",
             AppPage::Discovery(view::Page::NewRepository {
@@ -445,6 +534,12 @@ pub(crate) async fn create_repository(
         )
         .await;
     }
+    let property_values = match properties::values(&ctx, user.id, target, &values).await {
+        Ok(values) => values,
+        Err((status, message)) => {
+            return creation_error(&ctx, values, page, status, None, message).await
+        }
+    };
     let creation_owner = db::repositories::creation::RepositoryCreationOwner {
         actor_id: user.id,
         target: match target {
@@ -452,18 +547,25 @@ pub(crate) async fn create_repository(
             None => db::repositories::creation::RepositoryTarget::Personal(user.id),
         },
     };
-    let result = lifecycle::provision_with_initial_files(
-        (&ctx.state.pool, ctx.state.cluster.as_ref()),
-        &ctx.state.repos_path,
-        creation_owner,
-        &values.name,
-        Some(&values.description)
-            .filter(|value| !value.is_empty())
-            .map(String::as_str),
-        values.is_private,
-        files,
-    )
-    .await;
+    let result = if !values.source.is_empty() {
+        create_selection(&ctx, creation_owner, &values, files, &property_values).await
+    } else {
+        lifecycle::provision_with_initial_properties(
+            (&ctx.state.pool, ctx.state.cluster.as_ref()),
+            &ctx.state.repos_path,
+            lifecycle::CreationInput {
+                owner: creation_owner,
+                properties: &property_values,
+            },
+            &values.name,
+            Some(&values.description)
+                .filter(|value| !value.is_empty())
+                .map(String::as_str),
+            values.is_private,
+            files,
+        )
+        .await
+    };
     match result {
         Ok(repo) => {
             match db::repositories::records::repository_owner_name(&ctx.state.pool, repo.id).await {
@@ -482,13 +584,83 @@ pub(crate) async fn create_repository(
             };
             let message = match status {
                 StatusCode::CONFLICT => "That owner already has a repository with this name, or the name is reserved. Choose another name.",
-                StatusCode::BAD_REQUEST => "The repository details are invalid. Please review them.",
+                StatusCode::BAD_REQUEST => error.message,
                 StatusCode::UNAUTHORIZED => "Your session expired. Log in before creating a repository.",
                 StatusCode::FORBIDDEN => "You do not have permission to create this repository for the selected owner.",
                 _ => "Repository creation could not be completed. Check your repositories before retrying; contact an administrator if the problem persists.",
             };
             creation_error(&ctx, values, page, status, None, message).await
         }
+    }
+}
+
+async fn create_selection(
+    ctx: &PageContext,
+    owner: db::repositories::creation::RepositoryCreationOwner,
+    values: &NewRepositoryForm,
+    files: InitialFiles,
+    properties: &[db::organizations::properties::ValueInput],
+) -> Result<db::models::Repository, lifecycle::StorageError> {
+    let description = Some(values.description.as_str()).filter(|value| !value.is_empty());
+    let source = source_name(&values.source).map_err(|(_, message)| lifecycle::StorageError {
+        kind: lifecycle::LifecycleFailure::Invalid,
+        message,
+    })?;
+    if let Some((source_owner, source_name)) = source {
+        let source =
+            db::repositories::records::get_repository(&ctx.state.pool, source_owner, source_name)
+                .await
+                .map_err(|_| lifecycle::StorageError {
+                    kind: lifecycle::LifecycleFailure::Unavailable,
+                    message: "Source repository is unavailable.",
+                })?
+                .ok_or(lifecycle::StorageError {
+                    kind: lifecycle::LifecycleFailure::Denied,
+                    message: "Source repository is unavailable.",
+                })?;
+        if values.fork_source {
+            lifecycle::fork_into(
+                &ctx.state.pool,
+                ctx.state.cluster.as_ref(),
+                &ctx.state.repos_path,
+                &ctx.state.notification_broadcaster,
+                lifecycle::ForkOptions {
+                    owner,
+                    name: Some(&values.name),
+                    default_branch_only: !values.all_branches,
+                    properties,
+                },
+                source.id,
+                source_owner,
+            )
+            .await
+        } else {
+            lifecycle::generate(
+                (&ctx.state.pool, ctx.state.cluster.as_ref()),
+                &ctx.state.repos_path,
+                owner,
+                source.id,
+                lifecycle::TemplateOptions {
+                    name: &values.name,
+                    description,
+                    private: values.is_private,
+                    all_branches: values.all_branches,
+                    properties,
+                },
+            )
+            .await
+        }
+    } else {
+        lifecycle::provision_with_initial_files(
+            (&ctx.state.pool, ctx.state.cluster.as_ref()),
+            &ctx.state.repos_path,
+            owner,
+            &values.name,
+            description,
+            values.is_private,
+            files,
+        )
+        .await
     }
 }
 

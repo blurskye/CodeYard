@@ -1,36 +1,13 @@
-use crate::backend::api::auth::errors::session_failure;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session;
-use crate::backend::api::http::session::{build_logout_cookie, extract_session_id};
-use crate::backend::api::user::responses::{AuthResponse, Fields};
+use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 use crate::backend::identity;
 use crate::webui::pages::account;
 use axum::extract::{Form, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
-use axum::response::{IntoResponse, Response};
-use axum::Json;
+use axum::response::Response;
 use std::sync::Arc;
-
-pub async fn logout(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
-    let id = extract_session_id(&headers);
-    identity::sessions::end_session(&state.pool, id.as_deref())
-        .await
-        .map_err(|_| session_failure())?;
-    Ok((
-        StatusCode::OK,
-        [(header::SET_COOKIE, build_logout_cookie())],
-        Json(AuthResponse {
-            success: true,
-            user: None,
-            message: Some("Logged out successfully".to_owned()),
-        }),
-    ))
-}
 
 pub(crate) async fn logout_get(
     State(state): State<Arc<AppState>>,

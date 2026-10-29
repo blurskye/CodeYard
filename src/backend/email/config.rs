@@ -133,14 +133,15 @@ pub fn from_lookup(lookup: &dyn Fn(&str) -> Option<String>) -> Result<Option<Smt
     };
     let from = Mailbox::from_str(&get("FROM"))
         .map_err(|_| "CODEYARD_SMTP_FROM must be an address or Name <address>.".to_owned())?;
-    let password = get("PASSWORD");
+    // The password is read as it is: spaces at its ends belong to it, and an empty value is none.
+    let password = lookup("CODEYARD_SMTP_PASSWORD").filter(|value| !value.is_empty());
     let config = SmtpConfig {
         host,
         port: parse_port(&get("PORT"), security)
             .map_err(|_| "CODEYARD_SMTP_PORT must be a number from 1 to 65535.".to_owned())?,
         security,
         username: get("USERNAME"),
-        password: (!password.is_empty()).then_some(password),
+        password,
         from_name: from.name.unwrap_or_default(),
         from_address: from.email.to_string(),
         reply_to: get("REPLY_TO"),
@@ -285,5 +286,25 @@ mod tests {
         .unwrap();
         assert_eq!(config.password.as_deref(), Some("hunter2"));
         assert!(!format!("{config:?}").contains("hunter2"));
+    }
+
+    #[test]
+    fn the_password_keeps_its_surrounding_spaces() {
+        let config = from_lookup(&env(&[
+            ("CODEYARD_SMTP_HOST", "mail.example.com"),
+            ("CODEYARD_SMTP_FROM", "noreply@example.com"),
+            ("CODEYARD_SMTP_PASSWORD", " secret "),
+        ]))
+        .unwrap()
+        .unwrap();
+        assert_eq!(config.password.as_deref(), Some(" secret "));
+        let empty = from_lookup(&env(&[
+            ("CODEYARD_SMTP_HOST", "mail.example.com"),
+            ("CODEYARD_SMTP_FROM", "noreply@example.com"),
+            ("CODEYARD_SMTP_PASSWORD", ""),
+        ]))
+        .unwrap()
+        .unwrap();
+        assert_eq!(empty.password, None);
     }
 }

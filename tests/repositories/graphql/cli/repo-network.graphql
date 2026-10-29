@@ -1,0 +1,24 @@
+
+	fragment repo on Repository {
+		id
+		databaseId
+		name
+		owner { login }
+		viewerPermission
+		defaultBranchRef {
+			name
+		}
+		isPrivate
+	}
+	query RepositoryNetwork {
+		viewer { login }
+		
+		repo_000: repository(owner: "graphql-alice", name: "proj") {
+			...repo
+			parent {
+				...repo
+			}
+		}
+		
+	}
+	

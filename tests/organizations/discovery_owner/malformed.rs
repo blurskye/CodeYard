@@ -81,11 +81,9 @@ pub async fn run(f: &Fixture) {
             sanitized(f, "/search?q=discovery", authenticated).await;
         }
         sanitized(f, "/", true).await;
-        for path in ["/api/repos", "/api/search?q=discovery"] {
-            let (status, error) = f.api(path).await;
-            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{error}");
-            assert_eq!(error["error"], "unavailable");
-        }
+        let (status, error) = f.api("/api/repos").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{error}");
+        assert_eq!(error["error"], "unavailable");
         f.database.restore_owner_check(repo).await;
     }
     // Valid kind/shape with an absent identity is rejected by current FKs; no
@@ -138,8 +136,5 @@ pub async fn run(f: &Fixture) {
     );
     sanitized(f, "/search?q=discovery&type=issues", false).await;
     sanitized(f, "/search?q=discovery&type=issues", true).await;
-    let (status, error) = f.api("/api/search?q=discovery&type=issues").await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{error}");
-    assert_eq!(error["error"], "unavailable");
     f.database.restore_owner_check(repo).await;
 }

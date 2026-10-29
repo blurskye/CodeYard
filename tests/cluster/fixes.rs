@@ -38,6 +38,9 @@ async fn oversized_invites_are_refused_before_persisting_tokens() {
 #[tokio::test]
 async fn service_startup_refuses_roles_outside_existing_enrollment() {
     let db = PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+        .await
+        .unwrap();
     let root = tempfile::tempdir().unwrap();
     let key = cluster::load_or_create(root.path()).unwrap();
     db::cluster::register_own_node(
@@ -159,6 +162,9 @@ async fn adoption_and_index(pool: &DbPool) {
 #[tokio::test]
 async fn adoption_refreshes_forks_committed_while_it_waits_for_the_source() {
     let db = PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+        .await
+        .unwrap();
     let raw = &db.raw;
     let root = tempfile::tempdir().unwrap();
     let node = db::cluster::register_own_node(
@@ -220,5 +226,8 @@ async fn adoption_keeps_current_families_together_on_both_engines() {
     let sqlite = NativeDatabase::new().await;
     adoption_and_index(&sqlite.pool).await;
     let postgres = PostgresDatabase::new().await;
+    codeyard::backend::db::cluster::enable_cluster(&postgres.pool)
+        .await
+        .unwrap();
     adoption_and_index(&postgres.pool).await;
 }

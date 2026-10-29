@@ -152,6 +152,35 @@ pub(crate) async fn native_detail(
         // Issues and pull requests share one number sequence, and a pull request's page is under
         // `/pulls`. Links to `/issues/N` reach it through this redirect, which keeps the fragment.
         Err(response) if kind == Kind::Issue && response.status() == StatusCode::NOT_FOUND => {
+            if let Some(moved) =
+                db::issues::management::redirect(&ctx.state.pool, repo.record.id, number)
+                    .await
+                    .map_err(|_| unavailable(&ctx))?
+            {
+                let target =
+                    db::repositories::records::get_repository_by_id(&ctx.state.pool, moved.repo_id)
+                        .await
+                        .map_err(|_| unavailable(&ctx))?
+                        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
+                if !crate::backend::repositories::access::can_read(
+                    &ctx.state.pool,
+                    ctx.user.as_ref(),
+                    &target,
+                )
+                .await
+                .map_err(|_| unavailable(&ctx))?
+                {
+                    return Err(response);
+                }
+                let owner =
+                    db::repositories::records::repository_owner_name(&ctx.state.pool, target.id)
+                        .await
+                        .map_err(|_| unavailable(&ctx))?
+                        .ok_or_else(|| unavailable(&ctx))?;
+                return Ok(
+                    ctx.redirect(&format!("/{owner}/{}/issues/{}", target.name, moved.number))
+                );
+            }
             let pull_request = db::pull_requests::records::get_pull_request(
                 &ctx.state.pool,
                 repo.record.id,
@@ -159,10 +188,28 @@ pub(crate) async fn native_detail(
             )
             .await
             .map_err(|_| unavailable(&ctx))?;
-            if pull_request.is_none() {
+            let Some(pull_request) = pull_request else {
                 return Err(response);
-            }
+            };
             let mut location = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
+            if let Some(source) = ctx.query.get("comment") {
+                let source = source
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid comment."))?;
+                if let Some(id) = db::pull_requests::reviews::converted_issue_comment(
+                    &ctx.state.pool,
+                    pull_request.id,
+                    source,
+                )
+                .await
+                .map_err(|_| unavailable(&ctx))?
+                {
+                    location.push_str(&format!("?comment={id}#comment-{id}"));
+                    return Ok(ctx.redirect(&location));
+                }
+            }
             let page = ctx
                 .query
                 .get("page")
@@ -388,6 +435,7 @@ pub(crate) async fn save_entry_change(
                 title: text.title,
                 body: text.body,
                 state: text.state,
+                state_reason: None,
             },
         )
         .await
@@ -406,6 +454,7 @@ pub(crate) async fn save_entry_change(
                 body: text.body,
                 state: text.state,
                 base: None,
+                maintainer_can_modify: None,
             },
         )
         .await
@@ -507,6 +556,7 @@ mod tests {
             check_count: 0,
             review_state: None,
             check_state: None,
+            projects: vec![],
             reactions: Vec::new(),
         }
     }

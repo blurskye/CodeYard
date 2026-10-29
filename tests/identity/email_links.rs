@@ -25,7 +25,7 @@ use codeyard::backend::{
 
 const PAST: &str = "2020-01-01T00:00:00.000000Z";
 
-async fn set_up_mail(f: &Database) {
+pub(super) async fn set_up_mail(f: &Database) {
     let admin = f.actor("mail_admin").await;
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[admin])
         .await;
@@ -56,7 +56,7 @@ async fn set_up_mail(f: &Database) {
     );
 }
 
-async fn queued(pool: &DbPool) -> Vec<OutboxMessage> {
+pub(super) async fn queued(pool: &DbPool) -> Vec<OutboxMessage> {
     let mut mail = Vec::new();
     while let Some(message) = db::email::claim_due_email(pool, 5, 600).await.unwrap() {
         mail.push(message);
@@ -66,7 +66,7 @@ async fn queued(pool: &DbPool) -> Vec<OutboxMessage> {
 
 /// The code on its own line under "Your code:". It is the token a link carries when PUBLIC_URL is
 /// set, so it opens the link pages too.
-fn token_in(message: &OutboxMessage) -> String {
+pub(super) fn token_in(message: &OutboxMessage) -> String {
     let code = message
         .body_text
         .strip_prefix("Your code:\n")

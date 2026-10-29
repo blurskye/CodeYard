@@ -40,6 +40,24 @@ pub(crate) async fn live_session(
         .bind(session).bind(actor).fetch_one(&mut **tx).await?)
 }
 
+pub(crate) async fn require_account(
+    tx: &mut Transaction<'_, sqlx::Sqlite>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<()> {
+    use crate::backend::db::users::accounts::{AccountCredential, AccountRestricted};
+    let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)")
+        .bind(actor).fetch_one(&mut **tx).await?;
+    anyhow::ensure!(active, AccountRestricted);
+    let live = match credential {
+        AccountCredential::Session(session) => live_session(tx, actor, session).await?,
+        AccountCredential::Token(id) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=?1 AND user_id=?2 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))")
+            .bind(id).bind(actor).fetch_one(&mut **tx).await?,
+    };
+    anyhow::ensure!(live, AccountRestricted);
+    Ok(())
+}
+
 pub(crate) async fn current_password(
     tx: &mut Transaction<'_, Sqlite>,
     user: i64,
@@ -283,7 +301,7 @@ pub async fn change_email(
     if !current_password(&mut tx, user_id, expected, session, false).await? {
         return Ok(EmailChange::Missing);
     }
-    if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE email=?1 AND id<>?2)")
+    if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE lower(email)=lower(?1) AND id<>?2) OR EXISTS(SELECT 1 FROM user_emails WHERE lower(email)=lower(?1) AND user_id<>?2)")
         .bind(email)
         .bind(user_id)
         .fetch_one(&mut *tx)
@@ -366,7 +384,8 @@ pub async fn register_password(
         return Ok(AccountAdmission::Conflict);
     }
     if sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE username=?1 OR (?2 IS NOT NULL AND email=?2))",
+        "SELECT EXISTS(SELECT 1 FROM users WHERE username=?1 OR (?2 IS NOT NULL AND lower(email)=lower(?2)))
+         OR (?2 IS NOT NULL AND EXISTS(SELECT 1 FROM user_emails WHERE lower(email)=lower(?2)))",
     )
     .bind(username)
     .bind(email)
@@ -430,8 +449,14 @@ pub async fn admit_oauth_account(
     }
     let base: String = username_base.chars().take(200).collect();
     let mut name = base.clone();
-    for suffix in 0..32 {
-        if suffix > 0 {
+    // After the numbered names, a few random ones, so taken numbers cannot block the sign-in.
+    for suffix in 0..36 {
+        if suffix >= 32 {
+            name = format!(
+                "{base}_{}",
+                &crate::backend::identity::oauth_apps::random()[..8]
+            );
+        } else if suffix > 0 {
             name = format!("{base}_{suffix}");
         }
         if organization_name_exists(&mut tx, &name).await? {
@@ -515,20 +540,68 @@ pub async fn compare_exchange_password(
     let changed = sqlx::query_as::<_, User>("UPDATE users SET password_hash=?3,must_change_password=CASE WHEN ?4 THEN FALSE ELSE must_change_password END,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND password_hash=?2 AND NOT is_banned RETURNING *")
         .bind(user_id).bind(expected).bind(replacement).bind(clear_must_change).fetch_optional(&mut *tx).await?;
     if changed.is_some() && revoke_sessions {
-        sqlx::query("DELETE FROM personal_access_tokens WHERE user_id=?1")
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM sessions WHERE user_id=?1")
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
-        // A reset link still in a mailbox would undo the new password.
-        sqlx::query("DELETE FROM email_tokens WHERE user_id=?1 AND purpose='reset'")
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
+        revoke_credentials(&mut tx, user_id).await?;
     }
     tx.commit().await?;
     Ok(changed)
+}
+
+/// Ends the account's sessions and access tokens, and its reset links: a reset link still in a
+/// mailbox would undo the new password.
+async fn revoke_credentials(tx: &mut Transaction<'_, Sqlite>, user_id: i64) -> Result<()> {
+    sqlx::query("DELETE FROM personal_access_tokens WHERE user_id=?1")
+        .bind(user_id)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("DELETE FROM sessions WHERE user_id=?1")
+        .bind(user_id)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("DELETE FROM email_tokens WHERE user_id=?1 AND purpose='reset'")
+        .bind(user_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Uses a reset link and sets the password it was sent for. The link is used, the hash replaced
+/// and the credentials revoked in one transaction. Returns the account, or None when the link is
+/// no longer usable.
+pub async fn reset_password_with_link(
+    pool: &SqlitePool,
+    token_hash: &str,
+    replacement: &str,
+) -> Result<Option<i64>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let taken: Option<i64> = sqlx::query_scalar(
+        "DELETE FROM email_tokens
+         WHERE purpose = 'reset' AND token_hash = ?1
+           AND expires_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now')
+           AND EXISTS (SELECT 1 FROM users u
+                       WHERE u.id = email_tokens.user_id AND u.email = email_tokens.email
+                         AND NOT u.is_banned)
+         RETURNING user_id",
+    )
+    .bind(token_hash)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(user_id) = taken else {
+        return Ok(None);
+    };
+    let changed = sqlx::query(
+        "UPDATE users SET password_hash=?2,must_change_password=FALSE,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')
+         WHERE id=?1 AND password_hash IS NOT NULL AND NOT is_banned",
+    )
+    .bind(user_id)
+    .bind(replacement)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
+    if !changed {
+        return Ok(None);
+    }
+    revoke_credentials(&mut tx, user_id).await?;
+    tx.commit().await?;
+    Ok(Some(user_id))
 }

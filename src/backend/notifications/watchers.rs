@@ -65,6 +65,7 @@ pub async fn notify_watchers(
     );
     // A release notification carries its tag in the title, so the body is left empty.
     let body = (item.event != WatchEvent::Release).then_some(item.title);
+    let metadata = json!({"repo_owner":item.owner,"repo_name":item.repo,"number":item.number,"subject":item.title});
     let mut sent = Vec::new();
     let mut after = 0;
     loop {
@@ -94,7 +95,7 @@ pub async fn notify_watchers(
             if user_id == item.actor.id || item.notified.contains(&user_id) {
                 continue;
             }
-            let _ = create_and_broadcast_notification(
+            if create_and_broadcast_notification(
                 pool,
                 broadcaster,
                 NotificationRequest {
@@ -105,20 +106,37 @@ pub async fn notify_watchers(
                     title: &title,
                     body,
                     link: Some(item.link),
-                    metadata: json!({
-                        "repo_owner": item.owner,
-                        "repo_name": item.repo,
-                        "number": item.number,
-                        "subject": item.title,
-                    }),
+                    metadata: metadata.clone(),
                 },
             )
-            .await;
-            sent.push(user_id);
+            .await
+            .is_ok()
+            {
+                sent.push(user_id);
+            }
         }
         if !more {
             break;
         }
     }
+    let mut notified = item.notified.to_vec();
+    notified.extend(&sent);
+    let subscribers = super::create::notify_subscribers(
+        pool,
+        broadcaster,
+        NotificationRequest {
+            user_id: item.actor.id,
+            actor_id: Some(item.actor.id),
+            repo_id: Some(item.repository.id),
+            kind,
+            title: &title,
+            body,
+            link: Some(item.link),
+            metadata,
+        },
+        &notified,
+    )
+    .await;
+    sent.extend(subscribers);
     sent
 }

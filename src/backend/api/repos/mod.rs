@@ -2,6 +2,7 @@
 //! repository-wide form endpoint stay here. Code, refs, settings and activity own their routes.
 use crate::backend::app::AppState;
 use axum::{
+    response::IntoResponse,
     routing::{get, post},
     Router,
 };
@@ -9,23 +10,37 @@ use std::sync::Arc;
 
 pub mod access;
 pub mod activity;
+pub mod advisories;
+pub mod checks;
 pub mod chrome;
 pub mod code;
 pub mod collection;
+pub mod dependabot;
+pub mod dependencies;
+pub mod dependency_graph;
 pub mod deploy_keys;
+pub mod disclosure;
 pub mod discussion;
 pub mod forms;
 pub mod insights;
+mod invitations;
 pub mod issues;
 pub mod labels;
+mod migrations;
 pub mod milestones;
+pub mod pages;
 pub mod paging;
+mod properties;
 pub mod pulls;
 pub mod refs;
 pub mod releases;
 pub mod repository;
 pub mod responses;
+pub mod secret_scanning;
+pub mod security;
 pub mod settings;
+
+pub(crate) const LEGACY_PREFIX: &str = "/gists/@repos";
 
 pub fn router() -> Router<Arc<AppState>> {
     let json = Router::new()
@@ -71,11 +86,56 @@ pub fn router() -> Router<Arc<AppState>> {
         ));
     let creation = Router::new()
         .route(
+            "/new/migration",
+            get(migrations::new).post(migrations::create),
+        )
+        .route(
+            "/:owner/:repo/migration",
+            get(migrations::page).post(migrations::submit),
+        )
+        .route(
             "/new",
             get(collection::new_repository).post(collection::create_repository),
         )
-        .layer(axum::extract::DefaultBodyLimit::max(16 * 1024));
-    let pages = Router::new()
+        .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024));
+    Router::new()
+        .merge(json)
+        .merge(creation)
+        .merge(invitations::router())
+        .merge(page_router())
+        .nest(
+            LEGACY_PREFIX,
+            page_router()
+                .layer(axum::middleware::from_fn(
+                    super::http::interaction_proofs::prepare,
+                ))
+                .layer(axum::middleware::from_fn(
+                    super::http::middleware::bounded_legacy_repository_body,
+                ))
+                .layer(axum::middleware::from_fn(legacy_alias_uri)),
+        )
+}
+
+// Nested handlers need their public URI for native forms and hydrated navigation.
+async fn legacy_alias_uri(
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if !uri
+        .path()
+        .split('/')
+        .nth(3)
+        .map(crate::webui::decode_component)
+        .is_some_and(|owner| owner.eq_ignore_ascii_case("gists"))
+    {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    }
+    *request.uri_mut() = uri;
+    next.run(request).await
+}
+fn page_router() -> Router<Arc<AppState>> {
+    Router::new()
         .route("/:owner/:repo/settings", get(repository::page))
         .route(
             "/:owner/:repo/_forms/:action",
@@ -85,11 +145,16 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(refs::page_router())
         .merge(releases::page_router())
         .merge(insights::page_router())
-        .layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024));
-    Router::new()
-        .merge(json)
-        .merge(creation)
-        .merge(pages)
+        .merge(security::page_router())
+        .merge(dependabot::page_router())
+        .merge(secret_scanning::page_router())
+        .merge(dependency_graph::page_router())
+        .merge(dependencies::page_router())
+        .merge(pages::page_router())
+        .merge(advisories::page_router())
+        .merge(disclosure::page_router())
+        .merge(checks::router())
+        .layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024))
         .merge(code::upload_router())
         .merge(code::download_router())
         .merge(refs::commits::router())

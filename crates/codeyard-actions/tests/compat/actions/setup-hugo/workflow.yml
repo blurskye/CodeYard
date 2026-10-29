@@ -1,0 +1,16 @@
+# https://github.com/peaceiris/actions-hugo/tree/2752ce1d29631191ea3f27c23495fa06139a5b78
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: peaceiris/actions-hugo@2752ce1d29631191ea3f27c23495fa06139a5b78 # v3
+        with:
+          hugo-version: "0.144.2"
+          extended: "true"
+      - name: Assert documented effect
+        run: |
+          hugo version | grep 'v0\.144\.2'
+          echo compat:ok

@@ -1,0 +1,13 @@
+{
+  "exit_code": 1,
+  "jobs": {
+    "test": "failure"
+  },
+  "contains": [
+    "Job completed: failure"
+  ],
+  "absent": [
+    "compat:too-late"
+  ],
+  "timeout_seconds": 90
+}

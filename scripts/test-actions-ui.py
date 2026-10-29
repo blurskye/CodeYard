@@ -44,9 +44,14 @@ def launch_options():
 def login(context):
     if not args.username:
         return
+    page = context.request.get(base + "/login", headers={"Accept": "application/vnd.codeyard.page+json"})
+    assert page.ok, f"Login page failed: {page.status}"
+    csrf = page.json()["page"]["model"]["Auth"]["csrf_token"]
     response = context.request.post(
-        base + "/api/auth/login",
-        data={
+        base + "/login",
+        headers={"Origin": base},
+        form={
+            "csrf_token": csrf,
             "username": args.username,
             "password": args.password_file.read_text().rstrip("\r\n"),
         },

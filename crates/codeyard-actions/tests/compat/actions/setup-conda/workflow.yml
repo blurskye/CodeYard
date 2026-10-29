@@ -1,0 +1,17 @@
+# https://github.com/conda-incubator/setup-miniconda/tree/fc2d68f6413eb2d87b895e92f8584b5b94a10167
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3
+        with:
+          python-version: "3.12"
+          auto-activate-base: "true"
+          activate-environment: "compat"
+      - name: Assert documented effect
+        run: |
+          test -n "$CONDA"; test -x "$CONDA/bin/conda"; "$CONDA/bin/conda" --version
+          echo compat:ok

@@ -1,8 +1,10 @@
+pub(crate) mod threads;
 use crate::backend::db::models::Notification;
 use crate::backend::db::notifications::records::{
-    NotificationCounts, NotificationCursor, NotificationFilter, NotificationMark,
-    NotificationScopes,
+    NotificationCounts, NotificationCredential, NotificationCursor, NotificationFilter,
+    NotificationMark, NotificationScopes,
 };
+use crate::backend::db::notifications::threads::ThreadAction;
 use crate::backend::db::notifications::{
     NewNotification, NotificationInbox, NotificationInboxAction,
 };
@@ -18,6 +20,27 @@ pub async fn create_notification(
     use crate::backend::db::notifications::records::NotificationSuppressed;
     let mut tx = pool.begin().await?;
     lock_membership_shared(&mut tx).await?;
+    if let Some(actor) = input.actor_id {
+        anyhow::ensure!(
+            !super::super::users::blocks::interaction_blocked(&mut tx, input.user_id, actor)
+                .await?,
+            NotificationSuppressed
+        );
+    }
+    if let Some(repo) = input.repo_id {
+        for user in [Some(input.user_id), input.actor_id].into_iter().flatten() {
+            anyhow::ensure!(
+                !super::super::users::blocks::repository_interaction_blocked(&mut tx, user, repo)
+                    .await?,
+                NotificationSuppressed
+            );
+        }
+        // A recipient who lost Read after the event must not get its text or email.
+        anyhow::ensure!(
+            lock_notification_scope_readable(&mut tx, input.user_id, repo).await?,
+            NotificationSuppressed
+        );
+    }
     if matches!(input.kind, "user_followed" | "repository_starred") {
         let _: Option<i64> =
             sqlx::query_scalar("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
@@ -70,10 +93,26 @@ pub async fn create_notification(
         .await?;
         anyhow::ensure!(comment.is_some(), NotificationSuppressed);
     }
+    // A commit comment deleted before its notices were written must not come back as one.
+    if let Some(comment_id) = input
+        .metadata
+        .get("commit_comment_id")
+        .and_then(serde_json::Value::as_i64)
+    {
+        let comment: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM commit_comments WHERE id=$1 AND repo_id=$2 FOR SHARE",
+        )
+        .bind(comment_id)
+        .bind(input.repo_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        anyhow::ensure!(comment.is_some(), NotificationSuppressed);
+    }
+    let thread_id = threads::ensure(&mut tx, &input).await?;
     let notification = sqlx::query_as::<_, Notification>(
         r#"
-        INSERT INTO notifications (user_id, actor_id, repo_id, kind, title, body, link, metadata, scope_repository_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($3,0))
+        INSERT INTO notifications (user_id, actor_id, repo_id, kind, title, body, link, metadata, scope_repository_id,thread_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($3,0),$9)
         RETURNING *
         "#,
     )
@@ -85,6 +124,7 @@ pub async fn create_notification(
     .bind(input.body)
     .bind(input.link)
     .bind(input.metadata)
+    .bind(thread_id)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -584,6 +624,24 @@ async fn refresh_links(
     Ok(())
 }
 
+pub async fn notification_email_allowed(pool: &PgPool, notification_id: i64) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let row: Option<(i64, i64)> =
+        sqlx::query_as("SELECT user_id, scope_repository_id FROM notifications WHERE id=$1")
+            .bind(notification_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((user_id, scope)) = row else {
+        return Ok(false);
+    };
+    if notification_recipient(&mut tx, user_id).await?.is_none() {
+        return Ok(false);
+    }
+    let allowed = lock_notification_scope_readable(&mut tx, user_id, scope).await?;
+    tx.commit().await?;
+    Ok(allowed)
+}
+
 pub async fn notification_delivery(
     pool: &PgPool,
     session_id: &str,
@@ -815,15 +873,30 @@ pub async fn notification_inbox(
     user_id: i64,
     action: NotificationInboxAction,
 ) -> Result<Option<NotificationInbox>> {
+    notification_inbox_with_credential(
+        pool,
+        NotificationCredential::Session(session_id),
+        user_id,
+        action,
+    )
+    .await
+}
+
+pub async fn notification_inbox_with_credential(
+    pool: &PgPool,
+    credential: NotificationCredential<'_>,
+    user_id: i64,
+    action: NotificationInboxAction,
+) -> Result<Option<NotificationInbox>> {
     crate::backend::db::postgres::retry_on_deadlock(|| {
-        notification_inbox_once(pool, session_id, user_id, action.clone())
+        notification_inbox_once(pool, credential, user_id, action.clone())
     })
     .await
 }
 
 async fn notification_inbox_once(
     pool: &PgPool,
-    session_id: &str,
+    credential: NotificationCredential<'_>,
     user_id: i64,
     action: NotificationInboxAction,
 ) -> Result<Option<NotificationInbox>> {
@@ -834,17 +907,37 @@ async fn notification_inbox_once(
         tx.rollback().await?;
         return Ok(None);
     };
-    let expiry: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
-        "SELECT expires_at FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at>clock_timestamp() FOR SHARE",
-    ).bind(session_id).bind(user_id).fetch_optional(&mut *tx).await?;
-    let Some(expiry) = expiry else {
+    let authorization:Option<(Option<chrono::DateTime<chrono::Utc>>,)>=match credential {
+        NotificationCredential::Session(id)=>sqlx::query_as("SELECT expires_at FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at>clock_timestamp() FOR SHARE").bind(id).bind(user_id).fetch_optional(&mut *tx).await?,
+        NotificationCredential::Token(id)=>sqlx::query_as("SELECT expires_at FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND (NOT $3 OR scope='write') AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE").bind(id).bind(user_id).bind(action.requires_write()).fetch_optional(&mut *tx).await?,
+    };
+    let Some((expiry,)) = authorization else {
         tx.rollback().await?;
         return Ok(None);
     };
     let mut scopes = notification_scopes(&mut tx, user_id).await?;
     let mut next_cursor = None;
     let wants_counts = matches!(action, NotificationInboxAction::List { .. });
+    // Thread lookups and subscription changes do not report the unread badge, so they skip
+    // counting (and, on PostgreSQL, locking) every unread repository scope.
+    let wants_unread = !matches!(
+        action,
+        NotificationInboxAction::Threads(
+            ThreadAction::List(_)
+                | ThreadAction::Get(_)
+                | ThreadAction::GetSubscription(_)
+                | ThreadAction::SetSubscription { .. }
+                | ThreadAction::DeleteSubscription(_)
+        )
+    );
+    let mut thread_inbox = None;
     let (mut notifications, updated) = match action {
+        NotificationInboxAction::Threads(action) => {
+            let result = threads::perform(&mut tx, user_id, &mut scopes, action).await?;
+            let updated = result.updated;
+            thread_inbox = Some(result);
+            (Vec::new(), updated)
+        }
         NotificationInboxAction::List {
             filter,
             limit,
@@ -899,24 +992,30 @@ async fn notification_inbox_once(
             notification_done_all(&mut tx, user_id, &mut scopes, &filter).await?,
         ),
     };
-    let unread_count = notification_unread_count(&mut tx, user_id, &mut scopes).await?;
+    let unread_count = if wants_unread {
+        notification_unread_count(&mut tx, user_id, &mut scopes).await?
+    } else {
+        0
+    };
     let counts = if wants_counts {
         Some(notification_counts(&mut tx, user_id, &mut scopes).await?)
     } else {
         None
     };
     refresh_links(&mut tx, &mut notifications).await?;
-    let alive: bool = sqlx::query_scalar("SELECT $1::timestamptz>clock_timestamp()")
-        .bind(expiry)
-        .fetch_one(&mut *tx)
-        .await?;
+    let alive: bool =
+        sqlx::query_scalar("SELECT $1::timestamptz IS NULL OR $1::timestamptz>clock_timestamp()")
+            .bind(expiry)
+            .fetch_one(&mut *tx)
+            .await?;
     if !alive {
-        // Acknowledgments are provisional until final original-session expiry.
+        // Acknowledgments are provisional until the original credential's final expiry.
         tx.rollback().await?;
         return Ok(None);
     }
     tx.commit().await?;
     Ok(Some(NotificationInbox {
+        threads: thread_inbox,
         notifications,
         next_cursor,
         unread_count,

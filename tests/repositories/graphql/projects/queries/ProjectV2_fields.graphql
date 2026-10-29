@@ -1,0 +1,1 @@
+query ProjectV2_fields{ProjectV2: __type(name: "ProjectV2"){fields(includeDeprecated: true){name,args{name}}}}

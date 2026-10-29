@@ -1,0 +1,1 @@
+mutation UnlinkProjectV2FromTeam($input:UnlinkProjectV2FromTeamInput!){unlinkProjectV2FromTeam(input:$input){clientMutationId}}

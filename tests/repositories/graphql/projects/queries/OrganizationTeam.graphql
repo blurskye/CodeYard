@@ -1,0 +1,1 @@
+query OrganizationTeam($owner:String!$teamSlug:String!){organization(login: $owner){team(slug: $teamSlug){id,slug}}}

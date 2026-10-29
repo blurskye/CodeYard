@@ -139,10 +139,13 @@ pub async fn get_user_by_username(pool: &PgPool, username: &str) -> Result<Optio
 }
 
 pub async fn get_user_by_email(pool: &PgPool, email: &str) -> Result<Option<User>> {
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
-        .bind(email)
-        .fetch_optional(pool)
-        .await?;
+    // Older rows may differ only in case; the exact address then wins.
+    let user = sqlx::query_as::<_, User>(
+        "SELECT * FROM users WHERE lower(email) = lower($1) ORDER BY email = $1 DESC, id LIMIT 1",
+    )
+    .bind(email)
+    .fetch_optional(pool)
+    .await?;
 
     Ok(user)
 }
@@ -158,6 +161,25 @@ pub async fn get_users_by_emails(pool: &PgPool, emails: &[String]) -> Result<Vec
         .await?;
 
     Ok(users)
+}
+
+/// The verified owner of each address, as `(address, user id)`. Primary and secondary addresses
+/// both count, and the address is returned as it was requested.
+pub async fn get_verified_email_owners(
+    pool: &PgPool,
+    emails: &[String],
+) -> Result<Vec<(String, i64)>> {
+    if emails.is_empty() {
+        return Ok(vec![]);
+    }
+    Ok(sqlx::query_as(
+        "SELECT a.address, u.id FROM unnest($1::text[]) AS a(address) JOIN users u ON u.email_verified AND lower(u.email)=lower(a.address)
+         UNION
+         SELECT a.address, e.user_id FROM unnest($1::text[]) AS a(address) JOIN user_emails e ON e.verified AND lower(e.email)=lower(a.address)",
+    )
+    .bind(emails)
+    .fetch_all(pool)
+    .await?)
 }
 
 pub async fn get_users_by_usernames(pool: &PgPool, usernames: &[String]) -> Result<Vec<User>> {
@@ -179,6 +201,16 @@ pub async fn get_users_by_ids(pool: &PgPool, ids: &[i64]) -> Result<Vec<User>> {
     Ok(
         sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = ANY($1)")
             .bind(ids)
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
+pub async fn list_users_since(pool: &PgPool, since: i64, limit: i64) -> Result<Vec<User>> {
+    Ok(
+        sqlx::query_as("SELECT * FROM users WHERE id>$1 ORDER BY id LIMIT $2")
+            .bind(since)
+            .bind(limit)
             .fetch_all(pool)
             .await?,
     )
@@ -272,34 +304,28 @@ pub async fn update_user_profile(
     location: Option<&str>,
     website: Option<&str>,
 ) -> Result<Option<User>> {
-    let mut tx = pool.begin().await?;
-    super::transitions::lock_membership_shared(&mut tx).await?;
-    let active: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR UPDATE")
-        .bind(user_id).fetch_optional(&mut *tx).await?;
-    if active.is_none() || !super::transitions::live_session(&mut tx, user_id, session).await? {
-        return Ok(None);
-    }
-    let result = sqlx::query_as::<_, User>(
-        r#"
-        UPDATE users SET
-            display_name = COALESCE($2, display_name),
-            bio = COALESCE($3, bio),
-            location = COALESCE($4, location),
-            website = COALESCE($5, website),
-            updated_at = NOW()
-        WHERE id = $1 AND NOT is_banned AND NOT must_change_password
-        RETURNING *
-        "#,
+    use crate::backend::db::users::{
+        accounts::{AccountCredential, AccountRestricted},
+        profiles::ProfilePatch,
+    };
+    match super::profiles::save_profile(
+        pool,
+        user_id,
+        &AccountCredential::Session(session),
+        &ProfilePatch {
+            display_name,
+            bio,
+            location,
+            website,
+            ..ProfilePatch::default()
+        },
     )
-    .bind(user_id)
-    .bind(display_name)
-    .bind(bio)
-    .bind(location)
-    .bind(website)
-    .fetch_optional(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    Ok(result)
+    .await
+    {
+        Ok(user) => Ok(Some(user)),
+        Err(error) if error.is::<AccountRestricted>() => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// Accounts that match the search: all of them, the administrators and the banned ones.

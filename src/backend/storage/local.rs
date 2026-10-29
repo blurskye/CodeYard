@@ -42,7 +42,7 @@ impl LocalStore {
         upload: &Upload<'_>,
         mut reader: impl AsyncRead + Unpin,
     ) -> Result<(), StorageError> {
-        if !(1..=MAX_OBJECT_BYTES).contains(&upload.bytes) {
+        if !(0..=MAX_OBJECT_BYTES).contains(&upload.bytes) {
             return Err(StorageError::Invalid);
         }
         let path = self.path(upload.key)?;
@@ -51,10 +51,17 @@ impl LocalStore {
         // Partial files share one directory, so the cleanup finds the ones a crash leaves.
         let staging = self.root.join(STAGING_DIR);
         create_directories(&staging).await?;
-        let temporary = tempfile::Builder::new()
-            .prefix(TEMP_PREFIX)
-            .tempfile_in(staging)?;
-        let mut output = tokio::fs::File::from_std(temporary.reopen()?);
+        // tempfile is synchronous; keep a stalled disk off the async workers.
+        let (temporary, file) = tokio::task::spawn_blocking(move || {
+            let temporary = tempfile::Builder::new()
+                .prefix(TEMP_PREFIX)
+                .tempfile_in(staging)?;
+            let file = temporary.reopen()?;
+            std::io::Result::Ok((temporary, file))
+        })
+        .await
+        .map_err(|_| StorageError::Unavailable)??;
+        let mut output = tokio::fs::File::from_std(file);
         let mut buffer = vec![0u8; 64 * 1024];
         let mut hash = Sha256::new();
         let mut prefix = Vec::with_capacity(16);
@@ -86,8 +93,10 @@ impl LocalStore {
         }
         output.flush().await?;
         output.sync_all().await?;
-        temporary
-            .persist(&path)
+        let target = path.clone();
+        tokio::task::spawn_blocking(move || temporary.persist(target).map(drop).map_err(drop))
+            .await
+            .map_err(|_| StorageError::Unavailable)?
             .map_err(|_| StorageError::Unavailable)?;
         sync_directory(parent).await?;
         Ok(())

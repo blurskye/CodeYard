@@ -1,0 +1,16 @@
+# https://github.com/lukka/run-vcpkg/tree/b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+name: compat
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: action
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgGitCommitId: "b322364f06308bdd24823f9d8f03fe0cc86fd46f"
+          runVcpkgInstall: "false"
+      - name: Assert documented effect
+        run: |
+          test -x "$VCPKG_ROOT/vcpkg"; "$VCPKG_ROOT/vcpkg" version
+          echo compat:ok

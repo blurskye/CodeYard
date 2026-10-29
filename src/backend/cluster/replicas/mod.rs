@@ -15,7 +15,7 @@ use crate::backend::db::{
     models::{ClusterNode, HeldReplica, ReplicaSetting},
     DbPool,
 };
-use crate::backend::git::maintenance;
+use crate::backend::git::{maintenance, mirror};
 use crate::backend::repositories::store::RepoError;
 use crate::backend::storage::local::{remove_stale_temporaries, STALE_AFTER};
 use anyhow::{Context, Result};
@@ -614,8 +614,35 @@ async fn copy_one(context: &NodeContext, row: &HeldReplica, uuid: Uuid) -> Resul
         return Ok(());
     };
     if version > row.applied_version {
+        // Replacing refs takes several steps, so the copy stops counting as a usable version
+        // first. A crash part way leaves it unusable until the next copy completes it.
+        if row.applied_version >= 0
+            && !db::cluster::set_applied_version(
+                pool,
+                row.repository_id,
+                context.node_id,
+                primary,
+                -1,
+            )
+            .await?
+        {
+            return Ok(());
+        }
         let mirror = copy_path(&context.repos_path, uuid);
-        transfer::copy(context, primary, uuid, &mirror).await?;
+        if let Err(error) = transfer::copy(context, primary, uuid, &mirror).await {
+            // A busy primary refuses before it sends anything, so the copy is as it was.
+            if busy(&error) && row.applied_version >= 0 {
+                db::cluster::set_applied_version(
+                    pool,
+                    row.repository_id,
+                    context.node_id,
+                    primary,
+                    row.applied_version,
+                )
+                .await?;
+            }
+            return Err(error);
+        }
         // Finish packing before publishing a promotable version: a running maintenance
         // command still needs the mirror directory and prevents relocation.
         maintenance::after_copy(row.repository_id, &mirror).await;
@@ -633,9 +660,9 @@ async fn copy_one(context: &NodeContext, row: &HeldReplica, uuid: Uuid) -> Resul
     Ok(())
 }
 
-/// Removes copies and former-primary directories this node no longer holds. Copies of its
-/// own repositories are kept for `locate`, as are running copies and unplaced primaries.
-/// If the database cannot answer, nothing is removed.
+/// Removes the copies this node no longer holds, and moves unowned directories at the primary
+/// location into `deleted/`. Copies of its own repositories are kept for `locate`, as are running
+/// copies and unplaced primaries. If the database cannot answer, nothing is removed.
 async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying) {
     let keep = match keep_directories(context).await {
         Ok(mut keep) => {
@@ -669,6 +696,21 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
                         return;
                     }
                 }
+                // A repository whose deletion is still retiring it has no row yet. Keep its
+                // directory in deleted/, as a retirement does, instead of removing it.
+                let path = entry.path();
+                match tokio::task::spawn_blocking(move || mirror::retire(&path)).await {
+                    Ok(Ok(())) => {
+                        info!(repository = %uuid, "moved an unowned repository to deleted/")
+                    }
+                    Ok(Err(error)) => {
+                        warn!(repository = %uuid, %error, "could not move an unowned repository")
+                    }
+                    Err(error) => {
+                        warn!(repository = %uuid, %error, "could not move an unowned repository")
+                    }
+                }
+                continue;
             }
             match tokio::fs::remove_dir_all(entry.path()).await {
                 Ok(()) => {

@@ -145,6 +145,7 @@ pub async fn activate_upload(
 /// Queues the file's bytes for deletion in the caller's transaction. The bytes wait
 /// out the grace period after the PUT deadline: a PUT accepted before the deadline
 /// can still be transferring, and a replayed one can recreate bytes already removed.
+/// They also stay for the restore window, so a restored database still finds them.
 pub(crate) async fn queue_deletion(
     tx: &mut Transaction<'_, Sqlite>,
     file: &File,
@@ -153,6 +154,10 @@ pub(crate) async fn queue_deletion(
         .put_expires_at
         .unwrap_or(file.created_at + chrono::Duration::seconds(PUT_LIFETIME_SECONDS))
         + chrono::Duration::seconds(IN_FLIGHT_PUT_GRACE_SECONDS);
+    let delete_after = delete_after.max(
+        chrono::Utc::now()
+            + chrono::Duration::seconds(crate::backend::db::files::RESTORE_WINDOW_SECONDS),
+    );
     sqlx::query(
         "INSERT INTO pending_object_deletions(object_key,delete_after) VALUES(?1,?2)
          ON CONFLICT(object_key) DO UPDATE SET delete_after=MAX(pending_object_deletions.delete_after,excluded.delete_after)",

@@ -43,8 +43,9 @@ fn close_for_click(event: &web_sys::Event) {
     let target_node: &web_sys::Node = &target;
     let chose_link = target.closest(MENU_LINK).ok().flatten().is_some();
     for menu in open_menus() {
-        // A menu nested in another (Watch inside the tabs menu) keeps both open.
-        if !menu.contains(Some(target_node)) || chose_link {
+        // A menu nested in another (Watch inside the tabs menu) keeps both open. A click on the
+        // menu element itself lands on its phone backdrop, which dismisses it.
+        if !menu.contains(Some(target_node)) || chose_link || menu.is_same_node(Some(target_node)) {
             close(&menu);
         }
     }

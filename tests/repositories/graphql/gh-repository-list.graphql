@@ -1,0 +1,12 @@
+# cli/cli 5056c0a8ef34512be1d5b4120d4e4b30412ada8b, pkg/cmd/repo/list/http.go:listRepos.
+# owner and the default fields from list.go are substituted by the Go query builder.
+query RepositoryList($perPage:Int!,$endCursor:String,$privacy:RepositoryPrivacy,$fork:Boolean,$owner:String!) {
+  repositoryOwner(login: $owner) {
+    login
+    repositories(first: $perPage, after: $endCursor, privacy: $privacy, isFork: $fork, ownerAffiliations: OWNER, orderBy: { field: PUSHED_AT, direction: DESC }) {
+      nodes { nameWithOwner description isPrivate isFork isArchived createdAt pushedAt }
+      totalCount
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}

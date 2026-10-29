@@ -238,6 +238,7 @@ async fn query_narrowing(
     };
     Ok(ListFilter {
         state: None,
+        head_ref: None,
         include_merged: false,
         search: None,
         author_id,
@@ -313,7 +314,7 @@ pub(crate) async fn native_index(
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     // The milestones name each row and feed the milestone filter, so they are read once.
-    let milestones = db::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
+    let mut milestones = db::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
         .await
         .map_err(|_| unavailable(&ctx))?;
     // The search box holds the filters as qualifiers (`state:closed label:bug`); they replace the
@@ -321,13 +322,23 @@ pub(crate) async fn native_index(
     let mut typed_search = view::parse_search(ctx.query.get("q").map(String::as_str).unwrap_or(""));
     if let Some(view::MilestoneFilter::Title(title)) = typed_search.milestone.as_mut() {
         // A title that names no milestone is refused, so it is never read as a number or as `none`.
-        let found = milestones
+        // The catalogue is bounded, so a title past it is looked up exactly.
+        let number = match milestones
             .iter()
             .find(|summary| summary.title.eq_ignore_ascii_case(title))
-            .ok_or_else(|| {
-                ctx.error(StatusCode::BAD_REQUEST, "Choose a milestone from the list.")
-            })?;
-        *title = found.number.to_string();
+        {
+            Some(found) => found.number,
+            None => {
+                db::milestones::milestone_choice_by_title(&ctx.state.pool, repo.record.id, title)
+                    .await
+                    .map_err(|_| unavailable(&ctx))?
+                    .ok_or_else(|| {
+                        ctx.error(StatusCode::BAD_REQUEST, "Choose a milestone from the list.")
+                    })?
+                    .number
+            }
+        };
+        *title = number.to_string();
     }
     typed_search.apply_to(&mut ctx.query);
     let search_labels = std::mem::take(&mut typed_search.labels);
@@ -352,6 +363,16 @@ pub(crate) async fn native_index(
     }
     let state = if filter == "all" { None } else { Some(filter) };
     let narrowing = query_narrowing(&ctx, &repo).await?;
+    // The chosen milestone may be past the bounded catalogue; the search box still names it.
+    if let Pick::Is(id) = narrowing.milestone {
+        if !milestones.iter().any(|milestone| milestone.id == id) {
+            milestones.extend(
+                db::milestones::milestone_choices_by_ids(&ctx.state.pool, repo.record.id, &[id])
+                    .await
+                    .map_err(|_| unavailable(&ctx))?,
+            );
+        }
+    }
     // The page takes `labels=a,b` and any number of `label=` values, and the list keeps the items
     // that carry all of them.
     let typed = repeated(&raw_query_pairs(&uri), "label");
@@ -380,6 +401,9 @@ pub(crate) async fn native_index(
         .collect();
     let mut filters = list_filters(&ctx, &repo, milestones, labels.clone()).await?;
     filters.page = page_number;
+    if kind == Kind::Issue {
+        filters.pinned_issues = super::management::pinned(&ctx, &repo).await?;
+    }
     let mut items = Vec::new();
     let totals;
     match kind {
@@ -555,7 +579,7 @@ fn review_state(
 }
 
 /// The check state a pull request row shows, from the latest run of each workflow on its head
-/// commit. A run that failed or was cancelled decides it first, then a run still going, and only
+/// commit, its external commit statuses and its latest check runs. A run that failed or was cancelled decides it first, then a run still going, and only
 /// all successful runs make it a success. No runs leave the state out.
 fn check_state(checks: &[(i64, String)], pull_request: i64) -> Option<String> {
     let statuses: Vec<&str> = checks
@@ -996,7 +1020,26 @@ pub(crate) async fn native_create(
     }
     let references = body_references(&ctx, &repo, &draft.body).await;
     let (branches, head_repo, refs) = if kind == Kind::Pull {
-        head_choices(&ctx, &repo, &mut draft).await?
+        match head_choices(&ctx, &repo, &mut draft).await {
+            Ok(choices) => choices,
+            // The chosen head repository is gone, unreadable or unavailable. The draft is shown
+            // again against this repository, and the error stops its submission.
+            Err(_) => {
+                submission_error.get_or_insert_with(|| {
+                    "The selected head repository is unavailable. Your draft is preserved; choose the head again.".to_owned()
+                });
+                draft.head_repo = repo.record.id.to_string();
+                head_choices(&ctx, &repo, &mut draft)
+                    .await
+                    .unwrap_or_else(|_| {
+                        (
+                            view::BranchChoices::default(),
+                            repo.record.clone(),
+                            HashMap::new(),
+                        )
+                    })
+            }
+        }
     } else {
         (
             view::BranchChoices::default(),
@@ -1110,6 +1153,7 @@ pub(crate) async fn native_create(
                     title: draft.title.clone(),
                     body: Some(draft.body.clone()),
                     repository_id: Some(repo.record.id),
+                    parent_issue_id: None,
                 },
             )
             .await
@@ -1152,11 +1196,15 @@ pub(crate) async fn native_create(
             name,
             crate::backend::repositories::pull_requests::mutations::CreatePullRequestRequest {
                 head_repo_id: Some(head_repo.id),
-                title: draft.title.clone(),
-                body: Some(draft.body.clone()),
+                source:
+                    crate::backend::repositories::pull_requests::mutations::PullRequestSource::New {
+                        title: draft.title.clone(),
+                        body: Some(draft.body.clone()),
+                    },
                 head_branch: draft.head.clone(),
                 base_branch: draft.base.clone(),
                 is_draft: draft.draft,
+                maintainer_can_modify: None,
             },
         )
         .await

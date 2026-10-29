@@ -80,8 +80,39 @@ async fn contract(pg: bool) {
     // A branch that does not exist is a 404 in the repository's own page.
     let (status, html) = anonymous.page("/alice/proj/compare/main...nope").await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{html}");
-    assert!(html.contains("Branch not found."), "{html}");
+    // Either side may also be a tag or a commit, so the page names all three.
+    assert!(
+        html.contains("Check the path or revision, or pick another branch, tag or commit."),
+        "{html}"
+    );
     assert!(html.contains("repo-tabs"), "{html}");
+
+    // GitHub's `/pull/N` links, as the API and `gh` print them, lead to the pull request pages.
+    for (from, to) in [
+        ("/alice/proj/pull/7", "/alice/proj/pulls/7"),
+        (
+            "/alice/proj/pull/7/files?w=1",
+            "/alice/proj/pulls/7/files?w=1",
+        ),
+    ] {
+        let moved = anonymous
+            .exchange("GET", from, "text/html", Vec::new())
+            .await;
+        assert_eq!(moved.status, StatusCode::PERMANENT_REDIRECT, "{from}");
+        assert_eq!(moved.location.as_deref(), Some(to));
+    }
+    // An owner that decodes to `/host` cannot turn the alias into a redirect off the site.
+    let moved = anonymous
+        .exchange("GET", "/%2Fevil.example/x/pull/1", "text/html", Vec::new())
+        .await;
+    assert!(
+        moved
+            .location
+            .as_deref()
+            .is_none_or(|location| !location.starts_with("//")),
+        "{:?}",
+        moved.location
+    );
 
     // The form sends `?base=&head=`; the address that names both branches is the canonical one.
     // A field left empty means the default branch.
