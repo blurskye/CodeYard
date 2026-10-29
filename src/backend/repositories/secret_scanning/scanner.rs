@@ -196,23 +196,14 @@ impl Scanner {
             toml::from_str(include_str!("../../../../spec/gitleaks/gitleaks.toml"))?;
         // Personal tokens issued before prefixes were introduced remain valid, but cannot be
         // distinguished reliably from arbitrary hexadecimal values in source code.
-        for (id, regex, keyword) in [
-            (
-                "codeyard-pat",
-                r"(?-u:\b)cy_pat_[a-f0-9]{64}(?-u:\b)",
-                "cy_pat_",
-            ),
-            (
-                "codeyard-fine-grained-pat",
-                r"(?-u:\b)cy_fgpat_[a-f0-9]{64}(?-u:\b)",
-                "cy_fgpat_",
-            ),
-            (
-                "codeyard-actions-token",
-                r"(?-u:\b)ghs_[a-f0-9]{64}(?-u:\b)",
-                "ghs_",
-            ),
+        use crate::backend::identity::tokens::{PAT_PREFIX, FGPAT_PREFIX, ACTIONS_PREFIX, HEX_TOKEN_CHARS, URL_TOKEN_CHARS};
+        for (id, prefix, alphabet, length) in [
+            ("codeyard-pat", PAT_PREFIX, "a-f0-9", HEX_TOKEN_CHARS),
+            ("codeyard-fine-grained-pat", FGPAT_PREFIX, "a-f0-9", HEX_TOKEN_CHARS),
+            ("codeyard-actions-token", ACTIONS_PREFIX, "A-Za-z0-9_-", URL_TOKEN_CHARS),
         ] {
+            let regex = format!("(?:^|[^{alphabet}])({prefix}[{alphabet}]{{{length}}})(?:[^{alphabet}]|$)");
+            let keyword = prefix;
             config.rules.insert(
                 0,
                 Rule {
@@ -231,6 +222,7 @@ impl Scanner {
             .sort_by_key(|rule| rule.id == "generic-api-key");
         let mut rules = Vec::new();
         for mut input in config.rules {
+            if input.id == "airtable-personal-access-token" { input.keywords = vec!["pat".into()]; }
             let regex = input
                 .regex
                 .as_deref()
@@ -452,6 +444,11 @@ pub fn secret_types() -> Result<Vec<(String, String)>> {
     types.sort();
     types.dedup();
     Ok(types)
+}
+
+pub(super) fn cache_across_commits() -> Result<bool> {
+    let scanner = configured()?;
+    Ok(scanner.global.commits.is_empty() && scanner.rules.iter().all(|rule| rule.allowlists.iter().all(|allowlist| allowlist.commits.is_empty())))
 }
 
 /// Scans UTF-8 text blobs only. Binary and oversized blobs are deliberately skipped.

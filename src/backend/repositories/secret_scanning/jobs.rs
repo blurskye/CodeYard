@@ -57,8 +57,9 @@ pub async fn emit_alert(
     repo: &db::models::Repository,
     alert: &records::Alert,
     action: &'static str,
-    actor: i64,
+    actor: impl Into<Option<i64>>,
 ) -> Result<()> {
+    let actor = actor.into();
     let owner = db::repositories::records::repository_owner_name(&state.pool, repo.id)
         .await?
         .context("Repository owner unavailable")?;
@@ -68,11 +69,25 @@ pub async fn emit_alert(
         &state.pool,
         repo,
         "secret_scanning_alert",
-        vec![actor],
-        move |_, people| json!({"action": action,"alert": document,"repository": repository,"sender":payloads::person(&people.get(actor))}),
+        actor.into_iter().collect(),
+        move |_, people| json!({"action": action,"alert": document,"repository": repository,"sender":actor.map(|actor| payloads::person(&people.get(actor))).unwrap_or(Value::Null)}),
     )
     .await;
     Ok(())
+}
+
+async fn commit_target(store: &crate::backend::repositories::store::RepoStore, sha: &str) -> Result<Option<String>> {
+    let mut object = sha.to_owned();
+    let mut seen = HashSet::new();
+    loop {
+        ensure!(seen.len() < 32 && seen.insert(object.clone()), "Secret scan tag chain exceeds its limit");
+        match store.git_object_kind(&object).await?.as_str() {
+            "commit" => return Ok(Some(object)),
+            "tree" | "blob" => return Ok(None),
+            "tag" => object = store.git_tag(&object).await?.object,
+            _ => anyhow::bail!("Unsupported secret scan target"),
+        }
+    }
 }
 
 async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
@@ -86,26 +101,21 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
     let store = repo_store(&repo, state.cluster.as_ref());
     let (patterns, _) = records::effective_patterns(&state.pool, repo.id).await?;
     let patterns = Arc::new(patterns);
-    let mut pending = match &job.head_sha {
-        Some(head) => vec![store.commit(head).await?.sha],
+    let heads: Vec<String> = match &job.head_sha {
+        Some(head) => commit_target(&store, head).await?.into_iter().collect(),
         None => {
             let mut heads = Vec::new();
             for sha in store.refs_from_primary().await?.into_values() {
-                // Only a ref that peels to a commit has history. A tag, or a chain of tags, may
-                // end at a tree or a blob.
-                let (mut object, mut kind) = (sha.clone(), store.git_object_kind(&sha).await?);
-                while kind == "tag" {
-                    let tag = store.git_tag(&object).await?;
-                    (object, kind) = (tag.object, tag.kind);
-                }
-                if kind == "commit" {
-                    heads.push(object);
-                }
+                if let Some(commit) = commit_target(&store, &sha).await? { heads.push(commit); }
             }
             heads
         }
     };
+    let mut pending = heads.into_iter().map(|sha| (sha, false)).collect::<Vec<_>>();
     let mut visited = HashSet::new();
+    let cacheable = super::scanner::cache_across_commits()?;
+    let mut cache = std::collections::HashMap::<(String, String), Arc<Vec<super::Detection>>>::new();
+    let mut cache_bytes = 0usize;
     // The claim lapses after five minutes without a heartbeat, so a long commit or a long run of
     // scanned commits renews it on the way.
     let mut beat = std::time::Instant::now();
@@ -116,7 +126,12 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
         }
         due
     };
-    while let Some(sha) = pending.pop() {
+    while let Some((sha, finishing)) = pending.pop() {
+        if finishing {
+            ensure!(records::heartbeat(&state.pool, repo.id, job.id, job.attempt, Some(&sha)).await?, "Another worker took over this secret scan");
+            beat = std::time::Instant::now();
+            continue;
+        }
         if !visited.insert(sha.clone()) {
             continue;
         }
@@ -129,15 +144,17 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
         if !records::settings(&state.pool, repo.id).await?.enabled {
             return Ok(());
         }
-        let commit = store.commit(&sha).await?;
-        pending.extend(commit.parents);
         if job.scan_type == "incremental" && records::scanned(&state.pool, repo.id, &sha).await? {
             continue;
         }
+        let commit = store.commit(&sha).await?;
         // Each directory is listed on its own, so only a single directory over the tree limit
         // stops the scan.
         let mut directories = vec![(sha.clone(), String::new())];
         while let Some((directory, prefix)) = directories.pop() {
+            if renew(&mut beat) {
+                ensure!(records::heartbeat(&state.pool, repo.id, job.id, job.attempt, None).await?, "Another worker took over this secret scan");
+            }
             let tree = store.git_tree(&directory, false).await?;
             ensure!(!tree.truncated, "Secret scan tree exceeds the tree limit");
             for mut entry in tree.tree {
@@ -155,15 +172,23 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
                         "Another worker took over this secret scan"
                     );
                 }
-                let blob = store.blob_bytes(&sha, &entry.path).await?;
-                let path = entry.path.clone();
-                let commit_sha = sha.clone();
-                let patterns = patterns.clone();
-                let detections = tokio::task::spawn_blocking(move || {
-                    scan_with_patterns(&path, &commit_sha, &blob.bytes, &patterns, false)
-                })
-                .await??;
-                for detection in detections {
+                let key = (entry.path.clone(), entry.sha.clone());
+                let detections = if let Some(detections) = cache.get(&key) { detections.clone() } else {
+                    // Paths may be non-UTF-8; object identity, not the display path, selects bytes.
+                    let bytes = store.blob_by_id(&entry.sha).await?;
+                    let path = entry.path.clone();
+                    let commit_sha = sha.clone();
+                    let patterns = patterns.clone();
+                    let detections = Arc::new(tokio::task::spawn_blocking(move || scan_with_patterns(&path, &commit_sha, &bytes, &patterns, false)).await??);
+                    if cacheable {
+                        let bytes = detections.iter().map(|detection| detection.secret.len()).sum::<usize>() + key.0.len() + key.1.len();
+                        if cache.len() >= 1024 || cache_bytes.saturating_add(bytes) > 8 * 1024 * 1024 { cache.clear(); cache_bytes = 0; }
+                        cache_bytes += bytes;
+                        cache.insert(key, detections.clone());
+                    }
+                    detections
+                };
+                for detection in detections.iter() {
                     let location = records::Location {
                         commit_sha: sha.clone(),
                         blob_sha: entry.sha.clone(),
@@ -189,12 +214,9 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
                     )
                     .await?;
                     if let Some((alert, created, added)) = stored {
-                        if created {
-                            if let Some(actor) = job.actor_id {
-                                emit_alert(state, &repo, &alert, "created", actor).await?;
-                            }
-                        }
-                        if let Some(actor) = job.actor_id.filter(|_| added) {
+                        if created { emit_alert(state, &repo, &alert, "created", job.actor_id).await?; }
+                        if added {
+                            let actor = job.actor_id;
                             let owner = db::repositories::records::repository_owner_name(
                                 &state.pool,
                                 repo.id,
@@ -206,17 +228,16 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
                             let repository = payloads::repository(&repo, &owner);
                             let location =
                                 payloads::secret_scanning_location(&location, &owner, &repo.name);
-                            webhooks::emit(&state.pool, &repo, "secret_scanning_alert_location", vec![actor], move |_, people| json!({"action":"created","alert":document,"location":location,"repository":repository,"sender":payloads::person(&people.get(actor))})).await;
+                            webhooks::emit(&state.pool, &repo, "secret_scanning_alert_location", actor.into_iter().collect(), move |_, people| json!({"action":"created","alert":document,"location":location,"repository":repository,"sender":actor.map(|actor| payloads::person(&people.get(actor))).unwrap_or(Value::Null)})).await;
                         }
                     }
                 }
             }
         }
-        beat = std::time::Instant::now();
-        ensure!(
-            records::heartbeat(&state.pool, repo.id, job.id, job.attempt, Some(&sha)).await?,
-            "Another worker took over this secret scan"
-        );
+        // A persistent marker means this commit AND its ancestors completed, so pruning a
+        // later incremental walk cannot strand work after cancellation or a storage failure.
+        pending.push((sha, true));
+        pending.extend(commit.parents.into_iter().map(|sha| (sha, false)));
     }
     Ok(())
 }
@@ -227,7 +248,12 @@ pub async fn run_next(state: &AppState) -> Result<bool> {
         return Ok(false);
     };
     let result = scan_job(state, &job).await;
-    records::finish(&state.pool, job.id, job.attempt, result.is_ok()).await?;
+    let completion = match &result {
+        Ok(()) => records::ScanCompletion::Completed,
+        Err(error) if error.downcast_ref::<crate::backend::repositories::store::RepoError>().is_some_and(|error| error.kind == crate::backend::repositories::store::ErrorKind::Unavailable) || error.is::<sqlx::Error>() => records::ScanCompletion::Retry,
+        Err(_) => records::ScanCompletion::Failed,
+    };
+    records::finish(&state.pool, job.id, job.attempt, completion).await?;
     result?;
     Ok(true)
 }

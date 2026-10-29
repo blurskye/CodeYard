@@ -54,6 +54,8 @@ pub struct Pattern {
     pub custom_pattern_version: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(skip)]
+    compiled: std::sync::OnceLock<std::result::Result<Compiled, String>>,
 }
 
 #[derive(Deserialize)]
@@ -71,6 +73,7 @@ pub struct Delete {
     pub custom_pattern_version: Option<String>,
 }
 
+#[derive(Clone)]
 struct Compiled {
     regex: Regex,
     positive: Vec<Regex>,
@@ -152,11 +155,13 @@ impl Create {
             custom_pattern_version: Some(uuid::Uuid::new_v4().to_string()),
             created_at: now,
             updated_at: now,
+            compiled: Default::default(),
         }
     }
 }
 impl Pattern {
     pub fn apply(&mut self, input: &Update) -> Result<()> {
+        self.compiled.take();
         ensure!(
             input.pattern.is_some()
                 || input.start_delimiter.is_some()
@@ -200,13 +205,10 @@ pub fn scan(patterns: &[Pattern], text: &str, push: bool, deadline: std::time::I
         pattern.state == "published" && (!push || pattern.push_protection_enabled)
     }) {
         ensure!(std::time::Instant::now() < deadline, "Secret scanning exceeded its time budget");
-        let compiled = compile(
-            &pattern.pattern,
-            &pattern.start_delimiter,
-            &pattern.end_delimiter,
-            &pattern.must_match,
-            &pattern.must_not_match,
-        )?;
+        let compiled = pattern.compiled.get_or_init(|| compile(
+            &pattern.pattern, &pattern.start_delimiter, &pattern.end_delimiter,
+            &pattern.must_match, &pattern.must_not_match,
+        ).map_err(|error| error.to_string())).as_ref().map_err(|error| anyhow::anyhow!("{error}"))?;
         let mut from = 0;
         while from <= text.len() {
             ensure!(std::time::Instant::now() < deadline, "Secret scanning exceeded its time budget");

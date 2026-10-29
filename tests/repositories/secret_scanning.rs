@@ -53,10 +53,10 @@ fn secret_scanning_own_tokens_and_entropy() {
         ("cy_fgpat_", "codeyard_fine_grained_personal_access_token"),
         ("ghs_", "codeyard_actions_token"),
     ] {
-        let value = format!(
-            "{prefix}{}",
-            "3b17a095fdc84e62091adc64b3f5a7e891c246df938b5a017eafc647320bd952"
-        );
+        let payload = if prefix == "ghs_" {
+            "AUf2Wt_DtOxg3y0mK9sHbR-Zq6pVxN8cLe1jE4aY5f-"
+        } else { "3b17a095fdc84e62091adc64b3f5a7e891c246df938b5a017eafc647320bd952" };
+        let value = format!("{prefix}{payload}");
         let found = scan("tokens.txt", "commit", value.as_bytes()).unwrap();
         assert!(found
             .iter()
