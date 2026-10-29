@@ -426,7 +426,7 @@ fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 /// not support it, as GitHub Enterprise Server answers for a feature it lacks.
 fn placeholder(operation: &'static Operation) -> MethodRouter<Arc<AppState>> {
     let filter = MethodFilter::try_from(operation.method.clone()).expect("a REST method");
-    let route = on(filter, move || async move {
+    on(filter, move || async move {
         let (status, message) = match operation.support {
             Support::Supported => (
                 StatusCode::NOT_IMPLEMENTED,
@@ -435,8 +435,7 @@ fn placeholder(operation: &'static Operation) -> MethodRouter<Arc<AppState>> {
             Support::NotSupported => (StatusCode::NOT_FOUND, "Not Found"),
         };
         Error::new(status, message).response_with_docs(operation.docs)
-    });
-    orgs::token_grants::authorize(operation, route)
+    })
 }
 
 /// Every operation in GitHub's description gets a route, with its handler or a placeholder.

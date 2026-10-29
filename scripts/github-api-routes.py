@@ -37,7 +37,6 @@ NOT_SUPPORTED = {
     ("actions", "hosted-runners"): "GitHub-hosted runners are GitHub's machines",
     ("orgs", "network-configurations"): "Network configurations are GitHub's Azure networking",
     ("orgs", "api-insights"): "API insights are GitHub's own analytics",
-    ("orgs", "personal-access-tokens"): "Personal tokens have account-wide read/write scope, without per-repository grants or pending approvals",
 }
 
 # GitHub-only concepts can share subcategories with supported forge operations.

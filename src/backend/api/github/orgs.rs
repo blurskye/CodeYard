@@ -14,7 +14,7 @@ mod roles;
 mod rule_suites;
 mod security;
 mod settings;
-pub(super) mod token_grants;
+mod token_grants;
 use super::{api_url, auth, pagination::Pagination, Error, Result};
 use crate::backend::{
     app::AppState,
@@ -95,6 +95,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     handlers.extend(settings::handlers());
     handlers.extend(external_properties::handlers());
     handlers.extend(immutable_releases::handlers());
+    handlers.extend(token_grants::handlers());
     handlers
 }
 
