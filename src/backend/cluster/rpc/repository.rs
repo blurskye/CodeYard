@@ -742,7 +742,10 @@ impl RpcHandler {
                 offset,
                 limit,
                 raw_json,
-            } => encode_json(&store.search_code(&git_ref, &text, offset, limit), raw_json, &mut output)?,
+            } => {
+                let matches = store.search_code(&git_ref, &text, offset, limit).await?;
+                encode_json(&matches, raw_json, &mut output)?
+            }
             Operation::PathCommits {
                 git_ref,
                 path,
@@ -880,7 +883,10 @@ impl RpcHandler {
                 Value::Null
             }
             Operation::Contributors => json!(store.contributors()),
-            Operation::CommitStatistics { branch, raw_json } => encode_json(&store.commit_statistics(&branch), raw_json, &mut output)?,
+            Operation::CommitStatistics { branch, raw_json } => {
+                let statistics = store.commit_statistics(&branch).await?;
+                encode_json(&statistics, raw_json, &mut output)?
+            }
             Operation::CodeFrequency { branch } => json!(store.code_frequency(&branch)),
             Operation::IsAncestor {
                 ancestor,
