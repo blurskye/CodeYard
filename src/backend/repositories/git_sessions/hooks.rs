@@ -332,6 +332,9 @@ impl Gateway {
         } else {
             false
         };
+        let ref_change = crate::backend::repositories::store::begin_ref_change(
+            &self.pool, repo.id, &operation.path, Some(repo.storage_node_id),
+        ).await?;
         let gateway = self.clone();
         let (admitted, admitted_path, admitted_updates) =
             (operation.clone(), path.clone(), updates.to_vec());
@@ -405,11 +408,9 @@ impl Gateway {
         // A failed creation deletes its repository only while no write has reached it, so the
         // version moves before Git takes the push.
         db::repositories::records::advance_contribution_version(&self.pool, current.id).await?;
-        operation
-            .state
-            .lock()
-            .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
-            .publication = Some(publication);
+        let mut state = operation.state.lock().map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
+        state.ref_change = Some(ref_change);
+        state.publication = Some(publication);
         Ok(())
     }
 
@@ -449,6 +450,7 @@ impl Gateway {
             );
             failed = true;
         }
+        operation.state.lock().map_err(|_| anyhow::anyhow!("operation state unavailable"))?.ref_change.take();
         crate::backend::git::maintenance::after_push(repo.id, path.clone());
         for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
             if db::secret_scanning::enqueue(&self.pool, repo.id, &update.new, operation.actor_id)
@@ -540,6 +542,11 @@ impl Gateway {
             .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
             .previous_refs
             .clone();
+        for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
+            if let Some(branch) = update.reference.strip_prefix("refs/heads/") {
+                languages::refresh_default_branch(self.pool.clone(), repo.id, path.clone(), branch.to_owned(), Some(repo.storage_node_id));
+            }
+        }
         // Optional profile counts share one short budget and identical ranges are walked once.
         let activity = async {
             let mut counts = HashMap::new();
@@ -547,13 +554,6 @@ impl Gateway {
                 let Some(branch) = update.reference.strip_prefix("refs/heads/") else {
                     continue;
                 };
-                languages::refresh_default_branch(
-                    self.pool.clone(),
-                    repo.id,
-                    path.clone(),
-                    branch.to_owned(),
-                    Some(repo.storage_node_id),
-                );
                 let range = (update.old.clone(), update.new.clone());
                 let count = if let Some(count) = counts.get(&range) {
                     *count
@@ -583,19 +583,6 @@ impl Gateway {
                 "could not finish optional push activity within its budget"
             );
         }
-        // Live credentials remain mandatory for subsequent CI dispatch.
-        let current_repo = db::repositories::records::get_repository_by_id(&self.pool, repo.id)
-            .await?
-            .context("repository unavailable")?;
-        let (current_identity, _) = operation
-            .credential
-            .authorize(&self.pool, &current_repo, true)
-            .await?;
-        ensure!(current_identity.id == actor_id, "identity changed");
-        ensure!(
-            self.bare_path(&current_repo).await? == operation.path,
-            "repository location changed"
-        );
         // Remember every accepted commit, even when trust, skip messages or filters prevent CI.
         let store = repo_store(&repo, self.ci.cluster.as_ref());
         for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
@@ -614,6 +601,12 @@ impl Gateway {
                 Err(_) => failed = true,
             }
         }
+        // Accepted-push facts above are independent of credential liveness.
+        let current_repo = db::repositories::records::get_repository_by_id(&self.pool, repo.id)
+            .await?.context("repository unavailable")?;
+        let (current_identity, _) = operation.credential.authorize(&self.pool, &current_repo, true).await?;
+        ensure!(current_identity.id == actor_id, "identity changed");
+        ensure!(self.bare_path(&current_repo).await? == operation.path, "repository location changed");
         if !current_identity.is_admin
             && !self
                 .ci

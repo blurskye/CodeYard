@@ -5,7 +5,7 @@ use crate::backend::ci::CiRuns;
 use crate::backend::db::{self, models::Repository, DbPool};
 use crate::backend::git::repository::process as git_process;
 use crate::backend::repositories::store::{
-    begin_ref_change, repo_store, ErrorKind, GitService, GitSession, GitStreams, RepoError,
+    repo_store, ErrorKind, GitService, GitSession, GitStreams, RepoError,
 };
 use crate::backend::repositories::traffic;
 use anyhow::{ensure, Context, Result};
@@ -61,6 +61,7 @@ pub(super) struct HookState {
     // Acquired in pre-receive through the description already inherited by the child.
     // Released only when Git reports completed publication, before post-receive follow-up.
     pub(super) publication: Option<Arc<crate::backend::git::locks::PublicationGuard>>,
+    pub(super) ref_change: Option<crate::backend::repositories::store::RefChange>,
 }
 
 struct ActiveOperation {
@@ -223,6 +224,7 @@ async fn listen(
     let connections = Arc::new(Semaphore::new(connection_budget(
         git_process::session_capacity(),
     )));
+    let serves = Arc::new(Semaphore::new(2 * git_process::session_capacity()));
     let mut tasks = JoinSet::new();
     let mut draining = false;
     // Connection tasks read the stop flag through their own receiver, because the select
@@ -235,12 +237,20 @@ async fn listen(
         tokio::select! {
             _ = stop.wait_for(|stopped| *stopped), if !draining => draining = true,
             connection = listener.accept() => {
-                let (stream, _) = connection?;
+                let (stream, _) = match connection {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        tracing::warn!(%error, "OpenSSH broker accept failed");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        continue;
+                    }
+                };
                 let peer = stream.peer_cred()?.uid();
                 if peer != gateway.uid && peer != 0 { continue; }
                 let Ok(connection_slot) = connections.clone().try_acquire_owned() else { continue; };
                 let Ok(header_slot) = headers.clone().try_acquire_owned() else { continue; };
                 let gateway = gateway.clone();
+                let serves = serves.clone();
                 let stopping = stopping.clone();
                 tasks.spawn(async move {
                     let _connection_slot = connection_slot;
@@ -248,6 +258,17 @@ async fn listen(
                     let request = protocol::read_request(&mut stream).await;
                     drop(header_slot);
                     if let Ok(request) = request {
+                        // Serve waiters cannot consume the reserve needed by running pushes'
+                        // hooks. Classify only after the bounded header has been read.
+                        let _serve_slot = if matches!(&request, Request::Serve { .. }) {
+                            match serves.try_acquire_owned() {
+                                Ok(slot) => Some(slot),
+                                Err(_) => {
+                                    let _ = protocol::finish(&mut stream, 1).await;
+                                    return;
+                                }
+                            }
+                        } else { None };
                         let post = matches!(&request, Request::Hook { post: true, .. });
                         // A push that is already running still needs its hooks. Once shutdown
                         // has started, nothing else is admitted.
@@ -316,6 +337,11 @@ mod admission_tests {
     }
 }
 
+struct AbortSession(tokio::task::AbortHandle);
+impl Drop for AbortSession {
+    fn drop(&mut self) { self.0.abort(); }
+}
+
 impl Gateway {
     async fn handle(self: &Arc<Self>, stream: &mut UnixStream, request: Request) -> Result<()> {
         match request {
@@ -361,6 +387,7 @@ impl Gateway {
                         let _ = protocol::finish(&mut owned_stream, 1).await;
                     }
                 });
+                let _cancel_on_shutdown = AbortSession(task.abort_handle());
                 // The session ends when its task drops its end of the pair, whatever the
                 // client is still sending. Writing to a finished session fails, and that
                 // must not discard the answer still waiting to be forwarded.
@@ -394,11 +421,12 @@ impl Gateway {
                 base64_key,
                 serve_command,
             } => {
-                let _slot = timeout(protocol::CONTROL_TIMEOUT, self.controls.acquire())
+                let deadline = tokio::time::Instant::now() + protocol::CONTROL_TIMEOUT;
+                let _slot = tokio::time::timeout_at(deadline, self.controls.acquire())
                     .await?
                     .context("control requests busy")?;
-                let line = timeout(
-                    protocol::CONTROL_TIMEOUT,
+                let line = tokio::time::timeout_at(
+                    deadline,
                     self.keys(&user, &key_type, &base64_key, &serve_command),
                 )
                 .await??;
@@ -453,11 +481,12 @@ impl Gateway {
                         .published()?;
                     state.publication.take();
                 }
-                let _slot = timeout(protocol::CONTROL_TIMEOUT, self.controls.acquire())
+                let deadline = tokio::time::Instant::now() + protocol::CONTROL_TIMEOUT;
+                let _slot = tokio::time::timeout_at(deadline, self.controls.acquire())
                     .await?
                     .context("control requests busy")?;
-                let result = timeout(
-                    protocol::CONTROL_TIMEOUT,
+                let result = tokio::time::timeout_at(
+                    deadline,
                     self.hook(&operation, post, &updates, quarantine.as_deref()),
                 )
                 .await;
@@ -644,14 +673,19 @@ impl Gateway {
         };
         // A lost relay closes stdin but does not cancel an accepted push.
         let status = {
-            tokio::pin!(session, inbound, outbound);
+            let mut inbound = Box::pin(inbound);
+            tokio::pin!(session, outbound);
             tokio::select! {
                 result = &mut session => { let _ = outbound.await; result? }
                 _ = &mut inbound => {
+                    drop(inbound);
                     let (result, _) = tokio::join!(session, outbound);
                     result?
                 }
-                _ = &mut outbound => session.await?,
+                _ = &mut outbound => {
+                    drop(inbound);
+                    session.await?
+                },
             }
         };
         if !write && status.success() && delivered && observation.initial_transfer() {
@@ -686,7 +720,9 @@ impl Gateway {
             None
         };
         let token = uuid::Uuid::new_v4().simple().to_string();
-        let hooks = self.make_hooks(credential.id(), repo.id, write)?;
+        let gateway = self.clone();
+        let repo_id = repo.id;
+        let hooks = tokio::task::spawn_blocking(move || gateway.make_hooks(credential.id(), repo_id, write)).await??;
         let operation = Arc::new(Operation {
             credential,
             actor_id: actor.id,
@@ -706,21 +742,6 @@ impl Gateway {
                 gateway: self.clone(),
                 token: token.clone(),
             })
-        } else {
-            None
-        };
-        // A push can move some refs before it fails, so every receive is counted as a change
-        // before receive-pack starts. All transports, host OpenSSH included, end up here.
-        let _change = if write {
-            Some(
-                begin_ref_change(
-                    &self.pool,
-                    repo.id,
-                    &operation.path,
-                    Some(repo.storage_node_id),
-                )
-                .await?,
-            )
         } else {
             None
         };
@@ -751,7 +772,7 @@ impl Gateway {
             let publication = state.publication.take();
             (
                 state.dispatch_failed,
-                (!state.post_started)
+                (!state.post_started && publication.is_some())
                     .then(|| state.proposed.clone())
                     .flatten(),
                 publication,
