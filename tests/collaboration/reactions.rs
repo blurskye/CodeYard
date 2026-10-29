@@ -724,6 +724,7 @@ async fn proj_id(pool: &db::DbPool) -> i64 {
 async fn unassigned_lines(pool: &db::DbPool, issue: i64) -> usize {
     db::timeline::list_events(
         pool,
+        proj_id(pool).await,
         "issue",
         issue,
         None,

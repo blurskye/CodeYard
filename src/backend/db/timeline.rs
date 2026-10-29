@@ -81,6 +81,7 @@ native_operation!(crate::backend::db::postgres::timeline::list_events,
     crate::backend::db::sqlite::timeline::list_events,
     fn list_events(
     pool: &DbPool,
+    repo: i64,
     subject: &str,
     subject_id: i64,
     after: Option<DateTime<Utc>>,

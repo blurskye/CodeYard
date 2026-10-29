@@ -70,6 +70,7 @@ pub async fn record_event(
 /// The events from `after` up to `before`, each bound optional, oldest first.
 pub async fn list_events(
     pool: &SqlitePool,
+    repo: i64,
     subject: &str,
     subject_id: i64,
     after: Option<DateTime<Utc>>,
@@ -85,7 +86,9 @@ pub async fn list_events(
         r#"
         SELECT u.username AS actor, e.kind, e.detail, e.previous, e.created_at
         FROM timeline_events e LEFT JOIN users u ON u.id = e.actor_id
-        WHERE e.subject_kind = ?1 AND e.subject_id = ?2
+        WHERE e.subject_kind = ?1 AND e.subject_id = ?2 AND e.repo_id=?7
+          AND ((?1='issue' AND EXISTS(SELECT 1 FROM issues i WHERE i.id=?2 AND i.repo_id=?7))
+            OR (?1='pull_request' AND EXISTS(SELECT 1 FROM pull_requests p WHERE p.id=?2 AND p.repo_id=?7)))
           AND (?3 IS NULL OR e.created_at >= ?3) AND (?4 IS NULL OR e.created_at < ?4)
         ORDER BY e.created_at, e.id LIMIT ?5 OFFSET ?6
         "#,
@@ -96,6 +99,7 @@ pub async fn list_events(
     .bind(before)
     .bind(limit)
     .bind(offset)
+    .bind(repo)
     .fetch_all(pool)
     .await?)
 }
