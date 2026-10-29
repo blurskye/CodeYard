@@ -1138,21 +1138,27 @@ impl RpcHandler {
                 email,
             } => json!(store.prepare_restack(&from, &head, &onto, &name, &email)),
             Operation::PublishRestack {
+                authority,
                 stack_id,
                 versions,
                 base_branch,
                 base,
                 moves,
-            } => json!(store.publish_restack_as(
+            } => {
+                if Some(authority.user_id()) != actor {
+                    return Err(invalid("restack actor mismatch").into());
+                }
+                json!(store.publish_restack_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                authority,
                 stack_id,
                 &versions,
                 &base_branch,
                 &base,
                 &moves
-            )),
+            ))
+            },
             Operation::AdvertiseRefs { service } => {
                 output = store.advertise_refs(service).await?;
                 Value::Null

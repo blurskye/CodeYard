@@ -18,6 +18,12 @@ pub enum AccountActor {
     Token { user_id: i64, token_id: i64 },
 }
 
+impl std::fmt::Debug for AccountActor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AccountActor([redacted])")
+    }
+}
+
 impl From<i64> for AccountActor {
     fn from(id: i64) -> Self { Self::Trusted(id) }
 }

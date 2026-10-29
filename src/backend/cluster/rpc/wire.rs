@@ -387,6 +387,7 @@ pub enum Operation {
     /// Moves the branches of a restack, each checked against its old commit, with `base_branch`
     /// checked against `base` and the stack against the `versions` the rebase read.
     PublishRestack {
+        authority: crate::backend::db::users::accounts::AccountActor,
         stack_id: i64,
         versions: Vec<(i64, i64)>,
         base_branch: String,
