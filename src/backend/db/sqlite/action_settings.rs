@@ -129,6 +129,42 @@ pub async fn settings(
     Ok(stored)
 }
 
+pub async fn repositories(
+    pool: &SqlitePool,
+    actor: i64,
+    token: i64,
+    scope: &Scope,
+    setting: Setting,
+    change: Option<&crate::backend::db::action_settings::SelectionChange>,
+    window: (i64, i64),
+) -> Result<(i64, Vec<crate::backend::db::models::Repository>)> {
+    let (offset, limit) = window;
+    ensure!(matches!(scope, Scope::Organization(_)) && offset >= 0 && (1..=100).contains(&limit), Refusal::Invalid);
+    let mut tx = if change.is_some() { pool.begin_with("BEGIN IMMEDIATE").await? } else { pool.begin().await? };
+    let (_, _, org) = authority(&mut tx, actor, token, scope, change.is_some()).await?;
+    let stored: Option<String> = sqlx::query_scalar("SELECT rest_settings FROM org_actions_settings WHERE org_id=?1")
+        .bind(org).fetch_optional(&mut *tx).await?;
+    let mut stored: Value = serde_json::from_str(stored.as_deref().unwrap_or("{}"))?;
+    if let Some(change) = change {
+        let mut added = crate::backend::db::action_settings::change_selection(&mut stored, setting, change)?;
+        added.sort_unstable();
+        added.dedup();
+        let owned: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repositories WHERE owner_org_id=?1 AND id IN (SELECT value FROM json_each(?2))")
+            .bind(org).bind(serde_json::to_string(&added)?).fetch_one(&mut *tx).await?;
+        ensure!(owned == added.len() as i64, Refusal::Invalid);
+        sqlx::query("INSERT INTO org_actions_settings(org_id,rest_settings) VALUES(?1,?2) ON CONFLICT(org_id) DO UPDATE SET rest_settings=EXCLUDED.rest_settings,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
+            .bind(org).bind(stored.to_string()).execute(&mut *tx).await?;
+    }
+    let ids = stored[setting.key()]["selected_repository_ids"].as_array().cloned().unwrap_or_default();
+    let ids = serde_json::to_string(&ids)?;
+    let total = sqlx::query_scalar("SELECT COUNT(*) FROM repositories WHERE owner_org_id=?1 AND id IN (SELECT value FROM json_each(?2))")
+        .bind(org).bind(&ids).fetch_one(&mut *tx).await?;
+    let rows = sqlx::query_as("SELECT * FROM repositories WHERE owner_org_id=?1 AND id IN (SELECT value FROM json_each(?2)) ORDER BY id LIMIT ?3 OFFSET ?4")
+        .bind(org).bind(&ids).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok((total, rows))
+}
+
 pub async fn policies(
     pool: &SqlitePool,
     actor: i64,

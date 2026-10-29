@@ -133,13 +133,6 @@ fn switch_url(org: &str, setting: Setting, rest: &str) -> String {
     ))
 }
 
-fn selected(stored: &Value, setting: Setting) -> Vec<i64> {
-    stored[setting.key()]["selected_repository_ids"]
-        .as_array()
-        .map(|ids| ids.iter().filter_map(Value::as_i64).collect())
-        .unwrap_or_default()
-}
-
 async fn organization_switch(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -203,86 +196,28 @@ async fn organization_repositories(
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
     let actor = auth.user.id;
     let setting = switch(&uri);
-    let stored = db::action_settings::settings(&state.pool, actor, auth.token.id, &scope, None)
-        .await
-        .map_err(failure)?;
-    let org = db::organizations::get_public_organization(&state.pool, &params["org"])
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    if !write {
-        let mut repositories = Vec::new();
-        for id in selected(&stored, setting) {
-            if let Some(repo) = db::repositories::records::get_repository_by_id(&state.pool, id)
-                .await
-                .map_err(Error::unavailable)?
-                .filter(|repo| repo.owner_org_id == Some(org.id))
-            {
-                repositories.push(repo);
-            }
-        }
-        let (offset, limit) = page.window()?;
-        let total = repositories.len();
-        let mut values = Vec::new();
-        for repo in repositories.iter().skip(offset).take(limit) {
-            values.push(super::super::repos::document(&state, repo, Some(&auth)).await?);
-        }
-        return Ok((
-            page.headers(&uri, offset.saturating_add(limit) < total)?,
-            Json(json!({"total_count":total,"repositories":values})),
-        )
-            .into_response());
-    }
-    let mut ids = selected(&stored, setting);
-    // Only repositories being added are checked; removing never needs them to exist.
-    let added = if params.contains_key("repository_id") {
+    use db::action_settings::SelectionChange;
+    let change = if !write {
+        None
+    } else if params.contains_key("repository_id") {
         let id = super::id(&params, "repository_id")?;
-        ids.retain(|existing| *existing != id);
-        if method == axum::http::Method::DELETE {
-            Vec::new()
-        } else {
-            ids.push(id);
-            vec![id]
-        }
+        Some(if method == axum::http::Method::DELETE { SelectionChange::Remove(id) } else { SelectionChange::Add(id) })
     } else {
         let body = input(request).await?;
-        ids = body["selected_repository_ids"]
-            .as_array()
+        let ids = body["selected_repository_ids"].as_array()
             .ok_or_else(|| Error::validation("Actions", "selected_repository_ids", "missing"))?
-            .iter()
-            .map(|id| {
-                id.as_i64().ok_or_else(|| {
-                    Error::validation("Actions", "selected_repository_ids", "invalid")
-                })
-            })
-            .collect::<Result<_>>()?;
-        ids.sort_unstable();
-        ids.dedup();
-        ids.clone()
+            .iter().map(|id| id.as_i64().ok_or_else(|| Error::validation("Actions", "selected_repository_ids", "invalid")))
+            .collect::<Result<Vec<_>>>()?;
+        Some(SelectionChange::Set(ids))
     };
-    for id in added {
-        let owned = db::repositories::records::get_repository_by_id(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?
-            .is_some_and(|repo| repo.owner_org_id == Some(org.id));
-        if !owned {
-            return Err(Error::validation(
-                "Actions",
-                "selected_repository_ids",
-                "invalid",
-            ));
-        }
+    let (offset, limit) = page.window()?;
+    let (total, rows) = db::action_settings::repositories(&state.pool, actor, auth.token.id, &scope, setting, change.as_ref(), (offset as i64, limit as i64))
+        .await.map_err(failure)?;
+    if write {
+        return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    db::action_settings::settings(
-        &state.pool,
-        actor,
-        auth.token.id,
-        &scope,
-        Some((setting, &json!({"selected_repository_ids":ids}))),
-    )
-    .await
-    .map_err(failure)?;
-    Ok(StatusCode::NO_CONTENT.into_response())
+    let values: Vec<_> = rows.iter().map(|repo| crate::backend::webhooks::payloads::repository(repo, &params["org"])).collect();
+    Ok((page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?, Json(json!({"total_count":total,"repositories":values}))).into_response())
 }
 
 fn document(policy: &Policy, params: &Params) -> Result<Value> {

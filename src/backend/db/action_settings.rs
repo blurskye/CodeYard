@@ -240,6 +240,33 @@ native_operation!(crate::backend::db::postgres::action_settings::policies,
     crate::backend::db::sqlite::action_settings::policies,
     fn policies(pool: &DbPool, actor: i64, token: i64, scope: &Scope, id: Option<i64>, change: Option<Option<&Value>>) -> Result<Vec<Policy>>);
 
+pub enum SelectionChange {
+    Set(Vec<i64>),
+    Add(i64),
+    Remove(i64),
+}
+
+pub(crate) fn change_selection(stored: &mut Value, setting: Setting, change: &SelectionChange) -> Result<Vec<i64>> {
+    ensure!(matches!(setting, Setting::Permissions | Setting::Runners), Refusal::Invalid);
+    ensure!(stored[setting.key()]["enabled_repositories"] == "selected", Refusal::Invalid);
+    let mut ids: Vec<i64> = stored[setting.key()]["selected_repository_ids"].as_array()
+        .map(|ids| ids.iter().filter_map(Value::as_i64).collect()).unwrap_or_default();
+    let added = match change {
+        SelectionChange::Set(next) => { ids = next.clone(); next.clone() }
+        SelectionChange::Add(id) => { ids.push(*id); vec![*id] }
+        SelectionChange::Remove(id) => { ids.retain(|value| value != id); Vec::new() }
+    };
+    ids.sort_unstable();
+    ids.dedup();
+    ensure!(ids.len() <= 10_000 && ids.iter().all(|id| *id > 0), Refusal::Invalid);
+    stored[setting.key()]["selected_repository_ids"] = json!(ids);
+    Ok(added)
+}
+
+native_operation!(crate::backend::db::postgres::action_settings::repositories,
+    crate::backend::db::sqlite::action_settings::repositories,
+    fn repositories(pool: &DbPool, actor: i64, token: i64, scope: &Scope, setting: Setting, change: Option<&SelectionChange>, window: (i64, i64)) -> Result<(i64, Vec<super::models::Repository>)>);
+
 #[derive(sqlx::FromRow)]
 pub struct Policy {
     pub id: i64,
