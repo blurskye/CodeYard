@@ -51,8 +51,8 @@ async fn remove(
     kind: CiRunDeletion,
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
-    let actor = authentication.ok_or_else(auth::required)?.user.id;
-    if !db::ci::delete_ci_run_data(&state.pool, actor, repo.id, id, kind)
+    let authentication = authentication.ok_or_else(auth::required)?;
+    if !db::ci::delete_ci_run_data(&state.pool, (authentication.user.id, authentication.token.id), repo.id, id, kind)
         .await
         .map_err(|error| admission_error(error.into()))?
     {

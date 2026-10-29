@@ -1000,17 +1000,22 @@ async fn request_cancellation(
 
 pub async fn delete_ci_run_data(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     repo: i64,
     id: i64,
     kind: crate::backend::db::ci::CiRunDeletion,
 ) -> Result<bool> {
     use crate::backend::db::ci::CiRunDeletion;
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         CiAdmissionRefusal::Denied("CI run deletion permission denied")
     );
+    if let Some(token) = credential.token_id {
+        ensure!(super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "actions").await?, CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
+    }
     let statuses:Vec<String>=sqlx::query_scalar("SELECT status FROM ci_runs WHERE repo_id=$1 AND COALESCE(workflow_run_id,id)=$2 ORDER BY id").bind(repo).bind(id).fetch_all(&mut *tx).await?;
     if statuses.is_empty() {
         return Ok(false);
