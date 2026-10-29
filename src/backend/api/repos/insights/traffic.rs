@@ -95,5 +95,5 @@ pub(super) async fn page(
         InsightsPage::Traffic {
             page: Box::new(page),
         },
-    )
+    ).await
 }

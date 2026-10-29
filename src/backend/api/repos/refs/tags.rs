@@ -45,6 +45,7 @@ pub async fn list_tags(
         .collect();
     responses.sort_by(|a, b| a.name.cmp(&b.name));
 
+    crate::backend::api::repos::access::check_repo_read_access(&state.pool, &repository, &headers).await?;
     Ok(Json(responses))
 }
 

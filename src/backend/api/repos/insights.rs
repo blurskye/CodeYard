@@ -34,7 +34,10 @@ pub fn page_router() -> Router<Arc<AppState>> {
         .route("/:owner/:repo/insights/community", get(community))
 }
 
-fn show(ctx: &PageContext, loaded: Loaded, title: &str, page: InsightsPage) -> Response {
+async fn show(ctx: &PageContext, loaded: Loaded, title: &str, page: InsightsPage) -> Response {
+    if let Err((status, _)) = super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers).await {
+        return ctx.error(status, "Repository not found.");
+    }
     ctx.page_model(
         title,
         Page::Repositories(RepoPage::Insights {
@@ -128,7 +131,7 @@ async fn ref_activity(
                 time_period: input.time_period.unwrap_or_default(),
             }),
         },
-    )
+    ).await
 }
 
 async fn dependencies(
@@ -187,7 +190,7 @@ async fn dependencies(
             page,
             has_more,
         },
-    )
+    ).await
 }
 
 async fn pulse(
@@ -228,7 +231,7 @@ async fn pulse(
         loaded,
         "Pulse",
         InsightsPage::Pulse { days, activity },
-    )
+    ).await
 }
 
 async fn community(
@@ -304,7 +307,7 @@ async fn community(
             health_percentage: profile.health_percentage(),
             checks,
         },
-    )
+    ).await
 }
 
 async fn contributors(
@@ -343,7 +346,7 @@ async fn contributors(
         loaded,
         "Contributors",
         InsightsPage::Contributors { rows },
-    )
+    ).await
 }
 
 async fn code_frequency(
@@ -381,7 +384,7 @@ async fn code_frequency(
         loaded,
         "Code frequency",
         InsightsPage::CodeFrequency { weeks },
-    )
+    ).await
 }
 
 async fn actions(
@@ -420,7 +423,7 @@ async fn actions(
         loaded,
         "Actions usage",
         InsightsPage::Actions { days, workflows },
-    )
+    ).await
 }
 
 async fn forks(
@@ -477,5 +480,5 @@ async fn forks(
             page,
             has_more,
         },
-    )
+    ).await
 }
