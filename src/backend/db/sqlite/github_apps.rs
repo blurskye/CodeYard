@@ -5,6 +5,19 @@ use crate::backend::db::{
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+pub async fn delete_registration(pool: &SqlitePool, actor: i64, session: &str, id: i64) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let client: Option<String> = sqlx::query_scalar("SELECT a.client_id FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN sessions s ON s.user_id=u.id WHERE a.id=$1 AND u.id=$2 AND s.id=$3 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT u.must_change_password")
+        .bind(id).bind(actor).bind(session).fetch_optional(&mut *tx).await?;
+    let Some(client) = client else { return Ok(false); };
+    sqlx::query("DELETE FROM personal_access_tokens WHERE id IN (SELECT t.token_id FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id WHERE i.app_id=$1) OR id IN (SELECT token_id FROM oauth_app_tokens WHERE client_id=$2)")
+        .bind(id).bind(&client).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM oauth_app_grants WHERE client_id=$1").bind(&client).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM oauth_applications WHERE client_id=$1").bind(&client).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
 pub async fn register(
     pool: &SqlitePool,
     actor: i64,

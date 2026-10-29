@@ -34,7 +34,7 @@ pub struct NewDeployKey {
 
 native_operation!(crate::backend::db::postgres::deploy_keys::list_deploy_keys,
     crate::backend::db::sqlite::deploy_keys::list_deploy_keys,
-    fn list_deploy_keys(pool: &DbPool, repo_id: i64) -> Result<Vec<DeployKey>>);
+    fn list_deploy_keys(pool: &DbPool, repo_id: i64, after: i64, limit: i64) -> Result<Vec<DeployKey>>);
 
 native_operation!(crate::backend::db::postgres::deploy_keys::get_deploy_key,
     crate::backend::db::sqlite::deploy_keys::get_deploy_key,

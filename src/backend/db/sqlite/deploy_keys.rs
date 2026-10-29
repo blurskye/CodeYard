@@ -6,10 +6,10 @@ use sqlx::SqlitePool;
 
 const COLUMNS: &str = "id, repo_id, name AS title, fingerprint, public_key, NOT read_only AS can_write, created_by_id, last_used_at, created_at";
 
-pub async fn list_deploy_keys(pool: &SqlitePool, repo_id: i64) -> Result<Vec<DeployKey>> {
+pub async fn list_deploy_keys(pool: &SqlitePool, repo_id: i64, after: i64, limit: i64) -> Result<Vec<DeployKey>> {
     let sql =
-        format!("SELECT {COLUMNS} FROM deploy_keys WHERE repo_id = ?1 ORDER BY created_at, id");
-    Ok(sqlx::query_as(&sql).bind(repo_id).fetch_all(pool).await?)
+        format!("SELECT {COLUMNS} FROM deploy_keys WHERE repo_id = ?1 AND id > ?2 ORDER BY id LIMIT ?3");
+    Ok(sqlx::query_as(&sql).bind(repo_id).bind(after).bind(limit).fetch_all(pool).await?)
 }
 
 pub async fn get_deploy_key(pool: &SqlitePool, key_id: i64) -> Result<Option<DeployKey>> {

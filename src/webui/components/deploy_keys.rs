@@ -13,6 +13,7 @@ pub struct DeployKeyPanel {
     pub csrf_token: String,
     pub repository_id: i64,
     pub keys: Vec<DeployKeyRow>,
+    pub next: Option<String>,
     /// The add form as it was typed, so a refused add comes back with its values.
     pub title: String,
     pub public_key: String,
@@ -63,6 +64,8 @@ pub fn DeployKeySection(panel: DeployKeyPanel) -> Element {
                         }
                     }
                 }
+                if let Some(next) = &panel.next { crate::webui::navigation::NavLink { href: next.clone(), "Next deploy keys" } }
+                crate::webui::navigation::NavLink { href: panel.base.clone(), "First deploy keys" }
                 form { class: "deploy-key-form", method: "post", action: panel.action("deploy-key-add"),
                     input { r#type: "hidden", name: "csrf_token", value: panel.csrf_token.clone() }
                     input { r#type: "hidden", name: "repository_id", value: panel.repository_id.to_string() }

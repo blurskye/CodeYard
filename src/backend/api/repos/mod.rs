@@ -106,6 +106,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .nest(
             LEGACY_PREFIX,
             page_router()
+                .merge(super::ci::repository_router())
                 .layer(axum::middleware::from_fn(
                     super::http::interaction_proofs::prepare,
                 ))

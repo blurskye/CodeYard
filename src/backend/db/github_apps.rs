@@ -60,6 +60,8 @@ pub struct Token {
 
 native_operation!(crate::backend::db::postgres::github_apps::register, crate::backend::db::sqlite::github_apps::register,
     fn register(pool: &DbPool, actor: i64, session: &str, app: &App, secret_hash: &str) -> Result<Option<App>>);
+native_operation!(crate::backend::db::postgres::github_apps::delete_registration, crate::backend::db::sqlite::github_apps::delete_registration,
+    fn delete_registration(pool: &DbPool, actor: i64, session: &str, id: i64) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::github_apps::client_active,crate::backend::db::sqlite::github_apps::client_active,
     fn client_active(pool:&DbPool,client:&str)->Result<bool>);
 native_operation!(crate::backend::db::postgres::github_apps::app, crate::backend::db::sqlite::github_apps::app,

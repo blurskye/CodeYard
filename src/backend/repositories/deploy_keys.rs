@@ -57,7 +57,7 @@ pub async fn list_keys(
     repo: &Repository,
 ) -> Result<Vec<DeployKey>, DeployKeyError> {
     require_admin(pool, actor, repo).await?;
-    db::deploy_keys::list_deploy_keys(pool, repo.id)
+    db::deploy_keys::list_deploy_keys(pool, repo.id, 0, i64::MAX)
         .await
         .map_err(DeployKeyError::Unavailable)
 }
@@ -127,13 +127,19 @@ pub async fn settings_panel(
     repo: &Repository,
     place: Place<'_>,
     notice: Option<&str>,
+    after: i64,
 ) -> Result<DeployKeyPanel, DeployKeyError> {
-    let keys = list_keys(pool, actor, repo).await?;
+    require_admin(pool, actor, repo).await?;
+    let mut keys = db::deploy_keys::list_deploy_keys(pool, repo.id, after, 51).await.map_err(DeployKeyError::Unavailable)?;
+    let more = keys.len() > 50;
+    keys.truncate(50);
+    let next = more.then(|| format!("{}&keys_after={}", place.base, keys.last().unwrap().id));
     Ok(DeployKeyPanel {
         base: place.base.to_owned(),
         action_base: place.action.to_owned(),
         csrf_token: place.csrf_token.to_owned(),
         repository_id: repo.id,
+        next,
         keys: keys.into_iter().map(row).collect(),
         notice: notice.and_then(notice_text).map(str::to_owned),
         ..DeployKeyPanel::default()
