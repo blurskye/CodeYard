@@ -535,28 +535,16 @@ async fn org_alerts(
     Query(query): Query<Filters>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    use db::organizations::{self, OrganizationOutcome};
     let auth = auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(auth::required)?;
     let org = super::orgs::target(&state, &name).await?;
-    let role = organizations::membership::get_organization_role(&state.pool, auth.user.id, org.id)
-        .await
-        .map_err(Error::unavailable)?;
-    if !matches!(
-        role,
-        OrganizationOutcome::Applied(db::models::OrgRole::Owner | db::models::OrgRole::Admin)
-    ) {
-        return Err(Error::new(
-            StatusCode::FORBIDDEN,
-            "Must have organization security access",
-        ));
-    }
     let (offset, limit) = query.pagination().window()?;
     let filters = query.alert_filters()?;
-    let rows = records::alert_page(
+    let rows = records::organization_alert_page(
         &state.pool,
-        records::AlertScope::Organization(org.id),
+        auth.user.id,
+        org.id,
         &filters,
         offset as i64,
         (limit + 1) as i64,
@@ -566,12 +554,9 @@ async fn org_alerts(
     let next = rows.len() > limit;
     let mut values = Vec::new();
     for row in rows.iter().take(limit) {
-        let repo = db::repositories::records::get_repository_by_id(&state.pool, row.repo_id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        let mut alert = listed_alert(&state, row, &repo, &name, None).await?;
-        alert["repository"] = payloads::repository(&repo, &name);
+        let repo = &row.repository;
+        let mut alert = payloads::code_scanning_alert(&row.alert, std::slice::from_ref(&row.instance), &name, &repo.name, row.dismissed_by.as_ref().map(payloads::user)).map_err(Error::unavailable)?;
+        alert["repository"] = payloads::repository(repo, &name);
         values.push(alert);
     }
     query.pagination().response(&uri, values, next)
