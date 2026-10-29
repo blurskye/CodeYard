@@ -223,6 +223,10 @@ native_operation!(crate::backend::db::postgres::releases::get_repository_release
     crate::backend::db::sqlite::releases::get_repository_release_asset,
     fn get_repository_release_asset(pool: &DbPool, repo_id: i64, asset_id: i64) -> Result<Option<ReleaseAsset>>);
 
+native_operation!(crate::backend::db::postgres::releases::download_asset,
+    crate::backend::db::sqlite::releases::download_asset,
+    fn download_asset(pool: &DbPool, viewer: Option<i64>, repo: i64, tag: Option<&str>, name: Option<&str>, asset: Option<i64>) -> Result<Option<ReleaseAsset>>);
+
 native_operation!(crate::backend::db::postgres::releases::get_release_asset_by_name,
     crate::backend::db::sqlite::releases::get_release_asset_by_name,
     fn get_release_asset_by_name(pool: &DbPool, release_id: i64, name: &str) -> Result<Option<ReleaseAsset>>);
