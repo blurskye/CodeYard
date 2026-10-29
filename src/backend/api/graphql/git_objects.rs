@@ -144,7 +144,7 @@ pub(super) async fn reference_field(
     let head = super::arg(args, "headRef")?;
     let (source, head) = if let Some((owner, branch)) = head.split_once(':') {
         let source =
-            db::repositories::records::get_repository(&request.state.pool, owner, &repo.name)
+            crate::backend::repositories::pull_requests::branches::owner_head_repository(&request.state.pool, &repo, owner)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
