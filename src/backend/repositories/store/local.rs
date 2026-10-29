@@ -1277,49 +1277,30 @@ impl LocalStore {
     pub(super) async fn checkout_pack(
         destination: &Path,
         sha: &str,
-        mut pack: tempfile::NamedTempFile,
+        pack: tempfile::NamedTempFile,
         permit: tokio::sync::OwnedSemaphorePermit,
         lock: tokio::sync::OwnedMutexGuard<()>,
     ) -> Result<(), RepoError> {
         let destination = destination.to_owned();
         let sha = sha.to_owned();
-        tokio::task::spawn_blocking(move || {
-            let (_permit, _lock) = (permit, lock);
-            use std::io::{Read, Seek};
-            pack.as_file_mut()
-                .rewind()
-                .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
-            let mut header = [0; 8];
-            pack.read_exact(&mut header)
-                .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
-            if &header != b"0008NAK\n" {
-                return Err(unavailable("Invalid upload-pack response"));
-            }
-            std::fs::create_dir(&destination)
-                .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
-            let result = (|| -> anyhow::Result<()> {
-                // A cancelled run removes its workspace while this task may still be
-                // running. Never create the directory again behind it.
-                let mut options = git2::RepositoryInitOptions::new();
-                options.mkdir(false).mkpath(false);
-                let repo = git2::Repository::init_opts(&destination, &options)?;
-                let odb = repo.odb()?;
-                let mut writer = odb.packwriter()?;
-                std::io::copy(&mut pack, &mut writer)?;
-                writer.commit()?;
-                let oid = git2::Oid::from_str(&sha)?;
-                let commit = git::repository::find_commit_checked(&repo, oid)?;
-                repo.set_head_detached(oid)?;
-                repo.checkout_tree(commit.as_object(), None)?;
-                Ok(())
-            })();
-            if result.is_err() {
-                let _ = std::fs::remove_dir_all(&destination);
-            }
-            result.map_err(RepoError::from)
-        })
-        .await
-        .map_err(|_| unavailable("Git did not finish"))?
+        tokio::spawn(async move {
+        let (_permit, _lock) = (permit, lock);
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        let mut input = tokio::fs::File::from_std(pack.reopen().map_err(anyhow::Error::from)?);
+        input.rewind().await.map_err(anyhow::Error::from)?;
+        let mut header = [0; 8];
+        input.read_exact(&mut header).await.map_err(anyhow::Error::from)?;
+        if &header != b"0008NAK\n" {
+            return Err(unavailable("Invalid upload-pack response"));
+        }
+        let result = git::repository::materialize_checkout(
+            &destination, &sha, "codeyard", Some(input),
+        ).await.map_err(RepoError::from);
+        if result.is_err() {
+            let _ = tokio::fs::remove_dir_all(&destination).await;
+        }
+        result
+        }).await.map_err(|_| unavailable("Git did not finish"))?
     }
 
     // ----- Writes -----
@@ -3218,6 +3199,7 @@ impl LocalStore {
         if session.allow_unreachable {
             command.args(["-c", "uploadpack.allowAnySHA1InWant=true"]);
         }
+        process::limit_memory(&mut command);
         command.arg("upload-pack");
         if session.stateless {
             command.arg("--stateless-rpc");

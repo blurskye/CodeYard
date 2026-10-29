@@ -343,7 +343,8 @@ impl RemoteStore {
             .map_err(RepoError::from)?;
         let want = format!("want {oid}\n");
         let request = format!("{:04x}{want}00000009done\n", want.len() + 4);
-        let pack = tempfile::NamedTempFile::new()
+        let parent = destination.parent().ok_or_else(|| rpc::wire::invalid("invalid checkout directory"))?;
+        let pack = tempfile::NamedTempFile::new_in(parent)
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
         let mut output = tokio::fs::File::from_std(
             pack.reopen()

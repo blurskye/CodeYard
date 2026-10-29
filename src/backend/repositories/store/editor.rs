@@ -180,6 +180,7 @@ impl Repo<'_> {
         identity: Option<(&str, &str)>,
     ) -> Result<(ExitStatus, Vec<u8>), RepoError> {
         let mut command = process::git_command().map_err(|_| unavailable())?;
+        process::limit_memory(&mut command);
         command.arg("--git-dir").arg(self.0).args(args);
         if let Some((name, email)) = identity {
             command
