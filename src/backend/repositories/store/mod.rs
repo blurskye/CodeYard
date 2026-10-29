@@ -827,6 +827,7 @@ impl RepoStore {
                             base_ref: base_ref.into(),
                             head_ref: head_ref.into(),
                             limit: 250,
+                            offset: 0,
                             raw_json: true,
                             pull_request: true,
                         },
@@ -845,11 +846,16 @@ impl RepoStore {
         head_ref: &str,
         limit: usize,
     ) -> Result<Vec<CommitInfo>, RepoError> {
+        self.commits_between_page(base_ref, head_ref, 0, limit).await
+    }
+
+    /// A bounded range page, newest first; skipped commit bodies are never loaded.
+    pub async fn commits_between_page(&self, base_ref: &str, head_ref: &str, offset: usize, limit: usize) -> Result<Vec<CommitInfo>, RepoError> {
         if limit > MAX_COMMIT_PAGE_SIZE {
             return Err(RepoError::response_too_large());
         }
         match &self.0 {
-            Backend::Local(local) => local.commits_between(base_ref, head_ref, limit).await,
+            Backend::Local(local) => local.commits_between(base_ref, head_ref, offset, limit).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
@@ -857,6 +863,7 @@ impl RepoStore {
                             base_ref: base_ref.into(),
                             head_ref: head_ref.into(),
                             limit,
+                            offset,
                             raw_json: true,
                             pull_request: false,
                         },

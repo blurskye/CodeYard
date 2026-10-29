@@ -1080,9 +1080,10 @@ impl LocalStore {
         &self,
         base_ref: &str,
         head_ref: &str,
+        offset: usize,
         limit: usize,
     ) -> Result<Vec<CommitInfo>, RepoError> {
-        git::list_range_commits(self.path(), base_ref, head_ref, limit)
+        git::range_commits(self.path(), base_ref, head_ref, offset, limit)
             .await
             .map_err(RepoError::from)
     }

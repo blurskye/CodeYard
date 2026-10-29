@@ -192,6 +192,8 @@ pub enum Operation {
         base_ref: String,
         head_ref: String,
         limit: usize,
+        #[serde(default)]
+        offset: usize,
         /// Include the full count and GitHub's first 250 commits, oldest first.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         pull_request: bool,

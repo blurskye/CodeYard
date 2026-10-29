@@ -238,6 +238,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 base_ref: "main".into(),
                 head_ref: "main".into(),
                 limit: 10,
+                offset: 0,
                 raw_json: false,
                 pull_request: false,
             },

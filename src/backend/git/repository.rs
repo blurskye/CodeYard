@@ -1617,7 +1617,7 @@ pub(crate) async fn pull_request_commits(
     Ok((total, commits))
 }
 
-async fn range_commits(
+pub(crate) async fn range_commits(
     repo_path: &Path,
     base: &str,
     head: &str,
