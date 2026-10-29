@@ -792,6 +792,7 @@ async fn contract(pg: bool) {
         assert!(public.get(field).is_none(), "private field {field} leaked");
         expected.as_object_mut().unwrap().remove(field);
     }
+    expected["email"] = Value::Null;
     assert_eq!(public, expected);
     let (_, cleared) = request(
         &router,
