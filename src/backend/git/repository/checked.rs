@@ -1,8 +1,7 @@
 //! Merge commits, repository creation and CI checkouts from exact revisions.
 //! Ref updates go through `update-ref` transactions that check the old value.
 use super::{
-    find_commit_checked, open_quarantined, process, COMMIT_WALK_TIMEOUT, MAX_COMMIT_EMAIL_BYTES,
-    MAX_COMMIT_NAME_BYTES, MAX_COMMIT_WALK_BYTES,
+    find_commit_checked, open_quarantined, process, COMMIT_WALK_TIMEOUT, MAX_COMMIT_WALK_BYTES,
 };
 use anyhow::{anyhow, bail, ensure, Result};
 use std::{
@@ -385,14 +384,10 @@ async fn squash_message(path: &Path, base: &str, head: &str, title: &str) -> Res
 /// `MAX_COMMIT_OBJECT_BYTES`. Only a replayed commit, which keeps its own message, can outgrow it,
 /// and the replay checks that.
 fn check_commit_text(message: &str, people: &[&Person<'_>]) -> Result<()> {
-    let valid_person = |person: &Person<'_>| {
-        person.name.len() <= MAX_COMMIT_NAME_BYTES
-            && person.email.len() <= MAX_COMMIT_EMAIL_BYTES
-            && !person.name.contains(['\n', '\r', '\0'])
-            && !person.email.contains(['\n', '\r', '\0'])
-    };
+    for person in people {
+        crate::backend::git::objects::validate_identity(person.name, person.email)?;
+    }
     if message.is_empty() || message.contains('\0') || message.len() > MAX_MERGE_MESSAGE_BYTES
-        || !people.iter().all(|person| valid_person(person))
     {
         return Err(crate::backend::repositories::store::RepoError::new(
             crate::backend::repositories::store::ErrorKind::Invalid, "Invalid merge commit identity or message",

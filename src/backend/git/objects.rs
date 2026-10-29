@@ -33,18 +33,20 @@ pub struct Signature {
     pub date: Option<chrono::DateTime<chrono::FixedOffset>>,
 }
 
+/// Admission for newly supplied identities. Legacy replay preserves already stored bytes.
+pub(crate) fn validate_identity(name: &str, email: &str) -> std::result::Result<(), RepoError> {
+    if name.trim().is_empty() || name.len() > MAX_COMMIT_NAME_BYTES
+        || email.trim().is_empty() || email.len() > MAX_COMMIT_EMAIL_BYTES
+        || [name, email].iter().any(|value| value.contains(['\0', '\n', '\r', '<', '>']))
+    {
+        return Err(invalid("Invalid Git identity"));
+    }
+    Ok(())
+}
+
 impl Signature {
     fn git(&self) -> Result<git2::Signature<'static>> {
-        if self.name.is_empty()
-            || self.name.len() > MAX_COMMIT_NAME_BYTES
-            || self.email.is_empty()
-            || self.email.len() > MAX_COMMIT_EMAIL_BYTES
-            || [&self.name, &self.email]
-                .iter()
-                .any(|value| value.contains(['\0', '\n', '\r']))
-        {
-            return Err(invalid("Invalid Git identity").into());
-        }
+        validate_identity(&self.name, &self.email)?;
         // libgit2 writes object dates as unsigned 32-bit seconds, so other dates would wrap.
         if self
             .date

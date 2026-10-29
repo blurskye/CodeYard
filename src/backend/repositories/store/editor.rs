@@ -3,7 +3,7 @@
 //! editor started.
 use super::{ErrorKind, RepoError};
 use crate::backend::git::repository::{
-    process, CommitInfo, MAX_COMMIT_EMAIL_BYTES, MAX_COMMIT_NAME_BYTES,
+    process, CommitInfo,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -379,15 +379,7 @@ async fn prepare_commit(
     if changes.is_empty() {
         return Err(invalid("A commit needs at least one file."));
     }
-    if author.is_empty()
-        || author.len() > MAX_COMMIT_NAME_BYTES
-        || email.is_empty()
-        || email.len() > MAX_COMMIT_EMAIL_BYTES
-        || author.contains(['\0', '\r', '\n', '<', '>'])
-        || email.contains(['\0', '\r', '\n', '<', '>'])
-    {
-        return Err(invalid("Invalid commit identity."));
-    }
+    crate::backend::git::objects::validate_identity(author, email)?;
     let reference =
         crate::backend::git::branch_ref(branch).ok_or_else(|| invalid("Invalid branch name."))?;
     let current = storage.direct_ref(&reference).await?;
