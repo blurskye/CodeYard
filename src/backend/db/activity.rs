@@ -21,6 +21,13 @@ pub struct ActivityRow {
     pub repo_name: String,
 }
 
+/// Private profile activity is tied to the browser session that initiated the read.
+#[derive(Clone, Copy)]
+pub struct ActivityViewer<'a> {
+    pub user: i64,
+    pub session: &'a str,
+}
+
 pub struct ActivityBatch {
     pub rows: Vec<ActivityRow>,
     pub scanned: usize,
@@ -58,4 +65,4 @@ native_operation!(crate::backend::db::postgres::activity::record_repository_push
 
 native_operation!(crate::backend::db::postgres::activity::list_user_activity,
     crate::backend::db::sqlite::activity::list_user_activity,
-    fn list_user_activity(pool: &DbPool, user_id: i64, viewer: Option<i64>, limit: i64, offset: i64) -> Result<ActivityBatch>);
+    fn list_user_activity(pool: &DbPool, user_id: i64, viewer: Option<ActivityViewer<'_>>, limit: i64, offset: i64) -> Result<ActivityBatch>);

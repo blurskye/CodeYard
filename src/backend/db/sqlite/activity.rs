@@ -1,4 +1,4 @@
-use crate::backend::db::activity::{ActivityBatch, ScannedActivity};
+use crate::backend::db::activity::{ActivityBatch, ActivityViewer, ScannedActivity};
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -25,7 +25,7 @@ pub async fn record_repository_push(
 pub async fn list_user_activity(
     pool: &SqlitePool,
     user_id: i64,
-    viewer: Option<i64>,
+    viewer: Option<ActivityViewer<'_>>,
     limit: i64,
     offset: i64,
 ) -> Result<ActivityBatch> {
@@ -81,14 +81,16 @@ pub async fn list_user_activity(
         JOIN repositories r ON r.id = a.repo_id
         LEFT JOIN users owner ON r.owner_kind = 'user' AND r.owner_user_id = owner.id
         LEFT JOIN organizations ON r.owner_kind = 'org' AND r.owner_org_id = organizations.id
-        LEFT JOIN users u ON u.id = ?4
+        LEFT JOIN users u ON u.id = ?4 AND NOT u.is_banned AND NOT u.must_change_password
+            AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=?5 AND s.user_id=u.id AND julianday(s.expires_at)>julianday('now'))
         ORDER BY a.created_at DESC, a.kind, a.item_id DESC
         "#,
     ))
     .bind(user_id)
     .bind(limit)
     .bind(offset)
-    .bind(viewer)
+    .bind(viewer.map(|viewer| viewer.user))
+    .bind(viewer.map(|viewer| viewer.session))
     .fetch_all(pool)
     .await?;
     Ok(ActivityBatch::from_scan(rows))
