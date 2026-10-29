@@ -100,6 +100,8 @@ async fn run(
             boolean(&q, "collab", false)?,
             boolean(&q, "orgs", false)?,
         ])
+    } else if q.get("filter").is_some_and(|filter| filter == "repos") {
+        Some([true, true, true])
     } else {
         None
     };
