@@ -51,6 +51,7 @@ async fn document(state: &AppState, auth: Option<&auth::Authentication>, id: i64
         .map_err(Error::unavailable)?;
     issues::document(
         &state.pool,
+        issues::Reader::Request(state, auth),
         &repo,
         owners.get(&repo.id).ok_or_else(Error::missing)?,
         AssignedItem::Issue(id),

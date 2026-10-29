@@ -191,7 +191,7 @@ async fn metadata(
         let next = rows.last().copied();
         let mut values = Vec::new();
         for id in rows {
-            let mut value = issues::document(&state.pool, repo, owner, AssignedItem::Issue(id)).await?;
+            let mut value = issues::document(&state.pool, issues::Reader::Repository, repo, owner, AssignedItem::Issue(id)).await?;
             value["issue_type"] = value["type"].take();
             value["issue_field_values"] = serde_json::to_value(db::issue_attributes::values(&state.pool, repo.id, id, Some(actor)).await.map_err(Error::unavailable)?).map_err(Error::unavailable)?;
             value["repository"] = repository.clone();

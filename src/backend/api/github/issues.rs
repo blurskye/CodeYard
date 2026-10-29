@@ -443,9 +443,9 @@ async fn read(
     headers: HeaderMap,
     Path(p): Path<HashMap<String, String>>,
 ) -> Result<Json<Value>> {
-    let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
+    let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
-    Ok(Json(document(&state.pool, &repo, &p["owner"], item).await?))
+    Ok(Json(document(&state.pool, Reader::Request(&state, auth.as_ref()), &repo, &p["owner"], item).await?))
 }
 
 async fn list(
@@ -599,22 +599,8 @@ async fn list(
     .await
     .map_err(Error::unavailable)?;
     let next = rows.len() > limit;
-    let mut items = Vec::new();
-    for (id, pull) in rows {
-        items.push(
-            document(
-                &state.pool,
-                &repo,
-                &p["owner"],
-                if pull {
-                    AssignedItem::PullRequest(id)
-                } else {
-                    AssignedItem::Issue(id)
-                },
-            )
-            .await?,
-        );
-    }
+    let selected: Vec<_> = rows.into_iter().take(limit).map(|(id, pull)| if pull { AssignedItem::PullRequest(id) } else { AssignedItem::Issue(id) }).collect();
+    let items = documents(&state.pool, Reader::Request(&state, auth.as_ref()), &repo, &p["owner"], &selected).await?;
     page.response(&uri, items, next)
 }
 
@@ -901,7 +887,8 @@ async fn create(
     Json(input): Json<Value>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let authentication = auth.ok_or_else(auth::required)?;
+    let actor = &authentication.user;
     let title = title(input.get("title"))?.ok_or_else(|| Error::invalid("Title is required"))?;
     let parent_issue_id = input
         .get("parent_issue_id")
@@ -941,7 +928,7 @@ async fn create(
     .await?;
     Ok((
         StatusCode::CREATED,
-        Json(document(&state.pool, &repo, &p["owner"], item).await?),
+        Json(document(&state.pool, Reader::Request(&state, Some(&authentication)), &repo, &p["owner"], item).await?),
     ))
 }
 
@@ -952,7 +939,8 @@ async fn update(
     Json(input): Json<Value>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let authentication = auth.ok_or_else(auth::required)?;
+    let actor = &authentication.user;
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
     let title = title(input.get("title"))?;
     let body = text(&input, "body")?;
@@ -1014,7 +1002,7 @@ async fn update(
         metadata,
     )
     .await?;
-    Ok(Json(document(&state.pool, &repo, &p["owner"], item).await?))
+    Ok(Json(document(&state.pool, Reader::Request(&state, Some(&authentication)), &repo, &p["owner"], item).await?))
 }
 
 #[derive(serde::Deserialize)]
@@ -1030,10 +1018,11 @@ async fn change_assignees(
     remove: bool,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let authentication = auth.ok_or_else(auth::required)?;
+    let actor = &authentication.user;
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
     let names = assignee_names(input.assignees)?;
-    let current = document(&state.pool, &repo, &p["owner"], item).await?;
+    let current = document(&state.pool, Reader::Request(&state, Some(&authentication)), &repo, &p["owner"], item).await?;
     let number = current["number"]
         .as_i64()
         .and_then(|number| i32::try_from(number).ok())
@@ -1049,7 +1038,7 @@ async fn change_assignees(
         let users = resolve_assignees(&state.pool, &names).await?;
         assignments::assign(&state.pool, &state.notification_broadcaster, &target, &users).await.map_err(assignment_error)?;
     }
-    Ok(Json(document(&state.pool, &repo, &p["owner"], item).await?))
+    Ok(Json(document(&state.pool, Reader::Request(&state, Some(&authentication)), &repo, &p["owner"], item).await?))
 }
 
 async fn add_assignees(

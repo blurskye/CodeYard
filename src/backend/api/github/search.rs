@@ -109,7 +109,7 @@ async fn search_issues(
         } else {
             AssignedItem::Issue(id)
         };
-        let mut value = issues::document(&state.pool, repo, owner, item).await?;
+        let mut value = issues::document(&state.pool, issues::Reader::Request(&state, auth.as_ref()), repo, owner, item).await?;
         value["score"] = json!(score);
         items.push(value);
     }

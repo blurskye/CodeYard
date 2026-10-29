@@ -19,6 +19,7 @@ async fn event_document(
     owner: &str,
     id: i64,
     include_issue: bool,
+    authentication: Option<&super::auth::Authentication>,
     issues: &mut HashMap<(String, i64), Value>,
 ) -> Result<Value> {
     let event = db::timeline::get_event(&state.pool, repo.id, id)
@@ -57,7 +58,7 @@ async fn event_document(
     if include_issue {
         let key = (event.subject_kind.clone(), event.subject_id);
         if !issues.contains_key(&key) {
-            issues.insert(key.clone(), issues::document(&state.pool, repo, owner, item).await?);
+            issues.insert(key.clone(), issues::document(&state.pool, issues::Reader::Request(state, authentication), repo, owner, item).await?);
         }
         value["issue"] = issues[&key].clone();
     }
@@ -69,10 +70,10 @@ async fn read(
     headers: HeaderMap,
     Path(p): Path<Params>,
 ) -> Result<Json<Value>> {
-    let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
+    let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let id = p["event_id"].parse().map_err(|_| Error::missing())?;
     Ok(Json(
-        event_document(&state, &repo, &p["owner"], id, true, &mut HashMap::new()).await?,
+        event_document(&state, &repo, &p["owner"], id, true, auth.as_ref(), &mut HashMap::new()).await?,
     ))
 }
 
@@ -117,7 +118,7 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
+    let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let item = match p.get("issue_number") {
         Some(number) => Some(labels::item(&state.pool, repo.id, number).await?),
         None => None,
@@ -140,7 +141,7 @@ async fn list(
     let mut issues = HashMap::new();
     for (kind, id) in rows.into_iter().take(limit) {
         let value = match kind.as_str() {
-            "event" => event_document(&state, &repo, &p["owner"], id, item.is_none(), &mut issues).await?,
+            "event" => event_document(&state, &repo, &p["owner"], id, item.is_none(), auth.as_ref(), &mut issues).await?,
             "review" => review_document(&state, &repo, &p["owner"], id).await?,
             "issue_comment" | "pr_comment" => {
                 let comment = comments::find(
