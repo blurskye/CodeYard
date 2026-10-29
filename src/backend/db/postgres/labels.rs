@@ -345,6 +345,7 @@ async fn remove_item_label(
     let (subject, link, column) = target.tables();
     let mut tx = begin_item_label_write(pool, actor_id, repo_id).await?;
     lock_item_labels(&mut tx, repo_id, target, item_id, &[label_id]).await?;
+    let before = item_labels_snapshot(&mut tx, target, item_id).await?;
     let result = sqlx::query(&format!(
         "DELETE FROM {link} WHERE {column} = $1 AND label_id = $2"
     ))
@@ -354,6 +355,8 @@ async fn remove_item_label(
     .await?;
     if result.rows_affected() > 0 {
         touch_subject(&mut tx, subject, item_id).await?;
+        let after: Vec<_> = before.iter().filter(|label| label.id != label_id).cloned().collect();
+        record_label_changes(&mut tx, repo_id, target, item_id, actor_id, &before, &after).await?;
     }
     tx.commit().await?;
     Ok(result.rows_affected() > 0)
@@ -444,15 +447,17 @@ async fn write_item_labels(
 ) -> Result<Vec<Label>> {
     let mut tx = begin_item_label_write(pool, actor_id, repo_id).await?;
     let labels =
-        write_item_labels_transaction(&mut tx, repo_id, target, item_id, label_ids, replace)
+        write_item_labels_transaction(&mut tx, Some(actor_id), repo_id, target, item_id, label_ids, replace)
             .await?;
     tx.commit().await?;
     Ok(labels)
 }
 
 /// Caller retains live item-metadata authority until this transaction commits.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn write_item_labels_transaction(
     tx: &mut Transaction<'_, Postgres>,
+    actor: Option<i64>,
     repo_id: i64,
     target: LabelTarget,
     item_id: i64,
@@ -461,6 +466,7 @@ pub(crate) async fn write_item_labels_transaction(
 ) -> Result<Vec<Label>> {
     let (subject, link, column) = target.tables();
     let ids = lock_item_labels(tx, repo_id, target, item_id, label_ids).await?;
+    let before = item_labels_snapshot(tx, target, item_id).await?;
     let mut changed = false;
     if replace {
         changed |= sqlx::query(&format!("DELETE FROM {link} WHERE {column}=$1"))
@@ -495,7 +501,27 @@ pub(crate) async fn write_item_labels_transaction(
         labels.len() <= crate::backend::db::labels::MAX_ISSUE_LABELS,
         LabelWriteRefusal::InvalidLabels
     );
+    if let Some(actor) = actor {
+        record_label_changes(tx, repo_id, target, item_id, actor, &before, &labels).await?;
+    }
     Ok(labels)
+}
+
+async fn item_labels_snapshot(tx: &mut Transaction<'_, Postgres>, target: LabelTarget, item: i64) -> Result<Vec<Label>> {
+    let (_, link, column) = target.tables();
+    Ok(sqlx::query_as(&format!("SELECT l.* FROM labels l JOIN {link} il ON il.label_id=l.id WHERE il.{column}=$1 ORDER BY l.id"))
+        .bind(item).fetch_all(&mut **tx).await?)
+}
+
+async fn record_label_changes(tx: &mut Transaction<'_, Postgres>, repo: i64, target: LabelTarget, item: i64, actor: i64, before: &[Label], after: &[Label]) -> Result<()> {
+    let subject = match target { LabelTarget::Issue => "issue", LabelTarget::PullRequest => "pull_request" };
+    for (kind, old, new) in [("unlabeled", before, after), ("labeled", after, before)] {
+        for label in old.iter().filter(|label| !new.iter().any(|other| other.id == label.id)) {
+            sqlx::query("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind,detail,previous) VALUES($1,$2,$3,$4,$5,$6,$7)")
+                .bind(repo).bind(subject).bind(item).bind(actor).bind(kind).bind(&label.name).bind(&label.color).execute(&mut **tx).await?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) async fn get_items_labels(

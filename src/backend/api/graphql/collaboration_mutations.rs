@@ -190,12 +190,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 .map_err(github::Error::graphql)?;
         } else if label {
             for label_id in changes {
-                let name = db::labels::get_label_by_id(pool, label_id)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?
-                    .name;
-                let removed = match item {
+                match item {
                     AssignedItem::Issue(id) => {
                         db::labels::remove_issue_label(pool, actor, repo.id, id, label_id).await
                     }
@@ -205,9 +200,6 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     }
                 }
                 .map_err(|e| github::labels::write_error(e).graphql())?;
-                if removed {
-                    db::timeline::record_for(pool, repo.id, item, actor, "unlabeled", &name).await;
-                }
             }
         } else {
             use crate::backend::issues::assignments;

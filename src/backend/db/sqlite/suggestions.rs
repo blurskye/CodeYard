@@ -284,6 +284,7 @@ async fn effect(
         Action::AddLabel => {
             super::labels::write_item_labels_transaction(
                 tx,
+                None,
                 repo,
                 LabelTarget::Issue,
                 id,
@@ -292,14 +293,15 @@ async fn effect(
             )
             .await?;
             super::issue_attributes::touch(tx, id).await?;
+            let (name, color): (String, String) = sqlx::query_as("SELECT name,color FROM labels WHERE id=?1").bind(p.target_id).fetch_one(&mut **tx).await?;
             Ok((
                 Some(
                     super::issue_attributes::event(
                         tx,
                         (repo, id, actor),
                         "labeled",
-                        &prepared.name,
-                        "",
+                        &name,
+                        &color,
                     )
                     .await?,
                 ),

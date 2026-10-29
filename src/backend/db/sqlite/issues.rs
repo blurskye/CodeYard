@@ -37,6 +37,7 @@ pub async fn create_issue_with_metadata(
     if !metadata.labels.is_empty() {
         super::labels::write_item_labels_transaction(
             &mut tx,
+            Some(author_id),
             repo_id,
             LabelTarget::Issue,
             issue.id,

@@ -6,7 +6,8 @@ use chrono::{DateTime, Utc};
 /// Most events one page loads for an issue or pull request.
 pub const EVENT_LIMIT: i64 = 200;
 
-/// One change. `detail` is the label, user, milestone or new title; `previous` is the old title.
+/// One change. `detail` is the label, user, milestone or new title; `previous` is the old
+/// title for a rename or the retained label color for a label change.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TimelineEvent {
     pub actor: Option<String>,

@@ -99,7 +99,6 @@ async fn add_labels(
     subject: AssignedItem,
     ids: &[i64],
 ) -> anyhow::Result<Vec<db::models::Label>> {
-    let before = item_labels(pool, subject).await?;
     let labels = match subject {
         AssignedItem::Issue(item_id) => {
             db::labels::add_issue_labels(pool, actor_id, repo_id, item_id, ids).await?
@@ -108,13 +107,6 @@ async fn add_labels(
             db::labels::add_pull_request_labels(pool, actor_id, repo_id, item_id, ids).await?
         }
     };
-    for label in labels
-        .iter()
-        .filter(|label| ids.contains(&label.id))
-        .filter(|label| !before.iter().any(|old| old.id == label.id))
-    {
-        db::timeline::record_for(pool, repo_id, subject, actor_id, "labeled", &label.name).await;
-    }
     Ok(labels)
 }
 
@@ -127,7 +119,6 @@ async fn remove_label(
     subject: AssignedItem,
     label_id: i64,
 ) -> anyhow::Result<bool> {
-    let before = item_labels(pool, subject).await?;
     let removed = match subject {
         AssignedItem::Issue(item_id) => {
             db::labels::remove_issue_label(pool, actor_id, repo_id, item_id, label_id).await?
@@ -137,22 +128,7 @@ async fn remove_label(
                 .await?
         }
     };
-    if let (true, Some(label)) = (removed, before.iter().find(|label| label.id == label_id)) {
-        db::timeline::record_for(pool, repo_id, subject, actor_id, "unlabeled", &label.name).await;
-    }
     Ok(removed)
-}
-
-async fn item_labels(
-    pool: &db::DbPool,
-    subject: AssignedItem,
-) -> anyhow::Result<Vec<db::models::Label>> {
-    match subject {
-        AssignedItem::Issue(item_id) => db::labels::get_issue_labels(pool, item_id).await,
-        AssignedItem::PullRequest(item_id) => {
-            db::labels::get_pull_request_labels(pool, item_id).await
-        }
-    }
 }
 
 pub(crate) async fn native_add_label(

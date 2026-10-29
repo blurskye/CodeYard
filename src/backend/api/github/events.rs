@@ -39,12 +39,9 @@ async fn event_document(
     match event.kind.as_str() {
         "renamed" => value["rename"] = json!({"from":event.previous,"to":event.detail}),
         "labeled" | "unlabeled" => {
-            let label = db::labels::list_repo_labels(&state.pool, repo.id)
-                .await
-                .map_err(Error::unavailable)?
-                .into_iter()
-                .find(|label| label.name.eq_ignore_ascii_case(&event.detail));
-            value["label"] = json!({"name":event.detail,"color":label.map(|label|label.color.trim_start_matches('#').to_owned())});
+            // Older entries have no retained color; never substitute today's mutable label.
+            let color = (!event.previous.is_empty()).then(|| event.previous.trim_start_matches('#'));
+            value["label"] = json!({"name":event.detail,"color":color});
         }
         "milestoned" | "demilestoned" => value["milestone"] = json!({"title":event.detail}),
         "assigned" | "unassigned" => {
