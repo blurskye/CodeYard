@@ -216,7 +216,7 @@ pub async fn patch_webhook(
          encrypted_secret = CASE WHEN $10 THEN NULL ELSE COALESCE($8,encrypted_secret) END, secret_nonce = CASE WHEN $10 THEN NULL ELSE COALESCE($9,secret_nonce) END, \
          username = CASE WHEN $14 THEN NULL ELSE COALESCE($11,username,CASE WHEN $12::bytea IS NOT NULL THEN '' END) END, \
          encrypted_password = CASE WHEN $14 THEN NULL ELSE COALESCE($12,encrypted_password) END, password_nonce = CASE WHEN $14 THEN NULL ELSE COALESCE($13,password_nonce) END, \
-         updated_at = NOW() WHERE id = $1 AND {} = $2",
+         updated_at = GREATEST(clock_timestamp(),updated_at+interval '1 microsecond') WHERE id = $1 AND {} = $2 AND ($15::timestamptz IS NULL OR updated_at=$15)",
         owner.column()
     );
     let result = sqlx::query(&sql)
@@ -234,6 +234,7 @@ pub async fn patch_webhook(
         .bind(fields.password.as_ref().map(|s| s.ciphertext.as_slice()))
         .bind(fields.password.as_ref().map(|s| s.nonce.as_slice()))
         .bind(fields.clear_password)
+        .bind(fields.expected_updated)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;

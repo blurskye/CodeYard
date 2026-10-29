@@ -547,6 +547,11 @@ fn label_options(
 ) -> Element {
     rsx! {
         PickerPopover { title: format!("Apply labels to this {}", kind.singular()),
+            form { method: "get", action: url.to_owned(),
+                label { "Search the repository label catalogue" DraftInput { name: "label_search", initial_value: String::new() } }
+                button { r#type: "submit", "Search labels" }
+            }
+            p { class: "collaboration-muted", "Showing up to 100 matches and currently applied labels." }
             if available_labels.is_empty() { p { class: "collaboration-muted", "No labels yet." } }
             ul { class: "collaboration-picker-list",
                 for label in available_labels {
@@ -571,7 +576,7 @@ fn label_options(
                     }
                 }
             }
-            NavLink { class: "collaboration-manage-labels", href: format!("{}/labels", repo.url()), "Edit labels" }
+            if repo.can_admin { NavLink { class: "collaboration-manage-labels", href: format!("{}/labels", repo.url()), "Edit labels" } }
         }
     }
 }

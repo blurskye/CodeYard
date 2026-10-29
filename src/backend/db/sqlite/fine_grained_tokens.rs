@@ -83,12 +83,12 @@ pub async fn get(pool: &SqlitePool, token: i64) -> Result<Option<Token>> {
 }
 
 pub async fn list(pool: &SqlitePool, user: i64) -> Result<Vec<Token>> {
-    Ok(sqlx::query_as(&format!(
-        "{TOKEN} WHERE t.user_id=$1 ORDER BY f.token_id DESC LIMIT 100"
-    ))
-    .bind(user)
-    .fetch_all(pool)
-    .await?)
+    list_before(pool, user, None).await
+}
+
+pub async fn list_before(pool: &SqlitePool, user: i64, before: Option<i64>) -> Result<Vec<Token>> {
+    Ok(sqlx::query_as(&format!("{TOKEN} WHERE t.user_id=$1 AND (CAST($2 AS BIGINT) IS NULL OR f.token_id<$2) ORDER BY f.token_id DESC LIMIT 100"))
+        .bind(user).bind(before).fetch_all(pool).await?)
 }
 
 pub async fn bounds(pool: &SqlitePool, token: i64) -> Result<Option<Bounds>> {

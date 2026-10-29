@@ -145,7 +145,14 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         Ok(user) => user,
         Err(response) => return response,
     };
-    let Ok(rows) = db::fine_grained_tokens::list(&ctx.state.pool, user.id).await else {
+    let before = match ctx.query.get("before") {
+        Some(value) => match value.parse::<i64>() {
+            Ok(value) if value > 0 => Some(value),
+            _ => return ctx.error(StatusCode::BAD_REQUEST, "Invalid token cursor."),
+        },
+        None => None,
+    };
+    let Ok(rows) = db::fine_grained_tokens::list_before(&ctx.state.pool, user.id, before).await else {
         return ctx.error(StatusCode::SERVICE_UNAVAILABLE, UNAVAILABLE);
     };
     let mut names = HashMap::new();

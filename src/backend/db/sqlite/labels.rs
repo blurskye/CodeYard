@@ -117,6 +117,10 @@ pub async fn list_repo_labels(pool: &SqlitePool, repo_id: i64) -> Result<Vec<Lab
     Ok(labels)
 }
 
+pub async fn get_repo_label_by_name(pool: &SqlitePool, repo_id: i64, name: &str) -> Result<Option<Label>> {
+    Ok(sqlx::query_as("SELECT * FROM labels WHERE repo_id=?1 AND LOWER(name)=LOWER(?2)").bind(repo_id).bind(name).fetch_optional(pool).await?)
+}
+
 pub async fn get_label_by_id(pool: &SqlitePool, id: i64) -> Result<Option<Label>> {
     Ok(sqlx::query_as("SELECT * FROM labels WHERE id=?1")
         .bind(id)

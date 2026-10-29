@@ -492,25 +492,20 @@ pub(super) async fn settings_model(
         }
     }
     if tab == "secrets" {
-        settings.environments =
-            db::environment_values::environments(&ctx.state.pool, viewer.id, loaded.repository.id)
-                .await
-                .map_err(|_| unavailable(ctx))?;
+        settings.environments_page = match ctx.query.get("environments_page") {
+            Some(value) => value.parse::<i64>().ok().filter(|value| (0..=100_000).contains(value)).ok_or_else(|| ctx.repo_error(&loaded.chrome, StatusCode::BAD_REQUEST, "Invalid environment page."))?,
+            None => 0,
+        };
+        settings.environments = db::environments::list(&ctx.state.pool, loaded.repository.id, settings.environments_page * 100, 100).await.map_err(|_| unavailable(ctx))?.into_iter().map(|environment| environment.name).collect();
         if let Some(name) = ctx.query.get("environment").filter(|name| !name.is_empty()) {
-            let key = db::environment_values::environment_key(name).map_err(|_| {
+            db::environment_values::environment_key(name).map_err(|_| {
                 ctx.repo_error(
                     &loaded.chrome,
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "Invalid environment name.",
                 )
             })?;
-            let name = settings
-                .environments
-                .iter()
-                .find(|name| {
-                    db::environment_values::environment_key(name).ok().as_ref() == Some(&key)
-                })
-                .cloned()
+            let name = db::environments::get(&ctx.state.pool, loaded.repository.id, name).await.map_err(|_| unavailable(ctx))?.map(|environment| environment.name)
                 .ok_or_else(|| {
                     ctx.repo_error(
                         &loaded.chrome,
@@ -656,15 +651,9 @@ pub(super) async fn settings_model(
         }
     }
     if tab == "releases" {
-        settings.immutable_releases = Some(
-            crate::backend::repositories::releases::immutable::enabled(
-                &ctx.state.pool,
-                ctx.user.as_ref(),
-                &loaded.repository,
-            )
-            .await
-            .map_err(|_| unavailable(ctx))?,
-        );
+        let (opted_in, enforced) = db::repositories::immutable_releases::policy(&ctx.state.pool, loaded.repository.id).await.map_err(|_| unavailable(ctx))?;
+        settings.immutable_releases = Some(opted_in);
+        settings.immutable_enforced = enforced;
     }
     if tab == "autolinks" {
         settings.autolinks = db::repositories::autolinks::list(

@@ -117,6 +117,8 @@ pub struct Settings {
     #[serde(default)]
     pub immutable_releases: Option<bool>,
     #[serde(default)]
+    pub immutable_enforced: bool,
+    #[serde(default)]
     pub autolinks: Vec<crate::webui::components::references::Autolink>,
     /// Every branch, for the default-branch picker, and the branch the repository opens on.
     pub branches: Vec<String>,
@@ -144,6 +146,8 @@ pub struct Settings {
     pub variables: Vec<super::secrets::Variable>,
     #[serde(default)]
     pub environments: Vec<String>,
+    #[serde(default)]
+    pub environments_page: i64,
     pub environment: Option<Box<super::environments::Environment>>,
     pub properties: Option<Box<super::properties::Properties>>,
     #[serde(default)]
@@ -319,7 +323,8 @@ fn immutable_releases_section(repo: &RepoChrome, settings: &Settings) -> Element
         header {class:"repo-section-heading",h3 {"Immutable releases"} p {"Protect the Git tag and uploaded assets of future published releases."}}
         form {method:"post",action:repo.action("immutable-releases"),class:"repo-form-body",
             {csrf(&repo.csrf_token)} {repository_id(repo.id)}
-            label {class:"repo-check-label",DraftCheckbox{name:"enabled",initial_checked:settings.immutable_releases.unwrap_or(false)} "Enable immutable releases"}
+            label {class:"repo-check-label",DraftCheckbox{name:"enabled",initial_checked:settings.immutable_releases.unwrap_or(false)} "Repository opt-in to immutable releases"}
+            if settings.immutable_enforced { p { role: "status", "Organization policy enforces immutable releases regardless of this repository's opt-in. Clearing the checkbox does not disable enforcement." } }
             p {"Only future publications are affected. Save a draft, attach all assets, then publish. A signed DSSE attestation binds the tag, commit and SHA-256 asset digests to this forge node's signing key."}
             p {"Notes, title, pre-release and latest status stay editable. Published immutable releases cannot return to drafts. Disabling this setting never unlocks existing immutable releases."}
             p {"You may delete an immutable release. Its tag can then be deleted, but the tag name stays permanently reserved, including when the repository is recreated."}

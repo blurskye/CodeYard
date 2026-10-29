@@ -12,6 +12,10 @@ use uuid::Uuid;
 // Enforced when the repository opts in or its organization enforces it for all or selected
 // repositories. A repository setting never removes an organization's enforcement.
 const ENFORCED_SQL: &str = "(EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=$1) OR EXISTS(SELECT 1 FROM repositories r JOIN organization_immutable_releases o ON o.org_id=r.owner_org_id WHERE r.id=$1 AND (o.enforced_repositories='all' OR (o.enforced_repositories='selected' AND EXISTS(SELECT 1 FROM organization_immutable_release_repositories s WHERE s.org_id=o.org_id AND s.repo_id=r.id)))))";
+pub async fn policy(pool: &PgPool, repo: i64) -> Result<(bool, bool)> {
+    Ok(sqlx::query_as("SELECT EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=$1), EXISTS(SELECT 1 FROM repositories r JOIN organization_immutable_releases o ON o.org_id=r.owner_org_id WHERE r.id=$1 AND (o.enforced_repositories='all' OR (o.enforced_repositories='selected' AND EXISTS(SELECT 1 FROM organization_immutable_release_repositories s WHERE s.org_id=o.org_id AND s.repo_id=r.id))))").bind(repo).fetch_one(pool).await?)
+}
+
 pub async fn enabled(pool: &PgPool, repo: i64) -> Result<bool> {
     Ok(sqlx::query_scalar(&format!("SELECT {ENFORCED_SQL}"))
         .bind(repo)

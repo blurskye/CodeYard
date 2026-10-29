@@ -14,6 +14,8 @@ pub struct Draft {
     pub package: String,
     pub ecosystem: String,
     pub range: String,
+    #[serde(default)]
+    pub vulnerabilities_json: String,
 }
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Row {
@@ -105,7 +107,10 @@ fn AdvisoryView(repo: RepoChrome, page: Page) -> Element {
                     if let Some(url)=&detail.fork_url {NavLink {href:url.clone(),"Private remediation fork"}}
                     if repo.can_admin&&!repo.is_archived {
                         form {method:"post",action:repo.action("advisory"),{csrf(&repo.csrf_token)} {repository_id(repo.id)} input {r#type:"hidden",name:"ghsa",value:detail.row.ghsa.clone()}
-                            {fields(&page.draft,detail.vulnerabilities.is_empty())} button {r#type:"submit",name:"op",value:"save","Save advisory"}
+                            {fields(&page.draft,false)}
+                            label { "Vulnerabilities (JSON array)" DraftTextarea { name: "vulnerabilities_json", initial_value: page.draft.vulnerabilities_json.clone(), rows: 10 } }
+                            p { "Edit every package's ecosystem, name, vulnerable_version_range and patched_versions here. Keep other entries in the array." }
+                            button {r#type:"submit",name:"op",value:"save","Save advisory"}
                         }
                         form {method:"post",action:repo.action("advisory"),{csrf(&repo.csrf_token)} {repository_id(repo.id)} input {r#type:"hidden",name:"ghsa",value:detail.row.ghsa.clone()}
                             if detail.row.state=="triage"||detail.row.state=="closed" {button {name:"op",value:"draft","Accept as draft"}}

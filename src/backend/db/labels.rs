@@ -69,6 +69,10 @@ native_operation!(crate::backend::db::postgres::labels::list_repo_labels,
     crate::backend::db::sqlite::labels::list_repo_labels,
     fn list_repo_labels(pool: &DbPool, repo_id: i64) -> Result<Vec<Label>>);
 
+native_operation!(crate::backend::db::postgres::labels::get_repo_label_by_name,
+    crate::backend::db::sqlite::labels::get_repo_label_by_name,
+    fn get_repo_label_by_name(pool: &DbPool, repo_id: i64, name: &str) -> Result<Option<Label>>);
+
 native_operation!(crate::backend::db::postgres::labels::get_label_by_id,
     crate::backend::db::sqlite::labels::get_label_by_id,
     fn get_label_by_id(pool: &DbPool, id: i64) -> Result<Option<Label>>);

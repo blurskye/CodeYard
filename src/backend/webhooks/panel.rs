@@ -123,6 +123,7 @@ fn notice_text(notice: &str) -> Option<&'static str> {
 fn draft_of(hook: &Webhook) -> HookDraft {
     HookDraft {
         id: Some(hook.id),
+        expected_updated: hook.updated_at.to_rfc3339(),
         payload_url: hook.payload_url.clone(),
         content_type: hook.content_type.clone(),
         events: if hook.events == events::EVERYTHING {
@@ -251,6 +252,7 @@ pub fn draft_from_form(pairs: &[(String, String)]) -> HookDraft {
     };
     HookDraft {
         id: field("hook_id").parse().ok(),
+        expected_updated: field("expected_updated"),
         payload_url: field("payload_url"),
         content_type: field("content_type"),
         events: pairs
@@ -286,7 +288,11 @@ pub async fn apply(
         "webhook-save" => {
             let draft = draft_from_form(pairs);
             let submitted = form_of(&draft, pairs);
-            match settings::save(pool, encryptor, owner, actor, draft.id, &submitted).await {
+            let revision = chrono::DateTime::parse_from_rfc3339(&draft.expected_updated).ok().map(|date| date.with_timezone(&chrono::Utc));
+            if draft.id.is_some() && revision.is_none() {
+                return Err((HookError::Invalid("The original webhook revision is required. Reload before saving."), Some(draft)));
+            }
+            match settings::save_with_revision(pool, encryptor, owner, actor, draft.id, &submitted, revision).await {
                 Ok(_) => Ok("saved"),
                 Err(error) => Err((
                     error,

@@ -575,6 +575,17 @@ pub(in crate::backend::api) async fn request_again(
     emit(state, repo, actor, event, "rerequested", doc).await;
     Ok(())
 }
+pub(in crate::backend::api) async fn request_action(
+    state: &AppState, repo: &Repository, owner: &str, actor: i64,
+    credential: Credential<'_>, run: i64, identifier: String,
+) -> Result<()> {
+    let run = checks::requested_action(&state.pool, credential, repo.id, run, &identifier).await.map_err(write_error)?;
+    let doc = run_document(state, repo, owner, &run).await?;
+    let repository = repo.clone();
+    webhooks::emit(&state.pool, repo, "check_run", vec![actor], move |owner, people| json!({"action":"requested_action", "requested_action":{"identifier":identifier}, "check_run":doc, "repository":payloads::repository(&repository, owner), "sender":payloads::person(&people.get(actor))})).await;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 struct Preferences {
     #[serde(default)]

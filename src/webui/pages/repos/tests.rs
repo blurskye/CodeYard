@@ -385,6 +385,8 @@ fn fixtures() -> Vec<Page> {
             summary: Some("**Summary**".into()),
             text: None,
             details_url: Some("https://example.com/check".into()),
+            images: vec![],
+            actions: vec![],
             annotations: vec![super::checks::Annotation {
                 path: "<script>path</script>".into(),
                 location: "line 1".into(),

@@ -190,10 +190,12 @@ fn list(tokens: &[Row]) -> Element {
                 h2 { id: "fine-grained-title", "Fine-grained personal access tokens" }
                 p { "Each token reaches one owner's repositories with only the permissions you choose, and never more than your own access." }
                 NavLink { href: format!("{BASE}/new"), class: SUBMIT, "Generate new token" }
+                NavLink { href: BASE.to_owned(), "First page" }
+                if tokens.len() == 100 { if let Some(last) = tokens.last() { NavLink { href: format!("{BASE}?before={}", last.id), "Older tokens" } } }
             }
             div { class: "identity-row-list",
                 if tokens.is_empty() {
-                    div { class: "identity-empty", h3 { "No fine-grained tokens" } p { "Generate one for scripts, the gh CLI or Git over HTTPS." } }
+                    div { class: "identity-empty", h3 { "No fine-grained tokens on this page" } p { "Return to the first page or generate one for scripts, the gh CLI or Git over HTTPS." } }
                 }
                 for row in tokens {
                     article { class: "identity-row", key: "{row.id}",

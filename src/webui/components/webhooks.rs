@@ -40,6 +40,8 @@ pub struct HookRow {
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct HookDraft {
     pub id: Option<i64>,
+    #[serde(default)]
+    pub expected_updated: String,
     pub payload_url: String,
     pub content_type: String,
     /// The checked events, as stored. `*` checks everything.
@@ -218,6 +220,7 @@ fn HookEditor(panel: WebhookPanel, draft: HookDraft) -> Element {
             input { r#type: "hidden", name: "csrf_token", value: panel.csrf_token.clone() }
             if let Some(id) = panel.repository_id { input { r#type: "hidden", name: "repository_id", value: id.to_string() } }
             if let Some(id) = draft.id { input { r#type: "hidden", name: "hook_id", value: id.to_string() } }
+            input { r#type: "hidden", name: "expected_updated", value: draft.expected_updated.clone() }
             h4 { "{title}" }
             label { class: "repo-field",
                 span { "Payload URL" }
