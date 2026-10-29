@@ -53,7 +53,8 @@ async fn create(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let auth = viewer.ok_or_else(auth::required)?;
+    let actor = &auth.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Create = if body.is_empty() {
         Create::default()
@@ -74,13 +75,16 @@ async fn create(
             "Review the current pull request head",
         ));
     }
+    let position_diff = if input.comments.iter().any(|comment| comment.position.is_some() && comment.line.is_none()) {
+        Some(crate::backend::repositories::store::repo_store(&repo, state.cluster.as_ref()).diff(pull.diff_base(), &pull.head_sha).await.map_err(super::super::store_error)?)
+    } else { None };
     let mut prepared = Vec::new();
     for mut comment in input.comments {
         crate::backend::issues::validate_body(&comment.body, true)
             .map_err(Error::invalid_simple)?;
         comment.commit_id = Some(commit.clone());
         prepared.push(
-            comments::prepare(&state, &headers, &repo, &pull, comment, true)
+            comments::prepare_with_diff(&state, &headers, &repo, &pull, comment, true, position_diff.as_ref())
                 .await
                 .map_err(|e| Error::invalid_simple(e.1))?,
         );
@@ -97,79 +101,20 @@ async fn create(
                 body: input.body,
                 commit_sha: Some(commit),
                 review_id: None,
+                token: Some(auth.token.id),
             },
         )
         .await
         .map_err(failure)?;
         return Ok(Json(document(&state, &owner, &repo, &pull, &review).await?));
     }
-    let draft = db::pull_requests::reviews::create_pending_review(
-        &state.pool,
-        pull.id,
-        actor.id,
-        input.body.as_deref(),
-        &commit,
-    )
-    .await
-    .map_err(|e| failure(pull_requests::write_error(e)))?;
-    for mut request in prepared {
-        request.review_id = Some(draft.id);
-        if let Err(error) = pull_requests::comments::create_pull_request_comment(
-            &state.pool,
-            state.cluster.as_ref(),
-            &state.notification_broadcaster,
-            actor.id,
-            owner.clone(),
-            name.clone(),
-            number,
-            request,
-        )
-        .await
-        {
-            db::pull_requests::reviews::delete_pending_review_by_id(
-                &state.pool,
-                pull.id,
-                actor.id,
-                draft.id,
-            )
-            .await
-            .map_err(Error::unavailable)?;
-            return Err(failure(error));
-        }
-    }
-    let review = if let Some(review_state) = review_state {
-        match domain::create_pull_request_review(
-            &state.pool,
-            state.cluster.as_ref(),
-            &state.notification_broadcaster,
-            actor.id,
-            (owner.clone(), name, number),
-            domain::CreatePullRequestReviewRequest {
-                state: Some(review_state),
-                body: input.body,
-                commit_sha: Some(commit),
-                review_id: Some(draft.id),
-            },
-        )
-        .await
-        {
-            Ok(review) => review,
-            Err(error) => {
-                // A refused submission leaves no pending review, so the request can be retried.
-                db::pull_requests::reviews::delete_pending_review_by_id(
-                    &state.pool,
-                    pull.id,
-                    actor.id,
-                    draft.id,
-                )
-                .await
-                .map_err(Error::unavailable)?;
-                return Err(failure(error));
-            }
-        }
-    } else {
-        draft
-    };
+    let review = domain::create_pull_request_review_batch(
+        &state.pool, state.cluster.as_ref(), &state.notification_broadcaster, actor.id, (owner.clone(), name, number),
+        domain::CreatePullRequestReviewBatchRequest {
+            review: domain::CreatePullRequestReviewRequest { state: review_state, body: input.body, commit_sha: Some(commit), review_id: None, token: Some(auth.token.id) },
+            comments: prepared,
+        },
+    ).await.map_err(failure)?;
     Ok(Json(document(&state, &owner, &repo, &pull, &review).await?))
 }
 
@@ -230,7 +175,8 @@ async fn submit(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let auth = viewer.ok_or_else(auth::required)?;
+    let actor = &auth.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Submit =
         serde_json::from_slice(&body).map_err(|_| Error::invalid_simple("event is required"))?;
@@ -253,6 +199,7 @@ async fn submit(
             body: input.body,
             commit_sha: draft.commit_sha,
             review_id: Some(id),
+            token: Some(auth.token.id),
         },
     )
     .await

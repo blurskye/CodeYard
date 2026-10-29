@@ -190,18 +190,16 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                         body,
                         commit_sha: Some(commit.to_owned()),
                         review_id: existing.as_ref().map(|r| r.id),
+                        token: Some(request.auth.token.id),
                     },
                 )
                 .await
                 .map_err(pull_error)?
             } else {
-                db::pull_requests::reviews::create_pending_review(
-                    pool,
-                    pull.id,
-                    actor,
-                    body.as_deref(),
-                    commit,
-                )
+                db::pull_requests::reviews::save_review_batch(pool, db::pull_requests::reviews::ReviewBatch {
+                    pr_id: pull.id, author_id: actor, state: None, body: body.as_deref(), commit_sha: Some(commit),
+                    expected_pending: None, create_pending: true, comments: &[], token: Some(request.auth.token.id),
+                })
                 .await
                 .map_err(|e| pull_error(pull_requests::write_error(e)))?
             }

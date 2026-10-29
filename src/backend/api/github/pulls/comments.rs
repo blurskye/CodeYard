@@ -204,6 +204,18 @@ pub(super) async fn prepare(
     input: Create,
     pending: bool,
 ) -> Result<domain::CreatePullRequestCommentRequest> {
+    prepare_with_diff(state, headers, repo, pull, input, pending, None).await
+}
+
+pub(super) async fn prepare_with_diff(
+    state: &AppState,
+    headers: &HeaderMap,
+    repo: &db::models::Repository,
+    pull: &db::models::PullRequest,
+    input: Create,
+    pending: bool,
+    cached: Option<&crate::backend::git::DiffInfo>,
+) -> Result<domain::CreatePullRequestCommentRequest> {
     let mut line = input.line;
     let mut side = input.side;
     if let Some(parent) = input.in_reply_to {
@@ -243,10 +255,11 @@ pub(super) async fn prepare(
             return Err(Error::invalid("commit_id is required"));
         }
         if let Some(position) = input.position.filter(|_| line.is_none()) {
-            let diff = repo_store(repo, state.cluster.as_ref())
-                .diff(pull.diff_base(), &pull.head_sha)
-                .await
-                .map_err(super::store_error)?;
+            let loaded;
+            let diff = if let Some(diff) = cached { diff } else {
+                loaded = repo_store(repo, state.cluster.as_ref()).diff(pull.diff_base(), &pull.head_sha).await.map_err(super::store_error)?;
+                &loaded
+            };
             let row = diff
                 .files
                 .iter()
