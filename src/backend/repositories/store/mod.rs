@@ -48,7 +48,7 @@ pub(crate) use local::ensure_ref_room;
 pub use local::{begin_ref_change, RefChange};
 pub use types::{
     allowed_merge_methods, AsyncMergePublication, BlobBytes, BlobRange, BranchMergePublication,
-    GitService, GitSession, GitStreams, MergeFailure, MergeMethod, MergeRequest, PullBranchUpdate,
+    GitService, GitSession, GitStreams, MergeAuthorization, MergeFailure, MergeMethod, MergeRequest, PullBranchUpdate,
     RestackMove, RevertRequest, UpstreamMerge, UpstreamMergeType, MAX_ARCHIVE_RESPONSE_BYTES,
     MAX_BLOB_RESPONSE_BYTES, MAX_COMMIT_OFFSET, MAX_COMMIT_PAGE_SIZE,
     MAX_CONTRIBUTOR_RESPONSE_BYTES,
@@ -2067,7 +2067,7 @@ impl RepoStore {
                         &publication.result,
                         MergeMethod::Merge,
                         WriteVia::Direct,
-                        publication.token,
+                        publication.token.into(),
                     )
                     .await
             }
@@ -2102,8 +2102,9 @@ impl RepoStore {
         base: &str,
         result: &str,
         method: MergeMethod,
-        token: Option<i64>,
+        authorization: impl Into<MergeAuthorization>,
     ) -> Result<(), RepoError> {
+        let authorization = authorization.into();
         match &self.0 {
             Backend::Local(local) => {
                 local
@@ -2117,7 +2118,7 @@ impl RepoStore {
                         result,
                         method,
                         WriteVia::Merge,
-                        token,
+                        authorization,
                     )
                     .await
             }
@@ -2132,7 +2133,7 @@ impl RepoStore {
                             base: base.into(),
                             result: result.into(),
                             method,
-                            token,
+                            authorization,
                         },
                         b"",
                     )
@@ -2157,8 +2158,9 @@ impl RepoStore {
         base_branch: &str,
         base: &str,
         result: &str,
-        token: Option<i64>,
+        authorization: impl Into<MergeAuthorization>,
     ) -> Result<(), RepoError> {
+        let authorization = authorization.into();
         match &self.0 {
             Backend::Local(local) => {
                 let heads: Vec<(&str, &str)> = heads
@@ -2176,7 +2178,7 @@ impl RepoStore {
                         result,
                         MergeMethod::Merge,
                         WriteVia::Merge,
-                        token,
+                        authorization,
                     )
                     .await
             }
@@ -2189,7 +2191,7 @@ impl RepoStore {
                             base_branch: base_branch.into(),
                             base: base.into(),
                             result: result.into(),
-                            token,
+                            authorization,
                         },
                         b"",
                     )

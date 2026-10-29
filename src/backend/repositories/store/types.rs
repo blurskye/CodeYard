@@ -211,6 +211,7 @@ pub struct RevertRequest {
 /// all the way to the owning storage node. Older peers must reject, not ignore, this authority.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AsyncMergePublication {
+    pub policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
     pub uuid: String,
     pub token_id: i64,
     pub pull_request_id: i64,
@@ -219,6 +220,18 @@ pub struct AsyncMergePublication {
     pub base: String,
     pub result: String,
     pub method: MergeMethod,
+}
+
+/// The original credential and the policy snapshot the merge actually evaluated.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeAuthorization {
+    pub token: Option<i64>,
+    pub policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
+}
+impl From<Option<i64>> for MergeAuthorization {
+    fn from(token: Option<i64>) -> Self {
+        Self { token, policy: None }
+    }
 }
 
 /// A prepared, direct branch merge. Both mutable branches are pinned independently of the

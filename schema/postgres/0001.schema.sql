@@ -3842,7 +3842,16 @@ CREATE TABLE repository_merge_epochs (
 CREATE FUNCTION advance_merge_policy_epoch() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE previous_repo BIGINT; next_repo BIGINT;
 BEGIN
-    IF TG_TABLE_NAME IN ('pr_reviews','pr_comments') THEN
+    IF TG_TABLE_NAME='ci_runs' AND TG_OP='UPDATE' THEN
+        IF (NEW.repo_id,NEW.head_sha,NEW.workflow_path,NEW.status,NEW.attempt,NEW.created_at)
+            IS NOT DISTINCT FROM (OLD.repo_id,OLD.head_sha,OLD.workflow_path,OLD.status,OLD.attempt,OLD.created_at) THEN
+            RETURN NULL;
+        END IF;
+    END IF;
+    IF TG_TABLE_NAME='repositories' THEN
+        previous_repo:=OLD.id;
+        next_repo:=NEW.id;
+    ELSIF TG_TABLE_NAME IN ('pr_reviews','pr_comments') THEN
         IF TG_OP<>'INSERT' THEN
             SELECT repo_id INTO previous_repo FROM pull_requests WHERE id=OLD.pull_request_id;
         END IF;
@@ -3859,6 +3868,7 @@ BEGIN
     RETURN NULL;
 END;
 $$;
+CREATE TRIGGER merge_policy_repository AFTER UPDATE OF is_archived,is_private,allow_merge_commit,allow_squash_merge,allow_rebase_merge,owner_kind,owner_user_id,owner_org_id,storage_node_id,default_branch ON repositories FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
 CREATE TRIGGER merge_policy_rules AFTER INSERT OR UPDATE OR DELETE ON branch_protection_rules FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
 CREATE TRIGGER merge_policy_pulls AFTER INSERT OR UPDATE OR DELETE ON pull_requests FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
 CREATE TRIGGER merge_policy_reviews AFTER INSERT OR UPDATE OR DELETE ON pr_reviews FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();

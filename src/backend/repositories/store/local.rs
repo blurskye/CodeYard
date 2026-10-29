@@ -4,7 +4,7 @@
 mod branches;
 mod gists;
 use super::{
-    allowed_merge_methods, editor, AsyncMergePublication, BlobBytes, BlobRange, ErrorKind,
+    allowed_merge_methods, editor, AsyncMergePublication, BlobBytes, BlobRange, ErrorKind, MergeAuthorization,
     FileWrite, GitService, MergeMethod, MergeRequest, RepoError, RestackMove,
     MAX_ARCHIVE_RESPONSE_BYTES, MAX_BLOB_RESPONSE_BYTES,
 };
@@ -2259,7 +2259,7 @@ impl LocalStore {
         result: &str,
         method: MergeMethod,
         via: WriteVia,
-        token: Option<i64>,
+        authorization: MergeAuthorization,
     ) -> Result<(), RepoError> {
         self.publish_merge_authorized(
             pool,
@@ -2271,7 +2271,7 @@ impl LocalStore {
             result,
             method,
             via,
-            token,
+            authorization,
             None,
         )
         .await
@@ -2298,7 +2298,7 @@ impl LocalStore {
             &request.result,
             request.method,
             WriteVia::Merge,
-            Some(request.token_id),
+            MergeAuthorization { token: Some(request.token_id), policy: request.policy.clone() },
             Some(request),
         )
         .await
@@ -2318,9 +2318,10 @@ impl LocalStore {
         result: &str,
         method: MergeMethod,
         via: WriteVia,
-        token: Option<i64>,
+        authorization: MergeAuthorization,
         authority: Option<&AsyncMergePublication>,
     ) -> Result<(), RepoError> {
+        let MergeAuthorization { token, policy } = authorization;
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -2390,6 +2391,16 @@ impl LocalStore {
                 return Err(RepoError::write_denied());
             }
         }
+        // No pool reads while this transaction is retained: in-memory SQLite has one connection.
+        let policy_lease = if let Some(expected) = &policy {
+            Some(db::pull_requests::merge_policy::retain(pool, repo_id, expected).await.map_err(|error| {
+                if error.is::<db::pull_requests::merge_policy::Changed>() {
+                    RepoError::new(ErrorKind::Conflict, error.to_string())
+                } else {
+                    RepoError::authority_unavailable()
+                }
+            })?)
+        } else { None };
         publication
             .scope(git::publish_merge(
                 self.path(),
@@ -2400,6 +2411,9 @@ impl LocalStore {
             ))
             .await
             .map_err(RepoError::from)?;
+        if let Some(lease) = policy_lease {
+            lease.release().await.map_err(|_| RepoError::applied_followup_failed())?;
+        }
         let followup = self
             .after_ref_change(
                 pool,

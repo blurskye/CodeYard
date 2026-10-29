@@ -1102,7 +1102,7 @@ impl RpcHandler {
                 base,
                 result,
                 method,
-                token,
+                authorization,
             } => json!(store.publish_merge_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
@@ -1113,14 +1113,14 @@ impl RpcHandler {
                 &base,
                 &result,
                 method,
-                token
+                authorization
             )),
             Operation::PublishStackedMerge {
                 heads,
                 base_branch,
                 base,
                 result,
-                token,
+                authorization,
             } => json!(store.publish_stacked_merge_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
@@ -1129,7 +1129,7 @@ impl RpcHandler {
                 &base_branch,
                 &base,
                 &result,
-                token,
+                authorization,
             )),
             Operation::PrepareRestack {
                 from,

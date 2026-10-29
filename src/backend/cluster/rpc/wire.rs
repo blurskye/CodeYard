@@ -1,6 +1,6 @@
 use crate::backend::repositories::store::{
     AsyncMergePublication, BlobRange, CommitFilter, ErrorKind, FileWrite, GitService, GitSession,
-    MergeFailure, MergeMethod, MergeRequest, PreparedFile, PullBranchUpdate, RepoError,
+    MergeAuthorization, MergeFailure, MergeMethod, MergeRequest, PreparedFile, PullBranchUpdate, RepoError,
     RestackMove, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_TOTAL_BYTES,
 };
 use anyhow::{ensure, Result};
@@ -365,8 +365,7 @@ pub enum Operation {
         base: String,
         result: String,
         method: MergeMethod,
-        #[serde(default)]
-        token: Option<i64>,
+        authorization: MergeAuthorization,
     },
     /// Publishes a stacked merge commit. Each head is `(head branch or pull ref, commit)`.
     PublishStackedMerge {
@@ -374,8 +373,7 @@ pub enum Operation {
         base_branch: String,
         base: String,
         result: String,
-        #[serde(default)]
-        token: Option<i64>,
+        authorization: MergeAuthorization,
     },
     /// Builds the commits of a restack: `from..head` replayed onto `onto`.
     PrepareRestack {

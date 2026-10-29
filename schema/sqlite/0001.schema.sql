@@ -3680,6 +3680,9 @@ CREATE TABLE repository_merge_epochs (
     repo_id INTEGER PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
     version INTEGER NOT NULL DEFAULT 0 CHECK(version>=0)
 );
+CREATE TRIGGER merge_policy_repository AFTER UPDATE OF is_archived,is_private,allow_merge_commit,allow_squash_merge,allow_rebase_merge,owner_kind,owner_user_id,owner_org_id,storage_node_id,default_branch ON repositories BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
 CREATE TRIGGER merge_policy_rules_insert AFTER INSERT ON branch_protection_rules BEGIN
     INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
 END;
@@ -3746,7 +3749,7 @@ END;
 CREATE TRIGGER merge_policy_ci_insert AFTER INSERT ON ci_runs BEGIN
     INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
 END;
-CREATE TRIGGER merge_policy_ci_update AFTER UPDATE ON ci_runs BEGIN
+CREATE TRIGGER merge_policy_ci_update AFTER UPDATE OF repo_id,head_sha,workflow_path,status,attempt,created_at ON ci_runs BEGIN
     INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (OLD.repo_id,NEW.repo_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
 END;
 CREATE TRIGGER merge_policy_ci_delete AFTER DELETE ON ci_runs BEGIN
