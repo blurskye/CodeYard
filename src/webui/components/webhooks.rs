@@ -137,6 +137,9 @@ impl WebhookPanel {
 
 #[component]
 pub fn WebhookSection(panel: WebhookPanel) -> Element {
+    let mut panel = panel;
+    let detail = panel.detail.take();
+    let draft = panel.editing.take();
     rsx! {
         section { class: "repo-settings-section panel webhook-section", aria_labelledby: "webhooks-title",
             header { class: "repo-section-heading",
@@ -148,10 +151,10 @@ pub fn WebhookSection(panel: WebhookPanel) -> Element {
             div { class: "webhook-body",
                 if let Some(notice) = &panel.notice { div { class: "repo-alert repo-alert-success", role: "status", "{notice}" } }
                 if let Some(error) = &panel.error { div { class: "repo-alert repo-alert-error", role: "alert", strong { "Webhook was not saved" } p { "{error}" } } }
-                if let Some(detail) = &panel.detail {
-                    HookDetailView { panel: panel.clone(), detail: detail.clone() }
-                } else if let Some(draft) = &panel.editing {
-                    HookEditor { panel: panel.clone(), draft: draft.clone() }
+                if let Some(detail) = detail {
+                    HookDetailView { panel: panel.clone(), detail }
+                } else if let Some(draft) = draft {
+                    HookEditor { panel: panel.clone(), draft }
                 } else {
                     HookList { panel: panel.clone() }
                 }
@@ -294,6 +297,8 @@ fn HookEditor(panel: WebhookPanel, draft: HookDraft) -> Element {
 
 #[component]
 fn HookDetailView(panel: WebhookPanel, detail: HookDetail) -> Element {
+    let mut detail = detail;
+    let open = detail.open.take();
     rsx! {
         div { class: "webhook-toolbar",
             a { class: "btn btn-secondary btn-sm", href: panel.base.clone(), "Back to webhooks" }
@@ -318,8 +323,8 @@ fn HookDetailView(panel: WebhookPanel, detail: HookDetail) -> Element {
                 }
             }
         }
-        if let Some(open) = &detail.open {
-            DeliveryView { panel: panel.clone(), hook_id: detail.id, open: open.clone() }
+        if let Some(open) = open {
+            DeliveryView { panel: panel.clone(), hook_id: detail.id, open }
         }
     }
 }

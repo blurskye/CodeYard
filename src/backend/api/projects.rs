@@ -185,6 +185,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         None => false,
     };
     let mut page = view::Page {
+        view_state: view::ViewState { location: ctx.location.clone(), direction: "asc".into(), ..Default::default() },
         owner: name,
         base,
         csrf_token: ctx.csrf_token.clone(),
@@ -241,6 +242,11 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
             projects::Refusal::Invalid
         );
         config.sort_by = vec![(id, direction.into())];
+    }
+    page.view_state.visible_fields = config.visible_fields.clone();
+    if let Some((field, direction)) = config.sort_by.first() {
+        page.view_state.sort = field.to_string();
+        page.view_state.direction = direction.clone();
     }
     page.views = views
         .iter()

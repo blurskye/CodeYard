@@ -22,6 +22,7 @@ use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 fn view(a: Attribute, value: Option<Value>) -> IssueAttribute {
     IssueAttribute {
+        revision: db::issue_attributes::revision(&a).unwrap_or_default(),
         id: a.id,
         kind: a.kind,
         name: a.name,
@@ -71,7 +72,9 @@ pub(crate) async fn load(
     } else {
         false
     };
+    let owner = db::repositories::records::get_repository_by_id(&ctx.state.pool, repo).await.map_err(|_| unavailable(ctx))?.ok_or_else(|| unavailable(ctx))?;
     Ok(Box::new(IssueAttributes {
+        owner_key: db::issue_attributes::owner_key(owner.owner_user_id, owner.owner_org_id),
         types: types.into_iter().map(|a| view(a, None)).collect(),
         fields: fields
             .into_iter()
@@ -123,6 +126,7 @@ pub(crate) async fn native_change(
         .await
         .map_err(|_| unavailable(&ctx))?
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
+    crate::backend::api::repos::discussion::require_item_binding(&ctx, &form, repo.record.id, issue.id)?;
     let id = || {
         field(&form, "attribute_id")
             .parse::<i64>()
@@ -204,7 +208,7 @@ pub(crate) async fn native_change(
                 color: Some(field(&form, "color")).filter(|s| !s.is_empty()),
                 options,
             };
-            db::issue_attributes::configure(&ctx.state.pool, repo.record.id, actor, &definition)
+            db::issue_attributes::configure_checked(&ctx.state.pool, repo.record.id, actor, &definition, (Some(&field(&form, "expected_revision")), Some(&field(&form, "owner_key"))))
                 .await
                 .map_err(|e| failure(&ctx, e))?;
         }

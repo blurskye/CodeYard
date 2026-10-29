@@ -788,6 +788,7 @@ async fn branch_rules(
             restrict_pushes: rule.restrict_pushes,
             push_allowances: rule.push_allowances,
             push_team_allowances: rule.push_team_allowances,
+            push_app_allowances: rule.push_apps.into_iter().map(|id| format!("GitHub App #{id} (REST-managed)")).collect(),
             force_push_allowances: rule.force_push_allowances,
         });
     }
@@ -848,6 +849,7 @@ fn submitted_rule(
         push_team_allowances: names(&field(form, "push_team_allowances"), |c: char| {
             c == ',' || c.is_whitespace()
         }),
+        push_app_allowances: Vec::new(),
         force_push_allowances: force_push_names(form, pairs),
     }
 }
@@ -2069,16 +2071,11 @@ async fn mutate(
         "edit-label" => {
             let id = label_id(form)?;
             let (name, color, description) = label_fields(form)?;
-            db::labels::update_label(
-                pool,
-                actor.id,
-                repository.id,
-                id,
-                Some(&name),
-                Some(&color),
-                (serde_json::to_string(&description).unwrap_or_default()
-                    != field(form, "original_description"))
-                .then_some(description.as_str()),
+            db::labels::update_label_checked(
+                pool, actor.id, repository.id, id,
+                (Some(&name), Some(&color),
+                    (serde_json::to_string(&description).unwrap_or_default() != field(form, "original_description")).then_some(description.as_str())),
+                Some(&field(form, "original")),
             )
             .await
             .map_err(label_write_error)?;

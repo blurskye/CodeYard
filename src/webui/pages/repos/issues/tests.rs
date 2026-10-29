@@ -22,6 +22,7 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
     use super::page::{IssueAttribute, IssueAttributes};
     let opaque = "\n</textarea><script>alert(1)</script>";
     let kind = IssueAttribute {
+        revision: String::new(),
         id: 1,
         kind: "type".into(),
         name: "Bug".into(),
@@ -34,6 +35,7 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
         value: None,
     };
     let number = IssueAttribute {
+        revision: String::new(),
         id: 2,
         kind: "field".into(),
         name: "Estimate".into(),
@@ -53,6 +55,7 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
         ..number.clone()
     };
     let data = IssueAttributes {
+        owner_key: "user:1".into(),
         selected_type: Some(1),
         types: vec![kind],
         fields: vec![number, text],
@@ -64,6 +67,7 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
             &repository(),
             "/alice/repo/issues/1",
             &data,
+            1,
         ))
     });
     assert!(
@@ -333,6 +337,7 @@ fn page_modes() -> Vec<Page> {
                     about: "</a><script>choose()</script>".into(),
                 }],
                 blank_allowed: true,
+                draft: Default::default(),
             });
         }
         for preview in [false, true] {
@@ -517,6 +522,7 @@ fn page_modes() -> Vec<Page> {
         pagination: (1, false),
         draft: MilestoneDraft {
             repository_id: None,
+            original: String::new(),
             title: hostile.into(),
             description: "Ship it".into(),
             due_date: "2026-10-20".into(),
@@ -546,7 +552,8 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     repository,
                     templates,
                     blank_allowed,
-                } => new::chooser(repository, templates, *blank_allowed),
+                    draft,
+                } => new::chooser(repository, templates, *blank_allowed, draft),
                 Page::Milestones {
                     repository,
                     state,
@@ -3939,6 +3946,7 @@ fn milestone_pages_show_progress_rows_and_writer_forms() {
             (2, true),
             &MilestoneDraft {
                 repository_id: None,
+                original: String::new(),
                 title: "Release".into(),
                 description: "Ship it".into(),
                 due_date: "2026-10-20".into(),

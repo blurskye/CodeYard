@@ -790,6 +790,7 @@ fn form_fields(form: &[FormElement], answers: &[Vec<String>]) -> Vec<view::FormF
                     .iter()
                     .map(|option| option.label.clone())
                     .collect(),
+                required_options: element.options.iter().filter(|option| option.required).map(|option| option.label.clone()).collect(),
                 multiple: element.multiple,
                 required: element.required || element.options.iter().any(|option| option.required),
                 values,
@@ -888,6 +889,7 @@ pub(crate) async fn native_new_page(
                     repository: repo.view,
                     templates,
                     blank_allowed: found.blank_allowed,
+                    draft,
                 }),
             ));
         }

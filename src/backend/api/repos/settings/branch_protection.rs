@@ -32,6 +32,7 @@ pub struct BranchProtectionRuleResponse {
     pub restrict_pushes: bool,
     pub push_allowances: Vec<String>,
     pub push_team_allowances: Vec<String>,
+    pub push_apps: Vec<i64>,
     pub force_push_allowances: Vec<String>,
 }
 
@@ -165,6 +166,7 @@ pub(in crate::backend::api::repos) async fn rule_responses(
                 restrict_pushes: rule.restrict_pushes,
                 push_allowances,
                 push_team_allowances,
+                push_apps: rule.github_settings.push_apps,
                 force_push_allowances,
             }
         })

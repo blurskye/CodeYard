@@ -46,6 +46,8 @@ pub struct BranchRule {
     pub push_allowances: Vec<String>,
     #[serde(default)]
     pub push_team_allowances: Vec<String>,
+    #[serde(default)]
+    pub push_app_allowances: Vec<String>,
     pub force_push_allowances: Vec<String>,
 }
 /// A new rule starts with the settings the JSON API defaults to.
@@ -68,6 +70,7 @@ impl Default for BranchRule {
             restrict_pushes: false,
             push_allowances: Vec::new(),
             push_team_allowances: Vec::new(),
+            push_app_allowances: Vec::new(),
             force_push_allowances: Vec::new(),
         }
     }
@@ -1105,6 +1108,7 @@ fn rule_summary(rule: &BranchRule) -> Vec<String> {
                 .iter()
                 .map(|team| format!("{team} (team)")),
         );
+        actors.extend(rule.push_app_allowances.iter().cloned());
         let actors = if actors.is_empty() {
             "no one".to_owned()
         } else {

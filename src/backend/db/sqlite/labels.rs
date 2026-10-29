@@ -202,7 +202,15 @@ pub async fn update_label(
     color: Option<&str>,
     description: Option<&str>,
 ) -> Result<Label> {
+    update_label_checked(pool, actor_id, repo_id, label_id, (name, color, description), None).await
+}
+
+pub async fn update_label_checked(pool: &SqlitePool, actor_id: i64, repo_id: i64, label_id: i64, (name, color, description): (Option<&str>, Option<&str>, Option<&str>), expected: Option<&str>) -> Result<Label> {
     let mut tx = begin_label_write(pool, actor_id, repo_id).await?;
+    if let Some(expected) = expected {
+        let current: Label = sqlx::query_as("SELECT * FROM labels WHERE repo_id=?1 AND id=?2").bind(repo_id).bind(label_id).fetch_optional(&mut *tx).await?.ok_or(LabelWriteRefusal::InvalidLabels)?;
+        anyhow::ensure!(serde_json::to_string(&(current.name, current.color, current.description.unwrap_or_default()))? == expected, LabelWriteRefusal::Conflict);
+    }
     if let Some(name) = name {
         ensure_name_free(&mut tx, repo_id, name, label_id).await?;
     }

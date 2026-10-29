@@ -118,6 +118,10 @@ pub async fn save_milestone(
     number: Option<i32>,
     input: MilestoneInput<'_>,
 ) -> Result<Milestone> {
+    save_milestone_checked(pool, actor_id, repo_id, number, input, None).await
+}
+
+pub async fn save_milestone_checked(pool: &SqlitePool, actor_id: i64, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>, expected: Option<&str>) -> Result<Milestone> {
     crate::backend::issues::validate_milestone(input.title, input.description.unwrap_or(""))
         .map_err(anyhow::Error::msg)?;
     anyhow::ensure!(
@@ -127,6 +131,10 @@ pub async fn save_milestone(
         "Invalid milestone state"
     );
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
+    if let (Some(number), Some(expected)) = (number, expected) {
+        let current: Milestone = sqlx::query_as(&format!("SELECT {MILESTONE_COLUMNS} FROM milestones WHERE repo_id=?1 AND number=?2")).bind(repo_id).bind(number).fetch_optional(&mut *tx).await?.ok_or(MilestoneWriteRefusal::NotFound)?;
+        anyhow::ensure!(serde_json::to_string(&(current.title, current.description, current.due_date, current.state))? == expected, MilestoneWriteRefusal::Conflict);
+    }
     ensure_unique_title(&mut tx, repo_id, input.title, number).await?;
     let creating = number.is_none();
     let number = match number {

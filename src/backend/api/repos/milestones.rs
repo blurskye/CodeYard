@@ -49,6 +49,7 @@ pub(crate) fn milestone_choice_view(milestone: db::models::Milestone) -> view::M
 fn draft_of(milestone: &view::Milestone) -> MilestoneDraft {
     MilestoneDraft {
         repository_id: None,
+        original: serde_json::to_string(&(&milestone.title, &milestone.description, &milestone.due_date, &milestone.state)).unwrap_or_default(),
         title: milestone.title.clone(),
         description: milestone.description.clone().unwrap_or_default(),
         due_date: milestone.due_date.clone().unwrap_or_default(),
@@ -67,6 +68,7 @@ pub(crate) fn milestone_write_error(error: anyhow::Error) -> ApiFailure {
             "not_found",
             "The requested resource was not found or you do not have access.",
         ),
+        Some(MilestoneWriteRefusal::Conflict) => (StatusCode::CONFLICT, "milestone_changed", "The milestone changed. Your draft is preserved; reload before saving."),
         Some(MilestoneWriteRefusal::DuplicateTitle) => (
             StatusCode::UNPROCESSABLE_ENTITY,
             "milestone_title_taken",
@@ -85,6 +87,7 @@ pub(crate) fn milestone_write_error(error: anyhow::Error) -> ApiFailure {
 fn submitted_milestone(form: &HashMap<String, String>) -> MilestoneDraft {
     MilestoneDraft {
         repository_id: form.get("repository_id").cloned(),
+        original: field(form, "original"),
         title: field(form, "title"),
         description: field(form, "description"),
         due_date: field(form, "due_date"),
@@ -484,14 +487,12 @@ pub(crate) async fn native_update(
         }
     };
     let actor = ctx.require_user()?.id;
-    match db::milestones::update_milestone(
-        &ctx.state.pool,
-        actor,
-        repo.record.id,
-        number,
-        &input.title,
-        input.description.as_deref(),
-        input.due_date.as_deref(),
+    match db::milestones::save_milestone_checked(
+        &ctx.state.pool, actor, repo.record.id, Some(number),
+        db::milestones::MilestoneInput {
+            title: &input.title, description: input.description.as_deref(),
+            due_on: db::milestones::due_on(input.due_date.as_deref()).map_err(|_| unavailable(&ctx))?, state: None,
+        }, Some(&draft.original),
     )
     .await
     {

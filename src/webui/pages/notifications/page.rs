@@ -233,10 +233,10 @@ pub fn notifications_page(model: NotificationsPage) -> Element {
                             {filter_option(notifications_href(&model.view, model.repository, Some(reason.slug.as_str()), model.query.as_deref(), model.unread_only, None), &reason.label, model.reason.as_deref() == Some(reason.slug.as_str()))}
                         }
                     })}
-                    NavLink { href: unread_toggle, class: if model.unread_only { "btn btn-sm is-current" } else { "btn btn-sm" }, aria_current: if model.unread_only { Some("true".to_owned()) } else { None }, mark_current: false,
+                    if model.view != "done" { NavLink { href: unread_toggle, class: if model.unread_only { "btn btn-sm is-current" } else { "btn btn-sm" }, aria_current: if model.unread_only { Some("true".to_owned()) } else { None }, mark_current: false,
                         "Unread"
                         if model.unread_count > 0 { span { class: "notification-count", "{model.unread_count}" } }
-                    }
+                    } }
                     if filtered {
                         NavLink { href: clear, class: "notification-clear", mark_current: false, "Clear filters" }
                     }
@@ -341,7 +341,7 @@ fn view_tab(model: &NotificationsPage, name: &str, label: &str, count: i64) -> E
         model.repository,
         model.reason.as_deref(),
         model.query.as_deref(),
-        model.unread_only,
+        model.unread_only && name != "done",
         None,
     );
     rsx! {

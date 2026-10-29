@@ -11,6 +11,11 @@ use std::ops::Range;
 /// The longest URL an autolink may expand to. Browsers and servers refuse much longer ones.
 const MAX_AUTOLINK_URL_BYTES: usize = 8 * 1024;
 
+/// Admission uses the same raw-spelling policy as Markdown rendering.
+pub fn valid_autolink_template(template: &str) -> bool {
+    template.len() <= 4096 && super::markdown::safe_url(&template.replace("<num>", "1"), false)
+}
+
 /// Distinct usernames a page resolves. Later names stay plain text.
 pub const MAX_USERS: usize = 50;
 /// Distinct other repositories a page resolves. Later ones stay plain text.

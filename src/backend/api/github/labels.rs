@@ -24,6 +24,7 @@ pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
             Error::invalid("A label with this name already exists")
         }
         Some(LabelWriteRefusal::InvalidLabels) => Error::invalid("Invalid labels"),
+        Some(LabelWriteRefusal::Conflict) => Error::new(StatusCode::CONFLICT, "Label changed"),
         None => Error::unavailable(error),
     }
 }

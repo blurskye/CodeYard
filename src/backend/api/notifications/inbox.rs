@@ -175,7 +175,7 @@ impl ListParams {
         {
             return Err("Search text is too long");
         }
-        let unread_only = text("unread_only").is_some_and(|value| value == "1" || value == "true");
+        let unread_only = !matches!(view, NotificationView::Done) && text("unread_only").is_some_and(|value| value == "1" || value == "true");
         let before = decode_cursor(fields.get("before").map(String::as_str))
             .map_err(|()| "Invalid notification cursor")?;
         Ok(Self {

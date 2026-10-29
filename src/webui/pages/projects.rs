@@ -41,8 +41,18 @@ pub struct Column {
     pub name: String,
     pub items: Vec<Item>,
 }
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ViewState {
+    pub location: String,
+    pub sort: String,
+    pub direction: String,
+    pub visible_fields: Vec<i64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Page {
+    #[serde(default)]
+    pub view_state: ViewState,
     pub owner: String,
     pub base: String,
     pub csrf_token: String,
@@ -122,6 +132,7 @@ fn item_editor(page: &Page, item: &Item) -> Element {
     rsx! { details { class: "mt-2", summary { "Edit fields" }
         form { method: "post", action: "{page.base}/{project.number}", class: "identity-form",
             {csrf(&page.csrf_token)}
+            input { r#type: "hidden", name: "return_to", value: page.view_state.location.clone() }
             input { r#type: "hidden", name: "action", value: "update-item" }
             input { r#type: "hidden", name: "item_id", value: "{item.id}" }
             for field in page.fields.iter().filter(|f| f.data_type != "title") {
@@ -131,6 +142,7 @@ fn item_editor(page: &Page, item: &Item) -> Element {
         }
         form { method: "post", action: "{page.base}/{project.number}",
             {csrf(&page.csrf_token)}
+            input { r#type: "hidden", name: "return_to", value: page.view_state.location.clone() }
             input { r#type: "hidden", name: "action", value: "delete-item" }
             input { r#type: "hidden", name: "item_id", value: "{item.id}" }
             button { "Remove from project" }
@@ -158,6 +170,7 @@ fn field_editor(field: &Field, raw: &str, item: i64) -> Element {
 
 pub fn render(page: Page) -> Element {
     let base = &page.base;
+    let visible: Vec<_> = page.fields.iter().filter(|field| field.data_type != "title" && (page.view_state.visible_fields.is_empty() || page.view_state.visible_fields.contains(&field.id))).collect();
     rsx! {
         main { class: "container mx-auto px-4 py-6", style: "max-width:1280px;min-width:0;overflow-wrap:anywhere",
             nav { aria_label: "Projects", a { href: "{base}", "{page.owner} / Projects" } }
@@ -229,23 +242,18 @@ pub fn render(page: Page) -> Element {
                     } }
                     form { method: "get", class: "flex flex-wrap gap-2 my-4",
                         DraftInput { class: FIELD, name: "q", aria_label: Some("Filter project items".into()), initial_value: page.filter.clone(), placeholder: "Filter items, e.g. status:Todo" }
-                        select { class: FIELD, name: "sort", aria_label: "Sort field",
-                            option { value: "", "Sort by…" }
-                            for field in &page.fields { option { value: "{field.id}", "{field.name}" } }
-                        }
-                        select { class: FIELD, name: "direction", aria_label: "Sort direction",
-                            option { value: "asc", "Ascending" } option { value: "desc", "Descending" }
-                        }
+                        DraftSelect { class: FIELD, name: "sort", aria_label: Some("Sort field".into()), initial_value: page.view_state.sort.clone(), options: std::iter::once(SelectOption::new("", "Sort by…")).chain(page.fields.iter().map(|field| SelectOption::new(field.id.to_string(), &field.name))).collect::<Vec<_>>() }
+                        DraftSelect { class: FIELD, name: "direction", aria_label: Some("Sort direction".into()), initial_value: page.view_state.direction.clone(), options: vec![SelectOption::new("asc", "Ascending"), SelectOption::new("desc", "Descending")] }
                         button { class: SUBMIT, "Apply" }
                     }
                     if page.columns.is_empty() {
                         div { style: "max-width:100%;overflow-x:auto",
                             table { class: "w-full border-collapse", aria_label: "Project items",
-                                thead { tr { th { class: "p-2 text-left", "Title" } for field in page.fields.iter().filter(|f|f.data_type != "title") { th { class: "p-2 text-left", "{field.name}" } } } }
+                                thead { tr { th { class: "p-2 text-left", "Title" } for field in &visible { th { class: "p-2 text-left", "{field.name}" } } } }
                                 tbody { for item in &page.items {
                                     tr { class: "border-t",
                                         td { class: "p-2", {item_title(item)} {item_editor(&page, item)} }
-                                        for (_,_,display) in &item.values { td { class: "p-2", "{display}" } }
+                                        for field in &visible { td { class: "p-2", "{item.values.iter().find(|(id,_,_)| *id == field.id).map_or(\"\", |(_,_,display)| display.as_str())}" } }
                                     }
                                 } }
                             }

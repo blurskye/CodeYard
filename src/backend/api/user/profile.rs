@@ -47,6 +47,7 @@ pub(crate) fn profile_model(
 ) -> Profile {
     Profile {
         username: user.username.clone(),
+        repository_query: String::new(),
         social_accounts: accounts
             .into_iter()
             .map(|account| (account.provider, account.url))
@@ -303,7 +304,9 @@ pub(crate) async fn load_settings(
         )
     })?;
     let values = if let Some(form) = submitted {
-        preserved_values(form)
+        let mut values = preserved_values(form);
+        values.public_key = form.get("public_key").filter(|key| db::users::ssh_keys::parse_public_key(key).is_ok()).cloned().unwrap_or_default();
+        values
     } else {
         FormValues {
             display_name: profile.display_name.clone(),

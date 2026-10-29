@@ -26,6 +26,7 @@ fn write_error(error: anyhow::Error) -> Error {
             Error::new(StatusCode::FORBIDDEN, "Milestone mutation denied")
         }
         Some(MilestoneWriteRefusal::NotFound) => Error::missing(),
+        Some(MilestoneWriteRefusal::Conflict) => Error::new(StatusCode::CONFLICT, "Milestone changed"),
         Some(MilestoneWriteRefusal::DuplicateTitle) => {
             Error::invalid("A milestone with this title already exists")
         }

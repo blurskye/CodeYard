@@ -11,6 +11,8 @@ pub enum LabelWriteRefusal {
     InvalidLabels,
     #[error("A label with this name already exists")]
     DuplicateName,
+    #[error("Label changed since the form was loaded")]
+    Conflict,
 }
 
 pub(crate) fn label_database_error(error: sqlx::Error) -> anyhow::Error {
@@ -104,6 +106,10 @@ native_operation!(crate::backend::db::postgres::labels::update_label,
     color: Option<&str>,
     description: Option<&str>,
 ) -> Result<Label>);
+
+native_operation!(crate::backend::db::postgres::labels::update_label_checked,
+    crate::backend::db::sqlite::labels::update_label_checked,
+    fn update_label_checked(pool: &DbPool, actor_id: i64, repo_id: i64, label_id: i64, fields: (Option<&str>, Option<&str>, Option<&str>), expected: Option<&str>) -> Result<Label>);
 
 native_operation!(crate::backend::db::postgres::labels::delete_label,
     crate::backend::db::sqlite::labels::delete_label,

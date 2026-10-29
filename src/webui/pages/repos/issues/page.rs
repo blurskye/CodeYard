@@ -248,6 +248,8 @@ impl Milestone {
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MilestoneDraft {
     #[serde(default)]
+    pub original: String,
+    #[serde(default)]
     pub repository_id: Option<String>,
     pub title: String,
     pub description: String,
@@ -423,6 +425,8 @@ pub struct IssueSelectOption {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IssueAttribute {
     pub id: i64,
+    #[serde(default)]
+    pub revision: String,
     pub kind: String,
     pub name: String,
     pub description: Option<String>,
@@ -435,6 +439,8 @@ pub struct IssueAttribute {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IssueAttributes {
+    #[serde(default)]
+    pub owner_key: String,
     pub selected_type: Option<i64>,
     pub types: Vec<IssueAttribute>,
     pub fields: Vec<IssueAttribute>,
@@ -542,6 +548,8 @@ pub enum Page {
         repository: Repository,
         templates: Vec<TemplateCard>,
         blank_allowed: bool,
+        #[serde(default)]
+        draft: NewDraft,
     },
     New {
         repository: Repository,
@@ -716,7 +724,8 @@ pub fn render(page: Page) -> Element {
             repository,
             templates,
             blank_allowed,
-        } => chooser(&repository, &templates, blank_allowed),
+            draft,
+        } => chooser(&repository, &templates, blank_allowed, &draft),
         Page::New {
             repository,
             kind,
