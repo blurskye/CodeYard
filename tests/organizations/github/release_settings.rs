@@ -213,7 +213,7 @@ async fn contract(pg: bool) {
         base,
         write,
         json!({"display_name":"Scanner","installation_id":42}),
-        201,
+        422,
     )
     .await;
     let (_, list) = request(
@@ -226,10 +226,7 @@ async fn contract(pg: bool) {
         200,
     )
     .await;
-    assert_eq!(
-        list,
-        json!([{"display_name":"Scanner","installation":{"id":42}}])
-    );
+    assert_eq!(list, json!([]));
     request(
         &router,
         "orgs/external-properties-for-repos-get-organization-definitions",

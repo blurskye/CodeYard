@@ -3163,8 +3163,9 @@ CREATE TABLE organization_external_property_installations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     display_name TEXT NOT NULL,
-    installation_id BIGINT,
-    UNIQUE (org_id, display_name)
+    installation_id BIGINT NOT NULL REFERENCES github_app_installations(id) ON DELETE CASCADE,
+    UNIQUE (org_id, display_name),
+    UNIQUE (org_id, installation_id)
 );
 
 CREATE TABLE organization_external_property_values (

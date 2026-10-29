@@ -201,7 +201,9 @@ pub fn permissions(value: &Value) -> Option<Map<String, Value>> {
                     | "pages"
                     | "administration"
                     | "workflows"
-            ) || !matches!(value.as_str(), Some("read" | "write"))
+                    | "organization_external_properties_for_repos"
+            ) || !(matches!(value.as_str(), Some("read" | "write"))
+                || key == "organization_external_properties_for_repos" && value == "admin")
                 || (key == "metadata" && value != "read")
                 || (key == "workflows" && value != "write")
         })
@@ -219,7 +221,7 @@ pub fn subset(requested: &Value, granted: &Value) -> Option<Value> {
         .all(|(key, value)| {
             granted
                 .get(key)
-                .is_some_and(|grant| grant == "write" || grant == value)
+                .is_some_and(|grant| grant == "admin" || grant == "write" && value != "admin" || grant == value)
         })
         .then_some(Value::Object(requested))
 }
@@ -227,12 +229,12 @@ pub fn allows(permissions: &Value, key: &str, write: bool) -> bool {
     permissions
         .get(key)
         .and_then(Value::as_str)
-        .is_some_and(|level| level == "write" || (!write && level == "read"))
+        .is_some_and(|level| level == "admin" || level == "write" || (!write && level == "read"))
 }
 pub fn write(permissions: &Value) -> bool {
     permissions
         .as_object()
-        .is_some_and(|map| map.values().any(|value| value == "write"))
+        .is_some_and(|map| map.values().any(|value| value == "write" || value == "admin"))
 }
 
 /// Only RS256, with a maximum ten-minute lifetime. Private signing keys never persist.
