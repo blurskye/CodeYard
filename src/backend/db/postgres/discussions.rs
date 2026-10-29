@@ -474,14 +474,7 @@ pub(crate) async fn lock_review_dismissal_authority(
     Ok(pr)
 }
 
-pub async fn list_repo_authors(pool: &sqlx::PgPool, repo_id: i64) -> Result<Vec<String>> {
-    Ok(sqlx::query_scalar(
-        "SELECT username FROM users WHERE id IN (
-            SELECT author_id FROM issues WHERE repo_id = $1
-            UNION SELECT author_id FROM pull_requests WHERE repo_id = $1
-        ) ORDER BY username",
-    )
-    .bind(repo_id)
-    .fetch_all(pool)
-    .await?)
+pub async fn list_repo_authors(pool: &sqlx::PgPool, repo_id: i64, selected: Option<i64>) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar(&crate::backend::db::discussions::author_choices_sql(true))
+        .bind(repo_id).bind(selected).fetch_all(pool).await?)
 }

@@ -426,14 +426,7 @@ pub(super) async fn allocate_number(tx: &mut Transaction<'_, Sqlite>, repo_id: i
     Ok(i32::try_from(allocated)?)
 }
 
-pub async fn list_repo_authors(pool: &SqlitePool, repo_id: i64) -> Result<Vec<String>> {
-    Ok(sqlx::query_scalar(
-        "SELECT username FROM users WHERE id IN (
-            SELECT author_id FROM issues WHERE repo_id = ?1
-            UNION SELECT author_id FROM pull_requests WHERE repo_id = ?1
-        ) ORDER BY username",
-    )
-    .bind(repo_id)
-    .fetch_all(pool)
-    .await?)
+pub async fn list_repo_authors(pool: &SqlitePool, repo_id: i64, selected: Option<i64>) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar(&crate::backend::db::discussions::author_choices_sql(false))
+        .bind(repo_id).bind(selected).fetch_all(pool).await?)
 }

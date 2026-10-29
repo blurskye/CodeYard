@@ -276,6 +276,7 @@ async fn list_filters(
     repo: &RepositoryData,
     milestones: Vec<db::models::Milestone>,
     selected_labels: Vec<String>,
+    selected_author: Option<i64>,
 ) -> ResultPage<view::ListFilters> {
     let labels = db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
         .await
@@ -292,7 +293,7 @@ async fn list_filters(
         assignee: query_value(ctx, "assignee"),
         milestones: milestones.into_iter().map(milestone_choice_view).collect(),
         milestone: query_value(ctx, "milestone"),
-        authors: db::discussions::list_repo_authors(&ctx.state.pool, repo.record.id)
+        authors: db::discussions::list_repo_authors(&ctx.state.pool, repo.record.id, selected_author)
             .await
             .map_err(|_| unavailable(ctx))?,
         author: query_value(ctx, "author"),
@@ -399,7 +400,7 @@ pub(crate) async fn native_index(
         .iter()
         .map(|milestone| (milestone.id, milestone_choice_view(milestone.clone())))
         .collect();
-    let mut filters = list_filters(&ctx, &repo, milestones, labels.clone()).await?;
+    let mut filters = list_filters(&ctx, &repo, milestones, labels.clone(), list.author_id).await?;
     filters.page = page_number;
     if kind == Kind::Issue {
         filters.pinned_issues = super::management::pinned(&ctx, &repo).await?;
