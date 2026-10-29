@@ -40,6 +40,11 @@ pub async fn change(
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
+    if !matches!(change, Change::Enforcement(..)) {
+        let mode: Option<String> = sqlx::query_scalar("SELECT enforced_repositories FROM organization_immutable_releases WHERE org_id=$1 FOR UPDATE")
+            .bind(org).fetch_optional(&mut *tx).await?;
+        if mode.as_deref() != Some("selected") { return Ok(Conflict); }
+    }
     let ids = match change {
         Change::Enforcement(mode, ids) => {
             if !matches!(mode.as_str(), "all" | "selected" | "none") {
