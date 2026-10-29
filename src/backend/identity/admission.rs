@@ -14,8 +14,7 @@ pub enum AdmissionError {
 /// The budgets one admitted attempt was counted against, so a right password can give it back.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Attempt {
-    client: Option<String>,
-    account: String,
+    receipt: db::users::admission::Receipt,
 }
 
 /// Counts an attempt before its credentials are checked, against `client` (the request's address,
@@ -82,8 +81,8 @@ async fn admit(
     .await
     .map_err(|_| AdmissionError::Unavailable)?
     .map_err(|_| AdmissionError::Unavailable)?;
-    if admitted {
-        Ok(Attempt { client, account })
+    if let Some(receipt) = admitted {
+        Ok(Attempt { receipt })
     } else {
         Err(AdmissionError::Limited)
     }
@@ -94,11 +93,7 @@ async fn admit(
 pub async fn forgive_login(pool: &DbPool, attempt: &Attempt) {
     let forgiven = tokio::time::timeout(
         Duration::from_secs(5),
-        db::users::admission::forgive_password_attempt(
-            pool,
-            attempt.client.as_deref(),
-            &attempt.account,
-        ),
+        db::users::admission::forgive_password_attempt(pool, &attempt.receipt),
     )
     .await;
     if !matches!(forgiven, Ok(Ok(()))) {
