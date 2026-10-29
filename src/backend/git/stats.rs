@@ -331,14 +331,12 @@ fn ref_cache<T>(caches: &RefCaches<T>, path: &Path) -> RefCache<T> {
 
 async fn current_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
     let path = repo_path.to_owned();
-    let permit = process::operation_slot(process::RPC_TIMEOUT).await?;
-    tokio::task::spawn_blocking(move || {
-        let _permit = permit;
+    process::blocking_until(std::time::Instant::now() + process::RPC_TIMEOUT, move || {
         let mut refs = super::repository::list_mirror_refs(&path)?;
         refs.retain(|name, _| !name.starts_with("refs/codeyard/"));
         Ok(refs)
     })
-    .await?
+    .await
 }
 
 /// The cached value while the refs and `key` are the same, or `read`'s fresh one. A ref that

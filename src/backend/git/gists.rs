@@ -331,13 +331,11 @@ fn history_metadata(
 }
 pub(crate) async fn history(path: &Path, revision: Option<&str>, offset: usize, limit: usize) -> Result<Vec<GistRevision>> {
     use super::repository::process;
-    let permit = process::operation_slot(super::COMMIT_WALK_TIMEOUT).await?;
     let owned_path = path.to_owned();
     let revision = revision.map(str::to_owned);
-    let entries = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
+    let entries = process::blocking_until(Instant::now() + super::COMMIT_WALK_TIMEOUT, move || {
         history_metadata(&owned_path, revision.as_deref(), offset, limit)
-    }).await??;
+    }).await?;
     let mut result = Vec::new();
     for (mut revision, previous) in entries {
         let mut command = process::git_command()?;

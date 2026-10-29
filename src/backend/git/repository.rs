@@ -1034,9 +1034,7 @@ pub(crate) async fn list_tree_with_history(
     let (commit_sha, mut entries) = {
         let (repo_path, git_ref, path) =
             (repo_path.to_owned(), git_ref.to_owned(), path.to_owned());
-        let permit = process::operation_slot(process::RPC_TIMEOUT).await?;
-        tokio::task::spawn_blocking(move || {
-            let _permit = permit;
+        process::blocking_until(Instant::now() + process::RPC_TIMEOUT, move || {
             let repo = Repository::open_bare(&repo_path)?;
             let commit = peel_to_commit_checked(&repo, &git_ref)?;
             let commit_sha = commit.id().to_string();
@@ -1045,7 +1043,7 @@ pub(crate) async fn list_tree_with_history(
             Ok::<_, anyhow::Error>((commit_sha, entries))
         })
         .await
-        .context("Git tree read stopped")??
+        .context("Git tree read stopped")?
     };
 
     if history && !entries.is_empty() {
@@ -1188,9 +1186,7 @@ pub(crate) async fn blame_file(repo_path: &Path, git_ref: &str, path: &str) -> R
     let (revision, size, blob_id) = {
         let (repo_path, git_ref, path) =
             (repo_path.to_owned(), git_ref.to_owned(), path.to_owned());
-        let permit = process::operation_slot(process::RPC_TIMEOUT).await?;
-        tokio::task::spawn_blocking(move || {
-            let _permit = permit;
+        process::blocking_until(Instant::now() + process::RPC_TIMEOUT, move || {
             let repo = Repository::open_bare(&repo_path)?;
             let commit = peel_to_commit_checked(&repo, &git_ref)?;
             let entry = tree_entry(&repo, &commit, &path)?;
@@ -1202,7 +1198,7 @@ pub(crate) async fn blame_file(repo_path: &Path, git_ref: &str, path: &str) -> R
             Ok::<_, anyhow::Error>((commit.id().to_string(), size as u64, entry.id().to_string()))
         })
         .await
-        .context("Git blame file read stopped")??
+        .context("Git blame file read stopped")?
     };
     let (bytes, binary) = read_blob_range(repo_path, &blob_id, size, 0, size as usize).await?;
     if binary { return Err(BlameRefused(BLAME_BINARY).into()); }
@@ -1628,19 +1624,18 @@ pub(crate) async fn list_range_commits(
     range_commits(repo_path, base, head, 0, limit).await
 }
 
-/// Counts the whole range without loading commit bodies, then reads GitHub's first 250 commits.
+/// Count without materializing commit bodies, then read the requested oldest window (up to 250).
 pub(crate) async fn pull_request_commits(
     repo_path: &Path,
     base: &str,
     head: &str,
     limit: usize,
 ) -> Result<(u64, Vec<CommitInfo>)> {
-    let (base, head) = {
-        let repo = Repository::open_bare(repo_path)?;
-        let base = peel_to_commit_checked(&repo, base)?.id().to_string();
-        let head = peel_to_commit_checked(&repo, head)?.id().to_string();
-        (base, head)
-    };
+    let (path, base, head) = (repo_path.to_owned(), base.to_owned(), head.to_owned());
+    let (base, head) = process::blocking_until(Instant::now() + COMMIT_WALK_TIMEOUT, move || {
+        let repo = Repository::open_bare(path)?;
+        Ok((peel_to_commit_checked(&repo, &base)?.id().to_string(), peel_to_commit_checked(&repo, &head)?.id().to_string()))
+    }).await?;
     let mut command = process::git_command()?;
     command
         .current_dir(repo_path)
@@ -1666,12 +1661,11 @@ async fn range_commits(
         return Ok(Vec::new());
     }
     let deadline = Instant::now() + COMMIT_WALK_TIMEOUT;
-    let (base, head) = {
-        let repo = Repository::open_bare(repo_path)?;
-        let base = peel_to_commit_checked(&repo, base)?.id();
-        let head = peel_to_commit_checked(&repo, head)?.id();
-        (base, head)
-    };
+    let (path, base, head) = (repo_path.to_owned(), base.to_owned(), head.to_owned());
+    let (base, head) = process::blocking_until(deadline, move || {
+        let repo = Repository::open_bare(path)?;
+        Ok((peel_to_commit_checked(&repo, &base)?.id(), peel_to_commit_checked(&repo, &head)?.id()))
+    }).await?;
     // Git prunes the excluded side of the range instead of loading all base ancestry.
     let count = limit.min(MAX_COMMIT_WALK_OBJECTS);
     let mut command = process::git_command()?;
@@ -1685,22 +1679,22 @@ async fn range_commits(
             "--",
         ])
         .current_dir(repo_path);
-    let (status, output) = process::buffered(command, b"", count * 41, COMMIT_WALK_TIMEOUT).await?;
+    let (status, output) = process::buffered(command, b"", count * 41, deadline.saturating_duration_since(Instant::now())).await?;
     ensure!(status.success(), "Git commit range failed");
-    let repo = Repository::open_bare(repo_path)?;
-    let mut commits = Vec::new();
-    let mut total_bytes = 0;
-    for line in output
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-    {
-        ensure!(Instant::now() < deadline, "Git commit walk timed out");
-        let oid = git2::Oid::from_str(std::str::from_utf8(line)?)?;
-        let commit = find_commit_checked(&repo, oid)?;
-        add_commit_to_budget(&mut total_bytes, commit_object_size(&repo, oid)?, true)?;
-        commits.push(commit_info(&repo, &commit)?);
-    }
-    Ok(commits)
+    let path = repo_path.to_owned();
+    process::blocking_until(deadline, move || {
+        let repo = Repository::open_bare(path)?;
+        let mut commits = Vec::new();
+        let mut total_bytes = 0;
+        for line in output.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+            ensure!(Instant::now() < deadline, "Git commit walk timed out");
+            let oid = git2::Oid::from_str(std::str::from_utf8(line)?)?;
+            add_commit_to_budget(&mut total_bytes, commit_object_size(&repo, oid)?, true)?;
+            let commit = find_commit_checked(&repo, oid)?;
+            commits.push(commit_info(&repo, &commit)?);
+        }
+        Ok(commits)
+    }).await
 }
 
 pub(crate) fn get_commit(repo_path: &Path, sha: &str) -> Result<CommitInfo> {
@@ -1739,14 +1733,12 @@ pub(crate) async fn search_code(
     }
     let tip = {
         let (path, revision) = (repo_path.to_owned(), git_ref.to_owned());
-        let permit = process::operation_slot(CODE_SEARCH_TIMEOUT).await?;
-        tokio::task::spawn_blocking(move || {
-            let _permit = permit;
+        process::blocking_until(Instant::now() + CODE_SEARCH_TIMEOUT, move || {
             let repo = Repository::open_bare(&path)?;
             let commit = peel_to_commit_checked(&repo, &revision)?;
-            Ok::<_, anyhow::Error>(commit.id().to_string())
+            Ok(commit.id().to_string())
         })
-        .await??
+        .await?
     };
     let mut command = process::git_command()?;
     command
@@ -1934,10 +1926,8 @@ pub(crate) async fn list_path_commits(
         "Git could not list the commits for the path"
     );
     let (path, filter) = (repo_path.to_owned(), filter.clone());
-    let permit = process::operation_slot(COMMIT_WALK_TIMEOUT).await?;
-    tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        let deadline = Instant::now() + COMMIT_WALK_TIMEOUT;
+    let deadline = Instant::now() + COMMIT_WALK_TIMEOUT;
+    process::blocking_until(deadline, move || {
         let repo = Repository::open_bare(&path)?;
         let mut total_bytes = 0usize;
         let mut walked_bytes = 0usize;
@@ -1969,7 +1959,7 @@ pub(crate) async fn list_path_commits(
         }
         Ok(commits)
     })
-    .await?
+    .await
 }
 
 /// Only divergence is capped; every branch needs its tip date for stale classification.

@@ -214,12 +214,10 @@ pub(crate) async fn introduced_signatures(
         false, MAX_SIGNATURE_CHECKS, COMMIT_WALK_TIMEOUT,
     )
     .await?;
-    let permit = process::operation_slot(COMMIT_WALK_TIMEOUT).await?;
     let path = path.to_owned();
     let quarantine = quarantine.map(Path::to_owned);
-    tokio::task::spawn_blocking(move || -> Result<Vec<CommitSignature>> {
-        let _permit = permit;
-        let deadline = Instant::now() + COMMIT_WALK_TIMEOUT;
+    let deadline = Instant::now() + COMMIT_WALK_TIMEOUT;
+    process::blocking_until(deadline, move || -> Result<Vec<CommitSignature>> {
         let repo = open_quarantined(&path, quarantine.as_deref())?;
         let mut signatures = Vec::new();
         // The payloads are kept until every signature is checked, so their total is bounded.
@@ -253,7 +251,7 @@ pub(crate) async fn introduced_signatures(
         }
         Ok(signatures)
     })
-    .await?
+    .await
 }
 
 /// Enumerate IDs in a memory-limited child; libgit2 revwalk materializes unchecked ancestors.
@@ -577,9 +575,7 @@ pub(crate) async fn rewrite_template_history(
         author.0.to_owned(),
         author.1.to_owned(),
     );
-    let permit = process::operation_slot(process::RPC_TIMEOUT).await?;
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        let _permit = permit;
+    process::blocking_until(Instant::now() + process::RPC_TIMEOUT, move || -> Result<()> {
         let repo = git2::Repository::open_bare(&path_owned)?;
         let signature = git2::Signature::now(&name, &email)?;
         super::peel_to_commit_checked(&repo, &format!("refs/heads/{branch}"))?;
@@ -615,7 +611,7 @@ pub(crate) async fn rewrite_template_history(
         repo.set_head(&format!("refs/heads/{branch}"))?;
         Ok(())
     })
-    .await??;
+    .await?;
     match tokio::fs::remove_file(path.join("shallow")).await {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
