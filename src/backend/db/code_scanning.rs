@@ -93,6 +93,13 @@ impl BranchAlert {
     }
 }
 
+pub struct OrganizationAlert {
+    pub alert: Alert,
+    pub repository: super::models::Repository,
+    pub instance: Instance,
+    pub dismissed_by: Option<super::models::User>,
+}
+
 pub struct NewUpload<'a> {
     pub actor: i64,
     pub repo: i64,
@@ -280,6 +287,8 @@ native_operation!(super::postgres::code_scanning::analysis_sarif, super::sqlite:
     fn analysis_sarif(pool: &DbPool, repo: i64, id: i64) -> Result<Option<String>>);
 native_operation!(super::postgres::code_scanning::alert_page, super::sqlite::code_scanning::alert_page,
     fn alert_page(pool: &DbPool, scope: AlertScope, filters: &AlertFilters<'_>, offset: i64, limit: i64) -> Result<Vec<Alert>>);
+native_operation!(super::postgres::code_scanning::organization_alert_page, super::sqlite::code_scanning::organization_alert_page,
+    fn organization_alert_page(pool: &DbPool, actor: i64, org: i64, filters: &AlertFilters<'_>, offset: i64, limit: i64) -> Result<Vec<OrganizationAlert>>);
 native_operation!(super::postgres::code_scanning::alert, super::sqlite::code_scanning::alert,
     fn alert(pool: &DbPool, repo: i64, number: i64) -> Result<Option<Alert>>);
 native_operation!(super::postgres::code_scanning::instance, super::sqlite::code_scanning::instance,

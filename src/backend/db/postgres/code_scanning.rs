@@ -154,7 +154,30 @@ pub async fn instance(
     alert: i64,
     reference: Option<&str>,
 ) -> Result<Option<Instance>> {
-    Ok(sqlx::query_as("SELECT * FROM code_scanning_instances WHERE alert_id=$1 AND (CAST($2 AS TEXT) IS NULL OR ref_name=$2) ORDER BY CASE WHEN state='open' THEN 0 ELSE 1 END,upload_sequence DESC,ref_name,category LIMIT 1").bind(alert).bind(reference).fetch_optional(pool).await?)
+    let mut connection = pool.acquire().await?;
+    instance_on(&mut connection, alert, reference).await
+}
+
+async fn instance_on(connection: &mut PgConnection, alert: i64, reference: Option<&str>) -> Result<Option<Instance>> {
+    Ok(sqlx::query_as("SELECT * FROM code_scanning_instances WHERE alert_id=$1 AND (CAST($2 AS TEXT) IS NULL OR ref_name=$2) ORDER BY CASE WHEN state='open' THEN 0 ELSE 1 END,upload_sequence DESC,ref_name,category LIMIT 1").bind(alert).bind(reference).fetch_optional(connection).await?)
+}
+
+pub async fn organization_alert_page(pool: &PgPool, actor: i64, org: i64, filters: &AlertFilters<'_>, offset: i64, limit: i64) -> Result<Vec<OrganizationAlert>> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+    let role = super::organizations::authority::read_authority(&mut tx, actor, org).await?;
+    ensure!(matches!(role, crate::backend::db::organizations::OrganizationOutcome::Applied(crate::backend::db::models::OrgRole::Owner | crate::backend::db::models::OrgRole::Admin)), Refusal::Denied);
+    let rows = list::alert_page_on(&mut tx, AlertScope::Organization(org), filters, offset, limit).await?;
+    let mut result = Vec::with_capacity(rows.len());
+    for alert in rows {
+        let repository: crate::backend::db::models::Repository = sqlx::query_as("SELECT * FROM repositories WHERE id=$1").bind(alert.repo_id).fetch_one(&mut *tx).await?;
+        let reference = filters.reference.map(str::to_owned).unwrap_or_else(|| format!("refs/heads/{}", repository.default_branch));
+        let instance = instance_on(&mut tx, alert.id, Some(&reference)).await?.ok_or(Refusal::Missing)?;
+        let dismissed_by = if let Some(user) = alert.dismissed_by { sqlx::query_as("SELECT * FROM users WHERE id=$1").bind(user).fetch_optional(&mut *tx).await? } else { None };
+        result.push(OrganizationAlert { alert, repository, instance, dismissed_by });
+    }
+    tx.commit().await?;
+    Ok(result)
 }
 
 pub async fn instances(
