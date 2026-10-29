@@ -323,7 +323,7 @@ macro_rules! abstract_types {
         }
     };
 }
-abstract_types!(Node: Team,CommitComment,User,Bot, Organization, Repository, Issue, PullRequest, Label, IssueComment,Milestone,Commit,Ref,Blob,Tree,Tag,Reaction,Release,ReleaseAsset,PullRequestReview,PullRequestReviewComment,StatusContext,Status,StatusCheckRollup,ReviewRequest,ProjectV2,ProjectV2Item,ProjectV2Field,ProjectV2SingleSelectField,ProjectV2IterationField,DraftIssue,MergedEvent,ReadyForReviewEvent,ClosedEvent,ReopenedEvent,RenamedTitleEvent,LabeledEvent,UnlabeledEvent,AssignedEvent,UnassignedEvent,MilestonedEvent,DemilestonedEvent,LockedEvent,UnlockedEvent,Discussion,DiscussionCategory,DiscussionComment,Gist);
+abstract_types!(Node: IssueType,LinkedBranch,RepositoryRuleset,Team,CommitComment,User,Bot, Organization, Repository, Issue, PullRequest, Label, IssueComment,Milestone,Commit,Ref,Blob,Tree,Tag,Reaction,Release,ReleaseAsset,PullRequestReview,PullRequestReviewComment,StatusContext,Status,StatusCheckRollup,ReviewRequest,ProjectV2,ProjectV2Item,ProjectV2Field,ProjectV2SingleSelectField,ProjectV2IterationField,DraftIssue,MergedEvent,ReadyForReviewEvent,ClosedEvent,ReopenedEvent,RenamedTitleEvent,LabeledEvent,UnlabeledEvent,AssignedEvent,UnassignedEvent,MilestonedEvent,DemilestonedEvent,LockedEvent,UnlockedEvent,Discussion,DiscussionCategory,DiscussionComment,Gist);
 abstract_types!(Actor: User,Bot);
 abstract_types!(Assignee: User);
 abstract_types!(IssueOrPullRequest: Issue, PullRequest);

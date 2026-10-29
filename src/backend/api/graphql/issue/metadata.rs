@@ -4,8 +4,24 @@ use crate::backend::db::{
     relationships::Kind,
 };
 
-pub(in super::super) fn issue_type(item: &db::issue_attributes::Attribute) -> Value {
-    json!({"id":node_id::encode("IT",item.id),"name":item.name,"description":item.description,"color":item.color.as_deref().unwrap_or("gray").to_uppercase()})
+pub(in super::super) fn issue_type(item: &db::issue_attributes::Attribute, repo: i64) -> Value {
+    json!({"__typename":"IssueType","_repo":repo,"_scope":"issues","id":node_id::encode("IT",item.id),"name":item.name,"description":item.description,"color":item.color.as_deref().unwrap_or("gray").to_uppercase()})
+}
+
+pub(in super::super) async fn type_node(id: i64, request: &RequestContext) -> Result<Value> {
+    let mut after = 0;
+    loop {
+        let repositories = db::graphql::issue_type_repositories(&request.state.pool, id, after, request.auth.user.id).await.map_err(unavailable)?;
+        let done = repositories.len() < 100;
+        for repo in repositories {
+            after = repo;
+            if !repository::optional_authority(repo, "issues", request).await? { continue; }
+            if let Some(item) = db::issue_attributes::catalog(&request.state.pool, repo, Some(request.auth.user.id), "type").await.map_err(unavailable)?.into_iter().find(|item| item.id == id) {
+                return Ok(issue_type(&item, repo));
+            }
+        }
+        if done { return Err(missing()); }
+    }
 }
 
 pub(super) async fn resolve(
@@ -23,7 +39,7 @@ pub(super) async fn resolve(
             .await
             .map_err(unavailable)?
             .as_ref()
-            .map(issue_type)
+            .map(|item| issue_type(item, repo.id))
             .unwrap_or(Value::Null)),
         "subIssuesSummary" => {
             let (mut total, mut completed) = (0_i64, 0_i64);
@@ -120,7 +136,7 @@ pub(in super::super) async fn repository(
         ctx,
         rows.iter()
             .filter(|s| s.is_enabled)
-            .map(issue_type)
+            .map(|item| issue_type(item, repo.id))
             .collect(),
     )
 }

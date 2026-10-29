@@ -26,6 +26,13 @@ pub(super) async fn optional_authority(id: i64, scope: &str, request: &RequestCo
     }
 }
 
+pub(super) async fn shared_read_scope(id: i64, scopes: &[&'static str], request: &RequestContext) -> Result<&'static str> {
+    for scope in scopes {
+        if optional_authority(id, scope, request).await? { return Ok(*scope); }
+    }
+    Err(missing())
+}
+
 pub(super) async fn by_id(id: i64, request: &RequestContext) -> Result<db::models::Repository> {
     let repo = db::repositories::records::get_repository_by_id(&request.state.pool, id)
         .await

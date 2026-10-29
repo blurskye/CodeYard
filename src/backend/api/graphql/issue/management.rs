@@ -8,9 +8,14 @@ pub(super) fn error(error: anyhow::Error) -> Error {
     }
 }
 
-pub(super) async fn linked(
+pub(super) async fn linked(branch: store::LinkedBranch, request: &RequestContext) -> Result<Option<Value>> {
+    linked_at(branch, request, &mut std::collections::HashMap::new()).await
+}
+
+async fn linked_at(
     branch: store::LinkedBranch,
     request: &RequestContext,
+    snapshots: &mut std::collections::HashMap<i64, std::collections::HashMap<String, String>>,
 ) -> Result<Option<Value>> {
     let Some(repo) =
         db::repositories::records::get_repository_by_id(&request.state.pool, branch.repo_id)
@@ -30,22 +35,23 @@ pub(super) async fn linked(
         return Ok(None);
     }
     request.authorize(repo.id, "contents", false).await?;
-    let refs =
-        crate::backend::repositories::store::repo_store(&repo, request.state.cluster.as_ref())
-            .refs()
-            .await
-            .map_err(unavailable)?;
-    if !refs.contains_key(&format!("refs/heads/{}", branch.name)) {
-        return Ok(None);
+    if !snapshots.contains_key(&repo.id) {
+        let refs = crate::backend::repositories::store::repo_store(&repo, request.state.cluster.as_ref()).refs().await.map_err(unavailable)?;
+        request.charge(refs.iter().map(|(name, oid)| name.len() + oid.len() + 64).sum())?;
+        snapshots.insert(repo.id, refs);
     }
-    let reference = super::super::git_objects::reference(
+    let refs = &snapshots[&repo.id];
+    let name = format!("refs/heads/{}", branch.name);
+    let Some(oid) = refs.get(&name) else { return Ok(None); };
+    let reference = super::super::git_objects::reference_at(
         &repo,
-        &format!("refs/heads/{}", branch.name),
+        &name,
+        oid,
         request,
     )
     .await?;
     Ok(Some(
-        json!({"__typename":"LinkedBranch","id":node_id::encode("LB",branch.id),"ref":reference}),
+        json!({"__typename":"LinkedBranch","_repo":repo.id,"_scope":"contents","id":node_id::encode("LB",branch.id),"ref":reference}),
     ))
 }
 
@@ -102,11 +108,12 @@ pub(super) async fn resolve(
         "linkedBranches" => {
             connection::validate(ctx)?;
             let mut nodes = Vec::new();
+            let mut snapshots = std::collections::HashMap::new();
             for branch in store::linked_branches(&request.state.pool, id)
                 .await
                 .map_err(unavailable)?
             {
-                if let Some(branch) = linked(branch, request).await? {
+                if let Some(branch) = linked_at(branch, request, &mut snapshots).await? {
                     nodes.push(branch);
                 }
             }

@@ -115,11 +115,13 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
         .map_err(unavailable)?
         .ok_or_else(missing)?;
     let repo = repository::by_id(repo_id, request).await?;
+    let scope = if kind == "M" { repository::shared_read_scope(repo.id, &["issues", "pull-requests"], request).await? }
+        else { "contents" };
     request
         .authorize(
             repo.id,
             match kind {
-                "M" => "issues",
+                "M" => scope,
                 "IE" | "REA" => "metadata",
                 "PRR" | "PRRC" | "S" => "pull-requests",
                 "CS" => "statuses",
@@ -141,14 +143,16 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
             .await
         }
         "M" => {
-            super::collaboration::milestone(
+            let mut value = super::collaboration::milestone(
                 db::milestones::get_milestone_by_id(pool, repo.id, id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?,
                 request,
             )
-            .await
+            .await?;
+            value["_scope"] = json!(scope);
+            Ok(value)
         }
         "PRR" => {
             review(

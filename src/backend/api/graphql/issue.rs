@@ -17,6 +17,11 @@ pub(super) mod metadata;
 mod mutations;
 pub(super) use metadata::search;
 
+pub(super) async fn linked_branch_node(id: i64, request: &RequestContext) -> Result<Value> {
+    let branch = db::graphql::linked_branch(&request.state.pool, id).await.map_err(unavailable)?.ok_or_else(missing)?;
+    management::linked(branch, request).await?.ok_or_else(missing)
+}
+
 fn lock_reason(value: Option<&str>) -> Option<&str> {
     value.and_then(|value| match value {
         "off-topic" => Some("OFF_TOPIC"),

@@ -26,6 +26,8 @@ pub(crate) fn decode(value: &str) -> Option<(&str, i64)> {
             | "L"
             | "M"
             | "IT"
+            | "LB"
+            | "RRS"
             | "IC"
             | "PC"
             | "REA"

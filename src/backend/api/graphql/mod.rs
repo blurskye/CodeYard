@@ -306,13 +306,19 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
             repository::by_id(pull.repo_id, request).await?;
             Ok(issue::pull_object(&pull))
         }
+        "IT" => issue::metadata::type_node(id, request).await,
+        "LB" => issue::linked_branch_node(id, request).await,
+        "RRS" => rulesets::node(id, request).await,
         "L" => {
             let label = db::labels::get_label_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
             repository::by_id(label.repo_id, request).await?;
-            Ok(repository::label(&label))
+            let scope = repository::shared_read_scope(label.repo_id, &["issues", "pull-requests", "discussions"], request).await?;
+            let mut value = repository::label(&label);
+            value["_scope"] = json!(scope);
+            Ok(value)
         }
         "IC" => {
             let comment = db::issues::get_issue_comment(pool, id)
@@ -364,9 +370,10 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
             .authorize(
                 repo,
                 match kind {
-                    "I" | "IC" | "L" => "issues",
+                    "I" | "IC" | "IT" => "issues",
+                    "L" | "M" => value["_scope"].as_str().unwrap_or("issues"),
                     "PR" | "PC" => "pull-requests",
-                    "CC" => "contents",
+                    "CC" | "LB" => "contents",
                     _ => "metadata",
                 },
                 false,

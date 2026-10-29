@@ -52,59 +52,53 @@ async fn pull(id: i64, request: &RequestContext) -> Result<db::models::PullReque
     Ok(pull)
 }
 
-pub(super) async fn nodes(id: i64, request: &RequestContext) -> Result<Vec<Value>> {
+async fn roster(id: i64, request: &RequestContext) -> Result<(db::models::PullRequest, Vec<db::pull_requests::reviews::ReviewRequestOrigin>, std::collections::HashMap<i64, db::models::Team>)> {
     let pool = &request.state.pool;
     let pull = pull(id, request).await?;
-    let origins = db::pull_requests::reviews::review_request_origins(pool, id)
-        .await
-        .map_err(unavailable)?;
+    let teams: std::collections::HashMap<_, _> = db::pull_requests::team_reviewers::list(pool, pull.repo_id, Some(id), request.private_viewer(pull.repo_id, "pull-requests").await?)
+        .await.map_err(unavailable)?.into_iter().map(|row| (row.team.id, row.team)).collect();
+    let mut origins = db::pull_requests::reviews::review_request_origins(pool, id).await.map_err(unavailable)?;
+    origins.retain(|origin| origin.user_id.is_some() || origin.team_id.is_some_and(|id| teams.contains_key(&id)));
+    Ok((pull, origins, teams))
+}
+
+async fn objects(pull: &db::models::PullRequest, origins: &[db::pull_requests::reviews::ReviewRequestOrigin], teams: &std::collections::HashMap<i64, db::models::Team>, request: &RequestContext) -> Result<Vec<Value>> {
+    let ids: Vec<_> = origins.iter().filter_map(|origin| origin.user_id).collect();
+    let users: std::collections::HashMap<_, _> = db::users::accounts::get_users_by_ids(&request.state.pool, &ids).await.map_err(unavailable)?.into_iter().map(|user| (user.id, user)).collect();
     let mut nodes = Vec::new();
-    for reviewer in db::pull_requests::reviews::list_pull_request_reviewers(pool, id)
-        .await
-        .map_err(unavailable)?
-    {
-        if let Some(origin) = origins
-            .iter()
-            .find(|origin| origin.user_id == Some(reviewer.id))
-        {
-            nodes.push(json!({"__typename":"ReviewRequest","id":node_id::review_request(id,false,reviewer.id),
-                "databaseId":null,"asCodeOwner":origin.as_code_owner,"pullRequest":issue::pull_object(&pull),
-                "requestedReviewer":if reviewer.is_banned { Value::Null } else { user::actor_object(&reviewer,request.auth.user.id) }}));
-        }
+    for origin in origins {
+        let (team, id, reviewer) = match (origin.user_id, origin.team_id) {
+            (Some(id), None) => (false, id, users.get(&id).filter(|user| !user.is_banned).map_or(Value::Null, |user| user::actor_object(user, request.auth.user.id))),
+            (None, Some(id)) => (true, id, team_object(teams.get(&id).ok_or_else(missing)?, request).await?),
+            _ => return Err(missing()),
+        };
+        nodes.push(json!({"__typename":"ReviewRequest","_repo":pull.repo_id,"_scope":"pull-requests","id":node_id::review_request(pull.id,team,id),
+            "databaseId":null,"asCodeOwner":origin.as_code_owner,"pullRequest":issue::pull_object(pull),"requestedReviewer":reviewer}));
     }
-    for row in db::pull_requests::team_reviewers::list(
-        pool,
-        pull.repo_id,
-        Some(id),
-        request.private_viewer(pull.repo_id, "pull-requests").await?,
-    )
-    .await
-    .map_err(unavailable)?
-    {
-        if let Some(origin) = origins
-            .iter()
-            .find(|origin| origin.team_id == Some(row.team.id))
-        {
-            nodes.push(json!({"__typename":"ReviewRequest","id":node_id::review_request(id,true,row.team.id),
-                "databaseId":null,"asCodeOwner":origin.as_code_owner,"pullRequest":issue::pull_object(&pull),
-                "requestedReviewer":team_object(&row.team,request).await?}));
-        }
-    }
+    Ok(nodes)
+}
+
+pub(super) async fn nodes(id: i64, request: &RequestContext) -> Result<Vec<Value>> {
+    let (pull, origins, teams) = roster(id, request).await?;
+    let mut nodes = Vec::new();
+    for page in origins.chunks(100) { nodes.extend(objects(&pull, page, &teams, request).await?); }
     Ok(nodes)
 }
 
 pub(super) async fn list(ctx: &Arguments, request: &RequestContext, id: i64) -> Result<Value> {
     connection::validate(ctx)?;
-    connection::slice(ctx, nodes(id, request).await?)
+    let (pull, origins, teams) = roster(id, request).await?;
+    let page = connection::Page::new(ctx, origins.len() as i64)?;
+    let start = page.offset as usize;
+    let end = (start + page.limit as usize).min(origins.len());
+    Ok(page.finish(objects(&pull, &origins[start..end], &teams, request).await?))
 }
 
 pub(super) async fn node(id: &str, request: &RequestContext) -> Result<Value> {
-    let (pull, _, _) = node_id::decode_review_request(id).ok_or_else(missing)?;
-    nodes(pull, request)
-        .await?
-        .into_iter()
-        .find(|node| node["id"] == id)
-        .ok_or_else(missing)
+    let (pull, team, target) = node_id::decode_review_request(id).ok_or_else(missing)?;
+    let (pull, origins, teams) = roster(pull, request).await?;
+    let origin = origins.iter().find(|origin| if team { origin.team_id == Some(target) } else { origin.user_id == Some(target) }).ok_or_else(missing)?;
+    Ok(objects(&pull, std::slice::from_ref(origin), &teams, request).await?.remove(0))
 }
 
 fn ids(input: &Value, field: &str, kind: &str) -> Result<Vec<i64>> {
