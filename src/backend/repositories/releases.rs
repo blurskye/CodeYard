@@ -646,7 +646,7 @@ pub async fn update(
 /// Deletes a release and its assets. The uploaded files go too, unless something else uses them.
 pub async fn delete(
     pool: &db::DbPool,
-    store: &ObjectStore,
+    _store: &ObjectStore,
     actor: i64,
     owner: &str,
     name: &str,
@@ -662,12 +662,10 @@ pub async fn delete(
         .await
         .inspect_err(|error| tracing::warn!(release_id, %error, "release assets could not be read"))
         .ok();
-    let files = db::releases::delete_release(pool, actor, repository.id, release_id)
+    db::releases::delete_release(pool, actor, repository.id, release_id)
         .await
         .map_err(write_error)?;
-    for file in files {
-        discard_object(store, &file).await;
-    }
+    // The DAL queues asset bytes for deletion after the backup restore window.
     emit_release(
         pool,
         &repository,
@@ -850,7 +848,7 @@ pub async fn update_asset(
 /// Detaches an asset from its release and removes its file.
 pub async fn delete_asset(
     pool: &db::DbPool,
-    store: &ObjectStore,
+    _store: &ObjectStore,
     actor: i64,
     owner: &str,
     name: &str,
@@ -858,12 +856,9 @@ pub async fn delete_asset(
     asset_id: i64,
 ) -> Result<(), ReleaseError> {
     let (repository, _) = writable(pool, actor, owner, name).await?;
-    let file = db::releases::delete_release_asset(pool, actor, repository.id, release_id, asset_id)
+    db::releases::delete_release_asset(pool, actor, repository.id, release_id, asset_id)
         .await
         .map_err(write_error)?;
-    if let Some(file) = file {
-        discard_object(store, &file).await;
-    }
     Ok(())
 }
 
@@ -944,14 +939,6 @@ async fn open_asset(
         }
     }
     Ok(opened)
-}
-
-async fn discard_object(store: &ObjectStore, file: &db::models::File) {
-    if let Ok(_lock) = store.lock_file(&file.object_key).await {
-        if let Err(error) = store.delete(&file.object_key).await {
-            tracing::warn!(file = %file.id, %error, "release object cleanup deferred");
-        }
-    }
 }
 
 /// Removes an uploaded file that no release uses any more, as its uploader.

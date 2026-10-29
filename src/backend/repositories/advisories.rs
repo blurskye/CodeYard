@@ -31,9 +31,12 @@ pub async fn private_fork(
         .ok_or(Refusal::Missing)?;
     anyhow::ensure!(advisory.state == "draft", Refusal::Conflict);
     if let Some(id) = advisory.private_fork_id {
-        return db::repositories::records::get_repository_by_id(&state.pool, id)
-            .await?
-            .ok_or_else(|| Refusal::Missing.into());
+        return access::check_read(&state.pool, id, Some(actor))
+            .await
+            .map_err(|error| match error {
+                access::AccessError::Unavailable => anyhow::anyhow!("Repository authority is unavailable"),
+                _ => Refusal::Missing.into(),
+            });
     }
     let fork = lifecycle::provision(
         (&state.pool, state.cluster.as_ref()),
@@ -46,10 +49,14 @@ pub async fn private_fork(
     )
     .await?;
     if let Err(error) = advisories::attach_fork(&state.pool, actor, repo.id, ghsa, fork.id).await {
-        if let Err(cleanup) =
-            lifecycle::delete(&state.pool, state.cluster.as_ref(), actor, fork.id).await
-        {
-            tracing::warn!(repo_id=fork.id,%cleanup,"Unattached private advisory fork requires cleanup");
+        match db::repositories::records::delete_unattached_advisory_fork(&state.pool, fork.id).await {
+            Ok(Some(deleted)) => {
+                if let Err(cleanup) = lifecycle::remove_deleted_repository(state.cluster.as_ref(), &deleted).await {
+                    tracing::warn!(repo_id=fork.id,%cleanup,"Unattached private advisory fork requires cleanup");
+                }
+            }
+            Ok(None) => tracing::warn!(repo_id=fork.id,"Preserved advisory fork with accepted work or an attachment"),
+            Err(cleanup) => tracing::warn!(repo_id=fork.id,%cleanup,"Unattached private advisory fork requires cleanup"),
         }
         return Err(error);
     }

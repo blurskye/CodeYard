@@ -477,7 +477,12 @@ pub(crate) async fn native_review(
         ctx.state.cluster.as_ref(),
         &ctx.state.notification_broadcaster,
         user,
-        (owner.clone(), name.clone(), number),
+        review_rules::ReviewTarget {
+            owner: owner.clone(),
+            name: name.clone(),
+            number,
+            expected: Some((repo.record.id, value.id, submitted.pending_review)),
+        },
         request,
     )
     .await

@@ -126,15 +126,29 @@ fn check_optional_text(text: Option<&str>) -> Result<(), OperationError> {
     })
 }
 
+/// Native forms bind both immutable identities and the pending draft, including its absence.
+pub struct ReviewTarget {
+    pub owner: String,
+    pub name: String,
+    pub number: i32,
+    pub expected: Option<(i64, i64, Option<i64>)>,
+}
+
+impl From<(String, String, i32)> for ReviewTarget {
+    fn from((owner, name, number): (String, String, i32)) -> Self {
+        Self { owner, name, number, expected: None }
+    }
+}
+
 pub async fn create_pull_request_review(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    repository: (String, String, i32),
+    target: impl Into<ReviewTarget>,
     req: CreatePullRequestReviewRequest,
 ) -> Result<db::models::PullRequestReview, OperationError> {
-    let (owner, repo, number) = repository;
+    let ReviewTarget { owner, name: repo, number, expected } = target.into();
     let user = super::actor(pool, actor_id).await?;
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
@@ -167,6 +181,12 @@ pub async fn create_pull_request_review(
             message: "Pull request not found".to_owned(),
         })?;
 
+    if expected.is_some_and(|(repository_id, pull_id, _)| repository_id != repository.id || pull_id != pull_request.id) {
+        return Err(OperationError::Conflict {
+            code: "revision_conflict",
+            message: "The repository or pull request changed. Reload before submitting.".to_owned(),
+        });
+    }
     if pull_request.state != "open" {
         return Err(OperationError::Invalid {
             code: "invalid_state",
@@ -261,7 +281,7 @@ pub async fn create_pull_request_review(
         &review_state,
         req.body.as_deref(),
         Some(commit_sha.as_str()),
-        req.review_id,
+        expected.map(|(_, _, pending)| pending).or_else(|| req.review_id.map(Some)),
     )
     .await
     .map_err(super::write_error)?;
