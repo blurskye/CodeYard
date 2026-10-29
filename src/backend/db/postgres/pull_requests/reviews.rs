@@ -1147,13 +1147,18 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for PullRequestReviewEntry {
     }
 }
 
-/// The author's conversation comment on the pull request, as the author and repository still allow
-/// it. Comments filed in a review are not conversation comments and are not changed here.
-async fn conversation_comment_author(
+async fn private_pending_comment(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, comment: i64, actor: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_comments c JOIN pr_reviews v ON v.id=c.review_id WHERE c.id=$1 AND v.state='pending' AND v.author_id<>$2)")
+        .bind(comment).bind(actor).fetch_one(&mut **tx).await?)
+}
+
+/// The scoped comment author; review privacy is checked separately before mutation.
+async fn scoped_comment_author(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     repo_id: i64,
     pr_id: i64,
     comment_id: i64,
+    writer: bool,
 ) -> Result<Option<i64>> {
     let locked: Option<bool> =
         sqlx::query_scalar("SELECT locked FROM pull_requests WHERE id=$1 AND repo_id=$2 FOR SHARE")
@@ -1161,7 +1166,7 @@ async fn conversation_comment_author(
             .bind(repo_id)
             .fetch_optional(&mut **tx)
             .await?;
-    if locked != Some(false) {
+    if locked.is_none() || (locked == Some(true) && !writer) {
         return Ok(None);
     }
     Ok(sqlx::query_scalar(
@@ -1176,7 +1181,7 @@ async fn conversation_comment_author(
     .await?)
 }
 
-/// Changes the body of a conversation comment the actor wrote. None when the change is refused.
+/// The author or a live repository writer may edit a visible comment.
 pub async fn edit_pull_request_comment(
     pool: &PgPool,
     actor_id: i64,
@@ -1191,8 +1196,10 @@ pub async fn edit_pull_request_comment(
     if !discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
         return Ok(None);
     }
-    let author = conversation_comment_author(&mut tx, repo_id, pr_id, comment_id).await?;
-    if author != Some(actor_id) {
+    let writer = discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
+    let author = scoped_comment_author(&mut tx, repo_id, pr_id, comment_id, writer).await?;
+    if author.is_none() || (author != Some(actor_id) && !writer)
+        || private_pending_comment(&mut tx, comment_id, actor_id).await? {
         return Ok(None);
     }
     let comment = sqlx::query_as::<_, PullRequestComment>(
@@ -1209,7 +1216,7 @@ pub async fn edit_pull_request_comment(
 }
 
 /// Deletes a conversation comment with the notifications that link to it. The author may delete
-/// their own comment; a repository maintainer may delete anyone's.
+/// their own comment; a repository writer may delete anyone's visible comment.
 pub async fn delete_pull_request_comment(
     pool: &PgPool,
     actor_id: i64,
@@ -1222,19 +1229,12 @@ pub async fn delete_pull_request_comment(
     if !discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
         return Ok(false);
     }
-    let Some(author) = conversation_comment_author(&mut tx, repo_id, pr_id, comment_id).await?
+    let writer = discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
+    let Some(author) = scoped_comment_author(&mut tx, repo_id, pr_id, comment_id, writer).await?
     else {
         return Ok(false);
     };
-    let private: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_comments c JOIN pr_reviews v ON v.id=c.review_id WHERE c.id=$1 AND v.state='pending' AND v.author_id<>$2)")
-        .bind(comment_id).bind(actor_id).fetch_one(&mut *tx).await?;
-    if private {
-        return Ok(false);
-    }
-    // Anyone else needs maintainer authority, which also implies the contribution check.
-    if author != actor_id
-        && !discussions::lock_maintain_authority(&mut tx, actor_id, repo_id).await?
-    {
+    if (author != actor_id && !writer) || private_pending_comment(&mut tx, comment_id, actor_id).await? {
         return Ok(false);
     }
     // Replies are removed with their parent, so a comment with replies stays.

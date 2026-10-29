@@ -199,7 +199,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::edit_pul
     expected_body: &str,
 ) -> Result<Option<PullRequestComment>>);
 
-// Deletes a conversation comment: its author, or a maintainer. False when refused.
+// Deletes a visible comment: its author or a current repository writer. False when refused.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::delete_pull_request_comment,
     crate::backend::db::sqlite::pull_requests::reviews::delete_pull_request_comment,
     fn delete_pull_request_comment(

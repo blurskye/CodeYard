@@ -147,7 +147,7 @@ native_operation!(crate::backend::db::postgres::issues::get_issue_comment,
     crate::backend::db::sqlite::issues::get_issue_comment,
     fn get_issue_comment(pool: &DbPool, comment_id: i64) -> Result<Option<IssueComment>>);
 
-// Changes the body of the author's comment on the issue. None when the change is refused.
+// The author or a current repository writer may edit. None when the change is refused.
 native_operation!(crate::backend::db::postgres::issues::edit_issue_comment,
     crate::backend::db::sqlite::issues::edit_issue_comment,
     fn edit_issue_comment(
@@ -160,7 +160,7 @@ native_operation!(crate::backend::db::postgres::issues::edit_issue_comment,
     expected_body: &str,
 ) -> Result<Option<IssueComment>>);
 
-// Deletes a comment on the issue: its author, or a maintainer. False when refused.
+// Deletes a comment on the issue: its author or a current repository writer. False when refused.
 native_operation!(crate::backend::db::postgres::issues::delete_issue_comment,
     crate::backend::db::sqlite::issues::delete_issue_comment,
     fn delete_issue_comment(

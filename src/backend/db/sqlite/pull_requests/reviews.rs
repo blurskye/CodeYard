@@ -1192,26 +1192,32 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for PullRequestReviewEntry {
     }
 }
 
-/// The author's conversation comment on the pull request, as the author and repository still allow
-/// it. Comments filed in a review are not conversation comments and are not changed here.
-async fn conversation_comment_author(
+async fn private_pending_comment(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, comment: i64, actor: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_comments c JOIN pr_reviews v ON v.id=c.review_id WHERE c.id=?1 AND v.state='pending' AND v.author_id<>?2)")
+        .bind(comment).bind(actor).fetch_one(&mut **tx).await?)
+}
+
+/// The scoped comment author; review privacy is checked separately before mutation.
+async fn scoped_comment_author(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     repo_id: i64,
     pr_id: i64,
     comment_id: i64,
+    writer: bool,
 ) -> Result<Option<i64>> {
     Ok(sqlx::query_scalar(
         "SELECT c.author_id FROM pr_comments c JOIN pull_requests p ON p.id = c.pull_request_id
-         WHERE c.id = ?1 AND c.pull_request_id = ?2 AND p.repo_id = ?3 AND NOT p.locked",
+         WHERE c.id = ?1 AND c.pull_request_id = ?2 AND p.repo_id = ?3 AND (NOT p.locked OR ?4)",
     )
     .bind(comment_id)
     .bind(pr_id)
     .bind(repo_id)
+    .bind(writer)
     .fetch_optional(&mut **tx)
     .await?)
 }
 
-/// Changes the body of a conversation comment the actor wrote. None when the change is refused.
+/// The author or a live repository writer may edit a visible comment.
 pub async fn edit_pull_request_comment(
     pool: &SqlitePool,
     actor_id: i64,
@@ -1222,10 +1228,11 @@ pub async fn edit_pull_request_comment(
     expected_body: &str,
 ) -> Result<Option<PullRequestComment>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let author = conversation_comment_author(&mut tx, repo_id, pr_id, comment_id).await?;
-    if author != Some(actor_id)
-        || !discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
-    {
+    if !discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? { return Ok(None); }
+    let writer = discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
+    let author = scoped_comment_author(&mut tx, repo_id, pr_id, comment_id, writer).await?;
+    if author.is_none() || (author != Some(actor_id) && !writer)
+        || private_pending_comment(&mut tx, comment_id, actor_id).await? {
         return Ok(None);
     }
     let comment = sqlx::query_as::<_, PullRequestComment>(
@@ -1242,7 +1249,7 @@ pub async fn edit_pull_request_comment(
 }
 
 /// Deletes a conversation comment with the notifications that link to it. The author may delete
-/// their own comment; a repository maintainer may delete anyone's.
+/// their own comment; a repository writer may delete anyone's visible comment.
 pub async fn delete_pull_request_comment(
     pool: &SqlitePool,
     actor_id: i64,
@@ -1251,20 +1258,13 @@ pub async fn delete_pull_request_comment(
     comment_id: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let Some(author) = conversation_comment_author(&mut tx, repo_id, pr_id, comment_id).await?
+    if !discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? { return Ok(false); }
+    let writer = discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
+    let Some(author) = scoped_comment_author(&mut tx, repo_id, pr_id, comment_id, writer).await?
     else {
         return Ok(false);
     };
-    let private: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_comments c JOIN pr_reviews v ON v.id=c.review_id WHERE c.id=?1 AND v.state='pending' AND v.author_id<>?2)")
-        .bind(comment_id).bind(actor_id).fetch_one(&mut *tx).await?;
-    if private {
-        return Ok(false);
-    }
-    let allowed = if author == actor_id {
-        discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
-    } else {
-        discussions::lock_maintain_authority(&mut tx, actor_id, repo_id).await?
-    };
+    if (author != actor_id && !writer) || private_pending_comment(&mut tx, comment_id, actor_id).await? { return Ok(false); }
     // Replies are removed with their parent, so a comment with replies stays.
     let has_replies: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pr_comments WHERE in_reply_to_comment_id = ?1)",
@@ -1272,7 +1272,7 @@ pub async fn delete_pull_request_comment(
     .bind(comment_id)
     .fetch_one(&mut *tx)
     .await?;
-    if !allowed || has_replies {
+    if has_replies {
         return Ok(false);
     }
     sqlx::query(

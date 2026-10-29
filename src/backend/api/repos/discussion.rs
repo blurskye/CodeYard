@@ -695,36 +695,21 @@ pub(crate) async fn item(
         }
     }
 }
-/// What the viewer may do to the comments of a discussion: change their own, and delete their own
-/// or, as a maintainer, anyone's. The server checks the same rules again when the form is sent.
+/// Comment authors and repository writers may moderate visible comments. The mutation transaction
+/// remains authoritative; this view uses the repository page's existing permission projection.
 pub(crate) struct CommentRights {
     viewer: Option<i64>,
-    maintains: bool,
+    writes: bool,
     open: bool,
 }
 
 impl CommentRights {
-    /// `open` is false for a locked thread. An archived repository is never open.
-    pub(crate) async fn load(
-        ctx: &PageContext,
-        repo: &RepositoryData,
-        open: bool,
-    ) -> ResultPage<Self> {
-        let maintains = match &ctx.user {
-            Some(user) => crate::backend::repositories::access::can_maintain(
-                &ctx.state.pool,
-                user,
-                &repo.record,
-            )
-            .await
-            .map_err(|_| unavailable(ctx))?,
-            None => false,
-        };
-        Ok(Self {
+    pub(crate) fn for_repository(ctx: &PageContext, repo: &RepositoryData, open: bool) -> Self {
+        Self {
             viewer: ctx.user.as_ref().map(|user| user.id),
-            maintains,
-            open: open && !repo.record.is_archived,
-        })
+            writes: repo.view.can_write,
+            open: (open || repo.view.can_write) && !repo.record.is_archived,
+        }
     }
 
     pub(crate) fn apply(
@@ -735,8 +720,8 @@ impl CommentRights {
         updated: DateTime<Utc>,
     ) {
         let mine = self.viewer == Some(author_id);
-        comment.can_edit = self.open && mine;
-        comment.can_delete = self.open && (mine || self.maintains);
+        comment.can_edit = self.open && (mine || self.writes);
+        comment.can_delete = self.open && (mine || self.writes);
         comment.edited = (updated > created).then(|| updated.to_rfc3339());
     }
 }
@@ -781,7 +766,7 @@ pub(crate) async fn discussion(
                 .map_err(|_| unavailable(ctx))?;
             locked = issue.locked;
             lock_reason = issue.lock_reason;
-            let rights = CommentRights::load(ctx, repo, !locked).await?;
+            let rights = CommentRights::for_repository(ctx, repo, !locked);
             has_more = paging::has_next_page(page, rows.len(), COMMENTS_PER_PAGE, MAX_COMMENT_PAGE);
             subject = (db::timeline::Subject::Issue, issue.id);
             span = (
@@ -846,7 +831,7 @@ pub(crate) async fn discussion(
             let mut page_reviews = Vec::new();
             locked = pull.locked;
             lock_reason = pull.lock_reason.clone();
-            let rights = CommentRights::load(ctx, repo, !locked).await?;
+            let rights = CommentRights::for_repository(ctx, repo, !locked);
             for row in rows.into_iter().take(COMMENTS_PER_PAGE) {
                 match row {
                     DiscussionItem::Comment(entry) => {

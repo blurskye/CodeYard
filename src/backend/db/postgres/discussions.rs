@@ -332,7 +332,7 @@ pub(crate) async fn lock_issue_contribution(
             .await?;
     anyhow::ensure!(locked.is_some(), AUTHORITY_DENIED);
     anyhow::ensure!(
-        locked == Some(false),
+        locked == Some(false) || lock_write_authority(tx, actor_id, repo).await?,
         crate::backend::db::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())
@@ -358,7 +358,7 @@ pub(crate) async fn lock_pull_request_contribution(
     .await?;
     anyhow::ensure!(locked.is_some(), AUTHORITY_DENIED);
     anyhow::ensure!(
-        locked == Some(false),
+        locked == Some(false) || lock_write_authority(tx, actor_id, repo).await?,
         crate::backend::db::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())

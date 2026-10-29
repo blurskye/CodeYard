@@ -283,7 +283,7 @@ pub(crate) async fn lock_issue_contribution(
     let (repo, locked) = issue.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     require_contribution_authority(tx, actor_id, repo).await?;
     anyhow::ensure!(
-        !locked,
+        !locked || lock_write_authority(tx, actor_id, repo).await?,
         crate::backend::db::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())
@@ -302,7 +302,7 @@ pub(crate) async fn lock_pull_request_contribution(
     let (repo, locked) = scope.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     require_contribution_authority(tx, actor_id, repo).await?;
     anyhow::ensure!(
-        !locked,
+        !locked || lock_write_authority(tx, actor_id, repo).await?,
         crate::backend::db::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())

@@ -566,8 +566,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for IssueCommentEntry {
     }
 }
 
-/// Changes the body of a comment the actor wrote. Refused (None) when the actor is not the author,
-/// the thread is locked, or the actor no longer may take part in the repository.
+/// The author or a live repository writer may edit. Only writers may change locked threads.
 pub async fn edit_issue_comment(
     pool: &SqlitePool,
     actor_id: i64,
@@ -578,18 +577,19 @@ pub async fn edit_issue_comment(
     expected_body: &str,
 ) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? { return Ok(None); }
+    let writer = super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
     let author: Option<i64> = sqlx::query_scalar(
         "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
-         WHERE c.id = ?1 AND c.issue_id = ?2 AND i.repo_id = ?3 AND NOT i.locked",
+         WHERE c.id = ?1 AND c.issue_id = ?2 AND i.repo_id = ?3 AND (NOT i.locked OR ?4)",
     )
     .bind(comment_id)
     .bind(issue_id)
     .bind(repo_id)
+    .bind(writer)
     .fetch_optional(&mut *tx)
     .await?;
-    if author != Some(actor_id)
-        || !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
-    {
+    if author.is_none() || (author != Some(actor_id) && !writer) {
         return Ok(None);
     }
     let comment = sqlx::query_as::<_, IssueComment>(
@@ -606,7 +606,7 @@ pub async fn edit_issue_comment(
 }
 
 /// Deletes a comment with the notifications that link to it. The author may delete their own
-/// comment; a repository maintainer may delete anyone's. Returns false when the delete is refused.
+/// comment; a repository writer may delete anyone's. Returns false when the delete is refused.
 pub async fn delete_issue_comment(
     pool: &SqlitePool,
     actor_id: i64,
@@ -615,24 +615,22 @@ pub async fn delete_issue_comment(
     comment_id: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? { return Ok(false); }
+    let writer = super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
     let author: Option<i64> = sqlx::query_scalar(
         "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
-         WHERE c.id = ?1 AND c.issue_id = ?2 AND i.repo_id = ?3 AND NOT i.locked",
+         WHERE c.id = ?1 AND c.issue_id = ?2 AND i.repo_id = ?3 AND (NOT i.locked OR ?4)",
     )
     .bind(comment_id)
     .bind(issue_id)
     .bind(repo_id)
+    .bind(writer)
     .fetch_optional(&mut *tx)
     .await?;
     let Some(author) = author else {
         return Ok(false);
     };
-    let allowed = if author == actor_id {
-        super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
-    } else {
-        super::discussions::lock_maintain_authority(&mut tx, actor_id, repo_id).await?
-    };
-    if !allowed {
+    if author != actor_id && !writer {
         return Ok(false);
     }
     sqlx::query(
