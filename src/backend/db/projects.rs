@@ -109,9 +109,23 @@ pub fn valid_name(name: &str) -> bool {
     !name.trim().is_empty() && name.len() <= 255 && !name.chars().any(char::is_control)
 }
 
+#[derive(Clone, Copy)]
+pub enum BuiltInField { Assignees, Labels, LinkedPullRequests, Milestone, Repository, Reviewers }
+impl BuiltInField {
+    pub const ALL: [Self; 6] = [Self::Assignees, Self::Labels, Self::LinkedPullRequests, Self::Milestone, Self::Repository, Self::Reviewers];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Assignees => "Assignees", Self::Labels => "Labels",
+            Self::LinkedPullRequests => "Linked pull requests", Self::Milestone => "Milestone",
+            Self::Repository => "Repository", Self::Reviewers => "Reviewers",
+        }
+    }
+}
+
 impl NewField {
     pub(crate) fn configuration(&self) -> Result<String> {
-        anyhow::ensure!(valid_name(&self.name), Refusal::Invalid);
+        anyhow::ensure!(valid_name(&self.name)
+            && !BuiltInField::ALL.iter().any(|field| field.name().eq_ignore_ascii_case(self.name.trim())), Refusal::Invalid);
         let value = match self.data_type.as_str() {
             "text" | "number" | "date" => {
                 anyhow::ensure!(

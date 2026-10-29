@@ -83,7 +83,7 @@ pub async fn metadata(
     readme: Option<&str>,
     template: Option<bool>,
 ) -> Result<Project> {
-    anyhow::ensure!(readme.is_none_or(|s| s.len() <= 65536), Refusal::Invalid);
+    anyhow::ensure!(readme.is_none_or(|text| crate::backend::issues::validate_body(text, false).is_ok()), Refusal::Invalid);
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     write_project(&mut tx, actor, project).await?;
     let result = sqlx::query_as("UPDATE projects SET readme=COALESCE($2,readme),template=COALESCE($3,template),updated_at=$4 WHERE id=$1 RETURNING *").bind(project).bind(readme).bind(template).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
