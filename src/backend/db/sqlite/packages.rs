@@ -204,6 +204,39 @@ async fn authorize<'a>(
     Ok(package)
 }
 
+pub async fn container_namespace(pool: &SqlitePool, owner: &Owner) -> Result<String> {
+    let mut tx = begin(pool).await?;
+    if let Some(namespace) = sqlx::query_scalar::<_, String>("SELECT namespace FROM registry_namespaces WHERE (?1='user' AND owner_user_id=?2) OR (?1='org' AND owner_org_id=?2)")
+        .bind(&owner.kind).bind(owner.id).fetch_optional(&mut *tx).await? { return Ok(namespace); }
+    let base = owner.name.to_ascii_lowercase();
+    let base = if crate::backend::packages::valid_name(&base) { base } else { format!("cy-{}-{}", owner.kind, owner.id) };
+    for attempt in 0..1024 {
+        let candidate = if attempt == 0 { base.clone() } else { format!("{base}-{}-{}-{attempt}", owner.kind, owner.id) };
+        let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registry_namespaces WHERE namespace=?1) OR EXISTS(SELECT 1 FROM users WHERE username=?1 AND NOT (?2='user' AND id=?3)) OR EXISTS(SELECT 1 FROM organizations WHERE name=?1 AND NOT (?2='org' AND id=?3))")
+            .bind(&candidate).bind(&owner.kind).bind(owner.id).fetch_one(&mut *tx).await?;
+        if occupied { continue; }
+        sqlx::query("INSERT INTO registry_namespaces(namespace,owner_user_id,owner_org_id) VALUES(?1,?2,?3)")
+            .bind(&candidate).bind((owner.kind == "user").then_some(owner.id)).bind((owner.kind == "org").then_some(owner.id))
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
+        return Ok(candidate);
+    }
+    anyhow::bail!("container namespace allocation exhausted")
+}
+
+pub async fn container_owner(pool: &SqlitePool, namespace: &str) -> Result<Option<Owner>> {
+    if !crate::backend::packages::valid_name(namespace) || namespace.contains('/') { return Ok(None); }
+    let mapped: Option<Owner> = sqlx::query_as("SELECT u.id,u.username AS name,'user' AS kind FROM registry_namespaces n JOIN users u ON u.id=n.owner_user_id WHERE n.namespace=?1 UNION ALL SELECT o.id,o.name,'org' AS kind FROM registry_namespaces n JOIN organizations o ON o.id=n.owner_org_id WHERE n.namespace=?1")
+        .bind(namespace).fetch_optional(pool).await?;
+    if mapped.is_some() { return Ok(mapped); }
+    let owner: Option<Owner> = sqlx::query_as("SELECT * FROM (SELECT id,username AS name,'user' AS kind FROM users UNION ALL SELECT id,name,'org' AS kind FROM organizations) owners WHERE LOWER(name)=?1 ORDER BY CASE WHEN name=?1 THEN 0 ELSE 1 END,id LIMIT 1")
+        .bind(namespace).fetch_optional(pool).await?;
+    if let Some(owner) = owner {
+        if container_namespace(pool, &owner).await? == namespace { return Ok(Some(owner)); }
+    }
+    Ok(None)
+}
+
 pub async fn owner(pool: &SqlitePool, name: &str, kind: Option<&str>) -> Result<Option<Owner>> {
     Ok(sqlx::query_as("SELECT id,username AS name,'user' AS kind FROM users WHERE username=$1 AND ($2 IS NULL OR $2='user') UNION ALL SELECT id,name,'org' AS kind FROM organizations WHERE name=$1 AND ($2 IS NULL OR $2='org')")
         .bind(name).bind(kind).fetch_optional(pool).await?)

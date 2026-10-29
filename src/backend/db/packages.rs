@@ -112,6 +112,13 @@ native_operation!(crate::backend::db::postgres::packages::maven_file,
     crate::backend::db::sqlite::packages::maven_file,
     fn maven_file(pool: &DbPool, repo: i64, token: Option<Credential<'_>>, path: &str) -> Result<(Package, Blob)>);
 
+native_operation!(crate::backend::db::postgres::packages::container_namespace,
+    crate::backend::db::sqlite::packages::container_namespace,
+    fn container_namespace(pool: &DbPool, owner: &Owner) -> Result<String>);
+native_operation!(crate::backend::db::postgres::packages::container_owner,
+    crate::backend::db::sqlite::packages::container_owner,
+    fn container_owner(pool: &DbPool, namespace: &str) -> Result<Option<Owner>>);
+
 pub const MAX_NPM_METADATA_BYTES: usize = 64 * 1024;
 pub const MAX_METADATA_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 

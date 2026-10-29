@@ -25,6 +25,7 @@ pub mod node;
 pub mod notifications;
 pub mod organizations;
 pub(crate) mod npm;
+pub(crate) mod nuget;
 pub mod packages;
 pub mod projects;
 pub mod repositories;
