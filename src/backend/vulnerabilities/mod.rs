@@ -179,6 +179,7 @@ impl Advisory {
                 .iter()
                 .filter(|r| matches!(r.r#type.as_str(), "SEMVER" | "ECOSYSTEM"))
                 .any(|range| {
+                    let ecosystem = if range.r#type == "SEMVER" { "SEMVER" } else { ecosystem };
                     let mut introduced = None;
                     for event in &range.events {
                         if let Some(start) = event["introduced"].as_str() {
@@ -274,6 +275,13 @@ impl Advisory {
         if self.summary.trim().is_empty() {
             value["summary"] = json!(self.id);
         }
+        let bounded = |text: &str, limit: usize| {
+            let mut end = text.len().min(limit);
+            while !text.is_char_boundary(end) { end -= 1; }
+            text[..end].to_owned()
+        };
+        value["summary"] = json!(bounded(value["summary"].as_str().unwrap_or(&self.id), 1024));
+        value["description"] = json!(bounded(&self.details, 65535));
         value["published_at"] = json!(self.published.unwrap_or(self.modified));
         value["references"] = json!(self
             .references
@@ -283,40 +291,37 @@ impl Advisory {
         if value["cvss"]["vector_string"].is_null() {
             value["cvss"] = Value::Null;
         }
-        value["vulnerabilities"] = json!(self.affected.iter().map(|affected| {
-            let mut ranges: Vec<String> = affected.versions.iter().map(|v| format!("= {v}")).collect();
+        let mut vulnerabilities = Vec::new();
+        for affected in &self.affected {
+            let ecosystem = match affected.package.ecosystem.as_str() {
+                "crates.io" => "rust", "PyPI" => "pip", "Go" => "go",
+                "RubyGems" => "rubygems", "Packagist" => "composer", "Maven" => "maven",
+                "NuGet" => "nuget", "Pub" => "pub", "Hex" => "hex", other => other,
+            };
+            let mut entry = |range: String, patched: Option<&str>, kind: &str| {
+                vulnerabilities.push(json!({"package":{"ecosystem":ecosystem,"name":affected.package.name},"vulnerable_version_range":range,"first_patched_version":patched,"vulnerable_functions":[],"osv_range_type":kind}));
+            };
+            for version in &affected.versions {
+                entry(format!("= {version}"), None, "ECOSYSTEM");
+            }
             for range in &affected.ranges {
-                if !matches!(range.r#type.as_str(), "SEMVER" | "ECOSYSTEM") {
-                    continue;
-                }
+                if !matches!(range.r#type.as_str(), "SEMVER" | "ECOSYSTEM") { continue; }
                 let mut lower = None;
                 for event in &range.events {
                     if let Some(start) = event["introduced"].as_str() {
                         lower = Some(format!(">= {start}"));
                     } else if let Some(start) = lower.take() {
                         if let Some(end) = event["fixed"].as_str().or_else(|| event["limit"].as_str()) {
-                            ranges.push(format!("{start}, < {end}"));
+                            entry(format!("{start}, < {end}"), event["fixed"].as_str(), &range.r#type);
                         } else if let Some(end) = event["last_affected"].as_str() {
-                            ranges.push(format!("{start}, <= {end}"));
+                            entry(format!("{start}, <= {end}"), None, &range.r#type);
                         }
                     }
                 }
-                if let Some(start) = lower { ranges.push(start); }
+                if let Some(start) = lower { entry(start, None, &range.r#type); }
             }
-            let ecosystem = match affected.package.ecosystem.as_str() {
-                "crates.io" => "rust", "PyPI" => "pip", "Go" => "go",
-                "RubyGems" => "rubygems", "Packagist" => "composer", "Maven" => "maven",
-                "NuGet" => "nuget", "Pub" => "pub", "Hex" => "hex", other => other,
-            };
-            // A GIT range's fix is a commit ID, not a package version.
-            let patched = affected
-                .ranges
-                .iter()
-                .filter(|r| matches!(r.r#type.as_str(), "SEMVER" | "ECOSYSTEM"))
-                .flat_map(|r| &r.events)
-                .find_map(|e| e["fixed"].as_str());
-            json!({"package":{"ecosystem":ecosystem,"name":affected.package.name},"vulnerable_version_range":if ranges.is_empty() {"unknown".into()} else {ranges.join(" || ")},"first_patched_version":patched,"vulnerable_functions":[]})
-        }).collect::<Vec<_>>());
+        }
+        value["vulnerabilities"] = json!(vulnerabilities);
         db::dependabot_alerts::import_document(&value)
     }
     pub fn document(&self) -> Value {
@@ -334,6 +339,7 @@ impl Advisory {
             .severity
             .iter()
             .find_map(|s| s["score"].as_str().filter(|s| s.starts_with("CVSS:3.")));
+        let vector = vector.filter(|s| db::advisories::cvss_score(s).is_ok());
         let score = vector.and_then(|s| db::advisories::cvss_score(s).ok());
         json!({"ghsa_id":ghsa,"cve_id":cve,"summary":self.summary,"description":self.details,"severity":self.severity(),"identifiers":self.aliases.iter().chain(std::iter::once(&self.id)).filter(|id|id.starts_with("CVE-")||id.starts_with("GHSA-")).map(|id|json!({"type":if id.starts_with("CVE-"){"CVE"}else{"GHSA"},"value":id})).collect::<Vec<_>>(),"references":self.references.iter().filter_map(|r|r["url"].as_str().map(|url|json!({"url":url}))).collect::<Vec<_>>(),"published_at":self.published,"updated_at":self.modified,"withdrawn_at":self.withdrawn,"vulnerabilities":[],"cvss":{"score":score,"vector_string":vector},"cwes":[]})
     }
@@ -391,7 +397,9 @@ pub async fn synchronize(
         .timeout(Duration::from_secs(300))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
+    let mut failures = Vec::new();
     for ecosystem in enabled {
+        let result = async {
         ensure!(
             ECOSYSTEMS.contains(&ecosystem.as_str()),
             "Unknown OSV ecosystem"
@@ -423,16 +431,16 @@ pub async fn synchronize(
                     entry.size() <= 4 * 1024 * 1024,
                     "OSV record exceeds its limit"
                 );
-                expanded += entry.size();
-                ensure!(
-                    expanded <= 2 * 1024 * 1024 * 1024,
-                    "Expanded OSV archive exceeds its limit"
-                );
+                let declared = entry.size();
                 let mut bytes = Vec::new();
+                let remaining = (2u64 * 1024 * 1024 * 1024).saturating_sub(expanded);
                 entry
                     .by_ref()
-                    .take(4 * 1024 * 1024 + 1)
+                    .take((4 * 1024 * 1024 + 1).min(remaining.saturating_add(1)))
                     .read_to_end(&mut bytes)?;
+                expanded = expanded.checked_add(bytes.len() as u64).ok_or_else(|| anyhow::anyhow!("Expanded OSV archive exceeds its limit"))?;
+                ensure!(expanded <= 2 * 1024 * 1024 * 1024, "Expanded OSV archive exceeds its limit");
+                ensure!(bytes.len() as u64 == declared, "OSV archive entry size mismatch");
                 // One record the catalogue cannot hold must not stop the rest of the archive.
                 match Advisory::parse(&bytes) {
                     Ok(record) => records.push(record),
@@ -456,7 +464,14 @@ pub async fn synchronize(
         if changed {
             db::vulnerabilities::rescan_all(pool).await?;
         }
+        Ok::<_, anyhow::Error>(())
+        }.await;
+        if let Err(error) = result {
+            tracing::warn!(%ecosystem, %error, "OSV ecosystem synchronization failed");
+            failures.push(ecosystem);
+        }
     }
+    ensure!(failures.is_empty(), "OSV synchronization failed for {}", failures.join(", "));
     Ok(())
 }
 pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bool>) {
@@ -479,8 +494,10 @@ pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bo
                 if let Some(repo) =
                     db::repositories::records::get_repository_by_id(&state.pool, repo).await?
                 {
-                    if let Err(error) = scan(&state, &repo, generation).await {
-                        tracing::warn!(repo_id=repo.id,%error,"Dependency vulnerability scan failed");
+                    match tokio::time::timeout(Duration::from_secs(540), scan(&state, &repo, generation)).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => tracing::warn!(repo_id=repo.id,%error,"Dependency vulnerability scan failed"),
+                        Err(_) => tracing::warn!(repo_id=repo.id,"Dependency vulnerability scan exceeded its lease budget"),
                     }
                 }
             }
