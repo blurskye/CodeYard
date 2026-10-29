@@ -23,6 +23,7 @@ fn storage_error<E>(_: E) -> OperationError {
 }
 
 pub struct EnableRequest {
+    pub token: Option<i64>,
     pub merge_method: MergeMethod,
     pub commit_title: Option<String>,
     pub commit_message: Option<String>,
@@ -60,11 +61,13 @@ pub async fn enable(
     request: EnableRequest,
 ) -> Result<(), OperationError> {
     writable(pool, actor_id, pull).await?;
+    merge::merge_message(pull, request.merge_method, request.commit_title.as_deref(), request.commit_message.as_deref(), request.author_email.as_deref())?;
     db::pull_requests::auto_merge::enable_auto_merge(
         pool,
         &AutoMerge {
             pull_request_id: pull.id,
             enabled_by: actor_id,
+            token_id: request.token,
             merge_method: request.merge_method.as_str().into(),
             commit_title: request.commit_title,
             commit_message: request.commit_message,
@@ -146,7 +149,7 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
                     commit_title: entry.commit_title,
                     commit_message: entry.commit_message,
                     author_email: entry.author_email,
-                    token: None,
+                    token: entry.token_id,
                 },
             )
             .await;

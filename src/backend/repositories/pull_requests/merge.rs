@@ -1111,75 +1111,7 @@ pub async fn prepare_pull_request_merge(
     } else {
         None
     };
-    for text in [
-        request.commit_title.as_deref(),
-        request.commit_message.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if text.contains('\0') || crate::backend::issues::validate_body(text, false).is_err() {
-            return Err(OperationError::Invalid {
-                code: "validation_error",
-                message: "Invalid merge commit message".into(),
-            });
-        }
-    }
-    if request.author_email.as_deref().is_some_and(|email| {
-        email.is_empty()
-            || email.len() > 255
-            || !email.contains('@')
-            || email
-                .chars()
-                .any(|c| c.is_control() || matches!(c, '<' | '>'))
-    }) {
-        return Err(OperationError::Invalid {
-            code: "validation_error",
-            message: "Invalid merge author email".into(),
-        });
-    }
-    let (title, body) = default_merge_text(&pull_request, request.merge_method);
-    let message = if body.is_empty() {
-        title
-    } else {
-        format!("{title}\n\n{body}")
-    };
-    let message = if request.merge_method == MergeMethod::Squash {
-        request.commit_title.clone().unwrap_or(message)
-    } else if request.merge_method != MergeMethod::Rebase
-        && (request.commit_title.is_some() || request.commit_message.is_some())
-    {
-        let (title, body) = message.split_once("\n\n").unwrap_or((&message, ""));
-        let title = request.commit_title.as_deref().unwrap_or(title);
-        let body = request.commit_message.as_deref().unwrap_or(body);
-        if body.is_empty() {
-            title.to_owned()
-        } else {
-            format!("{title}\n\n{body}")
-        }
-    } else {
-        message
-    };
-    let message_len = message.len()
-        + if request.merge_method == MergeMethod::Squash {
-            request.commit_message.as_ref().map_or(0, |body| {
-                if body.is_empty() {
-                    0
-                } else {
-                    body.len() + 2
-                }
-            })
-        } else {
-            0
-        };
-    if request.merge_method != MergeMethod::Rebase
-        && (message.is_empty() || message_len > crate::backend::git::MAX_MERGE_MESSAGE_BYTES)
-    {
-        return Err(OperationError::Invalid {
-            code: "validation_error",
-            message: "Merge commit messages must contain 1 to 8192 bytes".into(),
-        });
-    }
+    let message = merge_message(&pull_request, request.merge_method, request.commit_title.as_deref(), request.commit_message.as_deref(), request.author_email.as_deref())?;
     let merge = StoreMerge {
         head_branch: head_ref(&repository, &pull_request),
         base_branch: trunk.base_branch.clone(),
@@ -1215,6 +1147,51 @@ pub async fn prepare_pull_request_merge(
         token,
         async_request: None,
     })
+}
+
+pub(super) fn merge_message(pull: &db::models::PullRequest, method: MergeMethod, title: Option<&str>, body: Option<&str>, email: Option<&str>) -> Result<String, OperationError> {
+    validate_options(title, body, email)?;
+    let (default_title, default_body) = default_merge_text(pull, method);
+    let default = if default_body.is_empty() { default_title } else { format!("{default_title}\n\n{default_body}") };
+    let message = if method == MergeMethod::Squash {
+        title.map(str::to_owned).unwrap_or(default)
+    } else if method != MergeMethod::Rebase && (title.is_some() || body.is_some()) {
+        let (default_title, default_body) = default.split_once("\n\n").unwrap_or((&default, ""));
+        let title = title.unwrap_or(default_title);
+        let body = body.unwrap_or(default_body);
+        if body.is_empty() { title.to_owned() } else { format!("{title}\n\n{body}") }
+    } else {
+        default
+    };
+    let length = message.len() + if method == MergeMethod::Squash {
+        body.filter(|body| !body.is_empty()).map_or(0, |body| body.len() + 2)
+    } else { 0 };
+    if method != MergeMethod::Rebase && (message.is_empty() || length > crate::backend::git::MAX_MERGE_MESSAGE_BYTES) {
+        return Err(OperationError::Invalid {
+            code: "validation_error",
+            message: "Merge commit messages must contain 1 to 8192 bytes".into(),
+        });
+    }
+    Ok(message)
+}
+
+fn validate_options(title: Option<&str>, message: Option<&str>, email: Option<&str>) -> Result<(), OperationError> {
+    for text in [title, message].into_iter().flatten() {
+        if text.contains('\0') || crate::backend::issues::validate_body(text, false).is_err() {
+            return Err(OperationError::Invalid {
+                code: "validation_error",
+                message: "Invalid merge commit message".into(),
+            });
+        }
+    }
+    if email.is_some_and(|email| email.is_empty() || email.len() > 255 || !email.contains('@')
+        || email.chars().any(|c| c.is_control() || matches!(c, '<' | '>'))) {
+        return Err(OperationError::Invalid {
+            code: "validation_error",
+            message: "Invalid merge author email".into(),
+        });
+    }
+    Ok(())
 }
 
 /// Maps a failed publication of a merge onto the refusal to show.
