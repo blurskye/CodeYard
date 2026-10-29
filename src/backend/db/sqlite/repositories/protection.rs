@@ -55,6 +55,7 @@ pub async fn upsert_branch_protection_rule(
         .unwrap_or_else(|| previous.clone());
     // Signatures are changed only through their own subresource.
     settings.required_signatures = previous.required_signatures;
+    crate::backend::db::repositories::protection::normalize_check_bindings(&mut settings.checks)?;
     if validate_apps {
         validate_push_apps_on(&mut tx, input.repo_id, &settings.push_apps).await?;
     }

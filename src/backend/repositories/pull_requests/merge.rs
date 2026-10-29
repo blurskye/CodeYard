@@ -514,10 +514,16 @@ async fn merge_blockers(
                 )
                 .await
                 .map_err(database_error)?;
+                // Old ambiguous bindings must fail closed as well as being refused by new writes.
+                let mut bindings = rule.github_settings.checks.clone();
+                db::repositories::protection::normalize_check_bindings(&mut bindings).map_err(|_| OperationError::Conflict {
+                    code: "branch_protection",
+                    message: "Required check producers conflict; update branch protection.".to_owned(),
+                })?;
                 // Protection binds GitHub App ids, but a check suite records the app's OAuth
                 // client row, so each binding is translated to that row.
                 let mut bound_apps: HashMap<&str, Option<i64>> = HashMap::new();
-                for check in &rule.github_settings.checks {
+                for check in &bindings {
                     let (Some(context), Some(id)) =
                         (check["context"].as_str(), check["app_id"].as_i64())
                     else {
