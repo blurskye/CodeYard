@@ -136,8 +136,7 @@ impl Update {
         if let Some(source) = &self.source {
             anyhow::ensure!(
                 matches!(source.path.as_str(), "/" | "/docs")
-                    && git2::Reference::is_valid_name(&format!("refs/heads/{}", source.branch))
-                    && source.branch.len() <= 255,
+                    && crate::backend::git::branch_ref(&source.branch).is_some(),
                 Refusal::Invalid
             );
         }
@@ -184,9 +183,9 @@ pub struct Deployment {
 native_operation!(crate::backend::db::postgres::pages::site,crate::backend::db::sqlite::pages::site,
     fn site(pool:&DbPool,repo:i64)->Result<Option<Site>>);
 native_operation!(crate::backend::db::postgres::pages::save,crate::backend::db::sqlite::pages::save,
-    fn save(pool:&DbPool,actor:i64,repo:i64,update:&Update,create:bool)->Result<Site>);
+    fn save(pool:&DbPool,actor:i64,credential:&crate::backend::db::users::accounts::AccountCredential<'_>,repo:i64,update:&Update,create:bool)->Result<Site>);
 native_operation!(crate::backend::db::postgres::pages::delete,crate::backend::db::sqlite::pages::delete,
-    fn delete(pool:&DbPool,actor:i64,repo:i64)->Result<()>);
+    fn delete(pool:&DbPool,actor:i64,credential:&crate::backend::db::users::accounts::AccountCredential<'_>,repo:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::pages::builds,crate::backend::db::sqlite::pages::builds,
     fn builds(pool:&DbPool,repo:i64,offset:i64,limit:i64)->Result<Vec<Build>>);
 native_operation!(crate::backend::db::postgres::pages::build,crate::backend::db::sqlite::pages::build,

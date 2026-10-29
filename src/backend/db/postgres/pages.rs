@@ -11,12 +11,14 @@ pub async fn site(pool: &PgPool, repo: i64) -> Result<Option<Site>> {
 pub async fn save(
     pool: &PgPool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
     input: &Update,
     create: bool,
 ) -> Result<Site> {
     input.validate(create)?;
     let mut tx = pool.begin().await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await?;
     anyhow::ensure!(
         super::discussions::lock_repository_mutation_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
@@ -63,12 +65,15 @@ pub async fn save(
     let kind = input.build_type.as_ref().unwrap_or(&previous.build_type);
     anyhow::ensure!(kind != "legacy" || branch.is_some(), Refusal::Invalid);
     let row=sqlx::query_as("INSERT INTO pages_sites(repo_id,build_type,branch,path,cname,https_enforced,is_public) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(repo_id) DO UPDATE SET build_type=excluded.build_type,branch=excluded.branch,path=excluded.path,cname=excluded.cname,https_enforced=excluded.https_enforced,is_public=excluded.is_public RETURNING *")
-        .bind(repo).bind(kind).bind(branch).bind(path).bind(cname).bind(input.https_enforced.unwrap_or(previous.https_enforced)).bind(input.public.unwrap_or(previous.public)).fetch_one(&mut *tx).await?;
+        .bind(repo).bind(kind).bind(branch).bind(path).bind(cname).bind(input.https_enforced.unwrap_or(previous.https_enforced)).bind(input.public.unwrap_or(previous.public)).fetch_one(&mut *tx).await.map_err(|error| {
+            if error.as_database_error().is_some_and(|error| error.constraint() == Some("pages_sites_cname_key")) { anyhow::Error::from(Refusal::Duplicate) } else { error.into() }
+        })?;
     tx.commit().await?;
     Ok(row)
 }
-pub async fn delete(pool: &PgPool, actor: i64, repo: i64) -> Result<()> {
+pub async fn delete(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64) -> Result<()> {
     let mut tx = pool.begin().await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await?;
     anyhow::ensure!(
         super::discussions::lock_repository_mutation_authority(&mut tx, actor, repo).await?,
         Refusal::Denied

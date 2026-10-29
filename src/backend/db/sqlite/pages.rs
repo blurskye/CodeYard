@@ -11,12 +11,14 @@ pub async fn site(pool: &SqlitePool, repo: i64) -> Result<Option<Site>> {
 pub async fn save(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
     input: &Update,
     create: bool,
 ) -> Result<Site> {
     input.validate(create)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await?;
     anyhow::ensure!(
         super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
@@ -67,8 +69,9 @@ pub async fn save(
     tx.commit().await?;
     Ok(row)
 }
-pub async fn delete(pool: &SqlitePool, actor: i64, repo: i64) -> Result<()> {
+pub async fn delete(pool: &SqlitePool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await?;
     anyhow::ensure!(
         super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
         Refusal::Denied

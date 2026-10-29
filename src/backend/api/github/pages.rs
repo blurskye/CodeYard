@@ -20,6 +20,9 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 fn failure(error: anyhow::Error) -> Error {
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return Error::new(StatusCode::FORBIDDEN, "Pages administration denied");
+    }
     match error.downcast_ref::<pages::Refusal>() {
         Some(pages::Refusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Pages administration denied")
@@ -104,7 +107,7 @@ async fn mutate(
                 }
             })?;
     }
-    let site = pages::save(&state.pool, actor.user.id, repo.id, &update, create)
+    let site = pages::save(&state.pool, actor.user.id, &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash), repo.id, &update, create)
         .await
         .map_err(failure)?;
     if create {
@@ -128,9 +131,11 @@ async fn remove(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, actor) = visible(&state, &headers, &params, true).await?;
+    let actor = actor.ok_or_else(auth::required)?;
     pages::delete(
         &state.pool,
-        actor.ok_or_else(auth::required)?.user.id,
+        actor.user.id,
+        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         repo.id,
     )
     .await
