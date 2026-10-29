@@ -1380,6 +1380,17 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         ]
     );
 
+    // Consent cannot survive a head without a known base-writer publisher.
+    db::pull_requests::auto_merge::enable_auto_merge(pool, &db::pull_requests::auto_merge::AutoMerge {
+        pull_request_id: first.id,
+        enabled_by: owner.id,
+        token_id: None,
+        merge_method: "merge".into(),
+        commit_title: None,
+        commit_message: None,
+        author_email: None,
+        enabled_at: chrono::Utc::now(),
+    }).await.unwrap();
     // Head and base moves use independent compare-and-swaps, so contention on
     // one revision cannot prevent the other revision from advancing.
     assert!(!db::pull_requests::records::move_open_pull_request_head(
@@ -1400,6 +1411,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
     )
     .await
     .unwrap());
+    assert!(db::pull_requests::auto_merge::get_auto_merge(pool, first.id).await.unwrap().is_none());
     assert!(db::pull_requests::records::move_open_pull_request_base(
         pool,
         first.id,
