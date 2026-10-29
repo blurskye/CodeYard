@@ -119,7 +119,7 @@ pub(super) fn client_credentials(path: &str) -> bool {
     )
 }
 
-async fn application(state: &AppState, headers: &HeaderMap, id: &str) -> Result<Application> {
+pub(super) async fn application(state: &AppState, headers: &HeaderMap, id: &str) -> Result<Application> {
     let credentials = || {
         let mut values = headers.get_all(header::AUTHORIZATION).iter();
         let value = values.next()?.to_str().ok()?;
