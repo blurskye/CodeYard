@@ -62,11 +62,12 @@ async fn tree(
     Path((owner, name, sha)): Path<(String, String, String)>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>> {
-    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
+    let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let tree = repo_store(&repo, state.cluster.as_ref())
         .git_tree(&sha, query.contains_key("recursive"))
         .await
         .map_err(store_error)?;
+    super::auth::revalidate_repository(&state, auth.as_ref(), repo.id, "contents").await?;
     Ok(Json(tree_document(tree, &owner, &name)))
 }
 
