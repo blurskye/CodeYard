@@ -135,6 +135,15 @@ pub(crate) fn readable_condition() -> String {
     )
 }
 
+/// Read-only callers retain one snapshot; effectful callers reserve BEGIN IMMEDIATE first.
+/// Archival and interaction restrictions do not remove repository read access.
+pub(crate) async fn lock_readable_repository_in_transaction(
+    connection: &mut sqlx::SqliteConnection, user_id: i64, repo_id: i64,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND NOT u.is_banned AND NOT u.must_change_password AND {})", readable_condition()))
+        .bind(user_id).bind(repo_id).fetch_one(connection).await?)
+}
+
 /// Current visibility and metadata in one snapshot for a bounded run list.
 pub async fn readable_repositories_by_ids(
     pool: &SqlitePool,

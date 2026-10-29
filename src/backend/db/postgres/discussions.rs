@@ -176,18 +176,19 @@ pub(crate) async fn lock_archive_authority(
     lock_policy_authority_with(tx, actor_id, repo_id, RepositoryLock::Exclusive, false).await
 }
 
-/// Reading repository settings. Administrators may read them on archived repositories too;
-/// with `admin` false, anyone who may take part in the repository may also read them.
+/// Settings reads survive archival. Secret metadata still requires administration;
+/// non-secret values require repository visibility, not contribution authority.
 pub(crate) async fn lock_settings_read_authority(
     tx: &mut Transaction<'_, Postgres>,
     actor_id: i64,
     repo_id: i64,
     admin: bool,
 ) -> Result<bool> {
-    if !admin && lock_contribution_authority(tx, actor_id, repo_id).await? {
-        return Ok(true);
+    if admin {
+        lock_policy_authority(tx, actor_id, repo_id, false).await
+    } else {
+        super::repositories::access::lock_readable_repository_in_transaction(tx, actor_id, repo_id).await
     }
-    lock_policy_authority(tx, actor_id, repo_id, false).await
 }
 
 /// Settings and bypass administration remain available after archival.

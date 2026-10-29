@@ -6,10 +6,7 @@ async fn authorized(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, actor: &Acto
     let allowed = if write {
         super::discussions::lock_write_authority(tx, actor.user_id, repo).await?
     } else {
-        use super::repositories::access::{lock_user_repo_access_in_transaction, readable_condition, RepositoryRowLock};
-        ensure!(lock_user_repo_access_in_transaction(tx, actor.user_id, repo, RepositoryRowLock::Shared, true).await?.is_some(), Refusal::Denied);
-        sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})", readable_condition()))
-            .bind(actor.user_id).bind(repo).fetch_one(&mut **tx).await?
+        super::repositories::access::lock_readable_repository_in_transaction(tx, actor.user_id, repo).await?
     };
     ensure!(allowed && super::credentials::repository(tx, actor, repo, "security_events", write).await?, Refusal::Denied);
     Ok(())

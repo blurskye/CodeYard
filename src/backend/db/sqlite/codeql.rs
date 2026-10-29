@@ -6,8 +6,7 @@ async fn authorized(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, actor: &Actor,
     let allowed = if write {
         super::discussions::lock_write_authority(tx, actor.user_id, repo).await?
     } else {
-        sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND NOT u.is_banned AND NOT u.must_change_password AND {})", super::repositories::access::readable_condition()))
-            .bind(actor.user_id).bind(repo).fetch_one(&mut **tx).await?
+        super::repositories::access::lock_readable_repository_in_transaction(tx, actor.user_id, repo).await?
     };
     ensure!(allowed && super::credentials::repository(tx, actor, repo, "security_events", write).await?, Refusal::Denied);
     Ok(())
