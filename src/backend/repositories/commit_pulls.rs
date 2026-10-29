@@ -74,6 +74,11 @@ async fn introduced(
     {
         return Ok(false);
     }
+    // Stack layers share a final merge tip; its ancestry is not every layer's content.
+    if pull.stack_id.is_some() {
+        return Ok(pull.merge_commit_sha.as_deref() == Some(commit)
+            || contains(store, commit, &pull.head_sha, cache).await?);
+    }
     let tip = if on_default {
         pull.merge_commit_sha.as_deref().unwrap_or(&pull.head_sha)
     } else {
@@ -111,7 +116,7 @@ pub async fn associated_pulls(
             .await
             .map_err(AssociationError::Git)?;
         let immutable = git::is_full_commit_id(query.reference);
-        let branch = if immutable {
+        let branch = if immutable || (query.reference.starts_with("refs/") && !query.reference.starts_with("refs/heads/")) {
             None
         } else {
             git::branch_ref(
@@ -146,6 +151,7 @@ pub async fn associated_pulls(
                 repository.id,
                 before,
                 256,
+                on_default,
             )
             .await
             .map_err(|_| AssociationError::Unavailable)?;
@@ -169,6 +175,8 @@ pub async fn associated_pulls(
                     continue;
                 }
                 if pulls.len() == query.limit {
+                    let repository = access::check_read(pool, repository.id, query.actor)
+                        .await.map_err(AssociationError::Access)?;
                     return Ok(CommitPullPage {
                         repository,
                         commit,
@@ -179,6 +187,8 @@ pub async fn associated_pulls(
                 pulls.push(pull);
             }
         }
+        let repository = access::check_read(pool, repository.id, query.actor)
+            .await.map_err(AssociationError::Access)?;
         Ok(CommitPullPage {
             repository,
             commit,
