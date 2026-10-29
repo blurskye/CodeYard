@@ -1262,7 +1262,7 @@ pub(crate) async fn branches(
         .map_err(|error| {
             api_error(
                 ctx,
-                crate::backend::api::http::error::repo_store_error(
+                crate::backend::api::repos::responses::repo_store_error(
                     error,
                     StatusCode::SERVICE_UNAVAILABLE,
                 ),

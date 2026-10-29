@@ -2,6 +2,7 @@
 //! page rendering, sessions and static assets. Resource areas use these and own no routes here.
 pub(crate) mod config;
 pub(crate) mod context;
+pub(crate) mod credentials;
 pub(crate) mod csrf;
 pub(crate) mod error;
 pub(crate) mod interaction_proofs;

@@ -162,15 +162,7 @@ pub(crate) async fn get_current_user(
     pool: &db::DbPool,
     headers: &HeaderMap,
 ) -> Result<db::models::User, (StatusCode, Json<ApiError>)> {
-    get_optional_user(pool, headers).await?.ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(ApiError::new(
-                "unauthorized",
-                "Session expired or not authenticated",
-            )),
-        )
-    })
+    get_optional_user(pool, headers).await?.ok_or_else(|| crate::backend::api::auth::errors::admin_authority_failure(crate::backend::identity::sessions::AccountAuthorityError::NotAuthenticated))
 }
 
 pub(crate) async fn get_optional_user(
@@ -182,25 +174,11 @@ pub(crate) async fn get_optional_user(
     };
     let user = db::users::sessions::get_session_account(pool, &session_id)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ApiError::new(
-                    "session_unavailable",
-                    "Session storage is temporarily unavailable",
-                )),
-            )
-        })?;
+        .map_err(|_| crate::backend::api::auth::errors::session_failure())?;
     // Absent/expired/revoked is anonymous; a storage outage is NOT anonymous.
     let user = user.filter(optional_user_allowed);
     if user.as_ref().is_some_and(|user| user.must_change_password) {
-        return Err((
-            StatusCode::PRECONDITION_REQUIRED,
-            Json(ApiError::new(
-                "password_change_required",
-                "Change your temporary password before accessing account resources",
-            )),
-        ));
+        return Err(crate::backend::api::auth::errors::admin_authority_failure(crate::backend::identity::sessions::AccountAuthorityError::PasswordChangeRequired));
     }
     Ok(user)
 }

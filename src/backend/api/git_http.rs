@@ -15,7 +15,6 @@ use axum::{
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
 use futures_util::{StreamExt, TryStreamExt};
 use serde::Deserialize;
 use std::{io::Read, sync::Arc};
@@ -55,21 +54,6 @@ fn store_unavailable(error: &RepoError) -> Response {
     unavailable()
 }
 
-fn basic_token(headers: &HeaderMap) -> Option<String> {
-    let mut values = headers.get_all(header::AUTHORIZATION).iter();
-    let value = values.next()?.to_str().ok()?;
-    if values.next().is_some() {
-        return None;
-    }
-    let (scheme, encoded) = value.split_once(' ')?;
-    if !scheme.eq_ignore_ascii_case("basic") || encoded.len() > 2048 {
-        return None;
-    }
-    let decoded = String::from_utf8(STANDARD.decode(encoded).ok()?).ok()?;
-    let (_, token) = decoded.split_once(':')?;
-    Some(token.to_owned())
-}
-
 async fn authenticate(
     state: &AppState,
     headers: &HeaderMap,
@@ -77,7 +61,7 @@ async fn authenticate(
     if !headers.contains_key(header::AUTHORIZATION) {
         return Ok(None);
     }
-    let presented = basic_token(headers);
+    let presented = super::http::credentials::basic(headers).map(|(_, token)| token);
     let found = match presented.as_deref() {
         Some(value) => db::users::tokens::find_token(&state.pool, &token_hash(value))
             .await
