@@ -346,7 +346,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::update_re
 
 native_operation!(crate::backend::db::postgres::repositories::records::delete_repository,
     crate::backend::db::sqlite::repositories::records::delete_repository,
-    fn delete_repository(pool: &DbPool, actor_id: i64, repo_id: i64) -> Result<Repository>);
+    fn delete_repository(pool: &DbPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo_id: i64) -> Result<Repository>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::delete_unattached_advisory_fork,
     crate::backend::db::sqlite::repositories::records::delete_unattached_advisory_fork,
@@ -378,7 +378,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::transfer_
 // name stable while the ownership transaction commits.
 native_operation!(crate::backend::db::postgres::repositories::records::transfer_repository_checked,
     crate::backend::db::sqlite::repositories::records::transfer_repository_checked,
-    fn transfer_repository_checked(pool:&DbPool,actor_id:i64,repo_id:i64,target:crate::backend::db::repositories::creation::RepositoryTarget,expected_owner:&str)->Result<Repository>);
+    fn transfer_repository_checked(pool:&DbPool,actor_id:i64,repo_id:i64,target:crate::backend::db::repositories::creation::RepositoryTarget,expected_owner:&str,expected_name:&str)->Result<Repository>);
 
 /// Canonical namespaces for already-selected repositories. This display read does
 /// not grant access; callers retain their visibility filtering before page limits.

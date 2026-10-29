@@ -557,8 +557,10 @@ pub async fn delete_unwritten_repository(
     .await?)
 }
 
-pub async fn delete_repository(pool: &PgPool, actor_id: i64, repo_id: i64) -> Result<Repository> {
+pub async fn delete_repository(pool: &PgPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo_id: i64) -> Result<Repository> {
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
+    let actor = actor.into();
+    let actor_id = actor.user_id();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_archive_authority(
@@ -567,6 +569,11 @@ pub async fn delete_repository(pool: &PgPool, actor_id: i64, repo_id: i64) -> Re
         .await?,
         Refusal::Denied
     );
+    if let Some(credential) = actor.credential() {
+        crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor_id, &credential).await?;
+    }
+    sqlx::query("UPDATE repositories SET forked_from_id=(SELECT forked_from_id FROM repositories WHERE id=$1) WHERE forked_from_id=$1")
+        .bind(repo_id).execute(&mut *tx).await?;
     let files: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT DISTINCT a.file_id FROM release_assets a JOIN releases r ON r.id=a.release_id WHERE r.repo_id=$1 ORDER BY a.file_id")
         .bind(repo_id).fetch_all(&mut *tx).await?;
     // Deletion detaches the repository's packages. Those that its privacy hid stay private.
@@ -669,9 +676,10 @@ pub async fn transfer_repository_checked(
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
     expected_owner: &str,
+    expected_name: &str,
 ) -> Result<Repository> {
     crate::backend::db::postgres::retry_on_deadlock(|| {
-        transfer_repository_once(pool, actor_id, repo_id, target, Some(expected_owner))
+        transfer_repository_once(pool, actor_id, repo_id, target, Some((expected_owner, expected_name)))
     })
     .await
 }
@@ -680,7 +688,7 @@ async fn transfer_repository_once(
     actor_id: i64,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
-    expected_owner: Option<&str>,
+    expected: Option<(&str, &str)>,
 ) -> Result<Repository> {
     use crate::backend::db::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
@@ -741,7 +749,12 @@ async fn transfer_repository_once(
         RepositoryTarget::Personal(id) => ("user", Some(id), None),
         RepositoryTarget::Organization(id) => ("org", None, Some(id)),
     };
-    check_namespace(&mut tx, repo_id, user, org, None, expected_owner).await?;
+    if let Some((_, name)) = expected {
+        let current: String = sqlx::query_scalar("SELECT name FROM repositories WHERE id=$1")
+            .bind(repo_id).fetch_one(&mut *tx).await?;
+        anyhow::ensure!(current == name, Refusal::NameConflict);
+    }
+    check_namespace(&mut tx, repo_id, user, org, None, expected.map(|(owner, _)| owner)).await?;
     let changed = previous != (kind.to_owned(), user, org);
     if changed {
         if let Some(org) = org {

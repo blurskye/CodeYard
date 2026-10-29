@@ -397,13 +397,18 @@ pub(super) async fn revoke_repo_access_in_transaction(
 
 pub async fn change_personal_repository_collaborator(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     username: &str,
     permission: Option<AccessLevel>,
 ) -> Result<CollaboratorChange> {
+    let admission = actor.into();
+    let actor = admission.user_id();
     let mut tx = pool.begin().await?;
     lock_membership_shared(&mut tx).await?;
+    if let Some(credential) = admission.credential() {
+        super::super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     let actor_state: Option<(bool, bool)> =
         sqlx::query_as("SELECT is_banned,must_change_password FROM users WHERE id=$1 FOR SHARE")
             .bind(actor)

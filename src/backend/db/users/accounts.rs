@@ -9,6 +9,36 @@ pub enum AccountCredential<'a> {
     Token(i64),
 }
 
+/// Identity plus the credential that admitted an operation. Numeric IDs are reserved for
+/// trusted internal callers; HTTP adapters must retain the original session or token.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub enum AccountActor {
+    Trusted(i64),
+    Session { user_id: i64, session: String },
+    Token { user_id: i64, token_id: i64 },
+}
+
+impl From<i64> for AccountActor {
+    fn from(id: i64) -> Self { Self::Trusted(id) }
+}
+
+impl AccountActor {
+    pub fn user_id(&self) -> i64 {
+        match self {
+            Self::Trusted(id) => *id,
+            Self::Session { user_id, .. } | Self::Token { user_id, .. } => *user_id,
+        }
+    }
+
+    pub fn credential(&self) -> Option<AccountCredential<'_>> {
+        match self {
+            Self::Trusted(_) => None,
+            Self::Session { session, .. } => Some(AccountCredential::Session(session)),
+            Self::Token { token_id, .. } => Some(AccountCredential::Token(*token_id)),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("A live unrestricted account credential is required")]
 pub struct AccountRestricted;

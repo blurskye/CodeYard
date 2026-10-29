@@ -468,10 +468,11 @@ async fn remove(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
+    let actor = actor.ok_or_else(auth::required)?;
     lifecycle::delete(
         &state.pool,
         state.cluster.as_ref(),
-        actor.ok_or_else(auth::required)?.user.id,
+        db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id },
         repo.id,
     )
     .await
