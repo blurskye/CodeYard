@@ -266,8 +266,8 @@ impl JobVm {
                 "-o",
             ])
             .arg(format!(
-                "UserKnownHostsFile={}",
-                self.files.path("known_hosts").display()
+                "UserKnownHostsFile=\"{}\"",
+                self.files.path("known_hosts").to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"")
             ))
             .args([
                 "-o",
@@ -484,7 +484,13 @@ fn guest_path(path: &str) -> Result<String> {
 }
 
 fn ps_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
+    let mut literal = String::from("'");
+    for ch in value.chars() {
+        literal.push(ch);
+        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201a}' | '\u{201b}') { literal.push(ch); }
+    }
+    literal.push('\'');
+    literal
 }
 
 fn step_script(script: &str, env: &BTreeMap<String, String>, directory: &str) -> Result<String> {
@@ -513,8 +519,7 @@ fn step_script(script: &str, env: &BTreeMap<String, String>, directory: &str) ->
 async fn checked(command: &mut Command) -> Result<()> {
     command.kill_on_drop(true).stdin(Stdio::null());
     let description = format!("{command:?}");
-    let output = command
-        .output()
+    let output = crate::runner::capture_output(command, Duration::from_secs(300))
         .await
         .with_context(|| format!("Starting {description}"))?;
     ensure!(
@@ -692,9 +697,9 @@ mod tests {
 
     #[test]
     fn quotes_step_environment_and_directory() {
-        let env = BTreeMap::from([("weird'name".into(), "a'\n$()".into())]);
+        let env = BTreeMap::from([("weird'name".into(), "a'’\n$()".into())]);
         let script = step_script("git status", &env, "C:/some ' dir").unwrap();
-        assert!(script.contains("'weird''name', 'a''\n$()', 'Process'"));
+        assert!(script.contains("'weird''name', 'a''’’\n$()', 'Process'"));
         assert!(script.contains("Set-Location -LiteralPath 'C:/some '' dir'"));
         assert!(script.starts_with("$ErrorActionPreference = 'Stop'\n"));
         assert!(script.ends_with(

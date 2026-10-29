@@ -75,7 +75,7 @@ impl Drop for ProcessGroup {
     }
 }
 
-pub(super) async fn output(
+pub(crate) async fn output(
     command: &mut Command,
     timeout: Duration,
 ) -> Result<std::process::Output> {

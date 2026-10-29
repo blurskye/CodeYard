@@ -5,7 +5,7 @@ mod containers;
 mod environment_values;
 mod matchers;
 mod process;
-pub(crate) use process::read_lines;
+pub(crate) use process::{read_lines, output as capture_output};
 mod reusable;
 
 use crate::expressions::{self, Contexts, Status, Value};
