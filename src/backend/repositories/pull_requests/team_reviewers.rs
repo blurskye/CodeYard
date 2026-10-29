@@ -3,6 +3,22 @@ use super::OperationError;
 use crate::backend::{db, notifications::NotificationBroadcaster};
 use db::models::{PullRequest, Repository, Team, User};
 
+pub async fn set_requests(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor: &User,
+    repo: &Repository,
+    pull: &PullRequest,
+    input: &db::pull_requests::team_reviewers::ReviewRequests<'_>,
+) -> Result<(), OperationError> {
+    let owner = db::repositories::records::repository_owner_name(pool, repo.id).await.map_err(super::database_error)?
+        .ok_or_else(|| OperationError::Missing { code: "not_found", message: "Repository not found".into() })?;
+    let changed = db::pull_requests::team_reviewers::set_requests(pool, actor.id, pull.id, input).await.map_err(error)?;
+    for user in &changed.added_users { super::reviews::notify_review_request(pool, broadcaster, actor, &owner, repo, pull, user).await; }
+    for team in &changed.added_teams { notify(pool, broadcaster, actor, repo, pull, team).await; }
+    Ok(())
+}
+
 pub async fn change(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,

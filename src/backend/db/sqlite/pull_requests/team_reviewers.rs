@@ -25,6 +25,49 @@ pub async fn members(pool: &SqlitePool, repo: i64, team: i64) -> Result<Vec<i64>
     Ok(rows)
 }
 
+pub async fn set_requests(pool: &SqlitePool, actor: i64, pull: i64, input: &crate::backend::db::pull_requests::team_reviewers::ReviewRequests<'_>) -> Result<crate::backend::db::pull_requests::team_reviewers::ReviewRequestChanges> {
+    use crate::backend::db::{models::User, pull_requests::team_reviewers::ReviewRequestChanges};
+    ensure!(input.users.len() + input.teams.len() <= 100, InvalidReviewTeam);
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let (author, state, _) = discussions::lock_pull_request_review_authority(&mut tx, actor, pull).await?;
+    ensure!(state == "open", InvalidReviewTeam);
+    let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM pull_requests WHERE id=?1").bind(pull).fetch_one(&mut *tx).await?;
+    if let Some(token) = input.token { ensure!(super::super::users::tokens::repository_write_on(&mut tx, token, actor, repo, "pull-requests").await?, discussions::AUTHORITY_DENIED); }
+    let old: Vec<i64> = sqlx::query_scalar("SELECT user_id FROM pr_reviewers WHERE pull_request_id=?1").bind(pull).fetch_all(&mut *tx).await?;
+    let old_ids: std::collections::HashSet<_> = old.into_iter().collect();
+    let old_teams: Vec<i64> = sqlx::query_scalar("SELECT team_id FROM pr_team_reviewers WHERE pull_request_id=?1").bind(pull).fetch_all(&mut *tx).await?;
+    let mut users: Vec<User> = Vec::new();
+    for id in input.users {
+        if users.iter().any(|user| user.id == *id) { continue; }
+        ensure!(*id != author && discussions::lock_write_authority(&mut tx, *id, repo).await?, discussions::AUTHORITY_DENIED);
+        users.push(sqlx::query_as("SELECT * FROM users WHERE id=?1").bind(id).fetch_one(&mut *tx).await?);
+    }
+    let mut teams: Vec<Team> = Vec::new();
+    for id in input.teams {
+        if teams.iter().any(|team| team.id == *id) { continue; }
+        teams.push(sqlx::query_as(&format!("{SCOPED} AND t.id=?3 AND a.permission BETWEEN 3 AND 5")).bind(repo).bind(actor).bind(id).fetch_optional(&mut *tx).await?.ok_or(InvalidReviewTeam)?);
+    }
+    let replace = !input.union && !input.rerequest;
+    if replace {
+        sqlx::query("DELETE FROM pr_reviewers WHERE pull_request_id=?1 AND user_id NOT IN (SELECT value FROM json_each(?2))").bind(pull).bind(serde_json::to_string(input.users)?).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM pr_team_reviewers WHERE pull_request_id=?1 AND team_id NOT IN (SELECT value FROM json_each(?2))").bind(pull).bind(serde_json::to_string(input.teams)?).execute(&mut *tx).await?;
+    }
+    let mut added_users = Vec::new();
+    for user in users {
+        if input.rerequest { sqlx::query("DELETE FROM pr_reviewers WHERE pull_request_id=?1 AND user_id=?2").bind(pull).bind(user.id).execute(&mut *tx).await?; }
+        sqlx::query("INSERT INTO pr_reviewers(pull_request_id,user_id) VALUES(?1,?2) ON CONFLICT DO NOTHING").bind(pull).bind(user.id).execute(&mut *tx).await?;
+        if input.rerequest || !old_ids.contains(&user.id) { added_users.push(user); }
+    }
+    let mut added_teams = Vec::new();
+    for team in teams {
+        if input.rerequest { sqlx::query("DELETE FROM pr_team_reviewers WHERE pull_request_id=?1 AND team_id=?2").bind(pull).bind(team.id).execute(&mut *tx).await?; }
+        sqlx::query("INSERT INTO pr_team_reviewers(pull_request_id,team_id) VALUES(?1,?2) ON CONFLICT DO NOTHING").bind(pull).bind(team.id).execute(&mut *tx).await?;
+        if input.rerequest || !old_teams.contains(&team.id) { added_teams.push(team); }
+    }
+    tx.commit().await?;
+    Ok(ReviewRequestChanges { added_users, added_teams })
+}
+
 pub async fn change(
     pool: &SqlitePool,
     actor: i64,
