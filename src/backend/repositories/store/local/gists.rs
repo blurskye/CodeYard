@@ -24,6 +24,7 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         id: i64,
+        read: bool,
     ) -> Result<db::models::Repository, RepoError> {
         let repo = db::repositories::records::get_repository_by_id(pool, id)
             .await
@@ -31,7 +32,12 @@ impl LocalStore {
             .filter(|repo| repo.is_gist)
             .ok_or_else(|| RepoError::new(ErrorKind::NotFound, "Gist not found"))?;
         if !super::repository_matches_path(&repo, self.path(), self.node_id) {
-            return Err(RepoError::storage_node_unavailable());
+            let replica = if let Some(node) = self.node_id.filter(|_| read) {
+                self.path().file_name() == std::path::Path::new(&repo.disk_path).file_name()
+                    && self.path().parent().and_then(std::path::Path::file_name).is_some_and(|name| name == "mirrors")
+                    && db::cluster::replica_applied_version(pool, id, node).await.map_err(failure)?.is_some_and(|version| version >= 0)
+            } else { false };
+            if !replica { return Err(RepoError::storage_node_unavailable()); }
         }
         if gists::by_repository(pool, id)
             .await
@@ -73,8 +79,10 @@ impl LocalStore {
         revision: Option<&str>,
     ) -> Result<GistSnapshot, RepoError> {
         let _lock = git::locks::lock(self.path()).await;
-        self.gist_location(pool, id).await?;
-        self.recover_gist(pool, id).await?;
+        let repo = self.gist_location(pool, id, true).await?;
+        if super::repository_matches_path(&repo, self.path(), self.node_id) {
+            self.recover_gist(pool, id).await?;
+        }
         let revision = revision.map(str::to_owned);
         self.blocking(move |path| git::gists::snapshot(path, revision.as_deref()))
             .await
@@ -88,8 +96,10 @@ impl LocalStore {
         limit: usize,
     ) -> Result<Vec<GistRevision>, RepoError> {
         let _lock = git::locks::lock(self.path()).await;
-        self.gist_location(pool, id).await?;
-        self.recover_gist(pool, id).await?;
+        let repo = self.gist_location(pool, id, true).await?;
+        if super::repository_matches_path(&repo, self.path(), self.node_id) {
+            self.recover_gist(pool, id).await?;
+        }
         let revision = revision.map(str::to_owned);
         self.blocking(move |path| git::gists::history(path, revision.as_deref(), offset, limit))
             .await
@@ -104,7 +114,7 @@ impl LocalStore {
     ) -> Result<GistSnapshot, RepoError> {
         input.validate()?;
         let _lock = git::locks::lock(self.path()).await;
-        let repo = self.gist_location(pool, id).await?;
+        let repo = self.gist_location(pool, id, false).await?;
         if repo.owner_user_id != Some(actor) {
             return Err(RepoError::write_denied());
         }

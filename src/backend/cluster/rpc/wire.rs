@@ -451,7 +451,9 @@ impl Operation {
             | Self::Contributors
             | Self::CommitStatistics { .. }
             | Self::CodeFrequency { .. }
-            | Self::BranchStatuses { .. } => true,
+            | Self::BranchStatuses { .. }
+            | Self::GistSnapshot { .. }
+            | Self::GistHistory { .. } => true,
             Self::AdvertiseRefs { service } => *service == GitService::UploadPack,
             Self::GitSession(session) => session.service == GitService::UploadPack,
             Self::Exists
@@ -459,8 +461,6 @@ impl Operation {
             | Self::WorkflowFiles { .. }
             | Self::PrimaryRefs
             | Self::BranchPublication { .. }
-            | Self::GistSnapshot { .. }
-            | Self::GistHistory { .. }
             | Self::PrimaryCommit { .. }
             | Self::ReleaseHistory { .. }
             | Self::ChangedPaths { .. }

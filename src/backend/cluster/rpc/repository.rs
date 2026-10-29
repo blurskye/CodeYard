@@ -457,7 +457,10 @@ impl RpcHandler {
         caller: iroh::PublicKey,
     ) -> Result<(Value, Vec<u8>), Failure> {
         let received = std::time::Instant::now();
-        let (store, repo_id, _read_guard) = if request.operation.is_read_only() {
+        // Gist reads own the same lock internally because primary reads may reconcile
+        // a pending gist write. Replica reads never perform that reconciliation.
+        let gist_read = matches!(&request.operation, Operation::GistSnapshot { .. } | Operation::GistHistory { .. });
+        let (store, repo_id, _read_guard) = if request.operation.is_read_only() && !gist_read {
             let admitted = self.read_admission(&request, caller).await?;
             (admitted.store, admitted.repo_id, Some(admitted.guard))
         } else {
