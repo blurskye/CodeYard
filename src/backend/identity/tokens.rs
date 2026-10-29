@@ -101,7 +101,7 @@ pub(crate) async fn repository_scope(pool: &DbPool, token: i64, actor: i64, repo
         return Ok(job.repo_id == repo && super::github_apps::allows(&serde_json::from_str(&job.permissions)?, permission, write));
     }
     if let Some(oauth) = crate::backend::db::oauth_apps::token(pool, token).await? {
-        if super::oauth_apps::application(pool, &oauth.client_id).await?.is_none() {
+        if super::oauth_apps::client(pool, &oauth.client_id).await?.is_none() {
             return Ok(false);
         }
         return Ok(super::oauth_apps::has_scope(&oauth.scopes, "repo") || (!write
