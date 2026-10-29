@@ -56,8 +56,7 @@ fn nonempty(value: &Value, path: &str) -> Result<()> {
 
 fn identifier(id: &str, path: &str) -> Result<()> {
     ensure!(
-        !id.is_empty() && id.len() < 100 && !id.starts_with("__")
-            && id.bytes().enumerate().all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && (b.is_ascii_digit() || b == b'-'))),
+        super::valid_identifier(id),
         "{path}: The identifier '{id}' is invalid. IDs must start with a letter or '_' and contain only alphanumeric characters, '_', and '-' (less than 100 characters; '__' is reserved)."
     );
     Ok(())
@@ -312,43 +311,10 @@ fn permissions(value: &Value, path: &str) -> Result<()> {
         return Ok(());
     }
     let map = mapping(value, path)?;
-    keys(
-        map,
-        &[
-            "actions",
-            "artifact-metadata",
-            "attestations",
-            "checks",
-            "contents",
-            "deployments",
-            "discussions",
-            "id-token",
-            "issues",
-            "models",
-            "packages",
-            "pages",
-            "pull-requests",
-            "repository-projects",
-            "security-events",
-            "statuses",
-            "vulnerability-alerts",
-        ],
-        path,
-    )?;
+    keys(map, super::PERMISSION_SCOPES, path)?;
     for (k, v) in map {
         let level = text(v, path)?;
-        ensure!(
-            ["read", "write", "none"].contains(&level.as_str()),
-            "{path}: Unexpected permission level '{level}'"
-        );
-        ensure!(
-            k.as_str() != Some("id-token") || level != "read",
-            "{path}.id-token: Expected 'write' or 'none'"
-        );
-        ensure!(
-            !matches!(k.as_str(), Some("models" | "vulnerability-alerts")) || level != "write",
-            "{path}: Expected 'read' or 'none'"
-        );
+        ensure!(super::permission_level_allowed(k.as_str().unwrap_or(""), &level), "{path}: Unexpected permission level '{level}'");
     }
     Ok(())
 }

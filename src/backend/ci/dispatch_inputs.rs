@@ -3,12 +3,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// GitHub's limits: ten inputs per workflow and 25 options per choice.
-pub const MAX_INPUTS: usize = 10;
+/// GitHub's limits: 25 inputs per workflow and 25 options per choice.
+pub const MAX_INPUTS: usize = 25;
 pub const MAX_NAME_BYTES: usize = 64;
 pub const MAX_OPTIONS: usize = 25;
 /// Longest accepted value; a form value is capped at the same size.
-pub const MAX_VALUE_BYTES: usize = 2048;
+pub const MAX_VALUE_BYTES: usize = 65_535;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -95,8 +95,18 @@ pub fn validate_inputs(
                 values.insert(input.name.clone(), value.clone());
             }
             None if input.required => return Err("a required workflow input is missing"),
-            None => {}
+            None => {
+                let value = match input.kind {
+                    InputKind::Boolean => "false",
+                    InputKind::Number => "0",
+                    _ => "",
+                };
+                values.insert(input.name.clone(), value.to_owned());
+            }
         }
+    }
+    if serde_json::to_vec(&values).map_err(|_| "invalid workflow input payload")?.len() > MAX_VALUE_BYTES {
+        return Err("workflow input payload is too large");
     }
     Ok(values)
 }

@@ -14,6 +14,26 @@ mod planner;
 mod tests;
 use std::collections::BTreeMap;
 
+pub const PERMISSION_SCOPES: &[&str] = &[
+    "actions", "artifact-metadata", "attestations", "checks", "contents", "deployments",
+    "discussions", "id-token", "issues", "models", "packages", "pages", "pull-requests",
+    "repository-projects", "security-events", "statuses", "vulnerability-alerts", "metadata",
+];
+
+pub fn permission_level_allowed(scope: &str, level: &str) -> bool {
+    PERMISSION_SCOPES.contains(&scope) && match level {
+        "none" => true,
+        "read" => scope != "id-token",
+        "write" => !matches!(scope, "models" | "metadata" | "vulnerability-alerts"),
+        _ => false,
+    }
+}
+
+pub fn valid_identifier(id: &str) -> bool {
+    !id.is_empty() && id.len() < 100 && !id.starts_with("__")
+        && id.bytes().enumerate().all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && (b.is_ascii_digit() || b == b'-')))
+}
+
 /// A parsed and checked workflow file. Its fields belong to this module.
 #[derive(Clone, Debug)]
 pub struct Workflow {

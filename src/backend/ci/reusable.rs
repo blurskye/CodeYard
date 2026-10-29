@@ -59,6 +59,7 @@ pub(super) struct Resolver<'a> {
     refs: BTreeMap<(i64, String), (String, String)>,
     pinned: BTreeMap<(i64, String, String), (String, String)>,
     snapshots: BTreeMap<String, (serde_json::Value, usize)>,
+    snapshot_bytes: usize,
 }
 
 /// Called-workflow commits a run's stored snapshots pin, keyed by repository, path and the ref
@@ -114,6 +115,7 @@ impl<'a> Resolver<'a> {
             refs: BTreeMap::new(),
             pinned,
             snapshots: BTreeMap::new(),
+            snapshot_bytes: 0,
         }
     }
 
@@ -123,6 +125,7 @@ impl<'a> Resolver<'a> {
         sha: String,
         path: String,
         content: String,
+        yaml: Option<Value>,
         depth: usize,
         // The ref this workflow was called at, as written and as a full ref name. None for a
         // root, which runs at the run's ref.
@@ -144,8 +147,26 @@ impl<'a> Resolver<'a> {
                     "Called workflows exceed four levels or contain a cycle",
                 ));
             }
-            let mut yaml = super::workflows::parse_yaml(content.as_bytes())
-                .map_err(|_| AdmissionError::Invalid("Called workflow YAML is invalid"))?;
+            if let Some((snapshot, height)) = self.snapshots.get(&identity) {
+                if depth + height > 3 {
+                    return Err(AdmissionError::Invalid("Called workflows exceed four levels"));
+                }
+                self.active.remove(&identity);
+                return Ok(snapshot.clone());
+            }
+            let mut yaml = if let Some(yaml) = yaml {
+                yaml
+            } else {
+                let parsed = super::admission::parse_admission_workflow(path.clone(), content, self.environment.clone()).await?;
+                if parsed.concurrency.is_some() || parsed.yaml.get("jobs").and_then(Value::as_mapping)
+                    .is_some_and(|jobs| jobs.values().any(|job| job.get("concurrency").is_some()))
+                {
+                    return Err(AdmissionError::Invalid("Called workflow concurrency is unsupported"));
+                }
+                super::admission::merge_scheduling(&mut self.scheduling, parsed.scheduling)?;
+                self.environment = parsed.environment;
+                parsed.yaml
+            };
             if depth > 0 {
                 self.called.insert(identity.clone());
                 if self.called.len() > 20 {
@@ -165,29 +186,6 @@ impl<'a> Resolver<'a> {
                         "Called workflow does not declare workflow_call",
                     ));
                 }
-                let parsed = super::admission::parse_admission_workflow(
-                    path.clone(),
-                    content.clone(),
-                    self.environment.clone(),
-                )
-                .await?;
-                // The run's concurrency comes from its top-level workflow only, so a called one cannot be honored.
-                if parsed.concurrency.is_some() {
-                    return Err(AdmissionError::Invalid(
-                        "Called workflow concurrency is unsupported",
-                    ));
-                }
-                super::admission::merge_scheduling(&mut self.scheduling, parsed.scheduling)?;
-                self.environment = parsed.environment;
-            }
-            if let Some((snapshot, height)) = self.snapshots.get(&identity) {
-                if depth + height > 3 {
-                    return Err(AdmissionError::Invalid(
-                        "Called workflows exceed four levels",
-                    ));
-                }
-                self.active.remove(&identity);
-                return Ok(snapshot.clone());
             }
             let mut height = 0;
             let jobs = yaml
@@ -211,7 +209,7 @@ impl<'a> Resolver<'a> {
                     )
                 } else {
                     let (source, reference) = reference
-                        .rsplit_once('@')
+                        .split_once('@')
                         .ok_or(AdmissionError::Invalid("Invalid called workflow reference"))?;
                     let mut parts = source.splitn(3, '/');
                     let owner = parts.next().unwrap_or("");
@@ -296,19 +294,15 @@ impl<'a> Resolver<'a> {
                     ".github/workflows/codeyard-call-{:x}.yml",
                     Sha256::digest(key.as_bytes())
                 );
-                let file = repo_store(&target, self.context)
-                    .ci_workflow_file(&target_sha, &target_path)
-                    .await?;
-                let mut snapshot = self
-                    .snapshot(
-                        target,
-                        target_sha,
-                        target_path,
-                        file.content,
-                        depth + 1,
-                        target_ref.clone(),
-                    )
-                    .await?;
+                let mut snapshot = if let Some((snapshot, height)) = self.snapshots.get(&key) {
+                    if self.active.contains(&key) || depth + 1 + height > 3 {
+                        return Err(AdmissionError::Invalid("Called workflows exceed four levels or contain a cycle"));
+                    }
+                    snapshot.clone()
+                } else {
+                    let file = repo_store(&target, self.context).ci_workflow_file(&target_sha, &target_path).await?;
+                    self.snapshot(target, target_sha, target_path, file.content, None, depth + 1, target_ref.clone()).await?
+                };
                 // The ref a call names is stored with its snapshot, so a called job's OIDC identity can name it.
                 if let (Some((called_ref, full_ref)), Some(stored)) =
                     (target_ref, snapshot.as_object_mut())
@@ -323,8 +317,13 @@ impl<'a> Resolver<'a> {
                     .insert("uses".into(), format!("./{file_name}").into());
             }
             self.active.remove(&identity);
+            let content = serde_yaml::to_string(&yaml).map_err(|_| AdmissionError::Unavailable)?;
+            self.snapshot_bytes = self.snapshot_bytes.saturating_add(content.len());
+            if self.snapshot_bytes > 2 * 1024 * 1024 {
+                return Err(AdmissionError::Invalid("Called workflow snapshots exceed size limit"));
+            }
             let stored = serde_json::json!({
-                "content": serde_yaml::to_string(&yaml).map_err(|_| AdmissionError::Unavailable)?,
+                "content": content,
                 "repository_id": repository.id, "sha": sha, "source_path": path,
             });
             self.snapshots.insert(identity, (stored.clone(), height));

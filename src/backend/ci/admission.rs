@@ -186,7 +186,7 @@ pub(super) async fn resolve(
     )
     .await??
     .ok_or(AdmissionError::Unavailable)?;
-    if actor.username == db::ci_tokens::BOT
+    if !rerun && actor.username == db::ci_tokens::BOT
         && !matches!(
             request.event.as_str(),
             "workflow_dispatch" | "repository_dispatch"
@@ -347,6 +347,7 @@ pub(super) async fn resolve(
             environment,
             scheduling: requirements,
             concurrency,
+            yaml,
         } = parse_admission_workflow(
             path.clone(),
             file.content.clone(),
@@ -411,7 +412,12 @@ pub(super) async fn resolve(
                                 | dispatch_inputs::InputKind::Number
                         )
                     ) {
-                        serde_json::from_str(value).unwrap_or(serde_json::Value::Null)
+                        if kind == Some(dispatch_inputs::InputKind::Number) {
+                            value.parse::<f64>().ok().and_then(serde_json::Number::from_f64)
+                                .map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
+                        } else {
+                            serde_json::Value::Bool(value == "true")
+                        }
                     } else {
                         serde_json::Value::String(value.clone())
                     };
@@ -486,8 +492,6 @@ pub(super) async fn resolve(
             db::action_workflows::register_workflow(pool, repo.id, path, &definition.name, false),
         )
         .await??;
-        let yaml = super::workflows::parse_yaml(file.content.as_bytes())
-            .map_err(|_| AdmissionError::Invalid("CI workflow YAML is invalid"))?;
         let has_calls = yaml
             .get("jobs")
             .and_then(serde_yaml::Value::as_mapping)
@@ -501,13 +505,14 @@ pub(super) async fn resolve(
                     commit.sha.clone(),
                     path.clone(),
                     file.content,
+                    Some(yaml),
                     0,
                     None,
                 ),
             )
             .await??;
             request.environment = called.environment.clone();
-            if request.environment.is_some() {
+            if request.environment.is_some() && !request.pipeline.includes_cd() {
                 request.pipeline = CiPipelineKind::Full;
             }
             snapshot
@@ -517,6 +522,9 @@ pub(super) async fn resolve(
         blobs.insert(path.clone(), snapshot);
     }
     merge_scheduling(&mut scheduling, called.scheduling)?;
+    if called.files.keys().any(|path| blobs.contains_key(path)) {
+        return Err(AdmissionError::Invalid("Called workflow path collides with root workflow"));
+    }
     blobs.extend(called.files);
     if serde_json::to_vec(&blobs)
         .map_err(|_| AdmissionError::Unavailable)?
@@ -574,6 +582,7 @@ pub(super) struct ParsedWorkflow {
     pub environment: Option<String>,
     pub scheduling: db::runners::Scheduling,
     pub(super) concurrency: Option<serde_yaml::Value>,
+    pub(super) yaml: serde_yaml::Value,
 }
 
 pub(super) async fn parse_admission_workflow(
@@ -597,6 +606,11 @@ pub(super) async fn parse_admission_workflow(
             return Err(AdmissionError::Invalid(
                 "CI workflow requires one to 128 jobs",
             ));
+        }
+        for id in jobs.keys() {
+            if !id.as_str().is_some_and(codeyard_actions::workflow::valid_identifier) {
+                return Err(AdmissionError::Invalid("CI job identifier is invalid"));
+            }
         }
         for job in jobs.values() {
             if let Some(value) = job.get("environment") {
@@ -633,6 +647,7 @@ pub(super) async fn parse_admission_workflow(
             environment,
             scheduling,
             concurrency: yaml.get("concurrency").cloned(),
+            yaml,
         })
     })
     .await

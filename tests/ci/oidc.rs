@@ -50,7 +50,10 @@ async fn contract(pg: bool) {
             branch: "refs/heads/main",
             head_sha: &sha,
             workflow_path: path,
-            workflow_blobs: &json!({}),
+            workflow_blobs: &json!({
+                (called): {"repository_id": repo.id, "source_path": called, "sha": sha, "full_ref": "refs/heads/main"},
+                (leaf): {"repository_id": repo.id, "source_path": leaf, "sha": sha, "full_ref": "refs/heads/main"}
+            }),
             workflow_inputs: None,
             environment: Some("prod:west"),
             manual: false,
@@ -85,7 +88,7 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap();
     let claims = claims(&token);
-    assert_eq!(claims["workflow"], "Called");
+    assert_eq!(claims["workflow"], "Caller");
     assert_eq!(
         claims["job_workflow_ref"],
         format!("alice/project/{called}@refs/heads/main")
@@ -103,7 +106,7 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap();
     let nested_claims = self::claims(&token);
-    assert_eq!(nested_claims["workflow"], "Leaf");
+    assert_eq!(nested_claims["workflow"], "Caller");
     assert_eq!(
         nested_claims["job_workflow_ref"],
         format!("alice/project/{leaf}@refs/heads/main")
