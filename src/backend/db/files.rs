@@ -113,10 +113,7 @@ impl ReserveUpload<'_> {
                 .as_ref()
                 .is_none_or(|types| types.iter().any(|t| t == self.content_type))
             && (!matches!(self.reason, FileReason::Avatar | FileReason::OrgAvatar)
-                || matches!(
-                    self.content_type,
-                    "image/png" | "image/jpeg" | "image/gif" | "image/webp"
-                ))
+                || crate::media::AVATAR_CONTENT_TYPES.contains(&self.content_type))
     }
 }
 

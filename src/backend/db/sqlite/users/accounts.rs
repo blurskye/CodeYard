@@ -221,10 +221,11 @@ pub async fn set_user_avatar(
     }
     if let Some(file) = avatar_file_id {
         let usable: Option<uuid::Uuid> = sqlx::query_scalar(
-            "UPDATE files SET is_active=TRUE,upload_expires_at=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND user_id=?2 AND (is_active OR (confirmed_at IS NOT NULL AND upload_expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))) AND reason='avatar' AND content_type IN ('image/png','image/jpeg','image/gif','image/webp') RETURNING id",
+            "UPDATE files SET is_active=TRUE,upload_expires_at=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND user_id=?2 AND (is_active OR (confirmed_at IS NOT NULL AND upload_expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))) AND reason='avatar' AND content_type IN (SELECT value FROM json_each(?3)) RETURNING id",
         )
         .bind(file)
         .bind(user_id)
+        .bind(serde_json::to_string(&crate::media::AVATAR_CONTENT_TYPES)?)
         .fetch_optional(&mut *tx)
         .await?;
         if usable.is_none() {
