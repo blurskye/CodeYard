@@ -126,6 +126,7 @@ struct Values {
 #[derive(Deserialize)]
 struct PropertyValue {
     repository_name: String,
+    #[serde(deserialize_with = "Option::deserialize")]
     value: Option<String>,
 }
 #[derive(Deserialize)]

@@ -64,14 +64,19 @@ async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Re
             value[format!("{key}_url")] = json!(url);
             value["_links"][key] = json!({"href":url,"type":"application/atom+xml"});
         }
-        let organizations = db::organizations::profiles::list_actor_organizations(
-            &state.pool,
-            viewer.user.id,
-            db::organizations::OrganizationPage::new(0, 100).map_err(Error::unavailable)?,
-        )
-        .await
-        .map_err(Error::unavailable)?;
-        if let db::organizations::OrganizationOutcome::Applied(organizations) = organizations {
+        let mut organizations = Vec::new();
+        let mut after = 0;
+        loop {
+            let rows = super::super::orgs::outcome(db::organizations::profiles::list_actor_organizations(
+                &state.pool, viewer.user.id,
+                db::organizations::OrganizationPage::new(after, 100).map_err(Error::unavailable)?,
+            ).await.map_err(Error::unavailable)?)?;
+            let more = rows.len() == 100;
+            if let Some(row) = rows.last() { after = row.id; }
+            organizations.extend(rows);
+            if !more { break; }
+        }
+        {
             let urls: Vec<_> = organizations
                 .into_iter()
                 .map(|org| {

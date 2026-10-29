@@ -34,7 +34,8 @@ async fn check(
     {
         return Err(Error::missing());
     }
-    Ok(Json(json!({"enabled":true,"enforced_by_owner":false})))
+    let enforced_by_owner = db::repositories::immutable_releases::owner_enforced(&state.pool, repo.id).await.map_err(error)?;
+    Ok(Json(json!({"enabled":true,"enforced_by_owner":enforced_by_owner})))
 }
 async fn change(
     state: &AppState,
@@ -45,7 +46,7 @@ async fn change(
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    immutable::set_enabled(&state.pool, actor.user.id, repo.id, enabled)
+    immutable::set_enabled(&state.pool, (actor.user.id, actor.token.id), repo.id, enabled)
         .await
         .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)

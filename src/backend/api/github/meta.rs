@@ -317,7 +317,10 @@ async fn markdown(
             .split_once('/')
             .filter(|(_, name)| !name.contains('/'))
             .ok_or_else(|| Error::validation("Markdown", "context", "invalid"))?;
-        let (repo, _) = repository(&state, &headers, owner, name, false).await?;
+        let (repo, authentication) = repository(&state, &headers, owner, name, false).await?;
+        if let Some(authentication) = authentication {
+            authentication.repository_scope(&state.pool, repo.id, "contents", false).await.map_err(super::auth::scope_error)?;
+        }
         let lasts =
             crate::backend::db::discussions::last_discussion_numbers(&state.pool, &[repo.id])
                 .await

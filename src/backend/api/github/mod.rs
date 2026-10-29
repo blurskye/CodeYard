@@ -149,7 +149,8 @@ impl Error {
         Self::new(StatusCode::NOT_FOUND, "Not Found")
     }
 
-    fn unavailable<E>(_: E) -> Self {
+    fn unavailable<E: std::fmt::Debug>(error: E) -> Self {
+        tracing::warn!(?error, "GitHub API dependency unavailable");
         Self::new(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable")
     }
 
