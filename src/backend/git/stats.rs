@@ -372,11 +372,23 @@ where
 }
 
 pub(crate) async fn get_contributors(repo_path: &Path) -> Result<Vec<ContributorInfo>> {
-    cached_by_refs(&CONTRIBUTOR_CACHES, repo_path, String::new(), |_| async {
+    contributors_for(repo_path, None).await
+}
+
+pub(crate) async fn get_branch_contributors(repo_path: &Path, branch: &str) -> Result<Vec<ContributorInfo>> {
+    contributors_for(repo_path, Some(branch)).await
+}
+
+async fn contributors_for(repo_path: &Path, branch: Option<&str>) -> Result<Vec<ContributorInfo>> {
+    cached_by_refs(&CONTRIBUTOR_CACHES, repo_path, branch.unwrap_or("").to_owned(), |refs| async move {
         let mut command = process::git_command()?;
-        command
-            .args(["shortlog", "-sne", "--exclude=refs/codeyard/*", "--all"])
-            .current_dir(repo_path);
+        command.args(["shortlog", "-sne"]).current_dir(repo_path);
+        if let Some(branch) = branch {
+            let Some(id) = refs.get(&format!("refs/heads/{branch}")) else { return Ok(Vec::new()) };
+            command.arg(id).arg("--");
+        } else {
+            command.args(["--exclude=refs/codeyard/*", "--all"]);
+        }
         let (status, output) = process::buffered(
             command,
             b"",
@@ -570,6 +582,8 @@ pub struct AuthorWeek {
     pub week: i64,
     pub commits: u64,
     pub all_commits: u64,
+    #[serde(default)]
+    pub days: [u64; 7],
     pub additions: u64,
     pub deletions: u64,
 }
@@ -693,6 +707,7 @@ fn parse_commit_statistics(output: &[u8]) -> Result<CommitStatistics> {
             ..Default::default()
         });
         entry.all_commits += 1;
+        entry.days[day] += 1;
         if changed {
             author.total += 1;
             entry.commits += 1;

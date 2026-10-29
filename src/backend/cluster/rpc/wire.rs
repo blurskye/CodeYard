@@ -247,6 +247,7 @@ pub enum Operation {
         path: String,
     },
     Contributors,
+    BranchContributors { branch: String },
     CommitStatistics {
         branch: String,
     },
@@ -445,6 +446,7 @@ impl Operation {
             | Self::FilePaths { .. }
             | Self::Blame { .. }
             | Self::Contributors
+            | Self::BranchContributors { .. }
             | Self::CommitStatistics { .. }
             | Self::CodeFrequency { .. }
             | Self::BranchStatuses { .. } => true,

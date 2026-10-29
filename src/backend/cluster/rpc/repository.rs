@@ -87,6 +87,7 @@ pub fn authorize_operation(
         Operation::FilePaths { .. } => ("FilePaths", false),
         Operation::Blame { .. } => ("Blame", false),
         Operation::Contributors => ("Contributors", false),
+        Operation::BranchContributors { .. } => ("BranchContributors", false),
         Operation::CommitStatistics { .. } => ("CommitStatistics", false),
         Operation::CodeFrequency { .. } => ("CodeFrequency", false),
         Operation::IsAncestor { .. } => ("IsAncestor", false),
@@ -874,6 +875,7 @@ impl RpcHandler {
                 Value::Null
             }
             Operation::Contributors => json!(store.contributors()),
+            Operation::BranchContributors { branch } => json!(store.branch_contributors(&branch)),
             Operation::CommitStatistics { branch } => json!(store.commit_statistics(&branch)),
             Operation::CodeFrequency { branch } => json!(store.code_frequency(&branch)),
             Operation::IsAncestor {

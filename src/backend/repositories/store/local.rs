@@ -1245,6 +1245,10 @@ impl LocalStore {
             .map_err(RepoError::from)
     }
 
+    pub(super) async fn branch_contributors(&self, branch: &str) -> Result<Vec<ContributorInfo>, RepoError> {
+        git::get_branch_contributors(self.path(), branch).await.map_err(RepoError::from)
+    }
+
     pub(super) async fn contributors(&self) -> Result<Vec<ContributorInfo>, RepoError> {
         git::get_contributors(self.path())
             .await

@@ -1256,6 +1256,14 @@ impl RepoStore {
         }
     }
 
+    /// Count-only history on the default branch, including merge commits.
+    pub async fn branch_contributors(&self, branch: &str) -> Result<Vec<ContributorInfo>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.branch_contributors(branch).await,
+            Backend::Remote(remote) => remote.call(Operation::BranchContributors { branch: branch.into() }, b"").await,
+        }
+    }
+
     /// Authors across all branches with their commit counts.
     pub async fn contributors(&self) -> Result<Vec<ContributorInfo>, RepoError> {
         match &self.0 {
