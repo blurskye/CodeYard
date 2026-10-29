@@ -1,11 +1,14 @@
 //! Canonical public reference names used at publication boundaries.
 
+/// libgit2's 1024-byte reference buffer also reserves a terminating NUL.
+pub(crate) const MAX_REF_BYTES: usize = 1023;
+
 /// Returns whether `reference` is an exact, non-normalized branch, tag or notes ref.
 /// Git's normalization can collapse empty path components, so callers reject
 /// malformed names rather than retargeting them to another ref.
 pub(crate) fn is_canonical_ref(reference: &str) -> bool {
     (reference.starts_with("refs/heads/") || reference.starts_with("refs/tags/") || reference.starts_with("refs/notes/"))
-        && reference.len() <= 1024
+        && reference.len() <= MAX_REF_BYTES
         && !reference.bytes().any(|byte| {
             byte <= b' '
                 || byte == 127
