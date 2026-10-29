@@ -910,6 +910,8 @@ pub(crate) async fn stop_ci_runs(
     .bind(run_ids)
     .fetch_all(&mut **tx)
     .await?;
+    sqlx::query("SELECT id FROM ci_runs WHERE id = ANY($1) ORDER BY id FOR UPDATE")
+        .bind(run_ids).fetch_all(&mut **tx).await?;
     let queued = sqlx::query_as::<_, CiRun>(
         "SELECT * FROM ci_runs WHERE id = ANY($1) AND status = 'queued' ORDER BY id FOR UPDATE",
     )

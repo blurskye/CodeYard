@@ -119,7 +119,7 @@ pub(super) fn matching_cache<'a>(
 
 native_operation!(crate::backend::db::postgres::action_objects::issue_token,
     crate::backend::db::sqlite::action_objects::issue_token,
-    fn issue_token(pool: &DbPool, run_id: i64, hash: &str, backend_id: &str) -> Result<()>);
+    fn issue_token(pool: &DbPool, run_id: i64, worker: &str, hash: &str, backend_id: &str) -> Result<()>);
 native_operation!(crate::backend::db::postgres::action_objects::authenticate,
     crate::backend::db::sqlite::action_objects::authenticate,
     fn authenticate(pool: &DbPool, hash: &str) -> Result<Option<RuntimeRun>>);

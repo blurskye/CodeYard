@@ -10,7 +10,7 @@ pub async fn issue(
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let (repo, fork): (i64, bool) = sqlx::query_as(
-        "SELECT repo_id,is_fork FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running'",
+        "SELECT repo_id,is_fork FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running' AND NOT cancel_requested",
     )
     .bind(run_id)
     .bind(worker)

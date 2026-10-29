@@ -52,7 +52,7 @@ pub async fn issue(
         "jti": secret()
     }))?);
     let token = format!("{header}.{payload}.{}", secret());
-    db::action_objects::issue_token(pool, run.id, &token_hash(&token), &backend).await?;
+    db::action_objects::issue_token(pool, run.id, run.worker.as_deref().unwrap_or(""), &token_hash(&token), &backend).await?;
     Ok(RuntimeCredentials {
         token,
         results_url: results_url(settings),

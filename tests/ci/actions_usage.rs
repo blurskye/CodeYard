@@ -65,7 +65,7 @@ async fn contract(pg: bool) {
             .unwrap()
             .unwrap();
         let generation = runtime::token_hash(&format!("usage-{attempt}"));
-        db::action_objects::issue_token(f.pool(), run.id, &generation, &run.run_id.to_string())
+        db::action_objects::issue_token(f.pool(), run.id, run.worker.as_deref().unwrap_or(""), &generation, &run.run_id.to_string())
             .await
             .unwrap();
         for (variant, labels, duration) in [

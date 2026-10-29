@@ -76,7 +76,7 @@ async fn contract(pg: bool) {
     assert_eq!(dispatch["workflow_run_id"], run.id);
     let workflow = ".github/workflows/ci.yml";
     let generation = runtime::token_hash("private-runtime");
-    db::action_objects::issue_token(f.pool(), run.id, &generation, &run.run_id.to_string())
+    db::action_objects::issue_token(f.pool(), run.id, run.worker.as_deref().unwrap_or(""), &generation, &run.run_id.to_string())
         .await
         .unwrap();
     db::action_jobs::save_state(

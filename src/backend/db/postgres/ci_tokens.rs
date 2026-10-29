@@ -10,7 +10,7 @@ pub async fn issue(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_membership_shared(&mut tx).await?;
-    let (repo, fork): (i64, bool) = sqlx::query_as("SELECT repo_id,is_fork FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running' FOR UPDATE")
+    let (repo, fork): (i64, bool) = sqlx::query_as("SELECT repo_id,is_fork FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running' AND NOT cancel_requested FOR UPDATE")
         .bind(run_id).bind(worker).fetch_one(&mut *tx).await?;
     ensure!(
         !fork || tokens.iter().all(|token| !token.write),

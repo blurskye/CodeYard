@@ -60,7 +60,7 @@ async fn start(
         .unwrap()
         .unwrap();
     let generation = runtime::token_hash(&format!("runtime-{worker}"));
-    db::action_objects::issue_token(f.pool(), run.id, &generation, &run.run_id.to_string())
+    db::action_objects::issue_token(f.pool(), run.id, run.worker.as_deref().unwrap_or(""), &generation, &run.run_id.to_string())
         .await
         .unwrap();
     let queued = event(Update::Queued {

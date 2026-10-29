@@ -2,15 +2,20 @@ use crate::backend::db::action_objects::{ActionObject, BlobPart, NewObject, Runt
 use anyhow::Result;
 use sqlx::PgPool;
 
-pub async fn issue_token(pool: &PgPool, run_id: i64, hash: &str, backend_id: &str) -> Result<()> {
-    let changed = sqlx::query("INSERT INTO actions_runtime_tokens(run_id,token_hash,backend_id) SELECT id,$2,$3 FROM ci_runs WHERE id=$1 AND status='running' ON CONFLICT(run_id) DO UPDATE SET token_hash=excluded.token_hash,backend_id=excluded.backend_id")
-        .bind(run_id).bind(hash).bind(backend_id).execute(pool).await?;
-    anyhow::ensure!(changed.rows_affected() == 1, "run is not active");
+pub async fn issue_token(pool: &PgPool, run_id: i64, worker: &str, hash: &str, backend_id: &str) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    let live: Option<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running' AND NOT cancel_requested FOR UPDATE")
+        .bind(run_id).bind(worker).fetch_optional(&mut *tx).await?;
+    anyhow::ensure!(live.is_some(), "run is not active");
+    sqlx::query("INSERT INTO actions_runtime_tokens(run_id,token_hash,backend_id) VALUES($1,$2,$3) ON CONFLICT(run_id) DO UPDATE SET token_hash=excluded.token_hash,backend_id=excluded.backend_id")
+        .bind(run_id).bind(hash).bind(backend_id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
 pub async fn authenticate(pool: &PgPool, hash: &str) -> Result<Option<RuntimeRun>> {
-    Ok(sqlx::query_as("SELECT r.id,r.repo_id,t.backend_id,CASE WHEN r.event='pull_request' THEN 'refs/pull/' || COALESCE(CAST(pr.number AS TEXT),CAST(r.id AS TEXT)) || '/merge' ELSE r.branch END AS branch,CASE WHEN r.event='pull_request' THEN pr.base_branch END AS base_branch,p.default_branch,r.is_fork FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id JOIN repositories p ON p.id=r.repo_id LEFT JOIN pull_requests pr ON pr.id=r.pull_request_id WHERE t.token_hash=$1 AND (r.status='running' OR r.completed_at > NOW() - INTERVAL '5 minutes')")
+    Ok(sqlx::query_as("SELECT r.id,r.repo_id,t.backend_id,CASE WHEN r.event='pull_request' THEN 'refs/pull/' || COALESCE(CAST(pr.number AS TEXT),CAST(r.id AS TEXT)) || '/merge' ELSE r.branch END AS branch,CASE WHEN r.event='pull_request' THEN pr.base_branch END AS base_branch,p.default_branch,r.is_fork FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id JOIN repositories p ON p.id=r.repo_id LEFT JOIN pull_requests pr ON pr.id=r.pull_request_id WHERE t.token_hash=$1 AND NOT r.cancel_requested AND (r.status='running' OR r.completed_at > NOW() - INTERVAL '5 minutes')")
         .bind(hash).fetch_optional(pool).await?)
 }
 

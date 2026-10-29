@@ -5,17 +5,22 @@ use sqlx::SqlitePool;
 pub async fn issue_token(
     pool: &SqlitePool,
     run_id: i64,
+    worker: &str,
     hash: &str,
     backend_id: &str,
 ) -> Result<()> {
-    let changed = sqlx::query("INSERT INTO actions_runtime_tokens(run_id,token_hash,backend_id) SELECT id,?2,?3 FROM ci_runs WHERE id=?1 AND status='running' ON CONFLICT(run_id) DO UPDATE SET token_hash=excluded.token_hash,backend_id=excluded.backend_id")
-        .bind(run_id).bind(hash).bind(backend_id).execute(pool).await?;
-    anyhow::ensure!(changed.rows_affected() == 1, "run is not active");
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let live: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ci_runs WHERE id=?1 AND worker=?2 AND status='running' AND NOT cancel_requested)")
+        .bind(run_id).bind(worker).fetch_one(&mut *tx).await?;
+    anyhow::ensure!(live, "run is not active");
+    sqlx::query("INSERT INTO actions_runtime_tokens(run_id,token_hash,backend_id) VALUES(?1,?2,?3) ON CONFLICT(run_id) DO UPDATE SET token_hash=excluded.token_hash,backend_id=excluded.backend_id")
+        .bind(run_id).bind(hash).bind(backend_id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
 pub async fn authenticate(pool: &SqlitePool, hash: &str) -> Result<Option<RuntimeRun>> {
-    Ok(sqlx::query_as("SELECT r.id,r.repo_id,t.backend_id,CASE WHEN r.event='pull_request' THEN 'refs/pull/' || COALESCE(CAST(pr.number AS TEXT),CAST(r.id AS TEXT)) || '/merge' ELSE r.branch END AS branch,CASE WHEN r.event='pull_request' THEN pr.base_branch END AS base_branch,p.default_branch,r.is_fork FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id JOIN repositories p ON p.id=r.repo_id LEFT JOIN pull_requests pr ON pr.id=r.pull_request_id WHERE t.token_hash=$1 AND (r.status='running' OR r.completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-5 minutes'))")
+    Ok(sqlx::query_as("SELECT r.id,r.repo_id,t.backend_id,CASE WHEN r.event='pull_request' THEN 'refs/pull/' || COALESCE(CAST(pr.number AS TEXT),CAST(r.id AS TEXT)) || '/merge' ELSE r.branch END AS branch,CASE WHEN r.event='pull_request' THEN pr.base_branch END AS base_branch,p.default_branch,r.is_fork FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id JOIN repositories p ON p.id=r.repo_id LEFT JOIN pull_requests pr ON pr.id=r.pull_request_id WHERE t.token_hash=$1 AND NOT r.cancel_requested AND (r.status='running' OR r.completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-5 minutes'))")
         .bind(hash).fetch_optional(pool).await?)
 }
 
