@@ -769,7 +769,7 @@ async fn conversation_comment_on_pull(
     Ok((repository, pull_request, comment))
 }
 
-/// Changes the body of a conversation comment. Only its author may, and not in an archived repository.
+/// The author or a repository writer may edit a visible comment in a live repository.
 pub async fn edit_pull_request_comment(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
@@ -790,10 +790,10 @@ pub async fn edit_pull_request_comment(
     if repository.is_archived {
         return Err(archived_refusal());
     }
-    if previous.author_id != user.id {
+    if previous.author_id != user.id && !crate::backend::repositories::access::can_write(pool, &user, &repository).await.map_err(database_error)? {
         return Err(OperationError::Denied {
             code: "comment_forbidden",
-            message: "Only the author can edit this comment.".to_owned(),
+            message: "Only the author or a repository writer can edit this comment.".to_owned(),
         });
     }
     if expected_body.is_some_and(|body| body != previous.body) {
@@ -870,7 +870,7 @@ pub async fn edit_pull_request_comment(
 }
 
 /// Deletes a conversation comment and the notifications about it. The author may delete their own
-/// comment and a repository maintainer may delete anyone's.
+/// comment and a repository writer may delete anyone's visible comment.
 pub async fn delete_pull_request_comment(
     pool: &db::DbPool,
     actor_id: i64,

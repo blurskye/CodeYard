@@ -67,24 +67,25 @@ async fn issue_comment(
         })
 }
 
-/// Why a locked thread or an archived repository refuses a comment change, if it does.
-fn refuse_change(
+async fn require_change(
+    pool: &db::DbPool,
+    user: &db::models::User,
     repository: &db::models::Repository,
     issue: &db::models::Issue,
-) -> Option<OperationError> {
+) -> Result<(), OperationError> {
     if repository.is_archived {
-        Some(OperationError::Denied {
+        return Err(OperationError::Denied {
             code: "repository_archived",
             message: "This repository is archived and read-only.".to_owned(),
-        })
-    } else if issue.locked {
-        Some(OperationError::Denied {
+        });
+    }
+    if issue.locked && !crate::backend::repositories::access::can_write(pool, user, repository).await.map_err(database_error)? {
+        return Err(OperationError::Denied {
             code: "conversation_locked",
             message: "This conversation is locked.".to_owned(),
-        })
-    } else {
-        None
+        });
     }
+    Ok(())
 }
 
 pub async fn create_issue_comment(
@@ -98,9 +99,7 @@ pub async fn create_issue_comment(
 ) -> Result<db::models::IssueComment, OperationError> {
     let user = super::actor(pool, actor_id).await?;
     let (repository, issue) = read_issue(pool, &user, &owner, &repo, number).await?;
-    if let Some(refusal) = refuse_change(&repository, &issue) {
-        return Err(refusal);
-    }
+    require_change(pool, &user, &repository, &issue).await?;
 
     if let Err(message) = super::validate_body(&req.body, true) {
         return Err(OperationError::Invalid {
@@ -202,7 +201,7 @@ pub async fn create_issue_comment(
     Ok(comment)
 }
 
-/// Changes the body of a comment. Only its author may, and only while the thread is open.
+/// The author or a repository writer may edit; locked threads remain writable by writers.
 pub async fn edit_issue_comment(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
@@ -219,14 +218,12 @@ pub async fn edit_issue_comment(
     } = target;
     let user = super::actor(pool, actor_id).await?;
     let (repository, issue) = read_issue(pool, &user, &owner, &repo, number).await?;
-    if let Some(refusal) = refuse_change(&repository, &issue) {
-        return Err(refusal);
-    }
+    require_change(pool, &user, &repository, &issue).await?;
     let previous = issue_comment(pool, &issue, comment_id).await?;
-    if previous.author_id != user.id {
+    if previous.author_id != user.id && !crate::backend::repositories::access::can_write(pool, &user, &repository).await.map_err(database_error)? {
         return Err(OperationError::Denied {
             code: "comment_forbidden",
-            message: "Only the author can edit this comment.".to_owned(),
+            message: "Only the author or a repository writer can edit this comment.".to_owned(),
         });
     }
     if expected_body.is_some_and(|body| body != previous.body) {
@@ -322,7 +319,7 @@ pub async fn edit_issue_comment(
 }
 
 /// Deletes a comment and the notifications about it. The author may delete their own comment and
-/// a repository maintainer may delete anyone's.
+/// a repository writer may delete anyone's.
 pub async fn delete_issue_comment(
     pool: &db::DbPool,
     actor_id: i64,
@@ -336,9 +333,7 @@ pub async fn delete_issue_comment(
     } = target;
     let user = super::actor(pool, actor_id).await?;
     let (repository, issue) = read_issue(pool, &user, &owner, &repo, number).await?;
-    if let Some(refusal) = refuse_change(&repository, &issue) {
-        return Err(refusal);
-    }
+    require_change(pool, &user, &repository, &issue).await?;
     let previous = issue_comment(pool, &issue, comment_id).await?;
     let removed =
         db::issues::delete_issue_comment(pool, user.id, repository.id, issue.id, comment_id)
