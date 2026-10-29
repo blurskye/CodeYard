@@ -730,6 +730,15 @@ pub fn repository_owner(repo: &Repository, owner: &str) -> Value {
     })
 }
 
+pub fn repository_snapshot(snapshot: &crate::backend::db::repository_stats::RepositorySnapshot) -> Value {
+    let mut value = repository(&snapshot.repository, &snapshot.owner);
+    value["open_issues"] = json!(snapshot.facts.open_items);
+    value["open_issues_count"] = json!(snapshot.facts.open_items);
+    value["pushed_at"] = json!(snapshot.facts.pushed_at);
+    value["language"] = json!(snapshot.facts.language);
+    value
+}
+
 pub fn repository(repo: &Repository, owner: &str) -> Value {
     let full_name = format!("{owner}/{}", repo.name);
     let html_url = repository_url(owner, &repo.name);

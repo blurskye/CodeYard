@@ -4,11 +4,13 @@ use sqlx::SqlitePool;
 
 use crate::backend::db::repository_stats::{LanguageSource, RepoActivityPoint, WorkflowUsage};
 
+pub(crate) const DOCUMENT_FACTS: &str = "(SELECT COUNT(*) FROM issues WHERE repo_id=r.id AND state='open')+(SELECT COUNT(*) FROM pull_requests WHERE repo_id=r.id AND state='open') AS open_items,(SELECT MAX(accepted_at) FROM ci_accepted_pushes WHERE repo_id=r.id) AS pushed_at,(SELECT language FROM repo_languages WHERE repo_id=r.id ORDER BY bytes DESC,language LIMIT 1) AS language";
+
 pub async fn repository_document_facts(
     pool: &SqlitePool,
     repo: i64,
 ) -> Result<crate::backend::db::repository_stats::RepositoryDocumentFacts> {
-    Ok(sqlx::query_as("SELECT (SELECT COUNT(*) FROM issues WHERE repo_id=r.id AND state='open')+(SELECT COUNT(*) FROM pull_requests WHERE repo_id=r.id AND state='open') AS open_items,(SELECT MAX(accepted_at) FROM ci_accepted_pushes WHERE repo_id=r.id) AS pushed_at,(SELECT language FROM repo_languages WHERE repo_id=r.id ORDER BY bytes DESC,language LIMIT 1) AS language FROM repositories r WHERE r.id=?1")
+    Ok(sqlx::query_as(&format!("SELECT {DOCUMENT_FACTS} FROM repositories r WHERE r.id=?1"))
         .bind(repo).fetch_one(pool).await?)
 }
 

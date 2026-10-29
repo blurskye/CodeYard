@@ -92,7 +92,7 @@ native_operation!(crate::backend::db::postgres::organizations::action_values::de
     fn delete(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str) -> Result<(), ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::repositories,
     crate::backend::db::sqlite::organizations::action_values::repositories,
-    fn repositories(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str) -> Result<Vec<super::models::Repository>, ValueError>);
+    fn repositories(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str, offset: i64, limit: i64) -> Result<(i64, Vec<super::repository_stats::RepositorySnapshot>), ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::select,
     crate::backend::db::sqlite::organizations::action_values::select,
     fn select(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str, change: Selection<'_>) -> Result<(), ValueError>);

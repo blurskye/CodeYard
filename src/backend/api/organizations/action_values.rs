@@ -63,12 +63,16 @@ pub(super) async fn build(
     let mut items = Vec::new();
     for (kind, row) in rows.into_iter().skip((page - 1) * PAGE).take(PAGE) {
         let repositories = if row.visibility == "selected" {
-            values::repositories(&ctx.state.pool, actor, org, kind, &row.name)
-                .await?
-                .into_iter()
-                .map(|repo| repo.id.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
+            let mut ids = Vec::new();
+            let mut offset = 0;
+            loop {
+                let (_, rows) = values::repositories(&ctx.state.pool, actor, org, kind, &row.name, offset, 100).await?;
+                let count = rows.len();
+                ids.extend(rows.into_iter().map(|repo| repo.repository.id.to_string()));
+                if count < 100 { break; }
+                offset += 100;
+            }
+            ids.join(", ")
         } else {
             String::new()
         };
