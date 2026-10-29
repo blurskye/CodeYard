@@ -1,5 +1,5 @@
 use crate::backend::db::repository_discussions::{
-    valid_body, Category, Comment, Discussion, Filter, Refusal, Write,
+    valid_body, Category, Comment, Discussion, Filter, Refusal, Write, DEFAULT_CATEGORIES,
 };
 use anyhow::Result;
 use sqlx::PgPool;
@@ -8,39 +8,12 @@ pub async fn enabled(pool: &PgPool, repo: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT COALESCE((SELECT enabled FROM repository_discussion_settings WHERE repo_id=$1),false)").bind(repo).fetch_one(pool).await?)
 }
 pub async fn categories(pool: &PgPool, repo: i64) -> Result<Vec<Category>> {
+    let existing: Vec<Category> = sqlx::query_as("SELECT * FROM discussion_categories WHERE repo_id=$1 ORDER BY id").bind(repo).fetch_all(pool).await?;
+    if DEFAULT_CATEGORIES.iter().all(|(_, slug, _, _, _)| existing.iter().any(|category| category.slug == *slug)) {
+        return Ok(existing);
+    }
     let mut tx = pool.begin().await?;
-    for (name, slug, emoji, description, answerable) in [
-        (
-            "Announcements",
-            "announcements",
-            "📣",
-            "Updates from maintainers",
-            false,
-        ),
-        (
-            "General",
-            "general",
-            "💬",
-            "Chat about the repository",
-            false,
-        ),
-        (
-            "Ideas",
-            "ideas",
-            "💡",
-            "Share ideas for new features",
-            false,
-        ),
-        ("Polls", "polls", "📊", "Ask the community", false),
-        ("Q&A", "q-a", "🙏", "Ask questions and find answers", true),
-        (
-            "Show and tell",
-            "show-and-tell",
-            "🙌",
-            "Show something you made",
-            false,
-        ),
-    ] {
+    for &(name, slug, emoji, description, answerable) in DEFAULT_CATEGORIES {
         sqlx::query("INSERT INTO discussion_categories(repo_id,name,slug,emoji,description,answerable) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT(repo_id,slug) DO NOTHING").bind(repo).bind(name).bind(slug).bind(emoji).bind(description).bind(answerable).execute(&mut *tx).await?;
     }
     let rows = sqlx::query_as("SELECT * FROM discussion_categories WHERE repo_id=$1 ORDER BY id")
@@ -104,6 +77,7 @@ pub async fn list(
     filter: &Filter,
     offset: i64,
     limit: i64,
+    count_total: bool,
 ) -> Result<(i64, Vec<Discussion>)> {
     let statement = filter.statement(true, &super::repositories::access::readable_condition())?;
     let mut connection = super::repositories::discovery::search_connection(pool).await?;
@@ -112,7 +86,7 @@ pub async fn list(
     for value in &statement.args {
         count = count.bind(value);
     }
-    let total = count.fetch_one(&mut *connection).await?;
+    let total = if count_total { count.fetch_one(&mut *connection).await? } else { 0 };
     let sql = format!(
         "SELECT i.* {} ORDER BY {} LIMIT {} OFFSET {}",
         statement.prefix,

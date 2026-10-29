@@ -16,7 +16,7 @@ pub async fn list(
     let (target, source) = kind.selection();
     let target = target.replace('$', "?");
     let source = source.replace('$', "?");
-    Ok(sqlx::query_as(&format!("SELECT i.id,i.repo_id,i.number,i.title,i.state,COALESCE(owners.username,orgs.name) AS owner,r.name AS repo FROM issue_relations e JOIN issues i ON i.id={target} JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=?1 LEFT JOIN users owners ON r.owner_kind='user' AND owners.id=r.owner_user_id LEFT JOIN organizations orgs ON r.owner_kind='org' AND orgs.id=r.owner_org_id WHERE {source}=?2 AND e.kind=?3 AND {} AND (COALESCE(u.username,'')<>?6 OR i.repo_id=(SELECT repo_id FROM issues WHERE id=?2)) ORDER BY e.position,i.id LIMIT ?4 OFFSET ?5",super::repositories::access::readable_condition())).bind(viewer).bind(root).bind(kind.storage()).bind(limit).bind(offset).bind(crate::backend::db::ci_tokens::BOT).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&format!("SELECT i.id,i.repo_id,i.number,i.title,i.state,i.created_at,COALESCE(owners.username,orgs.name) AS owner,r.name AS repo FROM issue_relations e JOIN issues i ON i.id={target} JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=?1 LEFT JOIN users owners ON r.owner_kind='user' AND owners.id=r.owner_user_id LEFT JOIN organizations orgs ON r.owner_kind='org' AND orgs.id=r.owner_org_id WHERE {source}=?2 AND e.kind=?3 AND {} AND (COALESCE(u.username,'')<>?6 OR i.repo_id=(SELECT repo_id FROM issues WHERE id=?2)) ORDER BY e.position,i.id LIMIT ?4 OFFSET ?5",super::repositories::access::readable_condition())).bind(viewer).bind(root).bind(kind.storage()).bind(limit).bind(offset).bind(crate::backend::db::ci_tokens::BOT).fetch_all(pool).await?)
 }
 pub async fn summaries(pool: &SqlitePool, roots: &[i64]) -> Result<Vec<RelationCounts>> {
     anyhow::ensure!(roots.len() <= 100, Refusal::Limit);
@@ -59,9 +59,10 @@ async fn change_once(
     repo: i64,
     root: i64,
     mutation: Mutation,
+    token: Option<i64>,
 ) -> Result<()> {
     let tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let tx = change_in_transaction(tx, actor, repo, root, mutation, false).await?;
+    let tx = change_in_transaction(tx, actor, repo, root, mutation, false, token).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -84,6 +85,7 @@ pub(crate) async fn change_in_transaction<'a>(
     root: i64,
     mutation: Mutation,
     triage: bool,
+    token: Option<i64>,
 ) -> Result<Transaction<'a, Sqlite>> {
     let other = mutation.target();
     anyhow::ensure!(other > 0 && root != other, Refusal::Invalid);
@@ -107,6 +109,11 @@ pub(crate) async fn change_in_transaction<'a>(
         .await?;
     let target_repo = target_repo.ok_or(Refusal::Missing)?;
     anyhow::ensure!(!restricted || target_repo == repo, Refusal::Missing);
+    if let Some(token) = token {
+        for affected in [repo, target_repo] {
+            anyhow::ensure!(super::users::tokens::repository_write_on(&mut tx, token, actor, affected, "issues").await?, Refusal::Denied);
+        }
+    }
     let visible:bool=sqlx::query_scalar(&format!("SELECT EXISTS (SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})",super::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
     anyhow::ensure!(visible, Refusal::Missing);
     let ids: Vec<i64> = sqlx::query_scalar(
@@ -167,6 +174,9 @@ pub(crate) async fn change_in_transaction<'a>(
                     if let Some((_, old_repo)) = old {
                         anyhow::ensure!(!restricted || old_repo == repo, Refusal::Missing);
                         anyhow::ensure!(replace, Refusal::HasParent);
+                        if let Some(token) = token {
+                            anyhow::ensure!(super::users::tokens::repository_write_on(&mut tx, token, actor, old_repo, "issues").await?, Refusal::Denied);
+                        }
                         anyhow::ensure!(
                             authority(&mut tx, actor, old_repo, triage).await?,
                             Refusal::Denied

@@ -88,6 +88,7 @@ pub async fn create_issue_with_metadata(
                     replace: false,
                 },
                 true,
+                None,
             )
             .await?
         }

@@ -529,6 +529,7 @@ impl Statement {
                 "repo"=>{if !value.contains('/'){return Err("Repository search must name owner/repository");}let value=self.bind(value);format!("lower(COALESCE(owners.username,orgs.name)||'/'||r.name)=lower({value})")},
                 "user"|"org"=>{if value=="@me" {if key=="org" {return Err("An organization name is required");} "r.owner_kind='user' AND r.owner_user_id=u.id".into()} else {let p=self.bind(value);format!("{}lower(COALESCE(owners.username,orgs.name))=lower({p})",if key=="org"{"r.owner_kind='org' AND "}else{""})}},
                 "author"=>if let Some(app)=value.strip_prefix("app/") {let p=self.bind(app);format!("i.author_id IN (SELECT bot_id FROM github_apps WHERE lower(slug)=lower({p}))")} else {self.person("i.author_id",value)},
+                "exact-base"|"exact-head"=>{let column=if key=="exact-base"{"base_branch"}else{"head_branch"};let p=self.bind(value);format!("i.pull_request AND EXISTS(SELECT 1 FROM pull_requests pr WHERE pr.id=i.id AND pr.{column}={p})")},
                 "base"=>{let p=self.bind(value);format!("i.pull_request AND EXISTS(SELECT 1 FROM pull_requests pr WHERE pr.id=i.id AND lower(pr.base_branch)=lower({p}))")},
                 // As on GitHub, head matches the branches whose names begin with the value.
                 "head"=>{let p=self.bind(value);format!("i.pull_request AND EXISTS(SELECT 1 FROM pull_requests pr WHERE pr.id=i.id AND lower(substr(pr.head_branch,1,length({p})))=lower({p}))")},

@@ -101,6 +101,7 @@ pub struct Link {
     pub number: i32,
     pub title: String,
     pub state: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
     pub owner: String,
     pub repo: String,
 }
@@ -119,8 +120,11 @@ pub struct RelationCounts {
 }
 native_operation!(crate::backend::db::postgres::relationships::list,crate::backend::db::sqlite::relationships::list,
     fn list(pool:&DbPool,viewer:Option<i64>,root:i64,kind:Kind,offset:i64,limit:i64)->Result<Vec<Link>>);
+pub async fn change(pool: &DbPool, actor: i64, repo: i64, root: i64, mutation: Mutation) -> Result<()> {
+    change_with_token(pool, actor, repo, root, mutation, None).await
+}
 native_operation!(crate::backend::db::postgres::relationships::change,crate::backend::db::sqlite::relationships::change,
-    fn change(pool:&DbPool,actor:i64,repo:i64,root:i64,mutation:Mutation)->Result<()>);
+    fn change_with_token(pool:&DbPool,actor:i64,repo:i64,root:i64,mutation:Mutation,token:Option<i64>)->Result<()>);
 native_operation!(crate::backend::db::postgres::relationships::summaries,crate::backend::db::sqlite::relationships::summaries,
     /// The sub-issue and dependency counts of each issue in `roots` (at most 100), one row per
     /// root and repository of the related issues.
