@@ -556,6 +556,16 @@ impl LocalStore {
         Ok(change)
     }
 
+    async fn check_contents_grant(&self, pool: &db::DbPool, repo: i64, actor: i64, token: Option<i64>) -> Result<(), RepoError> {
+        if let Some(token) = token {
+            if !db::users::tokens::can_write_repository(pool, actor, token, repo, "contents")
+                .await.map_err(|_| RepoError::authority_unavailable())? {
+                return Err(RepoError::write_denied());
+            }
+        }
+        Ok(())
+    }
+
     /// A token without the workflows permission may publish only updates that leave every
     /// workflow file as it is, or as a branch already has it. Session writes pass `None`.
     async fn check_workflow_grant(
@@ -632,11 +642,7 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        if let Some(token) = token {
-            if !db::users::tokens::can_write_repository(pool, actor, token, repo_id, "contents").await.map_err(|_| RepoError::authority_unavailable())? {
-                return Err(RepoError::write_denied());
-            }
-        }
+        self.check_contents_grant(pool, repo_id, actor, token).await?;
         let bytes = bytes.to_vec();
         let path = self.path().to_owned();
         let held = lock.clone();
@@ -1896,14 +1902,7 @@ impl LocalStore {
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
         self.check_workflow_grant(pool, prepared.token_id, vec![(prepared.expected.clone().unwrap_or_else(|| editor::ZERO.to_owned()), prepared.commit.sha.clone())], None).await?;
-        if let Some(token) = prepared.token_id {
-            if !db::users::tokens::can_write_repository(pool, actor, token, repo_id, "contents")
-                .await
-                .map_err(|_| RepoError::authority_unavailable())?
-            {
-                return Err(RepoError::write_denied());
-            }
-        }
+        self.check_contents_grant(pool, repo_id, actor, prepared.token_id).await?;
         let commit = publication
             .scope(editor::publish(self.path(), prepared))
             .await?;
@@ -2371,6 +2370,7 @@ impl LocalStore {
             .await?;
         self.check_workflow_grant(pool, token, vec![(base.to_owned(), result.to_owned())], None)
             .await?;
+        self.check_contents_grant(pool, repo_id, actor, token).await?;
         if let Some(authority) = authority {
             db::users::tokens::token_user(pool, authority.token_id, true)
                 .await
