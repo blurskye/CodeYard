@@ -1213,7 +1213,9 @@ CREATE TRIGGER repository_visibility_floor BEFORE INSERT OR UPDATE OF is_private
 
 CREATE OR REPLACE FUNCTION narrow_descendant_fork_visibility() RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.is_private AND NOT OLD.is_private THEN
+    IF NEW.is_private AND NOT OLD.is_private AND EXISTS (
+        SELECT 1 FROM repositories WHERE forked_from_id=NEW.id AND (NOT is_private OR NOT visibility_locked)
+    ) THEN
         WITH RECURSIVE descendants(id) AS (
             SELECT id FROM repositories WHERE forked_from_id = NEW.id
             UNION
@@ -1477,7 +1479,8 @@ CREATE UNIQUE INDEX idx_user_emails_address ON user_emails(lower(email));
 CREATE FUNCTION guard_primary_email() RETURNS TRIGGER AS $$
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtext(current_schema()),37004);
-    IF EXISTS (SELECT 1 FROM user_emails WHERE lower(email)=lower(NEW.email) AND user_id<>NEW.id) THEN
+    IF EXISTS (SELECT 1 FROM user_emails WHERE lower(email)=lower(NEW.email) AND user_id<>NEW.id)
+        OR EXISTS (SELECT 1 FROM users WHERE lower(email)=lower(NEW.email) AND id<>NEW.id) THEN
         RAISE EXCEPTION 'Email address is already registered' USING ERRCODE='23505';
     END IF;
     RETURN NEW;
@@ -3694,7 +3697,7 @@ CREATE INDEX repository_ruleset_versions_rule ON repository_ruleset_versions(rul
 
 CREATE TABLE repository_rule_suites (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT REFERENCES organizations(id) ON DELETE SET NULL,
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     repository_name TEXT NOT NULL CHECK(length(repository_name)<=255),
     actor_id BIGINT CHECK(actor_id IS NULL OR actor_id>0),
@@ -3831,3 +3834,32 @@ CREATE TABLE actions_job_concurrency (
     FOREIGN KEY(repo_id, name_key) REFERENCES actions_concurrency_groups(repo_id, name_key) ON DELETE CASCADE
 );
 CREATE INDEX actions_job_concurrency_group ON actions_job_concurrency(repo_id, name_key);
+
+-- Reverse references and ordered collection lookups.
+CREATE INDEX notification_threads_subject ON notification_threads(scope_repository_id,subject_type,subject_key,user_id);
+CREATE INDEX actions_blob_grants_object ON actions_blob_grants(object_id);
+CREATE INDEX actions_blob_grants_run ON actions_blob_grants(run_id);
+CREATE INDEX actions_artifacts_repository ON actions_objects(repo_id,kind,finalized,created_at,id);
+CREATE INDEX package_blob_grants_digest ON package_blob_grants(digest);
+CREATE INDEX package_blob_grants_expiry ON package_blob_grants(expires_at);
+CREATE INDEX vulnerability_jobs_due ON vulnerability_jobs(next_scan,repo_id);
+CREATE INDEX global_advisories_osv ON global_advisories(osv_id);
+CREATE INDEX project_items_issue ON project_items(issue_id,project_id);
+CREATE INDEX project_items_pull ON project_items(pull_request_id,project_id);
+CREATE INDEX project_items_repository ON project_items(repo_id);
+CREATE INDEX project_repositories_repository ON project_repositories(repo_id,project_id);
+CREATE INDEX discussion_comments_reply ON discussion_comments(reply_to_id);
+CREATE INDEX discussions_answer ON discussions(answer_id);
+CREATE INDEX issue_field_values_attribute ON issue_field_values(attribute_id);
+CREATE INDEX ci_accepted_pushes_history ON ci_accepted_pushes(repo_id,reference,sha,accepted_at DESC);
+CREATE INDEX stars_roster ON stars(repo_id,created_at DESC,user_id DESC);
+CREATE INDEX watches_roster ON watches(repo_id,created_at DESC,user_id DESC) WHERE level IN ('watching','custom');
+CREATE INDEX pull_requests_merged_commit ON pull_requests(repo_id,merge_commit_sha) WHERE merged;
+CREATE INDEX issue_comments_author_activity ON issue_comments(author_id,created_at DESC,id DESC);
+CREATE INDEX pr_comments_author_activity ON pr_comments(author_id,created_at DESC,id DESC);
+CREATE INDEX packages_deleted ON packages(deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX package_versions_deleted ON package_versions(deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX package_blobs_expiry ON package_blobs(expires_at);
+CREATE INDEX package_blobs_deleting ON package_blobs(digest) WHERE deleting;
+CREATE INDEX package_registry_tokens_expiry ON package_registry_tokens(expires_at);
+CREATE INDEX package_uploads_expiry ON package_uploads(expires_at);
