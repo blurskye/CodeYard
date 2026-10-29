@@ -273,7 +273,7 @@ static REF_CHANGES: LazyLock<Mutex<HashMap<PathBuf, usize>>> = LazyLock::new(Def
 static SIZE_REFRESHES: LazyLock<Mutex<HashMap<PathBuf, bool>>> = LazyLock::new(Default::default);
 
 /// Coalesce writes while a scan runs. Accounting never holds a publication lock or RefChange.
-fn refresh_storage_size(pool: db::DbPool, repo_id: i64, store: LocalStore) {
+pub(super) fn refresh_storage_size(pool: db::DbPool, repo_id: i64, store: LocalStore) {
     let path = store.path().to_owned();
     {
         let mut pending = SIZE_REFRESHES.lock().unwrap_or_else(|e| e.into_inner());
@@ -1871,8 +1871,8 @@ impl LocalStore {
         let commit = publication
             .scope(editor::publish(self.path(), prepared))
             .await?;
-        for hash in bypasses {
-            db::secret_scanning::use_bypass(pool, repo_id, actor, &hash, chrono::Utc::now())
+        for bypass in bypasses {
+            db::secret_scanning::use_bypass(pool, repo_id, actor, &bypass.hash, chrono::Utc::now())
                 .await
                 .map_err(RepoError::from)?;
         }

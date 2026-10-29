@@ -475,6 +475,11 @@ impl RepoStore {
         }
     }
 
+    /// Accepted primary writes share one coalesced accounting owner with file mutations.
+    pub(crate) fn refresh_storage_size(&self, pool: db::DbPool, repo_id: i64) {
+        if let Backend::Local(store) = &self.0 { local::refresh_storage_size(pool, repo_id, store.clone()); }
+    }
+
     /// Bytes the repository takes on disk.
     pub async fn size_bytes(&self) -> Result<u64, RepoError> {
         match &self.0 {

@@ -31,6 +31,9 @@ pub(crate) async fn push_document(
         .await?
         .context("push sender is unavailable")?;
     let sender = payloads::Person::of(&sender);
+    if is_zero_oid(&update.new) {
+        return Ok(payloads::push(&update.reference, update.old.as_deref().unwrap_or(ZERO_OID), ZERO_OID, &payloads::PushedCommits { commits: Vec::new(), head: None, forced: false }, repo, owner, &sender));
+    }
     let head = store.commit(&update.new).await?;
     // The webhook lists at most 20 commits, newest first.
     let (commits, forced) = match update.old.as_deref().filter(|old| !is_zero_oid(old)) {
@@ -61,7 +64,7 @@ pub(crate) async fn push_document(
     Ok(payloads::push(
         &update.reference,
         &old,
-        &head.sha,
+        &update.new,
         &commits,
         repo,
         owner,
@@ -146,10 +149,6 @@ impl CiRuns {
             return;
         }
         // A run's github.event is the push document the webhook sends.
-        let update = RefUpdate {
-            new: commit.sha.clone(),
-            ..update
-        };
         let event = match push_document(&self.pool, &store, repo, owner, actor_id, &update).await {
             Ok(event) => event,
             Err(error) => {
@@ -222,8 +221,8 @@ pub(crate) async fn matching_push_workflows(
     message: Option<&str>,
     budget: &mut WorkflowMatchBudget,
 ) -> Result<Vec<WorkflowDefinition>> {
-    // A skipped push needs neither the ref filters nor the changed paths.
-    if push_asks_to_skip(store, update, message).await {
+    // Deletions have no pushed commit whose message could skip the event.
+    if !is_zero_oid(&update.new) && push_asks_to_skip(store, update, message).await {
         return Ok(Vec::new());
     }
     let mut candidates = Vec::new();
@@ -234,7 +233,7 @@ pub(crate) async fn matching_push_workflows(
     }
     let needs_paths =
         !update.reference.starts_with("refs/tags/") && candidates.iter().any(filters_paths);
-    let changed = if !needs_paths {
+    let changed = if !needs_paths || is_zero_oid(&update.new) {
         Some(Vec::new())
     } else if update.old.is_some() && update.changed_paths.is_some() {
         update.changed_paths.clone()

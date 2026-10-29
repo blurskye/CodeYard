@@ -223,9 +223,7 @@ pub(super) async fn resolve(
     )
     .await??;
     if !enabled {
-        return Err(AdmissionError::Conflict(
-            "Actions are turned off for this repository",
-        ));
+        return Err(AdmissionError::WorkflowDisabled);
     }
     // Never trust the caller's repository name.
     request.repo_name = repo.name.clone();
