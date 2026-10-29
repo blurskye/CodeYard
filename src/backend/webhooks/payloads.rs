@@ -679,7 +679,8 @@ pub fn project_item(
     json!({"id": item.id, "node_id": node_id::encode("PVTI",item.id),
         "project_url": project_url, "item_url": format!("{project_url}/items/{}", item.id),
         "content_type": item.content_type(), "content": content, "creator": creator,
-        "created_at": time(item.created_at), "updated_at": time(item.updated_at), "archived_at": null})
+        "created_at": time(item.created_at), "updated_at": time(item.updated_at),
+        "is_archived": item.archived, "archived_at": optional_time(item.archived_at)})
 }
 
 pub fn project_draft(item: &crate::backend::db::projects::Item, creator: Value) -> Value {
