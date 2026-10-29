@@ -11,7 +11,7 @@ use crate::backend::{
 };
 use axum::{
     extract::{MatchedPath, OriginalUri, Path, Query, State},
-    http::HeaderMap,
+    http::{header, HeaderMap},
     response::{IntoResponse, Response},
     routing::{get, MethodRouter},
     Json,
@@ -50,7 +50,8 @@ fn document(
     count: i64,
     people: &HashMap<String, Person>,
 ) -> Value {
-    let parents = detail["parents"].take();
+    detail["parents"].take();
+    let parents: Vec<_> = commit.parents.iter().map(|sha| json!({"sha": sha, "url": format!("{}/commits/{sha}", repo_url(owner, name)), "html_url": format!("{}/{owner}/{name}/commit/{sha}", crate::backend::api::http::config::link_origin())})).collect();
     detail["comment_count"] = json!(count);
     json!({
         "sha": commit.sha, "node_id": super::node_id::git("C", &commit.sha),
@@ -123,8 +124,10 @@ pub(super) fn diff_files(
     owner: &str,
     name: &str,
     sha: &str,
+    base: Option<(&str, &str, &str)>,
 ) -> Vec<Value> {
     files.into_iter().map(|file| {
+        let (owner, name, sha) = if file.status == "removed" { base.unwrap_or((owner, name, sha)) } else { (owner, name, sha) };
         let mut value = json!({
             "sha": file.blob_sha, "filename": file.filename, "status": file.status,
             "additions": file.additions, "deletions": file.deletions, "changes": file.additions + file.deletions,
@@ -145,6 +148,8 @@ async fn read(
     headers: HeaderMap,
     Path((owner, name, reference)): Path<(String, String, String)>,
     route: MatchedPath,
+    Query(page): Query<Pagination>,
+    OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (owner, name, reference) = (&owner, &name, &reference);
     let (repo, _) = repository(&state, &headers, owner, name, false).await?;
@@ -159,8 +164,11 @@ async fn read(
     }
     let mut value = read_document(&state, repo.id, &commit, owner, name).await?;
     value["stats"] = json!({"additions":diff.additions,"deletions":diff.deletions,"total":diff.additions + diff.deletions});
-    value["files"] = json!(diff_files(diff.files, owner, name, &commit.sha));
-    Ok(Json(value).into_response())
+    let (offset, limit) = page.window()?;
+    let has_next = diff.files.len() > offset + limit;
+    let files = diff.files.into_iter().skip(offset).take(limit).collect();
+    value["files"] = json!(diff_files(files, owner, name, &commit.sha, commit.parents.first().map(|sha| (owner.as_str(), name.as_str(), sha.as_str()))));
+    Ok((page.headers(&uri, has_next)?, Json(value)).into_response())
 }
 
 #[derive(Deserialize)]
@@ -249,7 +257,7 @@ async fn blob(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, name, sha)): Path<(String, String, String)>,
-) -> Result<Json<Value>> {
+) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     if !crate::backend::git::is_full_commit_id(&sha) {
         return Err(Error::missing());
@@ -258,9 +266,12 @@ async fn blob(
         .blob_by_id(&sha)
         .await
         .map_err(store_error)?;
+    if headers.get(header::ACCEPT).and_then(|value| value.to_str().ok()).is_some_and(|value| value.contains("application/vnd.github.raw")) {
+        return Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response());
+    }
     Ok(Json(
         json!({"sha":sha.to_ascii_lowercase(),"node_id":super::node_id::git("B", &sha.to_ascii_lowercase()),"url":format!("{}/git/blobs/{sha}", repo_url(&owner, &name)),"size":bytes.len(),"encoding":"base64","content":STANDARD.encode(bytes)}),
-    ))
+    ).into_response())
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

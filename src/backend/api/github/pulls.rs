@@ -7,7 +7,7 @@ mod reviews;
 mod stacks;
 mod team_reviewers;
 use super::{
-    contents::{path_url, store_error},
+    contents::store_error,
     pagination::Pagination,
     repo_url, repository, Error, Result,
 };
@@ -371,19 +371,14 @@ async fn files(
         .await
         .map_err(store_error)?;
     let has_next = diff.files.len().min(3000) > offset + limit;
-    let items = diff.files.into_iter().take(3000).skip(offset).take(limit).map(|file| {
-        let mut value = json!({
-            "sha": file.blob_sha, "filename": file.filename, "status": file.status, "additions": file.additions, "deletions": file.deletions,
-            "changes": file.additions + file.deletions, "patch": file.patch,
-            "blob_url": format!("{}/{owner}/{name}/blob/{}/{}", crate::backend::api::http::config::link_origin(), pull.head_sha, path_url(&file.filename)),
-            "raw_url": format!("{}/{owner}/{name}/raw/{}/{}", crate::backend::api::http::config::link_origin(), pull.head_sha, path_url(&file.filename)),
-            "contents_url": format!("{}/contents/{}?ref={}", repo_url(&owner, &name), path_url(&file.filename), pull.head_sha),
-        });
-        if let Some(previous) = file.previous_filename {
-            value["previous_filename"] = json!(previous);
-        }
-        value
-    }).collect();
+    let files: Vec<_> = diff.files.into_iter().take(3000).skip(offset).take(limit).collect();
+    let base = if files.iter().any(|file| file.status == "removed") {
+        let store = repo_store(&repo, state.cluster.as_ref());
+        store.comparison_from(&store, pull.diff_base(), &pull.head_sha, 0, 0).await.map_err(store_error)?.merge_base_commit.sha
+    } else {
+        pull.diff_base().to_owned()
+    };
+    let items = super::commits::diff_files(files, &owner, &name, &pull.head_sha, Some((&owner, &name, &base)));
     page.response(&uri, items, has_next)
 }
 

@@ -34,16 +34,13 @@ pub(super) async fn side(
     let source = if source_owner == owner {
         base.clone()
     } else {
-        let (source, source_auth) =
-            repository(state, headers, source_owner, &base.name, false).await?;
-        // Job tokens and App credentials are bound to their repositories, so a readable fork
-        // still needs a grant.
-        if let Some(source_auth) = source_auth {
-            source_auth
-                .repository_scope(&state.pool, source.id, "contents", false)
-                .await
-                .map_err(auth::scope_error)?;
+        let mut candidates = crate::backend::db::repositories::discovery::comparison_forks(&state.pool, base.id, source_owner).await.map_err(Error::unavailable)?;
+        if candidates.is_empty() || (candidates.len() > 1 && candidates[0].name != base.name) {
+            return Err(Error::missing());
         }
+        let source = candidates.remove(0);
+        let source_auth = auth::authenticate(state, headers, false).await?;
+        auth::revalidate_repository(state, source_auth.as_ref(), source.id, "contents").await?;
         source
     };
     if !same_fork_network(&state.pool, base, &source)
@@ -161,8 +158,9 @@ async fn compare(
         value["files"] = json!(diff_files(
             diff.files,
             &head_owner,
-            &name,
-            &comparison.head_sha
+            &head_repo.name,
+            &comparison.head_sha,
+            Some((&base_owner, &base_repo.name, &comparison.merge_base_commit.sha))
         ));
     }
     let response_headers = if paginated {
