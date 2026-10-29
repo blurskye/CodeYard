@@ -1,5 +1,5 @@
 use crate::backend::db::packages::{
-    self, Blob, Credential, Listing, Owner, Package, Permission, Publish, Refusal, Upload, Version,
+    self, Actor, Blob, Credential, Listing, Owner, Package, Permission, Publish, Refusal, Upload, Version,
 };
 use anyhow::{ensure, Result};
 use sqlx::{Sqlite, SqlitePool, Transaction};
@@ -8,28 +8,6 @@ type Tx<'a> = Transaction<'a, Sqlite>;
 
 async fn begin(pool: &SqlitePool) -> Result<Tx<'_>> {
     Ok(pool.begin_with("BEGIN IMMEDIATE").await?)
-}
-
-struct Actor {
-    id: Option<i64>,
-    repo: Option<i64>,
-    /// A fine-grained token acts only on its resource owner's packages, as `(kind, id)`.
-    owner: Option<(&'static str, i64)>,
-}
-
-impl Actor {
-    const ANONYMOUS: Self = Self {
-        id: None,
-        repo: None,
-        owner: None,
-    };
-    /// A fine-grained token reads another owner's packages as an anonymous request would.
-    fn for_owner(self, kind: &str, id: Option<i64>) -> Self {
-        match self.owner {
-            Some((owner_kind, owner)) if owner_kind != kind || Some(owner) != id => Self::ANONYMOUS,
-            _ => self,
-        }
-    }
 }
 
 async fn actor<'a>(
@@ -53,6 +31,8 @@ async fn actor<'a>(
                 id: Some(id.ok_or(Refusal::Unauthorized)?),
                 repo: None,
                 owner: None,
+                selected: None,
+                classic: false,
             });
         }
     };
@@ -65,12 +45,16 @@ async fn actor<'a>(
     let write = !matches!(permission, Permission::Read);
     ensure!(!write || scope == "write", Refusal::Forbidden);
     let mut owner = None;
+    let mut selected = None;
+    let mut classic = name != crate::backend::db::ci_tokens::BOT;
     let bounds: Option<crate::backend::db::fine_grained_tokens::Bounds> =
         sqlx::query_as(super::fine_grained_tokens::BOUNDS)
             .bind(token)
             .fetch_optional(&mut **tx)
             .await?;
     if let Some(bounds) = bounds {
+        classic = false;
+        selected = (bounds.repository_access != "all").then_some(token);
         let permissions: serde_json::Map<String, serde_json::Value> =
             serde_json::from_str(&bounds.permissions)?;
         let level = permissions
@@ -88,9 +72,8 @@ async fn actor<'a>(
     }
     let mut repo = None;
     if name == crate::backend::db::ci_tokens::BOT {
-        let job: Option<(i64, String)> = sqlx::query_as("SELECT r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=$1 AND (t.revoked_at IS NULL OR t.revoked_at>CAST(strftime('%s','now') AS INTEGER)-60) AND (r.status='running' OR r.completed_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 minute'))")
-            .bind(token).fetch_optional(&mut **tx).await?;
-        let (repo_id, permissions) = job.ok_or(Refusal::Unauthorized)?;
+        let job = super::ci_tokens::get_in_connection(&mut *tx, token).await?.ok_or(Refusal::Unauthorized)?;
+        let (repo_id, permissions) = (job.repo_id, job.permissions);
         let permissions: crate::backend::ci::tokens::Permissions =
             serde_json::from_str(&permissions)?;
         ensure!(permissions.allows("packages", write), Refusal::Forbidden);
@@ -100,14 +83,13 @@ async fn actor<'a>(
         id: Some(id),
         repo,
         owner,
+        selected,
+        classic,
     })
 }
 
-fn read_condition() -> String {
-    // Public repository access alone does not make a private package public.
-    let access = super::repositories::access::USER_REPO_ACCESS_SQL
-        .replace("CASE WHEN NOT r.is_private THEN 1 ELSE 0 END", "0");
-    format!("((p.visibility='public' AND (p.repo_id IS NULL OR NOT r.is_private)) OR p.owner_user_id=u.id OR (p.owner_kind='user' AND u.is_admin) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=p.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin')) OR (p.repo_id IS NOT NULL AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id) AND ({access})>=1))")
+fn read_condition(actor: &Actor) -> String {
+    packages::read_condition(actor, super::repositories::access::USER_REPO_ACCESS_SQL)
 }
 
 async fn owner_level(tx: &mut Tx<'_>, package: &Package, user: i64) -> Result<i64> {
@@ -121,8 +103,8 @@ async fn owner_level(tx: &mut Tx<'_>, package: &Package, user: i64) -> Result<i6
             .await?;
         return Ok(if admin { 5 } else { 0 });
     }
-    let level: Option<i64> = sqlx::query_scalar("SELECT CASE m.role WHEN 'owner' THEN 6 WHEN 'admin' THEN 5 WHEN 'member' THEN CASE WHEN $3 THEN 1 WHEN $4 THEN 3 ELSE 0 END ELSE 0 END FROM org_memberships m WHERE m.org_id=$1 AND m.user_id=$2 AND EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=m.org_id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)")
-        .bind(package.owner_org_id).bind(user).bind(package.repo_id.is_some()).bind(package.visibility == "public").fetch_optional(&mut **tx).await?;
+    let level: Option<i64> = sqlx::query_scalar("SELECT CASE m.role WHEN 'owner' THEN 6 WHEN 'admin' THEN 5 WHEN 'member' THEN CASE WHEN $3 THEN 1 ELSE 0 END ELSE 0 END FROM org_memberships m WHERE m.org_id=$1 AND m.user_id=$2 AND EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=m.org_id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)")
+        .bind(package.owner_org_id).bind(user).bind(package.repo_id.is_some()).fetch_optional(&mut **tx).await?;
     Ok(level.unwrap_or(0))
 }
 
@@ -158,9 +140,14 @@ async fn authorize<'a>(
             .bind(repo).bind(&package.owner_kind).bind(package.owner_user_id.or(package.owner_org_id)).fetch_one(&mut **tx).await?;
         ensure!(same_owner, Refusal::Missing);
     }
-    let readable: bool = sqlx::query_scalar(&format!("SELECT COALESCE({},false) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.id=$1", read_condition()))
+    let readable: bool = sqlx::query_scalar(&format!("SELECT COALESCE({},false) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.id=$1", read_condition(&actor)))
         .bind(id).bind(actor.id).fetch_one(&mut **tx).await?;
     ensure!(readable, Refusal::Missing);
+    if !matches!(permission, Permission::Read) {
+        let scoped: bool = sqlx::query_scalar(&format!("SELECT {} FROM packages p WHERE p.id=$1", actor.scope_condition()))
+            .bind(id).fetch_one(&mut **tx).await?;
+        ensure!(scoped, Refusal::Forbidden);
+    }
     if !matches!(permission, Permission::Read) {
         let user = actor.id.ok_or(Refusal::Unauthorized)?;
         let mut level = owner_level(tx, &package, user).await?;
@@ -236,7 +223,7 @@ pub async fn list(
         None if actor.owner.is_some() => Actor::ANONYMOUS,
         None => actor,
     };
-    let rows = sqlx::query_as(&format!("SELECT p.* FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$5 WHERE ($1 IS NULL OR p.owner_kind=$1) AND ($2 IS NULL OR COALESCE(p.owner_user_id,p.owner_org_id)=$2) AND ($3 IS NULL OR p.package_type=$3) AND p.deleted_at IS NULL AND ($4 IS NULL OR p.visibility=$4) AND ($6 IS NULL OR (p.repo_id=$6 AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id))) AND ($9 IS NULL OR p.repo_id=$9) AND {} ORDER BY p.id DESC LIMIT $7 OFFSET $8",read_condition()))
+    let rows = sqlx::query_as(&format!("SELECT p.* FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$5 WHERE ($1 IS NULL OR p.owner_kind=$1) AND ($2 IS NULL OR COALESCE(p.owner_user_id,p.owner_org_id)=$2) AND ($3 IS NULL OR p.package_type=$3) AND p.deleted_at IS NULL AND ($4 IS NULL OR p.visibility=$4) AND ($6 IS NULL OR (p.repo_id=$6 AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id))) AND ($9 IS NULL OR p.repo_id=$9) AND {} ORDER BY p.id DESC LIMIT $7 OFFSET $8",read_condition(&actor)))
         .bind(query.owner.map(|o| o.kind.as_str())).bind(query.owner.map(|o| o.id)).bind(query.kind).bind(query.visibility).bind(actor.id).bind(actor.repo).bind(query.limit).bind(query.offset).bind(query.repo).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
@@ -255,7 +242,7 @@ pub async fn count_linked(
     } else {
         actor
     };
-    let count = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.repo_id=$1 AND p.deleted_at IS NULL AND ($3 IS NULL OR p.repo_id=$3) AND {}",read_condition()))
+    let count = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.repo_id=$1 AND p.deleted_at IS NULL AND ($3 IS NULL OR p.repo_id=$3) AND {}",read_condition(&actor)))
         .bind(repo).bind(actor.id).bind(actor.repo).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(count)
@@ -300,6 +287,9 @@ pub async fn create(
         Refusal::Forbidden
     );
     let user = actor.id.ok_or(Refusal::Unauthorized)?;
+    let scoped: bool = sqlx::query_scalar(&format!("SELECT {} FROM (SELECT $1 AS owner_org_id,$2 AS repo_id) p", actor.scope_condition()))
+        .bind(candidate.owner_org_id).bind(repo).fetch_one(&mut *tx).await?;
+    ensure!(scoped, Refusal::Forbidden);
     let owner_access = owner_level(&mut tx, &candidate, user).await?;
     let mut allowed = owner_access >= 3;
     if let Some(repo) = repo {
