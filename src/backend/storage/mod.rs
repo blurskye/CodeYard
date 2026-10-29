@@ -95,12 +95,12 @@ impl ObjectStore {
         loop {
             match store.ensure_bucket().await {
                 Ok(()) => return Ok(()),
-                Err(_) if attempt < 10 => {
-                    tracing::warn!(attempt, "S3 bucket preparation unavailable");
+                Err(error) if attempt < 10 => {
+                    tracing::warn!(attempt, error = %error, "S3 bucket preparation unavailable");
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     attempt += 1;
                 }
-                Err(_) => anyhow::bail!("S3 bucket preparation failed"),
+                Err(error) => return Err(error.context("S3 bucket preparation failed")),
             }
         }
     }
@@ -171,7 +171,7 @@ impl ObjectStore {
                 let signed = store
                     .presigned_put(upload, expires_in)
                     .await
-                    .map_err(|_| StorageError::Unavailable)?;
+                    .map_err(|error| { tracing::warn!(%error, "S3 upload signing failed"); StorageError::Unavailable })?;
                 Ok(UploadTarget {
                     url: signed.url,
                     headers: signed.headers,
@@ -189,7 +189,7 @@ impl ObjectStore {
         reader: impl AsyncRead + Unpin,
     ) -> Result<(), StorageError> {
         match &self.backend {
-            Backend::Local(store) => store.put(upload, reader).await,
+            Backend::Local(store) => store.put_guarded(upload, reader, Arc::new(self.try_acquire_io()?)).await,
             Backend::S3(_) => Err(StorageError::Rejected),
         }
     }
@@ -199,9 +199,9 @@ impl ObjectStore {
     /// storage is in use.
     pub async fn put_bytes(&self, upload: &Upload<'_>, bytes: Vec<u8>) -> Result<(), StorageError> {
         match &self.backend {
-            Backend::Local(store) => store.put(upload, bytes.as_slice()).await,
+            Backend::Local(store) => store.put_guarded(upload, bytes.as_slice(), Arc::new(self.try_acquire_io()?)).await,
             Backend::S3(store) => store
-                .put_object(upload, bytes)
+                .put_object(upload, bytes, Arc::new(self.try_acquire_io()?))
                 .await
                 .map_err(|_| StorageError::Unavailable),
         }
@@ -233,6 +233,23 @@ impl ObjectStore {
                     .await
                     .map_err(|_| StorageError::Unavailable)?,
             )),
+        }
+    }
+
+    /// Reads exactly the declared object length through one bounded response.
+    pub async fn read_object(&self, key: &str, length: usize) -> Result<Vec<u8>, StorageError> {
+        if !valid_key(key) || length > MAX_OBJECT_BYTES as usize { return Err(StorageError::Invalid); }
+        match &self.backend {
+            Backend::S3(store) => store.read_object(key, length).await.map_err(|_| StorageError::Unavailable),
+            Backend::Local(store) => {
+                use tokio::io::AsyncReadExt;
+                let (file, actual) = store.open_file(key).await?;
+                if actual != length as u64 { return Err(StorageError::Rejected); }
+                let mut bytes = Vec::with_capacity(length.min(64 * 1024));
+                file.take(length as u64 + 1).read_to_end(&mut bytes).await?;
+                if bytes.len() != length { return Err(StorageError::Rejected); }
+                Ok(bytes)
+            }
         }
     }
 
@@ -306,7 +323,8 @@ pub(crate) fn attachment_disposition(filename: &str) -> String {
             }
         })
         .collect();
-    format!("attachment; filename*=UTF-8''{encoded}")
+    let fallback: String = name.chars().map(|character| if character.is_ascii_alphanumeric() || " ._-".contains(character) { character } else { '_' }).collect();
+    format!("attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}")
 }
 
 /// Whether the first bytes match the declared image/PDF type, so a page can't

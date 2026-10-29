@@ -19,19 +19,21 @@ pub struct LocalStore {
     root: PathBuf,
 }
 
-struct TemporaryUpload(Option<tempfile::NamedTempFile>);
+type IoGuard = std::sync::Arc<tokio::sync::OwnedSemaphorePermit>;
+struct TemporaryUpload(Option<tempfile::NamedTempFile>, IoGuard);
 
 impl Drop for TemporaryUpload {
     fn drop(&mut self) {
         if let Some(temporary) = self.0.take() {
-            tokio::task::spawn_blocking(move || drop(temporary));
+            let guard = self.1.clone();
+            tokio::task::spawn_blocking(move || { let _guard = guard; drop(temporary); });
         }
     }
 }
 
 impl LocalStore {
     pub async fn open(root: &Path) -> Result<Self> {
-        create_directories(root)
+        create_directories(root, None)
             .await
             .with_context(|| format!("create object directory {}", root.display()))?;
         let root = tokio::fs::canonicalize(root).await?;
@@ -47,27 +49,34 @@ impl LocalStore {
 
     /// Streams into a temporary file and renames it into place only after the
     /// size, checksum and file signature check out.
-    pub async fn put(
+    #[cfg(test)]
+    pub async fn put(&self, upload: &Upload<'_>, reader: impl AsyncRead + Unpin) -> Result<(), StorageError> {
+        let guard = std::sync::Arc::new(std::sync::Arc::new(tokio::sync::Semaphore::new(1)).try_acquire_owned().unwrap());
+        self.put_guarded(upload, reader, guard).await
+    }
+
+    pub(super) async fn put_guarded(
         &self,
         upload: &Upload<'_>,
         mut reader: impl AsyncRead + Unpin,
+        guard: IoGuard,
     ) -> Result<(), StorageError> {
         if !(0..=MAX_OBJECT_BYTES).contains(&upload.bytes) {
             return Err(StorageError::Invalid);
         }
         let path = self.path(upload.key)?;
         let parent = path.parent().ok_or(StorageError::Invalid)?;
-        create_directories(parent).await?;
+        create_directories(parent, Some(guard.clone())).await?;
         // Partial files share one directory, so the cleanup finds the ones a crash leaves.
         let staging = self.root.join(STAGING_DIR);
-        create_directories(&staging).await?;
+        create_directories(&staging, Some(guard.clone())).await?;
         // tempfile is synchronous; keep a stalled disk off the async workers.
         let (mut temporary, file) = tokio::task::spawn_blocking(move || {
             let temporary = tempfile::Builder::new()
                 .prefix(TEMP_PREFIX)
                 .tempfile_in(staging)?;
             let file = temporary.reopen()?;
-            std::io::Result::Ok((TemporaryUpload(Some(temporary)), file))
+            std::io::Result::Ok((TemporaryUpload(Some(temporary), guard), file))
         })
         .await
         .map_err(|_| StorageError::Unavailable)??;
@@ -104,12 +113,13 @@ impl LocalStore {
         output.flush().await?;
         output.sync_all().await?;
         let target = path.clone();
+        let guard = temporary.1.clone();
         let temporary = temporary.0.take().ok_or(StorageError::Unavailable)?;
-        tokio::task::spawn_blocking(move || temporary.persist(target).map(drop).map_err(drop))
-            .await
-            .map_err(|_| StorageError::Unavailable)?
-            .map_err(|_| StorageError::Unavailable)?;
-        sync_directory(parent).await?;
+        tokio::task::spawn_blocking(move || {
+            let _guard = guard;
+            temporary.persist(&target).map_err(std::io::Error::other)?;
+            std::fs::File::open(target.parent().ok_or(std::io::ErrorKind::InvalidInput)?)?.sync_all()
+        }).await.map_err(|_| StorageError::Unavailable)??;
         Ok(())
     }
 
@@ -165,13 +175,14 @@ async fn sync_directory(path: &Path) -> std::io::Result<()> {
 }
 
 /// Flush only entries we create, not unrelated ancestors of an existing store.
-async fn create_directories(path: &Path) -> std::io::Result<()> {
+async fn create_directories(path: &Path, io: Option<IoGuard>) -> std::io::Result<()> {
     static CREATION: std::sync::OnceLock<std::sync::Arc<tokio::sync::Mutex<Vec<PathBuf>>>> = std::sync::OnceLock::new();
     let guard = CREATION.get_or_init(|| std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()))).clone().lock_owned().await;
     let path = path.to_owned();
     // The blocking job owns serialization through parent fsync, including if its request is
     // cancelled. Another put must not observe a directory before its parent entry is durable.
     tokio::task::spawn_blocking(move || {
+        let _io = io;
         let mut pending = guard;
         for directory in pending.iter() {
             std::fs::File::open(directory)?.sync_all()?;
