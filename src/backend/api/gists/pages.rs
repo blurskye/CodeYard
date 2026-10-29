@@ -92,7 +92,7 @@ async fn list_model(ctx: &PageContext) -> Result<view::Listing> {
     if let db::gists::ListScope::Owner(owner, true) = scope {
         domain::recover_owned(&ctx.state, owner).await?;
     }
-    let mut entries = db::gists::list(
+    let mut entries = db::gists::list_for_session(
         &ctx.state.pool,
         &db::gists::GistList {
             scope,
@@ -100,6 +100,7 @@ async fn list_model(ctx: &PageContext) -> Result<view::Listing> {
             limit: PAGE_SIZE as i64 + 1,
             offset: ((page - 1) * PAGE_SIZE) as i64,
         },
+        &session::extract_session_id(&ctx.headers).unwrap_or_default(),
     )
     .await?;
     let more = entries.len() > PAGE_SIZE;
