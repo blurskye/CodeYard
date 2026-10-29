@@ -559,9 +559,8 @@ pub async fn expire_objects(pool: &PgPool) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sqlx::query("DELETE FROM actions_objects WHERE id IN (SELECT id FROM actions_objects WHERE expires_at<=$1 OR (NOT finalized AND created_at<$2) ORDER BY id LIMIT 100)")
         .bind(now).bind(now-86400).execute(pool).await?;
-    sqlx::query("DELETE FROM actions_blob_grants WHERE expires_at<=$1")
-        .bind(now)
-        .execute(pool)
-        .await?;
+    sqlx::query("DELETE FROM actions_blob_grants WHERE token_hash IN (SELECT token_hash FROM actions_blob_grants WHERE expires_at<=$1 ORDER BY expires_at,token_hash LIMIT 1000)")
+        .bind(now).execute(pool).await?;
+    super::action_logs::expire(pool).await?;
     Ok(())
 }

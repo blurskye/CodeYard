@@ -1051,6 +1051,7 @@ CREATE TABLE IF NOT EXISTS ci_runs (
     workflow_run_id BIGINT REFERENCES ci_runs(id) ON DELETE CASCADE,
     workflow_run_attempt INTEGER,
     log_version BIGINT NOT NULL DEFAULT 0,
+    log_expires_at BIGINT CHECK (log_expires_at IS NULL OR completed_at IS NOT NULL),
     runner_labels TEXT NOT NULL DEFAULT '[]',
     runner_group TEXT,
     approval_required BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1061,6 +1062,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_runs_pull_revision ON ci_runs(pull_requ
     WHERE event = 'pull_request' AND pull_request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ci_runs_queue ON ci_runs(status, id) WHERE status IN ('queued', 'running');
 CREATE INDEX IF NOT EXISTS idx_ci_runs_repo_created_at ON ci_runs(repo_id, created_at DESC);
+CREATE INDEX ci_runs_log_expiry ON ci_runs(log_expires_at,id) WHERE log_expires_at IS NOT NULL AND log_lines>0;
 CREATE INDEX IF NOT EXISTS idx_ci_runs_user_created_at ON ci_runs(triggered_by_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ci_runs_status ON ci_runs(status);
 CREATE INDEX IF NOT EXISTS idx_ci_runs_push_user_created_at ON ci_runs(triggered_by_id, created_at DESC)

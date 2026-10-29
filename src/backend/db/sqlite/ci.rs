@@ -719,6 +719,7 @@ pub(super) async fn finish_in_tx(
     let Some(finished) = finished else {
         return Ok(None);
     };
+    super::action_logs::retain_completed(tx, run.repo_id, run.id).await?;
     super::action_jobs::close_active(tx, run.id).await?;
     super::runners::retire(tx, run.worker.as_deref()).await?;
     if is_deployment(run) {
@@ -1023,14 +1024,14 @@ pub async fn delete_ci_run_data(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         CiAdmissionRefusal::Denied("CI run deletion permission denied")
     );
-    let statuses:Vec<String>=sqlx::query_scalar("SELECT status FROM ci_runs WHERE repo_id=$1 AND COALESCE(workflow_run_id,id)=$2 ORDER BY id").bind(repo).bind(id).fetch_all(&mut *tx).await?;
+    let statuses: Vec<(i64, String)> = sqlx::query_as("SELECT id,status FROM ci_runs WHERE repo_id=$1 AND COALESCE(workflow_run_id,id)=$2 ORDER BY id").bind(repo).bind(id).fetch_all(&mut *tx).await?;
     if statuses.is_empty() {
         return Ok(false);
     }
     ensure!(
         statuses
             .iter()
-            .all(|status| !matches!(status.as_str(), "queued" | "running")),
+            .all(|(_, status)| !matches!(status.as_str(), "queued" | "running")),
         CiAdmissionRefusal::Conflict("Cannot delete an active workflow run or its logs")
     );
     let operation = match kind {
@@ -1042,16 +1043,8 @@ pub async fn delete_ci_run_data(
             "delete"
         }
         CiRunDeletion::Logs => {
-            sqlx::query("DELETE FROM ci_logs WHERE run_id IN (SELECT id FROM ci_runs WHERE COALESCE(workflow_run_id,id)=$1)")
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query(
-                "UPDATE ci_runs SET log_lines=0,log_bytes=0,log_version=log_version+1 WHERE COALESCE(workflow_run_id,id)=$1",
-            )
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+            let runs: Vec<i64> = statuses.iter().map(|(id, _)| *id).collect();
+            super::action_logs::clear(&mut tx, &runs).await?;
             "delete_logs"
         }
     };
@@ -1365,7 +1358,7 @@ pub async fn append_ci_logs(
 pub async fn list_ci_logs(pool: &SqlitePool, run_id: i64, limit: i64) -> Result<Vec<CiLogLine>> {
     ensure!(limit >= 0, "Result limit must be nonnegative");
     let rows = sqlx::query_as::<_, CiLogLine>(
-        "SELECT * FROM ci_logs WHERE run_id = ?1 ORDER BY id DESC LIMIT ?2",
+        "SELECT l.* FROM ci_logs l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=?1 AND (r.log_expires_at IS NULL OR r.log_expires_at>CAST(strftime('%s','now') AS INTEGER)) ORDER BY l.id DESC LIMIT ?2",
     )
     .bind(run_id)
     .bind(limit)
@@ -1420,7 +1413,7 @@ pub async fn list_ci_log_history(
         "invalid CI history cursor/window"
     );
     Ok(sqlx::query_as::<_, CiLogLine>(
-        "SELECT * FROM ci_logs WHERE run_id = ?1 AND id > ?2 ORDER BY id LIMIT ?3",
+        "SELECT l.* FROM ci_logs l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=?1 AND l.id>?2 AND (r.log_expires_at IS NULL OR r.log_expires_at>CAST(strftime('%s','now') AS INTEGER)) ORDER BY l.id LIMIT ?3",
     )
     .bind(run_id)
     .bind(after)

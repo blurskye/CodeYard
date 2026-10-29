@@ -5,6 +5,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 
+pub(crate) const RETENTION_BATCH: i64 = 8;
+
 #[derive(Clone, Copy)]
 pub struct Target {
     pub run: i64,

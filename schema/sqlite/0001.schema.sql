@@ -798,6 +798,7 @@ CREATE TABLE ci_runs (
     workflow_run_id INTEGER REFERENCES ci_runs(id) ON DELETE CASCADE,
     workflow_run_attempt INTEGER,
     log_version INTEGER NOT NULL DEFAULT 0,
+    log_expires_at INTEGER CHECK (log_expires_at IS NULL OR completed_at IS NOT NULL),
     runner_labels TEXT NOT NULL DEFAULT '[]',
     runner_group TEXT,
     approval_required BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1052,6 +1053,7 @@ CREATE INDEX idx_notifications_user_done ON notifications(user_id, done_at, crea
 CREATE INDEX idx_notifications_actor_id ON notifications(actor_id);
 
 CREATE INDEX idx_ci_runs_repo_created_at ON ci_runs(repo_id, created_at DESC);
+CREATE INDEX ci_runs_log_expiry ON ci_runs(log_expires_at,id) WHERE log_expires_at IS NOT NULL AND log_lines>0;
 
 CREATE INDEX idx_ci_runs_user_created_at ON ci_runs(triggered_by_id, created_at DESC);
 
