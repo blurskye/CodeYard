@@ -96,6 +96,7 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
     let base = repo.base();
     let raw = file_url(&base, "raw", &page.reference, &page.path);
     let url = file_url(&base, "blob", &page.reference, &page.path);
+    let preview_url = if page.permalink.is_empty() { &url } else { &page.permalink };
     let blame = file_url(&base, "blame", &page.reference, &page.path);
     let edit = file_url(&base, "edit", &page.reference, &page.path);
     let delete = file_url(&base, "delete", &page.reference, &page.path);
@@ -220,8 +221,8 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
         if page.truncated { p { class: "text-sm text-muted-foreground", "Showing a bounded preview starting at byte {page.offset}." if downloadable { " Raw contains the complete file." } } }
         if page.previous.is_some() || page.next.is_some() {
             nav { class: "flex gap-4", "aria-label": "File preview",
-                if let Some(offset) = page.previous { NavLink { href: format!("{url}?offset={offset}"), "Previous" } }
-                if let Some(offset) = page.next { NavLink { href: format!("{url}?offset={offset}"), "Next" } }
+                if let Some(offset) = page.previous { NavLink { href: format!("{preview_url}?offset={offset}"), "Previous" } }
+                if let Some(offset) = page.next { NavLink { href: format!("{preview_url}?offset={offset}"), "Next" } }
             }
         }
     };

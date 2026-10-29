@@ -271,7 +271,7 @@ fn form_field(index: usize, field: &FormField) -> Element {
                     DraftTextarea { id: id.clone(), name, required: field.required, rows: 6, placeholder: field.placeholder.clone(), initial_value: first, class: "collaboration-input" }
                 },
                 _ => rsx! {
-                    DraftSelect { id: id.clone(), name, required: field.required, initial_value: first, options: field.options.iter().map(|label| SelectOption::new(label.clone(), label.clone())).collect::<Vec<_>>() }
+                    DraftSelect { id: id.clone(), name, required: field.required, initial_value: first, options: std::iter::once(SelectOption::new("", "Select an answer")).chain(field.options.iter().map(|label| SelectOption::new(label.clone(), label.clone()))).collect::<Vec<_>>() }
                 },
             }
         }
