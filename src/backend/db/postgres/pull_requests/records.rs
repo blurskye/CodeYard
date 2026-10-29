@@ -152,6 +152,11 @@ pub async fn approve_pull_request_workflows(
     {
         return Ok(false);
     }
+    let fork: bool = sqlx::query_scalar("SELECT head_repo_id IS NULL OR head_repo_id<>repo_id FROM pull_requests WHERE id=$1")
+        .bind(pr_id).fetch_one(&mut *tx).await?;
+    if fork && !super::super::action_settings::fork_runs_allowed(&mut tx, repo).await? {
+        return Ok(false);
+    }
     let changed = sqlx::query("UPDATE pull_requests SET workflows_approved_sha = $2 WHERE id = $1 AND head_sha = $2 AND state = 'open' AND NOT is_draft")
         .bind(pr_id).bind(head).execute(&mut *tx).await?.rows_affected() == 1;
     tx.commit().await?;
