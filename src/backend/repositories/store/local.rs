@@ -932,8 +932,9 @@ impl LocalStore {
         &self,
         git_ref: &str,
         limit: usize,
+        query: &str,
     ) -> Result<FileList, RepoError> {
-        git::list_file_paths(self.path(), git_ref, limit)
+        git::list_file_paths(self.path(), git_ref, limit, query)
             .await
             .map_err(RepoError::from)
     }

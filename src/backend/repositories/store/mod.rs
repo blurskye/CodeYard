@@ -643,13 +643,22 @@ impl RepoStore {
 
     /// Every file path at `git_ref`, sorted. The listing keeps at most `limit` paths.
     pub async fn file_paths(&self, git_ref: &str, limit: usize) -> Result<FileList, RepoError> {
+        self.file_paths_matching(git_ref, "", limit).await
+    }
+
+    /// Match across the entire tree before retaining the bounded sorted result.
+    pub async fn file_paths_matching(&self, git_ref: &str, query: &str, limit: usize) -> Result<FileList, RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.file_paths(git_ref, limit).await,
+            Backend::Local(local) => local.file_paths(git_ref, limit, query).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
                         Operation::FilePaths {
-                            git_ref: git_ref.into(),
+                            git_ref: if query.is_empty() {
+                                git_ref.into()
+                            } else {
+                                rpc::wire::FilePathQuery::Filtered { reference: git_ref.into(), query: query.into() }
+                            },
                             limit,
                             raw_json: true,
                         },
