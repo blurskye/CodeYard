@@ -149,11 +149,11 @@ async fn create(
     Json(input): Json<Content>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
-    let target = target(&state.pool, repo.id, &p, route.as_str(), Some(actor.id)).await?;
+    let actor = auth.ok_or_else(auth::required)?;
+    let target = target(&state.pool, repo.id, &p, route.as_str(), Some(actor.user.id)).await?;
     validate(target.subject, &input.content)?;
     let (reaction, created) =
-        db::reactions::create_reaction(&state.pool, actor.id, target, &input.content)
+        db::reactions::create_reaction(&state.pool, actor.user.id, &actor.credential(), target, &input.content)
             .await
             .map_err(write_error)?;
     Ok((
@@ -217,10 +217,10 @@ async fn remove(
     route: MatchedPath,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
-    let target = target(&state.pool, repo.id, &p, route.as_str(), Some(actor.id)).await?;
+    let actor = auth.ok_or_else(auth::required)?;
+    let target = target(&state.pool, repo.id, &p, route.as_str(), Some(actor.user.id)).await?;
     let id = p["reaction_id"].parse().map_err(|_| Error::missing())?;
-    if !db::reactions::delete_reaction(&state.pool, actor.id, target, id)
+    if !db::reactions::delete_reaction(&state.pool, actor.user.id, &actor.credential(), target, id)
         .await
         .map_err(write_error)?
     {

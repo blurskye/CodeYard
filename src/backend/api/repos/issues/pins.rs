@@ -37,6 +37,7 @@ pub(crate) async fn native_pin(
     db::pins::set_pin(
         &ctx.state.pool,
         ctx.require_user()?.id,
+        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
         repo.record.id,
         item,
         comment,

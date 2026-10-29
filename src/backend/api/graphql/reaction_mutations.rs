@@ -70,7 +70,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     };
     let actor = request.auth.user.id;
     let reaction = if field == "addReaction" {
-        let (row, _) = db::reactions::create_reaction(pool, actor, target, content)
+        let (row, _) = db::reactions::create_reaction(pool, actor, &request.auth.credential(), target, content)
             .await
             .map_err(|e| github::reactions::write_error(e).graphql())?;
         super::node_objects::database("REA", row.id, request).await?
@@ -79,7 +79,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         .map_err(unavailable)?
     {
         let object = super::node_objects::database("REA", row.id, request).await?;
-        db::reactions::delete_reaction(pool, actor, target, row.id)
+        db::reactions::delete_reaction(pool, actor, &request.auth.credential(), target, row.id)
             .await
             .map_err(|e| github::reactions::write_error(e).graphql())?;
         object
