@@ -279,7 +279,7 @@ pub async fn authenticate(pool: &DbPool, value: &str) -> anyhow::Result<Option<A
         Value::Number(value) => value.to_string(),
         _ => return Ok(None),
     };
-    let Some(app) = db::github_apps::app(pool, &issuer).await? else {
+    let Some(app) = db::github_apps::app_issuer(pool, &issuer).await? else {
         return Ok(None);
     };
     // Slugs are discovery identifiers, not JWT issuers.
