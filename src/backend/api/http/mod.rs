@@ -3,6 +3,7 @@
 pub(crate) mod config;
 pub(crate) mod context;
 pub(crate) mod csrf;
+pub(crate) mod credentials;
 pub(crate) mod error;
 pub(crate) mod interaction_proofs;
 pub(crate) mod middleware;

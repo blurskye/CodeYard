@@ -113,11 +113,7 @@ fn valid_name(name: &str) -> bool {
 }
 
 async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<RuntimeRun, Error> {
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or_else(denied)?;
+    let token = crate::backend::api::http::credentials::bearer(headers).ok_or_else(denied)?;
     objects::authenticate(&state.pool, &runtime::token_hash(token))
         .await?
         .ok_or_else(denied)

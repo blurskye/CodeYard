@@ -43,14 +43,7 @@ async fn token(
     headers: HeaderMap,
     Query(input): Query<Audience>,
 ) -> Result<(HeaderMap, Json<Value>), StatusCode> {
-    let credential = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split_once(' '))
-        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
-        .map(|(_, credential)| credential)
-        .filter(|v| v.len() <= 4096)
-        .ok_or(StatusCode::FORBIDDEN)?;
+    let credential = crate::backend::api::http::credentials::bearer(&headers).ok_or(StatusCode::FORBIDDEN)?;
     if input
         .audience
         .as_ref()
