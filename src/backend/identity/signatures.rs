@@ -84,13 +84,7 @@ async fn owner_address(pool: &DbPool, owner: i64, email: &str) -> Result<&'stati
         .await?
         .into_iter()
         // Generated addresses name a username, which account lookup matches exactly.
-        .filter(|(address, _)| {
-            if address.ends_with("@users.noreply") {
-                address == email
-            } else {
-                address.eq_ignore_ascii_case(email)
-            }
-        })
+        .filter(|(address, _)| super::credentials::email_matches(address, email))
         .map(|(_, verified)| verified)
         .collect();
     // A verified match wins even when an unverified entry with the same text comes first.
