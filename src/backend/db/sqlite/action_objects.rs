@@ -497,17 +497,19 @@ pub async fn cache_usage(pool: &SqlitePool, repo: i64) -> Result<(i64, i64)> {
 
 pub async fn grant_artifact_download(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     id: i64,
     hash: &str,
 ) -> Result<bool> {
+    let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND {})", super::repositories::access::readable_condition()))
-        .bind(actor).bind(repo).fetch_one(&mut *tx).await?;
+        .bind(actor.user_id).bind(repo).fetch_one(&mut *tx).await?;
     if !readable {
         return Ok(false);
     }
+    if !super::credentials::repository(&mut tx, &actor, repo, "actions", false).await? { return Ok(false); }
     let changed = sqlx::query("INSERT INTO actions_blob_grants(token_hash,object_id,run_id,write,expires_at) SELECT $1,id,run_id,FALSE,CAST(strftime('%s','now') AS INTEGER)+60 FROM actions_objects WHERE id=$2 AND repo_id=$3 AND kind='artifact' AND finalized AND expires_at>CAST(strftime('%s','now') AS INTEGER)")
         .bind(hash).bind(id).bind(repo).execute(&mut *tx).await?.rows_affected()==1;
     tx.commit().await?;

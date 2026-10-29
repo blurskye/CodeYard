@@ -1,16 +1,17 @@
-use crate::backend::db::action_logs::{Grant, Job, Line, Manifest, Snapshot, Step, Target};
+use crate::backend::db::action_logs::{Grant, Job, Line, Manifest, ObservedStep, Snapshot, Target};
 use anyhow::{ensure, Result};
 use sqlx::{types::Json, PgPool};
 
 pub async fn issue(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     resource: &str,
     target: Target,
     hash: &str,
 ) -> Result<bool> {
     use super::repositories::access::{lock_user_repo_access_in_transaction, RepositoryRowLock};
+    let actor = actor.into();
     ensure!(
         resource.len() <= 4096
             && hash.len() == 64
@@ -24,11 +25,12 @@ pub async fn issue(
         .execute(&mut *tx)
         .await?;
     let authority =
-        lock_user_repo_access_in_transaction(&mut tx, actor, repo, RepositoryRowLock::Shared, true)
+        lock_user_repo_access_in_transaction(&mut tx, actor.user_id, repo, RepositoryRowLock::Shared, true)
             .await?;
     if !authority.is_some_and(|a| a.access.can_read() || (!a.organization && a.is_admin)) {
         return Ok(false);
     }
+    if !super::credentials::repository(&mut tx, &actor, repo, "actions", false).await? { return Ok(false); }
     let version: Option<i64> =
         sqlx::query_scalar("SELECT log_version FROM ci_runs WHERE id=$1 AND repo_id=$2")
             .bind(target.run)
@@ -41,24 +43,17 @@ pub async fn issue(
     if version > 0 {
         return Ok(false);
     }
-    let mut jobs:Vec<Job>=sqlx::query_as("SELECT id,name FROM actions_jobs WHERE run_id=$1 AND started_at IS NOT NULL AND ($2::bigint IS NULL OR id=$2) ORDER BY id").bind(target.run).bind(target.job).fetch_all(&mut *tx).await?;
+    let jobs:Vec<Job>=sqlx::query_as("SELECT id,name FROM actions_jobs WHERE run_id=$1 AND started_at IS NOT NULL AND ($2::bigint IS NULL OR id=$2) ORDER BY id").bind(target.run).bind(target.job).fetch_all(&mut *tx).await?;
     if target.job.is_some() && jobs.len() != 1 {
         return Ok(false);
     }
-    for job in &mut jobs {
-        job.steps=sqlx::query_as::<_,Step>("SELECT number,name,started_at,completed_at FROM actions_steps WHERE job_id=$1 ORDER BY number").bind(job.id).fetch_all(&mut *tx).await?;
-        if target
-            .step
-            .is_some_and(|number| !job.steps.iter().any(|step| step.number == number))
-        {
-            return Ok(false);
-        }
-    }
+    let steps = sqlx::query_as::<_, ObservedStep>("SELECT s.job_id,s.number,s.name,s.started_at,s.completed_at FROM actions_steps s JOIN actions_jobs j ON j.id=s.job_id WHERE j.run_id=$1 AND j.started_at IS NOT NULL AND ($2::bigint IS NULL OR j.id=$2) ORDER BY s.job_id,s.number")
+        .bind(target.run).bind(target.job).fetch_all(&mut *tx).await?;
+    let Some(manifest) = Manifest::capture(jobs, steps, target.step) else { return Ok(false); };
     let max:i64=sqlx::query_scalar("SELECT COALESCE(MAX(id),0) FROM ci_logs WHERE run_id=$1 AND ($2::bigint IS NULL OR job_id=$2) AND ($3::integer IS NULL OR step_number=$3)").bind(target.run).bind(target.job).bind(target.step).fetch_one(&mut *tx).await?;
     if target.job.is_none() && max == 0 {
         return Ok(false);
     }
-    let manifest = Manifest { jobs };
     ensure!(
         serde_json::to_vec(&manifest)?.len() <= 16 * 1024 * 1024,
         "log manifest exceeds native limits"

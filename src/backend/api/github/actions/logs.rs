@@ -151,12 +151,12 @@ async fn download(
             {
                 return Err(Error::missing());
             }
-            (repo, user.id)
+            (repo, db::credentials::Actor::from((user.id, session::extract_session_id(&headers).unwrap_or_default())))
         } else {
             let (repo, authentication) = repository(&state, &headers, owner, name, false).await?;
             (
                 repo,
-                authentication.as_ref().ok_or_else(auth::required)?.user.id,
+                authentication.as_ref().ok_or_else(auth::required)?.database_actor(&headers)?,
             )
         };
     if query.after.is_some() && params.contains_key("job_id") {

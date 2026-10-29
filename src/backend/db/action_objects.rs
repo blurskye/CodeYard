@@ -155,7 +155,7 @@ native_operation!(crate::backend::db::postgres::action_objects::cache_usage,
     fn cache_usage(pool: &DbPool, repo: i64) -> Result<(i64, i64)>);
 native_operation!(crate::backend::db::postgres::action_objects::grant_artifact_download,
     crate::backend::db::sqlite::action_objects::grant_artifact_download,
-    fn grant_artifact_download(pool: &DbPool, actor: i64, repo: i64, id: i64, hash: &str) -> Result<bool>);
+    fn grant_artifact_download(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, id: i64, hash: &str) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::action_objects::expire_objects,
     crate::backend::db::sqlite::action_objects::expire_objects,
     fn expire_objects(pool: &DbPool) -> Result<()>);
