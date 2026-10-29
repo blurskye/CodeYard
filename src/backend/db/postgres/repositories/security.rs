@@ -35,6 +35,12 @@ async fn authority(
     );
     Ok((!a.organization || a.organization_usable) && (a.access.can_admin() || personal))
 }
+async fn retain_credential(tx: &mut Transaction<'_, Postgres>, actor: &crate::backend::db::users::accounts::AccountActor) -> Result<()> {
+    if let Some(credential) = actor.credential() {
+        crate::backend::db::postgres::users::transitions::require_account(tx, actor.user_id(), &credential).await?;
+    }
+    Ok(())
+}
 pub async fn enabled(pool: &PgPool, repo: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_private_reporting p JOIN repositories r ON r.id=p.repo_id WHERE r.id=$1 AND NOT r.is_private)").bind(repo).fetch_one(pool).await?)
 }
@@ -83,12 +89,14 @@ pub async fn set_enabled(pool: &PgPool, actor: impl Into<crate::backend::db::use
 }
 pub async fn create_report(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     input: &NewReport<'_>,
 ) -> Result<i64> {
     let mut tx = pool.begin().await?;
-    let id = create_report_in(&mut tx, actor, repo, input).await?;
+    let actor = actor.into();
+    let id = create_report_in(&mut tx, actor.user_id(), repo, input).await?;
+    retain_credential(&mut tx, &actor).await?;
     tx.commit().await?;
     Ok(id)
 }
@@ -107,13 +115,16 @@ pub(crate) async fn create_report_in(
 }
 pub async fn list_reports(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Report>> {
+    let retained = actor.into();
+    let actor = retained.user_id();
     let mut tx = pool.begin().await?;
     let admin = authority(&mut tx, actor, repo, false).await?;
+    retain_credential(&mut tx, &retained).await?;
     let rows=sqlx::query_as::<_,Report>("SELECT s.*,u.username AS reporter FROM repository_security_reports s LEFT JOIN users u ON u.id=s.reporter_id WHERE s.repo_id=$1 AND (s.reporter_id=$2 OR $3) ORDER BY s.id DESC LIMIT $4 OFFSET $5").bind(repo).bind(actor).bind(admin).bind(limit.clamp(1,101)).bind(offset.clamp(0,100000)).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
@@ -129,22 +140,28 @@ async fn report_in(
 }
 pub async fn report_thread(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     id: i64,
     offset: i64,
 ) -> Result<Thread> {
+    let retained = actor.into();
+    let actor = retained.user_id();
     let mut tx = pool.begin().await?;
     let admin = authority(&mut tx, actor, repo, false).await?;
+    retain_credential(&mut tx, &retained).await?;
     let report = report_in(&mut tx, actor, repo, id, admin).await?;
     let replies=sqlx::query_as::<_,Reply>("SELECT s.*,u.username AS author FROM repository_security_replies s LEFT JOIN users u ON u.id=s.author_id WHERE s.report_id=$1 ORDER BY s.id LIMIT 21 OFFSET $2").bind(id).bind(offset.clamp(0,100000)).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Thread { report, replies })
 }
-pub async fn reply(pool: &PgPool, actor: i64, repo: i64, id: i64, body: &str) -> Result<()> {
+pub async fn reply(pool: &PgPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo: i64, id: i64, body: &str) -> Result<()> {
     crate::backend::db::repositories::security::validate_body(body)?;
+    let retained = actor.into();
+    let actor = retained.user_id();
     let mut tx = pool.begin().await?;
     let admin = authority(&mut tx, actor, repo, true).await?;
+    retain_credential(&mut tx, &retained).await?;
     let report = report_in(&mut tx, actor, repo, id, admin).await?;
     anyhow::ensure!(
         report.state == "open",
@@ -171,9 +188,12 @@ pub async fn reply(pool: &PgPool, actor: i64, repo: i64, id: i64, body: &str) ->
     tx.commit().await?;
     Ok(())
 }
-pub async fn set_state(pool: &PgPool, actor: i64, repo: i64, id: i64, closed: bool) -> Result<()> {
+pub async fn set_state(pool: &PgPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo: i64, id: i64, closed: bool) -> Result<()> {
+    let retained = actor.into();
+    let actor = retained.user_id();
     let mut tx = pool.begin().await?;
     let admin = authority(&mut tx, actor, repo, true).await?;
+    retain_credential(&mut tx, &retained).await?;
     report_in(&mut tx, actor, repo, id, admin).await?;
     sqlx::query("UPDATE repository_security_reports SET state=$2,updated_at=NOW() WHERE id=$1")
         .bind(id)

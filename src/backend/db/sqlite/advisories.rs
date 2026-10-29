@@ -52,7 +52,7 @@ pub async fn get(
 }
 pub async fn create(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     value: &Value,
     report: bool,
@@ -62,6 +62,8 @@ pub async fn create(
         anyhow::ensure!(!report && fork.is_boolean(), Refusal::Invalid);
     }
     let data = Data::parse(value, None, report)?;
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let report_id = if report {
         let input = crate::backend::db::repositories::security::NewReport::new(
@@ -76,6 +78,9 @@ pub async fn create(
         );
         None
     };
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     let row=sqlx::query_as("INSERT INTO repository_advisories(repo_id,ghsa_id,author_id,state,document,report_id) VALUES(?1,?2,?3,?4,?5,?6) RETURNING *").bind(repo).bind(identifier()).bind(actor).bind(if report {"triage"} else {"draft"}).bind(serde_json::to_string(&data)?).bind(report_id).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(row)
@@ -101,14 +106,19 @@ async fn administration(
 }
 pub async fn update(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     ghsa: &str,
     patch: &Value,
 ) -> Result<Advisory> {
     anyhow::ensure!(patch.get("start_private_fork").is_none(), Refusal::Invalid);
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     let previous = Data::from_row(&row)?;
     let data = Data::parse(patch, Some(&previous), false)?;
     let state = if let Some(state) = patch.get("state") {
@@ -157,15 +167,22 @@ pub async fn update(
         None
     };
     let updated=sqlx::query_as("UPDATE repository_advisories SET document=?3,state=?4,updated_at=?5,published_at=?6,publisher_id=?7,closed_at=?8,report_accepted=?9 WHERE repo_id=?1 AND ghsa_id=?2 RETURNING *").bind(repo).bind(ghsa).bind(serde_json::to_string(&data)?).bind(state).bind(now).bind(published_at).bind(publisher).bind(closed_at).bind(row.report_accepted||(row.state=="triage"&&state=="draft")).fetch_one(&mut *tx).await?;
-    if let Some(report) = row.report_id {
-        sqlx::query("UPDATE repository_security_reports SET state=?2,updated_at=?3 WHERE id=?1 AND repo_id=?4").bind(report).bind(if state=="closed" {"closed"} else {"open"}).bind(now).bind(repo).execute(&mut *tx).await?;
+    if state != row.state {
+        if let Some(report) = row.report_id {
+            sqlx::query("UPDATE repository_security_reports SET state=?2,updated_at=?3 WHERE id=?1 AND repo_id=?4").bind(report).bind(if state=="closed" {"closed"} else {"open"}).bind(now).bind(repo).execute(&mut *tx).await?;
+        }
     }
     tx.commit().await?;
     Ok(updated)
 }
-pub async fn request_cve(pool: &SqlitePool, actor: i64, repo: i64, ghsa: &str) -> Result<()> {
+pub async fn request_cve(pool: &SqlitePool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo: i64, ghsa: &str) -> Result<()> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     anyhow::ensure!(
         row.state == "draft"
             && row.cve_requested_at.is_none()

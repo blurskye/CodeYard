@@ -27,6 +27,9 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 pub(super) fn failure(error: anyhow::Error) -> Error {
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return Error::new(StatusCode::FORBIDDEN, "A live unrestricted credential is required");
+    }
     match error.downcast_ref::<advisories::Refusal>() {
         Some(advisories::Refusal::Denied) => {
             return Error::new(StatusCode::FORBIDDEN, "Advisory administration denied")
@@ -316,7 +319,7 @@ async fn create(
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     let actor = actor.ok_or_else(auth::required)?;
     let report = uri.path().ends_with("/reports");
-    let mut row = advisories::create(&state.pool, actor.user.id, repo.id, &value, report)
+    let mut row = advisories::create(&state.pool, crate::backend::db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id }, repo.id, &value, report)
         .await
         .map_err(failure)?;
     if value["start_private_fork"] == true {
@@ -345,7 +348,7 @@ async fn update(
     let actor = actor.ok_or_else(auth::required)?;
     let row = advisories::update(
         &state.pool,
-        actor.user.id,
+        crate::backend::db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id },
         repo.id,
         &params["ghsa_id"],
         &value,
@@ -363,7 +366,7 @@ async fn cve(
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     advisories::request_cve(
         &state.pool,
-        actor.ok_or_else(auth::required)?.user.id,
+        { let actor = actor.ok_or_else(auth::required)?; crate::backend::db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id } },
         repo.id,
         &params["ghsa_id"],
     )
