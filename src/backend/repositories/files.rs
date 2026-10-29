@@ -234,7 +234,10 @@ pub fn free_branch_name(username: &str, refs: &HashMap<String, String>) -> Strin
             !refs.contains_key(&reference)
                 && !refs
                     .keys()
-                    .any(|existing| existing.starts_with(&format!("{reference}/")))
+                    .any(|existing| {
+                        existing.strip_prefix(&reference).is_some_and(|tail| tail.starts_with('/'))
+                            || reference.strip_prefix(existing).is_some_and(|tail| tail.starts_with('/'))
+                    })
         })
         .unwrap_or_default()
 }

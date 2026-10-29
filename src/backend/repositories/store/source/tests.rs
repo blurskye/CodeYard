@@ -72,9 +72,9 @@ fn transfers_ignore_progress_but_not_remote_errors() {
     bytes.extend_from_slice(format!("{:04x}", data.len() + 4).as_bytes());
     bytes.extend_from_slice(&data);
     bytes.extend_from_slice(b"0009\x02info0000");
-    assert_eq!(unpack(&bytes).unwrap(), b"PACKcontents");
+    assert_eq!(unpack(bytes.clone()).unwrap(), b"PACKcontents");
     bytes.extend_from_slice(b"0009\x03fail");
-    assert!(unpack(&bytes).is_err());
-    assert!(unpack(b"0008NAK\n0000").is_err());
-    assert!(unpack(b"0008ACK\n0000").is_err());
+    assert!(unpack(bytes).is_err());
+    assert!(unpack(b"0008NAK\n0000".to_vec()).is_err());
+    assert!(unpack(b"0008ACK\n0000".to_vec()).is_err());
 }

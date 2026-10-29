@@ -528,6 +528,16 @@ pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<Comm
     {
         return Err(invalid("Invalid prepared file publication."));
     }
+    if prepared.expected.is_none() {
+        let references = repo.checked(&["for-each-ref", "--format=%(refname)", "refs/heads"], b"", None).await?;
+        let references = std::str::from_utf8(&references).map_err(|_| unavailable())?;
+        if references.lines().any(|reference| {
+            reference.strip_prefix(&prepared.reference).is_some_and(|tail| tail.starts_with('/'))
+                || prepared.reference.strip_prefix(reference).is_some_and(|tail| tail.starts_with('/'))
+        }) {
+            return Err(invalid("The branch name conflicts with an existing branch namespace."));
+        }
+    }
     let bytes = repo
         .checked(&["cat-file", "commit", &prepared.commit.sha], b"", None)
         .await?;
@@ -546,16 +556,17 @@ pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<Comm
         prepared.commit.sha,
         prepared.expected.as_deref().unwrap_or(ZERO)
     );
-    let (status, _) = repo
-        .command(&["update-ref", "--stdin"], transaction.as_bytes(), None)
-        .await?;
-    if !status.success() {
-        if repo.direct_ref(&prepared.reference).await? != prepared.expected {
-            return Err(conflict());
-        }
-        return Err(unavailable());
+    let result = repo.command(&["update-ref", "--stdin"], transaction.as_bytes(), None).await;
+    if result.as_ref().is_ok_and(|(status, _)| status.success()) {
+        return Ok(prepared.commit.clone());
     }
-    Ok(prepared.commit.clone())
+    // A killed or timed-out Git command may already have committed its transaction.
+    let current = repo.direct_ref(&prepared.reference).await?;
+    if current.as_deref() == Some(prepared.commit.sha.as_str()) {
+        return Ok(prepared.commit.clone());
+    }
+    if current != prepared.expected { return Err(conflict()); }
+    Err(unavailable())
 }
 
 fn oid(bytes: &[u8]) -> Result<String, RepoError> {

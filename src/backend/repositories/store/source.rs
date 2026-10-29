@@ -121,6 +121,7 @@ fn advertisement(mut input: &[u8]) -> Result<(HashMap<String, String>, Option<St
         );
     }
     ensure!(input.is_empty(), "Unexpected Git advertisement data");
+    ensure!(!refs.is_empty() || head_sha.is_none(), "Detached HEAD without named refs cannot be preserved by an import");
     // Without the symref capability, the default is a branch at the commit that HEAD names.
     if default_branch.is_none() {
         default_branch = head_sha.and_then(|head| {
@@ -134,32 +135,37 @@ fn advertisement(mut input: &[u8]) -> Result<(HashMap<String, String>, Option<St
     Ok((refs, default_branch))
 }
 
-fn unpack(mut input: &[u8]) -> Result<Vec<u8>> {
-    let mut output = Vec::new();
+fn unpack(mut input: Vec<u8>) -> Result<Vec<u8>> {
+    let mut read = 0;
+    let mut written = 0;
     let mut acknowledged = false;
-    while !input.is_empty() {
-        let Some(line) = packet(&mut input)? else {
-            continue;
-        };
+    while read < input.len() {
+        ensure!(input.len() - read >= 4, "Truncated Git packet");
+        let size = usize::from_str_radix(std::str::from_utf8(&input[read..read + 4])?, 16)?;
+        read += 4;
+        if size == 0 { continue; }
+        ensure!((4..=65520).contains(&size) && input.len() - read >= size - 4, "Invalid Git packet");
+        let end = read + size - 4;
         if !acknowledged {
-            ensure!(line == b"NAK\n", "Invalid Git acknowledgement");
+            ensure!(&input[read..end] == b"NAK\n", "Invalid Git acknowledgement");
             acknowledged = true;
-            continue;
-        }
-        match line.first() {
-            Some(1) => {
-                ensure!(
-                    line.len() - 1 <= MAX_IMPORT_PACK_BYTES - output.len(),
-                    "Git pack exceeds import size limit"
-                );
-                output.extend_from_slice(&line[1..]);
+        } else {
+            match input.get(read).filter(|_| read < end) {
+                Some(1) => {
+                    let length = end - read - 1;
+                    ensure!(length <= MAX_IMPORT_PACK_BYTES - written, "Git pack exceeds import size limit");
+                    input.copy_within(read + 1..end, written);
+                    written += length;
+                }
+                Some(2) => {}
+                _ => bail!("Git source transfer failed"),
             }
-            Some(2) => {}
-            _ => bail!("Git source transfer failed"),
         }
+        read = end;
     }
-    ensure!(output.starts_with(b"PACK"), "Missing Git pack");
-    Ok(output)
+    input.truncate(written);
+    ensure!(input.starts_with(b"PACK"), "Missing Git pack");
+    Ok(input)
 }
 
 pub(crate) async fn fetch(
@@ -216,7 +222,7 @@ pub(crate) async fn fetch(
             &format!(
                 "want {sha}{}\n",
                 if index == 0 {
-                    " side-band-64k ofs-delta"
+                    " side-band-64k"
                 } else {
                     ""
                 }
@@ -249,7 +255,7 @@ pub(crate) async fn fetch(
             ),
         "Invalid Git transfer type"
     );
-    let pack = unpack(&bytes(response, MAX_IMPORT_PACK_BYTES + 8 * 1024 * 1024).await?)?;
+    let pack = unpack(bytes(response, MAX_IMPORT_PACK_BYTES + 8 * 1024 * 1024).await?)?;
     Ok((refs, default_branch, pack))
 }
 

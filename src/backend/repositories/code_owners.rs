@@ -135,12 +135,13 @@ fn segments_match(
     path: &[&str],
     budget: &mut WorkflowMatchBudget,
 ) -> anyhow::Result<bool> {
+    budget.charge(pattern.len(), path.len())?;
     let mut next = vec![false; path.len() + 1];
+    let mut row = vec![false; path.len() + 1];
     next[path.len()] = true;
     for segment in pattern.iter().rev() {
-        let mut row = vec![false; path.len() + 1];
+        row.fill(false);
         for index in (0..=path.len()).rev() {
-            code_owner_glob_matches_bounded("", "", budget)?;
             row[index] = if segment == "**" {
                 next[index] || (index < path.len() && row[index + 1])
             } else {
@@ -149,7 +150,7 @@ fn segments_match(
                     && code_owner_glob_matches_bounded(segment, path[index], budget)?
             };
         }
-        next = row;
+        std::mem::swap(&mut next, &mut row);
     }
     Ok(next[0])
 }
