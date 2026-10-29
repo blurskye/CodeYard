@@ -11,7 +11,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::watch;
 
 const MAX_LINE: usize = 16 * 1024;
-const TRUNCATED_MARK: &str = " … [line truncated]";
+const OMITTED_LINE: &str = "Warning: An oversized output line was omitted.";
 const TERM_GRACE: Duration = Duration::from_secs(3);
 const KILL_GRACE: Duration = Duration::from_secs(2);
 const GROUP_POLL: Duration = Duration::from_millis(20);
@@ -70,6 +70,12 @@ where
     F: Fn(String, bool) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
+    if *cancel.borrow() {
+        return Err(Stopped::Cancelled.into());
+    }
+    if timeout.is_zero() {
+        return Err(Stopped::TimedOut.into());
+    }
     let mut child = command.spawn()?;
     let mut group = ProcessGroup::new(child.id());
     let stdout = child.stdout.take();
@@ -89,6 +95,7 @@ where
             let status = child.wait().await?;
             // Descendants can inherit the output pipes after the runner exits.
             stop_process_group(&mut child, group.pid()).await?;
+            group.disarm();
             Ok::<_, anyhow::Error>(status)
         })?;
         Ok::<_, anyhow::Error>(status)
@@ -258,19 +265,11 @@ where
         if cut {
             skip_line(&mut reader).await?;
         }
-        let mut text = String::from_utf8_lossy(&line)
+        let text = String::from_utf8_lossy(&line)
             .trim_end_matches(['\r', '\n'])
             .to_owned();
-        // Lossy decoding can make the text longer than the bytes read, so the limit applies to
-        // the text. The cut moves back to a character boundary, so no character is split.
-        if cut || text.len() > MAX_LINE {
-            let mut end = text.len().min(MAX_LINE - TRUNCATED_MARK.len());
-            while !text.is_char_boundary(end) {
-                end -= 1;
-            }
-            text.truncate(end);
-            text.push_str(TRUNCATED_MARK);
-        }
+        // Never retain a secret prefix which whole-value masking cannot recognize.
+        let text = if cut || text.len() > MAX_LINE { OMITTED_LINE.to_owned() } else { text };
         on_line(text, stderr).await?;
     }
 }
@@ -330,7 +329,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_line_over_the_limit_is_cut_with_a_marker_and_the_run_goes_on() {
+    async fn a_line_over_the_limit_is_omitted_and_the_run_goes_on() {
         let lines = Arc::new(Mutex::new(Vec::new()));
         let (_tx, cancel) = watch::channel(false);
         let mut long = command("/bin/sh");
@@ -349,8 +348,7 @@ mod tests {
         let seen = lines.lock().unwrap().clone();
         // The rest of the long line is dropped, not split into lines of its own.
         assert_eq!(seen.len(), 2, "{seen:?}");
-        assert_eq!(seen[0].0.len(), MAX_LINE);
-        assert!(seen[0].0.starts_with("aaaa") && seen[0].0.ends_with(TRUNCATED_MARK));
+        assert_eq!(seen[0].0, OMITTED_LINE);
         assert_eq!(seen[1], ("after".to_string(), false));
     }
 
@@ -371,7 +369,7 @@ mod tests {
         let seen = lines.lock().unwrap().clone();
         assert_eq!(seen.len(), 2, "{seen:?}");
         assert!(seen[0].len() <= MAX_LINE, "{}", seen[0].len());
-        assert!(seen[0].starts_with('é') && seen[0].ends_with(TRUNCATED_MARK));
+        assert_eq!(seen[0], OMITTED_LINE);
         assert_eq!(seen[1], "after");
     }
 

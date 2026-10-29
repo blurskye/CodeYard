@@ -486,6 +486,7 @@ async fn run_workflows(
         .unwrap_or(service.config.run_timeout_seconds);
     let deadline = Instant::now() + Duration::from_secs(timeout.into());
     let run = &claim.run;
+    let masker = credential_masker(claim);
     // A run still preparing when shutdown starts stops here, not after the checkout, and
     // the checkout counts against the run's time limit.
     let workspace_directory = service
@@ -651,7 +652,7 @@ async fn run_workflows(
                 let level = if stderr { log_level(&line) } else { "info" };
                 let mut line = LogLine {
                     stage: stage.clone(),
-                    line: mask_credentials(line, claim),
+                    line: if progress.is_none() && completed.is_none() { masker.mask(&line) } else { String::new() },
                     level: level.to_owned(),
                     ..Default::default()
                 };
@@ -661,6 +662,7 @@ async fn run_workflows(
                 let admissions = admissions.clone();
                 let generation = generation.clone();
                 let stage = stage.clone();
+                let masker = masker.clone();
                 async move {
                     if let Some(job) = completed {
                         let prefix = format!("{job}/");
@@ -688,7 +690,7 @@ async fn run_workflows(
                                 .get(&key)
                                 .copied()
                                 .context("output precedes its job observation")?;
-                            line.line = mask_credentials(text.clone(), claim);
+                            line.line = masker.mask(text);
                             line.job_id = Some(id);
                             line.step_number = step.map(i32::try_from).transpose()?;
                         } else {
@@ -731,7 +733,7 @@ async fn run_workflows(
                     ) {
                         result
                             .outputs
-                            .retain(|_, value| mask_credentials(value.clone(), claim) == *value);
+                            .retain(|_, value| !masker.contains(value));
                     }
                     service
                         .queue
@@ -1470,8 +1472,9 @@ async fn send_log_batches(
     Ok(())
 }
 
-fn mask_credentials(mut line: String, claim: &ClaimedRun) -> String {
-    let mut values: Vec<_> = std::iter::once(&claim.runtime.token)
+fn credential_masker(claim: &ClaimedRun) -> codeyard_actions::runner::Masker {
+    let masker = codeyard_actions::runner::Masker::default();
+    let values = std::iter::once(&claim.runtime.token)
         .chain(std::iter::once(&claim.github_tokens.act))
         .chain(std::iter::once(&claim.github_tokens.completion_secret))
         .chain(
@@ -1489,15 +1492,11 @@ fn mask_credentials(mut line: String, claim: &ClaimedRun) -> String {
                 .values()
                 .flat_map(|scope| scope.secrets.values()),
         )
-        .filter(|value| !value.is_empty())
-        .collect();
-    values.sort_unstable_by_key(|value| std::cmp::Reverse(value.len()));
+        .filter(|value| !value.is_empty());
     for value in values {
-        if line.contains(value.as_str()) {
-            line = line.replace(value.as_str(), "***");
-        }
+        masker.add(value);
     }
-    line
+    masker
 }
 
 fn log_level(line: &str) -> &'static str {
@@ -2354,7 +2353,7 @@ mod tests {
             store: None,
         };
         assert_eq!(
-            mask_credentials("shared-secret shared visible-variable".into(), &claim),
+            credential_masker(&claim).mask("shared-secret shared visible-variable"),
             "*** *** visible-variable"
         );
     }

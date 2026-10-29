@@ -9,7 +9,7 @@ use std::sync::{
 };
 
 #[derive(Clone, Default)]
-pub(super) struct Masker {
+pub struct Masker {
     masks: Arc<Mutex<Vec<String>>>,
     /// Bytes of the masks that steps asked for. The job's own secrets do not count.
     requested: Arc<AtomicUsize>,
@@ -19,6 +19,8 @@ pub(super) struct Masker {
 
 /// The masks a workflow's steps add are held in memory, so they may total this much.
 const MAX_MASK_BYTES: usize = 1 << 20;
+const MAX_MASKS: usize = 16_384;
+const MAX_EXPANDED_MASK_BYTES: usize = 16 << 20;
 
 impl Masker {
     /// Adds a mask a step asked for, unless the steps' masks would pass their budget.
@@ -31,7 +33,10 @@ impl Masker {
             return false;
         }
         self.add(value);
-        true
+        for word in value.split_whitespace() {
+            self.add(word);
+        }
+        !self.hidden.load(Ordering::Relaxed)
     }
 
     /// Hides all later output. A value whose mask was refused could otherwise be printed.
@@ -41,7 +46,7 @@ impl Masker {
 
     pub fn add(&self, value: &str) {
         let mut masks = self.masks.lock().unwrap_or_else(|error| error.into_inner());
-        for part in std::iter::once(value).chain(value.lines()) {
+        for part in std::iter::once(value).chain(value.lines()).chain(value.lines().map(|line| line.trim_end_matches('\r'))) {
             if part.trim().is_empty() {
                 continue;
             }
@@ -67,6 +72,12 @@ impl Masker {
                 base64::engine::general_purpose::STANDARD.encode(part),
             ] {
                 if !masks.contains(&encoded) {
+                    if masks.len() >= MAX_MASKS
+                        || masks.iter().map(String::len).sum::<usize>().saturating_add(encoded.len()) > MAX_EXPANDED_MASK_BYTES
+                    {
+                        self.hide_all();
+                        return;
+                    }
                     masks.push(encoded);
                 }
             }
@@ -78,12 +89,34 @@ impl Masker {
         if self.hidden.load(Ordering::Relaxed) {
             return "***".into();
         }
-        let mut value = value.to_owned();
         let masks = self.masks.lock().unwrap_or_else(|error| error.into_inner());
+        // Match the original text: replacement text must never be matched again, and
+        // overlapping secrets must be redacted together rather than exposing a suffix.
+        let mut boundaries = vec![0i32; value.len() + 1];
         for mask in masks.iter() {
-            value = value.replace(mask, "***");
+            let mut start = 0;
+            while let Some(index) = value[start..].find(mask) {
+                let index = start + index;
+                boundaries[index] += 1;
+                boundaries[index + mask.len()] -= 1;
+                start = index + value[index..].chars().next().expect("nonempty mask").len_utf8();
+            }
         }
-        value
+        let mut result = String::new();
+        let mut active = 0;
+        let mut copied = 0;
+        for (index, delta) in boundaries.into_iter().enumerate() {
+            let previous = active;
+            active += delta;
+            if previous == 0 && active > 0 {
+                result.push_str(&value[copied..index]);
+                result.push_str("***");
+            } else if previous > 0 && active == 0 {
+                copied = index;
+            }
+        }
+        result.push_str(&value[copied..]);
+        result
     }
 
     pub fn contains(&self, value: &str) -> bool {
@@ -153,7 +186,7 @@ impl Log {
                 Some((number, std::time::Instant::now()));
             progress.emit(Update::StepStarted {
                 number,
-                name: self.masker.mask(name),
+                name: bounded(&self.masker.mask(name), 1024),
             });
         }
     }
@@ -221,6 +254,9 @@ impl Log {
 #[derive(Default)]
 pub(super) struct Commands {
     stopped: Option<String>,
+    retained_bytes: usize,
+    retained_commands: usize,
+    storage_full: bool,
     workspace: std::path::PathBuf,
     pub matchers: super::matchers::Matchers,
     pub failed: bool,
@@ -252,7 +288,7 @@ impl Commands {
         } else {
             log.line(line);
         }
-        match self.matchers.matches(&log.masker.mask(line)) {
+        match self.matchers.matches(line) {
             Ok(Some(issue)) => {
                 if let Some(command) = issue.command(&self.workspace, &log.masker) {
                     log.line(&command);
@@ -314,6 +350,19 @@ impl Commands {
             .collect();
         let data = decode(data);
         let name = name.to_ascii_lowercase();
+        if matches!(name.as_str(), "set-output" | "save-state" | "set-env" | "add-path") {
+            let bytes = data.len().saturating_add(properties.get("name").map_or(0, String::len));
+            if self.storage_full || self.retained_commands >= 4096
+                || bytes > (1usize << 20).saturating_sub(self.retained_bytes)
+            {
+                self.failed = true;
+                self.storage_full = true;
+                log.line("Error: Workflow commands exceed the runner storage limit");
+                return;
+            }
+            self.retained_bytes += bytes;
+            self.retained_commands += 1;
+        }
         match name.as_str() {
             "add-mask" => {
                 if !log.masker.add_requested(&data) {
@@ -574,6 +623,15 @@ mod tests {
     #[test]
     fn masks_and_commands() {
         let masker = Masker::default();
+        masker.add("sensitive-token\r");
+        assert_eq!(masker.mask("sensitive-token"), "***");
+        assert!(masker.add_requested("alpha-token beta-token"));
+        assert_eq!(masker.mask("alpha-token"), "***");
+        masker.add("abc123");
+        masker.add("123456");
+        assert_eq!(masker.mask("abc123456"), "***");
+        for _ in 0..30 { masker.add("*"); }
+        assert_eq!(masker.mask("***"), "***");
         masker.add("long secret\nshort");
         assert_eq!(masker.mask("long secret and short"), "*** and ***");
         let log = Log {

@@ -15,7 +15,8 @@ use crate::progress::{
 use crate::workflow::{self, Container, PlannedJob, Step, StepAction};
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use commands::{Commands, Log, Masker, Progress};
+use commands::{Commands, Log, Progress};
+pub use commands::Masker;
 use containers::Podman;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
