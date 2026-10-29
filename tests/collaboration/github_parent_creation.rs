@@ -94,10 +94,12 @@ async fn parents(pg: bool) {
     .await;
     assert_eq!(linked["id"], parent.id);
     assert_eq!(
-        db::relationships::summary(f.pool(), parent.id)
+        db::relationships::summaries(f.pool(), &[parent.id])
             .await
             .unwrap()
-            .total,
+            .iter()
+            .map(|row| row.total)
+            .sum::<i64>(),
         1
     );
 
@@ -216,7 +218,7 @@ async fn parents(pg: bool) {
         denied.downcast_ref::<db::relationships::Refusal>(),
         Some(db::relationships::Refusal::Missing)
     ));
-    let denied = db::relationships::create_child(
+    let denied = create_child(
         f.pool(),
         bot,
         repos[0].id,
@@ -250,7 +252,7 @@ async fn parents(pg: bool) {
         denied.downcast_ref::<db::relationships::Refusal>(),
         Some(db::relationships::Refusal::Missing)
     ));
-    let same_repo = db::relationships::create_child(
+    let same_repo = create_child(
         f.pool(),
         bot,
         repos[0].id,
@@ -332,7 +334,7 @@ async fn parents(pg: bool) {
     // Graph limits roll back the newly allocated issue as well as the edge.
     let mut deepest = local.id;
     for _ in 0..7 {
-        deepest = db::relationships::create_child(
+        deepest = create_child(
             f.pool(),
             alice,
             repos[0].id,
@@ -351,7 +353,7 @@ async fn parents(pg: bool) {
         )
         .await;
     let denied =
-        db::relationships::create_child(f.pool(), alice, repos[0].id, deepest, "Too deep", "")
+        create_child(f.pool(), alice, repos[0].id, deepest, "Too deep", "")
             .await
             .unwrap_err();
     assert!(matches!(
@@ -375,4 +377,27 @@ async fn github_parent_creation_sqlite() {
 #[tokio::test]
 async fn github_parent_creation_postgres() {
     parents(true).await;
+}
+
+/// A new issue under `parent`, created the way the API creates one.
+async fn create_child(
+    pool: &db::DbPool,
+    actor: i64,
+    repo: i64,
+    parent: i64,
+    title: &str,
+    body: &str,
+) -> anyhow::Result<db::models::Issue> {
+    db::issues::create_issue_with_metadata(
+        pool,
+        repo,
+        actor,
+        title,
+        body,
+        db::issues::IssueMetadata {
+            parent: Some(parent),
+            ..Default::default()
+        },
+    )
+    .await
 }

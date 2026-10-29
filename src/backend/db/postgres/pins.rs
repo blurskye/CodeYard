@@ -1,6 +1,6 @@
 use crate::backend::db::{
     assignees::AssignedItem,
-    pins::{scope, Pin, PinRefusal},
+    pins::{scope, ItemPin, Pin, PinRefusal},
 };
 use anyhow::Result;
 use sqlx::PgPool;
@@ -12,6 +12,27 @@ pub async fn get_pin(pool: &PgPool, item: AssignedItem) -> Result<Option<Pin>> {
     ))
     .bind(s.id)
     .fetch_optional(pool)
+    .await?)
+}
+pub async fn get_pins(
+    pool: &PgPool,
+    pull_requests: bool,
+    ids: &[i64],
+) -> Result<Vec<ItemPin>> {
+    anyhow::ensure!(ids.len() <= 500, "Pin batch exceeds its limit");
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (pins, foreign) = if pull_requests {
+        ("pr_comment_pins", "pull_request_id")
+    } else {
+        ("issue_comment_pins", "issue_id")
+    };
+    Ok(sqlx::query_as(&format!(
+        "SELECT {foreign} AS item_id,comment_id,pinned_by,pinned_at FROM {pins} WHERE {foreign} IN (SELECT unnest($1::BIGINT[]))"
+    ))
+    .bind(ids)
+    .fetch_all(pool)
     .await?)
 }
 pub async fn set_pin(

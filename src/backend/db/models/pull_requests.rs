@@ -38,6 +38,8 @@ pub struct PullRequest {
     pub mergeable: Option<bool>,
     pub merged: bool,
     pub merged_by_id: Option<i64>,
+    /// Who closed or merged it; cleared when it is reopened.
+    pub closed_by_id: Option<i64>,
     pub merge_commit_sha: Option<String>,
     pub additions: i32,
     pub deletions: i32,

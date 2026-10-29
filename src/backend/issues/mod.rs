@@ -1,5 +1,6 @@
 use crate::backend::db;
 use crate::backend::repositories::access;
+pub mod assignments;
 pub mod branches;
 pub mod closing;
 pub mod comments;

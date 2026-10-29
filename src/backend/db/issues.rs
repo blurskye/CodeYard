@@ -5,15 +5,48 @@ use crate::backend::db::models::{Issue, IssueComment};
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
-native_operation!(crate::backend::db::postgres::issues::create_issue,
-    crate::backend::db::sqlite::issues::create_issue,
-    fn create_issue(
+/// What a new issue starts with besides its text: a parent issue, labels, assignees, a milestone
+/// and a type. The parent and labels and assignees need triage access, and the milestone and type
+/// need write access, as when they are set later. The creating transaction checks all of it, so
+/// the issue is saved with everything it asks for or not at all.
+#[derive(Clone, Copy, Default)]
+pub struct IssueMetadata<'a> {
+    pub parent: Option<i64>,
+    pub labels: &'a [i64],
+    pub assignees: &'a [i64],
+    pub milestone: Option<i32>,
+    pub issue_type: Option<i64>,
+}
+
+native_operation!(crate::backend::db::postgres::issues::create_issue_with_metadata,
+    crate::backend::db::sqlite::issues::create_issue_with_metadata,
+    fn create_issue_with_metadata(
     pool: &DbPool,
     repo_id: i64,
     author_id: i64,
     title: &str,
     body: &str,
+    metadata: IssueMetadata<'_>,
 ) -> Result<Issue>);
+
+/// A new issue with only its text.
+pub async fn create_issue(
+    pool: &DbPool,
+    repo_id: i64,
+    author_id: i64,
+    title: &str,
+    body: &str,
+) -> Result<Issue> {
+    create_issue_with_metadata(
+        pool,
+        repo_id,
+        author_id,
+        title,
+        body,
+        IssueMetadata::default(),
+    )
+    .await
+}
 
 native_operation!(crate::backend::db::postgres::issues::get_issue,
     crate::backend::db::sqlite::issues::get_issue,
@@ -22,6 +55,11 @@ native_operation!(crate::backend::db::postgres::issues::get_issue,
 native_operation!(crate::backend::db::postgres::issues::get_issue_by_id,
     crate::backend::db::sqlite::issues::get_issue_by_id,
     fn get_issue_by_id(pool: &DbPool, id: i64) -> Result<Option<Issue>>);
+
+native_operation!(crate::backend::db::postgres::issues::get_issues_by_ids,
+    crate::backend::db::sqlite::issues::get_issues_by_ids,
+    /// The issues of the repository among `ids` (at most 500), in no order.
+    fn get_issues_by_ids(pool: &DbPool, repo_id: i64, ids: &[i64]) -> Result<Vec<Issue>>);
 
 native_operation!(crate::backend::db::postgres::issues::list_repo_issues,
     crate::backend::db::sqlite::issues::list_repo_issues,

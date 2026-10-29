@@ -1,24 +1,119 @@
 pub(crate) mod management;
 use super::models::{Issue, IssueComment};
-use crate::backend::db::discussions::{contains_pattern, ListFilter, StateCounts};
+use crate::backend::db::assignees::AssignedItem;
+use crate::backend::db::discussions::{
+    contains_pattern, DiscussionWriteRefusal, ListFilter, StateCounts,
+};
 use crate::backend::db::issues::IssueCommentEntry;
+use crate::backend::db::issues::IssueMetadata;
+use crate::backend::db::labels::LabelTarget;
+use crate::backend::db::relationships::{Kind, Mutation};
 use crate::backend::db::issues::IssueListEntry;
 use crate::backend::db::issues::{IssueRelation, ViewerIssueEntry};
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
 
-pub async fn create_issue(
+pub async fn create_issue_with_metadata(
     pool: &PgPool,
     repo_id: i64,
     author_id: i64,
     title: &str,
     body: &str,
+    metadata: IssueMetadata<'_>,
 ) -> Result<Issue> {
-    let mut tx = pool.begin().await?;
-    super::discussions::require_contribution_authority(&mut tx, author_id, repo_id).await?;
-    let issue = insert_in_transaction(&mut tx, repo_id, author_id, title, body).await?;
-    tx.commit().await?;
-    Ok(issue)
+    super::retry_on_deadlock(|| async {
+        let mut tx = pool.begin().await?;
+        // A milestone write locks the repository row exclusively, so that lock comes first
+        // rather than as an upgrade of the shared lock the other checks take.
+        if metadata.milestone.is_some() {
+            anyhow::ensure!(
+                super::discussions::lock_exclusive_write_authority(&mut tx, author_id, repo_id)
+                    .await?,
+                DiscussionWriteRefusal::Denied
+            );
+        }
+        super::discussions::require_contribution_authority(&mut tx, author_id, repo_id).await?;
+        if !metadata.labels.is_empty() || !metadata.assignees.is_empty() {
+            anyhow::ensure!(
+                super::discussions::lock_triage_authority(&mut tx, author_id, repo_id).await?,
+                DiscussionWriteRefusal::Denied
+            );
+        }
+        if metadata.issue_type.is_some() {
+            anyhow::ensure!(
+                super::discussions::lock_write_authority(&mut tx, author_id, repo_id).await?,
+                DiscussionWriteRefusal::Denied
+            );
+            // Type writes take the attribute guard before any issue row.
+            super::issue_attributes::lock_metadata(&mut tx).await?;
+        }
+        let issue = insert_in_transaction(&mut tx, repo_id, author_id, title, body).await?;
+        if !metadata.labels.is_empty() {
+            super::labels::write_item_labels_transaction(
+                &mut tx,
+                repo_id,
+                LabelTarget::Issue,
+                issue.id,
+                metadata.labels,
+                false,
+            )
+            .await?;
+        }
+        for &user in metadata.assignees {
+            super::assignees::assign_in_transaction(
+                &mut tx,
+                repo_id,
+                AssignedItem::Issue(issue.id),
+                user,
+            )
+            .await?;
+        }
+        if let Some(number) = metadata.milestone {
+            super::milestones::set_item_milestone_in_transaction(
+                &mut tx,
+                repo_id,
+                "issues",
+                issue.id,
+                Some(number),
+            )
+            .await?;
+        }
+        if let Some(kind) = metadata.issue_type {
+            super::issue_attributes::type_in_transaction(
+                &mut tx,
+                repo_id,
+                author_id,
+                issue.id,
+                Some(kind),
+            )
+            .await?;
+        }
+        let mut tx = match metadata.parent {
+            Some(parent) => {
+                super::relationships::change_in_transaction(
+                    tx,
+                    author_id,
+                    repo_id,
+                    issue.id,
+                    Mutation::Add {
+                        kind: Kind::Parent,
+                        other: parent,
+                        replace: false,
+                    },
+                    true,
+                )
+                .await?
+            }
+            None => tx,
+        };
+        let issue = sqlx::query_as("SELECT * FROM issues WHERE id=$1")
+            .bind(issue.id)
+            .fetch_one(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(issue)
+    })
+    .await
 }
 pub(crate) async fn insert_in_transaction(
     tx: &mut Transaction<'_, Postgres>,
@@ -52,6 +147,20 @@ pub async fn get_issue(pool: &PgPool, repo_id: i64, number: i32) -> Result<Optio
             .await?;
 
     Ok(issue)
+}
+
+pub async fn get_issues_by_ids(pool: &PgPool, repo_id: i64, ids: &[i64]) -> Result<Vec<Issue>> {
+    anyhow::ensure!(ids.len() <= 500, "Issue batch exceeds its limit");
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as(
+        "SELECT * FROM issues WHERE repo_id = $1 AND id IN (SELECT unnest($2::BIGINT[]))",
+    )
+    .bind(repo_id)
+    .bind(ids)
+    .fetch_all(pool)
+    .await?)
 }
 
 pub async fn get_issue_by_id(pool: &PgPool, id: i64) -> Result<Option<Issue>> {

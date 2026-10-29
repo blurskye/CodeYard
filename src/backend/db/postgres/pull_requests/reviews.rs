@@ -490,6 +490,24 @@ pub async fn pull_request_comment_counts(pool: &PgPool, pr_id: i64) -> Result<(i
         .bind(pr_id).fetch_one(pool).await?)
 }
 
+pub async fn count_pull_request_conversation_comments_for(
+    pool: &PgPool,
+    pr_ids: &[i64],
+) -> Result<Vec<(i64, i64)>> {
+    anyhow::ensure!(pr_ids.len() <= 500, "Pull request batch exceeds its limit");
+    if pr_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as(
+        "SELECT c.pull_request_id, COUNT(*) FROM pr_comments c WHERE c.pull_request_id IN (SELECT unnest($1::BIGINT[])) AND c.path IS NULL
+           AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = c.review_id AND v.state = 'pending')
+         GROUP BY c.pull_request_id",
+    )
+    .bind(pr_ids)
+    .fetch_all(pool)
+    .await?)
+}
+
 pub async fn count_pull_request_comments(pool: &PgPool, pr_id: i64) -> Result<i64> {
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pr_comments i WHERE i.pull_request_id = $1

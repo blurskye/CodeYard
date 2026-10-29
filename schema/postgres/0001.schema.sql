@@ -591,6 +591,7 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     mergeable BOOLEAN,
     merged BOOLEAN NOT NULL DEFAULT FALSE,
     merged_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    closed_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     merge_commit_sha VARCHAR(40),
     stack_id BIGINT,
     milestone_id BIGINT REFERENCES milestones(id) ON DELETE SET NULL,

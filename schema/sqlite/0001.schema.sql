@@ -536,6 +536,7 @@ CREATE TABLE pull_requests (
     mergeable INTEGER CHECK (mergeable IN (0,1)),
     merged INTEGER NOT NULL DEFAULT 0 CHECK (merged IN (0,1)),
     merged_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL CHECK (merged_by_id IS NULL OR typeof(merged_by_id)='integer'),
+    closed_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL CHECK (closed_by_id IS NULL OR typeof(closed_by_id)='integer'),
     merge_commit_sha TEXT CHECK (length(merge_commit_sha)<=40),
     stack_id INTEGER CHECK (stack_id IS NULL OR typeof(stack_id)='integer'),
     -- Counts the changes to this row's place in its stack (joined, left, closed, reopened, retargeted, merged). A rebase of the stack refuses to publish when any of them moved.

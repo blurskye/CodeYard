@@ -249,6 +249,24 @@ pub async fn get_milestone_by_id(
     .await?)
 }
 
+pub async fn get_milestones_by_ids(
+    pool: &SqlitePool,
+    repo_id: i64,
+    ids: &[i64],
+) -> Result<Vec<MilestoneSummary>> {
+    anyhow::ensure!(ids.len() <= 500, "Milestone batch exceeds its limit");
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as::<_, MilestoneSummary>(&format!(
+        "{SUMMARY_SELECT} WHERE m.repo_id = ?1 AND m.id IN (SELECT value FROM json_each(?2))"
+    ))
+    .bind(repo_id)
+    .bind(serde_json::to_string(ids)?)
+    .fetch_all(pool)
+    .await?)
+}
+
 pub async fn list_repo_milestones(
     pool: &SqlitePool,
     repo_id: i64,
@@ -411,12 +429,26 @@ async fn set_item_milestone(
     milestone_number: Option<i32>,
 ) -> Result<()> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
+    set_item_milestone_in_transaction(&mut tx, repo_id, table, item_id, milestone_number).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// The milestone change of [`set_item_milestone`] inside a transaction that already holds the
+/// write authority.
+pub(crate) async fn set_item_milestone_in_transaction(
+    tx: &mut Transaction<'_, Sqlite>,
+    repo_id: i64,
+    table: &'static str,
+    item_id: i64,
+    milestone_number: Option<i32>,
+) -> Result<()> {
     let item: Option<i64> = sqlx::query_scalar(&format!(
         "SELECT id FROM {table} WHERE id = ?1 AND repo_id = ?2"
     ))
     .bind(item_id)
     .bind(repo_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     anyhow::ensure!(item.is_some(), MilestoneWriteRefusal::NotFound);
     let milestone_id = match milestone_number {
@@ -427,7 +459,7 @@ async fn set_item_milestone(
             )
             .bind(repo_id)
             .bind(number)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?
             .ok_or(MilestoneWriteRefusal::NotFound)?,
         ),
@@ -437,8 +469,7 @@ async fn set_item_milestone(
     ))
     .bind(item_id)
     .bind(milestone_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
-    tx.commit().await?;
     Ok(())
 }

@@ -104,8 +104,12 @@ pub struct Link {
     pub owner: String,
     pub repo: String,
 }
+/// The relationship counts of one issue from its related issues in one repository. Readers add up
+/// the rows of the repositories they may read.
 #[derive(sqlx::FromRow)]
-pub struct Summary {
+pub struct RelationCounts {
+    pub root: i64,
+    pub repo_id: i64,
     pub total: i64,
     pub completed: i64,
     pub blocked_by: i64,
@@ -117,7 +121,7 @@ native_operation!(crate::backend::db::postgres::relationships::list,crate::backe
     fn list(pool:&DbPool,viewer:Option<i64>,root:i64,kind:Kind,offset:i64,limit:i64)->Result<Vec<Link>>);
 native_operation!(crate::backend::db::postgres::relationships::change,crate::backend::db::sqlite::relationships::change,
     fn change(pool:&DbPool,actor:i64,repo:i64,root:i64,mutation:Mutation)->Result<()>);
-native_operation!(crate::backend::db::postgres::relationships::create_child,crate::backend::db::sqlite::relationships::create_child,
-    fn create_child(pool:&DbPool,actor:i64,repo:i64,parent:i64,title:&str,body:&str)->Result<super::models::Issue>);
-native_operation!(crate::backend::db::postgres::relationships::summary,crate::backend::db::sqlite::relationships::summary,
-    fn summary(pool:&DbPool,root:i64)->Result<Summary>);
+native_operation!(crate::backend::db::postgres::relationships::summaries,crate::backend::db::sqlite::relationships::summaries,
+    /// The sub-issue and dependency counts of each issue in `roots` (at most 100), one row per
+    /// root and repository of the related issues.
+    fn summaries(pool:&DbPool,roots:&[i64])->Result<Vec<RelationCounts>>);

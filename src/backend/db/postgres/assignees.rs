@@ -72,16 +72,21 @@ async fn locate_item(
     Ok((link, column))
 }
 
-/// Assigns `user_id`. Returns whether that was a new assignment: an existing assignee returns false.
-pub async fn assign_user(
+/// Assigns each of `user_ids` in one transaction. Returns the ones that were not assigned before.
+pub async fn assign_users(
     pool: &PgPool,
     actor_id: i64,
     repo_id: i64,
     item: AssignedItem,
-    user_id: i64,
-) -> Result<bool> {
+    user_ids: &[i64],
+) -> Result<Vec<i64>> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
-    let added = assign_in_transaction(&mut tx, repo_id, item, user_id).await?;
+    let mut added = Vec::new();
+    for &user_id in user_ids {
+        if assign_in_transaction(&mut tx, repo_id, item, user_id).await? {
+            added.push(user_id);
+        }
+    }
     tx.commit().await?;
     Ok(added)
 }
@@ -111,7 +116,8 @@ pub(crate) async fn assign_in_transaction(
     user_id: i64,
 ) -> Result<bool> {
     let (link, column) = locate_item(tx, repo_id, item).await?;
-    candidate(tx, repo_id, user_id).await?;
+    // A user who is already assigned stays assigned, even after losing access, so only a new
+    // assignee must be a candidate.
     let assigned: bool = sqlx::query_scalar(&format!(
         "SELECT EXISTS (SELECT 1 FROM {link} WHERE {column} = $1 AND user_id = $2)"
     ))
@@ -121,6 +127,7 @@ pub(crate) async fn assign_in_transaction(
     .await?;
     let mut added = false;
     if !assigned {
+        candidate(tx, repo_id, user_id).await?;
         let count: i64 =
             sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {link} WHERE {column} = $1"))
                 .bind(item_id(item))
@@ -144,28 +151,36 @@ pub(crate) async fn assign_in_transaction(
     Ok(added)
 }
 
-pub async fn unassign_user(
+/// Removes each user named in `usernames` in one transaction. Returns the names that were
+/// assigned. A name that is no user, or is not assigned, removes nothing.
+pub async fn unassign_users(
     pool: &PgPool,
     actor_id: i64,
     repo_id: i64,
     item: AssignedItem,
-    username: &str,
-) -> Result<bool> {
+    usernames: &[String],
+) -> Result<Vec<String>> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
     let (link, column) = locate_item(&mut tx, repo_id, item).await?;
-    // A name that is no user matches no row, so nothing is removed.
-    let result = sqlx::query(&format!(
-        "DELETE FROM {link} WHERE {column} = $1 AND user_id = (SELECT id FROM users WHERE username = $2)"
-    ))
-    .bind(item_id(item))
-    .bind(username)
-    .execute(&mut *tx)
-    .await?;
-    if result.rows_affected() > 0 {
+    let mut removed = Vec::new();
+    for username in usernames {
+        let deleted = sqlx::query(&format!(
+            "DELETE FROM {link} WHERE {column} = $1 AND user_id = (SELECT id FROM users WHERE username = $2)"
+        ))
+        .bind(item_id(item))
+        .bind(username)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if deleted > 0 {
+            removed.push(username.clone());
+        }
+    }
+    if !removed.is_empty() {
         super::labels::touch_subject(&mut tx, tables(item).0, item_id(item)).await?;
     }
     tx.commit().await?;
-    Ok(result.rows_affected() > 0)
+    Ok(removed)
 }
 
 pub async fn list_assignees(pool: &PgPool, item: AssignedItem) -> Result<Vec<String>> {
@@ -212,6 +227,26 @@ pub async fn list_assignable_usernames(pool: &PgPool, repo_id: i64) -> Result<Ve
         super::repositories::access::USER_REPO_ACCESS_SQL
     ))
     .bind(repo_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// The users among `user_ids` who may be assigned in the repository.
+pub async fn assignable_user_ids(
+    pool: &PgPool,
+    repo_id: i64,
+    user_ids: &[i64],
+) -> Result<Vec<i64>> {
+    if user_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT u.id FROM repositories r JOIN users u ON {CANDIDATES}
+         WHERE r.id=$1 AND u.id = ANY($2) AND ({})>=1",
+        super::repositories::access::USER_REPO_ACCESS_SQL
+    ))
+    .bind(repo_id)
+    .bind(user_ids)
     .fetch_all(pool)
     .await?)
 }

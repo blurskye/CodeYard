@@ -296,6 +296,7 @@ mod tests {
             mergeable: None,
             merged: state == "merged",
             merged_by_id: None,
+            closed_by_id: None,
             merge_commit_sha: None,
             additions: 0,
             deletions: 0,

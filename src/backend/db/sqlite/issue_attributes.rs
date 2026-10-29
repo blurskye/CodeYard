@@ -1,5 +1,5 @@
 use crate::backend::db::issue_attributes::{
-    Attribute, Definition, FieldChanges, FieldValue, Refusal, SelectOption, ValueInput,
+    AssignedType, Attribute, Definition, FieldChanges, FieldValue, Refusal, SelectOption, ValueInput,
 };
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -63,6 +63,21 @@ pub(crate) async fn assigned_connection(
 }
 pub async fn assigned_type(pool: &SqlitePool, repo: i64, issue: i64) -> Result<Option<Attribute>> {
     assigned_connection(&mut *pool.acquire().await?, repo, issue).await
+}
+pub async fn assigned_types(
+    pool: &SqlitePool,
+    repo: i64,
+    ids: &[i64],
+) -> Result<Vec<AssignedType>> {
+    anyhow::ensure!(ids.len() <= 500, Refusal::Invalid);
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as("SELECT s.issue_id, a.* FROM issue_type_assignments s JOIN issue_attributes a ON a.id=s.attribute_id JOIN issues i ON i.id=s.issue_id JOIN repositories r ON r.id=i.repo_id WHERE r.id=?1 AND i.id IN (SELECT value FROM json_each(?2)) AND a.kind='type' AND (a.owner_user_id=r.owner_user_id OR a.owner_org_id=r.owner_org_id)")
+        .bind(repo)
+        .bind(serde_json::to_string(ids)?)
+        .fetch_all(pool)
+        .await?)
 }
 pub async fn values(
     pool: &SqlitePool,

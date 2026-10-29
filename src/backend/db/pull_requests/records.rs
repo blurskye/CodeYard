@@ -200,6 +200,11 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::get_pull
     crate::backend::db::sqlite::pull_requests::records::get_pull_request_by_id,
     fn get_pull_request_by_id(pool: &DbPool, id: i64) -> Result<Option<PullRequest>>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::records::get_pull_requests_by_ids,
+    crate::backend::db::sqlite::pull_requests::records::get_pull_requests_by_ids,
+    /// The pull requests of the repository among `ids` (at most 500), in no order.
+    fn get_pull_requests_by_ids(pool: &DbPool, repo_id: i64, ids: &[i64]) -> Result<Vec<PullRequest>>);
+
 native_operation!(crate::backend::db::postgres::pull_requests::records::list_repo_pull_requests,
     crate::backend::db::sqlite::pull_requests::records::list_repo_pull_requests,
     fn list_repo_pull_requests(
@@ -480,6 +485,7 @@ mod tests {
             mergeable: None,
             merged: false,
             merged_by_id: None,
+            closed_by_id: None,
             merge_commit_sha: None,
             additions: 0,
             deletions: 0,

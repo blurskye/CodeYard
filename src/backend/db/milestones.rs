@@ -85,6 +85,11 @@ native_operation!(crate::backend::db::postgres::milestones::get_milestone_by_id,
     crate::backend::db::sqlite::milestones::get_milestone_by_id,
     fn get_milestone_by_id(pool: &DbPool, repo_id: i64, id: i64) -> Result<Option<MilestoneSummary>>);
 
+native_operation!(crate::backend::db::postgres::milestones::get_milestones_by_ids,
+    crate::backend::db::sqlite::milestones::get_milestones_by_ids,
+    /// The milestones of the repository among `ids` (at most 500) with their counts, in no order.
+    fn get_milestones_by_ids(pool: &DbPool, repo_id: i64, ids: &[i64]) -> Result<Vec<MilestoneSummary>>);
+
 // Every milestone of a repository, or only those in `state`, with due dates first.
 native_operation!(crate::backend::db::postgres::milestones::list_repo_milestones,
     crate::backend::db::sqlite::milestones::list_repo_milestones,

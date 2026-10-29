@@ -141,6 +141,12 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pu
     crate::backend::db::sqlite::pull_requests::reviews::count_pull_request_comments,
     fn count_pull_request_comments(pool: &DbPool, pr_id: i64) -> Result<i64>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pull_request_conversation_comments_for,
+    crate::backend::db::sqlite::pull_requests::reviews::count_pull_request_conversation_comments_for,
+    /// The conversation comments of each pull request in `pr_ids` (at most 500), the count an
+    /// issue document shows. Comments in a pending review do not count.
+    fn count_pull_request_conversation_comments_for(pool: &DbPool, pr_ids: &[i64]) -> Result<Vec<(i64, i64)>>);
+
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pull_request_comments_for,
     crate::backend::db::sqlite::pull_requests::reviews::count_pull_request_comments_for,
     fn count_pull_request_comments_for(pool: &DbPool, pr_ids: &[i64]) -> Result<Vec<(i64, i64)>>);

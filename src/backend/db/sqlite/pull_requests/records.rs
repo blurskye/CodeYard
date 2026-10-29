@@ -402,6 +402,24 @@ pub async fn get_converted_pull_request(
         .bind(repo_id).bind(number).fetch_optional(pool).await?)
 }
 
+pub async fn get_pull_requests_by_ids(
+    pool: &SqlitePool,
+    repo_id: i64,
+    ids: &[i64],
+) -> Result<Vec<PullRequest>> {
+    anyhow::ensure!(ids.len() <= 500, "Pull request batch exceeds its limit");
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as(
+        "SELECT * FROM pull_requests WHERE repo_id = ?1 AND id IN (SELECT value FROM json_each(?2))",
+    )
+    .bind(repo_id)
+    .bind(serde_json::to_string(ids)?)
+    .fetch_all(pool)
+    .await?)
+}
+
 pub async fn get_pull_request_by_id(pool: &SqlitePool, id: i64) -> Result<Option<PullRequest>> {
     let pr = sqlx::query_as::<_, PullRequest>("SELECT * FROM pull_requests WHERE id = ?1")
         .bind(id)
@@ -710,6 +728,7 @@ pub async fn update_pull_request(
             base_branch = COALESCE(?9, base_branch), base_sha = COALESCE(?10, base_sha),
             fork_sha = CASE WHEN ?9 IS NULL THEN fork_sha WHEN stack_id IS NOT NULL THEN COALESCE(fork_sha, base_sha) ELSE NULL END,
             closed_at = CASE WHEN ?4 = 'open' THEN NULL WHEN ?4 = 'closed' AND state <> 'closed' THEN strftime('%Y-%m-%dT%H:%M:%f000Z','now') ELSE closed_at END,
+            closed_by_id = CASE WHEN ?4 = 'open' THEN NULL WHEN ?4 = 'closed' AND state <> 'closed' THEN ?12 ELSE closed_by_id END,
             stack_version = stack_version + CASE WHEN ?4 IS NULL AND ?9 IS NULL THEN 0 ELSE 1 END,
             updated_at = ?7,
             maintainer_can_modify = COALESCE(?11,maintainer_can_modify),
@@ -742,7 +761,7 @@ pub async fn mark_pull_requests_merged(
     ordered.sort_by_key(|pull| pull.id);
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     for pull in ordered {
-        let changed = sqlx::query("UPDATE pull_requests SET state='merged',merged=1,merged_by_id=?2,merge_commit_sha=?3,merged_at=?4,closed_at=?4,updated_at=?4,head_sha=?5,base_sha=?6,stack_version=stack_version+1 WHERE id=?1 AND state='open' AND NOT merged AND base_branch=?7")
+        let changed = sqlx::query("UPDATE pull_requests SET state='merged',merged=1,merged_by_id=?2,closed_by_id=?2,merge_commit_sha=?3,merged_at=?4,closed_at=?4,updated_at=?4,head_sha=?5,base_sha=?6,stack_version=stack_version+1 WHERE id=?1 AND state='open' AND NOT merged AND base_branch=?7")
             .bind(pull.id)
             .bind(actor_id)
             .bind(merge_sha)

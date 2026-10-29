@@ -12,6 +12,13 @@ pub struct SelectOption {
     pub description: Option<String>,
     pub priority: i64,
 }
+/// The type of one issue in a batch read.
+#[derive(sqlx::FromRow)]
+pub struct AssignedType {
+    pub issue_id: i64,
+    #[sqlx(flatten)]
+    pub attribute: Attribute,
+}
 #[derive(Clone, Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Attribute {
     pub id: i64,
@@ -257,6 +264,9 @@ native_operation!(crate::backend::db::postgres::issue_attributes::values,crate::
     fn values(pool:&DbPool,repo:i64,issue:i64,viewer:Option<i64>)->Result<Vec<FieldValue>>);
 native_operation!(crate::backend::db::postgres::issue_attributes::assigned_type,crate::backend::db::sqlite::issue_attributes::assigned_type,
     fn assigned_type(pool:&DbPool,repo:i64,issue:i64)->Result<Option<Attribute>>);
+native_operation!(crate::backend::db::postgres::issue_attributes::assigned_types,crate::backend::db::sqlite::issue_attributes::assigned_types,
+    /// The types of the repository's issues among `ids` (at most 500).
+    fn assigned_types(pool:&DbPool,repo:i64,ids:&[i64])->Result<Vec<AssignedType>>);
 native_operation!(crate::backend::db::postgres::issue_attributes::owner_can_configure,crate::backend::db::sqlite::issue_attributes::owner_can_configure,
     fn owner_can_configure(pool:&DbPool,repo:i64,actor:i64)->Result<bool>);
 native_operation!(crate::backend::db::postgres::issue_attributes::configure,crate::backend::db::sqlite::issue_attributes::configure,
