@@ -10,6 +10,7 @@ mod deploy_keys;
 mod discovery_pages;
 mod editor_save;
 mod find;
+mod fine_grained_tokens;
 mod github;
 mod github_activity;
 mod github_deploy;

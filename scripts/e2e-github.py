@@ -518,6 +518,40 @@ jobs:
             self.step("gh gist clone", "gist", "clone", gist, str(self.directory / "gist-clone"))
             self.gh("gist", "delete", gist, "--yes")
 
+    def sweep_fine_grained(self):
+        """A fine-grained token made on the settings page: gh logs in with it and is bounded by it."""
+        org = self.api("orgs/e2e-org")["id"]
+        # Run directly, not through execute, so the token is never written to a command log.
+        created = subprocess.run(
+            ["python3", "-I", ROOT / "scripts/e2e-web.py", "form", "--base", self.base,
+             "--jar", self.directory.parent / "jar-alice.json", "--who", "alice",
+             "--action", "/settings/personal-access-tokens", "--has", "name",
+             "--set", "name=gh fine-grained", "--set", f"owner={org}", "--set", "access=all",
+             "--set", "permission.issues=read", "--submit", "action=create",
+             "--status", "200", "--print", "body", "/settings/personal-access-tokens/new"],
+            text=True, capture_output=True, env=self.env, cwd=ROOT, timeout=120)
+        found = re.search(r"cy_fgpat_[0-9a-f]{64}", created.stdout)
+        assert created.returncode == 0 and found, created.stderr[-2000:]
+        self.credentials["fine"] = found.group(0)
+        self.gh("auth", "login", "--hostname", HOST, "--with-token", "--insecure-storage",
+                input=self.credentials["fine"] + "\n", who="fine")
+        status = self.gh("auth", "status", "--hostname", HOST, who="fine")
+        assert "Logged in" in status.stdout + status.stderr, status.stdout + status.stderr
+        assert self.api("user", who="fine")["login"] == "alice"
+        with self.check("gh with a fine-grained token reads what it grants"):
+            assert isinstance(self.api(f"repos/{REPO}/issues", who="fine"), list)
+            assert isinstance(self.data("issue", "list", "--repo", HOST + "/" + REPO, "--json", "number", who="fine"), list)
+        with self.check("gh with a fine-grained token is refused what it does not grant"):
+            denied = self.gh("api", f"repos/{REPO}/issues", "--method", "POST", "-f", "title=Denied",
+                             "--include", who="fine", ok=(1,))
+            output = (denied.stdout + denied.stderr).lower()
+            assert "403" in output and "x-accepted-github-permissions: issues=write" in output, output[-2000:]
+            refused = self.gh("api", "orgs/e2e-org/personal-access-tokens", who="fine", ok=(1,))
+            assert "403" in refused.stdout + refused.stderr
+        with self.check("organization owners list fine-grained token grants"):
+            grants = self.api("orgs/e2e-org/personal-access-tokens")
+            assert any(grant["token_name"] == "gh fine-grained" for grant in grants), grants
+
     def sweep_repositories(self):
         self.step("gh repo view text", "repo", "view", REPO, expect="Real GitHub CLI repository")
         self.step("gh repo edit", "repo", "edit", REPO, "--description", "Edited by gh", "--homepage",
@@ -938,7 +972,7 @@ def main():
                     operation()
             with client.check("signed webhook schemas"):
                 check_deliveries(receiver, secret, directory)
-            for operation in (client.sweep_account, client.sweep_repositories, client.sweep_issues, client.sweep_pulls,
+            for operation in (client.sweep_account, client.sweep_fine_grained, client.sweep_repositories, client.sweep_issues, client.sweep_pulls,
                               client.sweep_releases, client.sweep_actions, client.sweep_projects, client.sweep_discussions, client.sweep_login, client.sweep_slow_run, client.sweep_git_setup):
                 with client.check(operation.__name__):
                     operation()

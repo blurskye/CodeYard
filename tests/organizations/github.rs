@@ -16,6 +16,7 @@ mod rulesets;
 mod security;
 mod settings;
 mod teams;
+mod token_grants;
 use crate::support::{
     database::Database, github_spec::assert_github_schema, http_client::Client,
     organizations::applied,

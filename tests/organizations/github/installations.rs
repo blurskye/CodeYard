@@ -1,4 +1,5 @@
-//! Organization installation discovery and unsupported personal-token grants on both engines.
+//! Organization installation discovery and who may manage fine-grained token grants, on both
+//! engines.
 use super::request;
 use crate::support::{database::Database, http_client::Client, organizations::applied};
 use codeyard::backend::{
@@ -207,65 +208,77 @@ async fn contract(pg: bool) {
     let before = db::users::tokens::list_tokens(f.pool(), owner, 0)
         .await
         .unwrap();
-    for (operation, method, suffix, body) in [
+    // Only owners manage token grants; with no fine-grained tokens the lists are empty and a
+    // named grant or request is missing.
+    for (operation, method, suffix, body, found) in [
         (
             "orgs/list-pat-grants",
             "GET",
             "personal-access-tokens",
             Value::Null,
+            200,
         ),
         (
             "orgs/list-pat-grant-repositories",
             "GET",
             "personal-access-tokens/1/repositories",
             Value::Null,
+            404,
         ),
         (
             "orgs/list-pat-grant-requests",
             "GET",
             "personal-access-token-requests",
             Value::Null,
+            200,
         ),
         (
             "orgs/list-pat-grant-request-repositories",
             "GET",
             "personal-access-token-requests/1/repositories",
             Value::Null,
+            404,
         ),
         (
             "orgs/review-pat-grant-request",
             "POST",
             "personal-access-token-requests/1",
             json!({"action":"approve"}),
+            404,
         ),
         (
             "orgs/review-pat-grant-requests-in-bulk",
             "POST",
             "personal-access-token-requests",
             json!({"action":"deny","pat_request_ids":[1]}),
+            404,
         ),
         (
             "orgs/update-pat-access",
             "POST",
             "personal-access-tokens/1",
             json!({"action":"revoke"}),
+            404,
         ),
         (
             "orgs/update-pat-accesses",
             "POST",
             "personal-access-tokens",
             json!({"action":"revoke","pat_ids":[1]}),
+            404,
         ),
     ] {
         let path = format!("/api/v3/orgs/acme/{suffix}");
+        let read_only = if method == "POST" { 403 } else { found };
         for (token, status) in [
             (None, 401),
             (Some(credentials[2].as_str()), 403),
             (Some(credentials[3].as_str()), 403),
             (Some(credentials[4].as_str()), 403),
-            (Some(credentials[0].as_str()), 404),
+            (Some(credentials[1].as_str()), read_only),
+            (Some(credentials[0].as_str()), found),
         ] {
-            let (_, error) = request(
+            let (_, reply) = request(
                 &router,
                 operation,
                 method,
@@ -275,11 +288,15 @@ async fn contract(pg: bool) {
                 status,
             )
             .await;
-            assert_eq!(error["status"], status.to_string());
-            assert!(error["documentation_url"].is_string());
+            if status == 200 {
+                assert_eq!(reply, json!([]));
+                continue;
+            }
+            assert_eq!(reply["status"], status.to_string());
+            assert!(reply["documentation_url"].is_string());
             if status == 404 {
-                assert_eq!(error["message"], "Not Found");
-                assert!(error["documentation_url"]
+                assert_eq!(reply["message"], "Not Found");
+                assert!(reply["documentation_url"]
                     .as_str()
                     .unwrap()
                     .contains("/orgs/personal-access-tokens#"));

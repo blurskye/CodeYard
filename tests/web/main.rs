@@ -7,4 +7,5 @@ mod runtime_startup;
 mod ssr_document;
 #[path = "../support/mod.rs"]
 mod support;
+mod token_pages;
 mod work_pages;

@@ -7,6 +7,7 @@ mod avatars;
 mod cli_identity;
 mod csrf;
 mod email_links;
+mod fine_grained_tokens;
 mod gh_gists_gpg;
 mod gh_keys_auth;
 mod gists_authority;
