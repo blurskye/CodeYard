@@ -45,14 +45,31 @@ pub(crate) async fn require_account(
     actor: i64,
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
+    require_account_with_mode(tx, actor, credential, true).await
+}
+
+pub(crate) async fn require_read_account(
+    tx: &mut Transaction<'_, sqlx::Sqlite>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<()> {
+    require_account_with_mode(tx, actor, credential, false).await
+}
+
+async fn require_account_with_mode(
+    tx: &mut Transaction<'_, sqlx::Sqlite>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    write: bool,
+) -> Result<()> {
     use crate::backend::db::users::accounts::{AccountCredential, AccountRestricted};
     let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)")
         .bind(actor).fetch_one(&mut **tx).await?;
     anyhow::ensure!(active, AccountRestricted);
     let live = match credential {
         AccountCredential::Session(session) => live_session(tx, actor, session).await?,
-        AccountCredential::Token(id) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=?1 AND user_id=?2 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))")
-            .bind(id).bind(actor).fetch_one(&mut **tx).await?,
+        AccountCredential::Token(id) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=?1 AND user_id=?2 AND scope IN ('read','write') AND (NOT ?3 OR scope='write') AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))")
+            .bind(id).bind(actor).bind(write).fetch_one(&mut **tx).await?,
     };
     anyhow::ensure!(live, AccountRestricted);
     Ok(())

@@ -1,6 +1,7 @@
 //! Local advisories and snapshot matches. No advisory read contacts an external feed.
 use super::{
     advisories::{self, Advisory, Data, Refusal},
+    users::accounts::AccountActor,
     DbPool,
 };
 use crate::backend::dependency_graph::{self, Package, Snapshot};
@@ -418,10 +419,10 @@ native_operation!(crate::backend::db::postgres::dependabot_alerts::without_osv,c
 native_operation!(crate::backend::db::postgres::dependabot_alerts::global_one,crate::backend::db::sqlite::dependabot_alerts::global_one,
     fn global_one(pool:&DbPool, ghsa_id:&str)->Result<Option<Value>>);
 native_operation!(crate::backend::db::postgres::dependabot_alerts::import,crate::backend::db::sqlite::dependabot_alerts::import,
-    fn import(pool:&DbPool,actor:i64,value:&Value)->Result<Value>);
+    fn import(pool:&DbPool,actor:impl Into<AccountActor>,value:&Value)->Result<Value>);
 native_operation!(crate::backend::db::postgres::dependabot_alerts::alerts,crate::backend::db::sqlite::dependabot_alerts::alerts,
-    fn alerts(pool:&DbPool,actor:i64,repo:i64)->Result<Vec<Alert>>);
+    fn alerts(pool:&DbPool,actor:impl Into<AccountActor>,repo:i64)->Result<Vec<Alert>>);
 native_operation!(crate::backend::db::postgres::dependabot_alerts::update,crate::backend::db::sqlite::dependabot_alerts::update,
-    fn update(pool:&DbPool,actor:i64,repo:i64,number:i64,input:&Update)->Result<Alert>);
+    fn update(pool:&DbPool,actor:impl Into<AccountActor>,repo:i64,number:i64,input:&Update)->Result<Alert>);
 native_operation!(crate::backend::db::postgres::dependabot_alerts::organization_repositories,crate::backend::db::sqlite::dependabot_alerts::organization_repositories,
     fn organization_repositories(pool:&DbPool,actor:i64,org:i64)->Result<Vec<i64>>);

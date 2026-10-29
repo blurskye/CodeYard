@@ -2,6 +2,7 @@ use crate::backend::{
     db::{
         advisories::{Advisory, Refusal},
         dependabot_alerts::{self, Alert, Update},
+        users::accounts::AccountActor,
     },
     dependency_graph::Snapshot,
 };
@@ -78,13 +79,18 @@ pub async fn global_one(pool: &SqlitePool, ghsa_id: &str) -> Result<Option<Value
         None => Ok(None),
     }
 }
-pub async fn import(pool: &SqlitePool, actor: i64, value: &Value) -> Result<Value> {
+pub async fn import(pool: &SqlitePool, actor: impl Into<AccountActor>, value: &Value) -> Result<Value> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let value = dependabot_alerts::import_document(value)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
         super::users::transitions::active_admin(&mut tx, actor).await?,
         Refusal::Denied
     );
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     sqlx::query("INSERT INTO global_advisories(ghsa_id,document) VALUES($1,$2) ON CONFLICT(ghsa_id) DO UPDATE SET document=$2,osv_id=NULL")
         .bind(value["ghsa_id"].as_str().unwrap()).bind(value.to_string()).execute(&mut *tx).await?;
     tx.commit().await?;
@@ -162,11 +168,21 @@ pub(crate) async fn refresh(tx: &mut Transaction<'_, Sqlite>, repo: i64) -> Resu
     }
     Ok(())
 }
-async fn authorize(tx: &mut Transaction<'_, Sqlite>, actor: i64, repo: i64) -> Result<()> {
-    ensure!(
-        super::discussions::lock_admin_authority(tx, actor, repo).await?,
-        Refusal::Denied
-    );
+async fn authorize(tx: &mut Transaction<'_, Sqlite>, actor: &AccountActor, repo: i64, mutation: bool) -> Result<()> {
+    let id = actor.user_id();
+    let allowed = if mutation {
+        super::discussions::lock_admin_authority(tx, id, repo).await?
+    } else {
+        super::discussions::lock_archive_authority(tx, id, repo).await?
+    };
+    ensure!(allowed, Refusal::Denied);
+    if let Some(credential) = actor.credential() {
+        if mutation {
+            super::users::transitions::require_account(tx, id, &credential).await?;
+        } else {
+            super::users::transitions::require_read_account(tx, id, &credential).await?;
+        }
+    }
     let settings: Option<String> = sqlx::query_scalar(
         "SELECT security_and_analysis FROM repository_security_settings WHERE repo_id=$1",
     )
@@ -182,9 +198,10 @@ async fn authorize(tx: &mut Transaction<'_, Sqlite>, actor: i64, repo: i64) -> R
     );
     Ok(())
 }
-pub async fn alerts(pool: &SqlitePool, actor: i64, repo: i64) -> Result<Vec<Alert>> {
+pub async fn alerts(pool: &SqlitePool, actor: impl Into<AccountActor>, repo: i64) -> Result<Vec<Alert>> {
+    let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, repo).await?;
+    authorize(&mut tx, &actor, repo, false).await?;
     refresh(&mut tx, repo).await?;
     let rows =
         sqlx::query_as("SELECT * FROM dependabot_alerts WHERE repo_id=$1 ORDER BY number DESC")
@@ -196,14 +213,16 @@ pub async fn alerts(pool: &SqlitePool, actor: i64, repo: i64) -> Result<Vec<Aler
 }
 pub async fn update(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<AccountActor>,
     repo: i64,
     number: i64,
     input: &Update,
 ) -> Result<Alert> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     input.validate()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, repo).await?;
+    authorize(&mut tx, &authority, repo, true).await?;
     refresh(&mut tx, repo).await?;
     let previous: Alert =
         sqlx::query_as("SELECT * FROM dependabot_alerts WHERE repo_id=$1 AND number=$2")
