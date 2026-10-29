@@ -42,6 +42,15 @@ pub(crate) fn validate_account(input: &PasswordAccount<'_>) -> Result<(), Accoun
     Ok(())
 }
 
+/// Generated noreply identities contain case-sensitive account names.
+pub(crate) fn email_matches(address: &str, candidate: &str) -> bool {
+    if address.ends_with("@users.noreply") {
+        address == candidate
+    } else {
+        address.eq_ignore_ascii_case(candidate)
+    }
+}
+
 pub(crate) fn validate_email(email: &str) -> Result<(), AccountInputError> {
     if email.len() > 255 || email.contains('\0') {
         return Err(AccountInputError::EmailBounds);
