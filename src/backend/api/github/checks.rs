@@ -4,7 +4,7 @@ use crate::backend::{
     app::AppState,
     db::{
         self,
-        checks::{self, Credential, Filter, Preference, Run, RunPatch, Suite},
+        checks::{self, Credential, Filter, Preference, Run, RunPatch, Suite, ACTIONS_APP_ID},
         models::Repository,
     },
     repositories::store::repo_store,
@@ -50,9 +50,6 @@ async fn app(state: &AppState, id: Option<i64>) -> Result<Value> {
         json!({"id":app.id,"node_id":super::node_id::encode("A", app.id),"client_id":app.client_id,"name":app.name,"description":null,"owner":payloads::person(&payloads::Person::of(&owner)),"external_url":app.homepage,"html_url":app.homepage,"created_at":app.created_at,"updated_at":app.created_at,"permissions":{"checks":"write","metadata":"read"},"events":["check_run","check_suite"]}),
     )
 }
-
-/// GitHub's id for its Actions app, which clients use to recognize Actions check suites.
-const ACTIONS_APP_ID: i64 = 15368;
 
 /// The app that publishes workflow run check suites, acting as the Actions bot account.
 async fn actions_app(state: &AppState, repo: &Repository, owner: &str) -> Result<Value> {
@@ -229,7 +226,7 @@ async fn create_run(
     let auth = auth.ok_or_else(super::auth::required)?;
     input.patch.validate(true).map_err(write_error)?;
     let (sha, branch) = head(&state, &repo, &input.head_sha).await?;
-    let run = checks::create_run(
+    let changed = checks::create_run(
         &state.pool,
         Credential::Token(auth.token.id),
         repo.id,
@@ -239,7 +236,7 @@ async fn create_run(
     )
     .await
     .map_err(write_error)?;
-    let doc = run_document(&state, &repo, &owner, &run).await?;
+    let doc = run_document(&state, &repo, &owner, &changed.run).await?;
     emit(
         &state,
         &repo,
@@ -249,6 +246,10 @@ async fn create_run(
         doc.clone(),
     )
     .await;
+    if let Some(suite) = changed.completed_suite {
+        let doc = suite_document(&state, &repo, &owner, &suite).await?;
+        emit(&state, &repo, auth.user.id, "check_suite", "completed", doc).await;
+    }
     Ok((StatusCode::CREATED, Json(doc)).into_response())
 }
 async fn update_run(
@@ -259,7 +260,7 @@ async fn update_run(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(super::auth::required)?;
-    let run = checks::update_run(
+    let changed = checks::update_run(
         &state.pool,
         Credential::Token(auth.token.id),
         repo.id,
@@ -268,8 +269,8 @@ async fn update_run(
     )
     .await
     .map_err(write_error)?;
-    let doc = run_document(&state, &repo, &owner, &run).await?;
-    if run.status == "completed" {
+    let doc = run_document(&state, &repo, &owner, &changed.run).await?;
+    if changed.run.status == "completed" {
         emit(
             &state,
             &repo,
@@ -279,6 +280,10 @@ async fn update_run(
             doc.clone(),
         )
         .await;
+    }
+    if let Some(suite) = changed.completed_suite {
+        let doc = suite_document(&state, &repo, &owner, &suite).await?;
+        emit(&state, &repo, auth.user.id, "check_suite", "completed", doc).await;
     }
     Ok(Json(doc))
 }
