@@ -19,7 +19,7 @@ pub(super) async fn review(
     .ok_or_else(missing)?;
     let repo = repository::by_id(pull.repo_id, request).await?;
     request.authorize(repo.id, "pull-requests", false).await?;
-    if row.state == "pending" && row.author_id != request.auth.user.id {
+    if row.state == "pending" && Some(row.author_id) != request.repository_viewer(&repo).await? {
         return Err(missing());
     }
     Ok(
@@ -51,7 +51,7 @@ pub(super) async fn review_comment(
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-        if review.state == "pending" && review.author_id != request.auth.user.id {
+        if review.state == "pending" && Some(review.author_id) != request.repository_viewer(&repo).await? {
             return Err(missing());
         }
     }
@@ -69,9 +69,9 @@ pub(super) async fn release(row: &db::models::Release, request: &RequestContext)
     let repo = repository::by_id(row.repo_id, request).await?;
     request.authorize(repo.id, "contents", false).await?;
     if row.is_draft
-        && !access::can_write(&request.state.pool, &request.auth.user, &repo)
+        && (request.repository_viewer(&repo).await?.is_none() || !access::can_write(&request.state.pool, &request.auth.user, &repo)
             .await
-            .map_err(unavailable)?
+            .map_err(unavailable)?)
     {
         return Err(missing());
     }

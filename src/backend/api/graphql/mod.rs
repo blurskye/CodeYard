@@ -92,6 +92,18 @@ impl RequestContext {
         self.require_oauth_scope("repo")
     }
 
+    /// Public fallback must not retain the account's access to unpublished repository data.
+    async fn repository_viewer(&self, repo: &db::models::Repository) -> Result<Option<i64>> {
+        if self.personal.is_some() {
+            let grant = crate::backend::identity::fine_grained::grant(&self.state.pool, self.auth.token.id)
+                .await.map_err(unavailable)?.ok_or_else(token_denied)?;
+            if !grant.reaches(&self.state.pool, repo).await.map_err(unavailable)? {
+                return Ok(None);
+            }
+        }
+        Ok(Some(self.auth.user.id))
+    }
+
     /// Each resolver checks the grant it needs, as the REST routes check theirs.
     fn require_oauth_scope(&self, scope: &str) -> Result<()> {
         if let Some(permissions) = &self.personal {

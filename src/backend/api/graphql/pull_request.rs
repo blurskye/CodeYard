@@ -109,7 +109,7 @@ pub(super) async fn resolve(
                 .collect();
             let query = db::pull_requests::reviews::ReviewQuery {
                 pull_id: pull.id,
-                viewer: Some(request.auth.user.id),
+                viewer: request.repository_viewer(&repo).await?,
                 author: args
                     .args
                     .get("author")
