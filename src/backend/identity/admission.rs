@@ -49,6 +49,11 @@ pub async fn admit_oauth_start(pool: &DbPool, client: Option<&str>) -> Result<()
         .map(drop)
 }
 
+pub async fn admit_anonymous_session(pool: &DbPool, client: Option<&str>) -> Result<(), AdmissionError> {
+    let identity = format!("anonymous-session:{}", client.unwrap_or_default());
+    admit(pool, None, account_key(None, &identity)).await.map(drop)
+}
+
 pub async fn forgive_oauth_start(pool: &DbPool, client: Option<&str>) {
     let identity = format!("oauth-start:{}", client.unwrap_or_default());
     let attempt = Attempt {
