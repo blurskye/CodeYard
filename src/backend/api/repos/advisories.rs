@@ -65,6 +65,7 @@ async fn render(
     status: StatusCode,
 ) -> Response {
     let mut page = AdvisoryPage {
+        can_administer: false,
         rows: Vec::new(),
         detail: None,
         draft: Draft {
@@ -77,6 +78,9 @@ async fn render(
     };
     let actor = ctx.user.as_ref().map(|u| u.id);
     let data = async {
+        if let Some(actor) = actor {
+            page.can_administer = advisories::can_administer(&ctx.state.pool, actor, loaded.repository.id).await?;
+        }
         if let Some(ghsa) = ghsa {
             let advisory = advisories::get(&ctx.state.pool, actor, loaded.repository.id, ghsa)
                 .await?
@@ -235,12 +239,16 @@ async fn submit(
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
-    if !loaded.chrome.can_admin
+    let actor = ctx.user.as_ref().unwrap().id;
+    let can_administer = match advisories::can_administer(&ctx.state.pool, actor, loaded.repository.id).await {
+        Ok(allowed) => allowed,
+        Err(_) => return chrome::unavailable(&ctx),
+    };
+    if !can_administer
         || forms::field(&form, "repository_id").parse::<i64>().ok() != Some(loaded.repository.id)
     {
         return ctx.error(StatusCode::FORBIDDEN, "Advisory administration denied.");
     }
-    let actor = ctx.user.as_ref().unwrap().id;
     let op = forms::field(&form, "op");
     let ghsa = forms::field(&form, "ghsa");
     let draft = Draft {

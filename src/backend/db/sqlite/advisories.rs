@@ -5,8 +5,14 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 fn visibility() -> String {
     let level = super::repositories::access::USER_REPO_ACCESS_SQL;
-    format!("(NOT r.is_private OR (NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND (r.owner_user_id=u.id OR u.is_admin)) OR ({level})>=1))) AND (a.state='published' OR (NOT u.is_banned AND NOT u.must_change_password AND (a.author_id=u.id OR (r.owner_kind='user' AND u.is_admin) OR ({level})>=5)))")
+    let manager = crate::backend::db::organizations::roles::security_manager_condition("u.id", "r.owner_org_id");
+    format!("(NOT r.is_private OR (NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND (r.owner_user_id=u.id OR u.is_admin)) OR ({level})>=1))) AND (a.state='published' OR (NOT u.is_banned AND NOT u.must_change_password AND (a.author_id=u.id OR (r.owner_kind='user' AND u.is_admin) OR ({level})>=5 OR ({manager}))))")
 }
+pub async fn can_administer(pool: &SqlitePool, actor: i64, repo: i64) -> Result<bool> {
+    let sql = crate::backend::db::advisories::administration_sql(super::repositories::access::USER_REPO_ACCESS_SQL);
+    Ok(sqlx::query_scalar(&sql).bind(actor).bind(repo).fetch_one(pool).await?)
+}
+
 pub async fn list(
     pool: &SqlitePool,
     actor: Option<i64>,
@@ -71,7 +77,7 @@ pub async fn create(
         Some(super::repositories::security::create_report_in(&mut tx, actor, repo, &input).await?)
     } else {
         anyhow::ensure!(
-            super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+            super::discussions::lock_security_mutation_authority(&mut tx, actor, repo).await?,
             Refusal::Denied
         );
         None
@@ -87,7 +93,7 @@ async fn administration(
     ghsa: &str,
 ) -> Result<Advisory> {
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(tx, actor, repo).await?,
+        super::discussions::lock_security_mutation_authority(tx, actor, repo).await?,
         Refusal::Denied
     );
     Ok(

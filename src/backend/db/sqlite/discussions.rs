@@ -149,6 +149,20 @@ pub(crate) async fn lock_admin_authority(
 }
 
 /// Administration of archival state must also work when the repository is already archived.
+/// Security managers administer advisory state without repository-wide administration.
+pub(crate) async fn lock_security_mutation_authority(
+    tx: &mut Transaction<'_, Sqlite>, actor_id: i64, repo_id: i64,
+) -> Result<bool> {
+    let Some(authority) = lock_discussion_authority(tx, actor_id, repo_id, false).await? else { return Ok(false); };
+    if authority.access.can_admin() || authority.personal_owner || authority.personal_override { return Ok(true); }
+    if !authority.organization { return Ok(false); }
+    let org: Option<i64> = sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=?1").bind(repo_id).fetch_one(&mut **tx).await?;
+    match org {
+        Some(org) => super::organizations::roles::manages_security(tx, actor_id, org).await,
+        None => Ok(false),
+    }
+}
+
 pub(crate) async fn lock_archive_authority(
     tx: &mut Transaction<'_, Sqlite>,
     actor_id: i64,

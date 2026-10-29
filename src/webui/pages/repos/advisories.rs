@@ -41,6 +41,8 @@ pub struct Detail {
 }
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Page {
+    #[serde(default)]
+    pub can_administer: bool,
     pub rows: Vec<Row>,
     pub detail: Option<Detail>,
     pub draft: Draft,
@@ -103,7 +105,7 @@ fn AdvisoryView(repo: RepoChrome, page: Page) -> Element {
                     for vulnerability in &detail.vulnerabilities {article {class:"panel",h4 {"{vulnerability.ecosystem}: {vulnerability.name}"} p {"Affected: {vulnerability.range}"} p {"Patched: {vulnerability.patched}"}}}
                     if let Some(url)=&detail.report_url {NavLink {href:url.clone(),"Original confidential report"}}
                     if let Some(url)=&detail.fork_url {NavLink {href:url.clone(),"Private remediation fork"}}
-                    if repo.can_admin&&!repo.is_archived {
+                    if page.can_administer&&!repo.is_archived {
                         form {method:"post",action:repo.action("advisory"),{csrf(&repo.csrf_token)} {repository_id(repo.id)} input {r#type:"hidden",name:"ghsa",value:detail.row.ghsa.clone()}
                             {fields(&page.draft,detail.vulnerabilities.is_empty())} button {r#type:"submit",name:"op",value:"save","Save advisory"}
                         }
@@ -117,7 +119,7 @@ fn AdvisoryView(repo: RepoChrome, page: Page) -> Element {
                     if page.rows.is_empty() {p {"No advisories are visible to this account."}}
                     for row in &page.rows {article {class:"panel",h3 {NavLink {href:format!("{base}/{}",row.ghsa),"{row.summary}"}} p {code {"{row.ghsa}"} " · {row.state} · {row.severity}"}}}
                     nav {aria_label:"Advisory pages",if page.page>1 {NavLink {href:format!("{base}?page={}",page.page-1),"Previous"}} if page.more {NavLink {href:format!("{base}?page={}",page.page+1),"Next"}}}
-                    if repo.can_admin&&!repo.is_archived {h3 {"Create draft advisory"} form {method:"post",action:repo.action("advisory"),{csrf(&repo.csrf_token)} {repository_id(repo.id)} {fields(&page.draft,true)} button {name:"op",value:"create","Create confidential draft"}}}
+                    if page.can_administer&&!repo.is_archived {h3 {"Create draft advisory"} form {method:"post",action:repo.action("advisory"),{csrf(&repo.csrf_token)} {repository_id(repo.id)} {fields(&page.draft,true)} button {name:"op",value:"create","Create confidential draft"}}}
                 }
             }
         },

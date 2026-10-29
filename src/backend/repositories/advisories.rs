@@ -1,5 +1,5 @@
 //! Temporary remediation forks reuse repository storage placement and checked fork initialization.
-use super::{access, lifecycle};
+use super::lifecycle;
 use crate::backend::{
     app::AppState,
     db::{
@@ -9,23 +9,14 @@ use crate::backend::{
     },
 };
 use anyhow::Result;
+
 pub async fn private_fork(
     state: &AppState,
     actor: i64,
     repo: &Repository,
     ghsa: &str,
 ) -> Result<Repository> {
-    access::check_admin(&state.pool, repo.id, actor)
-        .await
-        .map_err(|error| -> anyhow::Error {
-            match error {
-                access::AccessError::Unavailable => {
-                    anyhow::anyhow!("Repository authority is unavailable")
-                }
-                access::AccessError::NotFound => Refusal::Missing.into(),
-                _ => Refusal::Denied.into(),
-            }
-        })?;
+    anyhow::ensure!(advisories::can_administer(&state.pool, actor, repo.id).await?, Refusal::Denied);
     let advisory = advisories::get(&state.pool, Some(actor), repo.id, ghsa)
         .await?
         .ok_or(Refusal::Missing)?;
