@@ -246,7 +246,7 @@ pub async fn add_release_asset(
     asset: &NewReleaseAsset<'_>,
 ) -> Result<ReleaseAsset> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
-    super::users::transitions::require_account(&mut tx, actor_id, credential).await?;
+    anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?, ReleaseRefusal::Denied);
     let release = release_in_repo(&mut tx, repo_id, release_id).await?;
     anyhow::ensure!(!release.is_immutable, ReleaseRefusal::Immutable);
     let taken: Option<i64> =
