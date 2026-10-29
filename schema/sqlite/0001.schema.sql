@@ -3252,7 +3252,9 @@ CREATE INDEX actions_policies_org ON actions_policies(org_id);
 CREATE TABLE actions_deployment_reviews (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
-    environment_id BIGINT NOT NULL REFERENCES deployment_environments(id) ON DELETE CASCADE,
+    -- Historical identity: deleting the live environment must not delete an approval.
+    environment_id BIGINT NOT NULL,
+    environment_name TEXT NOT NULL,
     actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     state TEXT NOT NULL CHECK (state IN ('approved','rejected')),
     comment TEXT NOT NULL,

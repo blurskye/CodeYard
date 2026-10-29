@@ -16,8 +16,8 @@ pub struct Pending {
 
 #[derive(sqlx::FromRow)]
 pub struct Review {
-    #[sqlx(flatten)]
-    pub environment: Environment,
+    pub environment_id: i64,
+    pub environment_name: String,
     pub actor_id: Option<i64>,
     pub state: String,
     pub comment: String,

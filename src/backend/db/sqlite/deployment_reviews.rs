@@ -114,7 +114,7 @@ pub async fn review(
         let sha = source.head_sha.as_deref().ok_or(Refusal::Invalid)?;
         let deployment: Deployment = sqlx::query_as("INSERT INTO repository_deployments(repo_id,creator_id,sha,reference,task,payload,original_environment,environment,production_environment) VALUES(?1,?2,?3,?4,'deploy',?5,?6,?6,?7) RETURNING *").bind(repo).bind(source.triggered_by_id).bind(sha).bind(&source.branch).bind(serde_json::json!({"workflow_run_id":run}).to_string()).bind(&current.environment.name).bind(current.environment.name == "production").fetch_one(&mut *tx).await?;
         sqlx::query("INSERT INTO deployment_statuses(deployment_id,creator_id,state,environment) VALUES(?1,?2,?3,?4)").bind(deployment.id).bind(actor).bind(if input.state == "approved" { "queued" } else { "failure" }).bind(&current.environment.name).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO actions_deployment_reviews(run_id,environment_id,actor_id,state,comment,deployment_id) VALUES(?1,?2,?3,?4,?5,?6)").bind(run).bind(id).bind(actor).bind(&input.state).bind(&input.comment).bind(deployment.id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO actions_deployment_reviews(run_id,environment_id,actor_id,state,comment,deployment_id,environment_name) VALUES(?1,?2,?3,?4,?5,?6,?7)").bind(run).bind(id).bind(actor).bind(&input.state).bind(&input.comment).bind(deployment.id).bind(&current.environment.name).execute(&mut *tx).await?;
         deployments.push(deployment);
     }
     tx.commit().await?;
@@ -122,5 +122,5 @@ pub async fn review(
 }
 
 pub async fn history(pool: &SqlitePool, repo: i64, run: i64) -> Result<Vec<Review>> {
-    Ok(sqlx::query_as("SELECT e.*,v.actor_id,v.state,v.comment FROM actions_deployment_reviews v JOIN ci_runs r ON r.id=v.run_id JOIN deployment_environments e ON e.id=v.environment_id AND e.repo_id=r.repo_id WHERE r.repo_id=?1 AND r.id=?2 ORDER BY v.id").bind(repo).bind(run).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT v.environment_id,v.environment_name,v.actor_id,v.state,v.comment FROM actions_deployment_reviews v JOIN ci_runs r ON r.id=v.run_id WHERE r.repo_id=?1 AND r.id=?2 ORDER BY v.id").bind(repo).bind(run).fetch_all(pool).await?)
 }
