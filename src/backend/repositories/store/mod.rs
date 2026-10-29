@@ -1447,9 +1447,10 @@ impl RepoStore {
         actor: i64,
         old: &str,
         new: &str,
+        token: i64,
     ) -> Result<String, RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.rename_branch(pool, repo_id, actor, old, new).await,
+            Backend::Local(local) => local.rename_branch(pool, repo_id, actor, old, new, token).await,
             Backend::Remote(remote) => {
                 remote
                     .call_as(
@@ -1457,6 +1458,7 @@ impl RepoStore {
                         Operation::RenameBranch {
                             old: old.into(),
                             new: new.into(),
+                            token,
                         },
                         b"",
                     )

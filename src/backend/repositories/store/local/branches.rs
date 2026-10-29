@@ -8,12 +8,13 @@ impl LocalStore {
         actor: i64,
         old: &str,
         new: &str,
+        token: i64,
     ) -> Result<String, RepoError> {
         let (store, pool, old, new) = (self.clone(), pool.clone(), old.to_owned(), new.to_owned());
         // Finish metadata and HEAD updates even if the HTTP client leaves after the ref moves.
         tokio::spawn(async move {
             store
-                .rename_branch_owned(&pool, repo, actor, &old, &new)
+                .rename_branch_owned(&pool, repo, actor, &old, &new, token)
                 .await
         })
         .await
@@ -27,13 +28,14 @@ impl LocalStore {
         actor: i64,
         old: &str,
         new: &str,
+        token: i64,
     ) -> Result<String, RepoError> {
         let old_ref = git::branch_ref(old).ok_or_else(|| super::super::invalid_ref("branch"))?;
         let new_ref = git::branch_ref(new).ok_or_else(|| super::super::invalid_ref("branch"))?;
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
-        let user = self.rename_authority(pool, repo, actor, old, new).await?;
+        let user = self.rename_authority(pool, repo, actor, old, new, token).await?;
         let refs = self.refs().await?;
         let target = refs
             .get(&old_ref)
@@ -87,7 +89,7 @@ impl LocalStore {
             )
         })
         .await?;
-        self.rename_authority(pool, repo, actor, old, new).await?;
+        self.rename_authority(pool, repo, actor, old, new, token).await?;
         publication
             .scope(git::publish_branch_rename(self.path(), old, new, &target))
             .await
@@ -122,6 +124,7 @@ impl LocalStore {
         actor: i64,
         old: &str,
         new: &str,
+        token: i64,
     ) -> Result<db::models::User, RepoError> {
         let (repository, user) = access::check_write(pool, repo, actor)
             .await
@@ -149,6 +152,19 @@ impl LocalStore {
             .await
             .map_err(|_| RepoError::authority_unavailable())?
             .is_empty();
+        }
+        if !db::users::tokens::token_user(pool, token, true).await
+            .map_err(|_| RepoError::authority_unavailable())?.is_some_and(|user| user.id == actor)
+            || db::fine_grained_tokens::classic_refused_repository(pool, token, repo).await
+                .map_err(|_| RepoError::authority_unavailable())? {
+            return Err(RepoError::write_denied());
+        }
+        if let Some(bounds) = crate::backend::identity::github_apps::authority(pool, token).await
+            .map_err(|_| RepoError::authority_unavailable())? {
+            if !bounds.allows(pool, actor, repo, if protected { "administration" } else { "contents" }, true).await
+                .map_err(|_| RepoError::authority_unavailable())? {
+                return Err(RepoError::write_denied());
+            }
         }
         if protected
             && !access::can_admin(pool, &user, &repository)

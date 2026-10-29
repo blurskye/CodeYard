@@ -273,6 +273,7 @@ pub enum Operation {
     RenameBranch {
         old: String,
         new: String,
+        token: i64,
     },
     MergeUpstream {
         source: Uuid,

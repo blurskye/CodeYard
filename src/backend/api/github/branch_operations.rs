@@ -27,9 +27,10 @@ async fn rename(
     Json(input): Json<Rename>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user.id;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = auth.user.id;
     repo_store(&repo, state.cluster.as_ref())
-        .rename_branch_as(&state.pool, repo.id, actor, &branch, &input.new_name)
+        .rename_branch_as(&state.pool, repo.id, actor, &branch, &input.new_name, auth.token.id)
         .await
         .map_err(store_error)?;
     pull_requests::refresh_open_pull_requests(
