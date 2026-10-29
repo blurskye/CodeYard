@@ -497,8 +497,15 @@ impl Statement {
         self.args.push(value.into());
         self.placeholder(self.args.len() + 1)
     }
+    pub(crate) fn equals(&mut self, column: &str, value: &str) -> String {
+        let end = if self.postgres { "\\Z" } else { "\\z" };
+        self.regex(column, format!("(?i)\\A{}{end}", escape(value)))
+    }
     pub(crate) fn matches(&mut self, column: &str, value: &str) -> String {
-        let value = self.bind(format!("(?i){}", escape(value)));
+        self.regex(column, format!("(?i){}", escape(value)))
+    }
+    fn regex(&mut self, column: &str, pattern: String) -> String {
+        let value = self.bind(pattern);
         format!(
             "COALESCE({column},'') {} {value}",
             if self.postgres { "~" } else { "REGEXP" }

@@ -212,8 +212,8 @@ fn search_expression(sql: &mut Statement, expr: &Expr) -> Result<String> {
                 format!("i.author_id IN (SELECT id FROM users WHERE lower(username)=lower({p}))")
             }
             ("label", _) => {
-                let p = sql.bind(value);
-                format!("EXISTS(SELECT 1 FROM discussion_labels a JOIN labels l ON l.id=a.label_id WHERE a.discussion_id=i.id AND lower(l.name)=lower({p}))")
+                let predicate = sql.equals("l.name", value);
+                format!("EXISTS(SELECT 1 FROM discussion_labels a JOIN labels l ON l.id=a.label_id WHERE a.discussion_id=i.id AND {predicate})")
             }
             ("category", _) => {
                 let p = sql.bind(value);
