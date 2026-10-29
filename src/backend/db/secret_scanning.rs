@@ -163,8 +163,8 @@ native_operation!(super::postgres::secret_scanning::bypass, super::sqlite::secre
 
 native_operation!(super::postgres::secret_scanning::use_bypass,super::sqlite::secret_scanning::use_bypass,
     fn use_bypass(pool:&DbPool,repo:i64,actor:i64,hash:&str,accepted:DateTime<Utc>)->Result<()>);
-native_operation!(super::postgres::secret_scanning::alert_bypass,super::sqlite::secret_scanning::alert_bypass,
-    fn alert_bypass(pool:&DbPool,repo:i64,hash:&str)->Result<Option<Bypass>>);
+native_operation!(super::postgres::secret_scanning::alert_bypasses,super::sqlite::secret_scanning::alert_bypasses,
+    fn alert_bypasses(pool:&DbPool,keys:&[(i64,String)])->Result<Vec<Bypass>>);
 
 #[derive(Clone, sqlx::FromRow)]
 pub struct ScanJob {

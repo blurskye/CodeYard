@@ -190,17 +190,18 @@ async fn list_org(
     .await
     .map_err(error)?;
     let has_next = alerts.len() > limit;
+    let alerts = alerts.into_iter().take(limit).collect::<Vec<_>>();
+    let ids = alerts.iter().map(|alert| alert.repo_id).collect::<Vec<_>>();
+    let repositories = db::repositories::records::get_repositories_by_ids(&state.pool, &ids).await.map_err(Error::unavailable)?
+        .into_iter().map(|repo| (repo.id, repo)).collect::<HashMap<_, _>>();
+    let documents = jobs::Documents::load(&state, &alerts).await.map_err(Error::unavailable)?;
     let mut items = Vec::new();
-    for alert in alerts.into_iter().take(limit) {
-        let repo = db::repositories::records::get_repository_by_id(&state.pool, alert.repo_id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+    for alert in &alerts {
+        let repo = repositories.get(&alert.repo_id).ok_or_else(Error::missing)?;
         if repo.owner_org_id != Some(org.id) {
             continue;
         }
-        let mut document = jobs::document(&state, &alert, &org.name, &repo.name, query.hide_secret)
-            .await
+        let mut document = documents.document(&state, alert, &org.name, &repo.name, query.hide_secret)
             .map_err(Error::unavailable)?;
         document["repository"] = payloads::repository(&repo, &org.name);
         items.push(document);
@@ -240,14 +241,9 @@ async fn list(
     .await
     .map_err(error)?;
     let has_next = alerts.len() > limit;
-    let mut items = Vec::new();
-    for alert in alerts.into_iter().take(limit) {
-        items.push(
-            jobs::document(&state, &alert, &owner, &name, query.hide_secret)
-                .await
-                .map_err(Error::unavailable)?,
-        );
-    }
+    let alerts = alerts.into_iter().take(limit).collect::<Vec<_>>();
+    let documents = jobs::Documents::load(&state, &alerts).await.map_err(Error::unavailable)?;
+    let items = alerts.iter().map(|alert| documents.document(&state, alert, &owner, &name, query.hide_secret).map_err(Error::unavailable)).collect::<Result<Vec<_>>>()?;
     pagination.response(&uri, items, has_next)
 }
 

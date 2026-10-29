@@ -122,8 +122,11 @@ pub async fn use_bypass(
     tx.commit().await?;
     Ok(())
 }
-pub async fn alert_bypass(pool: &PgPool, repo: i64, hash: &str) -> Result<Option<Bypass>> {
-    Ok(sqlx::query_as("SELECT * FROM secret_scanning_bypasses WHERE repo_id=$1 AND secret_hash=$2 AND used_at IS NOT NULL ORDER BY used_at DESC LIMIT 1").bind(repo).bind(hash).fetch_optional(pool).await?)
+pub async fn alert_bypasses(pool: &PgPool, keys: &[(i64, String)]) -> Result<Vec<Bypass>> {
+    ensure!(keys.len() <= 100, "Too many alert enrichments");
+    if keys.is_empty() { return Ok(Vec::new()); }
+    Ok(sqlx::query_as("SELECT ranked.* FROM (SELECT b.*,row_number() OVER (PARTITION BY repo_id,secret_hash ORDER BY used_at DESC,id DESC) AS position FROM secret_scanning_bypasses b WHERE used_at IS NOT NULL AND (repo_id,secret_hash) IN (SELECT (value->>0)::BIGINT,value->>1 FROM jsonb_array_elements($1::jsonb))) ranked WHERE position=1")
+        .bind(serde_json::to_string(keys)?).fetch_all(pool).await?)
 }
 
 pub async fn settings(pool: &PgPool, repo: i64) -> Result<Settings> {
