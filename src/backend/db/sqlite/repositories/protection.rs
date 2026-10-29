@@ -34,6 +34,9 @@ pub async fn upsert_branch_protection_rule(
         .await?,
         ProtectionWriteRefusal::Denied
     );
+    if let Some(token) = input.token_id {
+        anyhow::ensure!(super::super::users::tokens::permits_write(&mut tx, input.actor_id, token, Some(input.repo_id), None, "administration").await?, ProtectionWriteRefusal::Denied);
+    }
     let previous: Option<String> = sqlx::query_scalar(
         "SELECT github_settings FROM branch_protection_rules WHERE repo_id=?1 AND pattern=?2",
     )
@@ -160,16 +163,21 @@ pub async fn upsert_branch_protection_rule(
 
 pub async fn delete_branch_protection_rule(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::tokens::Actor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<bool> {
+    let actor = actor_id.into();
+    let actor_id = actor.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id,)
             .await?,
         ProtectionWriteRefusal::Denied
     );
+    if let Some(token) = actor.token_id {
+        anyhow::ensure!(super::super::users::tokens::permits_write(&mut tx, actor_id, token, Some(repo_id), None, "administration").await?, ProtectionWriteRefusal::Denied);
+    }
     let result =
         sqlx::query("DELETE FROM branch_protection_rules WHERE repo_id = ?1 AND pattern = ?2")
             .bind(repo_id)
@@ -183,17 +191,22 @@ pub async fn delete_branch_protection_rule(
 
 pub async fn update_branch_protection_rule(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::tokens::Actor>,
     repo_id: i64,
     pattern: &str,
     update: crate::backend::db::repositories::protection::ProtectionUpdate,
 ) -> Result<BranchProtectionRule> {
+    let actor = actor_id.into();
+    let actor_id = actor.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
             .await?,
         ProtectionWriteRefusal::Denied
     );
+    if let Some(token) = actor.token_id {
+        anyhow::ensure!(super::super::users::tokens::permits_write(&mut tx, actor_id, token, Some(repo_id), None, "administration").await?, ProtectionWriteRefusal::Denied);
+    }
     let mut rule = sqlx::query_as::<_, BranchProtectionRule>(
         "SELECT * FROM branch_protection_rules WHERE repo_id=?1 AND pattern=?2",
     )

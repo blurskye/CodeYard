@@ -39,9 +39,10 @@ pub(super) async fn protected(
     name: &str,
     branch: &str,
     write: bool,
-) -> Result<(BranchProtectionRule, i64, String)> {
+) -> Result<(BranchProtectionRule, (i64, i64), String)> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = auth.user;
     if !access::can_admin(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
@@ -69,7 +70,7 @@ pub(super) async fn protected(
         repo_url(owner, name),
         crate::webui::encode_component(branch)
     );
-    Ok((rule, actor.id, url))
+    Ok((rule, (actor.id, auth.token.id), url))
 }
 
 fn checks(rule: &BranchProtectionRule, url: &str) -> Value {

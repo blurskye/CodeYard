@@ -205,7 +205,8 @@ async fn update(
     request: Request,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = auth.user;
     if !access::can_admin(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
@@ -243,6 +244,7 @@ async fn update(
     };
     let mut upsert = BranchProtectionRuleUpsert {
         actor_id: actor.id,
+        token_id: Some(auth.token.id),
         repo_id: repo.id,
         pattern: &branch,
         require_pull_request: input.required_pull_request_reviews.is_some(),
