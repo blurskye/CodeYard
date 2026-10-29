@@ -108,9 +108,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         lifecycle::validate_name(name).map_err(provision)?;
     }
     let saved = if matches!(field, "createRepository" | "cloneTemplateRepository") {
-        if request.bounded() {
-            return Err(token_denied());
-        }
+        if request.auth.is_job() { return Err(token_denied()); }
         // Checked before provisioning, which commits the repository.
         request.require_oauth_scope("repo")?;
         let private = match text(input, "visibility")? {
@@ -127,6 +125,20 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         } else {
             RepositoryTarget::Personal(actor)
         };
+        if request.personal.is_some() {
+            use crate::backend::identity::fine_grained;
+            let owner = match owner {
+                RepositoryTarget::Personal(id) => fine_grained::Owner::User(id),
+                RepositoryTarget::Organization(id) => fine_grained::Owner::Organization(id),
+            };
+            let grant = fine_grained::grant(pool, request.auth.token.id).await.map_err(unavailable)?.ok_or_else(token_denied)?;
+            if !grant.create_repository(owner) { return Err(token_denied()); }
+        }
+        if let RepositoryTarget::Organization(org) = owner {
+            if db::fine_grained_tokens::classic_refused(pool, request.auth.token.id, org).await.map_err(unavailable)? {
+                return Err(token_denied());
+            }
+        }
         let team = if let Some(id) = input["teamId"].as_str() {
             let (org, slug) = db::graphql::team_locator(
                 pool,
@@ -186,39 +198,13 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             .await
         }
         .map_err(provision)?;
-        records::set_repository_wiki(
-            pool,
-            actor,
-            row.id,
-            input["hasWikiEnabled"].as_bool().unwrap_or(true),
-        )
-        .await
-        .map_err(|_| partial("Repository created; wiki setting was not confirmed"))?;
-        if let Some(template) = input["template"].as_bool() {
-            records::patch_repository(
-                pool,
-                actor,
-                row.id,
-                &records::RepositoryChanges {
-                    is_template: Some(template),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|_| partial("Repository created; template setting was not confirmed"))?;
-        }
-        if let Some(website) = website {
-            topics::update_about(
-                pool,
-                actor,
-                row.id,
-                description.unwrap_or(""),
-                website.as_deref(),
-                &[],
-            )
-            .await
-            .map_err(|_| partial("Repository created; About metadata was not confirmed"))?;
-        }
+        records::patch_repository(pool, actor, row.id, &records::RepositoryChanges {
+            token: Some(request.auth.token.id),
+            wiki: Some(input["hasWikiEnabled"].as_bool().unwrap_or(false)),
+            is_template: input["template"].as_bool(),
+            website: website.as_ref().map(|value| value.as_deref()),
+            ..Default::default()
+        }).await.map_err(|_| partial("Repository created; settings were not confirmed"))?;
         if let Some(team) = team {
             use db::organizations::OrganizationOutcome;
             let granted = db::organizations::teams::grant_organization_team_repository(
@@ -239,65 +225,16 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     } else {
         let row = repository::by_id(target(input, "repositoryId", "R")?, request).await?;
         request.authorize(row.id, "administration", true).await?;
-        let about = description.is_some() || website.is_some();
-        if let Some(enabled) = input["hasDiscussionsEnabled"].as_bool() {
-            db::repository_discussions::write(
-                pool,
-                actor,
-                row.id,
-                None,
-                &db::repository_discussions::Write::Enabled(enabled),
-            )
-            .await
-            .map_err(super::discussions::operation)?;
-        }
-        if let Some(enabled) = input["hasWikiEnabled"].as_bool() {
-            records::set_repository_wiki(pool, actor, row.id, enabled)
-                .await
-                .map_err(settings)?;
-        }
-        if let Some(template) = input["template"].as_bool() {
-            records::patch_repository(
-                pool,
-                actor,
-                row.id,
-                &records::RepositoryChanges {
-                    is_template: Some(template),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(settings)?;
-        }
-        // Each existing native save retains its own live authority; a later refusal is partial,
-        // never a claim that an earlier metadata transaction rolled back.
-        if about {
-            // Only the submitted fields are written; unsubmitted values are never read back and resent.
-            records::patch_repository(
-                pool,
-                actor,
-                row.id,
-                &records::RepositoryChanges {
-                    description: description.map(Some),
-                    website: website.as_ref().map(|value| value.as_deref()),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(settings)?;
-        }
-        if let Some(name) = input["name"].as_str() {
-            records::rename_repository(pool, actor, row.id, name)
-                .await
-                .map_err(|error| {
-                    if about {
-                        partial("About metadata saved; repository rename was not confirmed")
-                    } else {
-                        settings(error)
-                    }
-                })?;
-        }
-        repository::by_id(row.id, request).await?
+        records::patch_repository(pool, actor, row.id, &records::RepositoryChanges {
+            token: Some(request.auth.token.id),
+            name: input["name"].as_str(),
+            description: description.map(Some),
+            website: website.as_ref().map(|value| value.as_deref()),
+            wiki: input["hasWikiEnabled"].as_bool(),
+            discussions: input["hasDiscussionsEnabled"].as_bool(),
+            is_template: input["template"].as_bool(),
+            ..Default::default()
+        }).await.map_err(settings)?
     };
     Ok(
         json!({"clientMutationId":input["clientMutationId"],"repository":repository::object(&saved)}),

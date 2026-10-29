@@ -183,6 +183,9 @@ struct Create {
     is_template: Option<bool>,
     has_wiki: Option<bool>,
     has_discussions: Option<bool>,
+    allow_merge_commit: Option<bool>,
+    allow_squash_merge: Option<bool>,
+    allow_rebase_merge: Option<bool>,
     custom_properties:
         Option<HashMap<String, Option<db::organizations::properties::PropertyValue>>>,
 }
@@ -197,6 +200,10 @@ async fn create(
         .await?
         .ok_or_else(auth::required)?;
     actor.require_write()?;
+    let merge_methods = records::MergeMethodUpdate {
+        merge: input.allow_merge_commit, squash: input.allow_squash_merge, rebase: input.allow_rebase_merge,
+    };
+    merge_methods.resolve((true, true, true)).map_err(settings_error)?;
     lifecycle::validate_description(input.description.as_deref().unwrap_or(""))
         .map_err(lifecycle_error)?;
     let website = input
@@ -266,30 +273,15 @@ async fn create(
     )
     .await
     .map_err(lifecycle_error)?;
-    features(
-        &state,
-        actor.user.id,
-        repo.id,
-        Some(input.has_wiki.unwrap_or(true)),
-        input.has_discussions,
-    )
-    .await?;
-    let repo = if input.is_template.is_some() || website.is_some() {
-        records::patch_repository(
-            &state.pool,
-            actor.user.id,
-            repo.id,
-            &records::RepositoryChanges {
-                is_template: input.is_template,
-                website: website.as_ref().map(|website| website.as_deref()),
-                ..Default::default()
-            },
-        )
-        .await
-        .map_err(settings_error)?
-    } else {
-        repo
-    };
+    let repo = records::patch_repository(&state.pool, actor.user.id, repo.id, &records::RepositoryChanges {
+        token: Some(actor.token.id),
+        is_template: input.is_template,
+        website: website.as_ref().map(|website| website.as_deref()),
+        wiki: Some(input.has_wiki.unwrap_or(true)),
+        discussions: input.has_discussions,
+        merge_methods,
+        ..Default::default()
+    }).await.map_err(settings_error)?;
     let value = document(&state, &repo, Some(&actor)).await?;
     Ok((
         StatusCode::CREATED,
@@ -317,41 +309,6 @@ struct Update {
     is_template: Option<bool>,
     has_wiki: Option<bool>,
     has_discussions: Option<bool>,
-}
-
-/// Wiki and discussions live outside the repository row, so both create and update set them here.
-async fn features(
-    state: &AppState,
-    actor: i64,
-    repo: i64,
-    wiki: Option<bool>,
-    discussions: Option<bool>,
-) -> Result<()> {
-    if let Some(enabled) = wiki {
-        records::set_repository_wiki(&state.pool, actor, repo, enabled)
-            .await
-            .map_err(settings_error)?;
-    }
-    if let Some(enabled) = discussions {
-        use db::repository_discussions::Refusal;
-        db::repository_discussions::write(
-            &state.pool,
-            actor,
-            repo,
-            None,
-            &db::repository_discussions::Write::Enabled(enabled),
-        )
-        .await
-        .map_err(|error| match error.downcast_ref::<Refusal>() {
-            Some(Refusal::Denied) => {
-                Error::new(StatusCode::FORBIDDEN, "Repository mutation denied")
-            }
-            Some(Refusal::Missing) => Error::missing(),
-            Some(Refusal::Invalid) => Error::invalid(error.to_string()),
-            None => Error::unavailable(error),
-        })?;
-    }
-    Ok(())
 }
 
 async fn update(
@@ -421,6 +378,7 @@ async fn update(
         }
     }
     let changes = records::RepositoryChanges {
+        token: Some(auth.token.id),
         name: input.name.as_deref(),
         description: value
             .get("description")
@@ -428,6 +386,8 @@ async fn update(
         website: value.get("homepage").map(|_| input.homepage.as_deref()),
         is_private: private,
         archived: input.archived,
+        wiki: input.has_wiki,
+        discussions: input.has_discussions,
         is_template: input.is_template,
         merge_methods: records::MergeMethodUpdate {
             merge: input.allow_merge_commit,
@@ -452,14 +412,6 @@ async fn update(
             .await
             .map_err(settings_error)?
     };
-    features(
-        &state,
-        actor.id,
-        repo.id,
-        input.has_wiki,
-        input.has_discussions,
-    )
-    .await?;
     Ok(Json(document(&state, &repo, Some(&auth)).await?))
 }
 

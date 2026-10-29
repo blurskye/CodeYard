@@ -138,6 +138,10 @@ pub(super) async fn readable_repositories(
     ids: &[i64],
     scope: &str,
 ) -> Result<std::collections::HashSet<i64>> {
+    if let Some(auth) = auth {
+        if db::users::tokens::token_user(&state.pool, auth.token.id, false).await.map_err(Error::unavailable)?
+            .is_none_or(|user| user.id != auth.user.id) { return Err(required()); }
+    }
     let mut readable = std::collections::HashSet::new();
     for chunk in ids.chunks(100) {
         let visible = db::repositories::access::readable_repository_ids(
@@ -601,7 +605,7 @@ async fn personal(
     path: &str,
     write: bool,
 ) -> Result<bool> {
-    use crate::backend::identity::fine_grained::{allows, Access, Need, Owner};
+    use crate::backend::identity::fine_grained::{allows, Need, Owner};
     let denied = || {
         Error::new(
             StatusCode::FORBIDDEN,
@@ -633,10 +637,7 @@ async fn personal(
                 ["orgs", name, "repos"] => Some(Owner::Organization(organization(name).await?.id)),
                 _ => None,
             };
-            grant.active
-                && grant.access == Access::All
-                && owner == Some(grant.owner)
-                && allows(&grant.permissions, "administration", true)
+            owner.is_some_and(|owner| grant.create_repository(owner))
         }
         Need::Packages => {
             let owner = match segments.as_slice() {

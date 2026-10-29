@@ -366,6 +366,9 @@ impl Object {
         arguments: &Arguments,
         request: &RequestContext,
     ) -> Result<Value> {
+        if ty == "Mutation" {
+            request.auth.require_live(&request.state.pool).await.map_err(|error| error.graphql())?;
+        }
         if let Some(repo) = self.0.get("_repo").and_then(Value::as_i64).or_else(|| {
             (ty == "Repository")
                 .then(|| self.0["databaseId"].as_i64())
