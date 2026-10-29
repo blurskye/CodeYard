@@ -59,6 +59,7 @@ pub mod environment_values;
 pub mod environments;
 pub mod events;
 pub mod files;
+pub mod fine_grained_tokens;
 pub mod following;
 pub mod gists;
 pub mod github_app_hooks;

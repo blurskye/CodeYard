@@ -22,3 +22,7 @@ native_operation!(crate::backend::db::postgres::users::tokens::find_token,
 native_operation!(crate::backend::db::postgres::users::tokens::token_user,
     crate::backend::db::sqlite::users::tokens::token_user,
     fn token_user(pool: &DbPool, token_id: i64, write: bool) -> Result<Option<User>>);
+native_operation!(crate::backend::db::postgres::users::tokens::touch_token,
+    crate::backend::db::sqlite::users::tokens::touch_token,
+    /// Records when and from which client address a token was last used.
+    fn touch_token(pool: &DbPool, token_id: i64, address: Option<&str>) -> Result<()>);

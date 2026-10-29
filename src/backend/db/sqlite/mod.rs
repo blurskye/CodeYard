@@ -38,6 +38,7 @@ pub(crate) mod environment_values;
 pub(crate) mod environments;
 pub(crate) mod events;
 pub(crate) mod files;
+pub(crate) mod fine_grained_tokens;
 pub(crate) mod following;
 pub(crate) mod gists;
 pub(crate) mod github_app_hooks;

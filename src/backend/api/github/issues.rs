@@ -768,7 +768,7 @@ async fn update(
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-            let saved = crate::backend::issues::mutations::update_issue_latest(
+            let saved = crate::backend::issues::mutations::update_issue(
                 &state.pool,
                 &state.notification_broadcaster,
                 actor.id,
@@ -793,7 +793,7 @@ async fn update(
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-            let saved = crate::backend::repositories::pull_requests::mutations::update_pull_request_latest(&state.pool, &state.ci_runs, &state.notification_broadcaster, actor.id, (p["owner"].clone(), repo.name.clone(), pull.number), crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest { expected_state: pull.state, expected_updated: pull.updated_at.to_rfc3339(), title, body, state: requested_state, base: None, maintainer_can_modify: None }).await.map_err(pull_error)?;
+            let saved = crate::backend::repositories::pull_requests::mutations::update_pull_request(&state.pool, &state.ci_runs, &state.notification_broadcaster, actor.id, (p["owner"].clone(), repo.name.clone(), pull.number), crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest { expected_state: pull.state, expected_updated: pull.updated_at.to_rfc3339(), title, body, state: requested_state, base: None, maintainer_can_modify: None }).await.map_err(pull_error)?;
             (saved.number, saved.title)
         }
     };

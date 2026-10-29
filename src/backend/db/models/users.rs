@@ -158,6 +158,13 @@ pub struct PersonalAccessToken {
     pub scope: String,
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// Read only by the queries that authenticate a token or list a user's tokens.
+    #[sqlx(default)]
+    #[serde(skip_serializing)]
+    pub last_used_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    #[serde(skip_serializing)]
+    pub last_used_ip: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

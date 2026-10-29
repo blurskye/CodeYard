@@ -148,7 +148,9 @@ CREATE TABLE personal_access_tokens (
     token_hash TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64),
     scope TEXT NOT NULL CHECK (scope IN ('read', 'write')),
     expires_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    last_used_at TEXT,
+    last_used_ip TEXT CHECK (last_used_ip IS NULL OR length(last_used_ip) <= 64)
 );
 CREATE INDEX idx_personal_access_tokens_user ON personal_access_tokens(user_id);
 
@@ -2034,6 +2036,38 @@ CREATE TABLE oauth_app_tokens (
     scopes TEXT NOT NULL
 );
 CREATE INDEX oauth_app_tokens_client ON oauth_app_tokens(client_id);
+
+-- tokens: fine-grained personal access tokens. Their personal_access_tokens row holds the hash,
+-- user and expiry; this row marks the token fine-grained and holds its bounds. The owning
+-- organization has no foreign key: deleting it must not turn the token into a classic one.
+CREATE TABLE fine_grained_tokens (
+    token_id INTEGER PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
+    owner_org_id INTEGER,
+    description TEXT NOT NULL DEFAULT '' CHECK (length(description) <= 1024),
+    repository_access TEXT NOT NULL CHECK (repository_access IN ('public','all','selected')),
+    permissions TEXT NOT NULL CHECK (length(permissions) <= 4096),
+    status TEXT NOT NULL CHECK (status IN ('pending','approved','denied','revoked')),
+    reason TEXT CHECK (reason IS NULL OR length(reason) <= 1024),
+    reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_at TEXT,
+    requested_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+);
+CREATE INDEX fine_grained_tokens_org ON fine_grained_tokens(owner_org_id, status);
+CREATE TABLE fine_grained_token_repositories (
+    token_id INTEGER NOT NULL REFERENCES fine_grained_tokens(token_id) ON DELETE CASCADE,
+    repo_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    PRIMARY KEY (token_id, repo_id)
+);
+CREATE INDEX fine_grained_token_repositories_repo ON fine_grained_token_repositories(repo_id);
+-- An organization without a row uses the defaults: fine-grained tokens allowed after owner
+-- approval, classic tokens allowed, and a 366-day maximum. A NULL maximum allows no expiry.
+CREATE TABLE organization_token_policies (
+    org_id INTEGER PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    fine_grained_allowed INTEGER NOT NULL DEFAULT 1 CHECK (fine_grained_allowed IN (0,1)),
+    fine_grained_approval INTEGER NOT NULL DEFAULT 1 CHECK (fine_grained_approval IN (0,1)),
+    classic_allowed INTEGER NOT NULL DEFAULT 1 CHECK (classic_allowed IN (0,1)),
+    max_lifetime_days INTEGER DEFAULT 366 CHECK (max_lifetime_days IS NULL OR max_lifetime_days BETWEEN 1 AND 366)
+);
 
 -- apps: GitHub Apps and installations
 CREATE TABLE github_apps (

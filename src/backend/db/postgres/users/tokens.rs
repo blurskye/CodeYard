@@ -46,7 +46,7 @@ pub async fn list_tokens(
     user_id: i64,
     before: i64,
 ) -> Result<Vec<PersonalAccessToken>> {
-    Ok(sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at FROM personal_access_tokens WHERE user_id=$1 AND ($2<=0 OR id<$2) ORDER BY id DESC LIMIT 100")
+    Ok(sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at,last_used_at,last_used_ip FROM personal_access_tokens WHERE user_id=$1 AND ($2<=0 OR id<$2) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens f WHERE f.token_id=personal_access_tokens.id) ORDER BY id DESC LIMIT 100")
         .bind(user_id).bind(before).fetch_all(pool).await?)
 }
 
@@ -62,7 +62,7 @@ pub async fn delete_token(
 
 // Include expired and suspended tokens here so failures share the account's login budget.
 pub async fn find_token(pool: &PgPool, hash: &str) -> Result<Option<PersonalAccessToken>> {
-    Ok(sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at FROM personal_access_tokens WHERE token_hash=$1")
+    Ok(sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at,last_used_at,last_used_ip FROM personal_access_tokens WHERE token_hash=$1")
         .bind(hash).fetch_optional(pool).await?)
 }
 
@@ -88,4 +88,15 @@ pub async fn token_user(pool: &PgPool, token_id: i64, write: bool) -> Result<Opt
         return Ok(None);
     }
     Ok(user)
+}
+
+pub async fn touch_token(pool: &PgPool, token_id: i64, address: Option<&str>) -> Result<()> {
+    sqlx::query(
+        "UPDATE personal_access_tokens SET last_used_at=clock_timestamp(),last_used_ip=$2 WHERE id=$1",
+    )
+    .bind(token_id)
+    .bind(address)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
