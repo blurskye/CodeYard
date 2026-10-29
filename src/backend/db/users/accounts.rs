@@ -11,7 +11,7 @@ pub enum AccountCredential<'a> {
 
 /// Identity plus the credential that admitted an operation. Numeric IDs are reserved for
 /// trusted internal callers; HTTP adapters must retain the original session or token.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AccountActor {
     Trusted(i64),
     Session { user_id: i64, session: String },

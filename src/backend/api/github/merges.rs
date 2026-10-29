@@ -56,7 +56,9 @@ async fn merge(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        auth.user.id,
+        crate::backend::db::users::accounts::AccountActor::Token {
+            user_id: auth.user.id, token_id: auth.token.id,
+        },
         repo.id,
         &owner,
         BranchMerge {
@@ -65,7 +67,6 @@ async fn merge(
             message: input.commit_message.as_deref(),
             expected_base: None,
             expected_head: None,
-            token: Some(auth.token.id),
         },
     )
     .await

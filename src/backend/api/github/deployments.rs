@@ -196,7 +196,7 @@ async fn create(
                     &state.pool,
                     state.cluster.as_ref(),
                     &state.ci_runs,
-                    actor.id,
+                    db::users::accounts::AccountActor::Token { user_id: actor.id, token_id: token },
                     repo.id,
                     &owner,
                     BranchMerge {
@@ -205,7 +205,6 @@ async fn create(
                         message: None,
                         expected_base: Some(&sha),
                         expected_head: Some(default),
-                        token: Some(token),
                     },
                 )
                 .await
