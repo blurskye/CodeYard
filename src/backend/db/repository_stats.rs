@@ -18,6 +18,10 @@ pub struct RepositoryDocumentFacts {
     pub language: Option<String>,
 }
 
+native_operation!(crate::backend::db::postgres::repository_stats::readable_snapshots,
+    crate::backend::db::sqlite::repository_stats::readable_snapshots,
+    fn readable_snapshots(pool: &DbPool, viewer: Option<i64>, ids: &[i64]) -> Result<Vec<RepositorySnapshot>>);
+
 native_operation!(crate::backend::db::postgres::repository_stats::repository_document_facts,
     crate::backend::db::sqlite::repository_stats::repository_document_facts,
     fn repository_document_facts(pool: &DbPool, repo: i64) -> Result<RepositoryDocumentFacts>);

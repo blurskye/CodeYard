@@ -418,6 +418,16 @@ pub async fn version_by_id(
     Ok(version)
 }
 
+pub async fn version_counts(pool: &PgPool, ids: &[i64]) -> Result<Vec<(i64, i64)>> {
+    ensure!(ids.len() <= 100, "Package page exceeds its limit");
+    Ok(sqlx::query_as("SELECT package_id,COUNT(*) FROM package_versions WHERE package_id=ANY($1) AND deleted_at IS NULL GROUP BY package_id").bind(ids).fetch_all(pool).await?)
+}
+
+pub async fn version_tags(pool: &PgPool, ids: &[i64]) -> Result<Vec<(i64, String)>> {
+    ensure!(ids.len() <= 100, "Version page exceeds its limit");
+    Ok(sqlx::query_as("SELECT version_id,tag FROM package_tags WHERE version_id=ANY($1) ORDER BY version_id,tag").bind(ids).fetch_all(pool).await?)
+}
+
 pub async fn version_count(pool: &PgPool, package: i64) -> Result<i64> {
     Ok(sqlx::query_scalar(
         "SELECT COUNT(*) FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL",
