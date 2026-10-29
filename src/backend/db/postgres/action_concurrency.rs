@@ -82,14 +82,15 @@ pub(crate) async fn admit_job(
     run: &CiRun,
     job: i64,
 ) -> Result<Option<bool>> {
-    let (key, holding, cancelled): (String, bool, bool) = sqlx::query_as("SELECT name_key,holding,cancelled FROM actions_job_concurrency WHERE job_id=$1 AND repo_id=$2").bind(job).bind(run.repo_id).fetch_one(&mut *connection).await?;
+    let key: String = sqlx::query_scalar("SELECT name_key FROM actions_job_concurrency WHERE job_id=$1 AND repo_id=$2").bind(job).bind(run.repo_id).fetch_one(&mut *connection).await?;
+    sqlx::query("SELECT repo_id FROM actions_concurrency_groups WHERE repo_id=$1 AND name_key=$2 FOR UPDATE").bind(run.repo_id).bind(&key).fetch_one(&mut *connection).await?;
+    let (holding, cancelled): (bool, bool) = sqlx::query_as("SELECT holding,cancelled FROM actions_job_concurrency WHERE job_id=$1 AND repo_id=$2").bind(job).bind(run.repo_id).fetch_one(&mut *connection).await?;
     if cancelled {
         return Ok(Some(false));
     }
     if holding {
         return Ok(Some(true));
     }
-    sqlx::query("SELECT repo_id FROM actions_concurrency_groups WHERE repo_id=$1 AND name_key=$2 FOR UPDATE").bind(run.repo_id).bind(&key).fetch_one(&mut *connection).await?;
     let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_job_concurrency g JOIN actions_jobs j ON j.id=g.job_id JOIN ci_runs c ON c.id=j.run_id WHERE g.repo_id=$1 AND g.name_key=$2 AND g.job_id<>$3 AND j.status<>'completed' AND c.status IN('queued','running') AND (g.holding OR (NOT g.cancelled AND g.job_id<$3)))").bind(run.repo_id).bind(&key).bind(job).fetch_one(&mut *connection).await?;
     if blocked {
         return Ok(None);
@@ -103,7 +104,7 @@ pub(crate) async fn admit_job(
 }
 
 pub async fn groups(pool: &PgPool, repo: i64, run: Option<i64>) -> Result<Vec<Group>> {
-    Ok(sqlx::query_as("SELECT g.name,g.last_acquired_at FROM actions_concurrency_groups g WHERE g.repo_id=$1 AND EXISTS(SELECT 1 FROM actions_run_concurrency r JOIN ci_runs c ON c.id=r.run_id WHERE r.repo_id=g.repo_id AND r.name_key=g.name_key AND (($2::bigint IS NULL AND c.status IN('queued','running')) OR COALESCE(c.workflow_run_id,c.id)=$2)) ORDER BY g.name_key").bind(repo).bind(run).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT g.name,g.last_acquired_at FROM actions_concurrency_groups g WHERE g.repo_id=$1 AND EXISTS(SELECT 1 FROM actions_run_concurrency r JOIN ci_runs c ON c.id=r.run_id WHERE r.repo_id=g.repo_id AND r.name_key=g.name_key AND (($2::bigint IS NULL AND c.status IN('queued','running')) OR COALESCE(c.workflow_run_id,c.id)=$2)) ORDER BY g.name_key COLLATE \"C\"").bind(repo).bind(run).fetch_all(pool).await?)
 }
 pub async fn members(pool: &PgPool, repo: i64, group: &str) -> Result<Vec<Member>> {
     Ok(sqlx::query_as("SELECT c.*,g.holding FROM ci_runs c JOIN actions_run_concurrency g ON g.run_id=c.id WHERE g.repo_id=$1 AND g.name_key=$2 AND c.status IN('queued','running') ORDER BY g.holding DESC,c.id").bind(repo).bind(group.to_lowercase()).fetch_all(pool).await?)

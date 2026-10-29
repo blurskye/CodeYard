@@ -182,46 +182,7 @@ pub async fn save_state(
     sqlx::query("UPDATE actions_steps SET status='completed',completed_at=clock_timestamp() WHERE status='in_progress' AND job_id IN(SELECT id FROM actions_jobs WHERE run_id=$1 AND generation<>$2)").bind(run).bind(generation).execute(&mut *tx).await?;
     sqlx::query("UPDATE actions_jobs SET status='completed',completed_at=clock_timestamp() WHERE run_id=$1 AND generation<>$2 AND status<>'completed'").bind(run).bind(generation).execute(&mut *tx).await?;
     let known:Vec<(String,i32,String)>=sqlx::query_as("SELECT logical_job,variant,status FROM actions_jobs WHERE run_id=$1 AND generation=$2 AND workflow_path=$3").bind(run).bind(generation).bind(workflow).fetch_all(&mut *tx).await?;
-    ensure!(
-        state
-            .jobs
-            .keys()
-            .all(|job| known.iter().any(|(id, _, _)| id == job)
-                && known
-                    .iter()
-                    .filter(|(id, _, _)| id == job)
-                    .all(|(_, _, status)| status == "completed")),
-        "state refers to an unobserved or unfinished job"
-    );
-    ensure!(
-        state
-            .variants
-            .iter()
-            .all(
-                |(job, variants)| variants.keys().all(|variant| known.iter().any(
-                    |(id, number, status)| id == job
-                        && *number as u32 == *variant
-                        && status == "completed"
-                ))
-            ),
-        "state refers to an unobserved or unfinished variant"
-    );
-    ensure!(
-        state
-            .jobs
-            .values()
-            .chain(
-                state
-                    .variants
-                    .values()
-                    .flat_map(|variants| variants.values())
-            )
-            .all(|job| matches!(
-                job.result.as_str(),
-                "success" | "failure" | "cancelled" | "skipped"
-            )),
-        "invalid job result"
-    );
+    crate::backend::db::action_jobs::validate_observed_state(state, &known)?;
     sqlx::query("INSERT INTO actions_job_states(run_id,generation,workflow_path,state) VALUES($1,$2,$3,$4) ON CONFLICT(run_id,generation,workflow_path) DO UPDATE SET state=EXCLUDED.state").bind(run).bind(generation).bind(workflow).bind(Json(state)).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
@@ -229,12 +190,12 @@ pub async fn save_state(
 
 pub(crate) async fn close_active(connection: &mut PgConnection, run: i64) -> Result<()> {
     sqlx::query("UPDATE actions_steps SET status='completed',completed_at=clock_timestamp() WHERE status='in_progress' AND job_id IN(SELECT id FROM actions_jobs WHERE run_id=$1)").bind(run).execute(&mut *connection).await?;
-    sqlx::query("UPDATE actions_jobs SET status='completed',completed_at=clock_timestamp() WHERE run_id=$1 AND status<>'completed'").bind(run).execute(connection).await?;
+    sqlx::query("UPDATE actions_jobs SET status='completed',completed_at=clock_timestamp(),duration_ms=CASE WHEN started_at IS NOT NULL THEN GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (clock_timestamp()-started_at))*1000)::bigint) END WHERE run_id=$1 AND status<>'completed'").bind(run).execute(connection).await?;
     Ok(())
 }
 
 pub async fn get(pool: &PgPool, repo: i64, id: i64, queued: bool) -> Result<Option<Job>> {
-    Ok(sqlx::query_as("SELECT j.* FROM actions_jobs j JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2 AND ($3 OR j.started_at IS NOT NULL)").bind(repo).bind(id).bind(queued).fetch_optional(pool).await?)
+    Ok(sqlx::query_as("SELECT j.* FROM actions_jobs j JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2 AND ($3 OR j.started_at IS NOT NULL OR j.status='completed')").bind(repo).bind(id).bind(queued).fetch_optional(pool).await?)
 }
 pub async fn list(
     pool: &PgPool,
@@ -252,7 +213,7 @@ pub async fn list(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let filter="c.repo_id=$1 AND (($3 AND COALESCE(c.workflow_run_id,c.id)=$2) OR (NOT $3 AND c.id=$2)) AND j.started_at IS NOT NULL";
+    let filter="c.repo_id=$1 AND (($3 AND COALESCE(c.workflow_run_id,c.id)=$2) OR (NOT $3 AND c.id=$2)) AND (j.started_at IS NOT NULL OR j.status='completed')";
     let total = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM actions_jobs j JOIN ci_runs c ON c.id=j.run_id WHERE {filter}"
     ))
