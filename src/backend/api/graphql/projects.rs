@@ -470,20 +470,7 @@ pub(super) async fn resolve(
             store::Owner::Organization(target)
         };
         return match field {
-            "team" if ty == "Organization" => {
-                let team = db::organizations::teams::get_public_team(
-                    pool,
-                    actor,
-                    target,
-                    &arg(ctx, "slug")?,
-                )
-                .await
-                .map_err(unavailable)?
-                .ok_or_else(missing)?;
-                Ok(
-                    json!({"__typename":"Team","id":node_id::encode("T",team.team.id),"slug":team.team.slug}),
-                )
-            }
+            "team" if ty == "Organization" => super::team::by_slug(target, &arg(ctx, "slug")?, request).await,
             "projectV2" => Ok(project_object(
                 &store::get(pool, viewer, owner, ctx.args.try_get("number")?.i64()?)
                     .await
