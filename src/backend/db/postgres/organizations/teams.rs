@@ -287,6 +287,9 @@ pub async fn list_organization_team_members(
     team: i64,
     page: OrganizationPage,
 ) -> Result<OrganizationOutcome<Vec<TeamMembership>>> {
+    list_members(pool, actor, org, team, page, false).await
+}
+async fn list_members(pool: &PgPool, actor: i64, org: i64, team: i64, page: OrganizationPage, direct: bool) -> Result<OrganizationOutcome<Vec<TeamMembership>>> {
     let mut tx = begin_read(pool).await?;
     let role = require_read_org!(tx, actor, org);
     let Some(team) = read_scoped_team(&mut tx, org, team).await? else {
@@ -295,13 +298,10 @@ pub async fn list_organization_team_members(
     if !team_visible(&mut tx, actor, role, &team).await? {
         return Ok(Denied);
     }
-    let members = sqlx::query_as(TEAM_MEMBERS_PAGE)
-        .bind(org)
-        .bind(team.id)
-        .bind(page.after)
-        .bind(page.limit)
-        .fetch_all(&mut *tx)
-        .await?;
+    let sql = if direct { TEAM_MEMBERS_PAGE.replace("effective_team_memberships", "team_memberships") } else { TEAM_MEMBERS_PAGE.to_owned() };
+    let members = sqlx::query_as(&sql)
+        .bind(org).bind(team.id).bind(page.after).bind(page.limit)
+        .fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(members))
 }
@@ -449,6 +449,9 @@ pub async fn list_organization_team_repositories(
     team: i64,
     page: OrganizationPage,
 ) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>> {
+    list_repositories(pool, actor, org, team, page, false).await
+}
+async fn list_repositories(pool: &PgPool, actor: i64, org: i64, team: i64, page: OrganizationPage, direct: bool) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>> {
     let mut tx = begin_read(pool).await?;
     let role = require_read_org!(tx, actor, org);
     let Some(team) = read_scoped_team(&mut tx, org, team).await? else {
@@ -459,15 +462,11 @@ pub async fn list_organization_team_repositories(
     }
     // Team visibility is not READ. Apply effective access before LIMIT/projection;
     // Use the canonical projection, including direct and inherited organization roles.
-    let rows = sqlx::query_as(&team_repositories_sql("a.id>$2"))
-        .bind(team.id)
-        .bind(page.after)
-        .bind(org)
-        .bind(page.limit)
-        .bind(administers(role))
-        .bind(actor)
-        .fetch_all(&mut *tx)
-        .await?;
+    let sql = team_repositories_sql("a.id>$2");
+    let sql = if direct { sql.replace("effective_team_repo_access", "team_repo_access") } else { sql };
+    let rows = sqlx::query_as(&sql)
+        .bind(team.id).bind(page.after).bind(org).bind(page.limit).bind(administers(role)).bind(actor)
+        .fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(rows))
 }
@@ -525,19 +524,10 @@ pub async fn list_public_team_members(
     team: i64,
     page: OrganizationPage,
 ) -> Result<Option<Vec<TeamMembership>>> {
-    let mut tx = begin_read(pool).await?;
-    let Some((_, team)) = readable_team(&mut tx, actor, org, team).await? else {
-        return Ok(None);
-    };
-    let members = sqlx::query_as(TEAM_MEMBERS_PAGE)
-        .bind(org)
-        .bind(team.id)
-        .bind(page.after)
-        .bind(page.limit)
-        .fetch_all(&mut *tx)
-        .await?;
-    tx.commit().await?;
-    Ok(Some(members))
+    Ok(match list_members(pool, actor, org, team, page, false).await? {
+        Applied(rows) => Some(rows),
+        _ => None,
+    })
 }
 pub async fn list_public_team_repositories(
     pool: &PgPool,
@@ -546,21 +536,10 @@ pub async fn list_public_team_repositories(
     team: i64,
     page: OrganizationPage,
 ) -> Result<Option<Vec<TeamRepositoryGrant>>> {
-    let mut tx = begin_read(pool).await?;
-    let Some((role, team)) = readable_team(&mut tx, actor, org, team).await? else {
-        return Ok(None);
-    };
-    let rows = sqlx::query_as(&team_repositories_sql("a.id>$2"))
-        .bind(team.id)
-        .bind(page.after)
-        .bind(org)
-        .bind(page.limit)
-        .bind(administers(role))
-        .bind(actor)
-        .fetch_all(&mut *tx)
-        .await?;
-    tx.commit().await?;
-    Ok(Some(rows))
+    Ok(match list_repositories(pool, actor, org, team, page, false).await? {
+        Applied(rows) => Some(rows),
+        _ => None,
+    })
 }
 pub async fn get_public_team_repository(
     pool: &PgPool,
