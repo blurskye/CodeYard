@@ -140,11 +140,7 @@ async fn load_users(ctx: &PageContext, listing: &Listing<'_>) -> Result<AdminUse
             )
         })?
         .is_some_and(|config| config.is_private());
-    let (requests, requests_count, requests_page) = if managed_accounts {
-        load_requests(ctx, listing.requests_page).await?
-    } else {
-        (Vec::new(), 0, 1)
-    };
+    let (requests, requests_count, requests_page) = load_requests(ctx, listing.requests_page).await?;
     Ok(AdminUsers {
         managed_accounts,
         current_user_id: admin.id,

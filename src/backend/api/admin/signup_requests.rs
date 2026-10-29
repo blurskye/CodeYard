@@ -26,7 +26,7 @@ pub(crate) async fn load_requests(
     ctx: &PageContext,
     page: usize,
 ) -> Result<(Vec<Signup>, usize, usize), Response> {
-    // Callers must pass the admin + private-node guard before reading identities.
+    // Existing requests remain reviewable after registration is opened.
     require_account(ctx, true)?;
     let total = db::users::signup_requests::count_signup_requests(&ctx.state.pool, "pending")
         .await

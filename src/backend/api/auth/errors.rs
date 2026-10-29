@@ -296,11 +296,6 @@ pub(crate) fn managed_account_failure(error: ManagedAccountError) -> ApiFailure 
 pub(crate) fn signup_review_failure(error: SignupReviewError) -> ApiFailure {
     match error {
         SignupReviewError::Authority(error) => admin_authority_failure(error),
-        SignupReviewError::PrivateNodeRequired => ApiError::failure(
-            StatusCode::FORBIDDEN,
-            "forbidden",
-            "Signup request review is available only in private node mode",
-        ),
         SignupReviewError::InvalidDecision => ApiError::failure(
             StatusCode::BAD_REQUEST,
             "validation_error",

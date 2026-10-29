@@ -244,7 +244,6 @@ pub enum SignupReviewOutcome {
 #[derive(Debug, PartialEq, Eq)]
 pub enum SignupReviewError {
     Authority(AccountAuthorityError),
-    PrivateNodeRequired,
     InvalidDecision,
     Denied,
     Missing,
@@ -272,12 +271,6 @@ pub async fn review_signup(
     let admin = sessions::administrator(pool, administrator_session)
         .await
         .map_err(SignupReviewError::Authority)?;
-    let setup = setup::status(pool)
-        .await
-        .map_err(|_| SignupReviewError::AccountUnavailable)?;
-    if !setup.setup_completed || setup.node_mode != "private" {
-        return Err(SignupReviewError::PrivateNodeRequired);
-    }
     let decision = decision.ok_or(SignupReviewError::InvalidDecision)?;
     // These named transactions also revalidate reviewer authority after locking.
     match decision {
