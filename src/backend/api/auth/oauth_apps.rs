@@ -110,10 +110,10 @@ async fn admit(state: &AppState, headers: &HeaderMap, key: &str) -> Result<(), R
     {
         return Err(StatusCode::SERVICE_UNAVAILABLE.into_response());
     }
-    admission::admit_login(
+    admission::admit_operation(
         &state.pool,
         session::client_address(headers),
-        None,
+        "device",
         &format!(
             "{key}:{}",
             session::client_address(headers).unwrap_or("local")

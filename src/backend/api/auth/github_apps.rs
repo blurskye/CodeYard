@@ -246,6 +246,18 @@ async fn register(
     let Some(session) = session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
+    if let Err(error) = crate::backend::identity::admission::admit_operation(
+        &ctx.state.pool,
+        None,
+        "app-register",
+        &ctx.user.as_ref().unwrap().id.to_string(),
+    ).await {
+        let status = match error {
+            crate::backend::identity::admission::AdmissionError::Limited => StatusCode::TOO_MANY_REQUESTS,
+            crate::backend::identity::admission::AdmissionError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        };
+        return ctx.error(status, "App registration is temporarily unavailable");
+    }
     let key = apps::generate_key().await;
     let (private, public) = match key {
         Ok(keys) => keys,

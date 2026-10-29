@@ -28,11 +28,11 @@ pub(super) async fn manifest_start(
     }
     // Keyed by client, so one client cannot spend everyone's manifest budget.
     let client = session::client_address(&headers);
-    match admission::admit_login(
+    match admission::admit_operation(
         &state.pool,
         client,
-        None,
-        &format!("github-app-manifest:{}", client.unwrap_or_default()),
+        "app-manifest",
+        client.unwrap_or_default(),
     )
     .await
     {

@@ -85,11 +85,11 @@ pub async fn password_login(
     if !verification.valid {
         return Err(LoginError::InvalidCredentials);
     }
-    admission::forgive_login(pool, &attempt).await;
     let mut user = user.ok_or(LoginError::InvalidCredentials)?;
     if user.is_banned {
         return Err(LoginError::Banned);
     }
+    admission::forgive_login(pool, &attempt).await;
     if verification.outdated {
         upgrade_hash(pool, &mut user, credentials.password).await;
     }
