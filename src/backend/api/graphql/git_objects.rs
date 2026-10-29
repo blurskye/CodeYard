@@ -97,6 +97,7 @@ pub(super) async fn reference(
         .refs()
         .await
         .map_err(unavailable)?;
+    request.charge(refs.iter().map(|(name, oid)| name.len() + oid.len() + 64).sum())?;
     let Some(oid) = refs.get(name) else {
         return Ok(Value::Null);
     };
@@ -107,7 +108,7 @@ pub(super) async fn reference_at(
     repo: &db::models::Repository,
     name: &str,
     oid: &str,
-    request: &RequestContext,
+    _request: &RequestContext,
 ) -> Result<Value> {
     let (prefix, short) = if let Some(name) = name.strip_prefix("refs/heads/") {
         ("refs/heads/", name)
@@ -117,7 +118,7 @@ pub(super) async fn reference_at(
         ("refs/", name.trim_start_matches("refs/"))
     };
     Ok(
-        json!({"__typename":"Ref","_repo":repo.id,"id":node_id::reference(repo.id,name),"name":short,"prefix":prefix,"target":load(repo,oid,request).await?}),
+        json!({"__typename":"Ref","_repo":repo.id,"_oid":oid,"id":node_id::reference(repo.id,name),"name":short,"prefix":prefix}),
     )
 }
 
@@ -128,6 +129,7 @@ pub(super) async fn reference_field(
     request: &RequestContext,
 ) -> Result<Value> {
     let repo = repository::by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
+    if field == "target" { return load(&repo, parent["_oid"].as_str().ok_or_else(missing)?, request).await; }
     let branch = parent["name"].as_str().ok_or_else(missing)?;
     if field == "branchProtectionRule" {
         let rules = crate::backend::repositories::protection::matching_rules(
@@ -173,7 +175,7 @@ pub(super) async fn reference_field(
     let comparison = store
         .comparison_from(
             &repo_store(&source, request.state.cluster.as_ref()),
-            parent["target"]["oid"].as_str().ok_or_else(missing)?,
+            parent["_oid"].as_str().ok_or_else(missing)?,
             &format!("refs/heads/{head}"),
             0,
             0,

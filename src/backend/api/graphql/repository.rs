@@ -251,7 +251,11 @@ pub(super) async fn resolve(
             .await
             .map_err(unavailable)?;
             let reference = format!("refs/heads/{default}");
-            Ok(refs.get(&reference).map(|oid| json!({"__typename":"Ref","_repo":id,"id":node_id::reference(id, &reference),"prefix":"refs/heads/","name":default,"target":{"__typename":"Commit","oid":oid,"_repo":id}})).unwrap_or(Value::Null))
+            request.charge(refs.iter().map(|(name, oid)| name.len() + oid.len() + 64).sum())?;
+            match refs.get(&reference) {
+                Some(oid) => super::git_objects::reference_at(&repo, &reference, oid, request).await,
+                None => Ok(Value::Null),
+            }
         }
         "issue" | "issueOrPullRequest" => {
             let number = ctx.args.try_get("number")?.i64()? as i32;

@@ -589,7 +589,7 @@ impl Object {
             ("User" | "Organization", _) => {
                 boxed(|| user::resolve(ty, field, arguments, request, &self.0)).await
             }
-            ("Ref", "branchProtectionRule" | "compare") => {
+            ("Ref", "target" | "branchProtectionRule" | "compare") => {
                 boxed(|| super::git_objects::reference_field(field, arguments, &self.0, request))
                     .await
             }
