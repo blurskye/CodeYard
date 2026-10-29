@@ -29,6 +29,10 @@ pub(super) fn read_method(method: &Method) -> bool {
 }
 
 impl Authentication {
+    pub fn credential(&self) -> db::users::accounts::AccountCredential<'_> {
+        db::users::accounts::AccountCredential::Token(self.token.id, &self.token.token_hash)
+    }
+
     pub fn is_job(&self) -> bool {
         self.user.username == db::ci_tokens::BOT
     }

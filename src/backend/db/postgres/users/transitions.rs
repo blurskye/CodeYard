@@ -90,16 +90,26 @@ pub(crate) async fn require_account(
     actor: i64,
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
-    use crate::backend::db::users::accounts::{AccountCredential, AccountRestricted};
+    use crate::backend::db::users::accounts::AccountRestricted;
     lock_membership_shared(tx).await?;
     let active: bool = sqlx::query_scalar("SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR NO KEY UPDATE")
         .bind(actor).fetch_optional(&mut **tx).await?.unwrap_or(false);
     anyhow::ensure!(active, AccountRestricted);
-    let live = match credential {
+    anyhow::ensure!(credential_live(tx, actor, credential, true).await?, AccountRestricted);
+    Ok(())
+}
+
+/// The caller retains account/role authority before locking its originating credential.
+pub(crate) async fn credential_live(
+    tx: &mut Transaction<'_, Postgres>, actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>, write: bool,
+) -> Result<bool> {
+    use crate::backend::db::users::accounts::AccountCredential;
+    Ok(match credential {
         AccountCredential::Session(session) => live_session(tx, actor, session).await?,
         AccountCredential::Token(id, hash) => {
-            let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar("SELECT expires_at FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND token_hash=$3 FOR SHARE")
-                .bind(id).bind(actor).bind(hash).fetch_optional(&mut **tx).await?;
+            let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar("SELECT expires_at FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND (NOT $4 OR scope='write') AND token_hash=$3 FOR SHARE")
+                .bind(id).bind(actor).bind(hash).bind(write).fetch_optional(&mut **tx).await?;
             match expiry {
                 Some(None) => true,
                 Some(Some(expiry)) => {
@@ -111,9 +121,7 @@ pub(crate) async fn require_account(
                 None => false,
             }
         }
-    };
-    anyhow::ensure!(live, AccountRestricted);
-    Ok(())
+    })
 }
 
 pub(crate) async fn current_password(
