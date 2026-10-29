@@ -2145,8 +2145,7 @@ impl RepoStore {
                             base: base.into(),
                             result: result.into(),
                             method,
-                            token,
-                            credential: Some(authority),
+                            token: rpc::wire::PublicationCredential::retain(authority, token),
                         },
                         b"",
                     )
@@ -2207,8 +2206,7 @@ impl RepoStore {
                             base_branch: base_branch.into(),
                             base: base.into(),
                             result: result.into(),
-                            token,
-                            credential: Some(authority),
+                            token: rpc::wire::PublicationCredential::retain(authority, token),
                         },
                         b"",
                     )

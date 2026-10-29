@@ -19,6 +19,34 @@ fn is_zero(value: &usize) -> bool {
     *value == 0
 }
 
+/// A retained credential uses the former numeric token slot, so an older storage peer
+/// rejects it instead of silently dropping a new optional authorization field.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PublicationCredential {
+    LegacyToken(i64),
+    Actor(crate::backend::db::users::accounts::AccountActor),
+}
+impl PublicationCredential {
+    pub fn retain(actor: crate::backend::db::users::accounts::AccountActor, token: Option<i64>) -> Option<Self> {
+        use crate::backend::db::users::accounts::AccountActor;
+        match (actor, token) {
+            (AccountActor::Trusted(_), None) => None,
+            (AccountActor::Trusted(user_id), Some(token_id)) => Some(Self::Actor(AccountActor::Token { user_id, token_id })),
+            (actor, _) => Some(Self::Actor(actor)),
+        }
+    }
+    pub fn into_actor(self, expected: i64) -> Result<crate::backend::db::users::accounts::AccountActor, RepoError> {
+        use crate::backend::db::users::accounts::AccountActor;
+        let actor = match self {
+            Self::LegacyToken(token_id) => AccountActor::Token { user_id: expected, token_id },
+            Self::Actor(actor) => actor,
+        };
+        if actor.user_id() != expected { return Err(invalid("merge credential actor mismatch")); }
+        Ok(actor)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Operation {
     Initialize {
@@ -367,9 +395,7 @@ pub enum Operation {
         result: String,
         method: MergeMethod,
         #[serde(default)]
-        token: Option<i64>,
-        #[serde(default)]
-        credential: Option<crate::backend::db::users::accounts::AccountActor>,
+        token: Option<PublicationCredential>,
     },
     /// Publishes a stacked merge commit. Each head is `(head branch or pull ref, commit)`.
     PublishStackedMerge {
@@ -378,9 +404,7 @@ pub enum Operation {
         base: String,
         result: String,
         #[serde(default)]
-        token: Option<i64>,
-        #[serde(default)]
-        credential: Option<crate::backend::db::users::accounts::AccountActor>,
+        token: Option<PublicationCredential>,
     },
     /// Builds the commits of a restack: `from..head` replayed onto `onto`.
     PrepareRestack {

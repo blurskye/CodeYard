@@ -1109,15 +1109,12 @@ impl RpcHandler {
                 result,
                 method,
                 token,
-                credential,
             } => json!(store.publish_merge_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                 {
                     let actor = actor.ok_or_else(|| invalid("repository mutation requires an actor"))?;
-                    let credential = credential.unwrap_or_else(|| actor.into());
-                    if credential.user_id() != actor { return Err(invalid("merge credential actor mismatch").into()); }
-                    credential
+                    token.map(|value| value.into_actor(actor)).transpose()?.unwrap_or_else(|| actor.into())
                 },
                 &head_branch,
                 &base_branch,
@@ -1125,7 +1122,7 @@ impl RpcHandler {
                 &base,
                 &result,
                 method,
-                token
+                None
             )),
             Operation::PublishStackedMerge {
                 heads,
@@ -1133,21 +1130,18 @@ impl RpcHandler {
                 base,
                 result,
                 token,
-                credential,
             } => json!(store.publish_stacked_merge_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                 {
                     let actor = actor.ok_or_else(|| invalid("repository mutation requires an actor"))?;
-                    let credential = credential.unwrap_or_else(|| actor.into());
-                    if credential.user_id() != actor { return Err(invalid("merge credential actor mismatch").into()); }
-                    credential
+                    token.map(|value| value.into_actor(actor)).transpose()?.unwrap_or_else(|| actor.into())
                 },
                 &heads,
                 &base_branch,
                 &base,
                 &result,
-                token,
+                None,
             )),
             Operation::PrepareRestack {
                 from,
