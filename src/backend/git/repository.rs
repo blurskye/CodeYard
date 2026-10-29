@@ -405,7 +405,6 @@ pub(crate) async fn template_texts(repo_path: &Path, revision: &str, paths: &[St
     let mut result = Vec::with_capacity(metadata.len());
     for metadata in metadata {
         let text = if let Some((id, size)) = metadata {
-            let _permit = process::operation_slot(process::RPC_TIMEOUT).await?;
             let (bytes, binary) = read_blob_range(repo_path, &id, size, 0, size as usize).await?;
             if binary { None } else { String::from_utf8(bytes).ok().map(|text| (id, text)) }
         } else { None };
@@ -461,13 +460,7 @@ pub(crate) async fn read_blob_range(
         .args(["cat-file", "blob", &oid.to_string()])
         .current_dir(repo_path);
     process::limit_memory(&mut command);
-    let mut child = command.spawn().context("start git cat-file")?;
-    let mut group = process::ProcessGroup(child.id());
-    let mut stdout = child.stdout.take().context("git cat-file stdout")?;
-    let stderr = child.stderr.take().context("git cat-file stderr")?;
-    drop(child.stdin.take());
-
-    let work = async {
+    let (_, result) = process::read_stream(command, b"", process::RPC_TIMEOUT, |mut stdout, _| async move {
         let mut bytes = Vec::with_capacity(length);
         let mut binary = false;
         let mut position = 0u64;
@@ -492,27 +485,9 @@ pub(crate) async fn read_blob_range(
         }
         anyhow::ensure!(bytes.len() == length, "Git blob range was incomplete");
 
-        if read_end < size {
-            process::kill_group(child.id());
-        }
-        let status = child.wait().await?;
-        let errors = process::read_bounded(stderr, 16 * 1024).await?;
-        if read_end == size {
-            anyhow::ensure!(
-                status.success(),
-                "Git blob read failed: {}",
-                String::from_utf8_lossy(&errors)
-            );
-        }
-        Ok::<_, anyhow::Error>((bytes, binary))
-    };
-    let result = tokio::time::timeout(process::RPC_TIMEOUT, work)
-        .await
-        .context("git blob read timed out")?;
-    if result.is_ok() {
-        group.0 = None;
-    }
-    result
+        Ok(if read_end < size { process::ReadEnd::Prefix((bytes, binary)) } else { process::ReadEnd::Complete((bytes, binary)) })
+    }).await?;
+    Ok(result)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -848,11 +823,12 @@ pub(crate) async fn list_file_paths(
     git_ref: &str,
     limit: usize,
 ) -> Result<FileList> {
-    let revision = {
-        let repo = Repository::open_bare(repo_path)?;
-        let commit = peel_to_commit_checked(&repo, git_ref)?;
-        commit.id().to_string()
-    };
+    let (path, revision) = (repo_path.to_owned(), git_ref.to_owned());
+    let revision = process::blocking_until(Instant::now() + process::RPC_TIMEOUT, move || {
+        let repo = Repository::open_bare(path)?;
+        let id = peel_to_commit_checked(&repo, &revision)?.id().to_string();
+        Ok(id)
+    }).await?;
     let mut command = process::git_command()?;
     command
         .args(["ls-tree", "-r", "-z", &revision, "--"])
@@ -862,11 +838,8 @@ pub(crate) async fn list_file_paths(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let _permit = process::operation_slot(process::RPC_TIMEOUT).await?;
-    let mut child = command.spawn().context("start git")?;
-    let mut group = process::ProcessGroup(child.id());
-    let mut reader = BufReader::new(child.stdout.take().context("git stdout")?);
-    let work = async {
+    let (_, files) = process::read_stream(command, b"", process::RPC_TIMEOUT, |stdout, _| async move {
+        let mut reader = BufReader::new(stdout);
         let mut paths = BinaryHeap::<String>::new();
         let mut bytes = 0usize;
         let mut truncated = false;
@@ -920,16 +893,9 @@ pub(crate) async fn list_file_paths(
                 truncated = true;
             }
         }
-        ensure!(child.wait().await?.success(), "Git file listing failed");
-        group.0 = None;
-        Ok::<_, anyhow::Error>(FileList {
-            paths: paths.into_sorted_vec(),
-            truncated,
-        })
-    };
-    tokio::time::timeout(process::RPC_TIMEOUT, work)
-        .await
-        .context("Git file listing timed out")?
+        Ok(process::ReadEnd::Complete(FileList { paths: paths.into_sorted_vec(), truncated }))
+    }).await?;
+    Ok(files)
 }
 
 pub(crate) async fn list_tree(
@@ -1047,14 +1013,15 @@ pub(crate) async fn list_tree_with_history(
     };
 
     if history && !entries.is_empty() {
-        // `-c` lists the paths that differ from every parent, so a file that only a merge
-        // introduced gets that merge as its last commit. `--diff-merges` needs git 2.31.
+        // Share linear-history work, then let Git simplify each unresolved path once a
+        // merge is reached; a combined diff cannot identify which parent's content survived.
+        let deadline = Instant::now() + COMMIT_WALK_TIMEOUT;
         let mut command = process::git_command()?;
         command
             .arg("--literal-pathspecs")
             .arg("log")
             .arg(format!("--max-count={}", MAX_TREE_HISTORY_COMMITS + 1))
-            .arg("--format=%x00%H%x00%T%x00%s%x00%an%x00%ae%x00%at%x00%cn%x00%ce%x00%ct")
+            .arg("--format=%x00%H%x00%T%x00%s%x00%an%x00%ae%x00%at%x00%cn%x00%ce%x00%ct%x00%P")
             .arg("--name-only")
             .arg("--no-renames")
             .arg("-c")
@@ -1068,12 +1035,10 @@ pub(crate) async fn list_tree_with_history(
         process::limit_memory(&mut command);
         // History is optional enrichment: exhausted budgets leave unresolved entries
         // empty, while Git failures and malformed output still fail the read.
-        let _permit = process::operation_slot(COMMIT_WALK_TIMEOUT).await?;
-        command.stdin(Stdio::null()).stderr(Stdio::null());
-        let mut child = command.spawn()?;
-        let mut group = process::ProcessGroup(child.id());
-        let mut reader = BufReader::new(child.stdout.take().context("git log stdout")?);
-        let read = async {
+        let entries_mut = &mut entries;
+        let read = process::read_stream(command, b"", deadline.saturating_duration_since(Instant::now()), |stdout, _| async move {
+            let entries = entries_mut;
+            let mut reader = BufReader::new(stdout);
             let mut bytes = 0usize;
             let mut field = read_delimited(&mut reader, 0, MAX_TREE_HISTORY_OUTPUT_BYTES).await?;
             for _ in 0..MAX_TREE_HISTORY_COMMITS {
@@ -1093,6 +1058,11 @@ pub(crate) async fn list_tree_with_history(
                     }
                     record.extend(value);
                 }
+                let (parents, used) = read_delimited(&mut reader, 0, MAX_TREE_COMMIT_FIELD_BYTES).await?.context("Missing git log parents")?;
+                ensure!(used == parents.len(), ObjectTooLarge);
+                if parents.split(|byte| *byte == b' ').count() > 1 {
+                    return Ok(process::ReadEnd::Prefix(true));
+                }
                 field = read_delimited(&mut reader, 0, MAX_TREE_PATH_BYTES + 2).await?;
                 // Combined merge output has an extra empty field before its paths.
                 if field.as_ref().is_some_and(|(value, _)| value == &[0]) {
@@ -1110,21 +1080,36 @@ pub(crate) async fn list_tree_with_history(
                     record.extend(value);
                     field = read_delimited(&mut reader, 0, MAX_TREE_PATH_BYTES + 2).await?;
                 }
-                apply_tree_history(&record, path, &mut entries)?;
+                apply_tree_history(&record, path, entries)?;
                 if entries.iter().all(|entry| entry.last_commit.is_some()) {
-                    return Ok(());
+                    return Ok(process::ReadEnd::Prefix(false));
                 }
             }
-            if field.is_none() {
-                ensure!(child.wait().await?.success(), "Git tree history failed");
-                group.0 = None;
-            }
-            Ok::<_, anyhow::Error>(())
+            Ok(if field.is_none() { process::ReadEnd::Complete(false) } else { process::ReadEnd::Prefix(false) })
+        });
+        let ambiguous = match read.await {
+            Ok((_, ambiguous)) => ambiguous,
+            Err(error) if error.is::<ObjectTooLarge>() || Instant::now() >= deadline => false,
+            Err(error) => return Err(error),
         };
-        match tokio::time::timeout(COMMIT_WALK_TIMEOUT, read).await {
-            Ok(Ok(())) | Err(_) => {}
-            Ok(Err(error)) if error.is::<ObjectTooLarge>() => {}
-            Ok(Err(error)) => return Err(error),
+        if ambiguous {
+            let mut bytes = 0usize;
+            for entry in entries.iter_mut().filter(|entry| entry.last_commit.is_none()) {
+                if Instant::now() >= deadline { break; }
+                let result = tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), list_path_commits(repo_path, &commit_sha, &entry.path, 0, 1, &CommitFilter::default())).await;
+                match result {
+                    Ok(Ok(mut commits)) => {
+                        if let Some(commit) = commits.pop() {
+                            bytes += serde_json::to_vec(&commit)?.len();
+                            if bytes > MAX_TREE_COMMIT_TOTAL_BYTES { break; }
+                            entry.last_commit = Some(commit);
+                        }
+                    }
+                    Err(_) => break,
+                    Ok(Err(error)) if error.is::<ObjectTooLarge>() => break,
+                    Ok(Err(error)) => return Err(error),
+                }
+            }
         }
     }
 
@@ -1142,7 +1127,6 @@ pub(crate) async fn get_blob_by_id(repo_path: &Path, id: &str) -> Result<Vec<u8>
         if size > super::objects::MAX_BLOB_WRITE_BYTES { return Err(ObjectTooLarge.into()); }
         Ok(size)
     }).await?;
-    let _permit = process::operation_slot(process::RPC_TIMEOUT).await?;
     Ok(read_blob_range(repo_path, id, size as u64, 0, size).await?.0)
 }
 
@@ -1755,17 +1739,12 @@ pub(crate) async fn search_code(
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     process::limit_memory(&mut command);
-    let _permit = process::operation_slot(process::RPC_TIMEOUT).await?;
-    let mut child = command.spawn().context("start git")?;
-    // Kills git's process group if the search returns before git has finished.
-    let mut group = process::ProcessGroup(child.id());
-    let stdout = child.stdout.take().context("git stdout")?;
     let prefix = format!("{tip}:");
     let needle = text.to_lowercase();
-    let mut records = BufReader::new(stdout);
-    let mut matches = Vec::new();
-    let mut skipped = 0;
-    let read = async {
+    let (_, matches) = process::read_stream(command, b"", CODE_SEARCH_TIMEOUT, |stdout, _| async move {
+        let mut records = BufReader::new(stdout);
+        let mut matches = Vec::new();
+        let mut skipped = 0;
         while let Some(record) = read_grep_record(&mut records).await? {
             let Some(found) = parse_code_match(&record, &prefix, &needle) else {
                 continue;
@@ -1774,26 +1753,11 @@ pub(crate) async fn search_code(
                 skipped += 1;
             } else {
                 matches.push(found);
-                if matches.len() == limit {
-                    break;
-                }
+                if matches.len() == limit { return Ok(process::ReadEnd::Prefix(matches)); }
             }
         }
-        Ok::<_, anyhow::Error>(())
-    };
-    tokio::time::timeout(CODE_SEARCH_TIMEOUT, read)
-        .await
-        .context("git timed out")??;
-    if matches.len() < limit {
-        // Git printed every record, so its status tells whether the search ran. Status 1 means no
-        // line matched.
-        let status = child.wait().await?;
-        group.0 = None;
-        ensure!(
-            status.success() || status.code() == Some(1),
-            "Git could not search the code"
-        );
-    }
+        Ok(process::ReadEnd::Complete(matches))
+    }).await?;
     Ok(matches)
 }
 
@@ -1870,8 +1834,6 @@ fn parse_code_match(record: &[u8], prefix: &str, needle: &str) -> Option<CodeMat
     })
 }
 
-const MAX_PATH_COMMIT_OUTPUT_BYTES: usize = 41 * (MAX_COMMIT_WALK_OBJECTS + 1);
-
 /// The commits after `offset` that changed `path`, newest first, as `git log -- <path>` lists
 /// them. The ref is peeled to a commit ID first, so `git log` never reads the ref name as an
 /// option, and the path comes after `--` as a literal pathspec.
@@ -1889,11 +1851,12 @@ pub(crate) async fn list_path_commits(
     if limit == 0 || path.split('/').any(|part| matches!(part, "" | "." | "..")) {
         return Ok(Vec::new());
     }
-    let tip = {
-        let repo = Repository::open_bare(repo_path)?;
-        let commit = peel_to_commit_checked(&repo, git_ref)?;
-        commit.id().to_string()
-    };
+    let (owned_path, revision) = (repo_path.to_owned(), git_ref.to_owned());
+    let tip = process::blocking_until(Instant::now() + COMMIT_WALK_TIMEOUT, move || {
+        let repo = Repository::open_bare(owned_path)?;
+        let id = peel_to_commit_checked(&repo, &revision)?.id().to_string();
+        Ok(id)
+    }).await?;
     let needs_filter =
         filter.author.is_some() || filter.message.is_some() || !filter.author_emails.is_empty();
     let mut command = process::git_command()?;
@@ -1916,52 +1879,44 @@ pub(crate) async fn list_path_commits(
         command.arg(format!("--until=@{until} +0000"));
     }
     command.arg(&tip).arg("--").arg(path).current_dir(repo_path);
-    let (status, output) = process::buffered(
-        command,
-        b"",
-        MAX_PATH_COMMIT_OUTPUT_BYTES,
-        process::RPC_TIMEOUT,
-    )
-    .await?;
-    ensure!(
-        status.success(),
-        "Git could not list the commits for the path"
-    );
-    let (path, filter) = (repo_path.to_owned(), filter.clone());
-    let deadline = Instant::now() + COMMIT_WALK_TIMEOUT;
-    process::blocking_until(deadline, move || {
-        let repo = Repository::open_bare(&path)?;
+    let path = repo_path.to_owned();
+    let filter = std::sync::Arc::new(filter.clone());
+    let (_, commits) = process::read_stream(command, b"", COMMIT_WALK_TIMEOUT, |stdout, admission| async move {
+        let mut reader = BufReader::new(stdout);
+        let mut repo = admission.blocking(move || Ok(Repository::open_bare(path)?)).await?;
         let mut total_bytes = 0usize;
         let mut walked_bytes = 0usize;
         let mut skipped = 0;
+        let mut count = 0;
         let mut commits = Vec::new();
-        for (index, line) in std::str::from_utf8(&output)?.lines().enumerate() {
-            if index >= MAX_COMMIT_WALK_OBJECTS || Instant::now() >= deadline {
-                return Err(ObjectTooLarge.into());
-            }
-            let oid = git2::Oid::from_str(line)?;
-            let size = commit_object_size(&repo, oid)?;
+        while let Some((line, used)) = read_delimited(&mut reader, b'\n', 42).await? {
+            ensure!(used == line.len() && count < MAX_COMMIT_WALK_OBJECTS, ObjectTooLarge);
+            count += 1;
+            let oid = git2::Oid::from_str(std::str::from_utf8(line.strip_suffix(b"\n").context("Incomplete path history ID")?)?)?;
+            let filter = filter.clone();
+            let materialize = skipped >= offset;
+            let (returned, size, matched, info) = admission.blocking(move || {
+                let size = commit_object_size(&repo, oid)?;
+                ensure!(walked_bytes.saturating_add(size) <= MAX_COMMIT_WALK_BYTES, ObjectTooLarge);
+                let (matched, info) = {
+                    let commit = find_commit_checked(&repo, oid)?;
+                    let matched = filter.matches(&commit);
+                    let info = if matched && materialize { Some(commit_info(&repo, &commit)?) } else { None };
+                    (matched, info)
+                };
+                Ok((repo, size, matched, info))
+            }).await?;
+            repo = returned;
             walked_bytes += size;
-            if walked_bytes > MAX_COMMIT_WALK_BYTES {
-                return Err(ObjectTooLarge.into());
-            }
-            let commit = find_commit_checked(&repo, oid)?;
-            if !filter.matches(&commit) {
-                continue;
-            }
-            if skipped < offset {
-                skipped += 1;
-                continue;
-            }
+            if !matched { continue; }
+            if skipped < offset { skipped += 1; continue; }
             add_commit_to_budget(&mut total_bytes, size, true)?;
-            commits.push(commit_info(&repo, &commit)?);
-            if commits.len() == limit {
-                break;
-            }
+            commits.push(info.context("Missing path history metadata")?);
+            if commits.len() == limit { return Ok(process::ReadEnd::Prefix(commits)); }
         }
-        Ok(commits)
-    })
-    .await
+        Ok(process::ReadEnd::Complete(commits))
+    }).await?;
+    Ok(commits)
 }
 
 /// Only divergence is capped; every branch needs its tip date for stale classification.

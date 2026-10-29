@@ -922,11 +922,6 @@ impl LocalStore {
         range: BlobRange,
     ) -> Result<BlobBytes, RepoError> {
         let (offset, length) = normalize_blob_range(range, size)?;
-        // The reader starts its own `git cat-file`, so it takes a slot like any other Git work.
-        let _permit =
-            git::repository::process::operation_slot(git::repository::process::RPC_TIMEOUT)
-                .await
-                .map_err(|_| unavailable("Git operation timed out"))?;
         let (bytes, is_binary) = git::read_blob_range(self.path(), id, size, offset, length)
             .await
             .map_err(RepoError::from)?;

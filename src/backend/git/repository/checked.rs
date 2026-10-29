@@ -343,7 +343,6 @@ pub(crate) async fn prepare_squash(
 /// as fit in the message limit.
 async fn squash_message(path: &Path, base: &str, head: &str, title: &str) -> Result<String> {
     let range = format!("{base}..{head}");
-    let _permit = process::operation_slot(COMMAND_TIMEOUT).await?;
     let mut command = process::git_command()?;
     command
         .arg("--git-dir")
@@ -358,16 +357,9 @@ async fn squash_message(path: &Path, base: &str, head: &str, title: &str) -> Res
         ])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    let mut child = command.spawn()?;
-    let mut group = process::ProcessGroup(child.id());
-    let mut reader = tokio::io::BufReader::new(
-        child
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow!("git log stdout"))?,
-    );
-    let mut listed = String::new();
-    let read = async {
+    let (_, listed) = process::read_stream(command, b"", COMMAND_TIMEOUT, |stdout, _| async move {
+        let mut reader = tokio::io::BufReader::new(stdout);
+        let mut listed = String::new();
         while let Some((subject, _)) = super::read_delimited(&mut reader, 0, 100).await? {
             let subject = String::from_utf8_lossy(&subject);
             let mut end = subject.len().min(100);
@@ -376,18 +368,12 @@ async fn squash_message(path: &Path, base: &str, head: &str, title: &str) -> Res
             }
             let line = format!("* {}\n", subject[..end].trim_end_matches(['\0', '\n', ' ']));
             if title.len() + 2 + listed.len() + line.len() > MAX_MERGE_MESSAGE_BYTES {
-                return Ok(());
+                return Ok(process::ReadEnd::Prefix(listed));
             }
             listed.push_str(&line);
         }
-        ensure!(
-            child.wait().await?.success(),
-            "Git could not list the commits to squash"
-        );
-        group.0 = None;
-        Ok::<_, anyhow::Error>(())
-    };
-    tokio::time::timeout(COMMAND_TIMEOUT, read).await??;
+        Ok(process::ReadEnd::Complete(listed))
+    }).await?;
     if listed.is_empty() {
         return Ok(title.to_owned());
     }
