@@ -60,7 +60,11 @@ native_operation!(crate::backend::db::postgres::email::enqueue_notification_emai
 native_operation!(crate::backend::db::postgres::email::withdraw_email,
     crate::backend::db::sqlite::email::withdraw_email,
     /// Drops an unsent message that must no longer be sent.
-    fn withdraw_email(pool: &DbPool, id: i64) -> Result<()>);
+    fn withdraw_email(pool: &DbPool, id: i64, attempt: i32) -> Result<()>);
+
+native_operation!(crate::backend::db::postgres::email::email_delivery_allowed,
+    crate::backend::db::sqlite::email::email_delivery_allowed,
+    fn email_delivery_allowed(pool: &DbPool, id: i64, attempt: i32) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::email::enqueue_invitation_email,
     crate::backend::db::sqlite::email::enqueue_invitation_email,
@@ -77,13 +81,13 @@ native_operation!(crate::backend::db::postgres::email::claim_due_email,
 native_operation!(crate::backend::db::postgres::email::mark_email_sent,
     crate::backend::db::sqlite::email::mark_email_sent,
     /// Marks the message sent and empties its body, which may hold a link that still works.
-    fn mark_email_sent(pool: &DbPool, id: i64) -> Result<()>);
+    fn mark_email_sent(pool: &DbPool, id: i64, attempt: i32) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::email::mark_email_failed,
     crate::backend::db::sqlite::email::mark_email_failed,
     /// Records a failed attempt. A message that has used `max_attempts` is given up, and its
     /// body is emptied like a sent one.
-    fn mark_email_failed(pool: &DbPool, id: i64, error: &str, retry_seconds: i64, max_attempts: i32) -> Result<()>);
+    fn mark_email_failed(pool: &DbPool, id: i64, attempt: i32, error: &str, retry_seconds: i64, max_attempts: i32) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::email::remove_old_email,
     crate::backend::db::sqlite::email::remove_old_email,

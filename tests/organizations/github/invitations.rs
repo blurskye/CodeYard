@@ -701,7 +701,7 @@ async fn contract(pg: bool) {
         .await;
     f.execute("UPDATE email_outbox SET attempts=5 WHERE id=$1", &[mail])
         .await;
-    db::email::mark_email_failed(f.pool(), mail, "SMTP rejected the recipient", 60, 5)
+    db::email::mark_email_failed(f.pool(), mail, 5, "SMTP rejected the recipient", 60, 5)
         .await
         .unwrap();
     let (_, body) = request(

@@ -96,9 +96,14 @@ pub async fn enqueue_notification_email(
     Ok(())
 }
 
-pub async fn withdraw_email(pool: &SqlitePool, id: i64) -> Result<()> {
-    sqlx::query("DELETE FROM email_outbox WHERE id=?1 AND sent_at IS NULL")
+pub async fn email_delivery_allowed(pool: &SqlitePool, id: i64, attempt: i32) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM email_outbox m WHERE m.id=$1 AND m.attempts=$2 AND m.sent_at IS NULL AND (m.code_token_hash IS NULL OR EXISTS(SELECT 1 FROM email_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=m.code_token_hash AND t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND u.email=t.email AND NOT u.is_banned)) AND (m.notification_id IS NULL OR EXISTS(SELECT 1 FROM notifications n JOIN users u ON u.id=n.user_id WHERE n.id=m.notification_id AND u.email=m.to_address AND u.email_verified AND u.email_notifications AND NOT u.is_banned AND NOT u.must_change_password)))").bind(id).bind(attempt).fetch_one(pool).await?)
+}
+
+pub async fn withdraw_email(pool: &SqlitePool, id: i64, attempt: i32) -> Result<()> {
+    sqlx::query("DELETE FROM email_outbox WHERE id=?1 AND sent_at IS NULL AND attempts=?2")
         .bind(id)
+        .bind(attempt)
         .execute(pool)
         .await?;
     Ok(())
@@ -151,9 +156,10 @@ pub async fn claim_due_email(
     Ok(message)
 }
 
-pub async fn mark_email_sent(pool: &SqlitePool, id: i64) -> Result<()> {
-    sqlx::query("UPDATE email_outbox SET sent_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), last_error = NULL, body_text = '' WHERE id = ?1")
+pub async fn mark_email_sent(pool: &SqlitePool, id: i64, attempt: i32) -> Result<()> {
+    sqlx::query("UPDATE email_outbox SET sent_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), last_error = NULL, body_text = '' WHERE id = ?1 AND sent_at IS NULL AND attempts=?2")
         .bind(id)
+        .bind(attempt)
         .execute(pool)
         .await?;
     Ok(())
@@ -162,20 +168,22 @@ pub async fn mark_email_sent(pool: &SqlitePool, id: i64) -> Result<()> {
 pub async fn mark_email_failed(
     pool: &SqlitePool,
     id: i64,
+    attempt: i32,
     error: &str,
     retry_seconds: i64,
     max_attempts: i32,
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    sqlx::query("UPDATE email_outbox SET last_error = ?2, next_attempt_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now', ?3 || ' seconds'), body_text = CASE WHEN attempts >= ?4 THEN '' ELSE body_text END WHERE id = ?1")
+    sqlx::query("UPDATE email_outbox SET last_error = ?2, next_attempt_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now', ?3 || ' seconds'), body_text = CASE WHEN attempts >= ?4 THEN '' ELSE body_text END WHERE id = ?1 AND sent_at IS NULL AND attempts=?5")
         .bind(id)
         .bind(error)
         .bind(retry_seconds)
         .bind(max_attempts)
+        .bind(attempt)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE organization_invitations SET failed_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),failed_reason='Invitation email could not be delivered' WHERE failed_at IS NULL AND id IN (SELECT organization_invitation_id FROM email_outbox WHERE id=?1 AND attempts>=?2 AND sent_at IS NULL)")
-        .bind(id).bind(max_attempts).execute(&mut *tx).await?;
+    sqlx::query("UPDATE organization_invitations SET failed_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),failed_reason='Invitation email could not be delivered' WHERE failed_at IS NULL AND id IN (SELECT organization_invitation_id FROM email_outbox WHERE id=?1 AND attempts>=?2 AND attempts=?3 AND sent_at IS NULL)")
+        .bind(id).bind(max_attempts).bind(attempt).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -225,6 +233,10 @@ pub async fn notification_email_address(pool: &SqlitePool, user_id: i64) -> Resu
 
 pub async fn save_email_token(pool: &SqlitePool, link: &EmailLink<'_>) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let current: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND email=?2 AND NOT is_banned)").bind(link.user_id).bind(link.email).fetch_one(&mut *tx).await?;
+    if !current {
+        return Ok(false);
+    }
     // A link issued less than RESEND_SECONDS ago expires later than now + ttl - RESEND_SECONDS.
     let saved = sqlx::query(
         "INSERT INTO email_tokens(user_id,purpose,email,token_hash,expires_at)
@@ -248,10 +260,11 @@ pub async fn save_email_token(pool: &SqlitePool, link: &EmailLink<'_>) -> Result
         == 1;
     // The mail carries this token, so it is queued only together with it.
     if saved {
-        sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text) VALUES (?1,?2,?3)")
+        sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text,code_token_hash) VALUES (?1,?2,?3,?4)")
             .bind(link.email)
             .bind(link.subject)
             .bind(link.body_text)
+            .bind(link.token_hash)
             .execute(&mut *tx)
             .await?;
     }

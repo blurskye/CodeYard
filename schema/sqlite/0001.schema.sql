@@ -1210,7 +1210,8 @@ CREATE TABLE email_outbox (
     sent_at TEXT,
     organization_invitation_id INTEGER REFERENCES organization_invitations(id) ON DELETE SET NULL,
     -- A notification email is sent only while its recipient can still read the notification.
-    notification_id INTEGER REFERENCES notifications(id) ON DELETE CASCADE
+    notification_id INTEGER REFERENCES notifications(id) ON DELETE CASCADE,
+    code_token_hash TEXT CHECK (code_token_hash IS NULL OR length(code_token_hash) = 64)
 );
 
 CREATE TABLE email_tokens (

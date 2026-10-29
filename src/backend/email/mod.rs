@@ -348,7 +348,7 @@ mod tests {
         // Each failure sets the next attempt; with no wait it is due again at once.
         let id = claimed[0].id;
         for attempts in 1..=outbox::MAX_ATTEMPTS {
-            db::email::mark_email_failed(&f.pool, id, "refused", 0, outbox::MAX_ATTEMPTS)
+            db::email::mark_email_failed(&f.pool, id, attempts, "refused", 0, outbox::MAX_ATTEMPTS)
                 .await
                 .unwrap();
             let next = db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
@@ -381,7 +381,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        db::email::mark_email_failed(&f.pool, two.id, "later", 3600, outbox::MAX_ATTEMPTS)
+        db::email::mark_email_failed(&f.pool, two.id, two.attempts, "later", 3600, outbox::MAX_ATTEMPTS)
             .await
             .unwrap();
         assert!(
