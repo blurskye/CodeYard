@@ -844,14 +844,16 @@ async fn pending_uploads_share_the_cache_quota(pg: bool) {
         object_key: format!("actions/{}", Uuid::new_v4()),
         size,
     };
+    assert!(objects::grant_blob(f.pool(), a, auth.id, "grant-a", true).await.unwrap());
+    assert!(objects::grant_blob(f.pool(), b, auth.id, "grant-b", true).await.unwrap());
     // Four bytes of `a` are in flight, so `b` cannot stage four more under a six-byte quota.
-    assert!(objects::stage_block(f.pool(), a, &part(4), 6)
+    assert!(objects::stage_block(f.pool(), a, "grant-a", &part(4), 6)
         .await
         .unwrap());
-    assert!(!objects::stage_block(f.pool(), b, &part(4), 6)
+    assert!(!objects::stage_block(f.pool(), b, "grant-b", &part(4), 6)
         .await
         .unwrap());
-    assert!(objects::stage_block(f.pool(), b, &part(2), 6)
+    assert!(objects::stage_block(f.pool(), b, "grant-b", &part(2), 6)
         .await
         .unwrap());
     f.finish().await;

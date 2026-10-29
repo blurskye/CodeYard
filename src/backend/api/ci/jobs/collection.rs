@@ -47,7 +47,7 @@ pub async fn list_ci_jobs(
             .map_err(super::unavailable)?
             .ok_or_else(missing)?;
         ensure_repo_read_access(&state, &user, &repo).await?;
-        db::ci::list_ci_runs_for_repo(&state.pool, repo.id, limit)
+        db::ci::list_filtered_ci_runs(&state.pool, user.id, Some(repo.id), &db::ci::CiRunFilter::default(), limit)
             .await
             .map_err(super::unavailable)?
     } else {

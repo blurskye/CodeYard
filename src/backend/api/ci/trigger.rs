@@ -86,7 +86,7 @@ fn draft(
         repository: scope
             .map(|(_, repo)| repo.clone())
             .unwrap_or_else(|| value("repo_name")),
-        branch: value("branch"),
+        branch: form.get("branch").cloned().unwrap_or_default(),
         event: if scope.is_some() {
             "workflow_dispatch".into()
         } else {
@@ -152,6 +152,9 @@ async fn refusal_workflows(
     let store =
         crate::backend::repositories::store::repo_store(repository, ctx.state.cluster.as_ref());
     let definitions = crate::backend::ci::list_workflows_for_ref(&store, branch).await?;
+    let user = ctx.user.as_ref().ok_or_else(|| anyhow::anyhow!("Sign in required"))?;
+    super::jobs::ensure_repo_read_access(&ctx.state, user, repository).await
+        .map_err(|_| anyhow::anyhow!("Repository read access required"))?;
     Ok(definitions
         .into_iter()
         .map(super::responses::workflow_view)
@@ -210,7 +213,7 @@ async fn dispatch(
     form: HashMap<String, String>,
     scope: Option<(String, String)>,
 ) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await {
+    let mut ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
@@ -220,20 +223,6 @@ async fn dispatch(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
-    // Allow every individually valid input, including name=value and CRLF overhead.
-    use crate::backend::ci::dispatch_inputs::{MAX_INPUTS, MAX_NAME_BYTES, MAX_VALUE_BYTES};
-    const MAX_INPUT_LINES_BYTES: usize = MAX_INPUTS * (MAX_NAME_BYTES + 1 + MAX_VALUE_BYTES + 2);
-    if form.iter().any(|(key, value)| {
-        value.len()
-            > if key == "inputs" {
-                MAX_INPUT_LINES_BYTES
-            } else {
-                MAX_VALUE_BYTES
-            }
-    }) {
-        return ctx.error(StatusCode::BAD_REQUEST, "Dispatch form value is too long.");
-    }
-    let draft = draft(&form, scope.as_ref());
     let base_path = scope
         .as_ref()
         .map(|(owner, repo)| {
@@ -244,6 +233,23 @@ async fn dispatch(
             )
         })
         .unwrap_or_else(|| "/ci".into());
+    ctx.return_to = Some(base_path.clone());
+    // Allow every individually valid input, including name=value and CRLF overhead.
+    use crate::backend::ci::dispatch_inputs::{MAX_INPUTS, MAX_NAME_BYTES, MAX_VALUE_BYTES};
+    const MAX_INPUT_LINES_BYTES: usize = MAX_INPUTS * (MAX_NAME_BYTES + 1 + MAX_VALUE_BYTES + 2);
+    if form.iter().any(|(key, value)| {
+        value.len()
+            > if key == "return_query" {
+                usize::MAX
+            } else if key == "inputs" {
+                MAX_INPUT_LINES_BYTES
+            } else {
+                MAX_VALUE_BYTES
+            }
+    }) {
+        return ctx.error(StatusCode::BAD_REQUEST, "Dispatch form value is too long.");
+    }
+    let draft = draft(&form, scope.as_ref());
     if !matches!(draft.pipeline.as_str(), "ci" | "cd" | "full") {
         return dispatch_error(
             &ctx,

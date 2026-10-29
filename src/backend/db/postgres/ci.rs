@@ -1213,7 +1213,8 @@ pub async fn list_rest_ci_runs(
         .bind(filter.until)
         .fetch_one(pool)
         .await?;
-    let sql = format!("SELECT c.* {condition} ORDER BY c.id DESC LIMIT $10 OFFSET $11");
+    let columns = crate::backend::db::ci::RUN_METADATA_COLUMNS;
+    let sql = format!("SELECT {columns} {condition} ORDER BY c.id DESC LIMIT $10 OFFSET $11");
     let rows = sqlx::query_as(&sql)
         .bind(repo_id)
         .bind(&filter.workflow)
@@ -1240,16 +1241,17 @@ pub async fn list_filtered_ci_runs(
 ) -> Result<Vec<CiRun>> {
     ensure!(limit >= 0, "Result limit must be nonnegative");
     let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let columns = crate::backend::db::ci::RUN_METADATA_COLUMNS;
     Ok(sqlx::query_as::<_, CiRun>(&format!(
         "WITH history AS (
-            SELECT c.*, r.name AS repository_name,
+            SELECT {columns}, r.name AS repository_name,
                 CASE WHEN c.event = 'pull_request' THEN coalesce(c.pull_request_event->>'head_ref', c.branch) ELSE c.branch END AS display_ref
             FROM ci_runs c JOIN repositories r ON r.id = c.repo_id
             WHERE (($2::bigint IS NULL AND c.triggered_by_id = $1) OR c.repo_id = $2)
                 AND c.repo_id IN (SELECT r.id FROM repositories r JOIN users u ON u.id = $1
                     WHERE NOT u.is_banned AND NOT u.must_change_password
                         AND ((r.owner_kind = 'user' AND u.is_admin) OR ({access}) > 0))
-        ), named AS (SELECT *, CASE WHEN display_ref LIKE 'refs/heads/%' AND substr(display_ref, 12, 5) != 'refs/' THEN substr(display_ref, 12) ELSE display_ref END AS display_branch FROM history)
+        ), named AS (SELECT *, CASE WHEN event NOT IN ('pull_request','pull_request_target') AND display_ref LIKE 'refs/heads/%' AND substr(display_ref, 12, 5) != 'refs/' THEN substr(display_ref, 12) ELSE display_ref END AS display_branch FROM history)
         SELECT * FROM named c WHERE ($3 = '' OR EXISTS (SELECT 1 FROM unnest(string_to_array(c.workflow_path, ',')) p WHERE trim(p) = $3))
             AND ($4 = '' OR c.event = $4) AND ($5 = '' OR c.display_branch = $5)
             AND ($6 = '' OR CASE lower(c.status) WHEN 'completed' THEN 'success' WHEN 'error' THEN 'failed' WHEN 'in_progress' THEN 'running' WHEN 'pending' THEN 'queued' WHEN 'canceled' THEN 'cancelled' ELSE lower(c.status) END = $6)
@@ -1260,8 +1262,9 @@ pub async fn list_filtered_ci_runs(
 }
 
 pub async fn list_ci_runs_for_repo(pool: &PgPool, repo_id: i64, limit: i64) -> Result<Vec<CiRun>> {
+    let columns = crate::backend::db::ci::RUN_METADATA_COLUMNS;
     let rows = sqlx::query_as::<_, CiRun>(
-        "SELECT * FROM ci_runs WHERE repo_id = $1 ORDER BY created_at DESC LIMIT $2",
+        &format!("SELECT {columns} FROM ci_runs c WHERE repo_id = $1 ORDER BY created_at DESC LIMIT $2"),
     )
     .bind(repo_id)
     .bind(limit)
@@ -1363,8 +1366,9 @@ pub async fn list_ci_runs_for_user(pool: &PgPool, user_id: i64, limit: i64) -> R
     let access = super::repositories::access::USER_REPO_ACCESS_SQL;
     // Visibility is decided once per repository the user has runs in, in the same
     // statement that orders and limits the runs.
+    let columns = crate::backend::db::ci::RUN_METADATA_COLUMNS;
     Ok(sqlx::query_as::<_, CiRun>(&format!(
-        "SELECT c.* FROM ci_runs c
+        "SELECT {columns} FROM ci_runs c
          WHERE c.triggered_by_id = $1 AND c.repo_id IN (
              SELECT r.id FROM repositories r JOIN users u ON u.id = $1
              WHERE NOT u.is_banned AND NOT u.must_change_password

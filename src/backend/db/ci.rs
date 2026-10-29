@@ -49,6 +49,9 @@ pub(crate) fn may_cancel_run(
     triggered_by_id == Some(actor_id) || personal_admin || access.can_admin()
 }
 
+/// History reads deliberately omit reusable-workflow content snapshots.
+pub(crate) const RUN_METADATA_COLUMNS: &str = "c.workflow_run_number,c.workflow_run_id,c.workflow_run_attempt,c.engine,c.id,c.run_id,c.repo_id,c.triggered_by_id,c.mode,c.pipeline,c.event,c.pull_request_id,c.attempt,c.pull_request_event,c.event_payload,c.workflow_inputs,c.is_fork,c.approval_required,c.branch,c.head_sha,c.workflow_path,c.workflow_sha,c.runner_labels,c.runner_group,c.worker,c.heartbeat_at,c.cancel_requested,c.environment,c.status,c.error_message,c.started_at,c.completed_at,c.created_at,c.updated_at";
+
 pub struct NewCiRun<'a> {
     pub repo_id: i64,
     pub triggered_by_id: i64,

@@ -153,9 +153,13 @@ async fn twirp(
     State(state): State<Arc<AppState>>,
     Path((service, method)): Path<(String, String)>,
     headers: HeaderMap,
-    Json(request): Json<Request>,
+    request: axum::extract::Request,
 ) -> Result<Json<Value>, Error> {
     let run = authenticate(&state, &headers).await?;
+    let bytes = tokio::time::timeout(Duration::from_secs(30), axum::body::to_bytes(request.into_body(), 64 * 1024))
+        .await.map_err(|_| Error(StatusCode::REQUEST_TIMEOUT, "deadline_exceeded", "Results body timed out"))?
+        .map_err(|_| invalid())?;
+    let request: Request = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
     let site = db::actions::get_actions_settings(&state.pool).await?;
     let repo = db::actions::get_repo_actions_settings(&state.pool, run.repo_id).await?;
     let cache_limit = site.cache_size_bytes(&repo);
@@ -277,16 +281,18 @@ async fn twirp(
             }
         }
         (true, "ListArtifacts") => {
-            let list = objects::list_artifacts(&state.pool, run.id).await?;
-            let list: Vec<_> = list.into_iter().filter(|o| request.name_filter.as_ref().is_none_or(|n| *n==o.name) && request.id_filter.as_ref().is_none_or(|id| *id==o.id.to_string()))
+            let id = request.id_filter.as_deref().map(str::parse::<i64>).transpose().map_err(|_| invalid())?;
+            let list = objects::list_artifacts(&state.pool, run.id, request.name_filter.as_deref(), id).await?;
+            let list: Vec<_> = list.into_iter()
                 .map(|o| json!({"workflowRunBackendId":run.backend_id,"workflowJobRunBackendId":run.backend_id,"databaseId":o.id.to_string(),"name":o.name,"size":o.size.to_string(),"createdAt":chrono::DateTime::from_timestamp(o.created_at,0).map(|t| t.to_rfc3339())})).collect();
             json!({"artifacts":list})
         }
         (true, "GetSignedArtifactURL") | (true, "DeleteArtifact") => {
-            let object = objects::own_object(&state.pool, run.id, "artifact", name, "")
-                .await?
-                .filter(|o| o.finalized)
-                .ok_or_else(missing)?;
+            let object = if method == "DeleteArtifact" {
+                objects::own_object(&state.pool, run.id, "artifact", name, "").await?.filter(|o| o.finalized)
+            } else {
+                objects::artifact_for_run(&state.pool, run.id, name).await?
+            }.ok_or_else(missing)?;
             if method == "DeleteArtifact" {
                 if !objects::delete_artifact(&state.pool, object.id, run.id, None).await? {
                     return Err(missing());
@@ -355,6 +361,7 @@ async fn put_blob(
     request: axum::extract::Request,
 ) -> Result<Response, Error> {
     let object = capability(&state, id, &query, true).await?;
+    let grant_hash = runtime::token_hash(query.get("sig").ok_or_else(denied)?);
     let _io = state.storage.try_acquire_io()?;
     let _memory = state
         .upload_reads
@@ -398,7 +405,7 @@ async fn put_blob(
     })?;
     if comp == "blocklist" {
         if bytes.len() > 8 * 1024 * 1024
-            || !objects::seal_blob(&state.pool, id, &block_list(&bytes)?).await?
+            || !objects::seal_blob(&state.pool, id, &grant_hash, &block_list(&bytes)?).await?
         {
             return Err(invalid());
         }
@@ -424,7 +431,7 @@ async fn put_blob(
         };
         // A single-shot PUT replaces an unfinished upload, so a retry after a lost response works.
         if comp.is_empty() {
-            objects::reopen_blob(&state.pool, id).await?;
+            objects::reopen_blob(&state.pool, id, &grant_hash).await?;
         }
         let mut blocks = Vec::new();
         let chunk_size = if comp.is_empty() {
@@ -432,9 +439,10 @@ async fn put_blob(
         } else {
             MAX_OBJECT_BYTES as usize
         };
+        let upload_id = uuid::Uuid::new_v4();
         for (index, bytes) in bytes.chunks(chunk_size).enumerate() {
             let block_id = if comp.is_empty() {
-                format!("plain-{index}")
+                format!("plain-{upload_id}-{index}")
             } else {
                 block.clone()
             };
@@ -443,7 +451,7 @@ async fn put_blob(
                 object_key: format!("actions/{}", uuid::Uuid::new_v4()),
                 size: bytes.len() as i64,
             };
-            if !objects::stage_block(&state.pool, id, &part, limit).await? {
+            if !objects::stage_block(&state.pool, id, &grant_hash, &part, limit).await? {
                 return Err(invalid());
             }
             let hash = hex::encode(Sha256::digest(bytes));
@@ -465,12 +473,12 @@ async fn put_blob(
                     "Blob upload timed out",
                 )
             })??;
-            if !objects::ready_block(&state.pool, id, &part.object_key).await? {
+            if !objects::ready_block(&state.pool, id, &grant_hash, &part.object_key).await? {
                 return Err(invalid());
             }
             blocks.push(block_id);
         }
-        if comp.is_empty() && !objects::seal_blob(&state.pool, id, &blocks).await? {
+        if comp.is_empty() && !objects::seal_blob(&state.pool, id, &grant_hash, &blocks).await? {
             return Err(invalid());
         }
     } else {
@@ -558,35 +566,34 @@ pub(super) async fn download(
     };
     let store = state.storage.clone();
     let stream = futures_util::stream::try_unfold(
-        (parts, start, end, store, permit),
-        |(parts, offset, end, store, permit)| async move {
+        (parts, start, end, 0usize, 0i64, None::<Box<dyn tokio::io::AsyncRead + Unpin + Send>>, store, permit),
+        |(parts, offset, end, mut index, mut base, mut reader, store, permit)| async move {
             if offset >= end {
                 return Ok::<_, std::io::Error>(None);
             }
-            let mut base = 0;
-            let part = parts
-                .iter()
-                .find(|p| {
-                    let contains = offset < base + p.size;
-                    if !contains {
-                        base += p.size;
-                    }
-                    contains
-                })
-                .ok_or_else(|| std::io::Error::other("Missing blob block"))?;
-            let length = (end - offset)
-                .min(base + part.size - offset)
-                .min(1024 * 1024) as usize;
-            let bytes = tokio::time::timeout(
-                Duration::from_secs(60),
-                store.read_range(&part.object_key, (offset - base) as u64, length),
-            )
-            .await
-            .map_err(|_| std::io::Error::other("Blob read timeout"))?
-            .map_err(|_| std::io::Error::other("Blob read unavailable"))?;
+            while let Some(part) = parts.get(index) {
+                if offset < base + part.size { break; }
+                base += part.size;
+                index += 1;
+                reader = None;
+            }
+            let part = parts.get(index).ok_or_else(|| std::io::Error::other("Missing blob block"))?;
+            let remaining = (end - offset).min(base + part.size - offset);
+            if reader.is_none() {
+                reader = Some(tokio::time::timeout(Duration::from_secs(60),
+                    store.open_range(&part.object_key, (offset - base) as u64, remaining as u64))
+                    .await.map_err(|_| std::io::Error::other("Blob read timeout"))?
+                    .map_err(|_| std::io::Error::other("Blob read unavailable"))?);
+            }
+            let mut bytes = vec![0; remaining.min(1024 * 1024) as usize];
+            use tokio::io::AsyncReadExt;
+            let length = tokio::time::timeout(Duration::from_secs(60), reader.as_mut().expect("range reader exists").read(&mut bytes))
+                .await.map_err(|_| std::io::Error::other("Blob read timeout"))??;
+            if length == 0 { return Err(std::io::Error::other("Short blob block")); }
+            bytes.truncate(length);
             Ok(Some((
                 Bytes::from(bytes),
-                (parts, offset + length as i64, end, store, permit),
+                (parts, offset + length as i64, end, index, base, reader, store, permit),
             )))
         },
     );
