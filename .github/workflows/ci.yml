@@ -59,7 +59,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Clippy
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Build the test helpers
         # The OpenSSH tests run this CLI as a separate process, and the engine tests run the
         # in-house workflow runner.
@@ -82,4 +82,4 @@ jobs:
           GITSERV_TEST_OPENSSH_HELPER: ${{ github.workspace }}/target/debug/codeyard
           CODEYARD_ACTIONS_BIN: ${{ github.workspace }}/target/debug/codeyard-actions
           E2E_ACT_BINARY: ${{ runner.temp }}/bin/act
-        run: cargo test --locked --all-targets
+        run: cargo test --locked --workspace --all-targets
