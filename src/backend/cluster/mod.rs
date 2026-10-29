@@ -238,6 +238,8 @@ pub struct Cluster {
     sessions: Option<rpc::SessionGate>,
     events: ci::CiHandler,
     pub context: NodeContext,
+    _identity_lock: db::cluster::ServingLock,
+    _repository_lock: Option<std::fs::File>,
 }
 
 /// The TCP address peers dial when `CLUSTER_TCP_ADVERTISE` is not set: the bound address,
@@ -320,7 +322,7 @@ impl Cluster {
     /// The clear is best effort: after `WITHDRAW_TIMEOUT` shutdown goes on without it.
     /// Repository sessions from other nodes are refused from here on.
     pub async fn withdraw(&self) {
-        self.events.stop_claiming();
+        self.events.close();
         if let Some(sessions) = &self.sessions {
             sessions.close();
         }
@@ -349,6 +351,7 @@ impl Cluster {
         if let Some(sessions) = &self.sessions {
             sessions.drain().await;
         }
+        self.events.drain().await;
     }
 
     pub async fn shutdown(&self) {
@@ -391,6 +394,7 @@ pub async fn start(
 ) -> Result<Cluster> {
     require_postgres(pool)?;
     let key = load_or_create(state_dir)?;
+    let identity_lock = db::cluster::serving_lock(pool, &key.public_hex()).await?;
     if !settings.declared.is_empty() {
         let summary = apply_declared_nodes(pool, &settings.declared).await?;
         info!(
@@ -434,6 +438,20 @@ pub async fn start(
         ),
         _ => {}
     }
+    let storage = roles.contains(NodeRole::Storage);
+    ensure!(storage || !db::cluster::has_storage_assignments(pool, node.id).await?,
+        "move this node's primaries and replica assignments before removing its storage service");
+    let repos_path = if storage {
+        std::fs::create_dir_all(repos_path)?;
+        repos_path.canonicalize()?
+    } else {
+        std::path::absolute(repos_path)?
+    };
+    let repository_lock = if storage {
+        Some(crate::backend::locks::exclusive_file(&repos_path.join("storage.lock"))?)
+    } else {
+        None
+    };
     // iroh listens only when the settings give it an address (see `Settings::bind`).
     let endpoint = match settings.bind {
         Some(bind_address) => {
@@ -446,8 +464,6 @@ pub async fn start(
         }
         None => None,
     };
-    std::fs::create_dir_all(repos_path)?;
-    let repos_path = repos_path.canonicalize()?;
     let iroh = match &endpoint {
         Some(endpoint) => {
             IrohDialer::with_endpoint(settings.relay.clone(), key.clone(), endpoint.clone())
@@ -514,7 +530,10 @@ pub async fn start(
         }
         None => (None, Vec::new()),
     };
+    ensure!(!storage || router.is_some() || !tcp_advertised.is_empty(), "TCP-only storage needs CLUSTER_TCP_ADVERTISE when CLUSTER_TCP_BIND is unspecified");
     Ok(Cluster {
+        _identity_lock: identity_lock,
+        _repository_lock: repository_lock,
         router,
         tcp_listener,
         heartbeat: std::sync::Mutex::new(None),
@@ -541,6 +560,8 @@ pub async fn client_context(
         return Ok(None);
     };
     require_postgres(pool)?;
+    std::fs::create_dir_all(state_dir)?;
+    let identity_lock = crate::backend::locks::exclusive_file(&state_dir.join("serve.lock"))?;
     let key = load_existing(state_dir)?
         .ok_or_else(|| anyhow!("this node has not joined the cluster; start serve first"))?;
     let node = db::cluster::get_node_by_public_key(pool, &key.public_hex())
@@ -553,7 +574,7 @@ pub async fn client_context(
     );
     Ok(Some(NodeContext {
         pool: Some(pool.clone()),
-        iroh: IrohDialer::new(settings.relay.clone(), key.clone()),
+        iroh: IrohDialer::new(settings.relay.clone(), key.clone()).with_identity_lock(identity_lock),
         key,
         node_id: node.id,
         repos_path: std::path::absolute(repos_path)?,
@@ -620,9 +641,22 @@ pub async fn report_alive(
     hint: NodeAddress,
     storage_path: Option<&Path>,
 ) -> Result<bool> {
+    ensure!(storage_path.is_none() || !hint.is_empty(), "storage node has no advertised address; configure CLUSTER_TCP_ADVERTISE or IROH_ADVERTISE");
     let hint = serde_json::to_string(&hint)?;
-    let free = storage_path.map(disk_free).transpose()?;
-    db::cluster::record_node_heartbeat(pool, &key.to_string(), VERSION, &hint, free).await
+    let free = if let Some(path) = storage_path {
+        static PROBES: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+        let permit = PROBES.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(1)))
+            .clone().try_acquire_owned().context("disk probe is still running")?;
+        let path = path.to_owned();
+        Some(tokio::time::timeout(Duration::from_secs(3), tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            disk_free(&path)
+        })).await.context("disk probe timed out")??? )
+    } else {
+        None
+    };
+    tokio::time::timeout(Duration::from_secs(5), db::cluster::record_node_heartbeat(pool, &key.to_string(), VERSION, &hint, free))
+        .await.context("heartbeat database update timed out")?
 }
 
 /// The addresses a node reports for peers to dial: iroh's, when it runs iroh, and the TCP

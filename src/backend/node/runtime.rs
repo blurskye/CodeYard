@@ -279,11 +279,21 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
 pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let signal = shutdown_signal();
     tokio::pin!(signal);
-    if !config.roles.single_node() && !crate::backend::db::cluster::cluster_enabled(&pool).await? {
+    let clustered = crate::backend::db::cluster::cluster_enabled(&pool).await?;
+    let _installation_lock = if !clustered {
+        Some(crate::backend::db::cluster::serving_lock(&pool, "installation").await?)
+    } else {
+        None
+    };
+    if !config.roles.single_node() && !clustered {
         pool.close().await;
         anyhow::bail!(super::SINGLE_NODE_ROLES);
     }
-    let repos_path = prepare_repository_root(&config.repos_path)?;
+    let repos_path = if config.roles.contains(NodeRole::Storage) {
+        prepare_repository_root(&config.repos_path)?
+    } else {
+        std::path::absolute(&config.repos_path)?
+    };
     let _state_dir_lock = match lock_state_dir(&config.state_dir) {
         Ok(lock) => lock,
         Err(error) => {
@@ -307,6 +317,11 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             "this database is in cluster mode; set the CLUSTER_* settings so this node can serve it"
         );
     }
+    let _repository_lock = if member.is_none() && config.roles.contains(NodeRole::Storage) {
+        Some(crate::backend::locks::exclusive_file(&repos_path.join("storage.lock"))?)
+    } else {
+        None
+    };
     let prepared = async {
         anyhow::ensure!(
         config.roles.faces_users() || member.is_some(),

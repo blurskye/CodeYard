@@ -109,18 +109,7 @@ impl RpcHandler {
     }
 
     fn header_slot(&self, peer: iroh::PublicKey) -> Result<tokio::sync::OwnedSemaphorePermit> {
-        let slots = {
-            let mut headers = self
-                .headers
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            headers.retain(|_, slots| Arc::strong_count(slots) > 1);
-            headers
-                .entry(peer)
-                .or_insert_with(|| Arc::new(Semaphore::new(4)))
-                .clone()
-        };
-        Ok(slots.try_acquire_owned()?)
+        transport::peer_header_slot(&self.headers, peer)
     }
 
     /// Serves one request stream. An error ends the connection the stream came on.
@@ -211,6 +200,7 @@ impl RpcHandler {
 
 impl ProtocolHandler for RpcHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+        let Ok(_connection) = transport::connection_slot(&connection) else { return Ok(()); };
         // Each stream the peer opens is one request, answered in turn.
         while let Some(link) = transport::accept_stream(&connection).await {
             if let Err(error) = self.serve_link(link).await {

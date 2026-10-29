@@ -19,6 +19,16 @@ pub struct LocalStore {
     root: PathBuf,
 }
 
+struct TemporaryUpload(Option<tempfile::NamedTempFile>);
+
+impl Drop for TemporaryUpload {
+    fn drop(&mut self) {
+        if let Some(temporary) = self.0.take() {
+            tokio::task::spawn_blocking(move || drop(temporary));
+        }
+    }
+}
+
 impl LocalStore {
     pub async fn open(root: &Path) -> Result<Self> {
         create_directories(root)
@@ -52,12 +62,12 @@ impl LocalStore {
         let staging = self.root.join(STAGING_DIR);
         create_directories(&staging).await?;
         // tempfile is synchronous; keep a stalled disk off the async workers.
-        let (temporary, file) = tokio::task::spawn_blocking(move || {
+        let (mut temporary, file) = tokio::task::spawn_blocking(move || {
             let temporary = tempfile::Builder::new()
                 .prefix(TEMP_PREFIX)
                 .tempfile_in(staging)?;
             let file = temporary.reopen()?;
-            std::io::Result::Ok((temporary, file))
+            std::io::Result::Ok((TemporaryUpload(Some(temporary)), file))
         })
         .await
         .map_err(|_| StorageError::Unavailable)??;
@@ -94,6 +104,7 @@ impl LocalStore {
         output.flush().await?;
         output.sync_all().await?;
         let target = path.clone();
+        let temporary = temporary.0.take().ok_or(StorageError::Unavailable)?;
         tokio::task::spawn_blocking(move || temporary.persist(target).map(drop).map_err(drop))
             .await
             .map_err(|_| StorageError::Unavailable)?
@@ -155,35 +166,44 @@ async fn sync_directory(path: &Path) -> std::io::Result<()> {
 
 /// Flush only entries we create, not unrelated ancestors of an existing store.
 async fn create_directories(path: &Path) -> std::io::Result<()> {
-    let mut missing = Vec::new();
-    let mut directory = path;
-    loop {
-        match tokio::fs::metadata(directory).await {
-            Ok(metadata) if metadata.is_dir() => break,
-            Ok(_) => return Err(std::io::Error::from(std::io::ErrorKind::NotADirectory)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                missing.push(directory);
-                directory = directory
-                    .parent()
-                    .filter(|p| !p.as_os_str().is_empty())
-                    .unwrap_or_else(|| Path::new("."));
+    static CREATION: std::sync::OnceLock<std::sync::Arc<tokio::sync::Mutex<Vec<PathBuf>>>> = std::sync::OnceLock::new();
+    let guard = CREATION.get_or_init(|| std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()))).clone().lock_owned().await;
+    let path = path.to_owned();
+    // The blocking job owns serialization through parent fsync, including if its request is
+    // cancelled. Another put must not observe a directory before its parent entry is durable.
+    tokio::task::spawn_blocking(move || {
+        let mut pending = guard;
+        for directory in pending.iter() {
+            std::fs::File::open(directory)?.sync_all()?;
+            std::fs::File::open(directory.parent().unwrap_or(Path::new(".")))?.sync_all()?;
+        }
+        pending.clear();
+        let mut missing = Vec::new();
+        let mut directory = path.as_path();
+        loop {
+            match std::fs::metadata(directory) {
+                Ok(metadata) if metadata.is_dir() => break,
+                Ok(_) => return Err(std::io::Error::from(std::io::ErrorKind::NotADirectory)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    missing.push(directory.to_owned());
+                    directory = directory.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
         }
-    }
-    for directory in missing.into_iter().rev() {
-        match tokio::fs::create_dir(directory).await {
-            Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => return Err(error),
-            _ => {}
+        for directory in missing.into_iter().rev() {
+            match std::fs::create_dir(&directory) {
+                Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => return Err(error),
+                _ => {}
+            }
+            pending.push(directory.clone());
+            std::fs::File::open(&directory)?.sync_all()?;
+            let parent = directory.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+            std::fs::File::open(parent)?.sync_all()?;
+            pending.pop();
         }
-        sync_directory(directory).await?;
-        let parent = directory
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        sync_directory(parent).await?;
-    }
-    Ok(())
+        Ok(())
+    }).await.map_err(std::io::Error::other)?
 }
 
 /// Removes files in `dir` whose names start with `TEMP_PREFIX` and that nothing has written

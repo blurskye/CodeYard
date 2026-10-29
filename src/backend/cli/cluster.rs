@@ -283,6 +283,7 @@ pub async fn run(
             _ => bail!("no node is named '{name}'; `codeyard cluster list` shows the names"),
         },
         Command::Adopt => {
+            ensure!(db::cluster::cluster_enabled(pool).await?, "enable cluster mode before adopting repositories");
             let key = load_existing(state_dir)?.ok_or_else(|| {
                 anyhow!(
                     "this node has no key yet; start `codeyard serve` with cluster settings first"
