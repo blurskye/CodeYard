@@ -55,11 +55,13 @@ fn parse_key_parts(key_type: &str, blob: &str) -> Result<PublicKey, SshKeyWriteR
     Ok(key)
 }
 
+pub const MAX_PUBLIC_KEY_BYTES: usize = 32768;
+
 /// One complete-key policy for enrollment and both SSH transports; comments are labels only.
 pub(crate) fn parse_public_key(public_key: &str) -> Result<PublicKey, SshKeyWriteRefusal> {
     use SshKeyWriteRefusal::InvalidKey;
     let public_key = public_key.trim();
-    if public_key.len() > 32768 || public_key.contains(['\r', '\n', '\0']) {
+    if public_key.len() > MAX_PUBLIC_KEY_BYTES || public_key.contains(['\r', '\n', '\0']) {
         return Err(InvalidKey);
     }
     let mut fields = public_key.split_whitespace();
