@@ -9,7 +9,12 @@ use sqlx::{types::Json, FromRow};
 
 #[derive(FromRow)]
 pub struct RunMetadata {
+    pub run_id: i64,
     pub workflow_id: i64,
+    #[sqlx(default)]
+    pub origin_created_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub actor_id: Option<i64>,
     // Internal snapshot: never serialize this record into a response. Repository payloads
     // select public fields and keep storage placement/paths out of HTTP documents.
     pub head_repository: Option<Json<Repository>>,
@@ -95,6 +100,6 @@ mod tests {
 native_operation!(crate::backend::db::postgres::action_runs::get,crate::backend::db::sqlite::action_runs::get,
     fn get(pool:&DbPool,repo:i64,id:i64,attempt:Option<i32>) -> Result<Option<CiRun>>);
 native_operation!(crate::backend::db::postgres::action_runs::metadata,crate::backend::db::sqlite::action_runs::metadata,
-    fn metadata(pool:&DbPool,repo:i64,id:i64) -> Result<Option<RunMetadata>>);
+    fn metadata(pool:&DbPool,repo:i64,ids:&[i64]) -> Result<Vec<RunMetadata>>);
 native_operation!(crate::backend::db::postgres::action_runs::list,crate::backend::db::sqlite::action_runs::list,
     fn list(pool:&DbPool,actor:Option<i64>,repo:i64,query:&RunQuery,offset:i64,limit:i64) -> Result<Option<RunPage>>);

@@ -112,9 +112,9 @@ impl CiRuns {
         let sender = db::users::accounts::get_user_by_id(&self.pool, actor)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
-        let metadata = db::action_runs::metadata(&self.pool, repo.id, run.id)
+        let metadata = db::action_runs::metadata(&self.pool, repo.id, &[run.id])
             .await?
-            .ok_or(AdmissionError::Unavailable)?;
+            .into_iter().next().ok_or(AdmissionError::Unavailable)?;
         let workflow =
             super::list_workflows_for_ref(&store, run.head_sha.as_deref().unwrap_or_default())
                 .await?
