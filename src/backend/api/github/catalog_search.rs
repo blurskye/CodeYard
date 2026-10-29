@@ -88,6 +88,7 @@ async fn catalog(
             &state.pool,
             state.cluster.as_ref(),
             viewer,
+            authentication.as_ref().map(|auth| auth.token.id),
             search,
         )
         .await
@@ -100,6 +101,7 @@ async fn catalog(
         viewer,
         &search,
         &Options {
+            token: authentication.as_ref().map(|auth| auth.token.id),
             repository,
             sort: q.get("sort").cloned(),
             ascending,
@@ -192,7 +194,7 @@ async fn catalog(
                 }
             }
             Kind::Topics => {
-                let Some(topic) = db::catalog_search::topic(&state.pool, viewer, &hit.key)
+                let Some(topic) = db::catalog_search::topic(&state.pool, viewer, authentication.as_ref().map(|auth| auth.token.id), &hit.key)
                     .await
                     .map_err(Error::unavailable)?
                 else {
