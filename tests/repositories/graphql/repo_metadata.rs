@@ -165,8 +165,8 @@ async fn contract(pg: bool) {
         assert_eq!(node["viewerDefaultMergeMethod"], "MERGE");
         assert_eq!(node["viewerHasStarred"], true);
         assert_eq!(node["viewerSubscription"], "SUBSCRIBED");
-        assert_eq!(node["codeOfConduct"]["key"], "contributor_covenant");
-        assert_eq!(node["codeOfConduct"]["name"], "Contributor Covenant");
+        assert_eq!(node["codeOfConduct"]["key"], "other");
+        assert_eq!(node["codeOfConduct"]["name"], "Other");
         assert!(node["codeOfConduct"]["url"].is_string());
         assert_eq!(
             node["licenseInfo"],

@@ -186,6 +186,18 @@ impl RequestContext {
         Ok(Some(self.auth.user.id))
     }
 
+    async fn account_permission(&self, key: &str, oauth_scope: &str) -> Result<bool> {
+        if self.auth.is_job() || db::users::tokens::token_user(&self.state.pool, self.auth.token.id, false)
+            .await.map_err(unavailable)?.is_none_or(|user| user.id != self.auth.user.id) {
+            return Ok(false);
+        }
+        if self.personal.is_some() {
+            return Ok(crate::backend::identity::fine_grained::grant(&self.state.pool, self.auth.token.id)
+                .await.map_err(unavailable)?.is_some_and(|grant| grant.account(self.auth.user.id, key, false)));
+        }
+        Ok(self.require_oauth_scope(oauth_scope).is_ok())
+    }
+
     async fn authorize_organization(&self, org: i64) -> Result<()> {
         self.require_oauth_scope("read:org")?;
         if db::users::tokens::token_user(&self.state.pool, self.auth.token.id, false)
