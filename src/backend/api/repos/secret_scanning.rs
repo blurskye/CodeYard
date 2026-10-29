@@ -268,7 +268,7 @@ async fn resolve(
         Ok(alert) => alert,
         Err(error) => return failure(&ctx, &loaded, error),
     };
-    if jobs::emit_alert(
+    if let Err(error) = jobs::emit_alert(
         &ctx.state,
         &loaded.repository,
         &alert,
@@ -280,9 +280,8 @@ async fn resolve(
         ctx.user.as_ref().expect("signed in").id,
     )
     .await
-    .is_err()
     {
-        return chrome::unavailable(&ctx);
+        tracing::warn!(repo_id = loaded.repository.id, number, %error, "saved secret scanning update notification failed");
     }
     Redirect::to(&format!(
         "{}/security/secret-scanning/{number}",

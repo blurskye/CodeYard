@@ -19,48 +19,47 @@ pub(super) async fn checks(
     head: &str,
     base: &str,
 ) -> ResultPage<Vec<view::Check>> {
-    // Alerts require write access even when the pull request itself is public.
-    let allowed = match &ctx.user {
-        Some(user) => {
-            crate::backend::repositories::access::user_access(&ctx.state.pool, user, &repo.record)
-                .await
-                .map(|level| level.can_write())
-        }
-        None => Ok(false),
-    }
-    .map_err(|_| unavailable(ctx))?;
-    if !allowed {
+    let Some(user) = &ctx.user else { return Ok(Vec::new()); };
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return Ok(Vec::new());
-    }
+    };
     let pool = &ctx.state.pool;
     let branch = (pull.head_repo_id == Some(repo.record.id))
         .then(|| format!("refs/heads/{}", pull.head_branch));
-    let analyses =
-        records::pull_analyses(pool, repo.record.id, head, pull.number, branch.as_deref())
-            .await
-            .map_err(|_| unavailable(ctx))?;
+    let candidates = records::pull_merge_candidates(pool, user.id, &session, repo.record.id, pull.number)
+        .await.map_err(|_| unavailable(ctx))?;
+    let mut more = candidates.len() > 100;
+    let store = crate::backend::repositories::store::repo_store(&repo.record, ctx.state.cluster.as_ref());
+    let mut merges = Vec::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    for candidate in candidates.into_iter().take(100) {
+        let result = match tokio::time::timeout_at(deadline, store.commit(&candidate)).await {
+            Ok(result) => result,
+            Err(_) => { more = true; break; },
+        };
+        match result {
+            Ok(commit) if commit.parents.len()==2 && commit.parents[0]==base && commit.parents[1]==head => merges.push(commit.sha),
+            Ok(_) => {},
+            Err(error) if matches!(error.kind, crate::backend::repositories::store::ErrorKind::NotFound | crate::backend::repositories::store::ErrorKind::Invalid) => {},
+            Err(_) => more = true,
+        }
+    }
+    let baseline_ref = format!("refs/heads/{}", pull.base_branch);
+    let snapshot = records::pull_snapshot(pool, user.id, &session, &records::PullSelection {
+        repo: repo.record.id, head, base, number: pull.number,
+        branch: branch.as_deref(), base_branch: &baseline_ref, merge_commits: &merges,
+    }).await.map_err(|_| unavailable(ctx))?;
+    more |= snapshot.more;
     let mut checks = Vec::new();
-    let mut remaining = 100;
     let root = format!("{}/security/code-scanning", repo.view.url());
-    for analysis in analyses.iter().take(100) {
+    for group in snapshot.groups {
+        let analysis = group.analysis;
         let tool: Value = serde_json::from_str(&analysis.tool).map_err(|_| unavailable(ctx))?;
         let tool = tool["name"].as_str().unwrap_or("Scanner");
-        let baseline = records::baseline_analysis(
-            pool,
-            repo.record.id,
-            &analysis.tool_key,
-            &analysis.category,
-            &format!("refs/heads/{}", pull.base_branch),
-            base,
-        )
-        .await
-        .map_err(|_| unavailable(ctx))?;
-        let findings = records::new_findings(pool, analysis.id, baseline)
-            .await
-            .map_err(|_| unavailable(ctx))?;
-        let total = findings.first().map_or(0, |finding| finding.total_count);
+        let baseline = group.baseline;
+        let total = group.total;
         let mut annotations = Vec::new();
-        for finding in findings.into_iter().take(remaining) {
+        for finding in group.findings {
             let rule: Value = serde_json::from_str(&finding.rule).map_err(|_| unavailable(ctx))?;
             let location: Value =
                 serde_json::from_str(&finding.location).map_err(|_| unavailable(ctx))?;
@@ -82,7 +81,6 @@ pub(super) async fn checks(
                 url: format!("{root}/{}{suffix}", finding.number),
             });
         }
-        remaining -= annotations.len();
         let url = if analysis.ref_name.len() <= 1024 && tool.len() <= 1024 {
             format!(
                 "{root}?branch={}&tool={}",
@@ -94,31 +92,27 @@ pub(super) async fn checks(
         };
         checks.push(view::Check {
             name:if analysis.category.is_empty() {excerpt(tool,128)} else {format!("{} / {}",excerpt(tool,128),excerpt(&analysis.category,128))},
-            state:if baseline.is_none() {"neutral"} else if total>0 {"failure"} else {"success"}.into(),
-            description:if baseline.is_none() {format!("{total} findings. No matching analysis exists for the base revision; these are not classified as newly introduced.")} else {format!("{total} new findings compared with the base revision.")},
-            url, truncated:total>annotations.len() as i64, annotations,
+            state:if baseline.is_none() {"neutral"} else if total>0 {"failure"} else if group.incomplete {"neutral"} else {"success"}.into(),
+            description:if group.incomplete {format!("{total} retained findings. Analysis results were truncated; this comparison is incomplete.")} else if baseline.is_none() {format!("{total} findings. No matching analysis exists for the base revision; these are not classified as newly introduced.")} else {format!("{total} new findings compared with the base revision.")},
+            url, truncated:group.incomplete || total>annotations.len() as i64, annotations,
         });
     }
-    if analyses.len() > 100 {
+    if more {
         checks.push(view::Check {
             name: "More code scanning analyses".into(),
             state: "neutral".into(),
             description:
-                "Only the latest 100 analysis groups are shown. See Security for all analyses."
+                "Some analysis groups or merge revisions could not be included. See Security for all analyses."
                     .into(),
             url: root.clone(),
             annotations: Vec::new(),
             truncated: false,
         });
     }
-    if let Some((status, error)) =
-        records::pull_processing(pool, repo.record.id, head, pull.number, branch.as_deref())
-            .await
-            .map_err(|_| unavailable(ctx))?
-    {
+    for (reference, status, error) in snapshot.processing {
         if status != "complete" {
             checks.push(view::Check {
-                name: "SARIF upload".into(),
+                name: format!("SARIF upload / {}", excerpt(&reference, 128)),
                 state: if status == "pending" {
                     "pending"
                 } else {
@@ -129,7 +123,7 @@ pub(super) async fn checks(
                     error.as_deref().unwrap_or("SARIF processing is pending."),
                     512,
                 ),
-                url: root,
+                url: root.clone(),
                 annotations: Vec::new(),
                 truncated: false,
             });
