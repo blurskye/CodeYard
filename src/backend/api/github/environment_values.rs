@@ -100,6 +100,9 @@ async fn target(
         (params["owner"].clone(), params["repo"].clone())
     };
     let (repo, auth) = super::repository(state, headers, &owner, &name, false).await?;
+    if params.get("repository_id").is_some_and(|id| id.parse::<i64>().ok() != Some(repo.id)) {
+        return Err(Error::missing());
+    }
     let auth = auth.ok_or_else(auth::required)?;
     if write {
         auth.require_write()?;
