@@ -138,6 +138,7 @@ pub(crate) fn command(executable: &Path) -> Result<Command> {
     let mut command = Command::from(std_command(executable));
     // Own process group so a timeout can kill git and anything it started.
     command.process_group(0).kill_on_drop(true);
+    limit_memory(&mut command);
     Ok(command)
 }
 
@@ -174,7 +175,9 @@ pub(crate) fn limit_memory(command: &mut Command) {
             if libc::getrlimit(libc::RLIMIT_AS, &mut inherited) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            let cap = (bytes as libc::rlim_t).min(inherited.rlim_max);
+            let cap = (bytes as libc::rlim_t)
+                .min(inherited.rlim_cur)
+                .min(inherited.rlim_max);
             let limit = libc::rlimit {
                 rlim_cur: cap,
                 rlim_max: cap,
@@ -351,28 +354,21 @@ async fn stream_with_idle(
             Ok::<_, anyhow::Error>(())
         };
         tokio::pin!(inbound, outbound);
-        let wait = child.wait();
-        tokio::pin!(wait);
-        let (status, drained) = tokio::select! {
-            status = &mut wait => (status?, false),
+        tokio::select! {
             result = &mut inbound => {
-                // Git can close stdin after a rejection or a complete pack. A
-                // lost receive input becomes EOF, letting Git reject short packs.
                 if let Err(error) = result {
                     if !receive && !error.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe) {
                         return Err(error);
                     }
                 }
-                tokio::select! {
-                    status = &mut wait => (status?, false),
-                    result = &mut outbound => { result?; (wait.await?, true) }
-                }
+                outbound.await?;
             }
-            result = &mut outbound => { result?; (wait.await?, true) }
-        };
-        if !drained {
-            outbound.await?;
+            result = &mut outbound => { result?; }
         }
+        // Keep the leader unreaped until its pipes are drained: its PGID must not be
+        // reused while cancellation can still signal the group.
+        let status = child.wait().await?;
+        group.0 = None;
         Ok(status)
     };
     let result = session_timeout(work, receiver, idle).await;
