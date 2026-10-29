@@ -68,7 +68,7 @@ pub fn ThemeForm(
                     });
                 }
             },
-            input { r#type: "hidden", name: "csrf_token", value: csrf_token }
+            {crate::webui::pages::fields::csrf(&csrf_token)}
             input { r#type: "hidden", name: "return_to", value: return_to }
             input { r#type: "hidden", name: "theme", value: next.as_str() }
             button { r#type: "submit", disabled: saving(), class: button_class, "aria-label": hint,

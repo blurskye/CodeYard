@@ -89,6 +89,7 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                                 }, "Leave")}
                             }
                             if manageable(member) {
+                                if page.is_owner {
                                 form { method: "post", action: target.to_owned(), class: "org-inline-form",
                                     input { r#type: "hidden", name: "user_id", value: "{member.user_id}" }
                                     label { span { class: "site-sr-only", "Role for {member.username}" }
@@ -96,6 +97,7 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                                     }
                                     {controls_as(page, "member-role", "Update", "btn")}
                                 }
+                                } else { span { class: "org-label", "{member.role}" } }
                                 {super::collaborators::conversion(page, member, target)}
                                 a { class: "btn btn-danger", href: "#remove-member-{member.user_id}", "Remove" span { class: "site-sr-only", " {member.username}" } }
                                 {confirm_dialog(Some(format!("remove-member-{}", member.user_id)).as_deref(), &format!("Remove {} from the organization", member.username), target, target, rsx! {

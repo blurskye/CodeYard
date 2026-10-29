@@ -44,7 +44,7 @@ pub fn MigrationView(
             if let Some(error) = error { p { role: "alert", class: "mb-6 rounded-md border border-border p-4", "{error.message}" } }
             if let Some(status) = &form.status { p { role: "status", class: "mb-4", "Import status: {status}" } }
             form { method: "post", action: form.action, class: "space-y-6",
-                input { r#type: "hidden", name: "csrf_token", value: csrf_token }
+                {crate::webui::pages::fields::csrf(&csrf_token)}
                 if let Some(id) = form.repository_id { input { r#type: "hidden", name: "repository_id", value: id } }
                 if !retry {
                     div {

@@ -27,7 +27,7 @@ pub struct Value {
 }
 fn tokens(panel: &Panel) -> Element {
     rsx! {
-        input { r#type: "hidden", name: "csrf_token", value: panel.csrf_token.clone() }
+        {crate::webui::pages::fields::csrf(&panel.csrf_token)}
         input { r#type: "hidden", name: "org_id", value: "{panel.org_id}" }
     }
 }

@@ -259,14 +259,7 @@ PY
 # ---------------------------------------------------------------- build -----
 
 check_css() {
-    local fresh=$WORK/tailwind.fresh.css committed=$ROOT/src/webui/assets/tailwind.css
-    bash "$ROOT/scripts/build-webui.sh" css >"$fresh"
-    if [[ $(sha256sum <"$fresh") != "$(sha256sum <"$committed")" ]]; then
-        echo "src/webui/assets/tailwind.css is stale: the views generate $(wc -c <"$fresh") bytes of CSS, the committed file has $(wc -c <"$committed")" >&2
-        echo "refresh it with: bash scripts/build-webui.sh css > src/webui/assets/tailwind.css" >&2
-        return 1
-    fi
-    echo "tailwind.css is what Tailwind generates from the views ($(wc -c <"$fresh") bytes)"
+    bash "$ROOT/scripts/build-webui.sh" check
 }
 
 build_bundle() {
@@ -2623,8 +2616,8 @@ summary() {
 preflight || { echo "e2e: tools are missing" >&2; exit 2; }
 echo "e2e: temporary directory $WORK"
 
-step 'build: committed tailwind.css matches what the views generate' check_css
 if [[ $E2E_SKIP_BUILD == 1 ]]; then
+    step 'build: committed tailwind.css matches what the views generate' check_css
     step -f 'build: existing server binary and bundle are present' check_build_artifacts
 else
     step -f 'build: browser bundle (Tailwind, dx)' build_bundle

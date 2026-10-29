@@ -13,6 +13,7 @@
 #                which the server reads only to find the module script (it is never
 #                served as a page), and assets/*.js|*.wasm. A stale CSS file stops the
 #                build; the server embeds that file, so refresh and commit it first.
+# check          Check committed CSS without building the browser bundle.
 # css            Print the CSS Tailwind generates from the views to stdout (progress
 #                goes to stderr), changing nothing. Redirect it into
 #                src/webui/assets/tailwind.css to refresh the committed copy.
@@ -24,7 +25,7 @@ cd "$ROOT"
 MODE=${1:-release}
 case $MODE in
     release | debug | css | check) ;;
-    *) echo "usage: $0 [release|debug|css]" >&2; exit 2 ;;
+    *) echo "usage: $0 [release|debug|css|check]" >&2; exit 2 ;;
 esac
 
 DX=${DX:-$(command -v dx || true)}

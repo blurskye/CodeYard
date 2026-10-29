@@ -186,14 +186,14 @@ fn HookList(panel: WebhookPanel) -> Element {
                     div { class: "webhook-row-actions",
                         a { class: "btn btn-secondary btn-sm", href: format!("{}&hook={}&edit=1", panel.base, hook.id), title: "Edit this webhook", "Edit" }
                         form { method: "post", action: panel.action("webhook-ping"), class: "webhook-inline-form",
-                            input { r#type: "hidden", name: "csrf_token", value: panel.csrf_token.clone() }
+                            {crate::webui::pages::fields::csrf(&panel.csrf_token)}
                             if let Some(id) = panel.repository_id { input { r#type: "hidden", name: "repository_id", value: id.to_string() } }
                             input { r#type: "hidden", name: "hook_id", value: hook.id.to_string() }
                             button { class: "btn btn-secondary btn-sm", r#type: "submit", title: "Send a ping to this URL", "Ping" }
                         }
                         a { class: "btn btn-danger btn-sm", href: format!("#webhook-delete-{}", hook.id), "Delete" span { class: "site-sr-only", " webhook {hook.url}" } }
                         {confirm_dialog(Some(&format!("webhook-delete-{}", hook.id)), &format!("Delete webhook {}", hook.url), &panel.base, &panel.action("webhook-delete"), rsx! {
-                                input { r#type: "hidden", name: "csrf_token", value: panel.csrf_token.clone() }
+                                {crate::webui::pages::fields::csrf(&panel.csrf_token)}
                                 if let Some(id) = panel.repository_id { input { r#type: "hidden", name: "repository_id", value: id.to_string() } }
                                 input { r#type: "hidden", name: "hook_id", value: hook.id.to_string() }
                                 strong { "Delete this webhook?" }
@@ -220,7 +220,7 @@ fn HookEditor(panel: WebhookPanel, draft: HookDraft) -> Element {
     };
     rsx! {
         form { class: "repo-form-body webhook-form", method: "post", action: panel.action("webhook-save"),
-            input { r#type: "hidden", name: "csrf_token", value: panel.csrf_token.clone() }
+            {crate::webui::pages::fields::csrf(&panel.csrf_token)}
             if let Some(id) = panel.repository_id { input { r#type: "hidden", name: "repository_id", value: id.to_string() } }
             if let Some(id) = draft.id { input { r#type: "hidden", name: "hook_id", value: id.to_string() } }
             input { r#type: "hidden", name: "expected_updated", value: draft.expected_updated.clone() }
@@ -336,7 +336,7 @@ fn DeliveryView(panel: WebhookPanel, hook_id: i64, open: DeliveryDetail) -> Elem
             header { class: "webhook-delivery-head",
                 h4 { "Delivery {open.guid}" }
                 form { method: "post", action: panel.action("webhook-redeliver"), class: "webhook-inline-form",
-                    input { r#type: "hidden", name: "csrf_token", value: panel.csrf_token.clone() }
+                    {crate::webui::pages::fields::csrf(&panel.csrf_token)}
                     if let Some(id) = panel.repository_id { input { r#type: "hidden", name: "repository_id", value: id.to_string() } }
                     input { r#type: "hidden", name: "hook_id", value: hook_id.to_string() }
                     input { r#type: "hidden", name: "delivery_id", value: open.id.to_string() }

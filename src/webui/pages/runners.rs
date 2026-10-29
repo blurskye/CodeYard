@@ -38,7 +38,7 @@ pub struct Runner {
     pub ephemeral: bool,
 }
 fn controls(page: &Page, action: &str) -> Element {
-    rsx! {input {r#type:"hidden",name:"csrf_token",value:page.csrf_token.clone()} input {r#type:"hidden",name:"action",value:action.to_owned()} }
+    rsx! {{crate::webui::pages::fields::csrf(&page.csrf_token)} input {r#type:"hidden",name:"action",value:action.to_owned()} }
 }
 fn submitted(page: &Page, action: &str, id: i64) -> bool {
     page.draft.get("action").is_some_and(|v| v == action)

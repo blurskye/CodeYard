@@ -218,7 +218,7 @@ fn SiteHeader(chrome: Chrome, repo: Option<RepoChrome>, located: bool) -> Elemen
                                     NavLink { href: "/help".to_string(), class: "site-menu-link".to_string(), {shell_icon(ShellIcon::Help)} "Help" }
                                     if chrome.is_admin { NavLink { href: "/admin".to_string(), class: "site-menu-link".to_string(), {shell_icon(ShellIcon::Shield)} "Administration" } }
                                     form { action: "/logout", method: "post", class: "site-signout-form",
-                                        input { r#type: "hidden", name: "csrf_token", value: token.clone() }
+                                        {crate::webui::pages::fields::csrf(token)}
                                         button { r#type: "submit", class: "site-menu-link", {shell_icon(ShellIcon::LogOut)} "Sign out" }
                                     }
                                 }

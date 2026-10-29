@@ -175,33 +175,30 @@ pub(super) fn fragment_slug(text: &str) -> String {
     slug
 }
 
-/// The next `http://` or `https://` URL in `text` at or after `from`, as a byte range. It
-/// starts a word, ends at whitespace or `<`, and gives back trailing punctuation and
-/// unmatched `)`. Each search resumes where the last one ended, so the scan is linear.
+/// One linear scan for web and email autolinks outside existing links and code.
 fn next_bare_url(text: &str, from: usize) -> Option<std::ops::Range<usize>> {
+    let local = |c: char| c.is_ascii_alphanumeric() || ".!#$%&'*+/=?^_`{|}~-".contains(c);
     let mut at = from;
-    while let Some(found) = text[at..].find("http") {
-        let start = at + found;
-        at = start + 4;
+    while at < text.len() {
+        let start = at;
         let rest = &text[start..];
-        let scheme = if rest.starts_with("https://") {
-            8
-        } else if rest.starts_with("http://") {
-            7
-        } else {
-            continue;
-        };
-        if text[..start]
-            .chars()
-            .next_back()
-            .is_some_and(char::is_alphanumeric)
-        {
+        let character = rest.chars().next()?;
+        if !local(character) { at += character.len_utf8(); continue; }
+        let scheme = if rest.starts_with("https://") { 8 } else if rest.starts_with("http://") { 7 }
+            else if rest.starts_with("www.") { 4 } else { 0 };
+        if scheme == 0 {
+            let local_end = rest.find(|c: char| !local(c)).unwrap_or(rest.len());
+            at = start + local_end;
+            if local_end == 0 || !text[at..].starts_with('@') { continue; }
+            let domain_start = at + 1;
+            at = domain_start + text[domain_start..].find(|c: char| !c.is_ascii_alphanumeric() && !matches!(c, '-' | '.')).unwrap_or(text.len() - domain_start);
+            let domain = text[domain_start..at].trim_end_matches('.');
+            if domain.contains('.') && domain.split('.').all(|label| !label.is_empty() && !label.starts_with('-') && !label.ends_with('-')) {
+                return Some(start..domain_start + domain.len());
+            }
             continue;
         }
-        let mut end = start
-            + rest
-                .find(|c: char| c.is_whitespace() || c == '<')
-                .unwrap_or(rest.len());
+        let mut end = start + rest.find(|c: char| c.is_whitespace() || c == '<').unwrap_or(rest.len());
         at = end;
         let url = &text[start..end];
         let open = url.matches('(').count();
@@ -214,11 +211,15 @@ fn next_bare_url(text: &str, from: usize) -> Option<std::ops::Range<usize>> {
             }
             end -= c.len_utf8();
         }
-        if end - start > scheme {
-            return Some(start..end);
-        }
+        if end - start > scheme { return Some(start..end); }
     }
     None
+}
+
+fn autolink_href(text: &str) -> String {
+    if text.starts_with("www.") { format!("https://{text}") }
+    else if text.starts_with("http://") || text.starts_with("https://") { text.to_owned() }
+    else { format!("mailto:{text}") }
 }
 
 /// GitHub's most used emoji shortcodes, sorted by name for binary search.
@@ -712,6 +713,10 @@ impl<'r> Emitter<'r> {
                 image_tag(src, alt, &pairs(&values, &["src", "alt"]))
             }
             "source" => {
+                if attrs.iter().any(|(name, _)| name == "media") && value(&values, "media").is_none() {
+                    release_id(&values, &mut self.heading_ids);
+                    return Some(());
+                }
                 let Some(srcset) = value(&values, "srcset") else {
                     // A source without a usable address is dropped, and the image shows.
                     release_id(&values, &mut self.heading_ids);
@@ -1049,9 +1054,10 @@ impl<'r> Emitter<'r> {
         loop {
             let colon = text[search..].find(':').map(|at| search + at);
             if let Some(range) = url.clone().filter(|r| colon.is_none_or(|c| r.start <= c)) {
-                if safe_url(&text[range.clone()], false) {
+                let href = autolink_href(&text[range.clone()]);
+                if safe_url(&href, false) {
                     self.plain(text, done..range.start, opaque)?;
-                    self.write(&anchor(&text[range.clone()], "", ""))?;
+                    self.write(&anchor(&href, "", ""))?;
                     self.write(&escape_html(&text[range.clone()]))?;
                     self.write("</a>")?;
                     done = range.end;

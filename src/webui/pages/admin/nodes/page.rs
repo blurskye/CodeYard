@@ -86,7 +86,7 @@ pub fn render(page: Page) -> Element {
                             td { class: "identity-num", "{node.disk_free}" }
                             td { class: "identity-table-action",
                                 form { method: "post", action: format!("/admin/nodes/{}/{}", node.name, if node.status == "active" { "revoke" } else { "approve" }),
-                                    input { r#type: "hidden", name: "csrf_token", value: page.csrf_token.clone() }
+                                    {crate::webui::pages::fields::csrf(&page.csrf_token)}
                                     if node.status == "active" {
                                         button { r#type: "submit", class: "btn btn-sm btn-danger", "Revoke" }
                                     } else {
