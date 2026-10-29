@@ -87,7 +87,7 @@ pub async fn recover_owned(state: &AppState, owner: i64) -> Result<()> {
             {
                 discard(state, gist.repo_id).await?;
             } else {
-                return Err(error);
+                tracing::warn!(gist_id = %id, %error, "Pending gist recovery deferred");
             }
         }
     }

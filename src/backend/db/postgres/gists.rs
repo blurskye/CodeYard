@@ -341,6 +341,10 @@ pub async fn comment(pool: &PgPool, repo: i64, id: i64) -> Result<Option<Comment
             .await?,
     )
 }
+pub async fn comment_position(pool: &PgPool, repo: i64, id: i64) -> Result<i64> {
+    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM gist_comments WHERE repo_id=$1 AND id<=$2").bind(repo).bind(id).fetch_one(pool).await?)
+}
+
 pub async fn create_comment(
     pool: &PgPool,
     actor: i64,

@@ -121,6 +121,9 @@ native_operation!(crate::backend::db::postgres::gists::change_comment,crate::bac
 native_operation!(crate::backend::db::postgres::gists::commit_user,crate::backend::db::sqlite::gists::commit_user,
     fn commit_user(pool:&DbPool,email:&str) -> Result<Option<User>>);
 
+native_operation!(crate::backend::db::postgres::gists::comment_position,crate::backend::db::sqlite::gists::comment_position,
+    fn comment_position(pool:&DbPool,repo:i64,id:i64) -> Result<i64>);
+
 pub fn validate_comment(body: &str) -> Result<()> {
     anyhow::ensure!(
         !body.trim().is_empty() && body.chars().count() <= 65535 && !body.contains('\0'),
