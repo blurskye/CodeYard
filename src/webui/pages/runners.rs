@@ -12,6 +12,8 @@ pub struct Page {
     pub action: String,
     pub groups: Vec<Group>,
     pub runners: Vec<Runner>,
+    pub group_navigation: Vec<(String, String)>,
+    pub runner_navigation: Vec<(String, String)>,
     pub organization: bool,
     pub message: Option<String>,
     pub draft: HashMap<String, String>,
@@ -113,7 +115,7 @@ pub fn render(page: Page) -> Element {
         p {class:"org-note","These are Codeyard cluster workers, not GitHub's runner executable. Registration uses the existing runner pairing path and requires a serving PostgreSQL core. The Podman socket is host-user access, not a sandbox. Changing runner access or labels conservatively stops running work in this scope."}
         if page.organization {section {class:"org-section repo-settings-section panel",h2 {"Runner groups"}
             for group in &page.groups {article {key:"group-{group.id}",class:"repo-form-body",
-                h3 {"{group.name}"} if group.default {p {"Default group"}}
+                h3 {"{group.name} (#{group.id})"} if group.default {p {"Default group"}}
                 form {method:"post",action:page.action.clone(),{controls(&page,"group-save")}
                     input {r#type:"hidden",name:"id",value:"{group.id}"}
                     {group_fields(&page,Some(group))}
@@ -125,6 +127,7 @@ pub fn render(page: Page) -> Element {
                     button {r#type:"submit",class:"btn btn-danger","Delete group"}
                 }}
             }}
+            nav {class:"repo-pagination",aria_label:"Runner group pages",for (label,href) in &page.group_navigation {a {href:href.clone(),"{label}"}}}
             form {method:"post",action:page.action.clone(),class:"repo-form-body",h3 {"Create a runner group"}
                 {controls(&page,"group-create")}{group_fields(&page,None)}button {r#type:"submit",class:"btn btn-primary","Create group"}
             }
@@ -140,7 +143,7 @@ pub fn render(page: Page) -> Element {
                 }
                 if page.organization {form {method:"post",action:page.action.clone(),{controls(&page,"move")}
                     input {r#type:"hidden",name:"id",value:"{runner.id}"}
-                    label {class:"repo-field",span {"Runner group"} DraftSelect {name:"group",initial_value:runner.group.map(|id|id.to_string()).unwrap_or_default(),required:true,options:page.groups.iter().map(|g|SelectOption::new(g.id.to_string(),g.name.clone())).collect::<Vec<_>>()}}
+                    label {class:"repo-field",span {"Runner group ID"} DraftInput {name:"group",initial_value:runner.group.map(|id|id.to_string()).unwrap_or_default(),required:true} small {"Find the group ID in the paginated group list above."}}
                     button {r#type:"submit",class:"btn","Move runner"}
                 }}
                 form {method:"post",action:page.action.clone(),{controls(&page,"runner-delete")}
@@ -150,6 +153,7 @@ pub fn render(page: Page) -> Element {
                 }
             }}
         }
+        nav {class:"repo-pagination",aria_label:"Runner pages",for (label,href) in &page.runner_navigation {a {href:href.clone(),"{label}"}}}
         section {class:"org-section repo-settings-section panel",h2 {"Register a runner"}
             p {"Credentials download as a file and are never stored in the page model. Registration and removal tokens expire after one hour. Keep them secret."}
             for (action,label) in [("registration-token","Download registration token"),("remove-token","Download removal token")] {form {method:"post",action:page.action.clone(),{controls(&page,action)}button {r#type:"submit",class:"btn","{label}"}}}
@@ -157,7 +161,7 @@ pub fn render(page: Page) -> Element {
             form {method:"post",action:page.action.clone(),class:"repo-form-body",{controls(&page,"jit")}
                 h3 {"Just-in-time runner"}
                 label {class:"repo-field",span {"Runner name"} DraftInput {name:"name",initial_value:value(&page,"jit",0,"name",""),required:true,maxlength:Some(100)}}
-                if page.organization {label {class:"repo-field",span {"Group"} DraftSelect {name:"group",initial_value:value(&page,"jit",0,"group",&page.groups.first().map(|g|g.id.to_string()).unwrap_or_default()),required:true,options:page.groups.iter().map(|g|SelectOption::new(g.id.to_string(),g.name.clone())).collect::<Vec<_>>()}}}
+                if page.organization {label {class:"repo-field",span {"Group ID"} DraftInput {name:"group",initial_value:value(&page,"jit",0,"group",&page.groups.iter().find(|group|group.default).map(|group|group.id.to_string()).unwrap_or_default()),required:true} small {"Find the group ID in the paginated group list above."}}}
                 label {class:"repo-field",span {"Custom labels"} DraftInput {name:"labels",initial_value:value(&page,"jit",0,"labels","linux"),required:true}}
                 label {class:"repo-field",span {"Work folder"} DraftInput {name:"work_folder",initial_value:value(&page,"jit",0,"work_folder","_work"),required:true,maxlength:Some(255)}}
                 button {r#type:"submit",class:"btn btn-primary","Download JIT configuration"}

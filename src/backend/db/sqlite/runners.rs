@@ -61,21 +61,26 @@ async fn stop_runners(
     let ids:Vec<i64>=sqlx::query_scalar("SELECT c.id FROM ci_runs c WHERE c.status='running' AND EXISTS(SELECT 1 FROM action_runners a JOIN nodes n ON n.id=a.node_id WHERE c.worker LIKE n.public_key || '/%' AND (a.id=?1 OR a.group_id=?2))").bind(runner).bind(group).fetch_all(&mut **tx).await?;
     super::ci::stop_ci_runs(tx, &ids).await
 }
-pub async fn list_groups(pool: &Pool, actor: i64, org: i64) -> Result<Vec<Group>> {
+pub async fn authorize_scope(pool: &Pool, actor: i64, scope: Scope) -> Result<()> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    authorize(&mut tx, actor, scope).await?;
+    tx.commit().await?;
+    Ok(())
+}
+const GROUP_FILTER: &str = "g.org_id=?1 AND (?2 IS NULL OR g.id=?2) AND (?3 IS NULL OR EXISTS(SELECT 1 FROM repositories r WHERE r.id=?3 AND r.owner_kind='org' AND r.owner_org_id=g.org_id AND (r.is_private OR g.allows_public_repositories) AND (g.visibility='all' OR (g.visibility='private' AND r.is_private) OR (g.visibility='selected' AND EXISTS(SELECT 1 FROM action_runner_group_repositories a WHERE a.group_id=g.id AND a.repo_id=r.id)))))";
+pub async fn list_groups(pool: &Pool, actor: i64, org: i64, query: &crate::backend::db::runners::GroupQuery) -> Result<crate::backend::db::runners::Listing<Group>> {
+    query.page.validate()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, Scope::Organization(org)).await?;
     default_group(&mut tx, org).await?;
-    let ids: Vec<i64> =
-        sqlx::query_scalar("SELECT id FROM action_runner_groups WHERE org_id=?1 ORDER BY id")
-            .bind(org)
-            .fetch_all(&mut *tx)
-            .await?;
+    let total = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM action_runner_groups g WHERE {GROUP_FILTER}"))
+        .bind(org).bind(query.id).bind(query.repository).fetch_one(&mut *tx).await?;
+    let ids: Vec<i64> = sqlx::query_scalar(&format!("SELECT g.id FROM action_runner_groups g WHERE {GROUP_FILTER} ORDER BY g.id LIMIT ?4 OFFSET ?5"))
+        .bind(org).bind(query.id).bind(query.repository).bind(query.page.limit).bind(query.page.offset).fetch_all(&mut *tx).await?;
     let mut rows = Vec::new();
-    for id in ids {
-        rows.push(group(&mut tx, org, id).await?);
-    }
+    for id in ids { rows.push(group(&mut tx, org, id).await?); }
     tx.commit().await?;
-    Ok(rows)
+    Ok(crate::backend::db::runners::Listing { total, rows })
 }
 async fn repositories_in(
     c: &mut Connection,
@@ -286,28 +291,28 @@ pub async fn group_runners(
     tx.commit().await?;
     Ok(())
 }
-const RUNNERS:&str="SELECT a.*,COALESCE(n.status='active' AND n.last_seen>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-60 seconds'),false) AS online,EXISTS(SELECT 1 FROM ci_runs c WHERE c.status='running' AND c.worker LIKE n.public_key || '/%') AS busy,n.version FROM action_runners a LEFT JOIN nodes n ON n.id=a.node_id WHERE a.org_id IS NOT DISTINCT FROM ?1 AND a.repo_id IS NOT DISTINCT FROM ?2 ORDER BY a.id";
-async fn runner_rows(c: &mut Connection, scope: Scope) -> Result<Vec<Runner>> {
+const RUNNERS:&str="SELECT a.*,COALESCE(n.status='active' AND n.last_seen>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-60 seconds'),false) AS online,EXISTS(SELECT 1 FROM ci_runs c WHERE c.status='running' AND c.worker LIKE n.public_key || '/%') AS busy,n.version FROM action_runners a LEFT JOIN nodes n ON n.id=a.node_id";
+const RUNNER_FILTER: &str = "a.org_id IS NOT DISTINCT FROM ?1 AND a.repo_id IS NOT DISTINCT FROM ?2 AND (?3 IS NULL OR a.id=?3) AND (?4 IS NULL OR a.group_id=?4) AND (?5 IS NULL OR LOWER(a.name)=LOWER(?5))";
+async fn runner_rows(c: &mut Connection, scope: Scope, query: &crate::backend::db::runners::RunnerQuery) -> Result<Vec<Runner>> {
     let (org, repo) = scope.ids();
-    Ok(sqlx::query_as(RUNNERS)
-        .bind(org)
-        .bind(repo)
-        .fetch_all(c)
-        .await?)
+    Ok(sqlx::query_as(&format!("{RUNNERS} WHERE {RUNNER_FILTER} ORDER BY a.id LIMIT ?6 OFFSET ?7"))
+        .bind(org).bind(repo).bind(query.id).bind(query.group).bind(&query.name)
+        .bind(query.page.limit).bind(query.page.offset).fetch_all(c).await?)
 }
-pub async fn list_runners(pool: &Pool, actor: i64, scope: Scope) -> Result<Vec<Runner>> {
+pub async fn list_runners(pool: &Pool, actor: i64, scope: Scope, query: &crate::backend::db::runners::RunnerQuery) -> Result<crate::backend::db::runners::Listing<Runner>> {
+    query.page.validate()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, scope).await?;
-    let rows = runner_rows(&mut tx, scope).await?;
+    let (org, repo) = scope.ids();
+    let total = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM action_runners a WHERE {RUNNER_FILTER}"))
+        .bind(org).bind(repo).bind(query.id).bind(query.group).bind(&query.name).fetch_one(&mut *tx).await?;
+    let rows = runner_rows(&mut tx, scope, query).await?;
     tx.commit().await?;
-    Ok(rows)
+    Ok(crate::backend::db::runners::Listing { total, rows })
 }
 async fn runner(c: &mut Connection, scope: Scope, id: i64) -> Result<Runner> {
-    runner_rows(c, scope)
-        .await?
-        .into_iter()
-        .find(|r| r.id == id)
-        .ok_or_else(|| Refusal::Missing.into())
+    let query = crate::backend::db::runners::RunnerQuery { id: Some(id), ..Default::default() };
+    runner_rows(c, scope, &query).await?.into_iter().next().ok_or_else(|| Refusal::Missing.into())
 }
 async fn delete_in(tx: &mut Transaction<'_, Sqlite>, scope: Scope, id: i64) -> Result<()> {
     let row = runner(tx, scope, id).await?;

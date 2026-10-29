@@ -119,7 +119,9 @@ async fn render(
         Ok(scope) => scope,
         Err(response) => return response,
     };
-    let rows = match native::list_runners(&ctx.state.pool, actor, scope).await {
+    let group_window = match page_window(ctx, "group_page", 10) { Ok(page) => page, Err(response) => return response };
+    let runner_window = match page_window(ctx, "runner_page", 25) { Ok(page) => page, Err(response) => return response };
+    let rows = match native::list_runners(&ctx.state.pool, actor, scope, &native::RunnerQuery { page: runner_window, ..Default::default() }).await {
         Ok(rows) => rows,
         Err(error) => return failure(ctx, error),
     };
@@ -131,7 +133,7 @@ async fn render(
                 Ok(Some(org)) => org,
                 _ => return ctx.error(StatusCode::NOT_FOUND, "Organization not found."),
             };
-            let groups = match native::list_groups(&ctx.state.pool, actor, org.id).await {
+            let groups = match native::list_groups(&ctx.state.pool, actor, org.id, &native::GroupQuery { page: group_window, ..Default::default() }).await {
                 Ok(rows) => rows,
                 Err(error) => return failure(ctx, error),
             };
@@ -164,11 +166,13 @@ async fn render(
                     crate::webui::encode_component(&owner),
                     crate::webui::encode_component(&repo.name)
                 ),
-                Vec::new(),
+                native::Listing { total: 0, rows: Vec::new() },
             )
         }
     };
-    let groups = groups
+    let group_navigation = navigation(scope, group_window, runner_window, groups.total, true);
+    let runner_navigation = navigation(scope, group_window, runner_window, rows.total, false);
+    let groups = groups.rows
         .into_iter()
         .map(|g| -> anyhow::Result<_> {
             Ok(view::Group {
@@ -188,7 +192,7 @@ async fn render(
             })
         })
         .collect::<anyhow::Result<Vec<_>>>();
-    let rows = rows
+    let rows = rows.rows
         .into_iter()
         .map(|r| -> anyhow::Result<_> {
             Ok(view::Runner {
@@ -218,14 +222,37 @@ async fn render(
             csrf_token: ctx.csrf_token.clone(),
             title: title.clone(),
             back,
-            action: destination(scope),
+            action: page_destination(scope, group_window, runner_window),
             organization: matches!(scope, Scope::Organization(_)),
             groups,
             runners,
+            group_navigation,
+            runner_navigation,
             message,
             draft,
         }),
     )
+}
+fn page_window(ctx: &PageContext, key: &str, limit: i64) -> Result<native::Window, Response> {
+    let page = ctx.query.get(key).map_or(Some(1), |value| value.parse::<i64>().ok());
+    let offset = page.filter(|page| *page > 0).and_then(|page| (page - 1).checked_mul(limit)).filter(|offset| *offset <= 1_000_000)
+        .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid runner settings page."))?;
+    Ok(native::Window { offset, limit })
+}
+fn page_destination(scope: Scope, groups: native::Window, runners: native::Window) -> String {
+    format!("{}&group_page={}&runner_page={}", destination(scope), groups.offset / groups.limit + 1, runners.offset / runners.limit + 1)
+}
+fn navigation(scope: Scope, groups: native::Window, runners: native::Window, total: i64, group: bool) -> Vec<(String, String)> {
+    let current = if group { groups } else { runners };
+    let mut links = Vec::new();
+    for (label, offset) in [("Previous", (current.offset > 0).then_some(current.offset - current.limit)),
+        ("Next", (current.offset + current.limit < total).then_some(current.offset + current.limit))] {
+        if let Some(offset) = offset {
+            let page = native::Window { offset, ..current };
+            links.push((label.into(), if group { page_destination(scope, page, runners) } else { page_destination(scope, groups, page) }));
+        }
+    }
+    links
 }
 fn destination(scope: Scope) -> String {
     match scope {
@@ -403,7 +430,7 @@ async fn mutate(
             .await?;
         }
         "registration-token" | "jit" => {
-            native::list_runners(pool, actor, scope).await?;
+            native::authorize_scope(pool, actor, scope).await?;
             let ticket = credentials::ticket(pool, ctx.state.cluster.as_ref()).await?;
             let expires = chrono::Utc::now() + chrono::Duration::hours(1);
             let jit = field(form, "action") == "jit";

@@ -256,8 +256,25 @@ pub(crate) fn workflow_allowed(
     })
 }
 
+#[derive(Clone, Copy)]
+pub struct Window { pub offset: i64, pub limit: i64 }
+impl Default for Window { fn default() -> Self { Self { offset: 0, limit: 30 } } }
+impl Window {
+    pub(crate) fn validate(self) -> Result<()> {
+        anyhow::ensure!(self.offset >= 0 && (1..=100).contains(&self.limit), Refusal::Invalid("page"));
+        Ok(())
+    }
+}
+#[derive(Default)]
+pub struct GroupQuery { pub page: Window, pub id: Option<i64>, pub repository: Option<i64> }
+#[derive(Default)]
+pub struct RunnerQuery { pub page: Window, pub id: Option<i64>, pub group: Option<i64>, pub name: Option<String> }
+pub struct Listing<T> { pub total: i64, pub rows: Vec<T> }
+
+native_operation!(crate::backend::db::postgres::runners::authorize_scope, crate::backend::db::sqlite::runners::authorize_scope,
+    fn authorize_scope(pool:&DbPool,actor:i64,scope:Scope)->Result<()>);
 native_operation!(crate::backend::db::postgres::runners::list_groups, crate::backend::db::sqlite::runners::list_groups,
-    fn list_groups(pool:&DbPool,actor:i64,org:i64)->Result<Vec<Group>>);
+    fn list_groups(pool:&DbPool,actor:i64,org:i64,query:&GroupQuery)->Result<Listing<Group>>);
 native_operation!(crate::backend::db::postgres::runners::save_group, crate::backend::db::sqlite::runners::save_group,
     fn save_group(pool:&DbPool,actor:i64,org:i64,id:Option<i64>,input:&GroupInput)->Result<Group>);
 native_operation!(crate::backend::db::postgres::runners::delete_group, crate::backend::db::sqlite::runners::delete_group,
@@ -267,7 +284,7 @@ native_operation!(crate::backend::db::postgres::runners::group_repositories, cra
 native_operation!(crate::backend::db::postgres::runners::group_runners, crate::backend::db::sqlite::runners::group_runners,
     fn group_runners(pool:&DbPool,actor:i64,org:i64,id:i64,selection:&Selection)->Result<()>);
 native_operation!(crate::backend::db::postgres::runners::list_runners, crate::backend::db::sqlite::runners::list_runners,
-    fn list_runners(pool:&DbPool,actor:i64,scope:Scope)->Result<Vec<Runner>>);
+    fn list_runners(pool:&DbPool,actor:i64,scope:Scope,query:&RunnerQuery)->Result<Listing<Runner>>);
 native_operation!(crate::backend::db::postgres::runners::delete_runner, crate::backend::db::sqlite::runners::delete_runner,
     fn delete_runner(pool:&DbPool,actor:i64,scope:Scope,id:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::runners::labels, crate::backend::db::sqlite::runners::labels,
