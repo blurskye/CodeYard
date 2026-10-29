@@ -687,6 +687,7 @@ impl RpcHandler {
                     size: blob.size,
                     offset: blob.offset,
                     mode: blob.mode,
+                    preview: blob.preview,
                 })
                 .map_err(|_| Failure::Repository(unavailable()))?
             }

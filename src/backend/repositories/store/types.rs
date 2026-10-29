@@ -63,6 +63,14 @@ pub struct BlobBytes {
     pub offset: u64,
     /// The Git file mode of the entry, such as 0o100644 or 0o120000.
     pub mode: u32,
+    #[serde(default)]
+    pub preview: Option<BlobPreviewMetadata>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlobPreviewMetadata {
+    pub first_line: usize,
+    pub previous: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +79,8 @@ pub enum BlobRange {
     Full,
     /// A preview window. An offset beyond EOF produces an empty window at EOF.
     Window { offset: u64, length: u64 },
+    /// Native preview: count prefix lines and retain canonical previous-page boundaries once.
+    Preview { offset: u64, line: Option<u32> },
     /// An HTTP byte range with an inclusive optional end.
     Bytes { start: u64, end: Option<u64> },
     /// The final `length` bytes.
@@ -84,6 +94,8 @@ pub(crate) struct BlobMetadata {
     pub size: u64,
     pub offset: u64,
     pub mode: u32,
+    #[serde(default)]
+    pub preview: Option<BlobPreviewMetadata>,
 }
 
 pub const MAX_BLOB_RESPONSE_BYTES: usize = crate::backend::git::MAX_BLOB_MATERIALIZE_BYTES;

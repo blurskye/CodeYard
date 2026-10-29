@@ -277,6 +277,7 @@ impl RemoteStore {
                     size: metadata.size,
                     offset: metadata.offset,
                     mode: metadata.mode,
+                    preview: metadata.preview,
                 })
             }
             Err(Failure::Repository(error)) => Err(error),

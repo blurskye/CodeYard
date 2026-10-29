@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::ChildStdout;
 
+mod blob_preview;
+pub(crate) use blob_preview::{read_blob_preview, PREVIEW_BYTES, PREVIEW_LINES};
 mod checked;
 #[cfg(test)]
 mod history_tests;

@@ -68,6 +68,7 @@ async fn record_secret_bypasses(pool: &db::DbPool, repo_id: i64, actor: i64, has
 fn normalize_blob_range(range: BlobRange, size: u64) -> Result<(u64, usize), RepoError> {
     let (offset, length) = match range {
         BlobRange::Full => (0, size),
+        BlobRange::Preview { .. } => return Err(RepoError::new(ErrorKind::Invalid, "Preview requires a stream reader")),
         BlobRange::Window { offset, length } => {
             let offset = offset.min(size);
             (offset, length.min(size - offset))
@@ -944,12 +945,19 @@ impl LocalStore {
         mode: u32,
         range: BlobRange,
     ) -> Result<BlobBytes, RepoError> {
-        let (offset, length) = normalize_blob_range(range, size)?;
         // The reader starts its own `git cat-file`, so it takes a slot like any other Git work.
         let _permit =
             git::repository::process::operation_slot(git::repository::process::RPC_TIMEOUT)
                 .await
                 .map_err(|_| unavailable("Git operation timed out"))?;
+        if let BlobRange::Preview { offset, line } = range {
+            let preview = git::repository::read_blob_preview(self.path(), id, size, offset, line)
+                .await.map_err(RepoError::from)?;
+            return Ok(BlobBytes { id: id.to_owned(), bytes: preview.bytes, is_binary: preview.is_binary,
+                size, offset: preview.offset, mode,
+                preview: Some(BlobPreviewMetadata { first_line: preview.first_line, previous: preview.previous }) });
+        }
+        let (offset, length) = normalize_blob_range(range, size)?;
         let (bytes, is_binary) = git::read_blob_range(self.path(), id, size, offset, length)
             .await
             .map_err(RepoError::from)?;
@@ -960,6 +968,7 @@ impl LocalStore {
             size,
             offset,
             mode,
+            preview: None,
         })
     }
 

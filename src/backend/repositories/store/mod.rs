@@ -47,7 +47,7 @@ pub use error::{ErrorKind, RepoError, RepoErrorReason, MERGE_METHOD_NOT_ALLOWED,
 pub(crate) use local::ensure_ref_room;
 pub use local::{begin_ref_change, RefChange};
 pub use types::{
-    allowed_merge_methods, AsyncMergePublication, BlobBytes, BlobRange, BranchMergePublication,
+    allowed_merge_methods, AsyncMergePublication, BlobBytes, BlobPreviewMetadata, BlobRange, BranchMergePublication,
     GitService, GitSession, GitStreams, MergeFailure, MergeMethod, MergeRequest, PullBranchUpdate,
     RestackMove, RevertRequest, UpstreamMerge, UpstreamMergeType, MAX_ARCHIVE_RESPONSE_BYTES,
     MAX_BLOB_RESPONSE_BYTES, MAX_COMMIT_OFFSET, MAX_COMMIT_PAGE_SIZE,
