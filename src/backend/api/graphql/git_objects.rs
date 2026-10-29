@@ -48,14 +48,10 @@ pub(super) async fn load(
     match kind.as_str() {
         "commit" => git::load(repo, oid, "contents", request).await,
         "blob" => {
-            let bytes = store.blob_by_id(oid).await.map_err(unavailable)?;
-            request.charge(bytes.len())?;
-            let text = std::str::from_utf8(&bytes)
-                .ok()
-                .filter(|_| !bytes.contains(&0));
-            Ok(
-                json!({"__typename":"Blob","_repo":repo.id,"id":node_id::git("B",oid),"oid":oid,"byteSize":bytes.len(),"isBinary":text.is_none(),"isTruncated":false,"text":text}),
-            )
+            let blob = store.blob_by_id_range(oid, crate::backend::repositories::store::BlobRange::Window { offset: 0, length: 0 }).await.map_err(unavailable)?;
+            request.charge(blob.size.min(8_000) as usize)?;
+            Ok(json!({"__typename":"Blob","_repo":repo.id,"id":node_id::git("B",oid),"oid":oid,"byteSize":blob.size,
+                "isBinary":blob.is_binary,"isTruncated":blob.size > crate::backend::repositories::store::MAX_BLOB_RESPONSE_BYTES as u64}))
         }
         "tree" => {
             let tree = store.git_tree(oid, false).await.map_err(unavailable)?;
@@ -80,6 +76,15 @@ pub(super) async fn load(
         }
         _ => Err(missing()),
     }
+}
+
+pub(super) async fn blob_text(parent: &Value, request: &RequestContext) -> Result<Value> {
+    if parent["isBinary"] == true || parent["isTruncated"] == true { return Ok(Value::Null); }
+    let repo = repository::by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
+    request.authorize(repo.id, "contents", false).await?;
+    let bytes = repo_store(&repo, request.state.cluster.as_ref()).blob_by_id(parent["oid"].as_str().ok_or_else(missing)?).await.map_err(unavailable)?;
+    request.charge(bytes.len())?;
+    Ok(std::str::from_utf8(&bytes).ok().map_or(Value::Null, |text| json!(text)))
 }
 
 pub(super) async fn reference(
@@ -280,19 +285,7 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
         }
         offset += rows.len() as i64;
         for repo in rows {
-            // A fine-grained token looks only in the repositories it reaches.
-            if request.personal.is_some() {
-                match request
-                    .auth
-                    .repository_scope(&request.state.pool, repo.id, "contents", false)
-                    .await
-                {
-                    Ok(()) => {}
-                    Err(super::auth::ScopeError::Unavailable) => return Err(unavailable(())),
-                    Err(_) => continue,
-                }
-            }
-            repository::by_id(repo.id, request).await?;
+            if !repository::optional_authority(repo.id, "contents", request).await? { continue; }
             match repo_store(&repo, request.state.cluster.as_ref())
                 .git_object_kind(oid)
                 .await

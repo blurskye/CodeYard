@@ -478,6 +478,7 @@ impl Object {
                 Some(value) => Ok(value.clone()),
                 None => boxed(|| super::release::field(field, arguments, &self.0, request)).await,
             },
+            ("Blob", "text") => super::git_objects::blob_text(&self.0, request).await,
             ("Tag", "target") => {
                 let repo =
                     repository::by_id(self.0["_repo"].as_i64().ok_or_else(missing)?, request)
