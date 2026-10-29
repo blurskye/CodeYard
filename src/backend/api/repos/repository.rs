@@ -1506,6 +1506,10 @@ async fn mutate(
     let base = crate::webui::repository_path(owner, name);
     let cluster = ctx.state.cluster.as_ref();
     let ci = &ctx.state.ci_runs;
+    let authority = || db::users::accounts::AccountActor::Session {
+        user_id: actor.id,
+        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    };
     match action {
         "star" | "unstar" | "watch" | "unwatch" => {
             use crate::backend::repositories::engagement::{change, Engagement};
@@ -1571,7 +1575,7 @@ async fn mutate(
                 pool,
                 cluster,
                 ci,
-                actor.id,
+                authority(),
                 owner,
                 repository.id,
                 &field(form, "name"),
@@ -1601,7 +1605,7 @@ async fn mutate(
                 pool,
                 cluster,
                 ci,
-                actor.id,
+                authority(),
                 repository.id,
                 &field(form, "name"),
             )
@@ -1615,7 +1619,7 @@ async fn mutate(
                 pool,
                 cluster,
                 ci,
-                actor.id,
+                authority(),
                 owner,
                 repository.id,
                 &field(form, "name"),
@@ -1630,7 +1634,7 @@ async fn mutate(
             crate::backend::repositories::refs::delete_tag(
                 pool,
                 cluster,
-                actor.id,
+                authority(),
                 repository.id,
                 &field(form, "name"),
             )

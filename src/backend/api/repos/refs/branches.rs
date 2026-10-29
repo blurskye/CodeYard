@@ -76,7 +76,10 @@ pub async fn create_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        actor.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: actor.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         &owner,
         super::repository_id(&state, &owner, &repo).await?,
         &req.name,
@@ -100,7 +103,10 @@ pub async fn delete_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        actor.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: actor.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         super::repository_id(&state, &owner, &repo).await?,
         &branch,
     )
