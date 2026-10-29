@@ -179,11 +179,12 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         reference: &str,
         sha: &str,
         force: bool,
     ) -> Result<(String, String), RepoError> {
+        let actor = actor.into();
         match &self.0 {
             Backend::Local(local) => {
                 local
@@ -193,10 +194,10 @@ impl RepoStore {
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor,
+                        actor.user_id(),
                         Operation::UpdateReference {
                             reference: reference.into(),
-                            sha: sha.into(),
+                            sha: rpc::wire::PublicationText::retain(sha, actor),
                             force,
                         },
                         b"",
@@ -1511,10 +1512,11 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         name: &str,
         sha: &str,
     ) -> Result<String, RepoError> {
+        let actor = actor.into();
         if git::branch_ref(name).is_none() {
             return Err(invalid_ref("branch"));
         }
@@ -1523,10 +1525,10 @@ impl RepoStore {
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor,
+                        actor.user_id(),
                         Operation::CreateBranch {
                             name: name.into(),
-                            sha: sha.into(),
+                            sha: rpc::wire::PublicationText::retain(sha, actor),
                         },
                         b"",
                     )
@@ -1696,9 +1698,10 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         name: &str,
     ) -> Result<(), RepoError> {
+        let actor = actor.into();
         if git::branch_ref(name).is_none() {
             return Err(invalid_ref("branch"));
         }
@@ -1706,7 +1709,7 @@ impl RepoStore {
             Backend::Local(local) => local.delete_branch(pool, repo_id, actor, name).await,
             Backend::Remote(remote) => {
                 remote
-                    .call_as(actor, Operation::DeleteBranch { name: name.into() }, b"")
+                    .call_as(actor.user_id(), Operation::DeleteBranch { name: rpc::wire::PublicationText::retain(name, actor) }, b"")
                     .await
             }
         }
@@ -1722,13 +1725,14 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         name: &str,
         sha: &str,
         message: Option<&str>,
         tagger_name: &str,
         tagger_email: &str,
     ) -> Result<TagInfo, RepoError> {
+        let actor = actor.into();
         if git::tag_ref(name).is_none() {
             return Err(invalid_ref("tag"));
         }
@@ -1750,10 +1754,10 @@ impl RepoStore {
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor,
+                        actor.user_id(),
                         Operation::CreateTag {
                             name: name.into(),
-                            sha: sha.into(),
+                            sha: rpc::wire::PublicationText::retain(sha, actor),
                             message: message.map(str::to_owned),
                             tagger_name: tagger_name.into(),
                             tagger_email: tagger_email.into(),
@@ -1770,9 +1774,10 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         name: &str,
     ) -> Result<(), RepoError> {
+        let actor = actor.into();
         if git::tag_ref(name).is_none() {
             return Err(invalid_ref("tag"));
         }
@@ -1780,7 +1785,7 @@ impl RepoStore {
             Backend::Local(local) => local.delete_tag(pool, repo_id, actor, name).await,
             Backend::Remote(remote) => {
                 remote
-                    .call_as(actor, Operation::DeleteTag { name: name.into() }, b"")
+                    .call_as(actor.user_id(), Operation::DeleteTag { name: rpc::wire::PublicationText::retain(name, actor) }, b"")
                     .await
             }
         }

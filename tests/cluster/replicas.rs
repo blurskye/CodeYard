@@ -3686,7 +3686,7 @@ async fn writes_are_refused_while_the_primary_is_down() {
         repository: uuid,
         operation: Operation::CreateBranch {
             name: "after".into(),
-            sha: head.clone(),
+            sha: head.clone().into(),
         },
         actor: Some(repo.actor),
         ci_run: None,

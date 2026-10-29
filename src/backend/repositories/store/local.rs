@@ -1435,10 +1435,11 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         name: &str,
         sha: &str,
     ) -> Result<String, RepoError> {
+        let actor = authority.user_id();
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -1472,8 +1473,9 @@ impl LocalStore {
             pool, &repository, actor, self.path(), None, std::slice::from_ref(&target),
         ).await.map_err(RepoError::from)?;
         let _change = self
-            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
+            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, authority.token_id())
             .await?;
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
         publication
             .scope(git::publish_ref_create(self.path(), &reference, &target))
             .await
@@ -1506,11 +1508,12 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         reference: &str,
         sha: &str,
         force: bool,
     ) -> Result<(String, String), RepoError> {
+        let actor = authority.user_id();
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -1566,6 +1569,7 @@ impl LocalStore {
             self.blocking(move |path| git::check_tag_budget(path, None, &[replacement]))
                 .await?;
         }
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
         if old == new {
             return Ok((old, new));
         }
@@ -1574,8 +1578,9 @@ impl LocalStore {
         ).await.map_err(RepoError::from)?;
         let writes = write.as_ref().into_iter().collect::<Vec<_>>();
         let _change = self
-            .begin_branch_change(pool, repo_id, actor, &writes, &publication, None)
+            .begin_branch_change(pool, repo_id, actor, &writes, &publication, authority.token_id())
             .await?;
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
         publication
             .scope(git::publish_ref(
                 self.path(),
@@ -1616,9 +1621,10 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         name: &str,
     ) -> Result<(), RepoError> {
+        let actor = authority.user_id();
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -1643,7 +1649,7 @@ impl LocalStore {
             new: None,
             via: WriteVia::Direct,
         };
-        live_write(
+        let repository = live_write(
             pool,
             repo_id,
             actor,
@@ -1655,8 +1661,9 @@ impl LocalStore {
         .await?;
         let reference = git::branch_ref(name).ok_or_else(|| super::invalid_ref("branch"))?;
         let _change = self
-            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
+            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, authority.token_id())
             .await?;
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
         publication
             .scope(git::publish_ref_delete(self.path(), &reference, &old))
             .await
@@ -1678,13 +1685,14 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         name: &str,
         sha: &str,
         message: Option<&str>,
         tagger_name: &str,
         tagger_email: &str,
     ) -> Result<TagInfo, RepoError> {
+        let actor = authority.user_id();
         if message.is_some_and(|message| message.len() > git::MAX_TAG_MESSAGE_BYTES) {
             return Err(RepoError::new(
                 ErrorKind::Invalid,
@@ -1738,6 +1746,7 @@ impl LocalStore {
             pool, &repository, actor, self.path(), None, std::slice::from_ref(&tag.sha),
         ).await.map_err(RepoError::from)?;
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
         publication.scope(git::publish_ref_create(self.path(), &reference, &tag.sha))
             .await
             .map_err(RepoError::from)?;
@@ -1758,9 +1767,10 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         name: &str,
     ) -> Result<(), RepoError> {
+        let actor = authority.user_id();
         let publication = git::locks::publication(self.path()).await.map_err(RepoError::from)?;
         let owned_name = name.to_owned();
         let old = self
@@ -1790,6 +1800,7 @@ impl LocalStore {
         )
         .await?;
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
         publication.scope(git::publish_ref_delete(self.path(), &reference, &old))
             .await
             .map_err(RepoError::from)?;

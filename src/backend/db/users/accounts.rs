@@ -36,6 +36,13 @@ impl AccountActor {
         }
     }
 
+    pub fn token_id(&self) -> Option<i64> {
+        match self {
+            Self::Token { token_id, .. } => Some(*token_id),
+            _ => None,
+        }
+    }
+
     pub fn credential(&self) -> Option<AccountCredential<'_>> {
         match self {
             Self::Trusted(_) => None,

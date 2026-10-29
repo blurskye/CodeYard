@@ -133,7 +133,7 @@ pub enum Operation {
     },
     UpdateReference {
         reference: String,
-        sha: String,
+        sha: PublicationText,
         force: bool,
     },
     WriteGitObject {
@@ -339,10 +339,10 @@ pub enum Operation {
     },
     CreateBranch {
         name: String,
-        sha: String,
+        sha: PublicationText,
     },
     DeleteBranch {
-        name: String,
+        name: PublicationText,
     },
     SetDefaultBranch {
         name: String,
@@ -367,13 +367,13 @@ pub enum Operation {
     },
     CreateTag {
         name: String,
-        sha: String,
+        sha: PublicationText,
         message: Option<String>,
         tagger_name: String,
         tagger_email: String,
     },
     DeleteTag {
-        name: String,
+        name: PublicationText,
     },
     PrepareFile {
         write: FileWrite,
@@ -769,7 +769,7 @@ mod tests {
         assert!(request.actor.is_none());
         assert!(matches!(
             request.operation,
-            Operation::CreateBranch { name, sha }
+            Operation::CreateBranch { name, sha: PublicationText::Legacy(sha) }
                 if name == "feature" && sha == "1111111111111111111111111111111111111111"
         ));
     }
