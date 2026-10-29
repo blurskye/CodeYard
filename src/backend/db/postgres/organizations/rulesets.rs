@@ -343,6 +343,13 @@ pub async fn version(
         can_edit: editable,
     }))
 }
+/// Effective membership, not a separate repository grant, determines a team bypass.
+pub async fn bypass_teams(pool: &PgPool, repo: i64, actor: i64, teams: &[i64]) -> Result<Vec<i64>> {
+    anyhow::ensure!(teams.len() <= 500, "Too many bypass teams");
+    Ok(sqlx::query_scalar("SELECT t.id FROM teams t JOIN repositories r ON r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=t.org_id JOIN effective_team_memberships tm ON tm.team_id=t.id JOIN org_memberships m ON m.org_id=t.org_id AND m.user_id=tm.user_id JOIN users u ON u.id=tm.user_id WHERE r.id=$1 AND tm.user_id=$2 AND t.id=ANY($3) AND t.privacy IN ('visible','secret') AND tm.role IN ('member','maintainer') AND m.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password")
+        .bind(repo).bind(actor).bind(teams).fetch_all(pool).await?)
+}
+
 /// The rulesets a push to `repo` is judged by: its own and the matching organization ones.
 pub async fn push_rulesets(pool: &PgPool, repo: i64) -> Result<Vec<Ruleset>> {
     let mut tx = begin_read(pool).await?;
