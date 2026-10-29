@@ -349,18 +349,12 @@ pub(in crate::webui::pages::repos) fn run_row(
 
 #[component]
 pub(in crate::webui::pages) fn ActionsView(model: ActionsPage) -> Element {
-    let active = model.selected.as_ref().is_some_and(|selected| {
-        matches!(
-            logs::normalize_status(&selected.run.status),
-            "running" | "queued"
-        )
-    });
     // Keep the run's log editor/search/details mounted across status transitions.
-    // Only the timer component is removed on terminal status, which cancels its
-    // use_future task without discarding the user's unsubmitted local controls.
+    // The timer drains outstanding log pages after terminal metadata arrives,
+    // then stops itself without discarding unsubmitted local controls.
     rsx! {
-        if active {
-            super::polling::ActiveRunPoll { key: "{model.selected.as_ref().unwrap().run.id}", run_id: model.selected.as_ref().unwrap().run.id.clone() }
+        if let Some(selected) = &model.selected {
+            super::polling::ActiveRunPoll { key: "{selected.run.id}", run_id: selected.run.id.clone() }
         }
         {actions_page(model)}
     }

@@ -56,8 +56,8 @@ fn apply_update(model: &mut ActionsPage, update: RunLogUpdate) {
         selected.logs_truncated = true;
     }
     selected.deployment = update.deployment;
-    // Drain outstanding history before terminal status unmounts the poller.
-    if !update.has_more {
+    // Metadata is current even while historical log pages are still draining.
+    {
         selected.run.status = update.progress.status;
         selected.run.started_at = update.progress.started_at;
         selected.run.completed_at = update.progress.completed_at;
@@ -85,8 +85,17 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
             let run_id = run_id.clone();
             let controller = controller.clone();
             async move {
+                let initially_active = {
+                    let page = current.peek();
+                    match &page.page {
+                        crate::webui::app::Page::Actions(crate::webui::pages::ci::Page::Actions(model)) => model.selected.as_ref().is_some_and(|selected| matches!(super::logs::normalize_status(&selected.run.status), "queued" | "running")),
+                        _ => false,
+                    }
+                };
+                if !initially_active { return; }
+                let mut backlog = false;
                 loop {
-                    gloo_timers::future::TimeoutFuture::new(2000).await;
+                    if !backlog { gloo_timers::future::TimeoutFuture::new(2000).await; }
                     let (location, url) = {
                         let page = current.peek();
                         let crate::webui::app::Page::Actions(
@@ -137,7 +146,8 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
                     }
                     match result {
                         Ok(update) => {
-                            let terminal = !update.has_more && !matches!(super::logs::normalize_status(&update.progress.status), "queued" | "running");
+                            backlog = update.has_more;
+                            let terminal = !backlog && !matches!(super::logs::normalize_status(&update.progress.status), "queued" | "running");
                             let mut page = current.write();
                             if let crate::webui::app::Page::Actions(
                                 crate::webui::pages::ci::Page::Actions(model),

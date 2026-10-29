@@ -120,7 +120,7 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                 .cloned()
                 .unwrap_or_else(|| grant.permission.to_string())
         } else {
-            grant.permission.to_string()
+            String::new()
         }
     };
     rsx! {
@@ -218,20 +218,20 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                                                 h4 { NavLink { href: crate::webui::repository_path(&grant.owner,&grant.name), class: "org-row-link", "{grant.owner}/{grant.name}" } }
                                             }
                                             div { class: "org-row-actions",
-                                                span { class: "org-label", "{permission_name(grant.permission)}" }
+                                                span { class: "org-label", "Effective: {permission_name(grant.permission)}" }
                                                 if manage {
                                                     form { method: "post", action: target.to_owned(), class: "org-inline-form",
                                                         input { r#type: "hidden", name: "team_id", value: "{detail.team.id}" }
                                                         input { r#type: "hidden", name: "repo_id", value: "{grant.repo_id}" }
                                                         label { span { class: "site-sr-only", "Access to {grant.owner}/{grant.name}" }
-                                                            DraftSelect { class: FIELD, name: "permission", initial_value: permission_value(detail.team.id, grant), options: permission_options(), required: true }
+                                                            DraftSelect { class: FIELD, name: "permission", initial_value: permission_value(detail.team.id, grant), options: std::iter::once(SelectOption::new("", "Choose an explicit direct grant")).chain(permission_options()).collect::<Vec<_>>(), required: true }
                                                         }
-                                                        {controls_as(page, "grant", "Save", "btn")}
+                                                        {controls_as(page, "grant", "Set direct grant", "btn")}
                                                     }
                                                     form { method: "post", action: target.to_owned(), class: "org-inline-form",
                                                         input { r#type: "hidden", name: "team_id", value: "{detail.team.id}" }
                                                         input { r#type: "hidden", name: "repo_id", value: "{grant.repo_id}" }
-                                                        {controls_as(page, "revoke", "Revoke", "btn btn-danger")}
+                                                        {controls_as(page, "revoke", "Revoke direct grant", "btn btn-danger")}
                                                     }
                                                 }
                                             }
