@@ -313,7 +313,7 @@ async fn save(
         return Err(Error::missing());
     }
     let blob = match expected {
-        Some(revision) => match store.blob_bytes(revision, path).await {
+        Some(revision) => match store.blob_range(revision, path, crate::backend::repositories::store::BlobRange::Window { offset: 0, length: 0 }).await {
             Ok(blob) => Some(blob),
             Err(error) if error.kind == ErrorKind::MissingPath => None,
             Err(error) => return Err(store_error(error)),

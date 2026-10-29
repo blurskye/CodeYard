@@ -61,7 +61,11 @@ async fn build(state: &AppState, headers: &HeaderMap, row: &RepositoryExport) ->
     {
         return Err(Error::missing());
     }
-    let options = row.options().map_err(Error::unavailable)?;
+    let mut options = row.options().map_err(Error::unavailable)?;
+    if options.org_metadata_only {
+        options.exclude_metadata = false;
+        options.exclude_owner_projects = false;
+    }
     let ids = row.repository_ids().map_err(Error::unavailable)?;
     let mut archive = MigrationArchive::default();
     if let Some(org) = row.owner_org_id {
@@ -134,20 +138,20 @@ async fn metadata(
     archive: &mut MigrationArchive,
 ) -> Result<()> {
     let repository = payloads::repository(repo, owner)["html_url"].clone();
-    let labels = db::labels::list_repo_labels(&state.pool, repo.id)
-        .await
-        .map_err(Error::unavailable)?;
-    let values = labels
-        .iter()
-        .map(|label| {
+    let mut offset = 0;
+    loop {
+        let labels = db::labels::list_repo_labels_page(&state.pool, repo.id, "", "oldest", 100, offset)
+            .await.map_err(Error::unavailable)?;
+        let count = labels.len();
+        let values = labels.iter().map(|label| {
             let mut value = payloads::label(label, owner, &repo.name);
             value["repository"] = repository.clone();
             value
-        })
-        .collect();
-    archive
-        .records("label", values)
-        .map_err(Error::unavailable)?;
+        }).collect();
+        archive.records("label", values).map_err(Error::unavailable)?;
+        if count < 100 { break; }
+        offset += 100;
+    }
     let mut offset = 0;
     loop {
         let rows =

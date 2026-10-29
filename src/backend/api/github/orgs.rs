@@ -154,21 +154,17 @@ async fn get_org(
 ) -> Result<Json<Value>> {
     let actor = auth::authenticate(&state, &headers, false).await?;
     let org = target(&state, &name).await?;
-    let owner = if let Some(actor) = actor {
-        matches!(
-            organizations::get_organization_role(&state.pool, actor.user.id, org.id)
-                .await
-                .map_err(Error::unavailable)?,
-            OrganizationOutcome::Applied(crate::backend::db::models::OrgRole::Owner)
-        )
-    } else {
-        false
-    };
+    if let Some(actor) = actor {
+        if let OrganizationOutcome::Applied(owned) = organizations::settings::owned(&state.pool, actor.user.id, org.id)
+            .await.map_err(Error::unavailable)? {
+            return settings::document(&state, &owned.organization, &owned.settings, true).await.map(Json);
+        }
+    }
     let configuration = organizations::settings::get(&state.pool, org.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    settings::document(&state, &org, &configuration, owner)
+    settings::document(&state, &org, &configuration, false)
         .await
         .map(Json)
 }
