@@ -554,7 +554,7 @@ impl CommitFilter {
             return false;
         }
         if !self.author_emails.is_empty() {
-            let email = String::from_utf8_lossy(commit.author().email_bytes()).into_owned();
+            let email = decode_commit_text(commit, commit.author().email_bytes());
             if !self
                 .author_emails
                 .iter()
@@ -575,8 +575,8 @@ impl CommitFilter {
                 let person = commit.author();
                 let signature = format!(
                     "{} <{}>",
-                    String::from_utf8_lossy(person.name_bytes()),
-                    String::from_utf8_lossy(person.email_bytes())
+                    decode_commit_text(commit, person.name_bytes()),
+                    decode_commit_text(commit, person.email_bytes())
                 );
                 signature.to_lowercase().contains(&author.to_lowercase())
             }
@@ -1229,7 +1229,7 @@ pub(crate) async fn blame_file(repo_path: &Path, git_ref: &str, path: &str) -> R
 }
 
 fn parse_blame(output: &[u8]) -> Result<Vec<BlameHunk>> {
-    let text = std::str::from_utf8(output)?;
+    let text = String::from_utf8_lossy(output);
     let mut authors = HashMap::<String, (String, i64, String)>::new();
     let mut current = None;
     let mut hunks = Vec::new();
@@ -2011,11 +2011,15 @@ pub(crate) async fn branch_statuses(
 }
 
 fn commit_message(commit: &git2::Commit<'_>) -> String {
+    decode_commit_text(commit, commit.message_raw_bytes())
+}
+
+fn decode_commit_text(commit: &git2::Commit<'_>, bytes: &[u8]) -> String {
     let encoding = commit
         .message_encoding()
         .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
         .unwrap_or(encoding_rs::UTF_8);
-    encoding.decode(commit.message_raw_bytes()).0.into_owned()
+    encoding.decode(bytes).0.into_owned()
 }
 
 /// A signature must be a header, not a similarly named line in the message body.
@@ -2045,10 +2049,10 @@ pub(crate) fn commit_info(repo: &Repository, commit: &git2::Commit<'_>) -> Resul
         sha: format!("{}", commit.id()),
         tree_sha: commit.tree_id().to_string(),
         message: commit_message(commit),
-        author_name: String::from_utf8_lossy(author.name_bytes()).into_owned(),
-        author_email: String::from_utf8_lossy(author.email_bytes()).into_owned(),
-        committer_name: String::from_utf8_lossy(committer.name_bytes()).into_owned(),
-        committer_email: String::from_utf8_lossy(committer.email_bytes()).into_owned(),
+        author_name: decode_commit_text(commit, author.name_bytes()),
+        author_email: decode_commit_text(commit, author.email_bytes()),
+        committer_name: decode_commit_text(commit, committer.name_bytes()),
+        committer_email: decode_commit_text(commit, committer.email_bytes()),
         timestamp: author.when().seconds(),
         committer_timestamp: committer.when().seconds(),
         parents,
@@ -2328,8 +2332,7 @@ pub(crate) fn prepare_delete_branch(repo_path: &Path, branch_name: &str) -> Resu
     let reference = crate::backend::git::branch_ref(branch_name)
         .ok_or_else(|| anyhow!("Invalid branch name"))?;
     let branch = repo
-        .find_branch(branch_name, git2::BranchType::Local)
-        .map_err(|_| anyhow!("Branch '{branch_name}' not found"))?;
+        .find_branch(branch_name, git2::BranchType::Local)?;
     if branch.is_head() {
         return Err(anyhow!("Cannot delete the default branch '{branch_name}'"));
     }

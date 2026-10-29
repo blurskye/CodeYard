@@ -115,7 +115,7 @@ pub fn language_for_path(path: &str) -> Option<&'static str> {
     } else {
         path.extension()
             .and_then(|extension| extension.to_str())
-            .and_then(|extension| extension_to_language(&extension.to_ascii_lowercase()))
+            .and_then(|extension| if extension == "C" { Some("C++") } else { extension_to_language(&extension.to_ascii_lowercase()) })
     }
 }
 
@@ -162,7 +162,8 @@ fn parse_language_stats(output: &[u8]) -> Result<Vec<LanguageStat>> {
         let size = size.ok_or_else(|| anyhow::anyhow!("Missing Git blob size"))?;
         let size = std::str::from_utf8(size)?.parse::<u64>()?;
         let filepath = String::from_utf8_lossy(filepath);
-        let language = language_for_path(filepath.as_ref());
+        // Keep prose/data classification for file views, but not source-language totals.
+        let language = language_for_path(filepath.as_ref()).filter(|language| !matches!(*language, "Markdown" | "JSON" | "YAML" | "TOML"));
         if let Some(language) = language {
             let bytes = lang_bytes.entry(language.to_owned()).or_insert(0);
             *bytes = bytes
