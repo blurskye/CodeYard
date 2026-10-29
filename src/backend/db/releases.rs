@@ -215,6 +215,20 @@ native_operation!(crate::backend::db::postgres::releases::latest_release,
     crate::backend::db::sqlite::releases::latest_release,
     fn latest_release(pool: &DbPool, repo_id: i64) -> Result<Option<Release>>);
 
+#[derive(sqlx::FromRow)]
+pub struct ReleaseAssetFile {
+    #[sqlx(flatten)]
+    pub asset: ReleaseAsset,
+    pub sha256_hex: String,
+    pub uploader_id: Option<i64>,
+    pub uploader_name: Option<String>,
+    pub uploader_is_admin: Option<bool>,
+}
+
+native_operation!(crate::backend::db::postgres::releases::list_asset_files,
+    crate::backend::db::sqlite::releases::list_asset_files,
+    fn list_asset_files(pool: &DbPool, release_id: i64) -> Result<Vec<ReleaseAssetFile>>);
+
 native_operation!(crate::backend::db::postgres::releases::list_release_assets,
     crate::backend::db::sqlite::releases::list_release_assets,
     fn list_release_assets(pool: &DbPool, release_id: i64) -> Result<Vec<ReleaseAsset>>);

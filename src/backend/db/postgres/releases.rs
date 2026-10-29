@@ -470,6 +470,11 @@ pub async fn latest_release(pool: &PgPool, repo_id: i64) -> Result<Option<Releas
     .await?)
 }
 
+pub async fn list_asset_files(pool: &PgPool, release_id: i64) -> Result<Vec<crate::backend::db::releases::ReleaseAssetFile>> {
+    Ok(sqlx::query_as("SELECT a.*,f.sha256_hex,u.id AS uploader_id,u.username AS uploader_name,u.is_admin AS uploader_is_admin FROM release_assets a JOIN files f ON f.id=a.file_id LEFT JOIN users u ON u.id=f.user_id WHERE a.release_id=$1 ORDER BY a.name,a.id")
+        .bind(release_id).fetch_all(pool).await?)
+}
+
 pub async fn list_release_assets(pool: &PgPool, release_id: i64) -> Result<Vec<ReleaseAsset>> {
     Ok(sqlx::query_as::<_, ReleaseAsset>(&format!(
         "SELECT {ASSET_COLUMNS} FROM release_assets WHERE release_id = $1 ORDER BY name"
