@@ -187,7 +187,8 @@ const PARALLEL: usize = 2;
 const RETRY_FIRST: Duration = Duration::from_secs(5);
 const RETRY_CAP: Duration = Duration::from_secs(30);
 /// Copies are kept here, under the repositories root, never at a primary's location.
-const MIRRORS: &str = "mirrors";
+pub(crate) const MIRRORS: &str = "mirrors";
+pub(crate) const QUARANTINES: &str = ".quarantines";
 
 /// Runs passes every `INTERVAL` until `stop` is set. A failed pass is logged and the next
 /// one tries again. A copy that finishes frees its slot at once, so the next copy in line
@@ -674,7 +675,7 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
             return;
         }
     };
-    for directory in [context.repos_path.join(MIRRORS), context.repos_path.clone()] {
+    for directory in [context.repos_path.join(MIRRORS), context.repos_path.join(MIRRORS).join(QUARANTINES), context.repos_path.clone()] {
         let Ok(mut entries) = tokio::fs::read_dir(&directory).await else {
             continue;
         };
@@ -694,28 +695,15 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
                 Ok(false) => {},
                 Err(error) => { warn!(%error, "could not check storage assignment; none removed"); return; }
             }
-            if directory == context.repos_path {
-                // A repository whose deletion is still retiring it has no row yet. Keep its
-                // directory in deleted/, as a retirement does, instead of removing it.
-                let path = entry.path();
-                match tokio::task::spawn_blocking(move || mirror::retire(&path)).await {
-                    Ok(Ok(())) => {
-                        info!(repository = %uuid, "moved an unowned repository to deleted/")
-                    }
-                    Ok(Err(error)) => {
-                        warn!(repository = %uuid, %error, "could not move an unowned repository")
-                    }
-                    Err(error) => {
-                        warn!(repository = %uuid, %error, "could not move an unowned repository")
-                    }
-                }
-                continue;
-            }
-            match tokio::fs::remove_dir_all(entry.path()).await {
-                Ok(()) => {
-                    info!(repository = %uuid, "removed a replica copy this node no longer holds")
-                }
-                Err(error) => warn!(repository = %uuid, %error, "could not remove a replica copy"),
+            // Rename only. The expiry worker owns recursive deletion outside the
+            // takeover loop; its restore window also protects recoverable retired bytes.
+            match tokio::task::spawn_blocking(move || {
+                let _reader_guard = _reader_guard;
+                mirror::retire(&path)
+            }).await {
+                Ok(Ok(())) => info!(repository = %uuid, "retired storage this node no longer holds"),
+                Ok(Err(error)) => warn!(repository = %uuid, %error, "could not retire unassigned storage"),
+                Err(error) => warn!(repository = %uuid, %error, "storage retirement stopped"),
             }
         }
     }

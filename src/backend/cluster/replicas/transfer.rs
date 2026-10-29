@@ -135,7 +135,7 @@ async fn move_aside(mirror: &Path) -> Result<()> {
         .file_name()
         .context("replica copy has no name")?
         .to_string_lossy();
-    let directory = mirror.parent().context("replica copy has no parent")?.join(".quarantines").join(name.as_ref());
+    let directory = mirror.parent().context("replica copy has no parent")?.join(super::QUARANTINES).join(name.as_ref());
     tokio::fs::create_dir_all(&directory).await?;
     let aside = directory.join(Uuid::new_v4().to_string());
     tokio::fs::rename(mirror, &aside).await?;
@@ -147,7 +147,7 @@ async fn remove_aside_copies(mirror: &Path) {
     let (Some(directory), Some(name)) = (mirror.parent(), mirror.file_name()) else {
         return;
     };
-    let directory = directory.join(".quarantines").join(name);
+    let directory = directory.join(super::QUARANTINES).join(name);
     let mut entries = match tokio::fs::read_dir(&directory).await {
         Ok(entries) => entries,
         Err(error) => {

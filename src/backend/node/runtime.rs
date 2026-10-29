@@ -167,7 +167,13 @@ async fn remove_expired_rows(
                 crate::backend::db::files::RESTORE_WINDOW_SECONDS as u64,
             );
             let sweep = tokio::task::spawn_blocking(move || {
-                crate::backend::git::mirror::remove_expired_deleted(&root, window)
+                let mirrors = root.join(crate::backend::cluster::replicas::MIRRORS);
+                let quarantines = mirrors.join(crate::backend::cluster::replicas::QUARANTINES);
+                let mut removed = 0;
+                for root in [root, mirrors, quarantines] {
+                    removed += crate::backend::git::mirror::remove_expired_deleted(&root, window)?;
+                }
+                anyhow::Ok(removed)
             });
             match sweep.await {
                 Ok(Ok(0)) => {}
