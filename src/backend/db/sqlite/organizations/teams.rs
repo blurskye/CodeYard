@@ -76,6 +76,12 @@ async fn public_team(
     })
 }
 
+async fn manages_team(c: &mut sqlx::SqliteConnection, actor: i64, org: i64, team: i64, role: OrgRole) -> Result<bool> {
+    if administers(role) { return Ok(true); }
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM teams t JOIN team_memberships m ON m.team_id=t.id WHERE t.id=?1 AND t.org_id=?2 AND m.user_id=?3 AND m.role='maintainer')")
+        .bind(team).bind(org).bind(actor).fetch_one(c).await?)
+}
+
 pub async fn create_organization_team(
     pool: &SqlitePool,
     actor: i64,
@@ -132,13 +138,16 @@ pub async fn update_organization_team(
 ) -> Result<OrganizationOutcome<Team>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
-    if !administers(role) {
-        return Ok(Denied);
-    }
+    if !manages_team(&mut tx, actor, org, team, role).await? { return Ok(Denied); }
     let Some(current) = scoped_team(&mut tx, org, team).await? else {
         return Ok(Missing);
     };
     let parent = input.parent_team_id.unwrap_or(current.parent_team_id);
+    if !administers(role) && parent != current.parent_team_id {
+        if let Some(parent) = parent {
+            if !manages_team(&mut tx, actor, org, parent, role).await? { return Ok(Denied); }
+        }
+    }
     let privacy = match input.privacy {
         Some(privacy) => privacy,
         None => TeamPrivacy::parse(&current.privacy)
@@ -197,9 +206,7 @@ pub async fn delete_organization_team(
 ) -> Result<OrganizationOutcome<()>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
-    if !administers(role) {
-        return Ok(Denied);
-    }
+    if !manages_team(&mut tx, actor, org, team, role).await? { return Ok(Denied); }
     if scoped_team(&mut tx, org, team).await?.is_none() {
         return Ok(Missing);
     }
@@ -304,9 +311,7 @@ pub async fn add_organization_team_member(
 ) -> Result<OrganizationOutcome<TeamMembership>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let actor_role = require_org!(tx, actor, org);
-    if !administers(actor_role) {
-        return Ok(Denied);
-    }
+    if !manages_team(&mut tx, actor, org, team, actor_role).await? { return Ok(Denied); }
     if !active(&mut tx, target).await? {
         return Ok(Denied);
     }
@@ -334,9 +339,7 @@ pub async fn remove_organization_team_member(
 ) -> Result<OrganizationOutcome<()>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
-    if !administers(role) {
-        return Ok(Denied);
-    }
+    if !manages_team(&mut tx, actor, org, team, role).await? { return Ok(Denied); }
     // Exact scoped cleanup, not a grant: target activity/org role is irrelevant.
     if scoped_team(&mut tx, org, team).await?.is_none() {
         return Ok(Missing);
