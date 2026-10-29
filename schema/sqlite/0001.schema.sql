@@ -53,6 +53,8 @@ CREATE TABLE users (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 
+CREATE UNIQUE INDEX users_username_folded ON users(lower(username));
+
 CREATE TABLE node_configuration (
     id INTEGER PRIMARY KEY CHECK (id IS NULL OR typeof(id)='integer') CHECK (id BETWEEN -32768 AND 32767),
     node_mode TEXT NOT NULL DEFAULT 'public' CHECK (length(node_mode)<=20),
@@ -931,6 +933,9 @@ CREATE INDEX idx_org_memberships_user_id ON org_memberships(user_id);
 
 CREATE INDEX idx_team_memberships_user_id ON team_memberships(user_id);
 
+CREATE UNIQUE INDEX organizations_name_folded ON organizations(lower(name));
+CREATE UNIQUE INDEX repo_unique_user_folded ON repositories(owner_user_id,lower(name));
+CREATE UNIQUE INDEX repo_unique_org_folded ON repositories(owner_org_id,lower(name));
 CREATE INDEX idx_repositories_name ON repositories(name);
 CREATE INDEX idx_repositories_storage_uuid ON repositories (substr(disk_path, -40));
 
@@ -1635,6 +1640,9 @@ CREATE TABLE notification_thread_subscriptions (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 CREATE INDEX notifications_thread ON notifications(thread_id,id DESC);
+CREATE INDEX notifications_thread_created ON notifications(thread_id,created_at DESC,id DESC);
+CREATE INDEX notifications_thread_inbox ON notifications(thread_id,id DESC) WHERE done_at IS NULL;
+CREATE INDEX notifications_thread_unread ON notifications(thread_id,id DESC) WHERE read_at IS NULL AND done_at IS NULL;
 CREATE TRIGGER notification_threads_provenance BEFORE UPDATE OF user_id,scope_repository_id,subject_type,subject_key ON notification_threads
 WHEN NEW.user_id<>OLD.user_id OR NEW.scope_repository_id<>OLD.scope_repository_id OR NEW.subject_type<>OLD.subject_type OR NEW.subject_key<>OLD.subject_key
 BEGIN SELECT RAISE(ABORT,'notification thread provenance is immutable'); END;

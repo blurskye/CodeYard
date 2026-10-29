@@ -41,7 +41,7 @@ pub async fn get_repository(
         SELECT r.* FROM repositories r
         LEFT JOIN users u ON r.owner_user_id = u.id AND r.owner_kind = 'user'
         LEFT JOIN organizations o ON r.owner_org_id = o.id AND r.owner_kind = 'org'
-        WHERE (u.username = ?1 OR o.name = ?1) AND r.name = ?2 AND NOT r.is_gist
+        WHERE (lower(u.username) = lower(?1) OR lower(o.name) = lower(?1)) AND lower(r.name) = lower(?2) AND NOT r.is_gist
         "#,
     )
     .bind(owner_name)

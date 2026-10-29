@@ -41,7 +41,7 @@ pub async fn get_repository(
         SELECT r.* FROM repositories r
         LEFT JOIN users u ON r.owner_user_id = u.id AND r.owner_kind = 'user'
         LEFT JOIN organizations o ON r.owner_org_id = o.id AND r.owner_kind = 'org'
-        WHERE (u.username = $1 OR o.name = $1) AND r.name = $2 AND NOT r.is_gist
+        WHERE (lower(u.username COLLATE "C") = lower($1 COLLATE "C") OR lower(o.name COLLATE "C") = lower($1 COLLATE "C")) AND lower(r.name COLLATE "C") = lower($2 COLLATE "C") AND NOT r.is_gist
         "#,
     )
     .bind(owner_name)
@@ -872,7 +872,7 @@ fn name_conflict_error(error: sqlx::Error) -> anyhow::Error {
     if error.as_database_error().is_some_and(|e| {
         e.code().as_deref() == Some("23505")
             && e.table() == Some("repositories")
-            && matches!(e.constraint(), Some("repo_unique_user" | "repo_unique_org"))
+            && matches!(e.constraint(), Some("repo_unique_user" | "repo_unique_org" | "repo_unique_user_folded" | "repo_unique_org_folded"))
     }) {
         anyhow::Error::new(Refusal::NameConflict)
     } else {

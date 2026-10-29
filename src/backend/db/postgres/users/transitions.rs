@@ -40,9 +40,9 @@ pub(crate) async fn organization_name_exists(
     tx: &mut Transaction<'_, Postgres>,
     username: &str,
 ) -> Result<bool> {
-    // Exact namespace policy: no case folding.
+    // Preserve canonical spelling while reserving ASCII case variants together.
     Ok(
-        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organizations WHERE name=$1)")
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organizations WHERE lower(name COLLATE \"C\")=lower($1 COLLATE \"C\"))")
             .bind(username)
             .fetch_one(&mut **tx)
             .await?,
@@ -322,7 +322,7 @@ pub async fn bootstrap_admin(
         return Ok(SetupClaim::AlreadyCompleted);
     }
     if organization_name_exists(&mut tx, username).await?
-        || sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username=$1)")
+        || sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE lower(username COLLATE \"C\")=lower($1 COLLATE \"C\"))")
             .bind(username)
             .fetch_one(&mut *tx)
             .await?
@@ -528,7 +528,7 @@ pub async fn register_password(
     if organization_name_exists(&mut tx, username).await? {
         return Ok(AccountAdmission::Conflict);
     }
-    if email_owned(&mut tx, email, -1).await? || sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username=$1)")
+    if email_owned(&mut tx, email, -1).await? || sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE lower(username COLLATE \"C\")=lower($1 COLLATE \"C\"))")
         .bind(username).fetch_one(&mut *tx).await? { return Ok(AccountAdmission::Conflict); }
     if config.node_mode == "private" && administrator.is_none() {
         if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM signup_requests WHERE status='pending' AND (username_key=$1 OR ($2::text IS NOT NULL AND email_key=$2)))")
@@ -601,7 +601,7 @@ pub async fn admit_oauth_account(
         if organization_name_exists(&mut tx, &name).await? {
             continue;
         }
-        let user = sqlx::query_as::<_, User>("INSERT INTO users (username,display_name) VALUES ($1,$2) ON CONFLICT (username) DO NOTHING RETURNING *")
+        let user = sqlx::query_as::<_, User>("INSERT INTO users (username,display_name) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING *")
             .bind(&name).bind(display_name).fetch_optional(&mut *tx).await?;
         if let Some(user) = user {
             // Login requires neither offline access nor token persistence. Do not retain

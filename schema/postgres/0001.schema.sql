@@ -68,6 +68,8 @@ ALTER TABLE files ADD CONSTRAINT fk_files_user_id
 --------------------------------------------------------------------------------
 -- PART 2B: NODE CONFIGURATION & ACCESS REQUESTS
 --------------------------------------------------------------------------------
+CREATE UNIQUE INDEX users_username_folded ON users(lower(username COLLATE "C"));
+
 CREATE TABLE IF NOT EXISTS node_configuration (
     id SMALLINT PRIMARY KEY,
     node_mode VARCHAR(20) NOT NULL DEFAULT 'public', -- public | private
@@ -340,6 +342,9 @@ CREATE TABLE IF NOT EXISTS repositories (
     CONSTRAINT repo_unique_user UNIQUE (owner_user_id, name),
     CONSTRAINT repo_unique_org UNIQUE (owner_org_id, name)
 );
+CREATE UNIQUE INDEX organizations_name_folded ON organizations(lower(name COLLATE "C"));
+CREATE UNIQUE INDEX repo_unique_user_folded ON repositories(owner_user_id,lower(name COLLATE "C"));
+CREATE UNIQUE INDEX repo_unique_org_folded ON repositories(owner_org_id,lower(name COLLATE "C"));
 CREATE INDEX IF NOT EXISTS idx_repositories_name ON repositories(name);
 CREATE INDEX IF NOT EXISTS idx_repositories_storage_uuid ON repositories (right(disk_path, 40));
 CREATE INDEX IF NOT EXISTS idx_repositories_is_private ON repositories(is_private);
@@ -1755,6 +1760,9 @@ CREATE TABLE notification_thread_subscriptions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX notifications_thread ON notifications(thread_id,id DESC);
+CREATE INDEX notifications_thread_created ON notifications(thread_id,created_at DESC,id DESC);
+CREATE INDEX notifications_thread_inbox ON notifications(thread_id,id DESC) WHERE done_at IS NULL;
+CREATE INDEX notifications_thread_unread ON notifications(thread_id,id DESC) WHERE read_at IS NULL AND done_at IS NULL;
 CREATE FUNCTION notification_threads_provenance() RETURNS TRIGGER AS $$
 BEGIN
     IF NEW.user_id IS DISTINCT FROM OLD.user_id OR NEW.scope_repository_id IS DISTINCT FROM OLD.scope_repository_id OR NEW.subject_type IS DISTINCT FROM OLD.subject_type OR NEW.subject_key IS DISTINCT FROM OLD.subject_key THEN

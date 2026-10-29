@@ -12,9 +12,9 @@ pub(crate) async fn organization_name_exists(
     username: &str,
 ) -> Result<bool> {
     // Call only inside BEGIN IMMEDIATE: serialize the reciprocal predicate and
-    // insert with organization creation. Keep exact, case-sensitive names.
+    // insert with organization creation. Preserve spelling, reserve ASCII case variants.
     Ok(
-        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organizations WHERE name=?1)")
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organizations WHERE lower(name)=lower(?1))")
             .bind(username)
             .fetch_one(&mut **tx)
             .await?,
@@ -224,7 +224,7 @@ pub async fn bootstrap_admin(
         return Ok(SetupClaim::AlreadyCompleted);
     }
     if organization_name_exists(&mut tx, username).await?
-        || sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username=?1)")
+        || sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE lower(username)=lower(?1))")
             .bind(username)
             .fetch_one(&mut *tx)
             .await?
@@ -406,7 +406,7 @@ pub async fn register_password(
     if organization_name_exists(&mut tx, username).await? {
         return Ok(AccountAdmission::Conflict);
     }
-    if email_owned(&mut tx, email, -1).await? || sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username=?1)")
+    if email_owned(&mut tx, email, -1).await? || sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE lower(username)=lower(?1))")
         .bind(username).fetch_one(&mut *tx).await? {
         return Ok(AccountAdmission::Conflict);
     }
@@ -478,7 +478,7 @@ pub async fn admit_oauth_account(
         if organization_name_exists(&mut tx, &name).await? {
             continue;
         }
-        let user = sqlx::query_as::<_, User>("INSERT INTO users (username,display_name) VALUES (?1,?2) ON CONFLICT (username) DO NOTHING RETURNING *")
+        let user = sqlx::query_as::<_, User>("INSERT INTO users (username,display_name) VALUES (?1,?2) ON CONFLICT DO NOTHING RETURNING *")
             .bind(&name).bind(display_name).fetch_optional(&mut *tx).await?;
         if let Some(user) = user {
             // Login requires neither offline access nor token persistence. Do not retain
