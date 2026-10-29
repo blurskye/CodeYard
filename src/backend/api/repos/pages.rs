@@ -144,7 +144,7 @@ async fn submit(
             "save"=>{
                 let create=pages::site(&ctx.state.pool,loaded.repository.id).await?.is_none();
                 let mut value=json!({"build_type":settings.build_type,"cname":if settings.cname.is_empty(){None}else{Some(&settings.cname)},"https_enforced":settings.https_enforced,"public":settings.public});
-                if !settings.branch.is_empty() {value["source"]=json!({"branch":settings.branch,"path":settings.path});}
+                if settings.build_type == "legacy" && !settings.branch.is_empty() {value["source"]=json!({"branch":settings.branch,"path":settings.path});}
                 let update=pages::Update::parse(&value,create)?;
                 if let Some(source)=&update.source {repo_store(&loaded.repository,ctx.state.cluster.as_ref()).commit(&format!("refs/heads/{}",source.branch)).await?;}
                 pages::save(&ctx.state.pool,actor,loaded.repository.id,&update,create).await?;
@@ -181,7 +181,7 @@ async fn submit(
             render(
                 &ctx,
                 loaded,
-                Some(settings),
+                (forms::field(&form, "op") == "save").then_some(settings),
                 Some(chrome::safe_error(status).into()),
                 status,
             )

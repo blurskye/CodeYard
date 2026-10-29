@@ -760,8 +760,8 @@ fn form_fields(form: &[FormElement], answers: &[Vec<String>]) -> Vec<view::FormF
                     vec![element.value.clone()]
                 }
                 FormKind::Dropdown if given.is_empty() && !element.multiple => element
-                    .options
-                    .get(element.default)
+                    .default
+                    .and_then(|index| element.options.get(index))
                     .map(|option| vec![option.label.clone()])
                     .unwrap_or_default(),
                 _ => given,

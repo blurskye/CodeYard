@@ -523,17 +523,6 @@ pub(crate) async fn create_repository(
                 .await
         }
     };
-    if target.is_none() && lifecycle::validate_name(&user.username).is_err() {
-        return creation_error(
-            &ctx,
-            values,
-            page,
-            StatusCode::BAD_REQUEST,
-            None,
-            "This account's repository path is invalid. Contact an administrator.",
-        )
-        .await;
-    }
     let property_values = match properties::values(&ctx, user.id, target, &values).await {
         Ok(values) => values,
         Err((status, message)) => {

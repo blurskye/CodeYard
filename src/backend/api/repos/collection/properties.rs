@@ -23,7 +23,7 @@ pub(super) fn drafts(
             if values.property_values.len() < data::MAX_DEFINITIONS {
                 values
                     .property_values
-                    .insert(name.to_owned(), super::draft_value(form, key, 205000));
+                    .insert(name.to_owned(), super::draft_value(form, key, data::MAX_FORM_VALUE_BYTES));
             }
         }
         if let Some(name) = key
@@ -41,7 +41,7 @@ pub(super) fn drafts(
     for (key, value) in form {
         if let Some(name) = key.strip_prefix("property_value_") {
             count += 1;
-            if !data::valid_name(name) || value.len() > 205000 {
+            if !data::valid_name(name) || value.len() > data::MAX_FORM_VALUE_BYTES {
                 return Err((None, "Invalid repository property input."));
             }
         }
@@ -98,8 +98,9 @@ pub(super) async fn populate(
         Err(_) => return Err(StatusCode::SERVICE_UNAVAILABLE),
     };
     let owner = matches!(
-        orgs::get_organization_role(&ctx.state.pool, actor, org).await,
-        Ok(Applied(OrgRole::Owner))
+        orgs::get_organization_role(&ctx.state.pool, actor, org).await
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
+        Applied(OrgRole::Owner)
     );
     form.properties_owner_org_id = org.to_string();
     form.property_values.retain(|name, _| {
