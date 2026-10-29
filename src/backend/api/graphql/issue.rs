@@ -9,7 +9,8 @@ use crate::backend::issues::{
     comments::CreateCommentRequest,
     mutations::{CreateIssueRequest, UpdateIssueRequest},
 };
-use async_graphql::{Error, ErrorExtensions};
+use async_graphql::Error;
+use super::mutations::issue_error as operation;
 use serde_json::json;
 
 mod management;
@@ -46,20 +47,6 @@ pub(super) fn pull_object(pull: &db::models::PullRequest) -> Value {
         "body":pull.body,"state":if pull.merged {"MERGED".to_owned()} else {pull.state.to_uppercase()},
         "createdAt":pull.created_at,"closedAt":pull.closed_at,"baseRefName":pull.base_branch,
         "headRefName":pull.head_branch,"isDraft":pull.is_draft,"merged":pull.merged,"mergedAt":pull.merged_at})
-}
-
-fn operation(error: issues::OperationError) -> Error {
-    let kind = match &error {
-        issues::OperationError::Missing { .. } => "NOT_FOUND",
-        issues::OperationError::Denied { .. } | issues::OperationError::Unauthenticated { .. } => {
-            "FORBIDDEN"
-        }
-        issues::OperationError::Unavailable { .. } => "INTERNAL",
-        _ => "UNPROCESSABLE",
-    };
-    Error::new(error.to_string()).extend_with(|_, e| {
-        e.set("type", kind);
-    })
 }
 
 pub(super) async fn resolve(

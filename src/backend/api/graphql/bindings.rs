@@ -552,6 +552,10 @@ impl Object {
                 value["lexicalFallbackReason"] = Value::Null;
                 Ok(value)
             }
+            ("ReviewRequest", "pullRequest") => {
+                let id = self.0["_pull"].as_i64().ok_or_else(missing)?;
+                boxed(|| super::review_requests::pull_projection(id, request)).await
+            }
             ("User", "organizations") => {
                 boxed(|| super::repository_list::organizations(arguments, request, &self.0)).await
             }
@@ -563,7 +567,7 @@ impl Object {
                 boxed(|| node(&id, request)).await
             }
             ("Query", "rateLimit") => Ok(
-                json!({"limit":5000,"cost":1,"remaining":5000-request.rate.used,"used":request.rate.used,"nodeCount":request.nodes.load(Ordering::Relaxed),"resetAt":request.rate.reset_at}),
+                json!({"limit":db::graphql::QUERY_LIMIT,"cost":1,"remaining":db::graphql::QUERY_LIMIT.saturating_sub(request.rate.used).max(0),"used":request.rate.used,"nodeCount":request.nodes.load(Ordering::Relaxed),"resetAt":request.rate.reset_at}),
             ),
             ("Query", "resource") => boxed(|| super::projects::resource(arguments, request)).await,
             ("Mutation", _) if field.contains("ProjectV2") => {

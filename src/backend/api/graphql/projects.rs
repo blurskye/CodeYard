@@ -187,11 +187,14 @@ async fn built_in_values(item: &store::Item, request: &RequestContext, selected:
         if !applies {
             continue;
         }
-        let resolved = if data_type == "REVIEWERS" {
-            json!({"nodes":super::review_requests::nodes(content["databaseId"].as_i64().ok_or_else(missing)?, request).await?})
-        } else {
-            boxed(|| issue::resolve(ty, source, &all, request, &content)).await?
-        };
+        if data_type == "REVIEWERS" {
+            let pull = content["databaseId"].as_i64().ok_or_else(missing)?;
+            if super::review_requests::count(pull, request).await? > 0 {
+                values.push(json!({"__typename":"ProjectV2ItemFieldReviewerValue","_project":item.project_id,"_reviewPull":pull,"field":built_in_field(&project, name, data_type)}));
+            }
+            continue;
+        }
+        let resolved = boxed(|| issue::resolve(ty, source, &all, request, &content)).await?;
         let (suffix, mut entry) = match data_type {
             "MILESTONE" if resolved.is_null() => continue,
             "MILESTONE" => ("Milestone", json!({ "milestone": resolved })),
@@ -703,12 +706,12 @@ async fn resolve_at(
             }
             connection::slice(ctx, values)
         }
+        ("ProjectV2ItemFieldReviewerValue", "reviewers") => super::review_requests::reviewers(ctx, request, parent["_reviewPull"].as_i64().ok_or_else(missing)?).await,
         (
             "ProjectV2ItemFieldLabelValue"
             | "ProjectV2ItemFieldPullRequestValue"
-            | "ProjectV2ItemFieldReviewerValue"
             | "ProjectV2ItemFieldUserValue",
-            "labels" | "pullRequests" | "reviewers" | "users",
+            "labels" | "pullRequests" | "users",
         ) => connection::slice(
             ctx,
             parent["_nodes"].as_array().cloned().unwrap_or_default(),
