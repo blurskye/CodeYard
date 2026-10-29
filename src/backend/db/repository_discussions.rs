@@ -140,9 +140,13 @@ impl Filter {
         filter.query = (!words.is_empty()).then(|| words.join(" "));
         Ok(filter)
     }
-    pub(crate) fn statement(&self, postgres: bool, readable: &str) -> Result<Statement> {
+    pub(crate) fn statement(&self, postgres: bool, readable: &str, reader: &super::repositories::credentials::Reader<'_>) -> Result<Statement> {
         let mut sql = Statement::new(postgres);
-        let mut predicates = vec![readable.to_owned()];
+        let token = sql.bind(reader.token().unwrap_or(0).to_string());
+        let session = sql.bind(reader.session().unwrap_or(""));
+        let hash = sql.bind(reader.hash().unwrap_or(""));
+        let scope = super::repositories::credentials::repository_condition(postgres, "discussions", false, &format!("NULLIF({token},'0')"), &format!("NULLIF({session},'')"), &format!("NULLIF({hash},'')"));
+        let mut predicates = vec![readable.to_owned(), scope];
         if let Some(repo) = self.repo {
             let value = sql.bind(repo.to_string());
             predicates.push(format!("i.repo_id=CAST({value} AS BIGINT)"));
@@ -245,9 +249,9 @@ native_operation!(super::postgres::repository_discussions::comments, super::sqli
 native_operation!(super::postgres::repository_discussions::labels, super::sqlite::repository_discussions::labels,
     fn labels(pool: &DbPool, discussion: i64) -> Result<Vec<super::models::Label>>);
 native_operation!(super::postgres::repository_discussions::list, super::sqlite::repository_discussions::list,
-    fn list(pool: &DbPool, viewer: i64, filter: &Filter, offset: i64, limit: i64) -> Result<(i64, Vec<Discussion>)>);
+    fn list(pool: &DbPool, viewer: i64, credential: &super::users::accounts::AccountCredential<'_>, filter: &Filter, offset: i64, limit: i64) -> Result<(i64, Vec<Discussion>)>);
 native_operation!(super::postgres::repository_discussions::write, super::sqlite::repository_discussions::write,
-    fn write(pool: &DbPool, actor: i64, repo: i64, discussion: Option<i64>, change: &Write<'_>) -> Result<i64>);
+    fn write(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, discussion: Option<i64>, change: &Write<'_>) -> Result<i64>);
 
 pub(crate) fn valid_body(body: &str) -> Result<()> {
     anyhow::ensure!(

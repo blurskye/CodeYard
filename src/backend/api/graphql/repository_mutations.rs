@@ -244,6 +244,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             db::repository_discussions::write(
                 pool,
                 actor,
+                &request.auth.credential(),
                 row.id,
                 None,
                 &db::repository_discussions::Write::Enabled(enabled),

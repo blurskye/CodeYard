@@ -4,6 +4,7 @@ pub mod autolinks;
 pub mod collaborators;
 pub mod commit_comments;
 pub mod creation;
+pub mod credentials;
 pub mod dependencies;
 pub mod discovery;
 pub mod github;

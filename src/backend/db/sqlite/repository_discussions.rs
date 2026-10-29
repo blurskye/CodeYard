@@ -76,12 +76,14 @@ pub async fn labels(
 pub async fn list(
     pool: &SqlitePool,
     viewer: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     filter: &Filter,
     offset: i64,
     limit: i64,
 ) -> Result<(i64, Vec<Discussion>)> {
-    let statement = filter.statement(false, &super::repositories::access::readable_condition())?;
-    let mut connection = super::repositories::discovery::search_connection(pool).await?;
+    let reader = crate::backend::db::repositories::credentials::Reader::authenticated(viewer, credential);
+    let statement = filter.statement(false, &super::repositories::access::readable_condition(), &reader)?;
+    let mut connection = pool.begin().await?;
     let count_sql = format!("SELECT COUNT(*) {}", statement.prefix);
     let mut count = sqlx::query_scalar::<_, i64>(&count_sql).bind(viewer);
     for value in &statement.args {
@@ -104,13 +106,30 @@ pub async fn list(
         .bind(offset)
         .fetch_all(&mut *connection)
         .await?;
-    connection.finish().await?;
+    connection.commit().await?;
     Ok((total, rows))
+}
+
+async fn credential_authority(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    repo: i64,
+    scope: &str,
+) -> Result<()> {
+    use crate::backend::db::repositories::credentials::{repository_condition, Reader};
+    anyhow::ensure!(super::users::transitions::credential_live(tx, actor, credential, true).await?, Refusal::Denied);
+    let reader = Reader::authenticated(actor, credential);
+    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}))", repository_condition(false, scope, true, "$3", "$4", "$5")))
+        .bind(actor).bind(repo).bind(reader.token()).bind(reader.session()).bind(reader.hash()).fetch_one(&mut **tx).await?;
+    anyhow::ensure!(allowed, Refusal::Denied);
+    Ok(())
 }
 
 pub async fn write(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
     discussion: Option<i64>,
     change: &Write<'_>,
@@ -121,6 +140,7 @@ pub async fn write(
             super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
             Refusal::Denied
         );
+        credential_authority(&mut tx, actor, credential, repo, "administration").await?;
         sqlx::query("INSERT INTO repository_discussion_settings(repo_id,enabled) VALUES (?1,?2) ON CONFLICT(repo_id) DO UPDATE SET enabled=excluded.enabled").bind(repo).bind(value).execute(&mut *tx).await?;
         tx.commit().await?;
         return Ok(repo);
@@ -129,6 +149,7 @@ pub async fn write(
         super::discussions::lock_contribution_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
+    credential_authority(&mut tx, actor, credential, repo, "discussions").await?;
     let enabled:bool=sqlx::query_scalar("SELECT COALESCE((SELECT enabled FROM repository_discussion_settings WHERE repo_id=?1),false)").bind(repo).fetch_one(&mut *tx).await?;
     anyhow::ensure!(enabled, Refusal::Denied);
     let current: Option<Discussion> = if let Some(id) = discussion {
