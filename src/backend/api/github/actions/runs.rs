@@ -217,20 +217,7 @@ pub(super) async fn document(
             Err(error) => return Err(crate::backend::api::github::contents::store_error(error)),
         }
     }
-    let pull_requests = if exclude {
-        json!([])
-    } else if let Some(pr) = pr {
-        let snapshot = run.pull_request_event.as_ref();
-        let side = |reference: &str, sha: &str, repository: &Value| json!({"ref":reference,"sha":sha,"repo":{"id":repository["id"],"url":repository["url"],"name":repository["name"]}});
-        json!([{"id":pr.id,"number":pr.number,"url":format!("{}/pulls/{}",repository["url"].as_str().unwrap_or(""),pr.number),
-            "head":side(snapshot.and_then(|event|event["head_ref"].as_str()).unwrap_or(&pr.head_branch),run.head_sha.as_deref().unwrap_or(&pr.head_sha),&head_repository),
-            "base":side(snapshot.and_then(|event|event["base_ref"].as_str()).unwrap_or(&pr.base_branch),snapshot.and_then(|event|event["base_sha"].as_str()).unwrap_or(&pr.base_sha),&repository)}])
-    } else if run.event == "pull_request" {
-        // The association was deleted; an empty list would falsely claim there never was one.
-        Value::Null
-    } else {
-        json!([])
-    };
+    let pull_requests = payloads::action_run_pull_requests(run, pr.as_ref(), &repository, &head_repository, exclude);
     let mut result = payloads::action_run(
         run,
         owner,

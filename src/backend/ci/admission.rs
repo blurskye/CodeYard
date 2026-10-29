@@ -287,6 +287,7 @@ pub(super) async fn resolve(
     } else {
         false
     };
+    let accepted_event = event_payload.is_some() && super::events::is_repository_event(&request.event) && request.head_sha.is_some();
     let configured_cd = config.workflow_cd.clone();
     if pr_revision && request.head_sha.is_none() {
         return Err(AdmissionError::Invalid(
@@ -298,13 +299,13 @@ pub(super) async fn resolve(
     let store = repo_store(&repo, context);
     let commit = store
         .resolve_ci_commit(
-            if accepted_push || pr_revision || pr_target || rerun {
+            if accepted_push || accepted_event || pr_revision || pr_target || rerun {
                 &reference
             } else {
                 &request.branch
             },
             request.head_sha.as_deref(),
-            !accepted_push && !pr_revision && !rerun,
+            !accepted_push && !accepted_event && !pr_revision && !rerun,
         )
         .await?;
     // Inputs belong to one workflow, so a run of several cannot take any.
