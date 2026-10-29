@@ -55,26 +55,14 @@ pub(crate) fn valid_work_folder(folder: &str) -> bool {
 }
 pub fn save_work_folder(state: &std::path::Path, folder: &str) -> Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
     anyhow::ensure!(valid_work_folder(folder), "invalid runner work folder");
     // A new file renamed over the old one, so a crash leaves the old settings or the new ones.
-    let temporary = state.join("runner-settings.json.tmp");
-    match std::fs::remove_file(&temporary) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&temporary)?;
+    let mut file = tempfile::NamedTempFile::new_in(state)?;
     file.write_all(&serde_json::to_vec(&SavedRunner {
         work_folder: folder.to_owned(),
     })?)?;
-    file.sync_all()?;
-    std::fs::rename(&temporary, state.join("runner-settings.json"))?;
+    file.as_file().sync_all()?;
+    file.persist(state.join("runner-settings.json")).map_err(|error| error.error)?;
     std::fs::File::open(state)?.sync_all()?;
     Ok(())
 }

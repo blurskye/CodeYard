@@ -43,6 +43,8 @@ const VISIBLE_RUN_ERRORS: &[&str] = &[
     ACCESS_LOST_MESSAGE,
     "A workflow job failed",
     "CI container recovery is unavailable",
+    "The CI worker lost contact with the server",
+    "CI container cleanup failed; the worker slot is waiting for recovery",
     "CI could not load the repository or secrets",
     "CI could not run",
     "Cancelled",
@@ -66,7 +68,7 @@ pub fn visible_run_error(error: Option<&str>) -> Option<String> {
 
 /// The title and body of the notification a run's starter gets when the run fails.
 pub fn failure_notification(run: &CiRun, message: Option<&str>) -> (String, Option<String>) {
-    let branch = if run.event == "pull_request" {
+    let branch = if matches!(run.event.as_str(), "pull_request" | "pull_request_target") {
         run.branch.as_str()
     } else {
         branch_name(&run.branch)
