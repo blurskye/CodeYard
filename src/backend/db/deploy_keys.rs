@@ -36,6 +36,10 @@ native_operation!(crate::backend::db::postgres::deploy_keys::list_deploy_keys,
     crate::backend::db::sqlite::deploy_keys::list_deploy_keys,
     fn list_deploy_keys(pool: &DbPool, repo_id: i64) -> Result<Vec<DeployKey>>);
 
+native_operation!(crate::backend::db::postgres::deploy_keys::list_deploy_keys_as,
+    crate::backend::db::sqlite::deploy_keys::list_deploy_keys_as,
+    fn list_deploy_keys_as(pool: &DbPool, actor: i64, repo_id: i64, credential: impl Into<Credential>) -> Result<Vec<DeployKey>>);
+
 native_operation!(crate::backend::db::postgres::deploy_keys::get_deploy_key,
     crate::backend::db::sqlite::deploy_keys::get_deploy_key,
     fn get_deploy_key(pool: &DbPool, key_id: i64) -> Result<Option<DeployKey>>);

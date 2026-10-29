@@ -12,6 +12,34 @@ pub async fn list_deploy_keys(pool: &SqlitePool, repo_id: i64) -> Result<Vec<Dep
     Ok(sqlx::query_as(&sql).bind(repo_id).fetch_all(pool).await?)
 }
 
+pub async fn list_deploy_keys_as(
+    pool: &SqlitePool, actor: i64, repo: i64, credential: impl Into<crate::backend::db::deploy_keys::Credential>,
+) -> Result<Vec<DeployKey>> {
+    let (session, token) = match credential.into() {
+        crate::backend::db::deploy_keys::Credential::Session(session) => (Some(session), None),
+        crate::backend::db::deploy_keys::Credential::Token(token) => (None, Some(token)),
+    };
+    let mut tx = pool.begin().await?;
+    let level = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let allowed: bool = sqlx::query_scalar(&format!(r#"
+        SELECT EXISTS(
+            SELECT 1 FROM repositories r JOIN users u ON u.id=?1
+            WHERE r.id=?2 AND NOT r.is_gist AND NOT u.is_banned AND NOT u.must_change_password
+              AND ((r.owner_kind='user' AND u.is_admin) OR ({level})>=5)
+              AND (
+                EXISTS(SELECT 1 FROM sessions s WHERE s.id=?3 AND s.user_id=u.id AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+                OR EXISTS(SELECT 1 FROM personal_access_tokens t WHERE t.id=?4 AND t.user_id=u.id
+                    AND t.scope IN ('read','write') AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))
+              )
+        )"#))
+        .bind(actor).bind(repo).bind(session).bind(token).fetch_one(&mut *tx).await?;
+    anyhow::ensure!(allowed, crate::backend::repositories::deploy_keys::DeployKeyError::Denied);
+    let keys = sqlx::query_as(&format!("SELECT {COLUMNS} FROM deploy_keys WHERE repo_id=?1 ORDER BY created_at,id"))
+        .bind(repo).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(keys)
+}
+
 pub async fn get_deploy_key(pool: &SqlitePool, key_id: i64) -> Result<Option<DeployKey>> {
     let sql = format!("SELECT {COLUMNS} FROM deploy_keys WHERE id = ?1");
     Ok(sqlx::query_as(&sql)

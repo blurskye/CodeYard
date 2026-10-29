@@ -55,11 +55,11 @@ pub async fn list_keys(
     pool: &db::DbPool,
     actor: &User,
     repo: &Repository,
+    credential: impl Into<db::deploy_keys::Credential>,
 ) -> Result<Vec<DeployKey>, DeployKeyError> {
-    require_admin(pool, actor, repo).await?;
-    db::deploy_keys::list_deploy_keys(pool, repo.id)
+    db::deploy_keys::list_deploy_keys_as(pool, actor.id, repo.id, credential)
         .await
-        .map_err(DeployKeyError::Unavailable)
+        .map_err(refusal)
 }
 
 /// Adds a key. The public key is validated by the same parser as account keys, and its
@@ -117,6 +117,7 @@ pub struct Place<'a> {
     /// The repository form endpoint, `/owner/repo/_forms`.
     pub action: &'a str,
     pub csrf_token: &'a str,
+    pub credential: db::deploy_keys::Credential,
 }
 
 /// The section for the settings page. `notice` is the query's `notice` value, which names a
@@ -128,7 +129,7 @@ pub async fn settings_panel(
     place: Place<'_>,
     notice: Option<&str>,
 ) -> Result<DeployKeyPanel, DeployKeyError> {
-    let keys = list_keys(pool, actor, repo).await?;
+    let keys = list_keys(pool, actor, repo, place.credential).await?;
     Ok(DeployKeyPanel {
         base: place.base.to_owned(),
         action_base: place.action.to_owned(),
