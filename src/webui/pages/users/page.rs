@@ -63,7 +63,11 @@ pub fn profile_page(
                         if !profile.public_email.is_empty() { p { class: "identity-profile-bio", "{profile.public_email}" } }
                         if !profile.twitter_username.is_empty() { p { class: "identity-profile-bio", "Twitter: @{profile.twitter_username}" } }
                         for (provider, url) in &profile.social_accounts {
-                            p { class: "identity-profile-bio", a { href: url.clone(), rel: "nofollow me", "{provider}: {url}" } }
+                            p { class: "identity-profile-bio",
+                                if crate::website::parse(url).is_some() {
+                                    a { href: url.clone(), rel: "nofollow me", "{provider}: {url}" }
+                                } else { "{provider}: {url}" }
+                            }
                         }
                         div { class: "identity-profile-follow",
                             if own {
@@ -597,18 +601,5 @@ pub struct ProfileStars {
 /// Whitelist public website link schemes. Unsafe stored values remain editable text.
 pub(super) fn safe_website(raw: &str) -> Option<&str> {
     let value = raw.trim();
-    let has_scheme = |scheme: &str| {
-        value
-            .get(..scheme.len())
-            .is_some_and(|head| head.eq_ignore_ascii_case(scheme))
-    };
-    if !value.chars().any(|c| c.is_control() || c == '\\')
-        && (has_scheme("https://") || has_scheme("http://"))
-    {
-        let authority = value.split_once("://")?.1.split(['/', '?', '#']).next()?;
-        if !authority.is_empty() && !authority.contains('@') {
-            return Some(value);
-        }
-    }
-    None
+    crate::website::parse(value).map(|_| value)
 }

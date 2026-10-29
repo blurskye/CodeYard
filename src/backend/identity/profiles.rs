@@ -10,14 +10,8 @@ use crate::backend::db::{
 pub fn social_account(
     input: &str,
 ) -> Result<crate::backend::db::users::social_accounts::SocialAccount, ProfileError> {
-    let url = url::Url::parse(input.trim()).map_err(|_| ProfileError::Website)?;
-    if !matches!(url.scheme(), "http" | "https")
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || input.len() > 255
-        || input.contains(['\0', '\r', '\n'])
-    {
+    let url = crate::website::parse(input.trim()).ok_or(ProfileError::Website)?;
+    if input.len() > 255 || input.contains(['\0', '\r', '\n']) {
         return Err(ProfileError::Website);
     }
     let host = url.host_str().unwrap().trim_start_matches("www.");
@@ -74,7 +68,9 @@ pub fn validate(input: &ProfileUpdate<'_>) -> Result<(), ProfileError> {
         }
     }
     if let Some(website) = input.website {
-        if crate::backend::db::repositories::topics::parse_website(website).is_err() {
+        if !website.trim().is_empty()
+            && crate::website::parse(website.trim()).is_none_or(|url| url.as_str().len() > 255)
+        {
             return Err(ProfileError::Website);
         }
     }

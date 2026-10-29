@@ -125,7 +125,7 @@ impl Changes {
         }
         let blog = text(input, "blog", 1024)?;
         if let Some(Some(value)) = &blog {
-            if !valid_url(value) {
+            if crate::website::parse(value).is_none() {
                 return Err(invalid("blog", "Enter an absolute HTTP or HTTPS URL"));
             }
         }
@@ -289,16 +289,6 @@ pub fn has_signoff(message: &str, name: &str, email: &str) -> bool {
         }
     }
     signed
-}
-pub fn valid_url(value: &str) -> bool {
-    value.trim() == value
-        && !value.chars().any(char::is_control)
-        && url::Url::parse(value).is_ok_and(|url| {
-            matches!(url.scheme(), "http" | "https")
-                && url.host_str().is_some()
-                && url.username().is_empty()
-                && url.password().is_none()
-        })
 }
 #[derive(Debug)]
 pub struct Updated {
