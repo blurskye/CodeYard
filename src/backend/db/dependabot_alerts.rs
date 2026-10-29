@@ -538,7 +538,16 @@ pub(crate) fn matches(
             let range = vulnerability["vulnerable_version_range"]
                 .as_str()
                 .unwrap_or("");
-            let matched = if let Some(osv) = osv {
+            // Every entry uses the ecosystem's version ordering, with or without OSV backing.
+            // The entry must match too, or another entry's range and fixed version are reported.
+            if !vulnerabilities::in_range(
+                vulnerabilities::ecosystem(&package.ecosystem).unwrap_or(""),
+                &package.version,
+                range,
+            ) {
+                continue;
+            }
+            if let Some(osv) = osv {
                 let locked = crate::backend::repositories::dependency_graph::Package {
                     manifest: package.manifest.clone(),
                     ecosystem: package.ecosystem.clone(),
@@ -547,19 +556,9 @@ pub(crate) fn matches(
                     package_url: package.package_url.clone().unwrap_or_default(),
                     scope: package.scope.clone(),
                 };
-                osv.matches(&locked)
-                    // The advisory matched; this entry must match too, or another entry's
-                    // range and fixed version would be reported.
-                    && vulnerabilities::in_range(
-                        vulnerabilities::ecosystem(&package.ecosystem).unwrap_or(""),
-                        &package.version,
-                        range,
-                    )
-            } else {
-                affected(&package.version, range)
-            };
-            if !matched {
-                continue;
+                if !osv.matches(&locked) {
+                    continue;
+                }
             }
             let key = (
                 advisory["ghsa_id"].as_str().unwrap_or("").to_owned(),
