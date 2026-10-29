@@ -140,6 +140,7 @@ async fn change(
                 db::oidc::save_settings(
                     &ctx.state.pool,
                     actor,
+                    &credential,
                     db::oidc::Scope::Organization(org),
                     &settings,
                 )
@@ -149,6 +150,7 @@ async fn change(
                 db::oidc::change_inclusion(
                     &ctx.state.pool,
                     actor,
+                    &credential,
                     org,
                     field(&form, "custom_property_name"),
                     action == "oidc-property-delete",
