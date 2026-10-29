@@ -250,7 +250,7 @@ async fn submit(
         (owner.clone(), name, number),
         domain::CreatePullRequestReviewRequest {
             state: state_for(Some(&input.event))?,
-            body: input.body.or(draft.body),
+            body: input.body,
             commit_sha: draft.commit_sha,
             review_id: Some(id),
         },

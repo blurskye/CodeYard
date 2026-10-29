@@ -149,8 +149,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         "addPullRequestReview" | "submitPullRequestReview" => {
             let body = input["body"]
                 .as_str()
-                .map(str::to_owned)
-                .or_else(|| existing.as_ref().and_then(|r| r.body.clone()));
+                .map(str::to_owned);
             crate::backend::issues::validate_body(body.as_deref().unwrap_or(""), false)
                 .map_err(async_graphql::Error::new)?;
             let commit = input
