@@ -38,6 +38,7 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
         println!("{line}");
         problems += 1;
     };
+    let mut deleted = HashMap::new();
     for repository in db::backups::list_repositories(pool).await? {
         if repository.storage_node_id.is_some() {
             continue;
@@ -50,9 +51,14 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .context("a repository path has no name")?;
-            match mirror::deleted_copy(root, name)? {
+            let copies = match deleted.entry(root.to_owned()) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::hash_map::Entry::Vacant(entry) => entry.insert(mirror::deleted_copies(root)?),
+            };
+            match copies.get(name).cloned() {
                 Some(kept) if repair => {
                     std::fs::rename(&kept, path)?;
+                    copies.remove(name);
                     std::fs::File::open(root)?.sync_all()?;
                     println!("{label}: restored from {}", kept.display());
                 }
