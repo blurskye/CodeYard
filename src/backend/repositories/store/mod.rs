@@ -493,6 +493,14 @@ impl RepoStore {
         }
     }
 
+    /// Public branches, tags and pull refs whose full names match this prefix.
+    pub async fn matching_refs(&self, prefix: &str) -> Result<HashMap<String, String>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.matching_refs(prefix).await,
+            Backend::Remote(remote) => remote.call(Operation::MatchingRefs { prefix: prefix.to_owned() }, b"").await,
+        }
+    }
+
     /// The same refs as [`RepoStore::refs`], but a remote store never falls back to a
     /// replica copy, which may lag behind. For callers that write the answer into the
     /// database.

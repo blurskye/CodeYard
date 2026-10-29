@@ -133,6 +133,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (Operation::Exists, false),
         (Operation::SizeBytes, false),
         (Operation::Refs, false),
+        (Operation::MatchingRefs { prefix: "refs/pull/".into() }, false),
         (Operation::PrimaryRefs, false),
         (
             Operation::BranchPublication {

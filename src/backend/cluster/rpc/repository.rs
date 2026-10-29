@@ -47,6 +47,7 @@ pub fn authorize_operation(
         Operation::Exists => ("Exists", false),
         Operation::SizeBytes => ("SizeBytes", false),
         Operation::Refs => ("Refs", false),
+        Operation::MatchingRefs { .. } => ("MatchingRefs", false),
         Operation::PrimaryRefs => ("PrimaryRefs", false),
         Operation::BranchPublication { .. } => ("BranchPublication", false),
         Operation::Info => ("Info", false),
@@ -573,6 +574,7 @@ impl RpcHandler {
             Operation::Exists => serde_json::json!(store.exists().await),
             Operation::SizeBytes => json!(store.size_bytes()),
             Operation::Refs | Operation::PrimaryRefs => json!(store.refs()),
+            Operation::MatchingRefs { prefix } => json!(store.matching_refs(&prefix)),
             Operation::BranchPublication {
                 repository_id,
                 reference,

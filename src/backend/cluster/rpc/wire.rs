@@ -56,6 +56,7 @@ pub enum Operation {
     Exists,
     SizeBytes,
     Refs,
+    MatchingRefs { prefix: String },
     /// The same refs as `Refs`, answered only by the primary. For a caller that writes the
     /// answer into the database.
     PrimaryRefs,
@@ -445,6 +446,7 @@ impl Operation {
             | Self::CommitsBetween { .. }
             | Self::DiffFile { .. }
             | Self::Refs
+            | Self::MatchingRefs { .. }
             | Self::Info
             | Self::CommitCount
             | Self::Tags

@@ -1287,6 +1287,11 @@ pub(crate) fn list_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
     )
 }
 
+/// REST matching refs also includes public pull refs, never retained-object or recovery refs.
+pub(crate) fn list_matching_refs(repo_path: &Path, prefix: &str) -> Result<HashMap<String, String>> {
+    collect_refs(repo_path, |name| name.starts_with(prefix) && (name.starts_with("refs/heads/") || name.starts_with("refs/tags/") || name.starts_with("refs/pull/")), MAX_MIRROR_REFS, MAX_MIRROR_REF_BYTES)
+}
+
 /// What a ref adds to the listings that pages and replicas read: its name and an object ID.
 pub(crate) fn ref_listing_bytes(name: &str) -> usize {
     name.len() + 40
@@ -1339,7 +1344,7 @@ pub(crate) fn list_mirror_refs(repo_path: &Path) -> Result<HashMap<String, Strin
 
 fn collect_refs(
     repo_path: &Path,
-    wanted: fn(&str) -> bool,
+    wanted: impl Fn(&str) -> bool,
     max_refs: usize,
     max_bytes: usize,
 ) -> Result<HashMap<String, String>> {

@@ -886,6 +886,11 @@ impl LocalStore {
         self.blocking(git::list_refs).await
     }
 
+    pub(super) async fn matching_refs(&self, prefix: &str) -> Result<HashMap<String, String>, RepoError> {
+        let prefix = prefix.to_owned();
+        self.blocking(move |path| git::list_matching_refs(path, &prefix)).await
+    }
+
     /// Every ref, for a replica to copy.
     pub(super) async fn mirror_refs(&self) -> Result<HashMap<String, String>, RepoError> {
         self.blocking(git::list_mirror_refs).await
