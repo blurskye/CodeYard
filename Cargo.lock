@@ -1425,6 +1425,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicase",
+ "unicode-normalization",
  "url",
  "uuid",
  "wasm-bindgen",

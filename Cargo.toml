@@ -95,6 +95,8 @@ lettre = { version = "0.11", default-features = false, features = ["builder", "s
 serde_yaml = "0.9"
 toml = "0.8"
 semver = "1"
+# Team slugs drop accents the way GitHub's do. Already in the graph through stringprep.
+unicode-normalization = "0.1.25"
 croner = "3"
 # Node-to-node transport (QUIC, peers authenticated by their keys). Pinned exactly: the
 # newest release that was two weeks old when added. aws-lc-rs is the TLS provider the rest

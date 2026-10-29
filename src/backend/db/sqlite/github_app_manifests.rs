@@ -1,7 +1,7 @@
 use crate::backend::db::{
     github_app_manifests::Draft,
     github_apps::App,
-    webhooks::{SealedSecret, WebhookFields},
+    webhooks::{SealedSecret, WebhookFields, WebhookPatch},
 };
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -82,7 +82,14 @@ pub async fn convert(
         .await?;
     }
     if let Some(hook) = hook {
-        super::github_app_hooks::save_in_connection(&mut tx, app.id, hook, secret, false).await?;
+        super::github_app_hooks::save_in_connection(
+            &mut tx,
+            app.id,
+            &WebhookPatch::from(hook),
+            secret,
+            false,
+        )
+        .await?;
     }
     sqlx::query("DELETE FROM github_app_manifests WHERE hash=$1")
         .bind(&draft.hash)

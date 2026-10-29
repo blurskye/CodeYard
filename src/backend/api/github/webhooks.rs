@@ -104,7 +104,7 @@ fn document(params: &Params, hook: &Webhook, last: Option<&WebhookDelivery>) -> 
     }
     value["test_url"] = json!(format!("{url}/tests"));
     value["last_response"] = json!({"code": last.and_then(|row| row.status_code),
-        "status": last.map(|row| if row.status_code.is_some_and(|code| (200..300).contains(&code)) { "active" } else { "failed" }).unwrap_or("unused"),
+        "status": last.map(|row| if row.succeeded() { "active" } else { "failed" }).unwrap_or("unused"),
         "message": last.and_then(|row| row.error.as_deref())});
     value
 }

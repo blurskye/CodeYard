@@ -1,7 +1,7 @@
 use crate::backend::db::{
     github_app_hooks::{Delivery, Subscription},
     models::Webhook,
-    webhooks::{NewDelivery, SealedSecret, WebhookFields},
+    webhooks::{NewDelivery, SealedSecret, WebhookPatch},
 };
 use anyhow::Result;
 use sqlx::PgPool;
@@ -12,22 +12,42 @@ pub async fn hook(pool: &PgPool, app: i64) -> Result<Option<Webhook>> {
 pub async fn save(
     pool: &PgPool,
     app: i64,
-    fields: &WebhookFields,
+    patch: &WebhookPatch,
     secret: Option<&SealedSecret>,
     clear: bool,
-) -> Result<()> {
+) -> Result<bool> {
     let mut connection = pool.acquire().await?;
-    save_in_connection(&mut connection, app, fields, secret, clear).await
+    save_in_connection(&mut connection, app, patch, secret, clear).await
 }
 pub(super) async fn save_in_connection(
-    pool: &mut sqlx::PgConnection,
+    connection: &mut sqlx::PgConnection,
     app: i64,
-    fields: &WebhookFields,
+    patch: &WebhookPatch,
     secret: Option<&SealedSecret>,
     clear: bool,
-) -> Result<()> {
-    sqlx::query("INSERT INTO github_app_hooks(app_id,payload_url,content_type,encrypted_secret,secret_nonce,events,active,ssl_verify) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(app_id) DO UPDATE SET payload_url=excluded.payload_url,content_type=excluded.content_type,events=excluded.events,active=excluded.active,ssl_verify=excluded.ssl_verify,encrypted_secret=CASE WHEN $9 THEN NULL ELSE COALESCE(excluded.encrypted_secret,github_app_hooks.encrypted_secret) END,secret_nonce=CASE WHEN $9 THEN NULL ELSE COALESCE(excluded.secret_nonce,github_app_hooks.secret_nonce) END,updated_at=clock_timestamp()").bind(app).bind(&fields.payload_url).bind(&fields.content_type).bind(secret.map(|s|s.ciphertext.as_slice())).bind(secret.map(|s|s.nonce.as_slice())).bind(&fields.events).bind(fields.active).bind(fields.ssl_verify).bind(clear).execute(pool).await?;
-    Ok(())
+) -> Result<bool> {
+    let ciphertext = secret.map(|secret| secret.ciphertext.as_slice());
+    let nonce = secret.map(|secret| secret.nonce.as_slice());
+    if sqlx::query("UPDATE github_app_hooks SET payload_url=COALESCE($2,payload_url),content_type=COALESCE($3,content_type),events=COALESCE($4,events),active=COALESCE($5,active),ssl_verify=COALESCE($6,ssl_verify),encrypted_secret=CASE WHEN $9 THEN NULL ELSE COALESCE($7,encrypted_secret) END,secret_nonce=CASE WHEN $9 THEN NULL ELSE COALESCE($8,secret_nonce) END,updated_at=clock_timestamp() WHERE app_id=$1")
+        .bind(app).bind(&patch.payload_url).bind(&patch.content_type).bind(&patch.events).bind(patch.active).bind(patch.ssl_verify).bind(ciphertext).bind(nonce).bind(clear)
+        .execute(&mut *connection).await?.rows_affected() > 0
+    {
+        return Ok(true);
+    }
+    let (Some(url), Some(content_type), Some(events), Some(active), Some(ssl_verify)) = (
+        &patch.payload_url,
+        &patch.content_type,
+        &patch.events,
+        patch.active,
+        patch.ssl_verify,
+    ) else {
+        return Ok(false);
+    };
+    // A first save names every field, so one that races another first save replaces it whole.
+    sqlx::query("INSERT INTO github_app_hooks(app_id,payload_url,content_type,encrypted_secret,secret_nonce,events,active,ssl_verify) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(app_id) DO UPDATE SET payload_url=excluded.payload_url,content_type=excluded.content_type,events=excluded.events,active=excluded.active,ssl_verify=excluded.ssl_verify,encrypted_secret=CASE WHEN $9 THEN NULL ELSE COALESCE(excluded.encrypted_secret,github_app_hooks.encrypted_secret) END,secret_nonce=CASE WHEN $9 THEN NULL ELSE COALESCE(excluded.secret_nonce,github_app_hooks.secret_nonce) END,updated_at=clock_timestamp()")
+        .bind(app).bind(url).bind(content_type).bind(ciphertext).bind(nonce).bind(events).bind(active).bind(ssl_verify).bind(clear)
+        .execute(connection).await?;
+    Ok(true)
 }
 pub async fn for_repository(pool: &PgPool, repo: i64) -> Result<Vec<Subscription>> {
     Ok(sqlx::query_as(&format!("SELECT {HOOK},i.id AS installation_id,a.permissions FROM github_app_hooks h JOIN github_apps a ON a.id=h.app_id JOIN users owner ON owner.id=a.owner_id JOIN users bot ON bot.id=a.bot_id JOIN github_app_installations i ON i.app_id=a.id JOIN repositories r ON r.id=$1 WHERE h.active AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND (r.owner_org_id IS NULL OR EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=r.owner_org_id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)) ORDER BY h.app_id")).bind(repo).fetch_all(pool).await?)

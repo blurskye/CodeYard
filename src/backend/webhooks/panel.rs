@@ -175,9 +175,7 @@ fn detail(place: &Place<'_>, hook: &Webhook, snapshot: &hooks::HookSettings) -> 
             id: delivery.id,
             label: label(delivery),
             status: status_text(delivery),
-            ok: delivery
-                .status_code
-                .is_some_and(|code| (200..300).contains(&code)),
+            ok: delivery.succeeded(),
             duration: format!("{} ms", delivery.duration_ms),
             delivered: delivery
                 .delivered_at

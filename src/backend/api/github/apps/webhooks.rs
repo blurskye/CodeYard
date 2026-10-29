@@ -5,7 +5,7 @@ use super::{
 };
 use crate::backend::{
     app::AppState,
-    db::{self, github_app_hooks::Delivery, models::Webhook},
+    db::{self, github_app_hooks::Delivery, models::Webhook, webhooks::WebhookPatch},
     webhooks::{
         self,
         settings::{self, HookError, HookForm},
@@ -53,9 +53,6 @@ pub(super) async fn update_config(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>> {
     let app = jwt(&state, &headers).await?;
-    let old = db::github_app_hooks::hook(&state.pool, app.id)
-        .await
-        .map_err(Error::unavailable)?;
     if !body.is_object() {
         return Err(Error::invalid("Expected a webhook configuration object"));
     }
@@ -67,51 +64,69 @@ pub(super) async fn update_config(
             })
             .transpose()
     };
+    let url = string("url")?;
     let content = match string("content_type")? {
-        Some("json") => settings::JSON_CONTENT_TYPE,
-        Some("form") => settings::FORM_CONTENT_TYPE,
+        Some("json") => Some(settings::JSON_CONTENT_TYPE),
+        Some("form") => Some(settings::FORM_CONTENT_TYPE),
         Some(_) => return Err(Error::invalid("Choose json or form")),
-        None => old
-            .as_ref()
-            .map_or(settings::FORM_CONTENT_TYPE, |h| h.content_type.as_str()),
+        None => None,
     };
     let ssl = match body.get("insecure_ssl") {
-        None => old.as_ref().is_none_or(|h| h.ssl_verify),
-        Some(Value::String(value)) if value == "0" || value == "1" => value == "0",
+        None => None,
+        Some(Value::String(value)) if value == "0" || value == "1" => Some(value == "0"),
         Some(Value::Number(value)) if value.as_i64() == Some(0) || value.as_i64() == Some(1) => {
-            value.as_i64() == Some(0)
+            Some(value.as_i64() == Some(0))
         }
         _ => return Err(Error::invalid("insecure_ssl must be 0 or 1")),
     };
     let secret = string("secret")?;
+    // The stored hook fills the fields the request leaves out only for validation. The save
+    // writes just the named fields, so a concurrent edit of another field stands.
+    let old = db::github_app_hooks::hook(&state.pool, app.id)
+        .await
+        .map_err(Error::unavailable)?;
+    let creating = old.is_none();
     let form = HookForm {
         username: None,
         password: None,
         clear_password: false,
         clear_secret: false,
-        payload_url: string("url")?
+        payload_url: url
             .or_else(|| old.as_ref().map(|h| h.payload_url.as_str()))
             .ok_or_else(|| Error::validation("Hook", "url", "missing_field"))?
             .into(),
-        content_type: content.into(),
+        content_type: content
+            .or_else(|| old.as_ref().map(|h| h.content_type.as_str()))
+            .unwrap_or(settings::FORM_CONTENT_TYPE)
+            .into(),
         events: vec!["*".into()],
-        active: old.as_ref().is_none_or(|hook| hook.active),
-        ssl_verify: ssl,
+        active: true,
+        ssl_verify: ssl.unwrap_or(true),
         secret: secret.unwrap_or("").into(),
     };
-    let mut fields = settings::validated(&form).map_err(hook_error)?;
-    fields.events = app.events;
+    let fields = settings::validated(&form).map_err(hook_error)?;
+    let patch = WebhookPatch {
+        payload_url: (creating || url.is_some()).then_some(fields.payload_url),
+        content_type: (creating || content.is_some()).then_some(fields.content_type),
+        events: Some(app.events),
+        active: creating.then_some(true),
+        ssl_verify: (creating || ssl.is_some()).then_some(fields.ssl_verify),
+        ..WebhookPatch::default()
+    };
     let sealed =
         settings::seal(state.secret_encryptor.as_deref(), &form.secret).map_err(hook_error)?;
-    db::github_app_hooks::save(
+    if !db::github_app_hooks::save(
         &state.pool,
         app.id,
-        &fields,
+        &patch,
         sealed.as_ref(),
         secret == Some(""),
     )
     .await
-    .map_err(Error::unavailable)?;
+    .map_err(Error::unavailable)?
+    {
+        return Err(Error::validation("Hook", "url", "missing_field"));
+    }
     let hook = db::github_app_hooks::hook(&state.pool, app.id)
         .await
         .map_err(Error::unavailable)?;
@@ -164,14 +179,8 @@ pub(super) async fn list_deliveries(
         .await
         .map_err(Error::unavailable)?;
     all.retain(|delivery| match query.status.as_deref() {
-        Some("success") => delivery
-            .recorded
-            .status_code
-            .is_some_and(|code| (200..400).contains(&code)),
-        Some("failure") => delivery
-            .recorded
-            .status_code
-            .is_some_and(|code| (400..600).contains(&code)),
+        Some("success") => delivery.recorded.succeeded(),
+        Some("failure") => !delivery.recorded.succeeded(),
         _ => true,
     });
     let cursor = query

@@ -106,6 +106,16 @@ impl Cursor {
     }
 }
 
+/// The cursor after a keyset batch that asked for `size` rows, or `None` when the batch was the
+/// last one.
+pub(super) fn next_after<T>(rows: &[T], size: i64, key: impl Fn(&T) -> i64) -> Option<i64> {
+    if rows.len() as i64 == size {
+        rows.last().map(key)
+    } else {
+        None
+    }
+}
+
 #[derive(Deserialize)]
 pub(super) struct Pagination {
     pub page: Option<usize>,
@@ -122,6 +132,34 @@ impl Pagination {
             .filter(|offset| *offset <= 1_000_000)
             .ok_or_else(|| Error::new(StatusCode::BAD_REQUEST, "Invalid page"))?;
         Ok((offset, limit))
+    }
+
+    /// Walks a native list that is read in keyset batches to this numbered page. `batch(after)`
+    /// returns the rows that count after the cursor `after`, and the cursor of the next batch
+    /// when another may follow. Answers the page's rows and whether more follow them.
+    pub async fn collect<T, F, Fut>(&self, mut batch: F) -> Result<(Vec<T>, bool)>
+    where
+        F: FnMut(i64) -> Fut,
+        Fut: std::future::Future<Output = Result<(Vec<T>, Option<i64>)>>,
+    {
+        let (offset, limit) = self.window()?;
+        let (mut after, mut skipped, mut items) = (0, 0, Vec::new());
+        loop {
+            let (rows, next) = batch(after).await?;
+            for row in rows {
+                if skipped < offset {
+                    skipped += 1;
+                } else if items.len() == limit {
+                    return Ok((items, true));
+                } else {
+                    items.push(row);
+                }
+            }
+            match next {
+                Some(next) if next > after => after = next,
+                _ => return Ok((items, false)),
+            }
+        }
     }
 
     pub fn response(&self, uri: &Uri, mut items: Vec<Value>, has_next: bool) -> Result<Response> {

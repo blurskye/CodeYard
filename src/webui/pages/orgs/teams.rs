@@ -311,7 +311,7 @@ fn management(page: &Page, target: &str, detail: &super::TeamDetail) -> Element 
         section { class: "org-danger", aria_labelledby: "team-delete-title",
             div { class: "org-danger-header",
                 h4 { id: "team-delete-title", "Delete team" }
-                p { "Deleting a team removes its memberships and repository access." }
+                p { "Deleting a team also deletes its child teams, and removes their memberships and repository access." }
             }
             div { class: "org-danger-action",
                 if refused {

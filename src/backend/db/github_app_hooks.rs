@@ -1,7 +1,7 @@
 //! App-owned webhook settings and delivery history; native repo/org hooks remain unchanged.
 use crate::backend::db::{
     models::{Webhook, WebhookDelivery},
-    webhooks::{NewDelivery, SealedSecret, WebhookFields},
+    webhooks::{NewDelivery, SealedSecret, WebhookPatch},
     DbPool,
 };
 use anyhow::Result;
@@ -24,7 +24,10 @@ pub struct Subscription {
 native_operation!(crate::backend::db::postgres::github_app_hooks::hook,crate::backend::db::sqlite::github_app_hooks::hook,
     fn hook(pool:&DbPool,app:i64)->Result<Option<Webhook>>);
 native_operation!(crate::backend::db::postgres::github_app_hooks::save,crate::backend::db::sqlite::github_app_hooks::save,
-    fn save(pool:&DbPool,app:i64,fields:&WebhookFields,secret:Option<&SealedSecret>,clear:bool)->Result<()>);
+    /// Saves an app's webhook. Fields the patch leaves `None` keep their stored values, so edits
+    /// of different fields never undo each other. Answers false when the app has no webhook yet
+    /// and the patch does not name every field a new one needs.
+    fn save(pool:&DbPool,app:i64,patch:&WebhookPatch,secret:Option<&SealedSecret>,clear:bool)->Result<bool>);
 native_operation!(crate::backend::db::postgres::github_app_hooks::for_repository,crate::backend::db::sqlite::github_app_hooks::for_repository,
     fn for_repository(pool:&DbPool,repo:i64)->Result<Vec<Subscription>>);
 native_operation!(crate::backend::db::postgres::github_app_hooks::insert_delivery,crate::backend::db::sqlite::github_app_hooks::insert_delivery,
