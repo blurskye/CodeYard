@@ -15,7 +15,7 @@ pub fn social_account(
         || url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
-        || input.len() > 255
+        || url.as_str().len() > 255
         || input.contains(['\0', '\r', '\n'])
     {
         return Err(ProfileError::Website);
@@ -59,6 +59,16 @@ pub enum ProfileError {
     Unavailable,
 }
 
+fn website(input: &str) -> Result<Option<String>, ProfileError> {
+    let input = input.trim();
+    let text = if matches!(url::Url::parse(input), Err(url::ParseError::RelativeUrlWithoutBase)) && !input.is_empty() {
+        format!("https://{input}")
+    } else {
+        input.to_owned()
+    };
+    crate::backend::db::repositories::topics::parse_website(&text).map_err(|_| ProfileError::Website)
+}
+
 pub fn validate(input: &ProfileUpdate<'_>) -> Result<(), ProfileError> {
     for (value, bound) in [
         (input.display_name, 100),
@@ -69,14 +79,12 @@ pub fn validate(input: &ProfileUpdate<'_>) -> Result<(), ProfileError> {
         if value.is_some_and(|value| value.contains('\0')) {
             return Err(ProfileError::Nul);
         }
-        if value.is_some_and(|value| value.len() > bound) {
+        if value.is_some_and(|value| value.chars().count() > bound) {
             return Err(ProfileError::Invalid);
         }
     }
-    if let Some(website) = input.website {
-        if crate::backend::db::repositories::topics::parse_website(website).is_err() {
-            return Err(ProfileError::Website);
-        }
+    if let Some(value) = input.website {
+        website(value)?;
     }
     Ok(())
 }
@@ -161,7 +169,12 @@ pub async fn save(
     {
         return Err(ProfileError::Invalid);
     }
-    crate::backend::db::users::profiles::save_profile(pool, actor, credential, input)
+    let normalized = input.website.map(website).transpose()?.flatten();
+    let patch = crate::backend::db::users::profiles::ProfilePatch {
+        website: input.website.map(|_| normalized.as_deref().unwrap_or("")),
+        ..*input
+    };
+    crate::backend::db::users::profiles::save_profile(pool, actor, credential, &patch)
         .await
         .map_err(|error| {
             if error.is::<accounts::AccountRestricted>() {
@@ -181,6 +194,7 @@ pub async fn update(
     input: ProfileUpdate<'_>,
 ) -> Result<User, ProfileError> {
     validate(&input)?;
+    let normalized = input.website.map(website).transpose()?.flatten();
     accounts::update_user_profile(
         pool,
         actor,
@@ -188,7 +202,7 @@ pub async fn update(
         input.display_name,
         input.bio,
         input.location,
-        input.website,
+        input.website.map(|_| normalized.as_deref().unwrap_or("")),
     )
     .await
     .map_err(|_| ProfileError::Unavailable)?

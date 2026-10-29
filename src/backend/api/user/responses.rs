@@ -79,14 +79,14 @@ pub(crate) fn within_bounds(form: &Fields) -> bool {
                         // A sign-in name may be an email address or a long Unicode username.
                         // Identity checks the real limits.
                         "username" => 1024,
-                        "display_name" => 100,
+                        "display_name" => 400,
                         // Titles hold 100 characters, up to four bytes each.
                         "name" => 400,
                         "email" => 320,
-                        "location" => 200,
+                        "location" => 800,
                         "website" | "redirect" => 2048,
                         "public_key" => 16384,
-                        "bio" => 4000,
+                        "bio" => 16000,
                         _ => 4096,
                     }
         })
