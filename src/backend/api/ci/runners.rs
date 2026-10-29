@@ -28,7 +28,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/settings/actions/runners", get(show).post(save))
         .route("/api/actions/runners/:id/remove", post(remove))
         .route("/api/actions/runners/download", get(download))
-        .layer(DefaultBodyLimit::max(65536))
+        .layer(DefaultBodyLimit::max(512 * 1024))
 }
 async fn scope(ctx: &PageContext) -> Result<Scope, Response> {
     if ctx.query.contains_key("org") && ctx.query.contains_key("repo") {
@@ -292,7 +292,7 @@ async fn save(
         Ok(scope) => scope,
         Err(response) => return response,
     };
-    if form.len() > 12 || form.values().any(|v| v.len() > 49152) {
+    if form.len() > 12 || form.iter().any(|(key, value)| value.len() > if key == "workflows" { 110_000 } else { 49152 }) {
         return ctx.error(StatusCode::BAD_REQUEST, "Runner form is too large.");
     }
     let result = mutate(&ctx, actor, scope, &form).await;
@@ -507,17 +507,22 @@ async fn download() -> Response {
         Err(error) => Err(error),
     };
     match file {
-        Ok(file) => (
-            [
+        Ok(file) => {
+            use futures_util::StreamExt;
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+            let stream = futures_util::stream::unfold(Some(tokio_util::io::ReaderStream::new(file)), move |reader| async move {
+                let mut reader = reader?;
+                match tokio::time::timeout_at(deadline, reader.next()).await {
+                    Ok(Some(bytes)) => Some((bytes, Some(reader))),
+                    Ok(None) => None,
+                    Err(_) => Some((Err(std::io::ErrorKind::TimedOut.into()), None)),
+                }
+            });
+            ([
                 ("content-type", "application/octet-stream"),
-                (
-                    "content-disposition",
-                    "attachment; filename=codeyard-runner",
-                ),
-            ],
-            Body::from_stream(tokio_util::io::ReaderStream::new(file)),
-        )
-            .into_response(),
+                ("content-disposition", "attachment; filename=codeyard-runner"),
+            ], Body::from_stream(stream)).into_response()
+        }
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }

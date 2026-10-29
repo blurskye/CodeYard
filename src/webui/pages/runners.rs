@@ -102,7 +102,7 @@ fn group_fields(page: &Page, group: Option<&Group>) -> Element {
         label {class:"repo-field",span {"Selected repository IDs"} DraftInput {name:"repositories",initial_value:repos} small {"Comma-separated IDs, for selected access only. Repositories must belong to this organization."}}
         label {class:"repo-check-label",input {r#type:"checkbox",name:"public",value:"yes",checked:flag(page,action,id,"public",group.is_some_and(|g|g.public))} "Allow public repositories"}
         label {class:"repo-check-label",input {r#type:"checkbox",name:"restricted",value:"yes",checked:flag(page,action,id,"restricted",group.is_some_and(|g|g.restricted))} "Restrict to selected workflows"}
-        label {class:"repo-field",span {"Allowed workflows"} DraftTextarea {name:"workflows",initial_value:workflows,rows:3,maxlength:Some(49152)} small {"One owner/repository/.github/workflows/file.yml@ref per line. A commit SHA can pin an exact revision."}}
+        label {class:"repo-field",span {"Allowed workflows"} DraftTextarea {name:"workflows",initial_value:workflows,rows:3,maxlength:Some(110000)} small {"One owner/repository/.github/workflows/file.yml@ref per line. A commit SHA can pin an exact revision."}}
     }
 }
 pub fn render(page: Page) -> Element {

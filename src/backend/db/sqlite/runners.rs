@@ -220,7 +220,7 @@ pub async fn save_group(
             .execute(&mut *tx)
             .await?;
     }
-    if existing.is_some() && input.changes_access() {
+    if existing.as_ref().is_some_and(|existing| input.changes_access(existing)) {
         stop_runners(&mut tx, None, Some(id)).await?;
     }
     if let Some(ids) = &input.runners {

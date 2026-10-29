@@ -81,12 +81,15 @@ pub struct GroupInput {
 impl GroupInput {
     /// Whether the edit can take access away from runs already on the group's runners. A
     /// rename alone cannot; runners joining or leaving are handled one by one.
-    pub fn changes_access(&self) -> bool {
-        self.visibility.is_some()
-            || self.allows_public_repositories.is_some()
-            || self.restricted_to_workflows.is_some()
-            || self.selected_workflows.is_some()
-            || self.selected_repository_ids.is_some()
+    pub fn changes_access(&self, existing: &Group) -> bool {
+        self.visibility.as_ref().is_some_and(|value| value != &existing.visibility)
+            || self.allows_public_repositories.is_some_and(|value| value != existing.allows_public_repositories)
+            || self.restricted_to_workflows.is_some_and(|value| value != existing.restricted_to_workflows)
+            || self.selected_workflows.as_ref().is_some_and(|values| {
+                let previous = serde_json::from_str::<Vec<String>>(&existing.selected_workflows);
+                previous.map_or(true, |previous| values.iter().collect::<std::collections::BTreeSet<_>>() != previous.iter().collect())
+            })
+            || self.selected_repository_ids.as_ref().is_some_and(|values| values.iter().collect::<std::collections::BTreeSet<_>>() != existing.repositories.iter().collect())
     }
     pub fn validate(&self) -> Result<()> {
         anyhow::ensure!(
