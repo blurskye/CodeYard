@@ -1,7 +1,7 @@
 use crate::backend::db::{
     fine_grained_tokens::{Bounds, NewToken, Policy, Token},
     models::OrgRole,
-    organizations::OrganizationOutcome,
+    organizations::{OrganizationOutcome, OwnerActor},
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -155,9 +155,11 @@ async fn active_owner(connection: &mut PgConnection, actor: i64, org: i64) -> Re
     ))
 }
 
-pub async fn set_policy(pool: &PgPool, actor: i64, org: i64, policy: &Policy) -> Result<bool> {
+pub async fn set_policy(pool: &PgPool, actor: impl Into<OwnerActor>, org: i64, policy: &Policy) -> Result<bool> {
+    let owner = actor.into();
+    let actor = owner.user_id;
     let mut tx = pool.begin().await?;
-    if !active_owner(&mut tx, actor, org).await? {
+    if !active_owner(&mut tx, actor, org).await? || !super::organizations::authority::owner_credential(&mut tx, &owner, org).await? {
         return Ok(false);
     }
     sqlx::query("INSERT INTO organization_token_policies(org_id,fine_grained_allowed,fine_grained_approval,classic_allowed,max_lifetime_days) VALUES($1,$2,$3,$4,$5) ON CONFLICT(org_id) DO UPDATE SET fine_grained_allowed=excluded.fine_grained_allowed,fine_grained_approval=excluded.fine_grained_approval,classic_allowed=excluded.classic_allowed,max_lifetime_days=excluded.max_lifetime_days")
@@ -174,14 +176,16 @@ pub async fn organization_tokens(pool: &PgPool, org: i64, status: &str) -> Resul
 pub async fn review(
     pool: &PgPool,
     org: i64,
-    reviewer: i64,
+    reviewer: impl Into<OwnerActor>,
     tokens: &[i64],
     from: &str,
     status: &str,
     reason: Option<&str>,
 ) -> Result<u64> {
+    let owner = reviewer.into();
+    let reviewer = owner.user_id;
     let mut tx = pool.begin().await?;
-    if !active_owner(&mut tx, reviewer, org).await? {
+    if !active_owner(&mut tx, reviewer, org).await? || !super::organizations::authority::owner_credential(&mut tx, &owner, org).await? {
         return Ok(0);
     }
     let mut changed = 0;

@@ -121,14 +121,14 @@ native_operation!(crate::backend::db::postgres::fine_grained_tokens::policy, cra
     fn policy(pool: &DbPool, org: i64) -> Result<Policy>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::set_policy, crate::backend::db::sqlite::fine_grained_tokens::set_policy,
     /// Saves the policy while `actor` owns the organization; false when they do not.
-    fn set_policy(pool: &DbPool, actor: i64, org: i64, policy: &Policy) -> Result<bool>);
+    fn set_policy(pool: &DbPool, actor: impl Into<super::organizations::OwnerActor>, org: i64, policy: &Policy) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::organization_tokens, crate::backend::db::sqlite::fine_grained_tokens::organization_tokens,
     /// The organization's newest 1000 tokens with `status` whose users are still members.
     fn organization_tokens(pool: &DbPool, org: i64, status: &str) -> Result<Vec<Token>>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::review, crate::backend::db::sqlite::fine_grained_tokens::review,
     /// Moves the organization's tokens in `from` to `status` while `reviewer` owns the
     /// organization, and returns how many changed.
-    fn review(pool: &DbPool, org: i64, reviewer: i64, tokens: &[i64], from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
+    fn review(pool: &DbPool, org: i64, reviewer: impl Into<super::organizations::OwnerActor>, tokens: &[i64], from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::classic_refused, crate::backend::db::sqlite::fine_grained_tokens::classic_refused,
     /// Whether `token` is a classic personal token and `org` refuses classic tokens. OAuth,
     /// App, job and fine-grained tokens are never classic.

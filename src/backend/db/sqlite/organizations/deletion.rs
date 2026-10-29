@@ -7,12 +7,14 @@ use super::authority::*;
 
 pub async fn delete_organization(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<OwnerActor>,
     org: i64,
 ) -> Result<OrganizationOutcome<()>> {
+    let owner = actor.into();
+    let actor = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
-    if role != OrgRole::Owner {
+    if role != OrgRole::Owner || !owner_credential(&mut tx, &owner, org).await? {
         return Ok(Denied);
     }
     if repository_count(&mut tx, org).await? > 0 {
@@ -73,12 +75,14 @@ pub async fn list_organization_deletion_repositories(
 /// An owner may delete even archived repositories, but only while they belong to this organization.
 pub async fn delete_organization_repository(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<OwnerActor>,
     org: i64,
     repo: i64,
 ) -> Result<OrganizationOutcome<crate::backend::db::models::Repository>> {
+    let owner = actor.into();
+    let actor = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner {
+    if require_org!(tx, actor, org) != OrgRole::Owner || !owner_credential(&mut tx, &owner, org).await? {
         return Ok(Denied);
     }
     let files: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT DISTINCT a.file_id FROM release_assets a JOIN releases r ON r.id=a.release_id WHERE r.repo_id=?1 ORDER BY a.file_id")

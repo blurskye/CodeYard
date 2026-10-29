@@ -63,11 +63,12 @@ pub(crate) async fn shutdown(deadline: tokio::time::Instant) {
 /// repositories and organization available for a retry; concurrent creation refuses the final delete.
 pub async fn delete(
     state: &AppState,
-    actor: i64,
+    actor: impl Into<organizations::OwnerActor>,
     org: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
+    let actor = actor.into();
     let repositories =
-        match organizations::list_organization_deletion_repositories(&state.pool, actor, org)
+        match organizations::list_organization_deletion_repositories(&state.pool, actor.user_id, org)
             .await?
         {
             Applied(repositories) => repositories,
@@ -76,7 +77,7 @@ pub async fn delete(
     for repository in repositories {
         let deleted = match organizations::delete_organization_repository(
             &state.pool,
-            actor,
+            actor.clone(),
             org,
             repository,
         )

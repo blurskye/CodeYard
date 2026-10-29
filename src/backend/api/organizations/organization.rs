@@ -1034,7 +1034,7 @@ async fn delete_with_repositories(
     actor: i64,
     org: i64,
 ) -> Result<OrganizationOutcome<()>, Response> {
-    crate::backend::organizations::delete(&ctx.state, actor, org)
+    crate::backend::organizations::delete(&ctx.state, (actor, crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), org)
         .await
         .map_err(|error| {
             if let Some(error) = error.downcast_ref::<lifecycle::StorageError>() {
