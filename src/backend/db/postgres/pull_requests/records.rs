@@ -99,16 +99,25 @@ pub async fn move_open_pull_request_head(
     pull_request_id: i64,
     old_head: &str,
     new_head: &str,
+    pusher: Option<i64>,
 ) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    super::super::users::transitions::lock_membership_shared(&mut tx).await?;
     let changed = sqlx::query(
         "UPDATE pull_requests SET head_sha = $2, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE id = $1 AND state = 'open' AND head_sha = $3",
     )
     .bind(pull_request_id)
     .bind(new_head)
     .bind(old_head)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
+    if changed == 1 && old_head != new_head {
+        let access = super::super::repositories::access::USER_REPO_ACCESS_SQL;
+        sqlx::query(&format!("DELETE FROM pull_request_auto_merges WHERE pull_request_id=$1 AND NOT EXISTS(SELECT 1 FROM pull_requests p JOIN repositories r ON r.id=p.repo_id JOIN users u ON u.id=$2 WHERE p.id=$1 AND ({access})>=3)"))
+            .bind(pull_request_id).bind(pusher).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
     Ok(changed == 1)
 }
 
