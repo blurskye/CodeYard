@@ -61,7 +61,7 @@ pub fn encode_path(path: &str) -> String {
 /// Whether a file's path names Markdown. The blob view shows such a file as a document, and the
 /// file editor previews it that way too, so both use this rule.
 pub fn is_markdown_path(path: &str) -> bool {
-    let path = path.to_lowercase();
+    let path = crate::git_paths::display(path).to_lowercase();
     [".md", ".markdown", ".mdx"]
         .iter()
         .any(|extension| path.ends_with(*extension))
