@@ -32,7 +32,7 @@ impl LocalStore {
             .filter(|repo| repo.is_gist)
             .ok_or_else(|| RepoError::new(ErrorKind::NotFound, "Gist not found"))?;
         if !super::repository_matches_path(&repo, self.path(), self.node_id) {
-            let replica = if let Some(node) = self.node_id.filter(|_| read) {
+            let replica = if let Some(node) = self.node_id.flatten().filter(|_| read) {
                 self.path().file_name() == std::path::Path::new(&repo.disk_path).file_name()
                     && self.path().parent().and_then(std::path::Path::file_name).is_some_and(|name| name == "mirrors")
                     && db::cluster::replica_applied_version(pool, id, node).await.map_err(failure)?.is_some_and(|version| version >= 0)
