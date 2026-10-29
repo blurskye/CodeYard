@@ -28,12 +28,12 @@ async fn change(
     pinned: bool,
 ) -> Result<(db::models::Repository, comments::Comment)> {
     let (repo, auth) = repository(state, headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let actor = auth.ok_or_else(auth::required)?;
     let id = p["comment_id"].parse().map_err(|_| Error::missing())?;
     let comment = comments::find(&state.pool, repo.id, id).await?;
     db::pins::set_pin(
         &state.pool,
-        actor.id,
+        (actor.user.id, actor.token.id),
         repo.id,
         comment.item,
         comment.id,
