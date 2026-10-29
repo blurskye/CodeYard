@@ -16,10 +16,11 @@ static CONVERSION_SLOTS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Se
 /// The worker rechecks all authority rather than turning the preflight read into a write permit.
 pub async fn enqueue_outside_conversion(
     pool: &DbPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     target: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
+    let actor = actor.into();
     match organizations::prepare_outside_conversion(pool, actor, org, target).await? {
         Applied(()) => {}
         other => return Ok(other),
@@ -38,7 +39,7 @@ pub async fn enqueue_outside_conversion(
         match organizations::convert_to_outside_collaborator(&pool, actor, org, target).await {
             Ok(Applied(())) => {}
             outcome => tracing::warn!(
-                actor,
+                actor = actor.user_id,
                 org,
                 target,
                 ?outcome,

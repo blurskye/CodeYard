@@ -32,7 +32,7 @@ native_operation!(crate::backend::db::postgres::organizations::membership::remov
 native_operation!(crate::backend::db::postgres::organizations::membership::convert_to_outside_collaborator, crate::backend::db::sqlite::organizations::membership::convert_to_outside_collaborator,
     fn convert_to_outside_collaborator(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
 native_operation!(crate::backend::db::postgres::organizations::membership::prepare_outside_conversion, crate::backend::db::sqlite::organizations::membership::prepare_outside_conversion,
-    fn prepare_outside_conversion(pool: &DbPool, actor: i64, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
+    fn prepare_outside_conversion(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
 
 pub fn parse_organization_role(
     value: &str,

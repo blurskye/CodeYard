@@ -196,7 +196,7 @@ pub async fn convert_to_outside_collaborator(
 
 pub async fn prepare_outside_conversion(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {

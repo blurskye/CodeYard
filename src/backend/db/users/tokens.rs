@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 
 /// A trusted account operation, or an operation initiated with a token whose grant must
 /// still be live when the native transaction commits.
+#[derive(Clone, Copy)]
 pub struct Actor {
     pub user_id: i64,
     pub token_id: Option<i64>,
