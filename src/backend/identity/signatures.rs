@@ -6,7 +6,8 @@ use anyhow::Result;
 use base64::Engine;
 use pgp::{
     composed::{Deserializable, DetachedSignature},
-    packet::{Packet, PacketParser},
+    crypto::hash::HashAlgorithm,
+    packet::{Packet, PacketParser, SignatureType},
 };
 use serde_json::{json, Value};
 
@@ -117,6 +118,12 @@ async fn gpg(pool: &DbPool, armored: &str, payload: &[u8], email: &str) -> Resul
     let Ok((signature, _)) = DetachedSignature::from_string(armored) else {
         return Ok("malformed_signature");
     };
+    if !matches!(signature.signature.typ(), Some(SignatureType::Binary | SignatureType::Text)) {
+        return Ok("unknown_signature_type");
+    }
+    if !matches!(signature.signature.hash_alg(), Some(HashAlgorithm::Sha224 | HashAlgorithm::Sha256 | HashAlgorithm::Sha384 | HashAlgorithm::Sha512 | HashAlgorithm::Sha3_256 | HashAlgorithm::Sha3_512)) {
+        return Ok("invalid");
+    }
     let issuer = match signature.signature.issuer_fingerprint().first() {
         Some(fingerprint) => format!("{fingerprint:X}"),
         None => match signature.signature.issuer_key_id().first() {
@@ -176,6 +183,10 @@ async fn ssh(pool: &DbPool, armored: &str, payload: &[u8], email: &str) -> Resul
     let Ok(signature) = ssh_key::SshSig::from_pem(armored) else {
         return Ok("malformed_signature");
     };
+    // ssh-key verifies SK signature mathematics but does not enforce user presence.
+    if matches!(signature.public_key(), ssh_key::public::KeyData::SkEd25519(_) | ssh_key::public::KeyData::SkEcdsaSha2NistP256(_)) {
+        return Ok("unknown_signature_type");
+    }
     let fingerprint = signature
         .public_key()
         .fingerprint(ssh_key::HashAlg::Sha256)

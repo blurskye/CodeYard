@@ -528,13 +528,19 @@ impl Grant {
         let reach = self.reaches(pool, &repo).await?;
         if repo.is_gist {
             // A gist is an account resource: its owner's gists permission covers it.
-            if reach && allows(&self.permissions, "gists", true) {
+            if self.account(repo.owner_user_id.unwrap_or_default(), "gists", true) {
                 return Ok(Some(
                     serde_json::json!({"metadata":"read","contents":"write"}),
                 ));
             }
         } else if reach {
-            return Ok(Some(Value::Object(self.group(Group::Repository))));
+            let mut permissions = if repo.is_private {
+                Map::new()
+            } else {
+                public_read().as_object().cloned().unwrap_or_default()
+            };
+            permissions.extend(self.group(Group::Repository));
+            return Ok(Some(Value::Object(permissions)));
         }
         Ok((!repo.is_private).then(public_read))
     }
@@ -613,7 +619,7 @@ pub fn need(path: &str, write: bool) -> Need {
         ["user", "keys", ..] => Need::Account("git_ssh_keys"),
         ["user", "ssh_signing_keys", ..] => Need::Account("ssh_signing_keys"),
         ["user", "starred", ..] => Need::Account("starring"),
-        ["user", "subscriptions"] => Need::Account("watching"),
+        ["user", "subscriptions"] | ["repos", _, _, "subscription"] => Need::Account("watching"),
         ["user", "blocks", ..] => Need::Account("blocking"),
         ["user", "interaction-limits"] => Need::Account("interaction_limits"),
         ["user", "social_accounts"] => {
@@ -646,6 +652,7 @@ pub fn need(path: &str, write: bool) -> Need {
         }
         ["gists"] | ["gists", "starred"] => Need::Account("gists"),
         ["gists", "public"] if !write => Need::Public,
+        ["gists", _, "star"] => Need::Account("gists"),
         ["gists", ..] => {
             if write {
                 Need::Account("gists")
@@ -703,11 +710,7 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
         (Some("actions"), Some("variables" | "organization-variables")) => Some("variables"),
         (Some("actions"), Some("runners" | "oidc" | "policies")) => Some("administration"),
         (Some("actions"), Some("concurrency_groups")) => Some("actions"),
-        (Some("environments"), _)
-            if matches!(parts.get(5).copied(), Some("secrets" | "variables")) =>
-        {
-            Some("environments")
-        }
+        (Some("environments"), _) if !write || matches!(parts.get(5).copied(), Some("secrets" | "variables")) => Some("environments"),
         (Some("hooks"), _) => Some("repository_hooks"),
         (Some("pulls"), _)
             if write
@@ -720,6 +723,7 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
         }
         (Some("dependabot"), Some("alerts")) => Some("vulnerability_alerts"),
         (Some("dependabot"), Some("secrets")) => Some("dependabot_secrets"),
+        (Some("secret-scanning"), Some("custom-patterns")) => Some("administration"),
         (Some("secret-scanning"), _) => Some("secret_scanning_alerts"),
         (Some("code-scanning"), _) => Some("security_events"),
         (Some("attestations"), _) => Some("attestations"),
@@ -755,6 +759,7 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
             _,
         ) => read("metadata"),
         (Some("issue-types"), _) => read("issues"),
+        (Some("stacks"), _) => Some("pull_requests"),
         (Some("comments"), _) => Some("contents"),
         _ => super::github_apps::repository_permission(path, write),
     }

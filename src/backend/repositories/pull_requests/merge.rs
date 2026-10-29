@@ -162,24 +162,29 @@ async fn eligible_reviews(
 }
 
 /// For `require_last_push_approval`: someone other than whoever pushed the head approved that
-/// head. A push the server holds no record of counts as the author's, whose reviews never count.
+/// head. Missing or mismatched publication provenance cannot authorize a merge.
 async fn last_push_approved(
     pool: &db::DbPool,
+    ci: &CiRuns,
     pull: &db::models::PullRequest,
     decisions: &[db::pull_requests::reviews::PullRequestReviewDecision],
 ) -> anyhow::Result<bool> {
-    let pusher = db::events::push_actor(
-        pool,
-        pull.head_repo_id.unwrap_or(pull.repo_id),
-        &format!("refs/heads/{}", pull.head_branch),
-        &pull.head_sha,
-    )
-    .await?
-    .unwrap_or(pull.author_id);
+    let Some(repository) = db::repositories::records::get_repository_by_id(pool, pull.head_repo_id.unwrap_or(pull.repo_id)).await? else {
+        return Ok(false);
+    };
+    let Some(record) = repo_store(&repository, ci.cluster.as_ref())
+        .branch_publication(repository.id, &format!("refs/heads/{}", pull.head_branch))
+        .await? else {
+        return Ok(false);
+    };
+    if record.publication.new != pull.head_sha {
+        return Ok(false);
+    }
+    let pusher = record.publication.actor.user_id();
     Ok(decisions.iter().any(|decision| {
         decision.state == "approved"
             && decision.commit_sha.as_deref() == Some(pull.head_sha.as_str())
-            && decision.author_id != pusher
+            && Some(decision.author_id) != pusher
     }))
 }
 
@@ -197,10 +202,11 @@ pub async fn review_decision(
     repository: &db::models::Repository,
     pull: &db::models::PullRequest,
 ) -> anyhow::Result<Option<ReviewDecision>> {
+    let target = super::stacks::merge_target(pool, pull).await?;
     let rules = crate::backend::repositories::protection::matching_rules(
         pool,
         repository,
-        &pull.base_branch,
+        &target.0,
     )
     .await?;
     let decisions = eligible_reviews(pool, pull, repository).await?;
@@ -215,7 +221,7 @@ pub async fn review_decision(
             return Ok(Some(ReviewDecision::Required));
         }
         if rule.github_settings.require_last_push_approval
-            && !last_push_approved(pool, pull, &decisions).await?
+            && !last_push_approved(pool, ci, pull, &decisions).await?
         {
             return Ok(Some(ReviewDecision::Required));
         }
@@ -233,7 +239,7 @@ pub async fn review_decision(
                 pool,
                 ci,
                 repository,
-                &pull.base_sha,
+                &target.1,
                 pull,
                 &approvers,
             )
@@ -296,15 +302,15 @@ fn required_status_check_failures(
             run.commit_status_context(),
             run.alias_commit_status_context(),
         ] {
-            ci_by_context.entry(context).or_default().push(run);
+            ci_by_context.entry(context.to_ascii_lowercase()).or_default().push(run);
         }
     }
     let mut failures = Vec::new();
     for required in required_checks {
         // A stored success can hide another producer's failure, so a server-owned requirement
         // is checked against the actual runs, under their full names and their aliases.
-        if db::repositories::protection::server_owned_status_context(required) {
-            match ci_by_context.get(required) {
+        if !bound_apps.contains_key(required.as_str()) && db::repositories::protection::server_owned_status_context(required) {
+            match ci_by_context.get(&required.to_ascii_lowercase()) {
                 Some(runs) => {
                     if runs.iter().any(|run| run.status != "success") {
                         let state = if runs.iter().any(|run| {
@@ -396,7 +402,7 @@ async fn merge_blockers(
             &pull_request.head_sha,
             rule.dismiss_stale_reviews,
         );
-        if has_changes_requested && !changes_requested_reported {
+        if db::repositories::protection::has_review_requirements(rule) && has_changes_requested && !changes_requested_reported {
             changes_requested_reported = true;
             blockers.push(OperationError::Conflict {
                 code: "branch_protection",
@@ -422,7 +428,7 @@ async fn merge_blockers(
         }
 
         if rule.github_settings.require_last_push_approval
-            && !last_push_approved(pool, pull_request, decisions)
+            && !last_push_approved(pool, ci, pull_request, decisions)
                 .await
                 .map_err(database_error)?
         {
@@ -485,19 +491,11 @@ async fn merge_blockers(
             let mut required_status_checks = Vec::new();
             let mut seen = HashSet::new();
             for check in &rule.required_status_checks {
-                let trimmed = check.trim();
-                if !trimmed.is_empty() && seen.insert(trimmed.to_string()) {
-                    required_status_checks.push(trimmed.to_string());
+                if seen.insert(check.clone()) {
+                    required_status_checks.push(check.clone());
                 }
             }
-            if required_status_checks.is_empty() {
-                blockers.push(OperationError::Conflict {
-                    code: "branch_protection",
-                    message:
-                        "Status checks are required but no contexts are configured; merge denied."
-                            .to_owned(),
-                });
-            } else {
+            if !required_status_checks.is_empty() {
                 let statuses = db::repositories::protection::list_commit_statuses(
                     pool,
                     repository.id,
@@ -545,7 +543,7 @@ async fn merge_blockers(
                         Some(app) => *app,
                         None => None,
                     };
-                    if db::repositories::protection::server_owned_status_context(required) {
+                    if !bound_apps.contains_key(required.as_str()) && db::repositories::protection::server_owned_status_context(required) {
                         continue;
                     }
                     check_runs.extend(
