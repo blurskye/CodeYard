@@ -66,7 +66,7 @@ pub fn validate_body(body: &str) -> std::result::Result<(), Refusal> {
 native_operation!(crate::backend::db::postgres::repositories::security::enabled,crate::backend::db::sqlite::repositories::security::enabled,
     fn enabled(pool:&DbPool,repo_id:i64)->Result<bool>);
 native_operation!(crate::backend::db::postgres::repositories::security::set_enabled,crate::backend::db::sqlite::repositories::security::set_enabled,
-    fn set_enabled(pool:&DbPool,actor:i64,repo_id:i64,enabled:bool)->Result<()>);
+    fn set_enabled(pool:&DbPool,actor:impl Into<super::super::users::accounts::AccountActor>,repo_id:i64,enabled:bool)->Result<()>);
 native_operation!(crate::backend::db::postgres::repositories::security::create_report,crate::backend::db::sqlite::repositories::security::create_report,
     fn create_report(pool:&DbPool,actor:i64,repo_id:i64,input:&NewReport<'_>)->Result<i64>);
 native_operation!(crate::backend::db::postgres::repositories::security::list_reports,crate::backend::db::sqlite::repositories::security::list_reports,

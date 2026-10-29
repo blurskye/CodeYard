@@ -933,17 +933,23 @@ impl RpcHandler {
                 &new_owner
             )),
             Operation::ConfigureDependencySecurity {
+                authority,
                 feature,
                 enabled,
                 private_consent,
-            } => json!(store.configure_dependency_security_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                feature,
-                enabled,
-                private_consent
-            )),
+            } => {
+                let actor = actor.ok_or_else(|| invalid("repository mutation requires an actor"))?;
+                let authority = authority.unwrap_or_else(|| actor.into());
+                if authority.user_id() != actor { return Err(invalid("dependency authority actor mismatch").into()); }
+                json!(store.configure_dependency_security_as(
+                    pool,
+                    repo_id.ok_or_else(|| invalid("repository unavailable"))?,
+                    authority,
+                    feature,
+                    enabled,
+                    private_consent
+                ))
+            },
             Operation::MutateRelease {
                 mutation,
                 attestation,

@@ -24,12 +24,22 @@ async fn authority(
 pub async fn enabled(pool: &SqlitePool, repo: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_private_reporting p JOIN repositories r ON r.id=p.repo_id WHERE r.id=?1 AND NOT r.is_private)").bind(repo).fetch_one(pool).await?)
 }
-pub async fn set_enabled(pool: &SqlitePool, actor: i64, repo: i64, enabled: bool) -> Result<()> {
+pub async fn set_enabled(pool: &SqlitePool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo: i64, enabled: bool) -> Result<()> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
+    if let Some(credential) = authority.credential() {
+        crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
+    let configured: Option<String> = sqlx::query_scalar("SELECT c.settings FROM code_security_configurations c JOIN repository_security_settings s ON s.configuration_id=c.id JOIN repositories r ON r.id=s.repo_id AND r.owner_org_id=c.org_id WHERE r.id=$1")
+        .bind(repo).fetch_optional(&mut *tx).await?;
+    if let Some(configured) = configured {
+        anyhow::ensure!(crate::backend::db::code_security::permits_toggle(&configured, "private_vulnerability_reporting", enabled)?, Refusal::Denied);
+    }
     let private: bool = sqlx::query_scalar("SELECT is_private FROM repositories WHERE id=?1")
         .bind(repo)
         .fetch_one(&mut *tx)
@@ -48,6 +58,11 @@ pub async fn set_enabled(pool: &SqlitePool, actor: i64, repo: i64, enabled: bool
             .execute(&mut *tx)
             .await?;
     }
+    let raw: Option<String> = sqlx::query_scalar("SELECT security_and_analysis FROM repository_security_settings WHERE repo_id=$1")
+        .bind(repo).fetch_optional(&mut *tx).await?;
+    let settings = crate::backend::db::code_security::with_toggle_status(raw.as_deref(), "private_vulnerability_reporting", enabled)?;
+    sqlx::query("INSERT INTO repository_security_settings(repo_id,security_and_analysis) VALUES($1,$2) ON CONFLICT(repo_id) DO UPDATE SET security_and_analysis=excluded.security_and_analysis")
+        .bind(repo).bind(settings).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }

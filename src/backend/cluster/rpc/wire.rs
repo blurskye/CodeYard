@@ -294,6 +294,8 @@ pub enum Operation {
         new_owner: String,
     },
     ConfigureDependencySecurity {
+        #[serde(default)]
+        authority: Option<crate::backend::db::users::accounts::AccountActor>,
         feature: crate::backend::db::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,

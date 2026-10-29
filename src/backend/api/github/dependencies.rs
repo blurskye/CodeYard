@@ -2,7 +2,7 @@
 use super::{auth, repository, Error, Result};
 use crate::backend::{
     app::AppState,
-    db::repositories::dependencies::Feature,
+    db::{self, repositories::dependencies::Feature},
     repositories::{
         access::AccessError,
         dependencies::{self, DependencyError, Status},
@@ -60,7 +60,7 @@ async fn change(
     dependencies::set_enabled(
         &state.pool,
         state.cluster.as_ref(),
-        actor.user.id,
+        db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id },
         repo.id,
         feature,
         enabled,

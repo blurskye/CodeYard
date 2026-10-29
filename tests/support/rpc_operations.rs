@@ -87,6 +87,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::ConfigureDependencySecurity {
+                authority: None,
                 feature: codeyard::backend::db::repositories::dependencies::Feature::Alerts,
                 enabled: true,
                 private_consent: false,
