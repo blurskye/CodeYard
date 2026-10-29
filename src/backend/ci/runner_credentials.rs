@@ -79,6 +79,11 @@ pub fn save_work_folder(state: &std::path::Path, folder: &str) -> Result<()> {
     Ok(())
 }
 pub fn work_root(state: &std::path::Path) -> Result<std::path::PathBuf> {
+    if let Some(root) = std::env::var_os("CI_WORK_ROOT") {
+        let root = std::path::PathBuf::from(root);
+        anyhow::ensure!(root.is_absolute(), "CI_WORK_ROOT must be absolute");
+        return Ok(root);
+    }
     let bytes = match std::fs::read(state.join("runner-settings.json")) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(state.to_owned()),
