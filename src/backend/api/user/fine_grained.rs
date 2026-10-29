@@ -532,7 +532,7 @@ async fn detail(ctx: &PageContext, user: &User, id: i64) -> Result<Detail, Token
         None => false,
     };
     let repositories = if token.repository_access == "selected" {
-        db::fine_grained_tokens::repositories(pool, token.token_id)
+        db::fine_grained_tokens::repositories(pool, token.token_id, Some(user.id))
             .await
             .map_err(unavailable)?
             .into_iter()

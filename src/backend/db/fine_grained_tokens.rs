@@ -113,7 +113,7 @@ native_operation!(crate::backend::db::postgres::fine_grained_tokens::bounds, cra
     fn bounds(pool: &DbPool, token: i64) -> Result<Option<Bounds>>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::repositories, crate::backend::db::sqlite::fine_grained_tokens::repositories,
     /// The selected repositories' ids and names, at most 100.
-    fn repositories(pool: &DbPool, token: i64) -> Result<Vec<(i64, String)>>);
+    fn repositories(pool: &DbPool, token: i64, viewer: Option<i64>) -> Result<Vec<(i64, String)>>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::selected, crate::backend::db::sqlite::fine_grained_tokens::selected,
     fn selected(pool: &DbPool, token: i64, repo: i64) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::policy, crate::backend::db::sqlite::fine_grained_tokens::policy,

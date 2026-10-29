@@ -319,7 +319,7 @@ async fn repositories(
     uri: &Uri,
     status: &str,
 ) -> Result<Response> {
-    let (_, org) = context(state, headers, name, false).await?;
+    let (viewer, org) = context(state, headers, name, false).await?;
     let token = db::fine_grained_tokens::get(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
@@ -330,7 +330,7 @@ async fn repositories(
     let mut more = false;
     match Access::parse(&token.repository_access) {
         Some(Access::Selected) => {
-            for (repo, _) in db::fine_grained_tokens::repositories(&state.pool, token.token_id)
+            for (repo, _) in db::fine_grained_tokens::repositories(&state.pool, token.token_id, Some(viewer.id))
                 .await
                 .map_err(Error::unavailable)?
             {

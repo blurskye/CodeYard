@@ -43,10 +43,10 @@ pub async fn create(
         .bind(user).bind(token.name).bind(hash).bind(token.scope).bind(token.expires_at.map(time::encode)).fetch_one(&mut *tx).await?;
     sqlx::query("INSERT INTO fine_grained_tokens(token_id,owner_org_id,description,repository_access,permissions,status) VALUES($1,$2,$3,$4,$5,$6)")
         .bind(id).bind(token.owner_org_id).bind(token.description).bind(token.repository_access).bind(token.permissions).bind(status).execute(&mut *tx).await?;
-    for repo in token.repositories {
-        // Only the owner's own repositories can be selected.
-        sqlx::query("INSERT OR IGNORE INTO fine_grained_token_repositories(token_id,repo_id) SELECT $1,id FROM repositories WHERE id=$2 AND NOT is_gist AND (($3 IS NULL AND owner_kind='user' AND owner_user_id=$4) OR (owner_kind='org' AND owner_org_id=$3))")
-            .bind(id).bind(repo).bind(token.owner_org_id).bind(user).execute(&mut *tx).await?;
+    for repo in token.repositories.iter().copied().collect::<std::collections::BTreeSet<_>>() {
+        let inserted = sqlx::query("INSERT OR IGNORE INTO fine_grained_token_repositories(token_id,repo_id) SELECT $1,id FROM repositories WHERE id=$2 AND NOT is_gist AND (($3 IS NULL AND owner_kind='user' AND owner_user_id=$4) OR (owner_kind='org' AND owner_org_id=$3))")
+            .bind(id).bind(repo).bind(token.owner_org_id).bind(user).execute(&mut *tx).await?.rows_affected();
+        anyhow::ensure!(inserted == 1, "Selected repository changed during token creation");
     }
     tx.commit().await?;
     Ok(Some((id, status.to_owned())))
@@ -98,11 +98,13 @@ pub async fn bounds(pool: &SqlitePool, token: i64) -> Result<Option<Bounds>> {
         .await?)
 }
 
-pub async fn repositories(pool: &SqlitePool, token: i64) -> Result<Vec<(i64, String)>> {
-    Ok(sqlx::query_as(
-        "SELECT r.id,r.name FROM fine_grained_token_repositories f JOIN repositories r ON r.id=f.repo_id WHERE f.token_id=$1 ORDER BY r.name,r.id LIMIT 100",
-    )
+pub async fn repositories(pool: &SqlitePool, token: i64, viewer: Option<i64>) -> Result<Vec<(i64, String)>> {
+    let readable = super::repositories::access::readable_condition();
+    Ok(sqlx::query_as(&format!(
+        "SELECT r.id,r.name FROM fine_grained_token_repositories f JOIN fine_grained_tokens t ON t.token_id=f.token_id JOIN personal_access_tokens p ON p.id=t.token_id JOIN repositories r ON r.id=f.repo_id LEFT JOIN users u ON u.id=$2 WHERE f.token_id=$1 AND ((t.owner_org_id IS NULL AND r.owner_kind='user' AND r.owner_user_id=p.user_id) OR (r.owner_kind='org' AND r.owner_org_id=t.owner_org_id)) AND {readable} ORDER BY r.name,r.id LIMIT 100",
+    ))
     .bind(token)
+    .bind(viewer)
     .fetch_all(pool)
     .await?)
 }
