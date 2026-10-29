@@ -156,7 +156,7 @@ pub(crate) async fn profile_response(
     } else {
         match crate::backend::identity::activity::profile_activity(
             &ctx.state.pool,
-            ctx.user.as_ref(),
+            ctx.user.as_ref().zip(ctx.session_id.as_deref()).map(|(user, session)| db::activity::ActivityViewer { user: user.id, session }),
             target.id,
             page,
         )

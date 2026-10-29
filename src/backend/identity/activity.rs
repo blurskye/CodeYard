@@ -1,5 +1,5 @@
 //! A user's public activity, filtered to the repositories the viewer may read.
-use crate::backend::db::{self, activity::ActivityRow, models::User, DbPool};
+use crate::backend::db::{self, activity::{ActivityRow, ActivityViewer}, DbPool};
 use anyhow::Result;
 
 pub const PAGE_SIZE: usize = 30;
@@ -20,7 +20,7 @@ pub struct ActivityPage {
 /// the scan stops after `MAX_SCAN_ROWS` rows.
 pub async fn profile_activity(
     pool: &DbPool,
-    viewer: Option<&User>,
+    viewer: Option<ActivityViewer<'_>>,
     user_id: i64,
     page: i64,
 ) -> Result<ActivityPage> {
@@ -35,7 +35,7 @@ pub async fn profile_activity(
         let batch = db::activity::list_user_activity(
             pool,
             user_id,
-            viewer.map(|u| u.id),
+            viewer,
             SCAN_ROWS,
             offset,
         )
