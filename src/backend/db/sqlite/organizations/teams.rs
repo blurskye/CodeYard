@@ -78,12 +78,14 @@ async fn public_team(
 
 pub async fn create_organization_team(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<TeamActor>,
     org: i64,
     input: &NewTeam,
 ) -> Result<OrganizationOutcome<Team>> {
+    let TeamActor { user: actor, token } = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
     if !administers(role) {
         return Ok(Denied);
     }
@@ -101,6 +103,7 @@ pub async fn create_organization_team(
         }
     }
     for &repo in &input.repositories {
+        if let Some(token) = token { if !super::super::users::tokens::repository_write_on(&mut tx, token, actor, repo, "administration").await? { return Ok(Denied); } }
         if !scoped_repo(&mut tx, org, repo).await? {
             return Ok(Conflict);
         }
@@ -125,13 +128,15 @@ pub async fn create_organization_team(
 }
 pub async fn update_organization_team(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<TeamActor>,
     org: i64,
     team: i64,
     input: &TeamProfile,
 ) -> Result<OrganizationOutcome<Team>> {
+    let TeamActor { user: actor, token } = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
     if !administers(role) {
         return Ok(Denied);
     }
@@ -191,12 +196,14 @@ pub async fn update_organization_team(
 }
 pub async fn delete_organization_team(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<TeamActor>,
     org: i64,
     team: i64,
 ) -> Result<OrganizationOutcome<()>> {
+    let TeamActor { user: actor, token } = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
     if !administers(role) {
         return Ok(Denied);
     }
@@ -296,14 +303,16 @@ pub async fn list_organization_team_members(
 }
 pub async fn add_organization_team_member(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<TeamActor>,
     org: i64,
     team: i64,
     target: i64,
     role: TeamRole,
 ) -> Result<OrganizationOutcome<TeamMembership>> {
+    let TeamActor { user: actor, token } = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let actor_role = require_org!(tx, actor, org);
+    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
     if !administers(actor_role) {
         return Ok(Denied);
     }
@@ -327,13 +336,15 @@ pub async fn add_organization_team_member(
 }
 pub async fn remove_organization_team_member(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<TeamActor>,
     org: i64,
     team: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
+    let TeamActor { user: actor, token } = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
     if !administers(role) {
         return Ok(Denied);
     }
@@ -364,14 +375,16 @@ pub async fn remove_organization_team_member(
 }
 pub async fn grant_organization_team_repository(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<TeamActor>,
     org: i64,
     team: i64,
     repo: i64,
     permission: TeamRepositoryPermission,
 ) -> Result<OrganizationOutcome<TeamRepoAccess>> {
+    let TeamActor { user: actor, token } = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? || !super::super::users::tokens::repository_write_on(&mut tx, token, actor, repo, "administration").await? { return Ok(Denied); } }
     if !administers(role) {
         return Ok(Denied);
     }
@@ -398,13 +411,15 @@ pub async fn grant_organization_team_repository(
 }
 pub async fn revoke_organization_team_repository(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<TeamActor>,
     org: i64,
     team: i64,
     repo: i64,
 ) -> Result<OrganizationOutcome<()>> {
+    let TeamActor { user: actor, token } = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? || !super::super::users::tokens::repository_write_on(&mut tx, token, actor, repo, "administration").await? { return Ok(Denied); } }
     if !administers(role) {
         return Ok(Denied);
     }
