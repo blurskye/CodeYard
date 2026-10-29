@@ -28,9 +28,11 @@ pub enum DeleteError {
 pub async fn delete_owned_file(
     pool: &DbPool,
     store: &ObjectStore,
-    actor_id: i64,
+    actor: impl Into<files_db::FileAuthority>,
     file_id: Uuid,
 ) -> Result<(), DeleteError> {
+    let actor = actor.into();
+    let actor_id = actor.user_id.ok_or(DeleteError::Denied)?;
     let first = files_db::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| DeleteError::MetadataUnavailable)?
@@ -39,7 +41,7 @@ pub async fn delete_owned_file(
         .lock_file(&first.object_key)
         .await
         .map_err(|_| DeleteError::StorageUnavailable)?;
-    match files_db::delete_file(pool, file_id, actor_id)
+    match files_db::delete_file(pool, file_id, actor)
         .await
         .map_err(|_| DeleteError::MetadataUnavailable)?
     {
@@ -92,22 +94,6 @@ pub async fn remove_expired_uploads(pool: &DbPool, store: &ObjectStore) -> anyho
     let mut removed = 0;
     let mut objects = HashMap::new();
     let metadata_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    crate::backend::db::action_objects::expire_objects(pool).await?;
-    // Package and attestation collection fail on their own, so a stuck package object cannot
-    // keep the upload backlog from expiring.
-    match tokio::time::timeout(
-        Duration::from_secs(30),
-        crate::backend::packages::collect(pool, store),
-    )
-    .await
-    {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => tracing::warn!(%error, "package objects were not collected"),
-        Err(_) => tracing::warn!("package object collection timed out"),
-    }
-    if let Err(error) = crate::backend::db::attestations::collect(pool).await {
-        tracing::warn!(%error, "attestation bundles were not collected");
-    }
     let expired = files_db::expired_uploads(pool, EXPIRED_LIMIT).await?;
     for candidate in expired {
         let expire = async {

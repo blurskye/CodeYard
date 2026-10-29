@@ -1,5 +1,5 @@
 use crate::backend::{
-    api::http::session::get_current_user,
+    api::http::session::{extract_session_id, get_current_user},
     app::AppState,
     files::{
         self, AssetDownload, DownloadCapability, DownloadError, DownloadTransport, SignedDownload,
@@ -70,7 +70,7 @@ pub async fn get_download_url(
 ) -> Result<Response, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
     let file_id = parse_file_id(&file_id)?;
-    let download = files::download_for_user(&state.pool, &state.storage, user.id, file_id)
+    let download = files::download_for_user(&state.pool, &state.storage, (user.id, extract_session_id(&headers).unwrap_or_default()), file_id)
         .await
         .map_err(download_failure)?;
     Ok(download_response(download))

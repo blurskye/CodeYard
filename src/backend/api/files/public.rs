@@ -1,4 +1,4 @@
-use crate::backend::{api::http::session::get_optional_user, app::AppState, files};
+use crate::backend::{api::http::session::{extract_session_id, get_optional_user}, app::AppState, files};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, Method},
@@ -18,7 +18,7 @@ pub async fn get_public_download_url(
         .await?
         .map(|user| user.id);
     let file_id = parse_file_id(&file_id)?;
-    let download = files::download_asset(&state.pool, &state.storage, actor, file_id)
+    let download = files::download_asset(&state.pool, &state.storage, (actor, extract_session_id(&headers)), file_id)
         .await
         .map_err(download_failure)?;
     Ok(download_response(download))
@@ -34,7 +34,7 @@ pub async fn public_file_redirect(
         .await?
         .map(|user| user.id);
     let file_id = parse_file_id(&file_id)?;
-    let download = files::open_asset_download(&state.pool, &state.storage, actor, file_id)
+    let download = files::open_asset_download(&state.pool, &state.storage, (actor, extract_session_id(&headers)), file_id)
         .await
         .map_err(download_failure)?;
     asset_response(download, method)

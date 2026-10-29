@@ -197,9 +197,11 @@ pub enum ConfirmationError {
 pub async fn confirm_upload(
     pool: &DbPool,
     store: &ObjectStore,
-    actor_id: i64,
+    actor: impl Into<files_db::FileAuthority>,
     file_id: Uuid,
 ) -> Result<(), ConfirmationError> {
+    let actor = actor.into();
+    let actor_id = actor.user_id.ok_or(ConfirmationError::NotFound)?;
     let first = files_db::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| ConfirmationError::MetadataUnavailable)?
@@ -222,7 +224,7 @@ pub async fn confirm_upload(
         .try_acquire_io()
         .map_err(|_| ConfirmationError::StorageUnavailable)?;
     verify_upload(store, &file).await?;
-    if !files_db::activate_upload(pool, file_id, actor_id)
+    if !files_db::activate_upload(pool, file_id, actor)
         .await
         .map_err(|_| ConfirmationError::MetadataUnavailable)?
     {

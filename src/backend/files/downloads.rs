@@ -56,10 +56,12 @@ pub enum DownloadError {
 pub async fn download_for_user(
     pool: &DbPool,
     store: &ObjectStore,
-    actor_id: i64,
+    actor: impl Into<files_db::FileAuthority>,
     file_id: Uuid,
 ) -> Result<SignedDownload, DownloadError> {
-    let file = authorize(pool, Some(actor_id), file_id).await?;
+    let actor = actor.into();
+    let actor_id = actor.user_id.ok_or(DownloadError::NotFound)?;
+    let file = authorize(pool, actor, file_id).await?;
     let (url, capability) = capability(store, &file).await?;
     files_db::record_download(pool, actor_id, file.id, file.reason.as_deref(), None)
         .await
@@ -71,17 +73,17 @@ pub async fn download_for_user(
 pub async fn download_asset(
     pool: &DbPool,
     store: &ObjectStore,
-    actor_id: Option<i64>,
+    actor: impl Into<files_db::FileAuthority>,
     file_id: Uuid,
 ) -> Result<SignedDownload, DownloadError> {
-    let file = authorize(pool, actor_id, file_id).await?;
+    let file = authorize(pool, actor.into(), file_id).await?;
     let (url, capability) = capability(store, &file).await?;
     Ok(download_result(file, url, capability))
 }
 
 async fn authorize(
     pool: &DbPool,
-    actor: Option<i64>,
+    actor: files_db::FileAuthority,
     file_id: Uuid,
 ) -> Result<File, DownloadError> {
     files_db::get_downloadable_file(pool, file_id, actor)
@@ -124,10 +126,10 @@ async fn capability(
 pub async fn open_asset_download(
     pool: &DbPool,
     store: &ObjectStore,
-    actor: Option<i64>,
+    actor: impl Into<files_db::FileAuthority>,
     file_id: Uuid,
 ) -> Result<AssetDownload, DownloadError> {
-    let file = authorize(pool, actor, file_id).await?;
+    let file = authorize(pool, actor.into(), file_id).await?;
     open_file(store, file).await
 }
 
