@@ -57,6 +57,7 @@ pub(crate) fn oauth_repository_path(permission: &str) -> String {
         "contents" => "contents/file",
         "actions" => "actions/runs",
         "checks" => "check-runs",
+        "pull_requests" => "pulls",
         "vulnerability_alerts" => "dependabot/alerts",
         "security_events" => "code-scanning/alerts",
         "environments" => "environments/production",

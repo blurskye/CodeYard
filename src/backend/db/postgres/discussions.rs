@@ -299,7 +299,7 @@ pub(crate) async fn require_exclusive_contribution_authority(
 
 pub async fn set_lock(
     pool: &sqlx::PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     item: crate::backend::db::assignees::AssignedItem,
     locked: bool,
@@ -310,14 +310,17 @@ pub async fn set_lock(
         crate::backend::db::discussions::valid_lock_reason(reason),
         LockRefusal::InvalidReason
     );
+    let actor = actor.into();
+    let actor_id = actor.user_id;
     let reason = if locked { reason } else { None };
-    let (table, subject, id) = match item {
-        AssignedItem::Issue(id) => ("issues", "issue", id),
-        AssignedItem::PullRequest(id) => ("pull_requests", "pull_request", id),
+    let (table, subject, id, permission) = match item {
+        AssignedItem::Issue(id) => ("issues", "issue", id, "issues"),
+        AssignedItem::PullRequest(id) => ("pull_requests", "pull_request", id, "pull_requests"),
     };
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        lock_write_authority(&mut tx, actor_id, repo_id).await?,
+        lock_triage_authority(&mut tx, actor_id, repo_id).await?
+            && super::credentials::repository(&mut tx, &actor, repo_id, permission, true).await?,
         LockRefusal::Denied
     );
     let (previous, previous_reason): (bool, Option<String>) = sqlx::query_as(&format!(

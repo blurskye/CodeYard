@@ -148,22 +148,16 @@ pub(crate) async fn repository(
     check_repo_read_access(&ctx.state.pool, &record, &ctx.headers)
         .await
         .map_err(|failure| api_error(ctx, failure))?;
-    let can_write = match &ctx.user {
-        Some(user) => {
-            crate::backend::repositories::access::can_write(&ctx.state.pool, user, &record)
-                .await
-                .map_err(|_| unavailable(ctx))?
-        }
-        None => false,
+    let access = match &ctx.user {
+        Some(user) => crate::backend::repositories::access::user_access(&ctx.state.pool, user, &record)
+            .await.map_err(|_| unavailable(ctx))?,
+        None => db::models::AccessLevel::None,
     };
-    let can_admin = match &ctx.user {
-        Some(user) => {
-            crate::backend::repositories::access::can_admin(&ctx.state.pool, user, &record)
-                .await
-                .map_err(|_| unavailable(ctx))?
-        }
-        None => false,
-    };
+    let mutable = ctx.user.is_some() && !record.is_archived
+        && !db::repository_exports::locked(&ctx.state.pool, record.id).await.map_err(|_| unavailable(ctx))?;
+    let can_write = mutable && access.can_write();
+    let can_triage = mutable && access.can_triage();
+    let can_admin = access.can_admin();
     // Reuse the Code page's authorized projection, including visibility, real
     // engagement counts and actor-scoped actions. Never serialize the DB record.
     let chrome = crate::backend::api::repos::chrome::load_database(ctx, owner, name)
@@ -176,6 +170,7 @@ pub(crate) async fn repository(
             name: name.to_owned(),
             signed_in: ctx.user.is_some(),
             can_write,
+            can_triage,
             can_admin,
             csrf: ctx.csrf_token.clone(),
             viewer: ctx

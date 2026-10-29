@@ -1284,7 +1284,7 @@ pub fn detail(
                         if kind==Kind::Issue {{super::relationships::panel(repo,&url,comments)}}
                         if let Some(attributes)=&comments.attributes {{super::attributes::panel(repo,&url,attributes)}}
                         if comments.suggestions.is_some() || draft.suggestion.is_some() {{super::suggestions::panel(repo,&url,comments.suggestions.as_deref(),draft.suggestion.as_deref())}}
-                        if repo.can_write && !repo.chrome.is_archived {
+                        if (repo.can_triage || repo.can_write) && !repo.chrome.is_archived {
                             section { class: "collaboration-sidebar-section",
                                 h3 { "Conversation" }
                                 form { method: "post", action: format!("{url}/lock"), class: "collaboration-form-fields",
