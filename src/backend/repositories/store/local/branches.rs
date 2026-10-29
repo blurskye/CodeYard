@@ -153,18 +153,9 @@ impl LocalStore {
             .map_err(|_| RepoError::authority_unavailable())?
             .is_empty();
         }
-        if !db::users::tokens::token_user(pool, token, true).await
-            .map_err(|_| RepoError::authority_unavailable())?.is_some_and(|user| user.id == actor)
-            || db::fine_grained_tokens::classic_refused_repository(pool, token, repo).await
-                .map_err(|_| RepoError::authority_unavailable())? {
-            return Err(RepoError::write_denied());
-        }
-        if let Some(bounds) = crate::backend::identity::github_apps::authority(pool, token).await
+        if !crate::backend::identity::tokens::repository_write(pool, token, actor, repo, if protected { "administration" } else { "contents" }).await
             .map_err(|_| RepoError::authority_unavailable())? {
-            if !bounds.allows(pool, actor, repo, if protected { "administration" } else { "contents" }, true).await
-                .map_err(|_| RepoError::authority_unavailable())? {
-                return Err(RepoError::write_denied());
-            }
+            return Err(RepoError::write_denied());
         }
         if protected
             && !access::can_admin(pool, &user, &repository)

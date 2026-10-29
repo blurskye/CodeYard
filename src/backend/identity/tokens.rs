@@ -83,6 +83,18 @@ pub async fn activity_feed_user(
     Ok(user)
 }
 
+/// Recheck a retained token's account, organization policy and effective repository grant.
+pub(crate) async fn repository_write(pool: &DbPool, token: i64, actor: i64, repo: i64, permission: &str) -> anyhow::Result<bool> {
+    if !tokens::token_user(pool, token, true).await?.is_some_and(|user| user.id == actor)
+        || crate::backend::db::fine_grained_tokens::classic_refused_repository(pool, token, repo).await? {
+        return Ok(false);
+    }
+    if let Some(authority) = super::github_apps::authority(pool, token).await? {
+        return authority.allows(pool, actor, repo, permission, true).await;
+    }
+    Ok(true)
+}
+
 pub fn token_hash(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }

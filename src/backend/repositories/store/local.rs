@@ -2350,6 +2350,12 @@ impl LocalStore {
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
+        if let Some(token) = token {
+            if !crate::backend::identity::tokens::repository_write(pool, token, actor, repo_id, "contents").await
+                .map_err(|_| RepoError::authority_unavailable())? {
+                return Err(RepoError::write_denied());
+            }
+        }
         self.check_workflow_grant(pool, token, vec![(base.to_owned(), result.to_owned())], None)
             .await?;
         if let Some(authority) = authority {
