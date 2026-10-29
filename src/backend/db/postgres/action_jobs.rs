@@ -8,6 +8,14 @@ use chrono::{DateTime, Utc};
 use codeyard_actions::progress::{Annotation, Event, State, Update};
 use sqlx::{types::Json, PgConnection, PgPool};
 
+async fn concurrency_repository(connection: &mut PgConnection, run: i64) -> Result<()> {
+    // Workflow admission owns this repository before its group and runs. Job requests may
+    // cancel workflow holders too, so they must use that order, including across groups.
+    sqlx::query("SELECT r.id FROM repositories r JOIN ci_runs c ON c.repo_id=r.id WHERE c.id=$1 FOR NO KEY UPDATE OF r")
+        .bind(run).execute(connection).await?;
+    Ok(())
+}
+
 async fn lease(
     connection: &mut PgConnection,
     worker: &str,
@@ -57,6 +65,9 @@ pub async fn apply(
     let at = DateTime::<Utc>::from_timestamp_millis(milliseconds(event.at_ms)?)
         .ok_or_else(|| anyhow::anyhow!("invalid runner clock"))?;
     let mut tx = pool.begin().await?;
+    if matches!(&event.update, Update::Concurrency { .. }) {
+        concurrency_repository(&mut tx, run).await?;
+    }
     let leased = lease(&mut tx, worker, run, generation, workflow).await?;
     if let Update::Queued {
         name: display,
@@ -152,6 +163,7 @@ pub async fn admit(
     job: i64,
 ) -> Result<Option<bool>> {
     let mut tx = pool.begin().await?;
+    concurrency_repository(&mut tx, run).await?;
     let leased = lease(&mut tx, worker, run, generation, workflow).await?;
     let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_jobs WHERE id=$1 AND run_id=$2 AND generation=$3 AND workflow_path=$4)").bind(job).bind(run).bind(generation).bind(workflow).fetch_one(&mut *tx).await?;
     ensure!(owned, "job is outside the claim");

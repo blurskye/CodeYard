@@ -3685,6 +3685,7 @@ CREATE TABLE actions_concurrency_groups (
     name_key TEXT NOT NULL,
     name TEXT NOT NULL,
     last_acquired_at TIMESTAMPTZ,
+    next_request BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY(repo_id, name_key)
 );
 
@@ -3693,6 +3694,7 @@ CREATE TABLE actions_run_concurrency (
     repo_id BIGINT NOT NULL,
     name_key TEXT NOT NULL,
     holding BOOLEAN NOT NULL DEFAULT FALSE,
+    request_order BIGINT NOT NULL DEFAULT 0,
     cancel_in_progress BOOLEAN NOT NULL DEFAULT FALSE,
     FOREIGN KEY(repo_id, name_key) REFERENCES actions_concurrency_groups(repo_id, name_key) ON DELETE CASCADE
 );
@@ -3857,6 +3859,7 @@ CREATE TABLE actions_job_concurrency (
     repo_id BIGINT NOT NULL,
     name_key TEXT NOT NULL,
     holding BOOLEAN NOT NULL DEFAULT FALSE,
+    request_order BIGINT NOT NULL DEFAULT 0,
     cancelled BOOLEAN NOT NULL DEFAULT FALSE,
     FOREIGN KEY(repo_id, name_key) REFERENCES actions_concurrency_groups(repo_id, name_key) ON DELETE CASCADE
 );

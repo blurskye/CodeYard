@@ -20,18 +20,23 @@ pub(crate) async fn record(
     sqlx::query("INSERT INTO actions_concurrency_groups(repo_id,name_key,name) VALUES($1,$2,$3) ON CONFLICT(repo_id,name_key) DO NOTHING").bind(run.repo_id).bind(&key).bind(&config.group).execute(&mut *connection).await?;
     sqlx::query("SELECT repo_id FROM actions_concurrency_groups WHERE repo_id=$1 AND name_key=$2 FOR UPDATE").bind(run.repo_id).bind(&key).fetch_one(&mut *connection).await?;
     let victims = sqlx::query_as("SELECT c.* FROM ci_runs c JOIN actions_run_concurrency g ON g.run_id=c.id WHERE g.repo_id=$1 AND g.name_key=$2 AND c.status IN('queued','running') AND (NOT g.holding OR $3) ORDER BY c.id FOR UPDATE OF c").bind(run.repo_id).bind(&key).bind(config.cancel_in_progress).fetch_all(&mut *connection).await?;
-    sqlx::query("INSERT INTO actions_run_concurrency(run_id,repo_id,name_key,cancel_in_progress) VALUES($1,$2,$3,$4)").bind(run.id).bind(run.repo_id).bind(key).bind(config.cancel_in_progress).execute(&mut *connection).await?;
+    sqlx::query("UPDATE actions_job_concurrency SET cancelled=TRUE WHERE repo_id=$1 AND name_key=$2 AND NOT cancelled AND (NOT holding OR $3) AND job_id IN(SELECT j.id FROM actions_jobs j JOIN ci_runs c ON c.id=j.run_id WHERE j.status<>'completed' AND c.status IN('queued','running'))")
+        .bind(run.repo_id).bind(&key).bind(config.cancel_in_progress).execute(&mut *connection).await?;
+    let order: i64 = sqlx::query_scalar("UPDATE actions_concurrency_groups SET next_request=next_request+1 WHERE repo_id=$1 AND name_key=$2 RETURNING next_request")
+        .bind(run.repo_id).bind(&key).fetch_one(&mut *connection).await?;
+    sqlx::query("INSERT INTO actions_run_concurrency(run_id,repo_id,name_key,cancel_in_progress,request_order) VALUES($1,$2,$3,$4,$5)").bind(run.id).bind(run.repo_id).bind(key).bind(config.cancel_in_progress).bind(order).execute(&mut *connection).await?;
     Ok(victims)
 }
 
 pub(crate) async fn eligible(connection: &mut PgConnection, run: &CiRun) -> Result<bool> {
-    let key: Option<String> =
-        sqlx::query_scalar("SELECT name_key FROM actions_run_concurrency WHERE run_id=$1")
+    let request: Option<(String, i64)> =
+        sqlx::query_as("SELECT name_key,request_order FROM actions_run_concurrency WHERE run_id=$1")
             .bind(run.id)
             .fetch_optional(&mut *connection)
             .await?;
-    let Some(key) = key else { return Ok(true) };
-    let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_run_concurrency g JOIN ci_runs c ON c.id=g.run_id WHERE g.repo_id=$1 AND g.name_key=$2 AND c.status IN('queued','running') AND c.id<>$3 AND (g.holding OR c.id<$3))").bind(run.repo_id).bind(&key).bind(run.id).fetch_one(&mut *connection).await?;
+    let Some((key, order)) = request else { return Ok(true) };
+    let sql = crate::backend::db::action_concurrency::blockers_sql(true);
+    let blocked: bool = sqlx::query_scalar(&sql).bind(run.repo_id).bind(&key).bind(order).bind(Some(run.id)).bind(None::<i64>).fetch_one(&mut *connection).await?;
     if blocked {
         return Ok(false);
     }
@@ -71,7 +76,11 @@ pub(crate) async fn request_job(
         return Ok(());
     }
     sqlx::query("UPDATE actions_job_concurrency SET cancelled=TRUE WHERE repo_id=$1 AND name_key=$2 AND job_id<>$3 AND NOT cancelled AND (NOT holding OR $4) AND job_id IN(SELECT j.id FROM actions_jobs j JOIN ci_runs c ON c.id=j.run_id WHERE j.status<>'completed' AND c.status IN('queued','running'))").bind(run.repo_id).bind(&key).bind(job).bind(config.cancel_in_progress).execute(&mut *connection).await?;
-    sqlx::query("INSERT INTO actions_job_concurrency(job_id,repo_id,name_key) VALUES($1,$2,$3) ON CONFLICT(job_id) DO NOTHING").bind(job).bind(run.repo_id).bind(key).execute(connection).await?;
+    sqlx::query("UPDATE ci_runs SET cancel_requested=TRUE WHERE id IN(SELECT g.run_id FROM actions_run_concurrency g WHERE g.repo_id=$1 AND g.name_key=$2 AND (NOT g.holding OR $3)) AND status IN('queued','running')")
+        .bind(run.repo_id).bind(&key).bind(config.cancel_in_progress).execute(&mut *connection).await?;
+    let order: i64 = sqlx::query_scalar("UPDATE actions_concurrency_groups SET next_request=next_request+1 WHERE repo_id=$1 AND name_key=$2 RETURNING next_request")
+        .bind(run.repo_id).bind(&key).fetch_one(&mut *connection).await?;
+    sqlx::query("INSERT INTO actions_job_concurrency(job_id,repo_id,name_key,request_order) VALUES($1,$2,$3,$4) ON CONFLICT(job_id) DO NOTHING").bind(job).bind(run.repo_id).bind(key).bind(order).execute(connection).await?;
     Ok(())
 }
 
@@ -84,14 +93,15 @@ pub(crate) async fn admit_job(
 ) -> Result<Option<bool>> {
     let key: String = sqlx::query_scalar("SELECT name_key FROM actions_job_concurrency WHERE job_id=$1 AND repo_id=$2").bind(job).bind(run.repo_id).fetch_one(&mut *connection).await?;
     sqlx::query("SELECT repo_id FROM actions_concurrency_groups WHERE repo_id=$1 AND name_key=$2 FOR UPDATE").bind(run.repo_id).bind(&key).fetch_one(&mut *connection).await?;
-    let (holding, cancelled): (bool, bool) = sqlx::query_as("SELECT holding,cancelled FROM actions_job_concurrency WHERE job_id=$1 AND repo_id=$2").bind(job).bind(run.repo_id).fetch_one(&mut *connection).await?;
+    let (holding, cancelled, order): (bool, bool, i64) = sqlx::query_as("SELECT holding,cancelled,request_order FROM actions_job_concurrency WHERE job_id=$1 AND repo_id=$2").bind(job).bind(run.repo_id).fetch_one(&mut *connection).await?;
     if cancelled {
         return Ok(Some(false));
     }
     if holding {
         return Ok(Some(true));
     }
-    let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_job_concurrency g JOIN actions_jobs j ON j.id=g.job_id JOIN ci_runs c ON c.id=j.run_id WHERE g.repo_id=$1 AND g.name_key=$2 AND g.job_id<>$3 AND j.status<>'completed' AND c.status IN('queued','running') AND (g.holding OR (NOT g.cancelled AND g.job_id<$3)))").bind(run.repo_id).bind(&key).bind(job).fetch_one(&mut *connection).await?;
+    let sql = crate::backend::db::action_concurrency::blockers_sql(true);
+    let blocked: bool = sqlx::query_scalar(&sql).bind(run.repo_id).bind(&key).bind(order).bind(None::<i64>).bind(Some(job)).fetch_one(&mut *connection).await?;
     if blocked {
         return Ok(None);
     }
@@ -104,8 +114,10 @@ pub(crate) async fn admit_job(
 }
 
 pub async fn groups(pool: &PgPool, repo: i64, run: Option<i64>) -> Result<Vec<Group>> {
-    Ok(sqlx::query_as("SELECT g.name,g.last_acquired_at FROM actions_concurrency_groups g WHERE g.repo_id=$1 AND EXISTS(SELECT 1 FROM actions_run_concurrency r JOIN ci_runs c ON c.id=r.run_id WHERE r.repo_id=g.repo_id AND r.name_key=g.name_key AND (($2::bigint IS NULL AND c.status IN('queued','running')) OR COALESCE(c.workflow_run_id,c.id)=$2)) ORDER BY g.name_key COLLATE \"C\"").bind(repo).bind(run).fetch_all(pool).await?)
+    let sql = crate::backend::db::action_concurrency::groups_sql(true);
+    Ok(sqlx::query_as(&sql).bind(repo).bind(run).fetch_all(pool).await?)
 }
 pub async fn members(pool: &PgPool, repo: i64, group: &str) -> Result<Vec<Member>> {
-    Ok(sqlx::query_as("SELECT c.*,g.holding FROM ci_runs c JOIN actions_run_concurrency g ON g.run_id=c.id WHERE g.repo_id=$1 AND g.name_key=$2 AND c.status IN('queued','running') ORDER BY g.holding DESC,c.id").bind(repo).bind(group.to_lowercase()).fetch_all(pool).await?)
+    let sql = crate::backend::db::action_concurrency::members_sql(true);
+    Ok(sqlx::query_as(&sql).bind(repo).bind(group.to_lowercase()).fetch_all(pool).await?)
 }
