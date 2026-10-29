@@ -258,19 +258,20 @@ impl Advisory {
         }
         "unknown".into()
     }
-    pub fn global_document(&self) -> Result<Value> {
+    pub fn catalogue_id(&self) -> String {
         use sha2::{Digest, Sha256};
-        let mut value = self.document();
-        if value["ghsa_id"].is_null() {
-            // OSV records without a GHSA alias need a stable local catalogue identity.
-            let hash = Sha256::digest(self.id.as_bytes());
-            let alphabet = b"23456789cfghjmpqrvwx";
-            let id: String = hash[..12]
-                .iter()
-                .map(|b| alphabet[*b as usize % alphabet.len()] as char)
-                .collect();
-            value["ghsa_id"] = json!(format!("GHSA-{}-{}-{}", &id[..4], &id[4..8], &id[8..]));
+        if let Some(id) = self.aliases.iter().chain(std::iter::once(&self.id)).find(|id| id.starts_with("GHSA-")) {
+            return id.clone();
         }
+        let hash = Sha256::digest(self.id.as_bytes());
+        let alphabet = b"23456789cfghjmpqrvwx";
+        let id: String = hash[..12].iter().map(|b| alphabet[*b as usize % alphabet.len()] as char).collect();
+        format!("GHSA-{}-{}-{}", &id[..4], &id[4..8], &id[8..])
+    }
+
+    pub fn global_document(&self) -> Result<Value> {
+        let mut value = self.document();
+        value["ghsa_id"] = json!(self.catalogue_id());
         if self.summary.trim().is_empty() {
             value["summary"] = json!(self.id);
         }
