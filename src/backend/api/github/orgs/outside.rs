@@ -90,19 +90,9 @@ async fn convert(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let result = if input.asynchronous {
-        crate::backend::organizations::enqueue_outside_conversion(
-            &state.pool,
-            actor.user.id,
-            org.id,
-            user.id,
-        )
-        .await
-    } else {
-        organizations::convert_to_outside_collaborator(&state.pool, actor.user.id, org.id, user.id)
-            .await
-    }
-    .map_err(Error::unavailable)?;
+    let result = crate::backend::organizations::convert_to_outside(
+        &state.pool, actor.user.id, org.id, user.id,
+    ).await.map_err(Error::unavailable)?;
     if matches!(result, OrganizationOutcome::Conflict) {
         return Err(Error::new(
             StatusCode::FORBIDDEN,

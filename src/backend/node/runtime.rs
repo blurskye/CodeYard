@@ -596,7 +596,6 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     drain_worker(secret_scanning, deadline).await;
     drain_worker(auto_merge, deadline).await;
     drain_worker(replicas, deadline).await;
-    crate::backend::organizations::shutdown(deadline).await;
     let stopped = workers.shutdown().await;
     if let Some(member) = &member {
         member.shutdown().await;
