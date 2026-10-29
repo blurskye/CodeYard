@@ -444,6 +444,16 @@ impl CiRuns {
         )
         .await?;
         let request = revision.request;
+        let event_payload = if event_payload.is_none() && request.event == "workflow_dispatch" {
+            let repository = db::repositories::records::get_repository_by_id(&self.pool, request.repo_id).await?.ok_or(AdmissionError::Missing("CI repository missing"))?;
+            let sender = db::users::accounts::get_user_by_id(&self.pool, request.triggered_by_id).await?.ok_or(AdmissionError::Denied("CI actor missing"))?;
+            Some(serde_json::json!({
+                "ref": request.branch,
+                "inputs": request.inputs,
+                "repository": crate::backend::webhooks::payloads::repository(&repository, &request.repo_owner),
+                "sender": crate::backend::webhooks::payloads::user(&sender),
+            }))
+        } else { event_payload };
         if let Some(attempt) = attempt
             .as_mut()
             .filter(|attempt| attempt.selection != db::ci::CiReplaySelection::All)
