@@ -28,21 +28,16 @@ pub(super) async fn build(
     actor: i64,
     org: i64,
 ) -> Result<view::Panel, ValueError> {
-    // One page of values keeps the settings page small even with large variables.
-    const PAGE: usize = 30;
     let page = ctx
         .query
         .get("values_page")
         .and_then(|page| page.parse::<usize>().ok())
         .filter(|page| (1..=1000).contains(page))
         .unwrap_or(1);
-    let mut rows = Vec::new();
-    for kind in [Kind::Secret, Kind::Variable] {
-        for row in values::list(&ctx.state.pool, actor, org, kind).await? {
-            rows.push((kind, row));
-        }
-    }
-    let more = rows.len() > page * PAGE;
+    let listed = values::settings_page(
+        &ctx.state.pool, actor, ctx.session_id.as_deref().ok_or(ValueError::Denied)?, org, page as i64,
+    ).await?;
+    let more = listed.more;
     let link = |page: usize| {
         let mut query: Vec<(String, String)> = ctx
             .query
@@ -53,31 +48,21 @@ pub(super) async fn build(
         query.push(("values_page".into(), page.to_string()));
         query.sort();
         format!(
-            "{}?{}",
-            ctx.path,
+            "/settings/organizations/{org}?{}",
             url::form_urlencoded::Serializer::new(String::new())
                 .extend_pairs(query)
                 .finish()
         )
     };
     let mut items = Vec::new();
-    for (kind, row) in rows.into_iter().skip((page - 1) * PAGE).take(PAGE) {
-        let repositories = if row.visibility == "selected" {
-            values::repositories(&ctx.state.pool, actor, org, kind, &row.name)
-                .await?
-                .into_iter()
-                .map(|repo| repo.id.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        } else {
-            String::new()
-        };
+    for entry in listed.values {
+        let row = entry.value;
         items.push(view::Value {
             name: row.name,
             value: row.value,
-            secret: kind == Kind::Secret,
+            secret: row.kind == Kind::Secret.as_str(),
             visibility: row.visibility,
-            repositories,
+            repositories: entry.repository_ids,
         });
     }
     let oidc = db::oidc::settings(&ctx.state.pool, actor, db::oidc::Scope::Organization(org))
