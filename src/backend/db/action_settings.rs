@@ -232,13 +232,13 @@ pub fn retention(repo: &Value, org: &Value, site: Option<i32>, private: bool) ->
 
 native_operation!(crate::backend::db::postgres::action_settings::settings,
     crate::backend::db::sqlite::action_settings::settings,
-    fn settings(pool: &DbPool, actor: i64, scope: &Scope, update: Option<(Setting, &Value)>) -> Result<Value>);
+    fn settings(pool: &DbPool, actor: i64, token: i64, scope: &Scope, update: Option<(Setting, &Value)>) -> Result<Value>);
 native_operation!(crate::backend::db::postgres::action_settings::effective,
     crate::backend::db::sqlite::action_settings::effective,
     fn effective(pool: &DbPool, repo: i64) -> Result<(Value, Value)>);
 native_operation!(crate::backend::db::postgres::action_settings::policies,
     crate::backend::db::sqlite::action_settings::policies,
-    fn policies(pool: &DbPool, actor: i64, scope: &Scope, id: Option<i64>, change: Option<Option<&Value>>) -> Result<Vec<Policy>>);
+    fn policies(pool: &DbPool, actor: i64, token: i64, scope: &Scope, id: Option<i64>, change: Option<Option<&Value>>) -> Result<Vec<Policy>>);
 
 #[derive(sqlx::FromRow)]
 pub struct Policy {

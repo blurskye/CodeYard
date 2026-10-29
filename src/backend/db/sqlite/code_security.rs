@@ -6,12 +6,15 @@ use crate::backend::db::{
 use anyhow::{ensure, Result};
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 
-async fn write(pool: &SqlitePool, actor: i64, org: i64) -> Result<Transaction<'_, Sqlite>> {
+async fn write<'a>(pool: &'a SqlitePool, actor: &crate::backend::db::users::tokens::Actor, org: i64) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    match super::organizations::authority::authority(&mut tx, actor, org).await? {
+    match super::organizations::authority::authority(&mut tx, actor.user_id, org).await? {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
+    }
+    if let Some(token) = actor.token_id {
+        ensure!(super::users::tokens::permits_write(&mut tx, actor.user_id, token, None, Some(org), "organization_administration").await?, Refusal::Denied);
     }
     Ok(tx)
 }
@@ -103,12 +106,14 @@ pub async fn list(pool: &SqlitePool, actor: i64, org: i64) -> Result<Vec<Configu
 }
 pub async fn save(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     id: Option<i64>,
     patch: &serde_json::Value,
 ) -> Result<Configuration> {
-    let mut tx = write(pool, actor, org).await?;
+    let actor = actor.into();
+    let mut tx = write(pool, &actor, org).await?;
+    let actor = actor.user_id;
     let current = match id {
         Some(id) => Some(configuration(&mut tx, org, id).await?),
         None => None,
@@ -130,8 +135,9 @@ pub async fn save(
     tx.commit().await?;
     Ok(row)
 }
-pub async fn delete(pool: &SqlitePool, actor: i64, org: i64, id: i64) -> Result<()> {
-    let mut tx = write(pool, actor, org).await?;
+pub async fn delete(pool: &SqlitePool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, id: i64) -> Result<()> {
+    let actor = actor.into();
+    let mut tx = write(pool, &actor, org).await?;
     configuration(&mut tx, org, id).await?;
     sqlx::query("DELETE FROM code_security_configurations WHERE org_id=$1 AND id=$2")
         .bind(org)
@@ -143,7 +149,7 @@ pub async fn delete(pool: &SqlitePool, actor: i64, org: i64, id: i64) -> Result<
 }
 pub async fn set_default(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     id: i64,
     scope: &str,
@@ -152,7 +158,8 @@ pub async fn set_default(
         ["all", "none", "public", "private_and_internal"].contains(&scope),
         Refusal::Invalid
     );
-    let mut tx = write(pool, actor, org).await?;
+    let actor = actor.into();
+    let mut tx = write(pool, &actor, org).await?;
     configuration(&mut tx, org, id).await?;
     let rows: Vec<Configuration> =
         sqlx::query_as("SELECT * FROM code_security_configurations WHERE org_id=$1")
@@ -185,7 +192,7 @@ pub async fn set_default(
 }
 pub async fn attach(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     id: Option<i64>,
     scope: &str,
@@ -210,7 +217,9 @@ pub async fn attach(
         },
         Refusal::Invalid
     );
-    let mut tx = write(pool, actor, org).await?;
+    let actor = actor.into();
+    let mut tx = write(pool, &actor, org).await?;
+    let actor = actor.user_id;
     let config = match id {
         Some(id) => Some(configuration(&mut tx, org, id).await?),
         None => None,

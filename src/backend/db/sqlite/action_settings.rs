@@ -9,6 +9,7 @@ use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 async fn authority(
     tx: &mut Transaction<'_, Sqlite>,
     actor: i64,
+    token: i64,
     scope: &Scope,
     write: bool,
 ) -> Result<(&'static str, &'static str, i64)> {
@@ -20,6 +21,9 @@ async fn authority(
                 super::discussions::lock_policy_authority(tx, actor, *repo, false).await?
             };
             ensure!(allowed, Refusal::Denied);
+            if write {
+                ensure!(super::users::tokens::permits_write(tx, actor, token, Some(*repo), None, "administration").await?, Refusal::Denied);
+            }
             Ok(("repo_actions_settings", "repo_id", *repo))
         }
         Scope::Organization(name) => {
@@ -37,6 +41,9 @@ async fn authority(
                 matches!(role, OrganizationOutcome::Applied(role) if organizations::administers(role)),
                 Refusal::Denied
             );
+            if write {
+                ensure!(super::users::tokens::permits_write(tx, actor, token, None, Some(org), "organization_administration").await?, Refusal::Denied);
+            }
             Ok(("org_actions_settings", "org_id", org))
         }
     }
@@ -70,11 +77,12 @@ pub async fn effective(pool: &SqlitePool, repo: i64) -> Result<(Value, Value)> {
 pub async fn settings(
     pool: &SqlitePool,
     actor: i64,
+    token: i64,
     scope: &Scope,
     update: Option<(Setting, &Value)>,
 ) -> Result<Value> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let (table, column, id) = authority(&mut tx, actor, scope, update.is_some()).await?;
+    let (table, column, id) = authority(&mut tx, actor, token, scope, update.is_some()).await?;
     let stored: Option<String> = sqlx::query_scalar(&format!(
         "SELECT rest_settings FROM {table} WHERE {column}=?1"
     ))
@@ -124,12 +132,13 @@ pub async fn settings(
 pub async fn policies(
     pool: &SqlitePool,
     actor: i64,
+    token: i64,
     scope: &Scope,
     id: Option<i64>,
     change: Option<Option<&Value>>,
 ) -> Result<Vec<Policy>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let (_, column, scope_id) = authority(&mut tx, actor, scope, change.is_some()).await?;
+    let (_, column, scope_id) = authority(&mut tx, actor, token, scope, change.is_some()).await?;
     let mut rows: Vec<Policy> = sqlx::query_as(&format!("SELECT id,data,created_at,updated_at FROM actions_policies WHERE {column}=?1 AND (CAST(?2 AS BIGINT) IS NULL OR id=?2) ORDER BY id")).bind(scope_id).bind(id).fetch_all(&mut *tx).await?;
     ensure!(id.is_none() || !rows.is_empty(), Refusal::Missing);
     if let Some(change) = change {

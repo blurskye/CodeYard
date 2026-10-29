@@ -94,6 +94,7 @@ async fn settings(
     let stored = db::action_settings::settings(
         &state.pool,
         actor,
+        auth.token.id,
         &scope,
         body.as_ref().map(|body| (setting, body)),
     )
@@ -162,12 +163,12 @@ async fn organization_switch(
                 "invalid",
             ));
         }
-        db::action_settings::settings(&state.pool, actor, &scope, Some((setting, &body)))
+        db::action_settings::settings(&state.pool, actor, auth.token.id, &scope, Some((setting, &body)))
             .await
             .map_err(failure)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let stored = db::action_settings::settings(&state.pool, actor, &scope, None)
+    let stored = db::action_settings::settings(&state.pool, actor, auth.token.id, &scope, None)
         .await
         .map_err(failure)?;
     let mut value = setting.defaults();
@@ -202,7 +203,7 @@ async fn organization_repositories(
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
     let actor = auth.user.id;
     let setting = switch(&uri);
-    let stored = db::action_settings::settings(&state.pool, actor, &scope, None)
+    let stored = db::action_settings::settings(&state.pool, actor, auth.token.id, &scope, None)
         .await
         .map_err(failure)?;
     let org = db::organizations::get_public_organization(&state.pool, &params["org"])
@@ -275,6 +276,7 @@ async fn organization_repositories(
     db::action_settings::settings(
         &state.pool,
         actor,
+        auth.token.id,
         &scope,
         Some((setting, &json!({"selected_repository_ids":ids}))),
     )
@@ -339,7 +341,7 @@ async fn policies(
         None
     };
     let change = if write { Some(body.as_ref()) } else { None };
-    let rows = db::action_settings::policies(&state.pool, actor, &scope, id, change)
+    let rows = db::action_settings::policies(&state.pool, actor, auth.token.id, &scope, id, change)
         .await
         .map_err(failure)?;
     if method == axum::http::Method::DELETE {
