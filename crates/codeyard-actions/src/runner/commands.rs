@@ -278,6 +278,7 @@ impl Log {
 pub(super) struct Commands {
     pub stopped: Option<String>,
     pub debug: bool,
+    stderr: bool,
     retained_bytes: usize,
     retained_commands: usize,
     storage_full: bool,
@@ -312,7 +313,7 @@ impl Commands {
         } else {
             log.line(line);
         }
-        match self.matchers.matches(line) {
+        match self.matchers.matches(line, self.stderr) {
             Ok(Some(issue)) => {
                 if let Some(command) = issue.command(&self.workspace, &log.masker) {
                     log.line(&command);
@@ -324,7 +325,13 @@ impl Commands {
         }
     }
 
+    #[cfg(test)]
     pub fn line(&mut self, log: &Log, line: &str, allow_unsafe: bool) {
+        self.stream_line(log, line, allow_unsafe, false);
+    }
+
+    pub fn stream_line(&mut self, log: &Log, line: &str, allow_unsafe: bool, stderr: bool) {
+        self.stderr = stderr;
         self.command_line(log, line, allow_unsafe, false);
     }
 

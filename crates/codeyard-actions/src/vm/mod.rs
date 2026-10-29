@@ -324,20 +324,22 @@ impl JobVm {
         tokio::spawn(crate::runner::read_lines(
             child.stdout.take().context("SSH stdout is unavailable")?,
             out_sender,
+            false,
         ));
         tokio::spawn(crate::runner::read_lines(
             child.stderr.take().context("SSH stderr is unavailable")?,
             err_sender,
+            true,
         ));
         let (mut out_done, mut err_done) = (false, false);
         while !out_done || !err_done {
             tokio::select! {
                 line = stdout.recv(), if !out_done => match line {
-                    Some(line) => output(Stream::Stdout, &line),
+                    Some(line) => output(Stream::Stdout, &line?.0),
                     None => out_done = true,
                 },
                 line = stderr.recv(), if !err_done => match line {
-                    Some(line) => output(Stream::Stderr, &line),
+                    Some(line) => output(Stream::Stderr, &line?.0),
                     None => err_done = true,
                 },
             }

@@ -2,7 +2,7 @@
 use super::commands::{Commands, Log};
 use anyhow::{Context, Result};
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{mpsc, watch};
 
@@ -11,48 +11,15 @@ use tokio::sync::{mpsc, watch};
 /// rather than cut, because a cut can keep the start of a secret that masking no longer matches.
 const MAX_LINE: usize = 64 * 1024;
 
-pub(crate) async fn read_lines(reader: impl AsyncRead + Unpin, sender: mpsc::Sender<String>) {
+pub(crate) async fn read_lines(
+    reader: impl AsyncRead + Unpin, sender: mpsc::Sender<Result<(String, bool)>>, stderr: bool,
+) {
     let mut reader = BufReader::new(reader);
-    let mut buffer = Vec::new();
     loop {
-        buffer.clear();
-        let read = (&mut reader)
-            .take(MAX_LINE as u64 + 1)
-            .read_until(b'\n', &mut buffer)
-            .await;
-        if matches!(read, Ok(0) | Err(_)) {
-            break;
-        }
-        let line = if buffer.len() > MAX_LINE && !buffer.ends_with(b"\n") {
-            if skip_line(&mut reader).await.is_err() {
-                break;
-            }
-            format!(
-                "Warning: An output line longer than {} KiB was omitted.",
-                MAX_LINE / 1024
-            )
-        } else {
-            String::from_utf8_lossy(&buffer)
-                .trim_end_matches(['\n', '\r'])
-                .to_owned()
-        };
-        if sender.send(line).await.is_err() {
-            break;
-        }
-    }
-}
-
-/// Discards the rest of a line in bounded pieces, so the child keeps running.
-async fn skip_line<R: AsyncRead + Unpin>(reader: &mut BufReader<R>) -> std::io::Result<()> {
-    let mut piece = Vec::new();
-    loop {
-        piece.clear();
-        let read = (&mut *reader)
-            .take(MAX_LINE as u64)
-            .read_until(b'\n', &mut piece)
-            .await?;
-        if read == 0 || piece.ends_with(b"\n") {
-            return Ok(());
+        match crate::process::read_line(&mut reader, MAX_LINE, None).await {
+            Ok(Some(line)) => if sender.send(Ok((line, stderr))).await.is_err() { return; },
+            Ok(None) => return,
+            Err(error) => { let _ = sender.send(Err(error.into())).await; return; }
         }
     }
 }
@@ -135,8 +102,9 @@ pub(super) async fn execute(
     let stdout = tokio::spawn(read_lines(
         child.stdout.take().context("No stdout")?,
         tx.clone(),
+        false,
     ));
-    let stderr = tokio::spawn(read_lines(child.stderr.take().context("No stderr")?, tx));
+    let stderr = tokio::spawn(read_lines(child.stderr.take().context("No stderr")?, tx, true));
     let end = tokio::time::sleep_until(deadline.into());
     tokio::pin!(end);
     let mut status = None;
@@ -160,8 +128,13 @@ pub(super) async fn execute(
             }
             result = child.wait(), if status.is_none() => { status = Some(result?); group.terminate(); }
             line = rx.recv(), if !closed => {
-                if let Some(line) = line { commands.line(log, &line, allow_unsafe); }
-                else { closed = true; }
+                if let Some(line) = line {
+                    let (line, stderr) = match line {
+                        Ok(line) => line,
+                        Err(error) => { stdout.abort(); stderr.abort(); return Err(error); }
+                    };
+                    commands.stream_line(log, &line, allow_unsafe, stderr);
+                } else { closed = true; }
             }
         }
         if closed {
@@ -183,12 +156,12 @@ mod tests {
         input.extend(vec![b'y'; MAX_LINE]);
         input.push(b'\n');
         let (sender, mut lines) = mpsc::channel(8);
-        read_lines(&input[..], sender).await;
-        let notice = lines.recv().await.unwrap();
-        assert!(notice.starts_with("Warning: An output line longer than"));
+        read_lines(&input[..], sender, false).await;
+        let (notice, _) = lines.recv().await.unwrap().unwrap();
+        assert_eq!(notice, crate::process::OMITTED_LINE);
         assert!(!notice.contains('x'));
-        assert_eq!(lines.recv().await.unwrap(), "next");
-        assert_eq!(lines.recv().await.unwrap().len(), MAX_LINE);
+        assert_eq!(lines.recv().await.unwrap().unwrap().0, "next");
+        assert_eq!(lines.recv().await.unwrap().unwrap().0.len(), MAX_LINE);
         assert!(lines.recv().await.is_none());
     }
 }

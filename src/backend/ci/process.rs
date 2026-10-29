@@ -6,12 +6,13 @@ use std::future::Future;
 use std::io;
 use std::process::{ExitStatus, Stdio};
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
+use tokio::io::{AsyncRead, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::watch;
 
 const MAX_LINE: usize = 16 * 1024;
-const OMITTED_LINE: &str = "Warning: An oversized output line was omitted.";
+#[cfg(test)]
+use codeyard_actions::process::OMITTED_LINE;
 const TERM_GRACE: Duration = Duration::from_secs(3);
 const KILL_GRACE: Duration = Duration::from_secs(2);
 const GROUP_POLL: Duration = Duration::from_millis(20);
@@ -270,49 +271,12 @@ where
         return Ok(());
     };
     let mut reader = BufReader::new(reader);
-    let mut line = Vec::new();
-    loop {
-        line.clear();
-        let read = (&mut reader)
-            .take(MAX_LINE as u64 + 1)
-            .read_until(b'\n', &mut line)
-            .await?;
-        if read == 0 {
-            return Ok(());
-        }
-        // JSON escaping can expand an authenticated native progress frame well beyond a
-        // normal log line. Keep its separate, still bounded transport envelope intact.
-        let limit = if line.starts_with(b"::codeyard-progress::") { 1024 * 1024 } else { MAX_LINE };
-        if line.len() > MAX_LINE && limit > MAX_LINE && !line.ends_with(b"\n") {
-            (&mut reader).take((limit + 1 - line.len()) as u64).read_until(b'\n', &mut line).await?;
-        }
-        let cut = line.len() > limit && !line.ends_with(b"\n");
-        if cut {
-            skip_line(&mut reader).await?;
-        }
-        let text = String::from_utf8_lossy(&line)
-            .trim_end_matches(['\r', '\n'])
-            .to_owned();
-        // Never retain a secret prefix which whole-value masking cannot recognize.
-        let text = if cut || text.len() > limit { OMITTED_LINE.to_owned() } else { text };
-        on_line(text, stderr).await?;
+    while let Some(line) = codeyard_actions::process::read_line(
+        &mut reader, MAX_LINE, Some((b"::codeyard-progress::", 1024 * 1024)),
+    ).await? {
+        on_line(line, stderr).await?;
     }
-}
-
-/// Drops input through the next newline. It reads a bounded piece at a time, so the rest of a
-/// very long line is never held in memory.
-async fn skip_line<R: AsyncRead + Unpin>(reader: &mut BufReader<R>) -> io::Result<()> {
-    let mut piece = Vec::new();
-    loop {
-        piece.clear();
-        let read = (&mut *reader)
-            .take(MAX_LINE as u64)
-            .read_until(b'\n', &mut piece)
-            .await?;
-        if read == 0 || piece.ends_with(b"\n") {
-            return Ok(());
-        }
-    }
+    Ok(())
 }
 
 #[cfg(test)]

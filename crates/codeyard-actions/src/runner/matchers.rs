@@ -46,6 +46,7 @@ struct Matcher {
     from_path: String,
     patterns: Vec<(Regex, Pattern)>,
     state: Vec<Option<Issue>>,
+    stderr_state: Vec<Option<Issue>>,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -155,6 +156,7 @@ impl Matcher {
             from_path: definition.from_path,
             patterns,
             state: vec![None; count.saturating_sub(1)],
+            stderr_state: vec![None; count.saturating_sub(1)],
         })
     }
 
@@ -270,10 +272,11 @@ impl Matchers {
     pub fn reset(&mut self) {
         for matcher in &mut self.0 {
             matcher.state.fill(None);
+            matcher.stderr_state.fill(None);
         }
     }
 
-    pub fn matches(&mut self, line: &str) -> Result<Option<Issue>> {
+    pub fn matches(&mut self, line: &str, stderr: bool) -> Result<Option<Issue>> {
         // The runner ignores ANSI formatting when matching tool output.
         static ANSI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
         let ansi = ANSI
@@ -282,7 +285,11 @@ impl Matchers {
         let mut index = 0;
         let mut failed = None;
         while index < self.0.len() {
-            let matched = match self.0[index].matches(&line) {
+            let matcher = &mut self.0[index];
+            if stderr { std::mem::swap(&mut matcher.state, &mut matcher.stderr_state); }
+            let matched = matcher.matches(&line);
+            if stderr { std::mem::swap(&mut matcher.state, &mut matcher.stderr_state); }
+            let matched = match matched {
                 Ok(matched) => matched,
                 Err(error) => {
                     self.0.remove(index);
@@ -296,7 +303,7 @@ impl Matchers {
             }) {
                 for (other, matcher) in self.0.iter_mut().enumerate() {
                     if index != other {
-                        matcher.state.fill(None);
+                        if stderr { matcher.stderr_state.fill(None); } else { matcher.state.fill(None); }
                     }
                 }
                 return Ok(Some(issue));
@@ -464,7 +471,7 @@ mod tests {
         let mut matchers = Matchers::default();
         matchers.add(&path).unwrap();
         assert!(matchers
-            .matches("\u{1b}[31mold\u{1b}[0m")
+            .matches("\u{1b}[31mold\u{1b}[0m", false)
             .unwrap()
             .is_some());
         std::fs::write(
@@ -473,12 +480,12 @@ mod tests {
         )
         .unwrap();
         matchers.add(&path).unwrap();
-        assert!(matchers.matches("old").unwrap().is_none());
-        assert!(matchers.matches("new").unwrap().is_some());
+        assert!(matchers.matches("old", false).unwrap().is_none());
+        assert!(matchers.matches("new", false).unwrap().is_some());
         std::fs::write(&path, "{}").unwrap();
         assert!(matchers.add(&path).is_err());
-        assert!(matchers.matches("new").unwrap().is_some());
+        assert!(matchers.matches("new", false).unwrap().is_some());
         matchers.remove("test");
-        assert!(matchers.matches("new").unwrap().is_none());
+        assert!(matchers.matches("new", false).unwrap().is_none());
     }
 }

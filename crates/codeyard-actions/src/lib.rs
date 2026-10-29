@@ -8,6 +8,7 @@
 pub mod expressions;
 pub mod fs;
 pub mod progress;
+pub mod process;
 pub mod runner;
 pub mod vm;
 pub mod workflow;
