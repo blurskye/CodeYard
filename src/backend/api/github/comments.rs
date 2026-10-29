@@ -31,6 +31,16 @@ pub(super) struct Comment {
     updated_at: DateTime<Utc>,
 }
 
+impl From<db::issues::ConversationComment> for Comment {
+    fn from(row: db::issues::ConversationComment) -> Self {
+        Self { id: row.id, item: if row.pull_request { AssignedItem::PullRequest(row.item_id) } else { AssignedItem::Issue(row.item_id) }, number: row.number, author_id: row.author_id, body: row.body, created_at: row.created_at, updated_at: row.updated_at }
+    }
+}
+
+fn item_key(item: AssignedItem) -> (bool, i64) {
+    match item { AssignedItem::Issue(id) => (false, id), AssignedItem::PullRequest(id) => (true, id) }
+}
+
 pub(super) async fn find(pool: &db::DbPool, repo_id: i64, id: i64) -> Result<Comment> {
     if id < 2 {
         return Err(Error::missing());
@@ -85,44 +95,39 @@ pub(super) async fn document(
     owner: &str,
     comment: &Comment,
 ) -> Result<Value> {
-    let user = db::users::accounts::get_user_by_id(pool, comment.author_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(|| Error::unavailable(()))?;
-    let author = payloads::Person::of(&user);
-    let mut value = payloads::conversation_comment(
-        comment.id,
-        &comment.body,
-        &author,
-        (comment.created_at, comment.updated_at),
-        payloads::Scope {
-            repo,
-            owner,
-            sender: &author,
-        },
-        comment.number,
-        matches!(comment.item, AssignedItem::PullRequest(_)),
-    );
-    value["user"] = payloads::user(&user);
-    value["author_association"] =
-        serde_json::json!(super::pulls::association(pool, repo, user.id).await?);
-    value["pin"] = match db::pins::get_pin(pool, comment.item)
-        .await
-        .map_err(Error::unavailable)?
-        .filter(|pin| pin.comment_id == comment.id)
-    {
-        Some(pin) => {
-            let pinner = match pin.pinned_by {
-                Some(id) => db::users::accounts::get_user_by_id(pool, id)
-                    .await
-                    .map_err(Error::unavailable)?,
-                None => None,
-            };
-            payloads::comment_pin(&pin, pinner.as_ref())
-        }
-        None => Value::Null,
-    };
-    Ok(value)
+    documents(pool, repo, owner, std::slice::from_ref(comment)).await?.pop().ok_or_else(Error::missing)
+}
+
+async fn documents(pool: &db::DbPool, repo: &db::models::Repository, owner: &str, comments: &[Comment]) -> Result<Vec<Value>> {
+    if comments.len() > 100 { return Err(Error::unavailable("Comment page exceeds its bound")); }
+    if comments.is_empty() { return Ok(Vec::new()); }
+    let mut pins = HashMap::new();
+    for pull in [false, true] {
+        let mut ids: Vec<_> = comments.iter().map(|comment| item_key(comment.item)).filter(|(kind, _)| *kind == pull).map(|(_, id)| id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        for pin in db::pins::get_pins(pool, pull, &ids).await.map_err(Error::unavailable)? { pins.insert((pull, pin.item_id), pin.pin); }
+    }
+    let mut authors: Vec<_> = comments.iter().map(|comment| comment.author_id).collect();
+    authors.sort_unstable();
+    authors.dedup();
+    let associations = crate::backend::repositories::access::author_associations(pool, repo, &authors).await.map_err(Error::unavailable)?;
+    let mut ids = authors;
+    ids.extend(pins.values().filter_map(|pin| pin.pinned_by));
+    ids.sort_unstable();
+    ids.dedup();
+    let users: HashMap<_, _> = db::users::accounts::get_users_by_ids(pool, &ids).await.map_err(Error::unavailable)?.into_iter().map(|user| (user.id, user)).collect();
+    let mut values = Vec::with_capacity(comments.len());
+    for comment in comments {
+        let user = users.get(&comment.author_id).ok_or_else(|| Error::unavailable(()))?;
+        let author = payloads::Person::of(user);
+        let mut value = payloads::conversation_comment(comment.id, &comment.body, &author, (comment.created_at, comment.updated_at), payloads::Scope { repo, owner, sender: &author }, comment.number, matches!(comment.item, AssignedItem::PullRequest(_)));
+        value["user"] = payloads::user(user);
+        value["author_association"] = serde_json::json!(associations.get(&user.id).map_or("NONE", String::as_str));
+        value["pin"] = pins.get(&item_key(comment.item)).filter(|pin| pin.comment_id == comment.id).map_or(Value::Null, |pin| payloads::comment_pin(pin, pin.pinned_by.and_then(|id| users.get(&id))));
+        values.push(value);
+    }
+    Ok(values)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -412,16 +417,8 @@ async fn list(
     .await
     .map_err(Error::unavailable)?;
     let next = rows.len() > limit;
-    let mut items = Vec::new();
-    for (id, pull) in rows.into_iter().take(limit) {
-        let comment = find(
-            &state.pool,
-            repo.id,
-            payloads::conversation_comment_id(id, pull),
-        )
-        .await?;
-        items.push(document(&state.pool, &repo, &p["owner"], &comment).await?);
-    }
+    let comments: Vec<Comment> = rows.into_iter().take(limit).map(Comment::from).collect();
+    let items = documents(&state.pool, &repo, &p["owner"], &comments).await?;
     let items = represent(&state, &headers, &repo, &p["owner"], items).await?;
     page.response(&uri, items, next)
 }

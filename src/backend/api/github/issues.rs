@@ -208,16 +208,8 @@ async fn documents_page(
             .map(|user| (user.username.clone(), user))
             .collect()
     };
-    let mut associations: HashMap<i64, &'static str> = HashMap::new();
-    for author in sorted(
-        issues
-            .values()
-            .map(|issue| issue.author_id)
-            .chain(pulls.values().map(|pull| pull.author_id))
-            .collect(),
-    ) {
-        associations.insert(author, super::pulls::association(pool, repo, author).await?);
-    }
+    let authors = sorted(issues.values().map(|issue| issue.author_id).chain(pulls.values().map(|pull| pull.author_id)).collect());
+    let associations = crate::backend::repositories::access::author_associations(pool, repo, &authors).await.map_err(Error::unavailable)?;
     let issue_labels = db::labels::get_issues_labels(pool, &issue_ids)
         .await
         .map_err(Error::unavailable)?;
@@ -300,7 +292,7 @@ async fn documents_page(
             )
         };
         value["user"] = payloads::user(&users[&author]);
-        value["author_association"] = json!(associations[&author]);
+        value["author_association"] = json!(associations.get(&author).map_or("NONE", String::as_str));
         value["closed_by"] = closed_by
             .and_then(|id| users.get(&id))
             .map_or(Value::Null, payloads::user);
