@@ -345,6 +345,9 @@ async fn create(
             .map_err(Error::unavailable)?
             .filter(|repo| repo.owner_org_id == Some(org.id))
             .ok_or_else(|| Error::validation("Team", "repo_names", "invalid"))?;
+        auth.repository_scope(&state.pool, repo.id, "administration", true)
+            .await
+            .map_err(auth::scope_error)?;
         repositories.push(repo.id);
     }
     let new = orgs::NewTeam::new(&slug(name), profile)
@@ -894,6 +897,17 @@ async fn repository(
     if repo.owner_org_id != Some(org.id) {
         return Err(Error::missing());
     }
+    // The organization's members permission does not reach past the credential's repository
+    // bounds: changing a team's access needs administration on that repository.
+    let write = !auth::read_method(&method);
+    auth.repository_scope(
+        &state.pool,
+        repo.id,
+        if write { "administration" } else { "metadata" },
+        write,
+    )
+    .await
+    .map_err(auth::scope_error)?;
     if method == Method::PUT {
         let input = input(request).await?;
         let permission = match string(&input, "permission")? {

@@ -11,12 +11,7 @@ use crate::backend::{
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{
-    cmp::Ordering,
-    io::{Cursor, Read},
-    sync::Arc,
-    time::Duration,
-};
+use std::{cmp::Ordering, io::Read, sync::Arc, time::Duration};
 
 pub const ECOSYSTEMS: &[&str] = &[
     "npm",
@@ -416,8 +411,7 @@ pub async fn synchronize(
             bytes.extend_from_slice(&chunk);
         }
         let records = tokio::task::spawn_blocking(move || -> Result<Vec<Advisory>> {
-            let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
-            ensure!(archive.len() <= 1_000_000, "Too many OSV records");
+            let mut archive = crate::backend::zip_archives::open(bytes, 1_000_000)?;
             let mut records = Vec::new();
             let mut expanded = 0u64;
             for i in 0..archive.len() {

@@ -619,6 +619,70 @@ async fn contract(pg: bool) {
             db::models::AccessLevel::from(level)
         );
     }
+    // A fine-grained token selected for another repository cannot change team access to
+    // team-repo, through the team's repository route or the team's creation.
+    let other_repo = session
+        .expect(
+            "POST",
+            "/api/repos",
+            json!({"name":"other-repo","is_private":true,"owner_org_id":org.id}),
+            StatusCode::CREATED,
+        )
+        .await["id"]
+        .as_i64()
+        .unwrap();
+    {
+        use codeyard::backend::identity::fine_grained;
+        let created = fine_grained::create(
+            f.pool(),
+            alice,
+            Some(&session.session),
+            fine_grained::Request {
+                name: "team-admin".into(),
+                description: "Team administration".into(),
+                owner: fine_grained::Owner::Organization(org.id),
+                access: fine_grained::Access::Selected,
+                repositories: vec![other_repo],
+                permissions: json!({"members":"write","administration":"write"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                expires_at: Some(chrono::Utc::now() + chrono::Duration::days(30)),
+            },
+        )
+        .await
+        .unwrap();
+        db::fine_grained_tokens::review(
+            f.pool(),
+            org.id,
+            alice,
+            &[created.id],
+            "pending",
+            "approved",
+            None,
+        )
+        .await
+        .unwrap();
+        let fine = format!("Bearer {}", created.value);
+        call(
+            &router,
+            "PUT",
+            &format!("{path}/repos/team-org/team-repo"),
+            &fine,
+            json!({"permission":"admin"}),
+            ("teams/add-or-update-repo-permissions-in-org", 404),
+        )
+        .await;
+        call(
+            &router,
+            "POST",
+            base,
+            &fine,
+            json!({"name":"Escalated","repo_names":["team-org/team-repo"]}),
+            ("teams/create", 404),
+        )
+        .await;
+    }
     let with_repo = call(
         &router,
         "POST",

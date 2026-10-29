@@ -371,6 +371,43 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(list.as_array().unwrap().len(), 2);
+    // Each upload, a replacement included, counts against the uploader's quota.
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM upload_rate_limit WHERE reason='codeql_database' AND user_id=$1",
+            &[alice],
+        )
+        .await,
+        3
+    );
+    f.execute(
+        "UPDATE file_reason_limits SET max_uploads_per_hour=3 WHERE reason='codeql_database'",
+        &[],
+    )
+    .await;
+    let (status, _, body) = raw(
+        &router,
+        "POST",
+        &format!("{uploads}/python?name=again.zip"),
+        Some(writer),
+        "application/zip",
+        second.clone(),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+    assert_eq!(
+        db::codeql::get(f.pool(), repo.id, "python")
+            .await
+            .unwrap()
+            .unwrap()
+            .object_key,
+        current.object_key
+    );
     call(
         &router,
         "DELETE",

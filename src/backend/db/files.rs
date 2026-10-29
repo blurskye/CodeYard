@@ -105,6 +105,10 @@ native_operation!(crate::backend::db::postgres::files::reserve_upload,
     crate::backend::db::sqlite::files::reserve_upload,
     fn reserve_upload(pool: &DbPool, req: ReserveUpload<'_>) -> Result<File, AdmissionError>);
 
+native_operation!(crate::backend::db::postgres::files::charge_upload,
+    crate::backend::db::sqlite::files::charge_upload,
+    fn charge_upload(pool: &DbPool, user: i64, reason: &str, size: i64) -> Result<(), AdmissionError>);
+
 native_operation!(crate::backend::db::postgres::files::verify_pending_upload,
     crate::backend::db::sqlite::files::verify_pending_upload,
     fn verify_pending_upload(pool: &DbPool, file_id: Uuid, user_id: i64) -> Result<bool, sqlx::Error>);

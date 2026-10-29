@@ -30,3 +30,4 @@ pub mod ssh;
 pub mod storage;
 pub mod vulnerabilities;
 pub mod webhooks;
+pub mod zip_archives;

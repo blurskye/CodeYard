@@ -376,43 +376,60 @@ async fn analysis(
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.contains("application/sarif+json"))
     {
+        // An analysis keeps up to 100 MiB of SARIF. The shared download slots bound how many
+        // are loaded and rewritten at once, the rewrite runs off the async workers, and the
+        // slot is held until the client has the last byte.
+        let permit = crate::backend::api::http::middleware::wait_for_slot(
+            &state.repository_downloads,
+        )
+        .await
+        .ok_or_else(|| Error::unavailable(()))?;
         let raw = records::analysis_sarif(&state.pool, repo.id, id)
             .await
             .map_err(failure)?
             .ok_or_else(Error::missing)?;
-        let mut sarif: Value = serde_json::from_str(&raw).map_err(Error::unavailable)?;
-        drop(raw);
         let alerts = records::analysis_alerts(&state.pool, row.id)
             .await
             .map_err(failure)?;
-        let mut source = match sarif["runs"][0]["results"].take() {
-            Value::Array(results) => results,
-            _ => Vec::new(),
-        };
-        let mut results = Vec::new();
-        for (index, number) in alerts {
-            let mut result = source
-                .get_mut(index as usize)
-                .map(Value::take)
-                .ok_or_else(|| Error::unavailable(()))?;
-            if !result["properties"].is_object() {
-                result["properties"] = json!({});
-            }
-            result["properties"]["github/alertNumber"] = json!(number);
-            result["properties"]["github/alertUrl"] = json!(format!(
-                "{}/code-scanning/alerts/{number}",
-                repo_url(&owner, &name)
-            ));
-            results.push(result);
-        }
-        sarif["runs"][0]["results"] = json!(results);
+        let alerts_url = format!("{}/code-scanning/alerts", repo_url(&owner, &name));
+        let bytes = tokio::task::spawn_blocking(move || sarif_download(raw, alerts, &alerts_url))
+            .await
+            .map_err(Error::unavailable)?
+            .map_err(Error::unavailable)?;
         return Ok((
             [(header::CONTENT_TYPE, "application/sarif+json")],
-            Json(sarif),
+            crate::backend::api::http::middleware::buffered_download_body(bytes, permit),
         )
             .into_response());
     }
     Ok(Json(analysis_document(row, &owner, &name, entry.deletable)?).into_response())
+}
+/// The stored SARIF with only the results that became alerts, each tagged with its alert
+/// number and URL as GitHub returns it.
+fn sarif_download(raw: String, alerts: Vec<(i64, i64)>, alerts_url: &str) -> anyhow::Result<Vec<u8>> {
+    let mut sarif: Value = serde_json::from_str(&raw)?;
+    drop(raw);
+    let mut source = match sarif["runs"][0]["results"].take() {
+        Value::Array(results) => results,
+        _ => Vec::new(),
+    };
+    let mut results = Vec::with_capacity(alerts.len());
+    for (index, number) in alerts {
+        let mut result = usize::try_from(index)
+            .ok()
+            .and_then(|index| source.get_mut(index))
+            .map(Value::take)
+            .ok_or_else(|| anyhow::anyhow!("alert {number} names no stored result"))?;
+        if !result["properties"].is_object() {
+            result["properties"] = json!({});
+        }
+        result["properties"]["github/alertNumber"] = json!(number);
+        result["properties"]["github/alertUrl"] = json!(format!("{alerts_url}/{number}"));
+        results.push(result);
+    }
+    drop(source);
+    sarif["runs"][0]["results"] = json!(results);
+    Ok(serde_json::to_vec(&sarif)?)
 }
 async fn delete_analysis(
     State(state): State<Arc<AppState>>,

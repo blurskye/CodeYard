@@ -16,8 +16,15 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{io::Cursor, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio_util::io::ReaderStream;
+
+/// The most entries a CodeQL database archive may hold; a large project's database has tens
+/// of thousands.
+const MAX_DATABASE_ENTRIES: usize = 200_000;
+
+/// The upload quota (`file_reason_limits.reason`) that CodeQL database uploads count against.
+const UPLOAD_QUOTA: &str = "codeql_database";
 
 pub(crate) const UPLOAD_ROUTE: &str =
     "/api/uploads/repos/:owner/:repo/code-scanning/codeql/databases/:language";
@@ -207,13 +214,25 @@ pub(in crate::backend::api::github) async fn upload(
         )
     })?;
     let bytes = tokio::task::spawn_blocking(move || {
-        zip::ZipArchive::new(Cursor::new(&bytes)).map_err(|_| ())?;
+        crate::backend::zip_archives::open(&bytes, MAX_DATABASE_ENTRIES).map_err(|_| ())?;
         Ok::<_, ()>(bytes.to_vec())
     })
     .await
     .map_err(Error::unavailable)?
     .map_err(|_| Error::validation("CodeqlDatabase", "file", "invalid"))?;
     let size = bytes.len() as i64;
+    // Every upload counts, including one that replaces an earlier database.
+    db::files::charge_upload(&state.pool, auth.user.id, UPLOAD_QUOTA, size)
+        .await
+        .map_err(|error| match error {
+            db::files::AdmissionError::Quota => {
+                Error::new(StatusCode::TOO_MANY_REQUESTS, "Upload quota exhausted")
+            }
+            db::files::AdmissionError::Invalid => {
+                Error::validation("CodeqlDatabase", "file", "invalid")
+            }
+            other => Error::unavailable(other),
+        })?;
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     let key = format!("codeql/{}", uuid::Uuid::new_v4());
     codeql::stage(&state.pool, auth.user.id, repo.id, &key)
