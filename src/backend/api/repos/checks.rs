@@ -164,6 +164,7 @@ async fn rerequest(
         &owner,
         actor,
         Credential::Session(&session),
+        crate::backend::db::ci::CiCredential::Session(session.clone()),
         run.suite_id,
         None,
     )

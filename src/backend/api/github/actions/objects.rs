@@ -217,12 +217,15 @@ async fn delete_artifact(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (object, auth) = artifact(&state, &headers, &owner, &name, id, true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user.id;
+    let auth = auth.ok_or_else(auth::required)?;
+    let actor = auth.workflow_actor(&state, object.repo_id).await?;
+    let credential = auth.ci_credential(&headers, "actions")?;
     if !objects::delete_artifact(
         &state.pool,
         object.id,
         object.run_id.ok_or_else(Error::missing)?,
         Some(actor),
+        Some(&credential),
     )
     .await
     .map_err(Error::unavailable)?

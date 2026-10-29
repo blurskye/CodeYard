@@ -92,7 +92,8 @@ pub(crate) async fn delete_artifact(
     };
     if let Err(response) = ctx.check_csrf(&form) { return response; }
     let actor = ctx.user.as_ref().expect("readable run").id;
-    match db::action_objects::delete_artifact(&ctx.state.pool, artifact, run.id, Some(actor)).await
+    let credential = crate::backend::api::http::session::extract_session_id(&ctx.headers).map(db::ci::CiCredential::Session);
+    match db::action_objects::delete_artifact(&ctx.state.pool, artifact, run.id, Some(actor), credential.as_ref()).await
     {
         Ok(true) => ctx.redirect(&run_page(&owner, &name, run.run_id)),
         Ok(false) => ctx.error(
@@ -131,7 +132,7 @@ pub(crate) async fn cancel_run(
         .require_user()
         .expect("readable_run checked the user")
         .id;
-    match ctx.state.ci_runs.cancel_run(run.run_id, actor).await {
+    match ctx.state.ci_runs.cancel_run(run.run_id, actor, crate::backend::api::http::session::extract_session_id(&ctx.headers).map(db::ci::CiCredential::Session)).await {
         Ok(_) => ctx.redirect(&run_page(&owner, &name, run.run_id)),
         Err(error) => {
             let (status, axum::Json(error)) = super::admission_error(error);
@@ -163,7 +164,7 @@ pub(crate) async fn rerun_run(
         .require_user()
         .expect("readable_run checked the user")
         .id;
-    match ctx.state.ci_runs.rerun_run(run.run_id, actor).await {
+    match ctx.state.ci_runs.rerun_run(run.run_id, actor, crate::backend::api::http::session::extract_session_id(&ctx.headers).map(db::ci::CiCredential::Session)).await {
         Ok(new_run) => ctx.redirect(&run_page(&owner, &name, new_run.run_id)),
         Err(error) => {
             let (status, axum::Json(error)) = super::admission_error(error);

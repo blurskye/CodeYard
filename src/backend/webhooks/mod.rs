@@ -267,9 +267,10 @@ where
 
 pub(crate) async fn emit_repository_dispatch(
     pool: &DbPool, repo: &Repository, actor: i64, sender: i64, event_type: String, client_payload: Value,
+    credential: db::ci::CiCredential,
 ) -> Value {
     let snapshot = repo.clone();
-    emit_checked(pool, repo, "repository_dispatch", vec![sender], Some(actor), move |owner, people| {
+    emit_checked(pool, repo, "repository_dispatch", vec![sender], Some((actor, credential)), move |owner, people| {
         serde_json::json!({"action":event_type, "branch":snapshot.default_branch,
             "client_payload":client_payload, "repository":payloads::repository(&snapshot, owner),
             "sender":payloads::person(&people.get(sender))})
@@ -277,7 +278,7 @@ pub(crate) async fn emit_repository_dispatch(
 }
 
 async fn emit_checked<F>(
-    pool: &DbPool, repo: &Repository, event: &'static str, user_ids: Vec<i64>, dispatch_actor: Option<i64>, build: F,
+    pool: &DbPool, repo: &Repository, event: &'static str, user_ids: Vec<i64>, dispatch_actor: Option<(i64, db::ci::CiCredential)>, build: F,
 ) -> Value
 where F: FnOnce(&str, &People) -> Value + Send + 'static,
 {
@@ -321,8 +322,8 @@ where F: FnOnce(&str, &People) -> Value + Send + 'static,
     }
     // Dispatch is a requested write, not notification of a previously committed write.
     // Accept it only after all bounded preparation, under the mutation authority lock.
-    if let Some(actor) = dispatch_actor {
-        if !matches!(db::ci::accept_repository_dispatch(pool, actor, repo.id).await, Ok(true)) {
+    if let Some((actor, credential)) = dispatch_actor {
+        if !matches!(db::ci::accept_repository_dispatch(pool, actor, repo.id, &credential).await, Ok(true)) {
             return Value::Null;
         }
     }

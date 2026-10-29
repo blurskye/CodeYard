@@ -511,8 +511,9 @@ async fn rerequest(
         &state,
         &repo,
         &owner,
-        auth.user.id,
+        auth.workflow_actor(&state, repo.id).await?,
         Credential::Token(auth.token.id),
+        auth.ci_credential(&headers, "actions")?,
         suite,
         run.as_ref(),
     )
@@ -525,6 +526,7 @@ pub(in crate::backend::api) async fn request_again(
     owner: &str,
     actor: i64,
     credential: Credential<'_>,
+    ci_credential: db::ci::CiCredential,
     suite: i64,
     run: Option<&Run>,
 ) -> Result<()> {
@@ -534,10 +536,7 @@ pub(in crate::backend::api) async fn request_again(
         .ok_or_else(Error::missing)?;
     if let Some(ci_run) = stored.ci_run_id {
         // An Actions suite shows its workflow run, so rerequesting it queues another attempt of that run.
-        let credential = match credential {
-            Credential::Token(id) => Some(id),
-            Credential::Session(_) => None,
-        };
+        let credential = Some(ci_credential);
         // Each attempt has its own suite and CI run; reruns go through the shared workflow run.
         let workflow_run = db::ci::get_ci_run_by_id(&state.pool, repo.id, ci_run)
             .await

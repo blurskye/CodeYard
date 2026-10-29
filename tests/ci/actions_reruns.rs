@@ -611,7 +611,7 @@ jobs:
     .await;
     let denied = state
         .ci_runs
-        .rerun_workflow_run(repo.id, first.id, bob, false, Some(credential))
+        .rerun_workflow_run(repo.id, first.id, bob, false, Some(db::ci::CiCredential::Token { id: credential, hash: String::new(), permission: "actions" }))
         .await
         .unwrap_err();
     assert!(denied.to_string().contains("credential"), "{denied}");

@@ -35,6 +35,7 @@ impl CiRuns {
         sender: i64,
         event_type: String,
         client_payload: Value,
+        credential: db::ci::CiCredential,
     ) -> Result<(), AdmissionError> {
         if repo.is_archived {
             return Err(AdmissionError::Denied(
@@ -42,14 +43,14 @@ impl CiRuns {
             ));
         }
         let payload = crate::backend::webhooks::emit_repository_dispatch(
-            &self.pool, repo, actor, sender, event_type, client_payload,
+            &self.pool, repo, actor, sender, event_type, client_payload, credential.clone(),
         ).await;
         // No payload means its reads failed, so the dispatch did not happen and must not be
         // acknowledged.
         if payload.is_null() {
             return Err(AdmissionError::Unavailable);
         }
-        self.queue_repository_event(repo, actor, "repository_dispatch", &payload)
+        self.queue_repository_event(repo, actor, "repository_dispatch", &payload, Some(credential))
             .await
     }
 
@@ -187,7 +188,7 @@ impl CiRuns {
         )
         .await;
         anyhow::ensure!(!payload.is_null(), "workflow run payload could not be emitted");
-        if may_chain { self.queue_repository_event(&repo, actor, "workflow_run", &payload).await?; }
+        if may_chain { self.queue_repository_event(&repo, actor, "workflow_run", &payload, None).await?; }
         Ok(())
     }
 
@@ -248,6 +249,7 @@ impl CiRuns {
         actor: i64,
         event: &str,
         payload: &Value,
+        credential: Option<db::ci::CiCredential>,
     ) -> Result<(), AdmissionError> {
         if !is_repository_event(event) || !self.actor_may_discover_workflows(repo.id, actor).await?
         {
@@ -311,6 +313,7 @@ impl CiRuns {
                     },
                     AccessLevel::Owner,
                     payload.clone(),
+                    credential.clone(),
                 )
                 .await
             {

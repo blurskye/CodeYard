@@ -19,6 +19,7 @@ pub(crate) mod backups;
 pub(crate) mod catalog_search;
 pub(crate) mod checks;
 pub(crate) mod ci;
+mod ci_credentials;
 pub(crate) mod ci_tokens;
 pub(crate) mod cluster;
 pub(crate) mod code_scanning;

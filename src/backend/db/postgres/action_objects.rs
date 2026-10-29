@@ -404,6 +404,7 @@ pub async fn delete_artifact(
     id: i64,
     run_id: i64,
     actor: Option<i64>,
+    credential: Option<&crate::backend::db::ci::CiCredential>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     if let Some(actor) = actor {
@@ -412,8 +413,11 @@ pub async fn delete_artifact(
             .fetch_optional(&mut *tx)
             .await?;
         let Some(repo) = repo else { return Ok(false) };
-        if !super::discussions::lock_write_authority(&mut tx, actor, repo).await? {
+        if !super::discussions::lock_exclusive_write_authority(&mut tx, actor, repo).await? {
             return Ok(false);
+        }
+        if let Some(proof) = credential {
+            if !super::ci_credentials::live(&mut tx, actor, repo, proof).await? { return Ok(false); }
         }
     }
     let changed =

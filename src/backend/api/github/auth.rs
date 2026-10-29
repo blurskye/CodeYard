@@ -29,6 +29,14 @@ pub(super) fn read_method(method: &Method) -> bool {
 }
 
 impl Authentication {
+    pub fn ci_credential(&self, headers: &HeaderMap, permission: &'static str) -> Result<db::ci::CiCredential> {
+        Ok(db::ci::CiCredential::Token {
+            id: self.token.id,
+            hash: token_hash(credential(headers).ok_or_else(required)?),
+            permission,
+        })
+    }
+
     pub fn is_job(&self) -> bool {
         self.user.username == db::ci_tokens::BOT
     }

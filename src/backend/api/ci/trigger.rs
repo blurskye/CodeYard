@@ -29,7 +29,7 @@ pub async fn trigger_ci(
     let user = get_current_user(&state.pool, &headers).await?;
     let run = state
         .ci_runs
-        .dispatch_run(user.id, request)
+        .dispatch_run(user.id, request, crate::backend::api::http::session::extract_session_id(&headers).map(crate::backend::db::ci::CiCredential::Session))
         .await
         .map_err(super::admission_error)?;
     Ok(Json(TriggerCiResponse {
@@ -313,7 +313,7 @@ async fn dispatch(
     match ctx
         .state
         .ci_runs
-        .dispatch_run(actor_id, request)
+        .dispatch_run(actor_id, request, crate::backend::api::http::session::extract_session_id(&ctx.headers).map(crate::backend::db::ci::CiCredential::Session))
         .await
         .map_err(super::admission_error)
     {

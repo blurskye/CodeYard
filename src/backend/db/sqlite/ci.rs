@@ -101,9 +101,10 @@ fn branch_or_trunk_sql(branch: &str) -> String {
     )
 }
 
-pub async fn accept_repository_dispatch(pool: &SqlitePool, actor: i64, repo: i64) -> Result<bool> {
+pub async fn accept_repository_dispatch(pool: &SqlitePool, actor: i64, repo: i64, credential: &crate::backend::db::ci::CiCredential) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let allowed = super::discussions::lock_write_authority(&mut tx, actor, repo).await?;
+    let allowed = super::discussions::lock_write_authority(&mut tx, actor, repo).await?
+        && super::ci_credentials::live(&mut tx, actor, repo, credential).await?;
     tx.commit().await?;
     Ok(allowed)
 }
@@ -149,6 +150,7 @@ pub async fn enqueue_ci_run(
         trusted_ids,
         &crate::backend::db::runners::Scheduling::default(),
         None,
+        None,
     )
     .await.map(|(run, _)| run)
 }
@@ -158,8 +160,9 @@ pub async fn enqueue_ci_run_for_runners(
     trusted_ids: &[i64],
     scheduling: &crate::backend::db::runners::Scheduling,
     event_payload: Option<&serde_json::Value>,
+    credential: Option<&crate::backend::db::ci::CiCredential>,
 ) -> Result<crate::backend::db::ci::Enqueued> {
-    enqueue_ci_run_inner(pool, input, trusted_ids, None, scheduling, event_payload).await
+    enqueue_ci_run_inner(pool, input, trusted_ids, None, scheduling, event_payload, credential).await
 }
 pub async fn enqueue_ci_run_attempt(
     pool: &SqlitePool,
@@ -176,6 +179,7 @@ pub async fn enqueue_ci_run_attempt(
         Some(attempt),
         scheduling,
         event_payload,
+        None,
     )
     .await
 }
@@ -186,6 +190,7 @@ async fn enqueue_ci_run_inner(
     requested_attempt: Option<crate::backend::db::ci::NewCiAttempt>,
     scheduling: &crate::backend::db::runners::Scheduling,
     event_payload: Option<&serde_json::Value>,
+    credential: Option<&crate::backend::db::ci::CiCredential>,
 ) -> Result<crate::backend::db::ci::Enqueued> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let cd = matches!(input.pipeline, "cd" | "full") || input.environment.is_some();
@@ -211,6 +216,10 @@ async fn enqueue_ci_run_inner(
         },
         CiAdmissionRefusal::Denied("CI repository execution permission denied")
     );
+    if let Some(proof) = credential.or_else(|| requested_attempt.as_ref().and_then(|attempt| attempt.credential.as_ref())) {
+        ensure!(super::ci_credentials::live(&mut tx, input.triggered_by_id, input.repo_id, proof).await?,
+            CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
+    }
     let paths: Vec<_> = input.workflow_path.split(',').collect();
     let disabled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_workflows WHERE repo_id=$1 AND path IN (SELECT value FROM json_each($2)) AND state<>'active')").bind(input.repo_id).bind(serde_json::to_string(&paths)?).fetch_one(&mut *tx).await?;
     ensure!(!disabled, CiAdmissionRefusal::WorkflowDisabled);
@@ -253,30 +262,6 @@ async fn enqueue_ci_run_inner(
     let mut parent_run = None;
     let mut replay = None;
     if let Some(request) = &requested_attempt {
-        if let Some(token) = request.credential {
-            let owns:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR julianday(expires_at)>julianday('now')))").bind(token).bind(input.triggered_by_id).fetch_one(&mut *tx).await?;
-            ensure!(
-                owns,
-                CiAdmissionRefusal::Denied("CI credential is no longer authorized")
-            );
-        }
-        let bot: bool = sqlx::query_scalar("SELECT username=$2 FROM users WHERE id=$1")
-            .bind(input.triggered_by_id)
-            .bind(crate::backend::db::ci_tokens::BOT)
-            .fetch_one(&mut *tx)
-            .await?;
-        if bot {
-            let allowed = if let Some(token) = request.credential {
-                super::ci_tokens::may_cancel(&mut tx, input.triggered_by_id, input.repo_id, token)
-                    .await?
-            } else {
-                false
-            };
-            ensure!(
-                allowed,
-                CiAdmissionRefusal::Denied("CI credential is no longer authorized")
-            );
-        }
         let source: CiRun = sqlx::query_as("SELECT * FROM ci_runs WHERE id=$1 AND repo_id=$2")
             .bind(request.source)
             .bind(input.repo_id)
@@ -938,20 +923,20 @@ pub async fn request_ci_cancellation(
     request_cancellation(pool, run_id, actor_id, None).await
 }
 
-pub async fn request_ci_cancellation_with_token(
+pub async fn request_ci_cancellation_with_credential(
     pool: &SqlitePool,
     run_id: Uuid,
     actor_id: i64,
-    token_id: i64,
+    credential: &crate::backend::db::ci::CiCredential,
 ) -> Result<crate::backend::db::ci::Cancellation> {
-    request_cancellation(pool, run_id, actor_id, Some(token_id)).await
+    request_cancellation(pool, run_id, actor_id, Some(credential)).await
 }
 
 async fn request_cancellation(
     pool: &SqlitePool,
     run_id: Uuid,
     actor_id: i64,
-    token_id: Option<i64>,
+    credential: Option<&crate::backend::db::ci::CiCredential>,
 ) -> Result<crate::backend::db::ci::Cancellation> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let user = sqlx::query_as::<_, super::models::User>("SELECT * FROM users WHERE id = ?1")
@@ -977,9 +962,14 @@ async fn request_cancellation(
         super::repositories::access::user_repo_access_in_transaction(&mut tx, actor_id, repo.id)
             .await?;
     let personal_admin = user.is_admin && repo.owner_kind == "user" && repo.owner_org_id.is_none();
-    let workflow_authorized = match token_id {
-        Some(token) => super::ci_tokens::may_cancel(&mut tx, actor_id, run.repo_id, token).await?,
-        None => false,
+    if let Some(proof) = credential {
+        ensure!(super::ci_credentials::live(&mut tx, actor_id, repo.id, proof).await?,
+            CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
+    }
+    let workflow_authorized = match credential {
+        Some(crate::backend::db::ci::CiCredential::Token { id, .. }) => sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)")
+            .bind(id).fetch_one(&mut *tx).await?,
+        _ => false,
     };
     ensure!(
         workflow_authorized

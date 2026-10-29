@@ -37,8 +37,8 @@ async fn perform(
 ) -> Result<Response> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
     let authentication = authentication.ok_or_else(auth::required)?;
-    let actor = authentication.user.id;
-    let credential = Some(authentication.token.id);
+    let actor = authentication.workflow_actor(&state, repo.id).await?;
+    let credential = Some(authentication.ci_credential(&headers, "actions")?);
     let args: Parameters = if body.is_empty() {
         Parameters::default()
     } else {

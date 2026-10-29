@@ -1068,7 +1068,7 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
 
     // A cancelled run tells no one.
     let cancelled = db.enqueue(w.repo, w.owner, false, &[]).await;
-    assert!(service.cancel_run(cancelled.run_id, w.owner).await.unwrap());
+    assert!(service.cancel_run(cancelled.run_id, w.owner, None).await.unwrap());
     assert!(
         subscriber.try_recv().is_err(),
         "a cancelled run sends nothing"
@@ -1125,7 +1125,7 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
         .await
         .unwrap()
         .is_none());
-    assert!(!service.cancel_run(run.run_id, w.owner).await.unwrap());
+    assert!(!service.cancel_run(run.run_id, w.owner, None).await.unwrap());
     assert!(!queue
         .finish(WORKER, run.id, "failed", failure)
         .await

@@ -183,6 +183,7 @@ impl CiRuns {
                     },
                     crate::backend::db::models::AccessLevel::Owner,
                     event.clone(),
+                    None,
                 )
                 .await;
             if let Err(error) = result {

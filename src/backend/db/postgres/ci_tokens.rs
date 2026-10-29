@@ -35,34 +35,8 @@ pub async fn issue(
 }
 
 pub async fn get(pool: &PgPool, token_id: i64) -> Result<Option<JobToken>> {
-    let mut connection = pool.acquire().await?;
-    get_in_connection(&mut connection, token_id).await
-}
-
-async fn get_in_connection(
-    connection: &mut sqlx::PgConnection,
-    token_id: i64,
-) -> Result<Option<JobToken>> {
     Ok(sqlx::query_as("SELECT r.id AS run_id,r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=$1 AND (t.revoked_at IS NULL OR t.revoked_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint-60) AND (r.status='running' OR r.completed_at>clock_timestamp()-INTERVAL '1 minute')")
-        .bind(token_id).fetch_optional(connection).await?)
-}
-
-pub(crate) async fn may_cancel(
-    connection: &mut sqlx::PgConnection,
-    actor: i64,
-    repo: i64,
-    token_id: i64,
-) -> Result<bool> {
-    let Some(token) = get_in_connection(connection, token_id).await? else {
-        return Ok(false);
-    };
-    if token.repo_id != repo {
-        return Ok(false);
-    }
-    let owns:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR expires_at>clock_timestamp()))").bind(token_id).bind(actor).fetch_one(connection).await?;
-    let permissions: crate::backend::ci::tokens::Permissions =
-        serde_json::from_str(&token.permissions)?;
-    Ok(owns && permissions.allows("actions", true))
+        .bind(token_id).fetch_optional(pool).await?)
 }
 
 pub async fn finish_job(pool: &PgPool, run_id: i64, worker: &str, job: &str) -> Result<()> {

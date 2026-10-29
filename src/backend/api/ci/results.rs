@@ -290,7 +290,7 @@ async fn twirp(
                 objects::artifact_for_run(&state.pool, run.id, name).await?
             }.ok_or_else(missing)?;
             if method == "DeleteArtifact" {
-                if !objects::delete_artifact(&state.pool, object.id, run.id, None).await? {
+                if !objects::delete_artifact(&state.pool, object.id, run.id, None, None).await? {
                     return Err(missing());
                 }
                 json!({"ok":true,"artifactId":object.id.to_string()})

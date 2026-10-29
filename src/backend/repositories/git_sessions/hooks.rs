@@ -755,6 +755,7 @@ impl Gateway {
                         },
                         access,
                         event.clone(),
+                        None,
                     )
                     .await;
                 if matches!(result, Err(ci::admission::AdmissionError::WorkflowDisabled)) {

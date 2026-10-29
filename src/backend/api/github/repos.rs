@@ -813,6 +813,7 @@ async fn dispatch(
             auth.user.id,
             input.event_type,
             input.client_payload,
+            auth.ci_credential(&headers, "contents")?,
         )
         .await
         .map_err(super::actions::admission_error)?;

@@ -201,10 +201,9 @@ async fn dispatch(
     input: std::result::Result<Json<Dispatch>, JsonRejection>,
 ) -> Result<Response> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = authentication
-        .ok_or_else(auth::required)?
-        .workflow_actor(&state, repo.id)
-        .await?;
+    let authentication = authentication.ok_or_else(auth::required)?;
+    let credential = authentication.ci_credential(&headers, "actions")?;
+    let actor = authentication.workflow_actor(&state, repo.id).await?;
     let Json(input) = input.map_err(|_| Error::invalid("Invalid workflow dispatch"))?;
     let workflow = lookup(&state, &repo, &key).await?;
     let run = state
@@ -223,6 +222,7 @@ async fn dispatch(
                 inputs: input.inputs,
                 repo_id: Some(repo.id),
             },
+            Some(credential),
         )
         .await
         .map_err(admission_error)?;

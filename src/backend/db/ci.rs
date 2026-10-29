@@ -82,10 +82,17 @@ pub enum CiReplaySelection {
     Job(i64),
 }
 
+/// The proof actually presented by the request, retained across Git and body awaits.
+#[derive(Clone)]
+pub enum CiCredential {
+    Session(String),
+    Token { id: i64, hash: String, permission: &'static str },
+}
+
 pub struct NewCiAttempt {
     pub source: i64,
     pub source_uuid: Uuid,
-    pub credential: Option<i64>,
+    pub credential: Option<CiCredential>,
     /// Native forms retain their explicit duplicate/reuse behavior; REST attempts require idle roots.
     pub allow_active: bool,
     pub selection: CiReplaySelection,
@@ -142,7 +149,7 @@ pub const ACCESS_LOST_MESSAGE: &str = "The person who started this run no longer
 
 native_operation!(crate::backend::db::postgres::ci::accept_repository_dispatch,
     crate::backend::db::sqlite::ci::accept_repository_dispatch,
-    fn accept_repository_dispatch(pool: &DbPool, actor: i64, repo: i64) -> Result<bool>);
+    fn accept_repository_dispatch(pool: &DbPool, actor: i64, repo: i64, credential: &CiCredential) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::ci::scheduled_repositories,
     crate::backend::db::sqlite::ci::scheduled_repositories,
@@ -168,7 +175,7 @@ native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run_attempt,
     fn enqueue_ci_run_attempt(pool:&DbPool,input:NewCiRun<'_>,trusted_ids:&[i64],attempt:NewCiAttempt,scheduling:&super::runners::Scheduling,event_payload:Option<&serde_json::Value>)->Result<Enqueued>);
 native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run_for_runners,
     crate::backend::db::sqlite::ci::enqueue_ci_run_for_runners,
-    fn enqueue_ci_run_for_runners(pool: &DbPool, input: NewCiRun<'_>, trusted_ids: &[i64], scheduling: &super::runners::Scheduling, event_payload: Option<&serde_json::Value>) -> Result<Enqueued>);
+    fn enqueue_ci_run_for_runners(pool: &DbPool, input: NewCiRun<'_>, trusted_ids: &[i64], scheduling: &super::runners::Scheduling, event_payload: Option<&serde_json::Value>, credential: Option<&CiCredential>) -> Result<Enqueued>);
 
 native_operation!(crate::backend::db::postgres::ci::claim_ci_run,
     crate::backend::db::sqlite::ci::claim_ci_run,
@@ -236,9 +243,9 @@ native_operation!(crate::backend::db::postgres::ci::request_ci_cancellation,
     crate::backend::db::sqlite::ci::request_ci_cancellation,
     fn request_ci_cancellation(pool: &DbPool, run_id: Uuid, actor_id: i64) -> Result<Cancellation>);
 
-native_operation!(crate::backend::db::postgres::ci::request_ci_cancellation_with_token,
-    crate::backend::db::sqlite::ci::request_ci_cancellation_with_token,
-    fn request_ci_cancellation_with_token(pool: &DbPool, run_id: Uuid, actor_id: i64, token_id: i64) -> Result<Cancellation>);
+native_operation!(crate::backend::db::postgres::ci::request_ci_cancellation_with_credential,
+    crate::backend::db::sqlite::ci::request_ci_cancellation_with_credential,
+    fn request_ci_cancellation_with_credential(pool: &DbPool, run_id: Uuid, actor_id: i64, credential: &CiCredential) -> Result<Cancellation>);
 native_operation!(crate::backend::db::postgres::ci::delete_ci_run_data,
     crate::backend::db::sqlite::ci::delete_ci_run_data,
     fn delete_ci_run_data(pool: &DbPool, actor: i64, repo: i64, id: i64, kind: CiRunDeletion) -> Result<bool>);

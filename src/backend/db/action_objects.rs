@@ -176,7 +176,7 @@ native_operation!(crate::backend::db::postgres::action_objects::artifact_by_id,
     fn artifact_by_id(pool: &DbPool, id: i64) -> Result<Option<ActionObject>>);
 native_operation!(crate::backend::db::postgres::action_objects::delete_artifact,
     crate::backend::db::sqlite::action_objects::delete_artifact,
-    fn delete_artifact(pool: &DbPool, id: i64, run_id: i64, actor: Option<i64>) -> Result<bool>);
+    fn delete_artifact(pool: &DbPool, id: i64, run_id: i64, actor: Option<i64>, credential: Option<&super::ci::CiCredential>) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::organizations::cache::org_cache_usage,
     crate::backend::db::sqlite::organizations::cache::org_cache_usage,
     fn org_cache_usage(pool: &DbPool, actor: i64, name: &str, offset: i64, limit: i64) -> Result<super::organizations::OrganizationOutcome<OrganizationCacheUsage>>);
