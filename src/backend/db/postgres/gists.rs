@@ -58,13 +58,24 @@ pub async fn git_repository(pool: &PgPool, id: &str) -> Result<Option<Repository
     )
 }
 pub async fn list(pool: &PgPool, input: &GistList) -> Result<Vec<Gist>> {
+    list_on(&mut *pool.acquire().await?, input).await
+}
+pub async fn list_for_session(pool: &PgPool, input: &GistList, session: &str) -> Result<Vec<Gist>> {
+    let actor = match input.scope { ListScope::Owner(actor, true) | ListScope::Starred(actor) => actor, _ => return list(pool, input).await };
+    let mut tx = pool.begin().await?;
+    super::users::transitions::require_account(&mut tx, actor, &AccountCredential::Session(session)).await?;
+    let entries = list_on(&mut tx, input).await?;
+    tx.commit().await?;
+    Ok(entries)
+}
+async fn list_on(connection: &mut sqlx::PgConnection, input: &GistList) -> Result<Vec<Gist>> {
     let (mode, id, secret) = match input.scope {
         ListScope::Public => (0, 0, false),
         ListScope::Owner(id, secret) => (1, id, secret),
         ListScope::Starred(id) => (2, id, true),
         ListScope::Forks(id) => (3, id, true),
     };
-    Ok(sqlx::query_as(&format!("SELECT {FIELDS} {FROM} WHERE g.ready AND ($1::timestamptz IS NULL OR g.updated_at>$1) AND (($2=0 AND g.is_public) OR ($2=1 AND r.owner_user_id=$3 AND ($4 OR g.is_public)) OR ($2=2 AND EXISTS(SELECT 1 FROM gist_stars s WHERE s.repo_id=g.repo_id AND s.user_id=$3)) OR ($2=3 AND r.forked_from_id=$3)) ORDER BY g.updated_at DESC,g.id DESC LIMIT $5 OFFSET $6")).bind(input.since).bind(mode).bind(id).bind(secret).bind(input.limit.clamp(0,101)).bind(input.offset.max(0)).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&format!("SELECT {FIELDS} {FROM} WHERE g.ready AND ($1::timestamptz IS NULL OR g.updated_at>$1) AND (($2=0 AND g.is_public) OR ($2=1 AND r.owner_user_id=$3 AND ($4 OR g.is_public)) OR ($2=2 AND EXISTS(SELECT 1 FROM gist_stars s WHERE s.repo_id=g.repo_id AND s.user_id=$3)) OR ($2=3 AND r.forked_from_id=$3)) ORDER BY g.updated_at DESC,g.id DESC LIMIT $5 OFFSET $6")).bind(input.since).bind(mode).bind(id).bind(secret).bind(input.limit.clamp(0,101)).bind(input.offset.max(0)).fetch_all(connection).await?)
 }
 const OWNED: &str = "WHERE g.ready AND r.owner_user_id=$1 AND ($2 OR g.is_public) AND ($3::boolean IS NULL OR g.is_public=$3)";
 pub async fn count_owned(
