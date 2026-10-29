@@ -913,7 +913,7 @@ pub(crate) async fn current_branch_head(path: &Path, branch: &str) -> Result<Opt
 
 async fn current_reference(path: &Path, reference: &str) -> Result<Option<String>> {
     ensure!(
-        crate::backend::git::is_canonical_ref(reference) || is_pull_head_ref(reference),
+        crate::backend::git::is_canonical_ref(reference) || is_pull_head_ref(reference) || is_retained_object_ref(reference),
         "Invalid reference"
     );
     let (status, current) = command(
@@ -1049,15 +1049,7 @@ pub(crate) async fn publish_ref(
         }
         None => format!("start\noption no-deref\ndelete {reference} {old}\nprepare\ncommit\n"),
     };
-    let (status, _) = command(
-        path,
-        &["update-ref", "--stdin", "-m", verb],
-        input.as_bytes(),
-        None,
-    )
-    .await?;
-    ensure!(status.success(), "Reference changed while publishing");
-    Ok(())
+    run_ref_transaction(path, &input, verb, "Reference changed while publishing").await
 }
 
 pub(crate) async fn publish_branch_rename(
@@ -1076,9 +1068,7 @@ pub(crate) async fn publish_branch_rename(
     {
         return Err(RefConflict("Reference changed while renaming".into()).into());
     }
-    let (status, _) = command(path, &["branch", "--move", "--", old, new], b"", None).await?;
-    ensure!(status.success(), "Git branch rename failed");
-    Ok(())
+    run_ref_command(path, &["branch", "--move", "--", old, new], b"", "Reference changed while renaming", &[(&old_ref, Some(target)), (&new_ref, None)]).await
 }
 
 pub(crate) async fn publish_ref_create(path: &Path, reference: &str, target: &str) -> Result<()> {
@@ -1184,13 +1174,26 @@ pub(crate) async fn publish_restack(
 pub(crate) struct RefConflict(pub(crate) String);
 
 /// Runs one `update-ref --stdin` transaction. A failed check of any line refuses all of them.
-async fn run_ref_transaction(path: &Path, input: &str, message: &str, failure: &str) -> Result<()> {
+pub(crate) async fn run_ref_transaction(path: &Path, input: &str, message: &str, failure: &str) -> Result<()> {
+    let mut expected = Vec::new();
+    for line in input.lines() {
+        let fields = line.split(' ').collect::<Vec<_>>();
+        let pair = match fields.as_slice() {
+            ["create", reference, _] => Some((*reference, None)),
+            ["update", reference, _, old] | ["delete", reference, old] | ["verify", reference, old] => {
+                Some((*reference, if old.bytes().all(|byte| byte == b'0') { None } else { Some(*old) }))
+            }
+            _ => None,
+        };
+        if let Some(pair) = pair { expected.push(pair); }
+    }
+    run_ref_command(path, &["update-ref", "--stdin", "-m", message], input.as_bytes(), failure, &expected).await
+}
+
+async fn run_ref_command(path: &Path, args: &[&str], input: &[u8], failure: &str, expected: &[(&str, Option<&str>)]) -> Result<()> {
     let mut command = process::git_command()?;
-    command
-        .arg("--git-dir")
-        .arg(path)
-        .args(["update-ref", "--stdin", "-m", message]);
-    let output = process::run(command, input.as_bytes(), MAX_OUTPUT, COMMAND_TIMEOUT).await?;
+    command.arg("--git-dir").arg(path).args(args);
+    let output = process::run(command, input, MAX_OUTPUT, COMMAND_TIMEOUT).await?;
     if !output.status.success() {
         let diagnostics = String::from_utf8_lossy(&output.stderr);
         if diagnostics.contains("but expected")
@@ -1199,7 +1202,14 @@ async fn run_ref_transaction(path: &Path, input: &str, message: &str, failure: &
         {
             return Err(RefConflict(failure.into()).into());
         }
-        bail!("Git ref transaction failed: {diagnostics}");
+        // Preserve storage failures, but classify lease failures even when Git's wording
+        // differs between versions or ref backends.
+        for (reference, old) in expected {
+            if current_reference(path, reference).await?.as_deref() != *old {
+                return Err(RefConflict(failure.into()).into());
+            }
+        }
+        bail!("Git ref publication failed: {diagnostics}");
     }
     Ok(())
 }

@@ -537,15 +537,9 @@ pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<Comm
         prepared.commit.sha,
         prepared.expected.as_deref().unwrap_or(ZERO)
     );
-    let (status, _) = repo
-        .command(&["update-ref", "--stdin"], transaction.as_bytes(), None)
-        .await?;
-    if !status.success() {
-        if repo.direct_ref(&prepared.reference).await? != prepared.expected {
-            return Err(conflict());
-        }
-        return Err(unavailable());
-    }
+    crate::backend::git::repository::run_ref_transaction(
+        path, &transaction, "publish editor commit", "The branch changed since the editor started.",
+    ).await.map_err(RepoError::from)?;
     Ok(prepared.commit.clone())
 }
 

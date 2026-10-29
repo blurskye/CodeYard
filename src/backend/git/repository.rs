@@ -26,7 +26,7 @@ pub(crate) use checked::{
     publish_ref, publish_ref_create, publish_ref_delete, publish_restack, quarantined_command,
     quarantined_is_fast_forward, rewrite_template_history, validate_merge_revision, MergeConflict,
     Person, PreparedPullHead, PullHeadConflict, RefConflict, UnsupportedMerge,
-    walk_commits, MAX_MERGE_MESSAGE_BYTES, NO_CHANGES,
+    walk_commits, run_ref_transaction, MAX_MERGE_MESSAGE_BYTES, NO_CHANGES,
 };
 pub(crate) use release_notes::release_history;
 pub use release_notes::ReleaseHistory;
