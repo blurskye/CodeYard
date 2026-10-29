@@ -102,6 +102,13 @@ fn branch_or_trunk_sql(branch: &str) -> String {
     )
 }
 
+pub async fn accept_repository_dispatch(pool: &PgPool, actor: i64, repo: i64) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let allowed = super::discussions::lock_write_authority(&mut tx, actor, repo).await?;
+    tx.commit().await?;
+    Ok(allowed)
+}
+
 pub async fn scheduled_repositories(pool: &PgPool, after: i64) -> Result<Vec<i64>> {
     Ok(sqlx::query_scalar(
         "SELECT id FROM repositories WHERE id>$1 AND NOT is_archived ORDER BY id LIMIT 100",

@@ -137,6 +137,10 @@ native_operation!(crate::backend::db::postgres::ci::ci_run_options,crate::backen
 /// lost access, and shown to the person who looks at the run.
 pub const ACCESS_LOST_MESSAGE: &str = "The person who started this run no longer has access";
 
+native_operation!(crate::backend::db::postgres::ci::accept_repository_dispatch,
+    crate::backend::db::sqlite::ci::accept_repository_dispatch,
+    fn accept_repository_dispatch(pool: &DbPool, actor: i64, repo: i64) -> Result<bool>);
+
 native_operation!(crate::backend::db::postgres::ci::scheduled_repositories,
     crate::backend::db::sqlite::ci::scheduled_repositories,
     fn scheduled_repositories(pool: &DbPool, after: i64) -> Result<Vec<i64>>);

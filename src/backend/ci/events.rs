@@ -41,20 +41,9 @@ impl CiRuns {
                 "Repository was archived so is read-only",
             ));
         }
-        let snapshot = repo.clone();
-        let payload = crate::backend::webhooks::emit(
-            &self.pool,
-            repo,
-            "repository_dispatch",
-            vec![sender],
-            move |owner, people| {
-                serde_json::json!({"action":event_type, "branch":snapshot.default_branch,
-                    "client_payload":client_payload,
-                    "repository":payloads::repository(&snapshot, owner),
-                    "sender":payloads::person(&people.get(sender))})
-            },
-        )
-        .await;
+        let payload = crate::backend::webhooks::emit_repository_dispatch(
+            &self.pool, repo, actor, sender, event_type, client_payload,
+        ).await;
         // No payload means its reads failed, so the dispatch did not happen and must not be
         // acknowledged.
         if payload.is_null() {
