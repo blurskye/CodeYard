@@ -116,6 +116,9 @@ pub(crate) async fn load_database(
         .map_err(|_| unavailable(ctx))?
         .remove(&repository.id)
         .unwrap_or_default();
+    let forks = from_api(ctx, super::responses::repository_fork_counts(
+        &ctx.state.pool, Some(&ctx.headers), &[repository.id],
+    ).await)?.remove(&repository.id).unwrap_or_default();
     let mut chrome = RepoChrome {
         id: repository.id,
         owner: owner.to_owned(),
@@ -128,7 +131,7 @@ pub(crate) async fn load_database(
         is_template: repository.is_template,
         stars: repository.stars_count,
         watchers: repository.watchers_count,
-        forks: repository.forks_count,
+        forks,
         csrf_token: ctx.csrf_token.clone(),
         current_path: if owner.eq_ignore_ascii_case("gists")
             && !ctx.path.starts_with("/gists/@repos/")

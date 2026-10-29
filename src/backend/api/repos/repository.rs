@@ -16,7 +16,7 @@ use crate::backend::api::repos::code::contents::{
 use crate::backend::api::repos::forms::{checkbox, field, repeated, with_status};
 use crate::backend::api::repos::labels::{label_write_error, parse_label_color};
 use crate::backend::api::repos::responses::{
-    lifecycle_error, lifecycle_status, repository_owner, repository_topics, ForkParent,
+    lifecycle_error, lifecycle_status, repository_fork_counts, repository_owner, repository_topics, ForkParent,
     RepoResponse,
 };
 use crate::backend::api::repos::settings::branch_protection;
@@ -158,7 +158,10 @@ async fn repository_response(
         None
     };
 
-    let mut response = RepoResponse::new(repository, &owner, topics, forked_from);
+    let forks = repository_fork_counts(&state.pool, Some(headers), &[repository.id]).await?
+        .remove(&repository.id).unwrap_or_default();
+    check_repo_read_access(&state.pool, repository, headers).await?;
+    let mut response = RepoResponse::new(repository, &owner, topics, forked_from, forks);
     response.default_branch = default_branch;
     Ok(response)
 }

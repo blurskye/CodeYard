@@ -450,10 +450,12 @@ async fn forks(
         .unwrap_or(1)
         .clamp(1, 10_000);
     let viewer = ctx.user.as_ref().map(|user| user.id);
+    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let offset = (page - 1) * FORKS_PER_PAGE;
     let Ok((found, has_more)) = visible_forks(
         &ctx.state.pool,
         viewer,
+        &session,
         loaded.repository.id,
         FORKS_PER_PAGE,
         offset,
@@ -466,8 +468,17 @@ async fn forks(
     let Ok(mut owners) = repository_owners(&ctx.state.pool, &ids).await else {
         return chrome::unavailable(&ctx);
     };
+    let viewer = match crate::backend::api::http::session::get_optional_user(&ctx.state.pool, &ctx.headers).await {
+        Ok(user) => user.map(|user| user.id),
+        Err(_) => return chrome::unavailable(&ctx),
+    };
+    let readable = match db::repositories::access::readable_repository_ids(&ctx.state.pool, viewer, &ids).await {
+        Ok(ids) => ids,
+        Err(_) => return chrome::unavailable(&ctx),
+    };
     let rows = found
         .into_iter()
+        .filter(|fork| readable.contains(&fork.id))
         .filter_map(|fork| {
             Some(Fork {
                 owner: owners.remove(&fork.id)?,
