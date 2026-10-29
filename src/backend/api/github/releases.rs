@@ -375,6 +375,7 @@ async fn upload(
     .map_err(|_| Error::invalid("Asset exceeds 100 MiB"))?
     .to_vec();
     auth.require_live(&state.pool).await?;
+    auth.repository_scope(&state.pool, repo.id, "contents", true).await.map_err(auth::scope_error)?;
     let actor = auth.user;
     let asset = releases::upload_asset(
         &state.pool,
@@ -384,6 +385,7 @@ async fn upload(
         &name,
         id,
         releases::AssetUpload {
+            token: Some(auth.token.id),
             name: &input.name,
             label: input.label.as_deref(),
             content_type: &content_type,
