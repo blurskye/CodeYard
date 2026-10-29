@@ -562,16 +562,10 @@ pub async fn create_pull_request_comment(
             pull_request.base_sha.as_str(),
         )),
     };
-    let stored = if let Some(review_id) = req.review_id {
-        db::pull_requests::reviews::add_comment_to_pending_review(pool, input, review_id).await
-    } else if pending {
-        db::pull_requests::reviews::add_pending_pull_request_comment(pool, input).await
-    } else {
-        db::pull_requests::reviews::add_pull_request_comment(pool, input).await
-    };
-    let comment = stored.map_err(super::write_error)?;
-    // A new thread on a file, and a reply that joins one, wait in the pending review.
-    if pending || in_pending_review(pool, &comment).await? {
+    let (comment, deferred) = db::pull_requests::reviews::insert_comment(pool, input, pending || req.review_id.is_some(), req.review_id)
+        .await.map_err(super::write_error)?;
+    // Submission owns publication for every comment that was pending when inserted.
+    if deferred {
         return Ok(comment);
     }
 
