@@ -543,12 +543,15 @@ pub async fn delete_unwritten_repository(
     pool: &PgPool,
     repo_id: i64,
 ) -> Result<Option<Repository>> {
-    Ok(sqlx::query_as::<_, Repository>(
-        "DELETE FROM repositories WHERE id=$1 AND contribution_version=0 RETURNING *",
-    )
-    .bind(repo_id)
-    .fetch_optional(pool)
-    .await?)
+    let mut tx = pool.begin().await?;
+    super::super::users::transitions::lock_membership_shared(&mut tx).await?;
+    lock_fork_ancestors(&mut tx, repo_id, "FOR NO KEY UPDATE").await?;
+    sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR UPDATE").bind(repo_id).execute(&mut *tx).await?;
+    let deleted = sqlx::query_as::<_, Repository>(
+        "DELETE FROM repositories WHERE id=$1 AND contribution_version=0 AND NOT EXISTS(SELECT 1 FROM repository_discussion_counters WHERE repo_id=$1) AND NOT EXISTS(SELECT 1 FROM discussions WHERE repo_id=$1) AND NOT EXISTS(SELECT 1 FROM repository_security_reports WHERE repo_id=$1) RETURNING *",
+    ).bind(repo_id).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(deleted)
 }
 
 pub async fn delete_repository(pool: &PgPool, actor_id: i64, repo_id: i64) -> Result<Repository> {
@@ -568,6 +571,7 @@ pub async fn delete_repository(pool: &PgPool, actor_id: i64, repo_id: i64) -> Re
         .bind(repo_id)
         .execute(&mut *tx)
         .await?;
+    super::super::runners::remove_repository_runners(&mut tx, repo_id).await?;
     let deleted =
         sqlx::query_as::<_, Repository>("DELETE FROM repositories WHERE id=$1 RETURNING *")
             .bind(repo_id)
@@ -753,9 +757,8 @@ async fn transfer_repository_once(
             .execute(&mut *tx)
             .await?;
     }
-    if let (true, Some(org)) = (changed, org) {
-        // One fork of a source per organization. Lock the source as fork creation does, so a
-        // concurrent creation or transfer waits for this check.
+    if changed {
+        // Serialize the destination's one-fork-per-source policy with fork creation.
         let source: Option<i64> =
             sqlx::query_scalar("SELECT forked_from_id FROM repositories WHERE id=$1")
                 .bind(repo_id)
@@ -766,10 +769,12 @@ async fn transfer_repository_once(
                 .bind(source)
                 .fetch_optional(&mut *tx)
                 .await?;
-            let duplicate: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE owner_kind='org' AND owner_org_id=$1 AND forked_from_id=$2 AND id<>$3)")
-                .bind(org)
+            let duplicate: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE owner_kind=$1 AND (owner_user_id=$4 OR owner_org_id=$5) AND forked_from_id=$2 AND id<>$3)")
+                .bind(kind)
                 .bind(source)
                 .bind(repo_id)
+                .bind(user)
+                .bind(org)
                 .fetch_one(&mut *tx)
                 .await?;
             anyhow::ensure!(!duplicate, Refusal::NameConflict);
@@ -803,6 +808,14 @@ async fn transfer_repository_once(
             .await?;
     }
     if changed {
+        if let Some(owner) = user {
+            sqlx::query("DELETE FROM repo_access a WHERE a.repo_id=$1 AND EXISTS(SELECT 1 FROM user_blocks b WHERE (b.user_id=$2 AND b.blocked_id=a.user_id) OR (b.blocked_id=$2 AND b.user_id=a.user_id))")
+                .bind(repo_id).bind(owner).execute(&mut *tx).await?;
+        }
+        sqlx::query("DELETE FROM action_runner_group_repositories WHERE repo_id=$1")
+            .bind(repo_id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE issue_suggestions SET state='invalidated',updated_at=clock_timestamp() WHERE state='pending' AND action='add_field' AND issue_id IN (SELECT id FROM issues WHERE repo_id=$1)")
+            .bind(repo_id).execute(&mut *tx).await?;
         super::creation::grant_creator(
             &mut tx,
             RepositoryCreationOwner { actor_id, target },
@@ -824,6 +837,9 @@ async fn transfer_repository_once(
         .execute(&mut *tx)
         .await?;
         super::super::code_security::apply_default(&mut tx, &result).await?;
+        sqlx::query("DELETE FROM secret_scanning_commits WHERE repo_id=$1").bind(repo_id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO secret_scanning_jobs(repo_id,scan_type,actor_id) SELECT $1,'backfill',$2 WHERE EXISTS(SELECT 1 FROM secret_scanning_settings WHERE repo_id=$1 AND enabled)")
+            .bind(repo_id).bind(actor_id).execute(&mut *tx).await?;
         // Packages stay in their publishing namespace; the new owner must not inherit access.
         // A package that the private repository hid stays private once it is detached.
         sqlx::query("UPDATE packages SET repo_id=NULL,visibility=CASE WHEN (SELECT is_private FROM repositories WHERE id=$2) THEN 'private' ELSE visibility END,updated_at=$1 WHERE repo_id=$2")
