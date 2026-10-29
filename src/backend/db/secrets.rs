@@ -73,6 +73,9 @@ impl SecretsError {
             Ok(error) => return error,
             Err(error) => error,
         };
+        if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+            return Self::Denied;
+        }
         if matches!(
             error.downcast_ref::<crate::backend::db::discussions::DiscussionWriteRefusal>(),
             Some(crate::backend::db::discussions::DiscussionWriteRefusal::Denied)
