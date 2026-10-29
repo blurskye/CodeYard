@@ -80,6 +80,12 @@ pub async fn upsert(
 
 pub async fn delete(pool: &PgPool, actor: impl Into<Actor>, repo: i64, name: &str) -> Result<()> {
     let mut tx = write(pool, actor, repo).await?;
+    let waiting: Vec<i64> = sqlx::query_scalar("SELECT c.id FROM ci_runs c JOIN ci_deployments d ON d.run_id=c.id WHERE d.repo_id=$1 AND d.environment_key=$2 AND d.status IN ('pending','approved') AND c.status='queued' ORDER BY c.id FOR UPDATE OF c")
+        .bind(repo).bind(name.to_lowercase()).fetch_all(&mut *tx).await?;
+    for id in waiting {
+        let run = sqlx::query_as("SELECT * FROM ci_runs WHERE id=$1").bind(id).fetch_one(&mut *tx).await?;
+        super::ci::finish_in_tx(&mut tx, &run, "failed", Some("Deployment environment was deleted")).await?;
+    }
     sqlx::query("UPDATE deployment_protection_gates SET state='disabled' WHERE rule_id IN (SELECT p.id FROM deployment_protection_rules p JOIN deployment_environments e ON e.id=p.environment_id WHERE e.repo_id=$1 AND e.name_key=$2) AND state IN ('pending','rejected')")
         .bind(repo).bind(name.to_lowercase()).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM deployment_environments WHERE repo_id=$1 AND name_key=$2")

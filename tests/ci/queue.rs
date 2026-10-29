@@ -2297,7 +2297,7 @@ async fn ci_lookup_indexes_and_one_deployment_per_run(db: &Database) {
     let w = world(db, "ci_indexes").await;
     let run = db.enqueue(w.repo, w.owner, true, &[]).await;
     let sql =
-        "INSERT INTO ci_deployments(run_id, repo_id, environment) VALUES ($1, $2, 'production')";
+        "INSERT INTO ci_deployments(run_id, repo_id, environment, environment_key) VALUES ($1, $2, 'production', 'production')";
     let duplicate = match db {
         Database::Postgres(f) => sqlx::query(sql)
             .bind(run.id)

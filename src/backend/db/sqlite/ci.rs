@@ -424,10 +424,11 @@ async fn enqueue_ci_run_inner(
             .await?;
     }
     if cd {
-        sqlx::query("INSERT INTO ci_deployments(run_id, repo_id, environment) VALUES (?1,?2,?3)")
+        sqlx::query("INSERT INTO ci_deployments(run_id, repo_id, environment,environment_key) VALUES (?1,?2,?3,?4)")
             .bind(run.id)
             .bind(run.repo_id)
             .bind(run.environment.as_deref().unwrap_or("production"))
+            .bind(run.environment.as_deref().unwrap_or("production").to_lowercase())
             .execute(&mut *tx)
             .await?;
     }
@@ -696,7 +697,7 @@ pub async fn heartbeat_ci_run(pool: &SqlitePool, id: i64, worker: &str) -> Resul
 /// run, its deployment, the commit status and, for a failed run, the starter's
 /// notification, all in the caller's transaction. A run that is already finished
 /// stays as it is and the result is `None`: the first final state wins.
-async fn finish_in_tx(
+pub(super) async fn finish_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
     run: &CiRun,
     status: &str,

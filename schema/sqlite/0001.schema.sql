@@ -823,6 +823,7 @@ CREATE TABLE ci_deployments (
     run_id INTEGER NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE CHECK (run_id IS NULL OR typeof(run_id)='integer'),
     repo_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE CHECK (repo_id IS NULL OR typeof(repo_id)='integer'),
     environment TEXT NOT NULL CHECK (length(environment)<=255),
+    environment_key TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (length(status)<=20), 
     approved_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL CHECK (approved_by_id IS NULL OR typeof(approved_by_id)='integer'),
     approved_at TEXT,
@@ -1062,6 +1063,7 @@ CREATE INDEX idx_ci_runs_push_user_created_at ON ci_runs(triggered_by_id, create
 CREATE INDEX idx_ci_logs_run_id_id ON ci_logs(run_id, id);
 
 CREATE INDEX idx_ci_deployments_repo_env ON ci_deployments(repo_id, environment, created_at DESC);
+CREATE INDEX ci_deployments_environment_waiting ON ci_deployments(repo_id,environment_key,status,run_id) WHERE status IN ('pending','approved');
 
 CREATE INDEX idx_auth_login_limits_expiry ON auth_login_limits (window_ends_at);
 

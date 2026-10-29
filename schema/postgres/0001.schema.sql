@@ -1105,6 +1105,7 @@ CREATE TABLE IF NOT EXISTS ci_deployments (
     run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     environment VARCHAR(255) NOT NULL,
+    environment_key TEXT NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending, approved, in_progress, success, failed, cancelled
     approved_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     approved_at TIMESTAMPTZ,
@@ -1115,6 +1116,7 @@ CREATE TABLE IF NOT EXISTS ci_deployments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ci_deployments_repo_env ON ci_deployments(repo_id, environment, created_at DESC);
+CREATE INDEX ci_deployments_environment_waiting ON ci_deployments(repo_id,environment_key,status,run_id) WHERE status IN ('pending','approved');
 
 -- commit_statuses is created before ci_runs, so its link to ci_runs is added here.
 ALTER TABLE commit_statuses ADD FOREIGN KEY (ci_run_id) REFERENCES ci_runs(id) ON DELETE SET NULL;
