@@ -92,11 +92,12 @@ pub async fn get(pool: &PgPool, token: i64) -> Result<Option<Token>> {
         .await?)
 }
 
-pub async fn list(pool: &PgPool, user: i64) -> Result<Vec<Token>> {
+pub async fn list(pool: &PgPool, user: i64, before: i64) -> Result<Vec<Token>> {
     Ok(sqlx::query_as(&format!(
-        "{TOKEN} WHERE t.user_id=$1 ORDER BY f.token_id DESC LIMIT 100"
+        "{TOKEN} WHERE t.user_id=$1 AND ($2<=0 OR f.token_id<$2) ORDER BY f.token_id DESC LIMIT 100"
     ))
     .bind(user)
+    .bind(before)
     .fetch_all(pool)
     .await?)
 }

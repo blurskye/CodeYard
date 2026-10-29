@@ -21,6 +21,7 @@ pub struct Model {
 pub enum View {
     List {
         tokens: Vec<Row>,
+        next_before: Option<i64>,
     },
     New {
         draft: Draft,
@@ -161,7 +162,7 @@ fn expiry_fields(choice: &str, date: &str, never_allowed: bool) -> Element {
 pub fn render(model: Model) -> Element {
     let token = model.csrf_token.clone();
     let body = match &model.view {
-        View::List { tokens } => list(tokens),
+        View::List { tokens, next_before } => list(tokens, *next_before),
         View::New { draft, choices } => new(&token, draft, choices),
         View::Show {
             token: detail,
@@ -183,7 +184,7 @@ pub fn render(model: Model) -> Element {
     }
 }
 
-fn list(tokens: &[Row]) -> Element {
+fn list(tokens: &[Row], next_before: Option<i64>) -> Element {
     rsx! {
         section { class: "identity-settings-section", aria_labelledby: "fine-grained-title",
             header { class: "identity-section-header",
@@ -194,6 +195,9 @@ fn list(tokens: &[Row]) -> Element {
             div { class: "identity-row-list",
                 if tokens.is_empty() {
                     div { class: "identity-empty", h3 { "No fine-grained tokens" } p { "Generate one for scripts, the gh CLI or Git over HTTPS." } }
+                }
+                if let Some(before) = next_before {
+                    NavLink { href: format!("{BASE}?before={before}"), "Older tokens" }
                 }
                 for row in tokens {
                     article { class: "identity-row", key: "{row.id}",
