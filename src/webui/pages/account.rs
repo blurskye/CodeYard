@@ -73,6 +73,7 @@ pub enum Page {
     ResetCode {
         csrf_token: String,
         email: String,
+        redirect: String,
         message: Option<String>,
         is_error: bool,
     },
@@ -231,9 +232,10 @@ pub fn render(page: Page) -> Element {
         Page::ResetCode {
             csrf_token,
             email,
+            redirect,
             message,
             is_error,
-        } => reset_code_page(&csrf_token, &email, message.as_deref(), is_error),
+        } => reset_code_page(&csrf_token, &email, &redirect, message.as_deref(), is_error),
         Page::ResetPassword {
             csrf_token,
             token,
@@ -392,6 +394,7 @@ mod tests {
             Page::ResetCode {
                 csrf_token: "csrf-marker".into(),
                 email: "alice@example.test".into(),
+                redirect: "/".into(),
                 message: Some("<b>Validation error</b>".into()),
                 is_error: true,
             },

@@ -469,6 +469,7 @@ fn the_code_step_takes_the_address_code_and_new_password_in_one_form() {
     let page = html(reset_code_page(
         "code-csrf",
         "kate@example.test",
+        "/",
         Some("Check your inbox."),
         false,
     ));

@@ -264,6 +264,7 @@ pub(in crate::webui::pages) fn code_field(id: &str) -> Element {
 pub fn reset_code_page(
     csrf_token: &str,
     email: &str,
+    redirect: &str,
     message: Option<&str>,
     is_error: bool,
 ) -> Element {
@@ -277,6 +278,7 @@ pub fn reset_code_page(
             {link_notice(message, is_error)}
             form { method: "post", action: "/reset-password/code", class: "identity-form",
                 {csrf(csrf_token)}
+                input { r#type: "hidden", name: "redirect", value: redirect.to_owned() }
                 div { class: "space-y-2",
                     label { r#for: "reset-email", class: "block text-sm font-semibold", "Email address" }
                     input { id: "reset-email", r#type: "email", name: "email", class: FIELD, maxlength: "320",
@@ -289,7 +291,7 @@ pub fn reset_code_page(
                 div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Change password" } }
             }
             p { class: "identity-auth-switch",
-                NavLink { href: "/forgot-password".to_string(), class: "identity-auth-link", "Ask for a new code" }
+                NavLink { href: format!("/forgot-password?redirect={}", crate::webui::encode_component(redirect)), class: "identity-auth-link", "Ask for a new code" }
             }
         }
     }
