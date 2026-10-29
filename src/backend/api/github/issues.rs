@@ -510,7 +510,7 @@ async fn list(
             } else {
                 name.clone()
             };
-            crate::backend::identity::credentials::validate_username(&name)
+            crate::backend::identity::credentials::validate_namespace(&name, 3)
                 .map_err(|_| Error::invalid("Invalid mentioned user"))?;
             Ok::<_, Error>(name)
         })
