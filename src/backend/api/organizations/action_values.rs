@@ -128,6 +128,7 @@ async fn change(
             "Organization does not match this form.",
         );
     }
+    let credential = db::users::accounts::AccountCredential::Session(ctx.session_id.as_deref().unwrap_or(""));
     if action.starts_with("oidc-") {
         let result = match action.as_str() {
             "oidc-save" => {
@@ -193,7 +194,7 @@ async fn change(
         .await;
     }
     let result = if action.ends_with("-delete") {
-        values::delete(&ctx.state.pool, actor, org, kind, &name).await
+        values::delete(&ctx.state.pool, actor, &credential, org, kind, &name).await
     } else {
         match repositories(&form) {
             Err(error) => Err(error),
@@ -201,6 +202,7 @@ async fn change(
                 &ctx.state.pool,
                 ctx.state.secret_encryptor.as_deref(),
                 actor,
+                &credential,
                 org,
                 &Save {
                     kind,
