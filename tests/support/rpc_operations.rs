@@ -153,6 +153,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (
             Operation::WriteGitObject {
                 input: codeyard::backend::git::objects::ObjectWrite::Blob,
+                token: None,
             },
             false,
         ),

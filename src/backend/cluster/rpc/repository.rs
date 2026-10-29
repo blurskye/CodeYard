@@ -624,10 +624,11 @@ impl RpcHandler {
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                 actor.ok_or_else(|| invalid("repository mutation requires an actor"))?
             )),
-            Operation::WriteGitObject { input } => json!(store.write_git_object_as(
+            Operation::WriteGitObject { input, token } => json!(store.write_git_object_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                 actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                token,
                 input,
                 &body
             )),

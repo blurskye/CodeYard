@@ -81,6 +81,7 @@ pub enum Operation {
     },
     WriteGitObject {
         input: crate::backend::git::objects::ObjectWrite,
+        token: Option<i64>,
     },
     ImportGit {
         import: crate::backend::repositories::imports::GitImport,
@@ -561,6 +562,7 @@ pub(super) fn operation_body_limit(operation: &Operation) -> usize {
         Operation::PrepareFile { .. } | Operation::SaveFile { .. } => MAX_EDITOR_BYTES,
         Operation::WriteGitObject {
             input: crate::backend::git::objects::ObjectWrite::Blob,
+            ..
         } => crate::backend::git::objects::MAX_BLOB_WRITE_BYTES,
         Operation::PrepareUpload { .. } => MAX_UPLOAD_TOTAL_BYTES,
         Operation::GistWrite { .. } => crate::backend::repositories::store::MAX_GIST_REQUEST_BYTES,

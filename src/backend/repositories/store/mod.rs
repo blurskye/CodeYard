@@ -212,18 +212,19 @@ impl RepoStore {
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
+        token: Option<i64>,
         input: git::objects::ObjectWrite,
         bytes: &[u8],
     ) -> Result<String, RepoError> {
         match &self.0 {
             Backend::Local(local) => {
                 local
-                    .write_git_object(pool, repo_id, actor, input, bytes)
+                    .write_git_object(pool, repo_id, actor, token, input, bytes)
                     .await
             }
             Backend::Remote(remote) => {
                 remote
-                    .call_as(actor, Operation::WriteGitObject { input }, bytes)
+                    .call_as(actor, Operation::WriteGitObject { input, token }, bytes)
                     .await
             }
         }

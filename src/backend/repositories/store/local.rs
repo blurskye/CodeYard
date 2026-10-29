@@ -608,6 +608,7 @@ impl LocalStore {
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
+        token: Option<i64>,
         input: git::objects::ObjectWrite,
         bytes: &[u8],
     ) -> Result<String, RepoError> {
@@ -619,7 +620,8 @@ impl LocalStore {
         if bytes.len() > limit {
             return Err(RepoError::response_too_large());
         }
-        let _lock = git::locks::lock(self.path()).await;
+        let lock = Arc::new(git::locks::lock(self.path()).await);
+        let permit = process::operation_slot(process::RPC_TIMEOUT).await.map_err(|_| unavailable("Git operation timed out"))?;
         let repository = live_write(
             pool,
             repo_id,
@@ -630,10 +632,18 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
+        if let Some(token) = token {
+            if !db::users::tokens::can_write_repository(pool, actor, token, repo_id, "contents").await.map_err(|_| RepoError::authority_unavailable())? {
+                return Err(RepoError::write_denied());
+            }
+        }
         let bytes = bytes.to_vec();
-        let sha = self
-            .blocking(move |path| git::objects::write(path, input, &bytes))
-            .await?;
+        let path = self.path().to_owned();
+        let held = lock.clone();
+        let sha = tokio::task::spawn_blocking(move || {
+            let _held = (held, permit);
+            git::objects::write(&path, input, &bytes)
+        }).await.map_err(|_| unavailable("Git did not finish"))?.map_err(RepoError::from)?;
         // An object no ref names is not in any replica pack. In a replicated repository a
         // hidden ref keeps it, and the ref change makes replicas copy it like any other
         // accepted write. A single server keeps it until Git prunes unreachable objects.
