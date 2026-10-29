@@ -32,6 +32,17 @@ class Scripts(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
+    def test_disposable_pg_url_removes_database_query_overrides(self):
+        import urllib.parse
+        body = (ROOT / "scripts/e2e.sh").read_text().split("pg_url() {", 1)[1].split("\n}", 1)[0]
+        self.env.update(PYTHON=sys.executable, GITSERV_TEST_DATABASE_URL=(
+            "postgresql://fixture:password@localhost/source?dbname=real&db%6eame=other&sslmode=require"))
+        result = self.shell("pg_url() {" + body + "\n}\npg_url cye2e_owned")
+        url = urllib.parse.urlsplit(result.stdout.strip())
+        self.assertEqual(url.path, "/cye2e_owned")
+        self.assertEqual(urllib.parse.parse_qs(url.query), {"sslmode": ["require"]})
+        self.assertEqual(url.password, "password")
+
     def executable(self, path, content):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)

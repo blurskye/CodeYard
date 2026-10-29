@@ -296,6 +296,8 @@ pub fn FilesPanel(
     can_write: bool,
     default_branch: String,
 ) -> Element {
+    let linked: std::collections::HashSet<_> = folders.iter().flat_map(|folder| &folder.entries).filter(|entry| entry.kind == "tree").map(|entry| entry.path.as_str()).collect();
+    let roots: Vec<_> = folders.iter().filter(|folder| folder.path.is_empty() || !linked.contains(folder.path.as_str())).collect();
     rsx! {
         aside { class: "repo-files-panel", "aria-label": "Files",
             div { class: "repo-files-head",
@@ -310,7 +312,12 @@ pub fn FilesPanel(
                 label { class: "repo-icon-button icon-tooltip", r#for: "repo-files-filter", "aria-label": "Go to file", {icon("search")} }
             }
             GoToFile { base: base.clone(), reference: reference.clone(), folders: folders.clone() }
-            div { class: "repo-files-tree", {folder_items(&base, &reference, &path, &folders, "")} }
+            div { class: "repo-files-tree",
+                for listing in roots {
+                    if !listing.path.is_empty() { p { class: "repo-files-item", "Loaded folder: " NavLink { href: file_url(&base, "tree", &reference, &listing.path), "{listing.path}" } } }
+                    {folder_items(&base, &reference, &path, &folders, &listing.path)}
+                }
+            }
         }
     }
 }

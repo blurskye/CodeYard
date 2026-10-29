@@ -75,8 +75,7 @@ pub fn timestamp(value: i64) -> String {
 
 /// The job name in the bracketed prefix of an `act` output line, such as `[CI/build]`.
 pub fn act_job_name(line: &str) -> Option<String> {
-    let inner = line.strip_prefix('[')?;
-    let token = &inner[..inner.find(']')?];
+    let (token, _) = act_prefix(line)?;
     let separator = token.rfind('/')?;
     if separator == 0 || separator + 1 >= token.len() {
         return None;
@@ -95,9 +94,21 @@ fn step_name(name: &str) -> String {
     trimmed.trim().to_string()
 }
 
-fn act_payload(line: &str) -> Option<&str> {
+fn act_prefix(line: &str) -> Option<(&str, &str)> {
     let inner = line.strip_prefix('[')?;
-    Some(inner[inner.find(']')? + 1..].trim_start())
+    let mut depth = 1;
+    for (at, character) in inner.char_indices() {
+        if character == '[' { depth += 1; }
+        if character == ']' {
+            depth -= 1;
+            if depth == 0 { return Some((&inner[..at], inner[at + 1..].trim_start())); }
+        }
+    }
+    None
+}
+
+fn act_payload(line: &str) -> Option<&str> {
+    act_prefix(line).map(|(_, payload)| payload)
 }
 
 /// The step a start line names: act's "⭐ Run <name>" or codeyard-actions' "Step started: <name>".
@@ -430,12 +441,13 @@ pub fn project_logs(lines: &[LogLine], run_status: &str) -> Vec<WorkflowJob> {
 }
 
 /// Adds the steps the workflow file lists but the logs have not reached: pending while the run
-/// is active, skipped once it has ended. A planned job with no logs yet is listed the same way.
+/// is active, unknown once it has ended without an explicit result. Bounded log absence
+/// never proves that a step was skipped.
 /// The set-up and complete phases are the runner's: codeyard-actions logs no markers for them,
 /// so a finished job that logged steps does not get them as skipped.
 pub fn add_planned_steps(jobs: &mut Vec<WorkflowJob>, planned: &[PlannedJob], run_status: &str) {
     let active = matches!(normalize_status(run_status), "queued" | "running");
-    let missing = if active { "pending" } else { "skipped" };
+    let missing = if active { "pending" } else { "unknown" };
     for plan in planned.iter().filter(|plan| !plan.steps.is_empty()) {
         let logged = jobs
             .iter()
@@ -461,8 +473,8 @@ pub fn add_planned_steps(jobs: &mut Vec<WorkflowJob>, planned: &[PlannedJob], ru
         // Each missing step goes after the step the file lists before it.
         let mut at = 0;
         for name in names {
-            if let Some(index) = job.steps.iter().position(|step| step.name == name) {
-                at = at.max(index + 1);
+            if let Some(offset) = job.steps[at..].iter().position(|step| step.name == name) {
+                at += offset + 1;
             } else {
                 let mut step = new_step(name.to_owned());
                 step.status = missing.to_owned();
@@ -915,7 +927,7 @@ mod tests {
 
         let mut finished = project_logs(&lines, "failed");
         add_planned_steps(&mut finished, &plan, "failed");
-        assert_eq!(finished[0].steps[2].status, "skipped");
+        assert_eq!(finished[0].steps[2].status, "unknown");
         assert_eq!(normalize_status("skipped"), "skipped");
     }
 

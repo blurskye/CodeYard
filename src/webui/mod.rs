@@ -53,6 +53,7 @@ pub fn decode_component(text: &str) -> String {
         let escaped = (bytes[at] == b'%')
             .then(|| bytes.get(at + 1..at + 3))
             .flatten()
+            .filter(|hex| hex.iter().all(u8::is_ascii_hexdigit))
             .and_then(|hex| u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok());
         match escaped {
             Some(byte) => {

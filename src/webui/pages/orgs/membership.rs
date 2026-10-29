@@ -11,9 +11,10 @@ use dioxus::prelude::*;
 // The roles the backend parser accepts. Which role a person may assign is the DAO's decision.
 const ROLES: [(&str, &str); 3] = [("member", "Member"), ("admin", "Admin"), ("owner", "Owner")];
 
-fn role_options() -> Vec<SelectOption> {
+fn role_options(owner: bool) -> Vec<SelectOption> {
     ROLES
         .iter()
+        .filter(|(value, _)| owner || *value == "member")
         .map(|&(value, label)| SelectOption::new(value, label))
         .collect()
 }
@@ -27,7 +28,7 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
             && page.draft.get("user_id") == Some(&member.user_id.to_string());
         page.draft
             .get("role")
-            .filter(|role| drafted && ROLES.iter().any(|(value, _)| *value == role.as_str()))
+            .filter(|role| drafted && (page.is_owner || role.as_str() == "member") && ROLES.iter().any(|(value, _)| *value == role.as_str()))
             .cloned()
             .unwrap_or_else(|| member.role.clone())
     };
@@ -52,7 +53,7 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
             if page.can_manage && !suspended {
                 form { method: "post", action: target.to_owned(), class: "org-inline-form org-add-member", aria_label: "Invite a member",
                     {input(page, "add-member", "username", "Username or email address")}
-                    {select("Role", "role", field_value(page, "add-member", "role"), role_options())}
+                    {select("Role", "role", field_value(page, "add-member", "role"), role_options(page.is_owner))}
                     label { class: "org-check-label",
                         input { r#type: "checkbox", name: "reinstate", value: "yes", checked: field_value(page, "add-member", "reinstate") == "yes" }
                         " Restore the previous role instead"
@@ -91,7 +92,7 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                                 form { method: "post", action: target.to_owned(), class: "org-inline-form",
                                     input { r#type: "hidden", name: "user_id", value: "{member.user_id}" }
                                     label { span { class: "site-sr-only", "Role for {member.username}" }
-                                        DraftSelect { class: FIELD, name: "role", initial_value: role_value(member), options: role_options(), required: true }
+                                        DraftSelect { class: FIELD, name: "role", initial_value: role_value(member), options: role_options(page.is_owner), required: true }
                                     }
                                     {controls_as(page, "member-role", "Update", "btn")}
                                 }

@@ -9,6 +9,7 @@ four added lines in --range-path (default range.txt) in the PR's first diff hunk
 """
 import argparse
 import os
+import secrets
 from pathlib import Path
 import tempfile
 from urllib.parse import urlencode
@@ -115,7 +116,7 @@ with sync_playwright() as pw:
             hydrated(review)
             review.get_by_label('First line of the comment range', exact=True).fill('1')
             review.locator('select[name="start_side"]').select_option('RIGHT')
-            text = f'Hydrated range at {width}px'
+            text = f'Hydrated range at {width}px ({secrets.token_hex(8)})'
             review.get_by_label('Comment on this line (Markdown)', exact=True).fill(text)
             review.evaluate('window.scrollTo(0, 0)')
             review.screenshot(path=str(output / f'composer-{width}.png'), full_page=True)

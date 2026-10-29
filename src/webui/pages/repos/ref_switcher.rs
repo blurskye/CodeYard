@@ -40,7 +40,7 @@ impl RefLinks {
                 let reference = if tag {
                     format!("refs/tags/{name}")
                 } else {
-                    name.to_owned()
+                    format!("refs/heads/{name}")
                 };
                 format!("{}{query}", history_url(base, &reference, path))
             }

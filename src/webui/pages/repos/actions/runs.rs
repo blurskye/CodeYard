@@ -399,6 +399,8 @@ pub fn actions_page(mut model: ActionsPage) -> Element {
     }
     // A repository with no workflows shows the heading and the get-started panel only.
     let needs_setup = model.workflows.is_empty()
+        && model.runs.is_empty()
+        && ["workflow", "status", "branch", "event", "before"].iter().all(|name| model.value(name).is_empty())
         && model.repository.is_some()
         && model.workflow_warning.is_none();
     // The Run workflow menu only appears when a workflow can be started by hand.

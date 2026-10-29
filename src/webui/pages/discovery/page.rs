@@ -842,34 +842,29 @@ fn issue_results(model: &SearchModel, kind: Kind, issues: &[IssueCard], none: &s
     }
 }
 
-/// The parts of `line` split at the matches of `needle`, ignoring ASCII case. Each part says
-/// whether it is a match.
+/// Match the searcher's Unicode lowercase projection while retaining original byte ranges.
 fn highlight_parts(line: &str, needle: &str) -> Vec<(String, bool)> {
-    let mut parts = Vec::new();
-    if needle.is_empty() {
-        return vec![(line.to_owned(), false)];
-    }
-    let mut plain = 0;
-    let mut at = 0;
-    while at + needle.len() <= line.len() {
-        // A match starts on a character boundary, and it ends on one too because its bytes equal
-        // the needle's, which is valid UTF-8.
-        let matched = line.is_char_boundary(at)
-            && line.as_bytes()[at..at + needle.len()].eq_ignore_ascii_case(needle.as_bytes());
-        if matched {
-            if plain < at {
-                parts.push((line[plain..at].to_owned(), false));
-            }
-            parts.push((line[at..at + needle.len()].to_owned(), true));
-            at += needle.len();
-            plain = at;
-        } else {
-            at += 1;
+    if needle.is_empty() { return vec![(line.to_owned(), false)]; }
+    let needle = needle.to_lowercase();
+    let mut folded = String::new();
+    let mut ranges = Vec::new();
+    for (start, character) in line.char_indices() {
+        for lower in character.to_lowercase() {
+            folded.push(lower);
+            for _ in 0..lower.len_utf8() { ranges.push((start, start + character.len_utf8())); }
         }
     }
-    if plain < line.len() {
-        parts.push((line[plain..].to_owned(), false));
+    let mut parts = Vec::new();
+    let mut plain = 0;
+    for (at, _) in folded.match_indices(&needle) {
+        let start = ranges[at].0;
+        let end = ranges[at + needle.len() - 1].1;
+        if start < plain { continue; }
+        if plain < start { parts.push((line[plain..start].to_owned(), false)); }
+        parts.push((line[start..end].to_owned(), true));
+        plain = end;
     }
+    if plain < line.len() { parts.push((line[plain..].to_owned(), false)); }
     parts
 }
 
@@ -913,7 +908,7 @@ fn search_results(model: &SearchModel) -> Element {
                 for hit in &model.code {
                     article { class: "border-b border-border px-4 py-3",
                         p { class: "text-sm",
-                            NavLink { href: format!("{}?view=code&line={}#L{}", crate::webui::pages::repos::ref_path::file_url(&repository_url(&hit.owner, &hit.repo), "blob", &hit.branch, &hit.path), hit.line_number, hit.line_number), class: "font-semibold text-primary hover:underline", "{hit.owner}/{hit.repo}: {hit.path}" }
+                            NavLink { href: format!("{}?view=code&line={}#L{}", crate::webui::pages::repos::ref_path::branch_url(&repository_url(&hit.owner, &hit.repo), "blob", &hit.branch, &hit.path), hit.line_number, hit.line_number), class: "font-semibold text-primary hover:underline", "{hit.owner}/{hit.repo}@{hit.branch}: {hit.path}" }
                         }
                         pre { class: "mt-2 overflow-x-auto rounded-md bg-muted px-3 py-2 text-xs", code { "{hit.line_number}  ", {highlighted_text(&hit.line, &model.highlight)} } }
                     }
@@ -961,7 +956,7 @@ pub fn search(model: SearchModel) -> Element {
             form { id: "search-form", action: "/search", method: "get", class: "mb-6 flex flex-wrap items-end gap-3",
                 div { class: "flex-1",
                     label { r#for: "search-q", class: "sr-only", "Search repositories, code, commits, issues, pull requests and people" }
-                    input { id: "search-q", name: "q", "value": model.query.clone(), maxlength: 256, class: INPUT, placeholder: "Search repositories, code, commits, issues, pull requests and people" }
+                    input { id: "search-q", name: "q", "value": model.query.clone(), class: INPUT, placeholder: "Search repositories, code, commits, issues, pull requests and people" }
                 }
                 input { r#type: "hidden", name: "type", value: model.tab.clone() }
                 if !sorts.is_empty() {

@@ -1404,6 +1404,11 @@ fn render_markdown(
         return Some(String::new());
     }
     let mut emitter = Emitter::new(document, references, task_form);
+    if document && text.contains("[^") {
+        for event in Parser::new_ext(text, markdown_options(document)) {
+            if let Event::FootnoteReference(label) = event { emitter.footnote_number(&label); }
+        }
+    }
     let events = Parser::new_ext(text, markdown_options(document)).into_offset_iter();
     let mut events = TextRuns::new(text, events);
     while let Some(event) = events.next() {

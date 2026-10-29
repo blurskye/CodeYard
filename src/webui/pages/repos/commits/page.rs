@@ -47,7 +47,7 @@ pub(in crate::webui::pages::repos) fn latest_commit_bar(
         div { class: "repo-latest-commit bg-muted/40 border-b border-border flex items-center justify-between gap-4 text-sm",
             div { class: "repo-commit-summary min-w-0",
                 span { class: "repo-avatar-stack",
-                    for name in people.iter() { Avatar { name: name.clone(), size: 20 } }
+                    for name in people.iter() { Avatar { name: name.clone(), size: 20, account: false } }
                 }
                 span { class: "repo-commit-author",
                     for (index, name) in people.iter().enumerate() {
@@ -134,7 +134,7 @@ pub(in crate::webui::pages::repos) fn commit_row(base: &str, commit: &Commit) ->
             div { class: "repo-commit-node", {icon("commits")} }
             div { class: "repo-commit-row-content",
                 NavLink { class: "repo-history-message".to_owned(), href: href.clone(), "{commit.message.lines().next().unwrap_or(\"\")}" }
-                p { class: "repo-history-author", Avatar { name: commit.author.clone(), size: 20 } strong { "{commit.author}" } " committed " {commit_date(&commit.committer_date)} }
+                p { class: "repo-history-author", Avatar { name: commit.author.clone(), size: 20, account: false } strong { "{commit.author}" } " committed " {commit_date(&commit.committer_date)} }
             }
             div { class: "repo-commit-row-actions",
                 NavLink { class: "repo-short-sha".to_owned(), href, "{short_sha(&commit.sha)}" }
@@ -323,7 +323,7 @@ fn history_filters(
                         NavLink { class: option_class(filter.author.is_empty()), aria_current: current(filter.author.is_empty()), href: link(HistoryFilter { author: String::new(), ..filter.clone() }), "All users" }
                         for name in people {
                             NavLink { class: option_class(filter.author == name), aria_current: current(filter.author == name), href: link(HistoryFilter { author: name.to_owned(), ..filter.clone() }),
-                                Avatar { name: name.to_owned(), size: 16 }
+                                Avatar { name: name.to_owned(), size: 16, account: false }
                                 span { "{name}" }
                             }
                         }
@@ -392,7 +392,7 @@ pub fn commit_detail(
                     }
                     if !branches.is_empty() || !tags.is_empty() {
                         div { class: "repo-commit-refs", "aria-label": "Branches and tags at this commit",
-                            for name in branches.iter() { NavLink { class: "repo-ref-pill".to_owned(), href: file_url(&base, "tree", name, ""), {icon("branches")} "{name}" } }
+                            for name in branches.iter() { NavLink { class: "repo-ref-pill".to_owned(), href: crate::webui::pages::repos::ref_path::branch_url(&base, "tree", name, ""), {icon("branches")} "{name}" } }
                             for name in tags.iter() { NavLink { class: "repo-ref-pill".to_owned(), href: file_url(&base, "tree", &format!("refs/tags/{name}"), ""), {icon("tags")} "{name}" } }
                         }
                     }

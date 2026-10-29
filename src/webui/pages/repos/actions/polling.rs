@@ -180,7 +180,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cursor_updates_deduplicate_bound_logs_and_drain_before_terminal_status() {
+    fn cursor_updates_bound_logs_without_delaying_terminal_metadata() {
         let mut model = super::super::tests::model();
         let run = model.runs[0].clone();
         model.selected = Some(super::super::SelectedRun {
@@ -216,7 +216,7 @@ mod tests {
             deployment: None,
         };
         apply_update(&mut model, update(&[1, 2], true));
-        assert_eq!(model.selected.as_ref().unwrap().run.status, "running");
+        assert_eq!(model.selected.as_ref().unwrap().run.status, "success");
         apply_update(&mut model, update(&[2, 3], false));
         let selected = model.selected.as_ref().unwrap();
         assert_eq!(
