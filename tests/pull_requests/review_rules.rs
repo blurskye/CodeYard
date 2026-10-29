@@ -1066,7 +1066,7 @@ async fn pending_review_holds_at_most_200_comments(pg: bool) {
     let held = db::pull_requests::reviews::list_pending_review_comments(pool, pr_id, world.bob_id)
         .await
         .unwrap();
-    assert_eq!(held.len(), 200);
+    assert_eq!(held.comments.len(), 200);
     world.database.finish().await;
 }
 

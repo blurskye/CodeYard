@@ -266,8 +266,10 @@ pub(crate) async fn render_diff(
         )
         .await
         .map_err(|_| unavailable(ctx))?,
-        None => Vec::new(),
+        None => Default::default(),
     };
+    let truncated = truncated || pending.truncated;
+    let pending = pending.comments;
     let pending_ids: HashSet<i64> = pending.iter().map(|entry| entry.comment.id).collect();
     let pending_comments = pending.len();
     let stored = match (&review, ctx.user.as_ref()) {
