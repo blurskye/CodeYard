@@ -46,7 +46,7 @@ pub(crate) async fn push_document(
             store.commits_between(old, &head.sha, 20).await?,
             !store.is_ancestor(old, &head.sha).await?,
         ),
-        None => (vec![head.clone()], update.old.as_deref().is_some_and(|old| !is_zero_oid(old))),
+        None => (store.commits(&head.sha, 0, 20, &Default::default()).await?, update.old.as_deref().is_some_and(|old| !is_zero_oid(old))),
     };
     // Bounded as in the push webhook, so a huge message cannot outgrow the run's claim.
     let pushed = |commit: &CommitInfo| payloads::PushedCommit {
@@ -215,7 +215,7 @@ async fn push_asks_to_skip(
     }
 }
 
-/// Ref filters run first. Missing path information skips only workflows that require it.
+/// Ref filters run first. Unavailable path information conservatively admits their candidates.
 pub(crate) async fn matching_push_workflows(
     store: &RepoStore,
     update: &RefUpdate,
@@ -245,14 +245,15 @@ pub(crate) async fn matching_push_workflows(
         match store.push_changed_paths(old, &update.new).await {
             Ok(paths) => Some(paths),
             Err(error) => {
-                tracing::warn!(%error, "push changed paths unavailable; path-filtered workflows skipped");
+                tracing::warn!(%error, "push changed paths unavailable; running ref-matched workflows");
                 None
             }
         }
     };
     let mut matched = Vec::new();
     for workflow in candidates {
-        if changed.is_none() && filters_paths(&workflow) {
+        if changed.is_none() {
+            matched.push(workflow);
             continue;
         }
         if workflow.matches_event_with_context_and_budget(
