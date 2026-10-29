@@ -460,6 +460,7 @@ pub async fn synchronize(
     Ok(())
 }
 pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bool>) {
+    let mut discovered = false;
     let mut interval = tokio::time::interval(Duration::from_secs(30));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -470,7 +471,10 @@ pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bo
                     tracing::warn!(%error,"OSV synchronization failed");
                 }
             }
-            db::vulnerabilities::queue_changed(&state.pool).await?;
+            if !discovered {
+                db::vulnerabilities::queue_changed(&state.pool).await?;
+                discovered = true;
+            }
             for _ in 0..20 {
                 let Some((repo, generation)) = db::vulnerabilities::claim(&state.pool).await?
                 else {

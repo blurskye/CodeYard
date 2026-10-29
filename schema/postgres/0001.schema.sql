@@ -3267,6 +3267,15 @@ CREATE TABLE vulnerability_jobs (
     lease_until TIMESTAMPTZ
 );
 CREATE INDEX vulnerability_jobs_due ON vulnerability_jobs(next_scan, repo_id);
+CREATE FUNCTION repository_vulnerability_job() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT NEW.is_gist THEN
+        INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) VALUES(NEW.id,1,clock_timestamp());
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER repository_vulnerability_job AFTER INSERT ON repositories FOR EACH ROW EXECUTE FUNCTION repository_vulnerability_job();
 
 -- Actions job annotations
 CREATE TABLE actions_job_annotations (

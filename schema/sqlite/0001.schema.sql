@@ -3119,6 +3119,10 @@ CREATE TABLE vulnerability_jobs (
     lease_until TEXT
 );
 CREATE INDEX vulnerability_jobs_due ON vulnerability_jobs(next_scan, repo_id);
+CREATE TRIGGER repository_vulnerability_job AFTER INSERT ON repositories WHEN NOT NEW.is_gist
+BEGIN
+    INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) VALUES(NEW.id,1,strftime('%Y-%m-%dT%H:%M:%f000Z','now'));
+END;
 
 -- Actions job annotations
 CREATE TABLE actions_job_annotations (
