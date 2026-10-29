@@ -1,7 +1,7 @@
 # Trusted local Actions runner
 
-The server runs repository workflows with `act`, which starts job containers
-through a rootless Podman API. That API must be reachable **inside** the server
+The server runs repository workflows with `codeyard-actions` by default, or the
+optional patched `act` engine. Both start job containers through a rootless Podman API. That API must be reachable **inside** the server
 container. Installing Podman in the container alone is not enough.
 
 **Trusted workflows only.** Access to the Podman socket lets a workflow run code
@@ -45,8 +45,8 @@ executes. When the server starts, and every 30 seconds after, it removes the con
 each record whose lock is free, then deletes the record. Containers left by a crashed
 server are removed once the server runs again and the Podman socket is reachable. A node
 runs up to `CI_MAX_ACTIVE_RUNS` runs at once
-(default 4). Workflow container options can override the resource limits. They are
-limits, not protection against hostile workflows.
+(default 4). Worker-injected limits apply to explicit job and service containers too;
+workflow options cannot raise them. These are limits, not protection against hostile workflows.
 
 A run waits in the queue until one of the node's slots is free. Repository maintenance
 never prunes, so the commit of a queued run stays readable after its branch moves on.
@@ -84,11 +84,17 @@ run history; dispatch still requires a real workflow file. Native multi-workflow
 pipelines remain available natively, but do not invent comma-named GitHub workflows; a run
 document without a single workflow identity returns a metadata-unavailable error.
 
-The deprecated workflow billing endpoints are absent: these self-hosted engines have no
-GitHub-hosted runner billing. Native elapsed times are not fabricated hosted-OS charges.
-Custom deployment-protection provider reviews are also unavailable: there is no registered
-provider integration, and an owner PAT cannot stand in for a provider's App identity. The
-endpoint returns a documented not-found error without creating approvals or deployments.
+The workflow and run timing endpoints are available at
+`/api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}/timing` and
+`/api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/timing`. They aggregate recorded job
+milliseconds (including re-runs), without hosted-OS multipliers or rounding; workflow
+usage covers the current UTC month. These are observations, not hosted-runner charges.
+
+Custom deployment-protection integrations are available through the environment
+`deployment_protection_rules` and `deployment_protection_rules/apps` endpoints.
+An installed GitHub App reviews its pending run through
+`POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/deployment_protection_rule`
+using its installation token. An owner PAT cannot substitute for that provider identity.
 
 ## Deliberate re-runs
 
@@ -160,8 +166,8 @@ old caches or shorten expiry atomically without rewriting repository overrides; 
 settings show the effective limits. Lookups use the run's branch, then the default branch. Pull request caches
 have their own scope; fork runs can restore caches but cannot publish base-repository caches.
 Artifacts default to 90 days of retention, configurable on the admin page. A workflow can
-request shorter retention. Download artifact ZIPs or delete them with repository write access
-from the run page. Block requests are limited to 100 MiB, single-shot PUTs to 128 MiB,
+request shorter retention. Repository readers download artifact ZIPs from the run page;
+repository writers can also delete them while the repository is not archived. Block requests are limited to 100 MiB, single-shot PUTs to 128 MiB,
 and each artifact to 10 GiB.
 Expired and deleted objects are removed by the existing upload sweep; physical deletion
 waits an hour to cover in-flight uploads. The Results protocol is run-scoped; repository-scoped
