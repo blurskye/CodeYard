@@ -20,6 +20,14 @@ pub async fn create_notification(
     use crate::backend::db::notifications::records::NotificationSuppressed;
     let mut tx = pool.begin().await?;
     lock_membership_shared(&mut tx).await?;
+    if matches!(input.kind, "user_followed" | "repository_starred") {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':notification:' || ($1::bigint)::text,0))")
+            .bind(input.user_id).execute(&mut *tx).await?;
+    }
+    if input.kind == "repository_forked" {
+        let fork = input.metadata.get("fork_repository_id").and_then(serde_json::Value::as_i64).ok_or(NotificationSuppressed)?;
+        anyhow::ensure!(lock_notification_scope_readable(&mut tx, input.user_id, fork).await?, NotificationSuppressed);
+    }
     if let Some(actor) = input.actor_id {
         anyhow::ensure!(
             !super::super::users::blocks::interaction_blocked(&mut tx, input.user_id, actor)
@@ -42,11 +50,6 @@ pub async fn create_notification(
         );
     }
     if matches!(input.kind, "user_followed" | "repository_starred") {
-        let _: Option<i64> =
-            sqlx::query_scalar("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
-                .bind(input.user_id)
-                .fetch_optional(&mut *tx)
-                .await?;
         let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=$1 AND actor_id=$2 AND kind=$3 AND ($3='user_followed' OR repo_id=$4) AND created_at>clock_timestamp()-INTERVAL '1 day')")
             .bind(input.user_id).bind(input.actor_id).bind(input.kind).bind(input.repo_id).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!recent, NotificationSuppressed);
@@ -111,8 +114,8 @@ pub async fn create_notification(
     let thread_id = threads::ensure(&mut tx, &input).await?;
     let notification = sqlx::query_as::<_, Notification>(
         r#"
-        INSERT INTO notifications (user_id, actor_id, repo_id, kind, title, body, link, metadata, scope_repository_id,thread_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($3,0),$9)
+        INSERT INTO notifications (user_id, actor_id, repo_id, kind, title, body, link, metadata, scope_repository_id,thread_id,created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($3,0),$9,clock_timestamp())
         RETURNING *
         "#,
     )
@@ -216,9 +219,9 @@ const FILTER_SQL: &str = "(NOT $3 OR (read_at IS NULL AND done_at IS NULL))
     OR ($4::text='done' AND done_at IS NOT NULL))
   AND ($5::bigint IS NULL OR scope_repository_id=$5)
   AND (cardinality($6::text[])=0 OR kind = ANY($6::text[]))
-  AND ($7::text IS NULL OR strpos(lower(title),$7::text)>0 OR strpos(lower(metadata->>'subject'),$7::text)>0
+  AND ($7::text IS NULL OR strpos(lower(title),lower($7::text))>0 OR strpos(lower(metadata->>'subject'),lower($7::text))>0
     OR EXISTS (SELECT 1 FROM repositories r
-               WHERE r.id=notifications.scope_repository_id AND strpos(lower(r.name),$7::text)>0))";
+               WHERE r.id=notifications.scope_repository_id AND strpos(lower(r.name),lower($7::text))>0))";
 
 async fn notification_candidates(
     connection: &mut sqlx::PgConnection,
@@ -606,14 +609,24 @@ pub async fn count_header_unread(pool: &PgPool, user_id: i64) -> Result<i64> {
     .await?)
 }
 
-async fn refresh_links(
+pub(super) async fn refresh_links(
     connection: &mut sqlx::PgConnection,
     notifications: &mut [Notification],
 ) -> Result<()> {
     let ids: Vec<_> = notifications.iter().filter_map(|n| n.repo_id).collect();
     let names: Vec<(i64,String,String)> = sqlx::query_as("SELECT r.id,COALESCE(u.username,o.name),r.name FROM repositories r LEFT JOIN users u ON r.owner_kind='user' AND u.id=r.owner_user_id LEFT JOIN organizations o ON r.owner_kind='org' AND o.id=r.owner_org_id WHERE r.id=ANY($1)")
-        .bind(&ids).fetch_all(connection).await?;
+        .bind(&ids).fetch_all(&mut *connection).await?;
     for notification in notifications {
+        if notification.kind == "repository_forked" {
+            let fork = notification.metadata.get("fork_repository_id").and_then(serde_json::Value::as_i64);
+            let readable = match fork {
+                Some(fork) => lock_notification_scope_readable(connection, notification.user_id, fork).await?,
+                None => false,
+            };
+            if !readable {
+                crate::backend::db::notifications::records::redact_fork(notification);
+            }
+        }
         if let Some((_, owner, name)) = names
             .iter()
             .find(|(id, _, _)| Some(*id) == notification.repo_id)
@@ -626,18 +639,24 @@ async fn refresh_links(
 
 pub async fn notification_email_allowed(pool: &PgPool, notification_id: i64) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    let row: Option<(i64, i64)> =
-        sqlx::query_as("SELECT user_id, scope_repository_id FROM notifications WHERE id=$1")
+    let row: Option<(i64, i64, String, serde_json::Value)> =
+        sqlx::query_as("SELECT user_id, scope_repository_id, kind, metadata FROM notifications WHERE id=$1")
             .bind(notification_id)
             .fetch_optional(&mut *tx)
             .await?;
-    let Some((user_id, scope)) = row else {
+    let Some((user_id, scope, kind, metadata)) = row else {
         return Ok(false);
     };
     if notification_recipient(&mut tx, user_id).await?.is_none() {
         return Ok(false);
     }
-    let allowed = lock_notification_scope_readable(&mut tx, user_id, scope).await?;
+    let fork_allowed = if kind == "repository_forked" {
+        match metadata.get("fork_repository_id").and_then(serde_json::Value::as_i64) {
+            Some(fork) => lock_notification_scope_readable(&mut tx, user_id, fork).await?,
+            None => false,
+        }
+    } else { true };
+    let allowed = fork_allowed && lock_notification_scope_readable(&mut tx, user_id, scope).await?;
     tx.commit().await?;
     Ok(allowed)
 }

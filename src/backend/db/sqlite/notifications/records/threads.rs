@@ -35,7 +35,7 @@ pub(crate) async fn subscribers(
     key: &str,
 ) -> Result<Vec<i64>> {
     let scope = super::scope_readable_condition();
-    Ok(sqlx::query_scalar(&format!("SELECT t.user_id FROM notification_threads t JOIN notification_thread_subscriptions s ON s.thread_id=t.id JOIN users u ON u.id=t.user_id JOIN repositories r ON r.id=t.scope_repository_id WHERE t.scope_repository_id=?1 AND t.subject_type=?2 AND t.subject_key=?3 AND s.subscribed AND s.is_explicit AND NOT s.ignored AND NOT u.is_banned AND NOT u.must_change_password AND {scope} AND NOT EXISTS(SELECT 1 FROM watches w WHERE w.repo_id=?1 AND w.user_id=t.user_id AND w.level='ignoring') ORDER BY t.user_id")).bind(repo_id).bind(kind).bind(key).fetch_all(pool).await?)
+    Ok(sqlx::query_scalar(&format!("SELECT t.user_id FROM notification_threads t JOIN notification_thread_subscriptions s ON s.thread_id=t.id JOIN users u ON u.id=t.user_id JOIN repositories r ON r.id=t.scope_repository_id WHERE t.scope_repository_id=?1 AND t.subject_type=?2 AND t.subject_key=?3 AND s.subscribed AND NOT s.ignored AND NOT u.is_banned AND NOT u.must_change_password AND {scope} AND NOT EXISTS(SELECT 1 FROM watches w WHERE w.repo_id=?1 AND w.user_id=t.user_id AND w.level='ignoring') ORDER BY t.user_id")).bind(repo_id).bind(kind).bind(key).fetch_all(pool).await?)
 }
 pub(crate) async fn attach_existing(
     connection: &mut sqlx::SqliteConnection,
@@ -104,8 +104,9 @@ async fn candidates(
             OR (t.subject_type='Discussion' AND (
                 EXISTS(SELECT 1 FROM pull_requests p WHERE p.repo_id=t.scope_repository_id AND CAST(p.number AS TEXT)=t.subject_key AND p.author_id=?1)
                 OR EXISTS(SELECT 1 FROM issues i WHERE i.repo_id=t.scope_repository_id AND CAST(i.number AS TEXT)=t.subject_key AND i.author_id=?1)
+                OR EXISTS(SELECT 1 FROM pr_reviews v JOIN pull_requests p ON p.id=v.pull_request_id WHERE p.repo_id=t.scope_repository_id AND CAST(p.number AS TEXT)=t.subject_key AND v.author_id=?1 AND v.state<>'pending')
                 OR EXISTS(SELECT 1 FROM pr_comments c JOIN pull_requests p ON p.id=c.pull_request_id WHERE p.repo_id=t.scope_repository_id AND CAST(p.number AS TEXT)=t.subject_key AND c.author_id=?1 AND NOT EXISTS(SELECT 1 FROM pr_reviews v WHERE v.id=c.review_id AND v.state='pending'))
-                OR EXISTS(SELECT 1 FROM issue_comments c JOIN issues i ON i.id=c.issue_id WHERE i.repo_id=t.scope_repository_id AND CAST(i.number AS TEXT)=t.subject_key AND c.author_id=?1))))
+                OR EXISTS(SELECT 1 FROM issue_comments c JOIN issues i ON i.id=c.issue_id WHERE i.repo_id=t.scope_repository_id AND CAST(i.number AS TEXT)=t.subject_key AND c.author_id=?1))) OR (t.subject_type='Commit' AND EXISTS(SELECT 1 FROM commit_comments c WHERE c.repo_id=t.scope_repository_id AND c.commit_sha=t.subject_key AND c.author_id=?1)))
         GROUP BY t.id,t.scope_repository_id
     ) SELECT thread_id,scope_repository_id,latest_id,updated_at,last_read_at,unread FROM grouped
       WHERE (?5 IS NOT NULL OR inbox) AND (?7 OR unread)
@@ -136,9 +137,12 @@ async fn view(
         .bind(summary.scope_repository_id)
         .fetch_optional(&mut *connection)
         .await?;
-    let (Some(thread), Some(notification), Some(repo)) = (thread, notification, repo) else {
+    let (Some(thread), Some(mut notification), Some(repo)) = (thread, notification, repo) else {
         return Ok(None);
     };
+    if notification.kind == "repository_forked" {
+        super::refresh_links(connection, std::slice::from_mut(&mut notification)).await?;
+    }
     let owner:Option<String>=sqlx::query_scalar("SELECT CASE WHEN r.owner_kind='user' THEN u.username ELSE o.name END FROM repositories r LEFT JOIN users u ON r.owner_user_id=u.id LEFT JOIN organizations o ON r.owner_org_id=o.id WHERE r.id=?1").bind(repo.id).fetch_optional(&mut *connection).await?.flatten();
     let Some(owner) = owner else {
         return Ok(None);
