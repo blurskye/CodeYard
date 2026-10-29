@@ -767,8 +767,12 @@ pub async fn notification_inbox_with_credential(
     user_id: i64,
     action: NotificationInboxAction,
 ) -> Result<Option<NotificationInbox>> {
-    // Reserved writer ownership precedes every authority read, including waiters.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // Mutations reserve the writer before admission; polling uses one read snapshot.
+    let mut tx = if action.requires_write() {
+        pool.begin_with("BEGIN IMMEDIATE").await?
+    } else {
+        pool.begin().await?
+    };
     if !notification_recipient(&mut tx, user_id).await? {
         tx.rollback().await?;
         return Ok(None);

@@ -22,6 +22,15 @@ pub struct Discussion {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+pub(crate) const DEFAULT_CATEGORIES: &[(&str, &str, &str, &str, bool)] = &[
+    ("Announcements", "announcements", "📣", "Updates from maintainers", false),
+    ("General", "general", "💬", "Chat about the repository", false),
+    ("Ideas", "ideas", "💡", "Share ideas for new features", false),
+    ("Polls", "polls", "📊", "Ask the community", false),
+    ("Q&A", "q-a", "🙏", "Ask questions and find answers", true),
+    ("Show and tell", "show-and-tell", "🙌", "Show something you made", false),
+];
+
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Category {
     pub id: i64,
