@@ -163,54 +163,28 @@ impl GitSshHandler {
         repo: &Repository,
         write: bool,
     ) -> Result<Option<ReceiveCredential>> {
-        // A deploy key reaches only its own repository, with the access its checks grant.
-        if let Some(key_id) = self.deploy_key {
-            if deploy_keys::authorize(&self.pool, key_id, repo, write)
-                .await
-                .is_err()
-            {
-                let msg = Self::deploy_key_denial_message(write);
-                self.refuse_command(channel, session, msg.trim_end());
-                return Ok(None);
-            }
-            return Ok(Some(ReceiveCredential::DeployKey(key_id)));
-        }
-        let Some(user) = self.user.clone() else {
+        use crate::backend::repositories::git_sessions::CredentialRefusal;
+        let credential = if let Some(key) = self.deploy_key {
+            ReceiveCredential::DeployKey(key)
+        } else if self.user.is_some() {
+            ReceiveCredential::SshKey(self.key_id.ok_or_else(|| anyhow::anyhow!("SSH key unavailable"))?)
+        } else {
             let _ = session.channel_failure(channel);
             return Ok(None);
         };
-        let required_access = if write {
-            AccessLevel::Write
-        } else {
-            AccessLevel::Read
+        let authorized = credential.authorize(&self.pool, repo, write).await;
+        let message = match authorized {
+            Ok((actor, _)) if self.deploy_key.is_some() || self.user.as_ref().is_some_and(|user| user.id == actor.id) => return Ok(Some(credential)),
+            Ok(_) => Self::repository_denial_message(None, write),
+            Err(_) if self.deploy_key.is_some() => Self::deploy_key_denial_message(write),
+            Err(error) => match error.downcast_ref::<CredentialRefusal>() {
+                Some(CredentialRefusal::Missing | CredentialRefusal::Credential) => Self::repository_denial_message(Some((repo.is_private, AccessLevel::None)), write),
+                Some(_) => Self::repository_denial_message(Some((repo.is_private, AccessLevel::Read)), write),
+                None => return Err(error),
+            },
         };
-        let key_id = self
-            .key_id
-            .ok_or_else(|| anyhow::anyhow!("SSH key unavailable"))?;
-        let current_key =
-            crate::backend::db::users::ssh_keys::get_user_by_ssh_key_id(&self.pool, key_id).await?;
-        let current = current_key.as_ref().is_some_and(|identity| {
-            identity.user.id == user.id
-                && !identity.user.is_banned
-                && !identity.user.must_change_password
-        });
-        let access = match current_key {
-            Some(identity) => {
-                crate::backend::repositories::access::user_git_access(
-                    &self.pool,
-                    &identity.user,
-                    repo,
-                )
-                .await?
-            }
-            None => AccessLevel::None,
-        };
-        if !current || access < required_access || (write && repo.is_archived) {
-            let msg = Self::repository_denial_message(Some((repo.is_private, access)), write);
-            self.refuse_command(channel, session, msg.trim_end());
-            return Ok(None);
-        }
-        Ok(Some(ReceiveCredential::SshKey(key_id)))
+        self.refuse_command(channel, session, message.trim_end());
+        Ok(None)
     }
 
     /// The same message for a repository that is missing and one the key cannot reach, so a deploy
