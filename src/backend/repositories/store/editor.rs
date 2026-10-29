@@ -209,7 +209,7 @@ impl Repo<'_> {
         if let Some((author, committer)) = identity {
             for (role, identity) in [("AUTHOR", author), ("COMMITTER", committer)] {
                 command.env(format!("GIT_{role}_NAME"), &identity.name).env(format!("GIT_{role}_EMAIL"), &identity.email).env_remove(format!("GIT_{role}_DATE"));
-                if let Some(date) = identity.date { command.env(format!("GIT_{role}_DATE"), date.format("%s %z").to_string()); }
+                if let Some(date) = identity.date { command.env(format!("GIT_{role}_DATE"), date.format("@%s %z").to_string()); }
             }
         }
         process::buffered(command, input, MAX_OUTPUT, TIMEOUT)
