@@ -2,7 +2,7 @@ use super::{auth, events, Error, Result};
 use crate::{
     backend::{
         app::AppState,
-        db::{self, events::EventScope},
+        db::{self, events::{EventScope, EventViewer}},
         identity::tokens,
     },
     webui::{components::escape_html, encode_component},
@@ -154,7 +154,7 @@ async fn feed(
     let (viewer, scope, public, title, id) =
         if let Some(kind) = params.get("kind").or_else(|| params.get("org")) {
             let token = query.token.as_deref().ok_or_else(Error::missing)?;
-            let user = tokens::activity_feed_user(&state.pool, token)
+            let feed = tokens::activity_feed_user(&state.pool, token)
                 .await
                 .map_err(|e| {
                     if e == tokens::TokenError::Unavailable {
@@ -163,6 +163,7 @@ async fn feed(
                         Error::missing()
                     }
                 })?;
+            let user = &feed.user;
             if params.get("username") != Some(&user.username) {
                 return Err(Error::missing());
             }
@@ -199,7 +200,7 @@ async fn feed(
                 encode_component(kind)
             };
             (
-                Some(user.id),
+                Some(EventViewer::Feed { user: user.id, token: feed.token, value: token }),
                 scope,
                 false,
                 format!("{} activity", user.username),
@@ -208,7 +209,7 @@ async fn feed(
         } else {
             let viewer = auth::authenticate(&state, &headers, false)
                 .await?
-                .map(|v| v.user.id);
+                .map(|v| EventViewer::Token { user: v.user.id, token: v.token.id });
             if let Some(username) = params.get("username") {
                 let user = db::users::accounts::get_user_by_username(&state.pool, username)
                     .await

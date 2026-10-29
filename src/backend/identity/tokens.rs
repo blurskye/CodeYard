@@ -16,6 +16,11 @@ pub struct CreatedToken {
     pub value: String,
 }
 
+pub struct ActivityFeedUser {
+    pub user: crate::backend::db::models::User,
+    pub token: i64,
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum TokenError {
     #[error("Use a name of 1-100 characters, scope read or write, and a future expiry")]
@@ -61,7 +66,7 @@ pub async fn activity_feed_token(pool: &DbPool, token_id: i64) -> Result<String,
 pub async fn activity_feed_user(
     pool: &DbPool,
     value: &str,
-) -> Result<crate::backend::db::models::User, TokenError> {
+) -> Result<ActivityFeedUser, TokenError> {
     if value.len() != 69 || !value.starts_with("feed_") {
         return Err(TokenError::Denied);
     }
@@ -80,7 +85,7 @@ pub async fn activity_feed_user(
     {
         return Err(TokenError::Denied);
     }
-    Ok(user)
+    Ok(ActivityFeedUser { user, token: id })
 }
 
 /// Recheck a retained token's account, organization policy and effective repository grant.
