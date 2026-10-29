@@ -13,6 +13,10 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[(
     2,
     "secret_scan_ancestry",
     include_str!("../../../../schema/postgres/0002.secret_scan_ancestry.sql"),
+), (
+    3,
+    "ci_ref_names",
+    include_str!("../../../../schema/postgres/0003.ci_ref_names.sql"),
 )];
 
 static MIGRATION_TURNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
