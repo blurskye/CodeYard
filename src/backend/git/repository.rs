@@ -2288,6 +2288,9 @@ pub struct DiffFileInfo {
     pub additions: i32,
     pub deletions: i32,
     pub patch: String,
+    /// Exact Git bytes for downloads; the display patch may contain replacement characters.
+    #[serde(default, with = "patch_bytes", skip_serializing_if = "Vec::is_empty")]
+    pub patch_bytes: Vec<u8>,
     /// The blob id of the file's new side. A reader's viewed mark is kept against it.
     #[serde(default)]
     pub blob_sha: String,
@@ -2406,7 +2409,7 @@ pub(crate) async fn get_diff_stats(
     let head = peel_to_commit_checked(&repo, head_ref)?.id();
     drop(repo);
     let metadata = diff_metadata(repo_path, &format!("{base}...{head}"), false, &[]).await?;
-    let patches = vec![String::new(); metadata.len()];
+    let patches = vec![Vec::new(); metadata.len()];
     diff_info(metadata, patches)
 }
 
@@ -2663,7 +2666,7 @@ fn parse_diff_metadata(output: &[u8]) -> Result<Vec<DiffFileMetadata>> {
     Ok(files)
 }
 
-fn split_diff_patches(output: &[u8], files: &[DiffFileMetadata]) -> Result<Vec<String>> {
+fn split_diff_patches(output: &[u8], files: &[DiffFileMetadata]) -> Result<Vec<Vec<u8>>> {
     if output.len() > MAX_DIFF_TOTAL_PATCH_BYTES {
         return Err(ObjectTooLarge.into());
     }
@@ -2700,7 +2703,7 @@ fn split_diff_patches(output: &[u8], files: &[DiffFileMetadata]) -> Result<Vec<S
         if patch.len() > MAX_DIFF_FILE_PATCH_BYTES {
             return Err(ObjectTooLarge.into());
         }
-        patches.push(String::from_utf8_lossy(patch).into_owned());
+        patches.push(patch.to_vec());
     }
     Ok(patches)
 }
@@ -2753,7 +2756,19 @@ async fn diff_in_repository(
     diff_info(metadata, patches)
 }
 
-fn diff_info(metadata: Vec<DiffFileMetadata>, patches: Vec<String>) -> Result<DiffInfo> {
+// Compact wire encoding avoids numeric JSON expansion of bounded raw patches.
+mod patch_bytes {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&STANDARD.encode(bytes))
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        STANDARD.decode(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+fn diff_info(metadata: Vec<DiffFileMetadata>, patches: Vec<Vec<u8>>) -> Result<DiffInfo> {
     let mut additions = 0i32;
     let mut deletions = 0i32;
     let mut files = Vec::with_capacity(metadata.len());
@@ -2771,7 +2786,8 @@ fn diff_info(metadata: Vec<DiffFileMetadata>, patches: Vec<String>) -> Result<Di
             status: metadata.status.to_owned(),
             additions: metadata.additions,
             deletions: metadata.deletions,
-            patch,
+            patch: String::from_utf8_lossy(&patch).into_owned(),
+            patch_bytes: patch,
             blob_sha: metadata.blob_sha,
         });
     }
