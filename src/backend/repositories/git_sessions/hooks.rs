@@ -10,7 +10,7 @@ use crate::backend::{
         self,
         models::{AccessLevel, Repository, User},
     },
-    git::{branches_and_tags_in_use, ref_listing_bytes, RefsInUse},
+    git::{published_refs_in_use, ref_listing_bytes, RefsInUse},
     repositories::{
         languages,
         protection::{
@@ -108,7 +108,7 @@ fn admit_updates(
         .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
     let created = created_refs(updates);
     if !created.is_empty() {
-        let held = branches_and_tags_in_use(path)?;
+        let held = published_refs_in_use(path)?;
         let reserved =
             reserved_by_others(&operations, operation, &git2::Repository::open_bare(path)?)?;
         ensure_ref_room(
@@ -637,6 +637,7 @@ impl Gateway {
 
         let mut match_budget = WorkflowMatchBudget::new();
         'updates: for update in updates {
+            if update.reference.starts_with("refs/notes/") { continue; }
             let revision = if update.new == ZERO_SHA {
                 format!("refs/heads/{}", current_repo.default_branch)
             } else { update.new.clone() };

@@ -1307,9 +1307,9 @@ pub(crate) struct RefsInUse {
     pub bytes: usize,
 }
 
-/// Counts every branch and tag for the admission check.
-pub(crate) fn branches_and_tags_in_use(repo_path: &Path) -> Result<RefsInUse> {
-    refs_in_use(repo_path, &["refs/heads/*", "refs/tags/*"])
+/// Counts every public branch, tag and notes ref for admission.
+pub(crate) fn published_refs_in_use(repo_path: &Path) -> Result<RefsInUse> {
+    refs_in_use(repo_path, &["refs/heads/*", "refs/tags/*", "refs/notes/*"])
 }
 
 /// Counts every pull request head for the admission check. Replicas copy them too.
@@ -3013,7 +3013,7 @@ mod read_limit_tests {
             .unwrap();
 
         assert_eq!(
-            branches_and_tags_in_use(directory.path()).unwrap().count,
+            published_refs_in_use(directory.path()).unwrap().count,
             MAX_READ_REFS + 1
         );
         assert!(list_refs(directory.path())

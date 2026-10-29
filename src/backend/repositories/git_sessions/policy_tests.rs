@@ -647,7 +647,7 @@ mod fixture {
                 .unwrap();
         }
         assert_eq!(
-            crate::backend::git::branches_and_tags_in_use(&fixture.path)
+            crate::backend::git::published_refs_in_use(&fixture.path)
                 .unwrap()
                 .count,
             10_000

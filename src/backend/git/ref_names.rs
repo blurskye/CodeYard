@@ -1,10 +1,10 @@
-//! Canonical branch and tag reference names used at every publication boundary.
+//! Canonical public reference names used at publication boundaries.
 
-/// Returns whether `reference` is an exact, non-normalized branch or tag ref.
+/// Returns whether `reference` is an exact, non-normalized branch, tag or notes ref.
 /// Git's normalization can collapse empty path components, so callers reject
 /// malformed names rather than retargeting them to another ref.
 pub(crate) fn is_canonical_ref(reference: &str) -> bool {
-    (reference.starts_with("refs/heads/") || reference.starts_with("refs/tags/"))
+    (reference.starts_with("refs/heads/") || reference.starts_with("refs/tags/") || reference.starts_with("refs/notes/"))
         && reference.len() <= 1024
         && !reference.bytes().any(|byte| {
             byte <= b' '
@@ -58,6 +58,7 @@ mod tests {
             "refs/tags/v1",
             "refs/tags/版本-β",
             "refs/tags/release/stable",
+            "refs/notes/commits",
         ] {
             assert!(is_canonical_ref(reference), "{reference}");
         }
