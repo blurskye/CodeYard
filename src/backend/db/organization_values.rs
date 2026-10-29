@@ -27,6 +27,27 @@ pub struct OrganizationValue {
     pub updated_at: DateTime<Utc>,
 }
 
+pub const SETTINGS_PAGE_SIZE: i64 = 30;
+
+#[derive(sqlx::FromRow)]
+pub struct SettingsValue {
+    #[sqlx(flatten)]
+    pub value: OrganizationValue,
+    pub repository_ids: String,
+}
+
+pub struct SettingsPage {
+    pub values: Vec<SettingsValue>,
+    pub more: bool,
+}
+impl SettingsPage {
+    pub(crate) fn from_rows(mut values: Vec<SettingsValue>) -> Self {
+        let more = values.len() > SETTINGS_PAGE_SIZE as usize;
+        values.truncate(SETTINGS_PAGE_SIZE as usize);
+        Self { values, more }
+    }
+}
+
 pub struct Save<'a> {
     pub kind: Kind,
     pub previous: Option<&'a str>,
@@ -84,6 +105,9 @@ native_operation!(crate::backend::db::postgres::organizations::action_values::ke
 native_operation!(crate::backend::db::postgres::organizations::action_values::list,
     crate::backend::db::sqlite::organizations::action_values::list,
     fn list(pool: &DbPool, actor: i64, org: i64, kind: Kind) -> Result<Vec<OrganizationValue>, ValueError>);
+native_operation!(crate::backend::db::postgres::organizations::action_values::settings_page,
+    crate::backend::db::sqlite::organizations::action_values::settings_page,
+    fn settings_page(pool: &DbPool, actor: i64, session: &str, org: i64, page: i64) -> Result<SettingsPage, ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::save,
     crate::backend::db::sqlite::organizations::action_values::save,
     fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: i64, org: i64, input: &Save<'_>) -> Result<bool, ValueError>);
