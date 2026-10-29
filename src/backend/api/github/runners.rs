@@ -252,11 +252,13 @@ fn document(row: &Runner) -> Result<Value> {
     Ok(value)
 }
 async fn selected_group(state: &AppState, actor: i64, scope: Scope, p: &Params) -> Result<Group> {
-    native::list_groups(&state.pool, actor, org(scope)?)
+    native::list_groups(&state.pool, actor, org(scope)?, &native::GroupQuery {
+        id: Some(id(p, "runner_group_id")?), limit: Some(1), ..Default::default()
+    })
         .await
-        .map_err(error)?
+        .map_err(error)?.1
         .into_iter()
-        .find(|g| g.id == id(p, "runner_group_id").unwrap_or(0))
+        .next()
         .ok_or_else(Error::missing)
 }
 async fn selected_runner(state: &AppState, actor: i64, scope: Scope, p: &Params) -> Result<Runner> {
@@ -294,32 +296,19 @@ async fn groups(
     let visible_to_repository = query.visible_to_repository;
     let (actor, scope) = scope(&s, &headers, &p, false).await?;
     let org_id = org(scope)?;
-    let mut rows = native::list_groups(&s.pool, actor, org_id)
-        .await
-        .map_err(error)?;
-    if let Some(name) = visible_to_repository {
-        let name = name
-            .strip_prefix(&format!("{}/", p["org"]))
-            .unwrap_or(&name);
-        let repo = db::repositories::records::get_repository(&s.pool, &p["org"], name)
-            .await
-            .map_err(Error::unavailable)?
-            .filter(|r| {
-                r.owner_kind == "org" && r.owner_org_id == Some(org_id) && r.owner_user_id.is_none()
-            })
-            .ok_or_else(Error::missing)?;
-        rows.retain(|g| g.allows_repository(repo.id, repo.is_private));
-    }
-    let total = rows.len();
     let (offset, limit) = page.window()?;
+    let prefix = format!("{}/", p["org"]);
+    let repository = visible_to_repository.as_deref().map(|name| name.strip_prefix(&prefix).unwrap_or(name));
+    let (total, rows) = native::list_groups(&s.pool, actor, org_id, &native::GroupQuery {
+        repository, offset: i64::try_from(offset).map_err(Error::unavailable)?,
+        limit: Some(limit as i64), ..Default::default()
+    }).await.map_err(error)?;
     let rows = rows
         .iter()
-        .skip(offset)
-        .take(limit)
         .map(|g| group_document(&p["org"], g))
         .collect::<Result<Vec<_>>>()?;
     Ok((
-        page.headers(&uri, offset.saturating_add(limit) < total)?,
+        page.headers(&uri, (offset.saturating_add(limit) as u128) < total as u128)?,
         Json(json!({"total_count":total,"runner_groups":rows})),
     )
         .into_response())

@@ -142,6 +142,10 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
     } else {
         "active"
     };
+    let ordinary_runner: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM action_runner_tokens WHERE token_hash=?1 AND runner_id IS NULL)")
+        .bind(request.token_hash).fetch_one(&mut *tx).await?;
+    let internal_name = crate::backend::db::runners::runner_node_name(request.public_key);
+    let node_name = if ordinary_runner { internal_name.as_str() } else { request.name };
     // A joined node is not live until it has published itself, so no last_seen here.
     let inserted = sqlx::query_as::<_, ClusterNode>(&format!(
         "INSERT INTO nodes (public_key, name, roles, status, version)
@@ -150,14 +154,14 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
          RETURNING *, {NOW} AS observed_at"
     ))
     .bind(request.public_key)
-    .bind(request.name)
+    .bind(node_name)
     .bind(serde_json::to_string(&roles)?)
     .bind(status)
     .bind(request.version)
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(node) = inserted {
-        super::runners::bind_registration(&mut tx, request.token_hash, &node).await?;
+        super::runners::bind_registration(&mut tx, request.token_hash, &node, request.name).await?;
         tx.commit().await?;
         return Ok(JoinOutcome::Joined(node));
     }

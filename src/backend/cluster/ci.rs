@@ -79,6 +79,7 @@ mod tests {
                 context.key.public_key(),
                 request(Operation::Claim {
                     mode: CiExecutionMode::Local,
+                    platforms: CiConfig::default().platform_labels(),
                 }),
             )
             .await
@@ -86,6 +87,7 @@ mod tests {
         assert_eq!(error.to_string(), CORE_UNAVAILABLE);
         let header = serde_json::to_vec(&request(Operation::Claim {
             mode: CiExecutionMode::Local,
+            platforms: CiConfig::default().platform_labels(),
         }))
         .unwrap();
         let mut frame = Vec::new();
@@ -161,6 +163,11 @@ mod tests {
                 &name,
                 &value,
                 Some(owner.id),
+                &db::users::accounts::AccountCredential::Session(&{
+                    let session = uuid::Uuid::new_v4().simple().to_string().repeat(2);
+                    db::users::sessions::create_session(&pool, &session, owner.id, None, None, chrono::Utc::now() + chrono::Duration::hours(1)).await.unwrap();
+                    session
+                }),
             )
             .await
             .unwrap();
@@ -219,6 +226,7 @@ mod tests {
                     worker: "worker/1".into(),
                     operation: Operation::Claim {
                         mode: CiExecutionMode::Local,
+                        platforms: CiConfig::default().platform_labels(),
                     },
                 },
             )
@@ -233,7 +241,7 @@ mod tests {
         assert_eq!(current.error_message.as_deref(), Some(CLAIM_TOO_LARGE));
         assert!(handler
             .queue
-            .claim("another-worker", CiExecutionMode::Local)
+            .claim("another-worker", CiExecutionMode::Local, &CiConfig::default().platform_labels())
             .await
             .unwrap()
             .is_none());
@@ -298,7 +306,8 @@ impl CiHandler {
         );
         let worker = format!("{peer}/{}", request.worker);
         let value = match request.operation {
-            Operation::Claim { mode } => {
+            Operation::Claim { mode, platforms } => {
+                ensure!(platforms.len() <= 1000 && platforms.iter().all(|label| !label.is_empty() && label.len() <= 128), "invalid runner platforms");
                 ensure!(
                     self.accepting_claims.load(Ordering::Acquire),
                     CORE_UNAVAILABLE
@@ -306,7 +315,7 @@ impl CiHandler {
                 // Refuse before dequeuing: a run claimed here could not be prepared, and the
                 // worker would then fail it instead of asking another core.
                 ensure!(self.may_read_repositories().await?, CORE_UNAVAILABLE);
-                let mut claim = self.queue.claim(&worker, mode).await?;
+                let mut claim = self.queue.claim(&worker, mode, &platforms).await?;
                 if let Some(claim) = &mut claim {
                     claim.storage_node_id = claim.storage_node_id.or(Some(self.context.node_id));
                 }

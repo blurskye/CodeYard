@@ -1,9 +1,8 @@
 use crate::backend::db::{
-    action_settings::{organization_allows, Setting},
     models::{CiRun, ClusterNode},
     organizations::{administers, OrganizationOutcome},
     runners::{
-        normalize_labels, workflow_allowed, Candidate, Group, GroupInput, Labels, Refusal,
+        normalize_labels, Candidate, Eligibility, Group, GroupInput, Labels, Refusal,
         Registration, RegistrationBinding, Runner, Scope, Selection,
     },
 };
@@ -61,21 +60,41 @@ async fn stop_runners(
     let ids:Vec<i64>=sqlx::query_scalar("SELECT c.id FROM ci_runs c WHERE c.status='running' AND EXISTS(SELECT 1 FROM action_runners a JOIN nodes n ON n.id=a.node_id WHERE c.worker LIKE n.public_key || '/%' AND (a.id=$1 OR a.group_id=$2))").bind(runner).bind(group).fetch_all(&mut **tx).await?;
     super::ci::stop_ci_runs(tx, &ids).await
 }
-pub async fn list_groups(pool: &Pool, actor: i64, org: i64) -> Result<Vec<Group>> {
-    let mut tx = pool.begin().await?;
-    authorize(&mut tx, actor, Scope::Organization(org)).await?;
-    default_group(&mut tx, org).await?;
-    let ids: Vec<i64> =
-        sqlx::query_scalar("SELECT id FROM action_runner_groups WHERE org_id=$1 ORDER BY id")
-            .bind(org)
-            .fetch_all(&mut *tx)
-            .await?;
-    let mut rows = Vec::new();
-    for id in ids {
-        rows.push(group(&mut tx, org, id).await?);
+pub async fn list_groups(
+    pool: &Pool, actor: i64, org: i64, query: &crate::backend::db::runners::GroupQuery<'_>,
+) -> Result<(i64, Vec<Group>)> {
+    // Initialization is the only write. Ordinary reads neither lock the organization nor
+    // reserve a writer, and authorization and projection share one snapshot.
+    let initialized: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM action_runner_groups WHERE org_id=$1 AND is_default)")
+        .bind(org).fetch_one(pool).await?;
+    if !initialized {
+        let mut tx = pool.begin().await?;
+        authorize(&mut tx, actor, Scope::Organization(org)).await?;
+        default_group(&mut tx, org).await?;
+        tx.commit().await?;
     }
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+    let role = super::organizations::authority::read_authority(&mut tx, actor, org).await?;
+    anyhow::ensure!(matches!(role, OrganizationOutcome::Applied(role) if administers(role)), Refusal::Denied);
+    if let Some(name) = query.repository {
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE owner_kind='org' AND owner_org_id=$1 AND owner_user_id IS NULL AND lower(name COLLATE \"C\")=lower($2 COLLATE \"C\"))")
+            .bind(org).bind(name).fetch_one(&mut *tx).await?;
+        anyhow::ensure!(exists, Refusal::Missing);
+    }
+    let predicate = "g.org_id=$1 AND ($2::BIGINT IS NULL OR g.id=$2) AND ($3::TEXT IS NULL OR EXISTS(SELECT 1 FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=g.org_id AND r.owner_user_id IS NULL AND lower(r.name COLLATE \"C\")=lower($3 COLLATE \"C\") AND (r.is_private OR g.allows_public_repositories) AND (g.visibility='all' OR (g.visibility='private' AND r.is_private) OR (g.visibility='selected' AND EXISTS(SELECT 1 FROM action_runner_group_repositories s WHERE s.group_id=g.id AND s.repo_id=r.id)))))";
+    let total = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM action_runner_groups g WHERE {predicate}"))
+        .bind(org).bind(query.id).bind(query.repository).fetch_one(&mut *tx).await?;
+    let mut rows: Vec<Group> = sqlx::query_as(&format!("SELECT g.* FROM action_runner_groups g WHERE {predicate} ORDER BY g.id LIMIT $4 OFFSET $5"))
+        .bind(org).bind(query.id).bind(query.repository).bind(query.limit.unwrap_or(i64::MAX)).bind(query.offset).fetch_all(&mut *tx).await?;
+    let ids: Vec<_> = rows.iter().map(|g| g.id).collect();
+    let selections: Vec<(i64,i64)> = sqlx::query_as("SELECT s.group_id,s.repo_id FROM action_runner_group_repositories s JOIN repositories r ON r.id=s.repo_id JOIN action_runner_groups g ON g.id=s.group_id WHERE s.group_id=ANY($1) AND r.owner_kind='org' AND r.owner_org_id=g.org_id AND r.owner_user_id IS NULL ORDER BY s.group_id,s.repo_id")
+        .bind(&ids).fetch_all(&mut *tx).await?;
+    let mut grants = std::collections::BTreeMap::<i64, Vec<i64>>::new();
+    for (group, repo) in selections { grants.entry(group).or_default().push(repo); }
+    for row in &mut rows { row.repositories = grants.remove(&row.id).unwrap_or_default(); }
     tx.commit().await?;
-    Ok(rows)
+    Ok((total, rows))
 }
 async fn repositories_in(
     c: &mut Connection,
@@ -487,6 +506,7 @@ pub(super) async fn bind_registration(
     tx: &mut Transaction<'_, Postgres>,
     hash: &str,
     node: &ClusterNode,
+    display_name: &str,
 ) -> Result<()> {
     let scoped: bool =
         sqlx::query_scalar("SELECT runner_scoped FROM join_tokens WHERE token_hash=$1")
@@ -523,7 +543,10 @@ pub(super) async fn bind_registration(
             .execute(&mut **tx)
             .await?;
     } else {
-        sqlx::query("INSERT INTO action_runners(org_id,repo_id,group_id,node_id,name) VALUES($1,$2,$3,$4,$5)").bind(org).bind(repo).bind(group_id).bind(node.id).bind(&node.name).execute(&mut **tx).await?;
+        let duplicate: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM action_runners WHERE org_id IS NOT DISTINCT FROM $1 AND repo_id IS NOT DISTINCT FROM $2 AND lower(name)=lower($3))")
+            .bind(org).bind(repo).bind(display_name).fetch_one(&mut **tx).await?;
+        anyhow::ensure!(!duplicate, Refusal::Invalid("name"));
+        sqlx::query("INSERT INTO action_runners(org_id,repo_id,group_id,node_id,name) VALUES($1,$2,$3,$4,$5)").bind(org).bind(repo).bind(group_id).bind(node.id).bind(display_name).execute(&mut **tx).await?;
     }
     sqlx::query("UPDATE nodes SET runner_managed=true WHERE id=$1")
         .bind(node.id)
@@ -533,137 +556,50 @@ pub(super) async fn bind_registration(
 }
 /// Claim holds repository authority and then node membership. Group edits take the same
 /// organization authority lock, so eligibility cannot race a narrower policy into a claim.
-pub(super) async fn eligible(c: &mut Connection, key: Option<&str>, run: &CiRun) -> Result<bool> {
+pub(super) async fn eligible(c: &mut Connection, key: Option<&str>, run: &CiRun, mode: &str, platforms: &[String]) -> Result<bool> {
     let Some(key) = key else {
-        return Ok(run.runner_group.is_none());
+        return Eligibility::default().allows(run, mode, platforms);
     };
     let managed: bool = sqlx::query_scalar("SELECT runner_managed FROM nodes WHERE public_key=$1")
         .bind(key)
         .fetch_one(&mut *c)
         .await?;
     if !managed {
-        return Ok(run.runner_group.is_none());
+        return Eligibility::default().allows(run, mode, platforms);
     }
     let row:Option<Candidate>=sqlx::query_as("SELECT a.org_id,a.repo_id,a.group_id,a.labels,a.used FROM action_runners a JOIN nodes n ON n.id=a.node_id WHERE n.public_key=$1 FOR UPDATE OF a").bind(key).fetch_optional(&mut *c).await?;
-    let Some(Candidate {
-        org_id: org,
-        repo_id: repo,
-        group_id,
-        labels,
-        used,
-    }) = row
-    else {
-        return Ok(false);
-    };
-    if used {
-        return Ok(false);
-    }
-    // The owning organization may keep its repositories off self-hosted runners.
+    let mut facts = Eligibility { managed, runner: row, ..Default::default() };
     let policy: Option<String> = sqlx::query_scalar("SELECT o.rest_settings FROM repositories r JOIN org_actions_settings o ON o.org_id=r.owner_org_id AND r.owner_kind='org' WHERE r.id=$1")
         .bind(run.repo_id)
         .fetch_optional(&mut *c)
         .await?;
-    if let Some(policy) = policy {
-        let policy: serde_json::Value = serde_json::from_str(&policy)?;
-        if !organization_allows(&policy, Setting::Runners, run.repo_id) {
-            return Ok(false);
-        }
-    }
-    let labels: Vec<String> = serde_json::from_str(&labels)?;
-    let wanted: Vec<String> = serde_json::from_str(&run.runner_labels)?;
-    if !wanted
-        .iter()
-        .all(|label| label == "self-hosted" || labels.contains(label))
-    {
-        return Ok(false);
-    }
-    if repo == Some(run.repo_id) {
-        return Ok(run.runner_group.is_none());
-    }
-    let Some(org) = org else {
-        return Ok(false);
-    };
+    facts.policy = policy;
     let owner:Option<(String,Option<i64>,bool,String)>=sqlx::query_as("SELECT r.owner_kind,r.owner_org_id,r.is_private,o.name || '/' || r.name FROM repositories r JOIN organizations o ON o.id=r.owner_org_id WHERE r.id=$1").bind(run.repo_id).fetch_optional(&mut *c).await?;
-    let Some((kind, owner, private, full_name)) = owner else {
-        return Ok(false);
-    };
-    if kind != "org" || owner != Some(org) {
-        return Ok(false);
+    facts.owner = owner;
+    if let Some((org, id)) = facts.runner.as_ref().and_then(|r| r.org_id.zip(r.group_id)) {
+        facts.group = Some(group(c, org, id).await?);
     }
-    let Some(group_id) = group_id else {
-        return Ok(false);
-    };
-    let g = group(c, org, group_id).await?;
-    if run
-        .runner_group
-        .as_ref()
-        .is_some_and(|name| !g.name.eq_ignore_ascii_case(name))
-    {
-        return Ok(false);
-    }
-    if !g.allows_repository(run.repo_id, private) {
-        return Ok(false);
-    }
-    if g.restricted_to_workflows {
-        let allowed: Vec<String> = serde_json::from_str(&g.selected_workflows)?;
-        let Some(blobs) = run.workflow_blobs.as_object() else {
-            return Ok(false);
-        };
-        let reference = if run.event == "pull_request" {
+    if facts.group.as_ref().is_some_and(|g| g.restricted_to_workflows) {
+        if run.event == "pull_request" {
             let number: Option<i32> =
                 sqlx::query_scalar("SELECT number FROM pull_requests WHERE id=$1 AND repo_id=$2")
                     .bind(run.pull_request_id)
                     .bind(run.repo_id)
                     .fetch_optional(&mut *c)
                     .await?;
-            let Some(number) = number else {
-                return Ok(false);
-            };
-            format!("refs/pull/{number}/merge")
-        } else if run.branch.starts_with("refs/") {
-            run.branch.clone()
-        } else {
-            format!("refs/heads/{}", run.branch)
-        };
-        if blobs.is_empty() {
-            return Ok(false);
+            facts.pull_number = number.map(i64::from);
         }
-        for (path, blob) in blobs {
-            // A called workflow is checked under the repository, path and ref it came from,
-            // not under the file name admission stored it as.
-            let allowed_here = match blob.get("source_path").and_then(|source| source.as_str()) {
-                Some(source) => {
-                    let source_repo = blob["repository_id"].as_i64().unwrap_or(run.repo_id);
-                    let name: Option<String> = if source_repo == run.repo_id {
-                        Some(full_name.clone())
-                    } else {
-                        sqlx::query_scalar("SELECT COALESCE(u.username, o.name) || '/' || r.name FROM repositories r LEFT JOIN users u ON u.id=r.owner_user_id LEFT JOIN organizations o ON o.id=r.owner_org_id WHERE r.id=$1")
-                            .bind(source_repo)
-                            .fetch_optional(&mut *c)
-                            .await?
-                    };
-                    name.is_some_and(|name| {
-                        workflow_allowed(
-                            &allowed,
-                            &format!("{name}/{source}"),
-                            blob["ref"].as_str().unwrap_or(&reference),
-                            blob["sha"].as_str().or(run.head_sha.as_deref()),
-                        )
-                    })
+        if let Some(blobs) = run.workflow_blobs.as_object() {
+            for repo in blobs.values().filter_map(|blob| blob["repository_id"].as_i64()) {
+                if repo != run.repo_id && !facts.source_names.contains_key(&repo) {
+                    let name: Option<String> = sqlx::query_scalar("SELECT COALESCE(u.username, o.name) || '/' || r.name FROM repositories r LEFT JOIN users u ON u.id=r.owner_user_id LEFT JOIN organizations o ON o.id=r.owner_org_id WHERE r.id=$1")
+                        .bind(repo).fetch_optional(&mut *c).await?;
+                    if let Some(name) = name { facts.source_names.insert(repo, name); }
                 }
-                None => workflow_allowed(
-                    &allowed,
-                    &format!("{full_name}/{path}"),
-                    &reference,
-                    run.head_sha.as_deref(),
-                ),
-            };
-            if !allowed_here {
-                return Ok(false);
             }
         }
     }
-    Ok(true)
+    facts.allows(run, mode, platforms)
 }
 pub(super) async fn mark_claimed(c: &mut Connection, key: Option<&str>) -> Result<()> {
     if let Some(key) = key {

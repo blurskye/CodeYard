@@ -89,6 +89,13 @@ impl Default for CiConfig {
 }
 
 impl CiConfig {
+    pub fn platform_labels(&self) -> Vec<String> {
+        match self.mode {
+            CiExecutionMode::Local => UBUNTU_LABELS.iter().map(|label| (*label).to_owned()).collect(),
+            CiExecutionMode::Podman => self.act_platform_map.keys().cloned().collect(),
+        }
+    }
+
     pub fn from_env() -> Result<Self> {
         let defaults = Self::default();
         let var = |key: &str| std::env::var(key).ok().filter(|value| !value.is_empty());

@@ -19,7 +19,7 @@ pub const ALPN_PAIR: &[u8] = b"codeyard/pair/1";
 /// Request and response calls between nodes. Members only.
 pub const ALPN_RPC: &[u8] = b"codeyard/rpc/3";
 /// CI job claims and log upload for workers without a database. Members only.
-pub const ALPN_EVENTS: &[u8] = b"codeyard/events/5";
+pub const ALPN_EVENTS: &[u8] = b"codeyard/events/6";
 
 /// Close code for a peer that is not an active member.
 pub const CLOSE_NOT_A_MEMBER: u32 = 403;
@@ -490,7 +490,7 @@ mod tests {
     fn protocol_names_are_distinct_and_versioned() {
         assert_eq!(ALPN_PAIR, b"codeyard/pair/1");
         assert_eq!(ALPN_RPC, b"codeyard/rpc/3");
-        assert_eq!(ALPN_EVENTS, b"codeyard/events/5");
+        assert_eq!(ALPN_EVENTS, b"codeyard/events/6");
         let names = [ALPN_PAIR, ALPN_RPC, ALPN_EVENTS];
         for (index, name) in names.iter().enumerate() {
             assert!(names[index + 1..].iter().all(|other| other != name));

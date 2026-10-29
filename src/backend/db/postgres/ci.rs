@@ -493,8 +493,9 @@ pub async fn claim_ci_run(
     worker: &str,
     mode: &str,
     trusted_ids: &[i64],
+    platforms: &[String],
 ) -> Result<Option<CiRun>> {
-    claim_queued_run(pool, None, worker, mode, trusted_ids).await
+    claim_queued_run(pool, None, worker, mode, trusted_ids, platforms).await
 }
 
 /// `claim_ci_run` for a cluster node. The node row is locked `FOR SHARE` until the
@@ -505,8 +506,9 @@ pub async fn claim_ci_run_on_node(
     worker: &str,
     mode: &str,
     trusted_ids: &[i64],
+    platforms: &[String],
 ) -> Result<Option<CiRun>> {
-    claim_queued_run(pool, Some(node_key), worker, mode, trusted_ids).await
+    claim_queued_run(pool, Some(node_key), worker, mode, trusted_ids, platforms).await
 }
 
 /// The running run `worker` holds, if an earlier claim committed it and its reply was lost. A
@@ -562,6 +564,7 @@ async fn claim_queued_run(
     worker: &str,
     mode: &str,
     trusted_ids: &[i64],
+    platforms: &[String],
 ) -> Result<Option<CiRun>> {
     ensure!(
         matches!(mode, "local" | "podman"),
@@ -664,7 +667,7 @@ async fn claim_queued_run(
             }
             continue;
         }
-        if !super::runners::eligible(&mut tx, node_key, &run).await? {
+        if !super::runners::eligible(&mut tx, node_key, &run, mode, platforms).await? {
             tx.rollback().await?;
             continue;
         }

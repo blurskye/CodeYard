@@ -167,7 +167,7 @@ native_operation!(crate::backend::db::postgres::ci::claim_ci_run,
     /// access are cancelled instead, and the claim moves on to the next one. A worker
     /// that already holds a running run gets that run back, so a claim retried after a
     /// lost reply does not leave its run stranded.
-    fn claim_ci_run(pool: &DbPool, worker: &str, mode: &str, trusted_ids: &[i64]) -> Result<Option<CiRun>>);
+    fn claim_ci_run(pool: &DbPool, worker: &str, mode: &str, trusted_ids: &[i64], platforms: &[String]) -> Result<Option<CiRun>>);
 
 native_operation!(crate::backend::db::postgres::ci::claim_ci_run_on_node,
     crate::backend::db::sqlite::ci::claim_ci_run_on_node,
@@ -183,6 +183,7 @@ native_operation!(crate::backend::db::postgres::ci::claim_ci_run_on_node,
         worker: &str,
         mode: &str,
         trusted_ids: &[i64],
+        platforms: &[String],
     ) -> Result<Option<CiRun>>);
 
 native_operation!(crate::backend::db::postgres::ci::ci_run_allows_repository_read,

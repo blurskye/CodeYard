@@ -138,8 +138,8 @@ async fn render(
                 Ok(Some(org)) => org,
                 _ => return ctx.error(StatusCode::NOT_FOUND, "Organization not found."),
             };
-            let groups = match native::list_groups(&ctx.state.pool, actor, org.id).await {
-                Ok(rows) => rows,
+            let groups = match native::list_groups(&ctx.state.pool, actor, org.id, &Default::default()).await {
+                Ok((_, rows)) => rows,
                 Err(error) => return failure(ctx, error),
             };
             (
