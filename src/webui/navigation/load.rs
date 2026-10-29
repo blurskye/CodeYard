@@ -117,11 +117,31 @@ async fn decode_page_response(response: gloo_net::http::Response) -> Result<Page
         ResponseKind::Navigate => return Ok(PageLoad::Navigate(location)),
         ResponseKind::Model => {}
     }
-    let text = response
-        .text()
-        .await
-        .map_err(|_| LoadError::Transport("The page response was interrupted."))?;
-    decode_page_model(&text).map(PageLoad::Model)
+    use wasm_bindgen::JsCast;
+    let stream = response.body().ok_or(LoadError::InvalidModel)?;
+    let reader = stream.get_reader().dyn_into::<web_sys::ReadableStreamDefaultReader>()
+        .map_err(|_| LoadError::Transport("The page response could not be read."))?;
+    let mut bytes = Vec::new();
+    loop {
+        let chunk = wasm_bindgen_futures::JsFuture::from(reader.read()).await
+            .map_err(|_| LoadError::Transport("The page response was interrupted."))?;
+        if js_sys::Reflect::get(&chunk, &"done".into()).ok().and_then(|v| v.as_bool()) == Some(true) {
+            break;
+        }
+        let value = js_sys::Reflect::get(&chunk, &"value".into())
+            .map_err(|_| LoadError::InvalidModel)?;
+        let value = value.dyn_into::<js_sys::Uint8Array>().map_err(|_| LoadError::InvalidModel)?;
+        let length = value.length() as usize;
+        if length > crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES.saturating_sub(bytes.len()) {
+            let _ = reader.cancel();
+            return Err(LoadError::TooLarge);
+        }
+        let start = bytes.len();
+        bytes.resize(start + length, 0);
+        value.copy_to(&mut bytes[start..]);
+    }
+    let text = std::str::from_utf8(&bytes).map_err(|_| LoadError::InvalidModel)?;
+    decode_page_model(text).map(PageLoad::Model)
 }
 
 #[cfg(target_arch = "wasm32")]

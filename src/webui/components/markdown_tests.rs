@@ -1791,7 +1791,7 @@ fn keyboard_subscript_and_entities_in_raw_html() {
     );
     assert_eq!(
         parse_markdown("<div>a &amp; &eacute; b</div>"),
-        "<div>a &amp; &amp;eacute; b</div>"
+        "<div>a &amp; é b</div>"
     );
 }
 

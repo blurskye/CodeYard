@@ -18,6 +18,8 @@ pub fn refresh_page() {
 
 #[component]
 pub(crate) fn RefreshLink(href: String) -> Element {
+    #[cfg(target_arch = "wasm32")]
+    let target = href.clone();
     rsx! {
         a { class: "actions-button", href, onclick: move |event| {
             #[cfg(target_arch = "wasm32")]
@@ -25,7 +27,11 @@ pub(crate) fn RefreshLink(href: String) -> Element {
                 // A modified or middle click keeps the browser's own behaviour.
                 if event.modifiers().is_empty() && event.trigger_button() == Some(MouseButton::Primary) {
                     event.prevent_default();
-                    crate::webui::navigation::refresh_page();
+                    if let Some(router) = dioxus_router::try_router().filter(|router| router.full_route_string() != target) {
+                        router.push(target.clone());
+                    } else {
+                        crate::webui::navigation::refresh_page();
+                    }
                 }
             }
             #[cfg(not(target_arch = "wasm32"))]
@@ -252,7 +258,7 @@ fn PageRouteView(target: String) -> Element {
                     return;
                 }
             };
-            let navigation = target != current.peek().location;
+            let navigation = target.split('#').next() != current.peek().location.split('#').next();
             let scroll = navigation.then(history_scroll);
             let signal = controller.signal();
             let timeout_controller = controller.clone();
@@ -369,15 +375,16 @@ const MODEL_TIMEOUT_MS: u32 = 45_000;
 
 #[cfg(target_arch = "wasm32")]
 fn history_scroll() -> [f64; 2] {
+    use wasm_bindgen::JsCast;
     let state = web_sys::window()
         .and_then(|window| window.history().ok())
         .and_then(|history| history.state().ok());
-    let value = state.map(|state| js_sys::Array::from(&state));
+    let value = state.and_then(|state| state.dyn_into::<js_sys::Array>().ok());
     value
         .map(|state| {
             [
-                state.get(0).as_f64().unwrap_or(0.0),
-                state.get(1).as_f64().unwrap_or(0.0),
+                state.get(0).as_f64().filter(|n| n.is_finite() && *n >= 0.0).unwrap_or(0.0),
+                state.get(1).as_f64().filter(|n| n.is_finite() && *n >= 0.0).unwrap_or(0.0),
             ]
         })
         .unwrap_or([0.0, 0.0])

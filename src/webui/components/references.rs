@@ -96,6 +96,9 @@ impl References {
         budget: usize,
         mut visit: impl FnMut(Range<usize>, Link),
     ) {
+        let definitions = self.autolinks.iter().map(|definition| {
+            (definition, definition.url_template.matches("<num>").count())
+        }).collect::<Vec<_>>();
         let mut remaining = budget;
         let mut done = range.start;
         scan_tokens(text, range.clone(), opaque, |span, token| {
@@ -103,7 +106,7 @@ impl References {
                 return;
             }
             if let Some(link) = self.link(&token) {
-                self.scan_autolinks(text, done..span.start, opaque, &mut remaining, &mut visit);
+                self.scan_autolinks(&definitions, text, done..span.start, opaque, &mut remaining, &mut visit);
                 if remaining > 0 {
                     visit(span.clone(), link);
                     remaining -= 1;
@@ -111,11 +114,12 @@ impl References {
                 done = span.end;
             }
         });
-        self.scan_autolinks(text, done..range.end, opaque, &mut remaining, &mut visit);
+        self.scan_autolinks(&definitions, text, done..range.end, opaque, &mut remaining, &mut visit);
     }
 
     fn scan_autolinks(
         &self,
+        definitions: &[(&Autolink, usize)],
         text: &str,
         range: Range<usize>,
         opaque: &[Range<usize>],
@@ -136,7 +140,7 @@ impl References {
                 continue;
             }
             let mut matched = None;
-            for definition in self.autolinks.iter() {
+            for &(definition, placeholders) in definitions {
                 if definition.key_prefix.is_empty() {
                     continue;
                 }
@@ -155,7 +159,7 @@ impl References {
                     .bytes()
                     .take_while(|byte| {
                         if definition.is_alphanumeric {
-                            byte.is_ascii_alphanumeric()
+                            byte.is_ascii_alphanumeric() || *byte == b'-'
                         } else {
                             byte.is_ascii_digit()
                         }
@@ -177,8 +181,8 @@ impl References {
                 }
                 // A long template filled with a long identifier is skipped before it is built,
                 // so the links a page buffers stay within the Markdown output budget.
-                let size = definition.url_template.len()
-                    + definition.url_template.matches("<num>").count() * length;
+                let size = definition.url_template.len() - placeholders * "<num>".len()
+                    + placeholders * length;
                 if size > MAX_AUTOLINK_URL_BYTES {
                     continue;
                 }
@@ -371,7 +375,11 @@ fn classify(word: &str) -> Option<Token<'_>> {
             repo,
             number,
         }),
-        None => commit(tail.strip_prefix('@')?).map(|sha| Token::RepoCommit { owner, repo, sha }),
+        None => {
+            let sha = tail.strip_prefix('@')?;
+            ((7..=40).contains(&sha.len()) && sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                .then_some(Token::RepoCommit { owner, repo, sha })
+        }
     }
 }
 

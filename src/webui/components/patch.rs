@@ -13,14 +13,10 @@ pub(crate) struct PatchRow<'a> {
 }
 
 /// The lines git writes before a file's first hunk. Binary notices are not among them.
-const GIT_HEADER_PREFIXES: [&str; 13] = [
+const GIT_HEADER_PREFIXES: [&str; 9] = [
     "index ",
     "--- ",
     "+++ ",
-    "old mode ",
-    "new mode ",
-    "new file mode ",
-    "deleted file mode ",
     "similarity index ",
     "dissimilarity index ",
     "rename from ",
