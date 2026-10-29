@@ -144,18 +144,15 @@ async fn native_state(tx: &mut PgConnection, run: &CiRun) -> Result<Option<Strin
     let Some(environment) = environment else {
         return Ok(None);
     };
-    let rules: Option<(i64, String, String, Option<String>, bool)> = sqlx::query_as(
-        "SELECT e.id, d.status, e.reviewers, e.branch_policy,
-                e.wait_timer > 0 AND d.created_at + make_interval(mins => e.wait_timer::int) > clock_timestamp()
-           FROM ci_deployments d
-           JOIN deployment_environments e ON e.repo_id = d.repo_id AND e.name_key = $2
-          WHERE d.run_id = $1",
+    let pending = crate::backend::db::deployment_protection::native_pending_sql(true);
+    let rules: Option<(i64, String, Option<String>, bool)> = sqlx::query_as(
+        &format!("SELECT e.id,d.status,e.branch_policy,{pending} FROM ci_deployments d JOIN deployment_environments e ON e.repo_id=d.repo_id AND e.name_key=$2 WHERE d.run_id=$1"),
     )
     .bind(run.id)
     .bind(environment.to_lowercase())
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((environment_id, status, reviewers, branch_policy, timer_running)) = rules else {
+    let Some((environment_id, status, branch_policy, pending)) = rules else {
         return Ok(None);
     };
     if status == "rejected" {
@@ -201,7 +198,7 @@ async fn native_state(tx: &mut PgConnection, run: &CiRun) -> Result<Option<Strin
     if !branch_allowed {
         return Ok(Some("rejected".to_owned()));
     }
-    if timer_running || (status == "pending" && reviewers != "[]") {
+    if pending {
         return Ok(Some("pending".to_owned()));
     }
     Ok(None)

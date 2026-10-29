@@ -44,6 +44,10 @@ pub struct CiRun {
     #[serde(default)]
     #[sqlx(default)]
     pub approval_required: bool,
+    /// Read projection only: pending deployment reviewers, timers or App decisions.
+    #[serde(default)]
+    #[sqlx(default)]
+    pub deployment_waiting: bool,
     pub branch: String,
     pub head_sha: Option<String>,
     pub workflow_path: String,

@@ -64,9 +64,14 @@ pub fn state(value: &str) -> (&'static str, Option<&'static str>) {
         .map(|(_, status, conclusion)| (*status, *conclusion))
         .unwrap_or(("completed", None))
 }
-/// A run's GitHub status and conclusion. A queued run held for approval is waiting.
+pub(crate) fn state_sql(pg: bool, run: &str) -> String {
+    let protection = super::deployment_protection::waiting_sql(pg, run);
+    format!("CASE WHEN {run}.status='queued' AND ({run}.approval_required OR {protection}) THEN 'waiting' ELSE {run}.status END")
+}
+
+/// Fork approval and pending environment protection share the REST waiting phase.
 pub fn run_state(run: &CiRun) -> (&'static str, Option<&'static str>) {
-    if run.approval_required && run.status == "queued" {
+    if (run.approval_required || run.deployment_waiting) && run.status == "queued" {
         ("waiting", None)
     } else {
         state(&run.status)

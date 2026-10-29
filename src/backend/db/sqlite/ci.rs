@@ -412,7 +412,7 @@ async fn enqueue_ci_run_inner(
             .bind(awaiting_approval)
             .fetch_one(&mut *tx)
             .await?;
-    let run = super::action_runs::record(&mut tx, &run, parent_run).await?;
+    let mut run = super::action_runs::record(&mut tx, &run, parent_run).await?;
     super::checks::insert_workflow_suite(&mut tx, &run).await?;
     if let Some(request) = &requested_attempt {
         sqlx::query("INSERT INTO actions_replays(run_id,source_id,data,debug) VALUES($1,$2,$3,$4)")
@@ -433,6 +433,9 @@ async fn enqueue_ci_run_inner(
             .await?;
     }
     super::deployment_protection::snapshot(&mut tx, &run).await?;
+    let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "r");
+    run.deployment_waiting = sqlx::query_scalar(&format!("SELECT {waiting} FROM ci_runs r WHERE r.id=?1"))
+        .bind(run.id).fetch_one(&mut *tx).await?;
     // Adding retained input changes what a current replica must contain.
     sqlx::query("UPDATE repositories SET write_version=write_version+1 WHERE id=?1 AND storage_node_id IS NOT NULL")
         .bind(run.repo_id).execute(&mut *tx).await?;
@@ -1054,8 +1057,9 @@ pub async fn delete_ci_run_data(
 }
 
 pub async fn get_ci_run_by_id(pool: &SqlitePool, repo_id: i64, id: i64) -> Result<Option<CiRun>> {
+    let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "r");
     Ok(
-        sqlx::query_as("SELECT * FROM ci_runs WHERE repo_id=$1 AND id=$2")
+        sqlx::query_as(&format!("SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.repo_id=$1 AND r.id=$2"))
             .bind(repo_id)
             .bind(id)
             .fetch_optional(pool)
@@ -1065,14 +1069,16 @@ pub async fn get_ci_run_by_id(pool: &SqlitePool, repo_id: i64, id: i64) -> Resul
 
 /// For callers that hold a run's own id but not its repository, such as a worker's report.
 pub async fn get_ci_run(pool: &SqlitePool, id: i64) -> Result<Option<CiRun>> {
-    Ok(sqlx::query_as("SELECT * FROM ci_runs WHERE id=$1")
+    let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "r");
+    Ok(sqlx::query_as(&format!("SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.id=$1"))
         .bind(id)
         .fetch_optional(pool)
         .await?)
 }
 
 pub async fn get_ci_run_by_run_id(pool: &SqlitePool, run_id: uuid::Uuid) -> Result<Option<CiRun>> {
-    let run = sqlx::query_as::<_, CiRun>("SELECT * FROM ci_runs WHERE run_id = ?1")
+    let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "r");
+    let run = sqlx::query_as::<_, CiRun>(&format!("SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.run_id=?1"))
         .bind(run_id)
         .fetch_optional(pool)
         .await?;

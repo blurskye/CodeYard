@@ -60,14 +60,15 @@ pub async fn get(
     id: i64,
     attempt: Option<i32>,
 ) -> Result<Option<CiRun>> {
-    Ok(sqlx::query_as("SELECT * FROM ci_runs WHERE repo_id=$1 AND COALESCE(workflow_run_id,id)=$2 AND ($3 IS NULL OR COALESCE(workflow_run_attempt,1)=$3) ORDER BY COALESCE(workflow_run_attempt,1) DESC LIMIT 1").bind(repo).bind(id).bind(attempt).fetch_optional(pool).await?)
+    let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "c");
+    Ok(sqlx::query_as(&format!("SELECT c.*,{waiting} AS deployment_waiting FROM ci_runs c WHERE c.repo_id=$1 AND COALESCE(c.workflow_run_id,c.id)=$2 AND ($3 IS NULL OR COALESCE(c.workflow_run_attempt,1)=$3) ORDER BY COALESCE(c.workflow_run_attempt,1) DESC LIMIT 1")).bind(repo).bind(id).bind(attempt).fetch_optional(pool).await?)
 }
 
 pub async fn metadata(pool: &SqlitePool, repo: i64, id: i64) -> Result<Option<RunMetadata>> {
     Ok(sqlx::query_as("SELECT m.*,(SELECT s.id FROM check_suites s WHERE s.ci_run_id=c.id) AS check_suite_id FROM actions_run_metadata m JOIN ci_runs c ON c.id=m.run_id WHERE c.repo_id=$1 AND c.id=$2").bind(repo).bind(id).fetch_optional(pool).await?)
 }
 
-const FILTER:&str="c.repo_id=$1 AND c.workflow_path NOT LIKE '%,%' AND NOT EXISTS(SELECT 1 FROM ci_runs newer WHERE newer.workflow_run_id=COALESCE(c.workflow_run_id,c.id) AND newer.workflow_run_attempt>COALESCE(c.workflow_run_attempt,1)) AND ($2='' OR c.workflow_path=$2) AND ($3='' OR EXISTS(SELECT 1 FROM users a WHERE a.id=origin.triggered_by_id AND a.username=$3)) AND ($4='' OR COALESCE(json_extract(c.pull_request_event,'$.head_ref'),c.branch) IN ($4,'refs/heads/'||$4,'refs/tags/'||$4)) AND ($5='' OR c.event=$5) AND (json_array_length($6)=0 OR (CASE WHEN c.approval_required AND c.status='queued' THEN 'waiting' ELSE c.status END) IN (SELECT value FROM json_each($6))) AND (NOT $7 OR c.status NOT IN ('queued','pending','running','in_progress')) AND ($8 IS NULL OR julianday(origin.created_at)>julianday($8) OR (NOT $12 AND julianday(origin.created_at)=julianday($8))) AND ($9 IS NULL OR julianday(origin.created_at)<julianday($9) OR ($11 AND julianday(origin.created_at)=julianday($9))) AND ($10='' OR c.head_sha=$10) AND ($13 IS NULL OR EXISTS(SELECT 1 FROM check_suites s WHERE s.id=$13 AND s.ci_run_id=c.id))";
+const FILTER:&str="c.repo_id=$1 AND c.workflow_path NOT LIKE '%,%' AND NOT EXISTS(SELECT 1 FROM ci_runs newer WHERE newer.workflow_run_id=COALESCE(c.workflow_run_id,c.id) AND newer.workflow_run_attempt>COALESCE(c.workflow_run_attempt,1)) AND ($2='' OR c.workflow_path=$2) AND ($3='' OR EXISTS(SELECT 1 FROM users a WHERE a.id=origin.triggered_by_id AND a.username=$3)) AND ($4='' OR COALESCE(json_extract(c.pull_request_event,'$.head_ref'),c.branch) IN ($4,'refs/heads/'||$4,'refs/tags/'||$4)) AND ($5='' OR c.event=$5) AND (NOT $7 OR c.status NOT IN ('queued','pending','running','in_progress')) AND ($8 IS NULL OR julianday(origin.created_at)>julianday($8) OR (NOT $12 AND julianday(origin.created_at)=julianday($8))) AND ($9 IS NULL OR julianday(origin.created_at)<julianday($9) OR ($11 AND julianday(origin.created_at)=julianday($9))) AND ($10='' OR c.head_sha=$10) AND ($13 IS NULL OR EXISTS(SELECT 1 FROM check_suites s WHERE s.id=$13 AND s.ci_run_id=c.id))";
 
 pub async fn list(
     pool: &SqlitePool,
@@ -83,13 +84,16 @@ pub async fn list(
     );
     let mut tx = pool.begin().await?;
     let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "c");
+    let phase = crate::backend::db::action_runs::state_sql(false, "c");
+    let filter = format!("{FILTER} AND (json_array_length($6)=0 OR ({phase}) IN (SELECT value FROM json_each($6)))");
     let readable:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND (NOT r.is_private OR (NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=1))))")).bind(repo).bind(actor).fetch_one(&mut *tx).await?;
     if !readable {
         return Ok(None);
     }
     let statuses = serde_json::to_string(&q.statuses)?;
-    let total=sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ci_runs c JOIN ci_runs origin ON origin.id=COALESCE(c.workflow_run_id,c.id) AND origin.repo_id=c.repo_id WHERE {FILTER}")).bind(repo).bind(&q.workflow).bind(&q.actor).bind(&q.branch).bind(&q.event).bind(&statuses).bind(q.completed).bind(q.since).bind(q.until).bind(&q.sha).bind(q.until_inclusive).bind(q.since_exclusive).bind(q.check_suite).fetch_one(&mut *tx).await?;
-    let runs=sqlx::query_as(&format!("SELECT c.* FROM ci_runs c JOIN ci_runs origin ON origin.id=COALESCE(c.workflow_run_id,c.id) AND origin.repo_id=c.repo_id WHERE {FILTER} ORDER BY origin.id DESC LIMIT $14 OFFSET $15")).bind(repo).bind(&q.workflow).bind(&q.actor).bind(&q.branch).bind(&q.event).bind(&statuses).bind(q.completed).bind(q.since).bind(q.until).bind(&q.sha).bind(q.until_inclusive).bind(q.since_exclusive).bind(q.check_suite).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    let total=sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ci_runs c JOIN ci_runs origin ON origin.id=COALESCE(c.workflow_run_id,c.id) AND origin.repo_id=c.repo_id WHERE {filter}")).bind(repo).bind(&q.workflow).bind(&q.actor).bind(&q.branch).bind(&q.event).bind(&statuses).bind(q.completed).bind(q.since).bind(q.until).bind(&q.sha).bind(q.until_inclusive).bind(q.since_exclusive).bind(q.check_suite).fetch_one(&mut *tx).await?;
+    let runs=sqlx::query_as(&format!("SELECT c.*,{waiting} AS deployment_waiting FROM ci_runs c JOIN ci_runs origin ON origin.id=COALESCE(c.workflow_run_id,c.id) AND origin.repo_id=c.repo_id WHERE {filter} ORDER BY origin.id DESC LIMIT $14 OFFSET $15")).bind(repo).bind(&q.workflow).bind(&q.actor).bind(&q.branch).bind(&q.event).bind(&statuses).bind(q.completed).bind(q.since).bind(q.until).bind(&q.sha).bind(q.until_inclusive).bind(q.since_exclusive).bind(q.check_suite).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Some(RunPage { total, runs }))
 }
