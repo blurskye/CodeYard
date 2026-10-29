@@ -295,6 +295,8 @@ pub enum Operation {
         new_owner: String,
     },
     ConfigureDependencySecurity {
+        #[serde(default)]
+        token_id: Option<i64>,
         feature: crate::backend::db::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,

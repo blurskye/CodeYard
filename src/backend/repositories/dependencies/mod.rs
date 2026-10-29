@@ -82,13 +82,14 @@ pub async fn status(
 pub async fn set_enabled(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
-    actor: i64,
+    actor: impl Into<db::users::tokens::Actor>,
     repo: i64,
     feature: Feature,
     enabled: bool,
     private_consent: bool,
 ) -> Result<(), DependencyError> {
-    let repository = access::check_admin(pool, repo, actor)
+    let actor = actor.into();
+    let repository = access::check_admin(pool, repo, actor.user_id)
         .await
         .map_err(DependencyError::Access)?;
     if repository.is_archived {

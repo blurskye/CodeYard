@@ -934,13 +934,14 @@ impl RpcHandler {
                 &new_owner
             )),
             Operation::ConfigureDependencySecurity {
+                token_id,
                 feature,
                 enabled,
                 private_consent,
             } => json!(store.configure_dependency_security_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                crate::backend::db::users::tokens::Actor { user_id: actor.ok_or_else(|| invalid("repository mutation requires an actor"))?, token_id },
                 feature,
                 enabled,
                 private_consent

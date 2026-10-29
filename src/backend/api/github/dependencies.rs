@@ -60,7 +60,7 @@ async fn change(
     dependencies::set_enabled(
         &state.pool,
         state.cluster.as_ref(),
-        actor.user.id,
+        (actor.user.id, actor.token.id),
         repo.id,
         feature,
         enabled,

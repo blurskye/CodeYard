@@ -69,14 +69,19 @@ async fn save(tx: &mut Transaction<'_, Postgres>, repo: i64, snapshot: &Snapshot
 }
 pub async fn configure(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     repo: i64,
     feature: Feature,
     enabled: bool,
     private_consent: bool,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
+    let credential = actor.into();
+    let actor = credential.user_id;
     let repository = admin(&mut tx, actor, repo, true).await?;
+    if let Some(token) = credential.token_id {
+        ensure!(super::super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "administration").await?, Refusal::Denied);
+    }
     let current = state_in(&mut tx, repo).await?;
     let Some(policy) = Policy::change(
         current.as_ref(),
