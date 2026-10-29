@@ -64,6 +64,8 @@ native_operation!(crate::backend::db::postgres::github_apps::client_active,crate
     fn client_active(pool:&DbPool,client:&str)->Result<bool>);
 native_operation!(crate::backend::db::postgres::github_apps::app, crate::backend::db::sqlite::github_apps::app,
     fn app(pool: &DbPool, key: &str) -> Result<Option<App>>);
+native_operation!(crate::backend::db::postgres::github_apps::app_issuer, crate::backend::db::sqlite::github_apps::app_issuer,
+    fn app_issuer(pool: &DbPool, issuer: &str) -> Result<Option<App>>);
 native_operation!(crate::backend::db::postgres::github_apps::app_by_id, crate::backend::db::sqlite::github_apps::app_by_id,
     fn app_by_id(pool: &DbPool, id: i64) -> Result<Option<App>>);
 native_operation!(crate::backend::db::postgres::github_apps::apps, crate::backend::db::sqlite::github_apps::apps,

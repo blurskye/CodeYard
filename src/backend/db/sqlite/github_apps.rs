@@ -47,8 +47,19 @@ pub async fn client_active(pool: &SqlitePool, client: &str) -> Result<bool> {
 pub async fn app(pool: &SqlitePool, key: &str) -> Result<Option<App>> {
     Ok(sqlx::query_as("SELECT a.* FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE (a.slug=$1 OR a.client_id=$1 OR CAST(a.id AS TEXT)=$1) AND NOT u.is_banned AND NOT u.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password").bind(key).fetch_optional(pool).await?)
 }
-/// An app by id whatever its owner's state, for documents of an installation the request may
-/// already see. Authentication and execution use `app`.
+/// Authentication accepts indexed numeric ids and client ids, never discovery slugs.
+pub async fn app_issuer(pool: &SqlitePool, issuer: &str) -> Result<Option<App>> {
+    let id = issuer.parse::<i64>().ok();
+    let column = if id.is_some() { "a.id" } else { "a.client_id" };
+    let query = format!("SELECT a.* FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE {column}=$1 AND NOT u.is_banned AND NOT u.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password");
+    Ok(if let Some(id) = id {
+        sqlx::query_as(&query).bind(id).fetch_optional(pool).await?
+    } else {
+        sqlx::query_as(&query).bind(issuer).fetch_optional(pool).await?
+    })
+}
+
+/// An app for documents already visible to the caller, regardless of owner state.
 pub async fn app_by_id(pool: &SqlitePool, id: i64) -> Result<Option<App>> {
     Ok(sqlx::query_as("SELECT * FROM github_apps WHERE id=$1")
         .bind(id)
