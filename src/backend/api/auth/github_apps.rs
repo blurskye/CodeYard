@@ -34,6 +34,7 @@ pub fn router() -> Router<Arc<AppState>> {
             axum::routing::post(uninstall),
         )
         .route("/settings/apps/new", get(new).post(register))
+        .route("/settings/apps/:slug/regenerate", axum::routing::post(regenerate))
         .route("/apps/:slug", get(install_get))
         .route(
             "/apps/:slug/installations/new",
@@ -80,7 +81,8 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         return r;
     }
     let mut model = model("list");
-    match db::github_apps::apps(&ctx.state.pool, ctx.user.as_ref().unwrap().id).await {
+    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
+    match db::github_apps::apps(&ctx.state.pool, ctx.user.as_ref().unwrap().id, &session).await {
         Ok(apps) => model.applications = apps.into_iter().map(|app| (app.name, app.slug)).collect(),
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Apps unavailable"),
     }
@@ -99,7 +101,8 @@ async fn managed_installations(
         return response;
     }
     let mut model = model("installations");
-    match db::github_apps::managed_installations(&ctx.state.pool, ctx.user.as_ref().unwrap().id)
+    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
+    match db::github_apps::managed_installations(&ctx.state.pool, ctx.user.as_ref().unwrap().id, &session)
         .await
     {
         Ok(rows) => {
@@ -160,6 +163,48 @@ async fn uninstall(
         ),
     }
 }
+fn key_failure(ctx: &PageContext, error: apps::RegistrationKeyError) -> Response {
+    let status = match error {
+        apps::RegistrationKeyError::Limited => StatusCode::TOO_MANY_REQUESTS,
+        apps::RegistrationKeyError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    ctx.error(status, "App credential generation is temporarily unavailable")
+}
+
+async fn regenerate(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri, Path(slug): Path<String>, Form(form): Form<Fields>) -> Response {
+    let mut ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    ctx.return_to = Some("/settings/apps".into());
+    if let Some(response) = login(&ctx) { return response; }
+    if let Err(response) = ctx.check_csrf(&form) { return response; }
+    let actor = ctx.user.as_ref().unwrap().id;
+    let Some(session) = session::extract_session_id(&ctx.headers) else {
+        return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
+    };
+    match db::github_apps::app(&ctx.state.pool, &slug).await {
+        Ok(Some(app)) if app.owner_id == actor && app.slug == slug => {},
+        Ok(_) => return ctx.error(StatusCode::NOT_FOUND, "App not found"),
+        Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Apps unavailable"),
+    }
+    let (private, public) = match apps::registration_key(&ctx.state.pool, actor).await {
+        Ok(keys) => keys,
+        Err(error) => return key_failure(&ctx, error),
+    };
+    let secret = oauth::random();
+    match db::github_apps::rotate_credentials(&ctx.state.pool, actor, &session, &slug, &public, &token_hash(&secret)).await {
+        Ok(Some(client)) => {
+            let mut model = model("new");
+            model.credentials = Some((client, secret, private));
+            page(&ctx, model)
+        }
+        Ok(None) => ctx.error(StatusCode::NOT_FOUND, "App not found"),
+        Err(error) if error.is::<db::users::accounts::AccountRestricted>() => ctx.error(StatusCode::FORBIDDEN, "Account unavailable"),
+        Err(_) => ctx.error(StatusCode::SERVICE_UNAVAILABLE, "App credential replacement unavailable"),
+    }
+}
+
 async fn new(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
@@ -246,27 +291,9 @@ async fn register(
     let Some(session) = session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    if let Err(error) = crate::backend::identity::admission::admit_operation(
-        &ctx.state.pool,
-        None,
-        "app-register",
-        &ctx.user.as_ref().unwrap().id.to_string(),
-    ).await {
-        let status = match error {
-            crate::backend::identity::admission::AdmissionError::Limited => StatusCode::TOO_MANY_REQUESTS,
-            crate::backend::identity::admission::AdmissionError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-        };
-        return ctx.error(status, "App registration is temporarily unavailable");
-    }
-    let key = apps::generate_key().await;
-    let (private, public) = match key {
+    let (private, public) = match apps::registration_key(&ctx.state.pool, ctx.user.as_ref().unwrap().id).await {
         Ok(keys) => keys,
-        _ => {
-            return ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Key generation unavailable",
-            )
-        }
+        Err(error) => return key_failure(&ctx, error),
     };
     let permissions = permissions.unwrap();
     let client = format!("Iv1.{}", &oauth::random()[..16]);

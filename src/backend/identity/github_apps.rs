@@ -37,6 +37,21 @@ pub async fn generate_key() -> anyhow::Result<(String, String)> {
     .await?
 }
 
+pub enum RegistrationKeyError {
+    Limited,
+    Unavailable,
+}
+
+/// Native registration and credential recovery share one account key-generation budget.
+pub async fn registration_key(pool: &DbPool, actor: i64) -> Result<(String, String), RegistrationKeyError> {
+    super::admission::admit_operation(pool, None, "app-register", &actor.to_string()).await
+        .map_err(|error| match error {
+            super::admission::AdmissionError::Limited => RegistrationKeyError::Limited,
+            super::admission::AdmissionError::Unavailable => RegistrationKeyError::Unavailable,
+        })?;
+    generate_key().await.map_err(|_| RegistrationKeyError::Unavailable)
+}
+
 #[derive(Clone)]
 pub struct Manifest {
     pub name: String,

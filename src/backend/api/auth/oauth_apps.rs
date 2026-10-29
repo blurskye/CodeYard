@@ -520,7 +520,8 @@ async fn applications(
     if let Some(response) = login(&ctx) {
         return response;
     }
-    match db::oauth_apps::applications(&ctx.state.pool, ctx.user.as_ref().unwrap().id).await {
+    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
+    match db::oauth_apps::applications(&ctx.state.pool, ctx.user.as_ref().unwrap().id, &session).await {
         Ok(apps) => ctx.page_model(
             "OAuth applications",
             Page::Identity(account::Page::OAuthApplications {
