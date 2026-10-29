@@ -5,6 +5,7 @@ mod collaboration;
 mod collaboration_mutations;
 mod comment_mutations;
 mod commit_comment;
+mod checks;
 mod connection;
 mod discussions;
 mod gists;
@@ -307,6 +308,7 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
             repository::by_id(pull.repo_id, request).await?;
             Ok(issue::pull_object(&pull))
         }
+        "CRU" | "CSU" => checks::node(kind, id, request).await,
         "IT" => issue::metadata::type_node(id, request).await,
         "LB" => issue::linked_branch_node(id, request).await,
         "RRS" => rulesets::node(id, request).await,

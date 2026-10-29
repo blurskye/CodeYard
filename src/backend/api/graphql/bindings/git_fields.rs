@@ -51,6 +51,24 @@ impl gql::StatusCheckRollupContextEdgeResolver for Object {
 impl gql::StatusContextStateCountResolver for Object {
     fields!("StatusContextStateCount"; count() -> i32; state() -> gql::StatusState;);
 }
+impl gql::CheckRunResolver for Object {
+    fields!("CheckRun"; id() -> ID; database_id() -> Option<i32>; name() -> String;
+        status() -> gql::CheckStatusState; conclusion() -> Option<gql::CheckConclusionState>;
+        started_at() -> Option<gql::DateTime>; completed_at() -> Option<gql::DateTime>; details_url() -> Option<gql::URI>;
+        external_id() -> Option<String>; check_suite() -> gql::CheckSuite;
+        summary() -> Option<String>; text() -> Option<String>; title() -> Option<String>;
+        is_required(pull_request_id: Option<ID>, pull_request_number: Option<i32>) -> bool;
+    );
+}
+impl gql::CheckSuiteResolver for Object {
+    fields!("CheckSuite"; id() -> ID; workflow_run() -> Option<gql::WorkflowRun>;);
+}
+impl gql::WorkflowRunResolver for Object {
+    fields!("WorkflowRun"; event() -> String; workflow() -> gql::Workflow;);
+}
+impl gql::WorkflowResolver for Object {
+    fields!("Workflow"; name() -> String;);
+}
 impl gql::CheckRunStateCountResolver for Object {
     fields!("CheckRunStateCount"; count() -> i32; state() -> gql::CheckRunState;);
 }

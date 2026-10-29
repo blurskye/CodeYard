@@ -126,7 +126,8 @@ pub(super) async fn resolve(
             Ok(page.finish(nodes))
         }
         ("Commit", "comments") => super::commit_comment::list(repo.id, oid, args, request).await,
-        ("Commit", "statusCheckRollup" | "status") => {
+        ("Commit", "statusCheckRollup") => super::checks::rollup(repo.id, oid, request).await,
+        ("Commit", "status") => {
             request.authorize(repo.id, "statuses", false).await?;
             let rows = db::repositories::protection::list_commit_statuses(
                 &request.state.pool,
@@ -149,41 +150,16 @@ pub(super) async fn resolve(
                 "SUCCESS"
             };
             Ok(
-                json!({"__typename":if field=="status" {"Status"} else {"StatusCheckRollup"},"_repo":repo.id,"_scope":"statuses","_oid":oid,"id":node_id::git(if field=="status" {"STAT"} else {"SCR"},&format!("{}/{oid}",repo.id)),"state":state}),
+                json!({"__typename":"Status","_repo":repo.id,"_scope":"statuses","_oid":oid,"id":node_id::git("STAT",&format!("{}/{oid}",repo.id)),"state":state}),
             )
         }
-        ("StatusCheckRollup", "contexts") | ("Status", "contexts") => {
+        ("StatusCheckRollup", "contexts") => super::checks::contexts(args, request, parent).await,
+        ("Status", "contexts") => {
             request.authorize(repo.id, "statuses", false).await?;
-            let rows = db::repositories::protection::list_commit_statuses(
-                &request.state.pool,
-                repo.id,
-                oid,
-            )
-            .await
-            .map_err(unavailable)?;
-            let mut counts = std::collections::BTreeMap::<String, i64>::new();
-            for row in &rows {
-                *counts.entry(row.state.to_uppercase()).or_default() += 1;
-            }
-            let nodes = rows
-                .iter()
-                .map(|row| status(repo.id, row))
-                .collect::<Vec<_>>();
-            if ty == "Status" {
-                return Ok(json!(nodes));
-            }
-            let total = nodes.len();
-            let mut value = connection::slice(args, nodes)?;
-            value["checkRunCount"] = json!(0);
-            value["checkRunCountsByState"] = json!([]);
-            value["statusContextCount"] = json!(total);
-            value["statusContextCountsByState"] = json!(counts
-                .into_iter()
-                .map(|(state, count)| json!({"state":state,"count":count}))
-                .collect::<Vec<_>>());
-            Ok(value)
+            let rows = db::repositories::protection::list_commit_statuses(&request.state.pool, repo.id, oid).await.map_err(unavailable)?;
+            Ok(json!(rows.iter().map(|row| status(repo.id, row)).collect::<Vec<_>>()))
         }
-        ("StatusContext", "isRequired") => {
+        ("StatusContext" | "CheckRun", "isRequired") => {
             let pull = if let Some(id) = args.args.get("pullRequestId").filter(|id| !id.is_null()) {
                 let (kind, id) = node_id::decode(id.string()?).ok_or_else(missing)?;
                 if kind != "PR" {
@@ -226,7 +202,7 @@ pub(super) async fn resolve(
                     .required_status_checks
                     .iter()
                     .any(
-                        |name| Some(name.as_str()) == parent["context"].as_str()
+                        |name| Some(name.as_str()) == parent[if ty == "CheckRun" { "name" } else { "context" }].as_str()
                     ))))
         }
         ("StatusContext", "creator") => match parent["_creator"].as_i64() {

@@ -98,6 +98,8 @@ enums!(
     PullRequestReviewDecision,
     StatusState,
     CheckRunState,
+    CheckStatusState,
+    CheckConclusionState,
     IssueSearchType,
     LexicalFallbackReason,
     LockReason,
@@ -273,6 +275,10 @@ objects!(
     PullRequestChangedFileEdge,
     Status,
     StatusContext,
+    CheckRun,
+    CheckSuite,
+    WorkflowRun,
+    Workflow,
     StatusCheckRollup,
     StatusCheckRollupContextConnection,
     StatusCheckRollupContextEdge,
@@ -323,7 +329,7 @@ macro_rules! abstract_types {
         }
     };
 }
-abstract_types!(Node: IssueType,LinkedBranch,RepositoryRuleset,Team,CommitComment,User,Bot, Organization, Repository, Issue, PullRequest, Label, IssueComment,Milestone,Commit,Ref,Blob,Tree,Tag,Reaction,Release,ReleaseAsset,PullRequestReview,PullRequestReviewComment,StatusContext,Status,StatusCheckRollup,ReviewRequest,ProjectV2,ProjectV2Item,ProjectV2Field,ProjectV2SingleSelectField,ProjectV2IterationField,DraftIssue,MergedEvent,ReadyForReviewEvent,ClosedEvent,ReopenedEvent,RenamedTitleEvent,LabeledEvent,UnlabeledEvent,AssignedEvent,UnassignedEvent,MilestonedEvent,DemilestonedEvent,LockedEvent,UnlockedEvent,Discussion,DiscussionCategory,DiscussionComment,Gist);
+abstract_types!(Node: CheckRun,CheckSuite,IssueType,LinkedBranch,RepositoryRuleset,Team,CommitComment,User,Bot, Organization, Repository, Issue, PullRequest, Label, IssueComment,Milestone,Commit,Ref,Blob,Tree,Tag,Reaction,Release,ReleaseAsset,PullRequestReview,PullRequestReviewComment,StatusContext,Status,StatusCheckRollup,ReviewRequest,ProjectV2,ProjectV2Item,ProjectV2Field,ProjectV2SingleSelectField,ProjectV2IterationField,DraftIssue,MergedEvent,ReadyForReviewEvent,ClosedEvent,ReopenedEvent,RenamedTitleEvent,LabeledEvent,UnlabeledEvent,AssignedEvent,UnassignedEvent,MilestonedEvent,DemilestonedEvent,LockedEvent,UnlockedEvent,Discussion,DiscussionCategory,DiscussionComment,Gist);
 abstract_types!(Actor: User,Bot);
 abstract_types!(Assignee: User);
 abstract_types!(IssueOrPullRequest: Issue, PullRequest);
@@ -335,7 +341,7 @@ abstract_types!(RepositoryOwner: User, Organization);
 abstract_types!(GitObject: Commit,Blob,Tree,Tag);
 abstract_types!(Reactable: Issue,PullRequest,IssueComment,PullRequestReview,PullRequestReviewComment,Release,CommitComment);
 abstract_types!(RequestedReviewer: User,Bot,Team);
-abstract_types!(StatusCheckRollupContext: StatusContext);
+abstract_types!(StatusCheckRollupContext: StatusContext,CheckRun);
 abstract_types!(Starrable: Repository);
 abstract_types!(Subscribable: Repository);
 abstract_types!(RuleSource: Organization, Repository);
@@ -416,6 +422,11 @@ impl Object {
                 _ => self.0["_scope"].as_str().unwrap_or("contents"),
             };
             request.authorize(repo, scope, false).await?;
+        }
+        if ty == "StatusCheckRollup" {
+            let repo = self.0["_repo"].as_i64().ok_or_else(missing)?;
+            request.authorize(repo, "statuses", false).await?;
+            request.authorize(repo, "checks", false).await?;
         }
         if ty == "Organization" && matches!(field, "team" | "rulesets" | "projects" | "projectsV2" | "projectV2" | "viewerCanCreateProjects") {
             request.authorize_organization(self.0["databaseId"].as_i64().ok_or_else(missing)?).await?;
@@ -593,6 +604,7 @@ impl Object {
                 boxed(|| super::git_objects::reference_field(field, arguments, &self.0, request))
                     .await
             }
+            ("CheckRun" | "CheckSuite" | "WorkflowRun" | "Workflow", _) => boxed(|| super::checks::resolve(ty, field, arguments, request, &self.0)).await,
             ("Commit" | "Status" | "StatusContext" | "StatusCheckRollup", _) => {
                 boxed(|| super::git::resolve(ty, field, arguments, request, &self.0)).await
             }

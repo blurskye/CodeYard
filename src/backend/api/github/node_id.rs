@@ -34,6 +34,8 @@ pub(crate) fn decode(value: &str) -> Option<(&str, i64)> {
             | "RE"
             | "RA"
             | "CS"
+            | "CRU"
+            | "CSU"
             | "PRR"
             | "PRRC"
             | "IE"
