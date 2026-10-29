@@ -2887,7 +2887,9 @@ CREATE TABLE project_items (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     archived BOOLEAN NOT NULL DEFAULT false,
+    archived_at TEXT,
     position INTEGER NOT NULL DEFAULT 0,
+    CHECK (archived = (archived_at IS NOT NULL)),
     CHECK ((issue_id IS NOT NULL AND pull_request_id IS NULL AND draft_title IS NULL AND repo_id IS NOT NULL)
         OR (pull_request_id IS NOT NULL AND issue_id IS NULL AND draft_title IS NULL AND repo_id IS NOT NULL)
         OR (draft_title IS NOT NULL AND issue_id IS NULL AND pull_request_id IS NULL AND repo_id IS NULL)),

@@ -223,6 +223,7 @@ pub struct Item {
     pub draft_body: Option<String>,
     pub field_values: String,
     pub archived: bool,
+    pub archived_at: Option<DateTime<Utc>>,
     pub position: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

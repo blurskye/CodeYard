@@ -99,7 +99,7 @@ pub async fn archive_item(
 ) -> Result<Item> {
     let mut tx = pool.begin().await?;
     writable_item(&mut tx, actor, project, item).await?;
-    sqlx::query("UPDATE project_items SET archived=$2,updated_at=$3 WHERE id=$1")
+    sqlx::query("UPDATE project_items SET archived=$2,archived_at=CASE WHEN $2 THEN COALESCE(archived_at,$3) ELSE NULL END,updated_at=$3 WHERE id=$1")
         .bind(item)
         .bind(archived)
         .bind(chrono::Utc::now())
@@ -259,7 +259,7 @@ pub async fn copy(
                         .map(|id| (id.to_string(), v))
                 })
                 .collect();
-            sqlx::query("INSERT INTO project_items(project_id,creator_id,draft_title,draft_body,field_values,archived,position,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)").bind(result.id).bind(actor).bind(item.draft_title).bind(item.draft_body).bind(serde_json::to_string(&values)?).bind(item.archived).bind(item.position).bind(now).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO project_items(project_id,creator_id,draft_title,draft_body,field_values,archived,archived_at,position,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $6 THEN $8 ELSE NULL END,$7,$8,$8)").bind(result.id).bind(actor).bind(item.draft_title).bind(item.draft_body).bind(serde_json::to_string(&values)?).bind(item.archived).bind(item.position).bind(now).execute(&mut *tx).await?;
         }
     }
     tx.commit().await?;
