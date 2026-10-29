@@ -452,7 +452,7 @@ impl CiHandler {
 
     /// The reply to the request on `link`. An error means the frame is broken, and it ends
     /// the connection instead.
-    async fn answer(&self, link: &mut Link) -> Result<Result<serde_json::Value, String>> {
+    async fn answer(&self, link: &mut Link, slot: tokio::sync::OwnedSemaphorePermit) -> Result<Result<serde_json::Value, String>> {
         let peer = link.peer;
         if let Some(refusal) = self.refusal(peer).await {
             return Ok(Err(refusal.to_owned()));
@@ -476,7 +476,12 @@ impl CiHandler {
                 tracing::debug!(%error, "could not record a worker's last request");
             }
         }
-        Ok(match self.execute(peer, request).await {
+        let handler = self.clone();
+        let result = self.sessions.spawn_admitted(async move {
+            let _slot = slot;
+            handler.execute(peer, request).await
+        }).await?;
+        Ok(match result {
             Ok(value) => Ok(value),
             Err(error) => {
                 // Never return database errors or decrypted secret contents to the peer.
@@ -503,9 +508,9 @@ impl CiHandler {
         tokio::time::timeout(std::time::Duration::from_secs(90), async {
             // A busy core refuses at once, as pairing does, so the client asks another
             // core instead of waiting in a queue. Hold admission through the reply write.
-            let slot = self.slots.try_acquire();
-            let result = match &slot {
-                Ok(_) => self.answer(&mut link).await?,
+            let slot = self.slots.clone().try_acquire_owned();
+            let result = match slot {
+                Ok(slot) => self.answer(&mut link, slot).await?,
                 Err(_) => Err(CORE_UNAVAILABLE.to_owned()),
             };
             let header = serde_json::to_vec(&Reply { result })?;

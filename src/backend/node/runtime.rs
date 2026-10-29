@@ -600,13 +600,22 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     drain_worker(email, deadline).await;
     drain_worker(metadata, deadline).await;
     drain_worker(secret_scanning, deadline).await;
-    drain_worker(auto_merge, deadline).await;
+    // A merge may already have published Git. Stop between PRs, but never abort
+    // its authoritative post-publication bookkeeping on the listener deadline.
+    if let Some(auto_merge) = auto_merge {
+        if let Err(error) = auto_merge.await {
+            warn!(%error, "auto-merge stopped unexpectedly");
+        }
+    }
     drain_worker(replicas, deadline).await;
     let stopped = workers.shutdown().await;
     if let Some(member) = &member {
         member.shutdown().await;
+        // Listener shutdown cancels network waiters, not admitted mutation tasks.
+        // Keep the pool and event sinks alive until their effects have finished.
+        member.drain_sessions().await;
     }
-    crate::backend::webhooks::shutdown(deadline).await;
+    crate::backend::webhooks::shutdown(tokio::time::Instant::now() + SHUTDOWN_GRACE).await;
     notifications.shutdown().await;
     pool.close().await;
     result.and(stopped)

@@ -70,6 +70,16 @@ impl SessionGate {
         (*open).then(|| self.running.track_future(session))
     }
 
+    /// Gives already-admitted work an independent lifetime. Dropping the reply waiter
+    /// must not cancel committed claims or post-publication bookkeeping.
+    pub fn spawn_admitted<F>(&self, work: F) -> tokio::task::JoinHandle<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        tokio::spawn(self.running.track_future(work))
+    }
+
     /// Refuses sessions from now on. Sessions already admitted keep running.
     pub fn close(&self) {
         *self.open.lock().unwrap_or_else(|error| error.into_inner()) = false;
@@ -122,7 +132,7 @@ impl RpcHandler {
 
     async fn answer_link(&self, mut link: Link) -> Result<()> {
         let deadline = tokio::time::Instant::now() + TIMEOUT;
-        let slot = self.slots.try_acquire()?;
+        let slot = self.slots.clone().try_acquire_owned()?;
         let peer = link.peer;
         let header_slot = self.header_slot(peer)?;
         // Membership is checked before reading headers, also on reused connections.
@@ -178,7 +188,22 @@ impl RpcHandler {
             let body = read_frame(&mut link.reader, body_limit).await?;
             // This second pass is intentionally live: authority can change while an
             // allowed editor upload is still arriving.
-            let (reply, body) = match self.execute(request, body, peer).await {
+            let result = if request.operation.is_read_only() {
+                self.execute(request, body, peer).await
+            } else {
+                let handler = self.clone();
+                self.sessions.spawn_admitted(async move {
+                    // Retain admission until the mutation really ends, not until its
+                    // response deadline or connection expires.
+                    let _slot = slot;
+                    let result = handler.execute(request, body, peer).await;
+                    if let Err(error) = &result {
+                        tracing::warn!(?error, "admitted repository mutation failed");
+                    }
+                    result
+                }).await?
+            };
+            let (reply, body) = match result {
                 Ok((value, body)) => (Reply { result: Ok(value) }, body),
                 Err(error) => (Reply { result: Err(error) }, Vec::new()),
             };

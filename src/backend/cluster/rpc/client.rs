@@ -6,6 +6,7 @@ use crate::backend::{
     repositories::store::{ErrorKind, RepoError},
 };
 use anyhow::Result;
+use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 impl NodeContext {
@@ -97,13 +98,25 @@ impl NodeContext {
             .await
             .map_err(|_| unavailable())??;
         let result = tokio::time::timeout_at(deadline, async {
-            write_frame(&mut link.writer, header, MAX_JSON).await?;
-            write_frame(&mut link.writer, body, MAX_BYTES).await?;
-            link.finish().await?;
-            let reply: Reply = serde_json::from_slice(&read_frame(&mut link.reader, MAX_JSON).await?)?;
-            if reply.result.is_err() { return Ok((reply, Vec::new())); }
-            let body = read_frame(&mut link.reader, response_body_limit).await?;
-            Ok::<_, anyhow::Error>((reply, body))
+            let sending = async {
+                write_frame(&mut link.writer, header, MAX_JSON).await?;
+                write_frame(&mut link.writer, body, MAX_BYTES).await?;
+                link.writer.shutdown().await?;
+                Ok::<_, anyhow::Error>(())
+            };
+            let receiving = async {
+                let reply: Reply = serde_json::from_slice(&read_frame(&mut link.reader, MAX_JSON).await?)?;
+                let body = if reply.result.is_err() { Vec::new() } else {
+                    read_frame(&mut link.reader, response_body_limit).await?
+                };
+                Ok::<_, anyhow::Error>((reply, body))
+            };
+            tokio::pin!(sending, receiving);
+            tokio::select! {
+                biased;
+                reply = &mut receiving => reply,
+                _ = &mut sending => receiving.await,
+            }
         })
         .await;
         link.close(0, b"RPC complete");
