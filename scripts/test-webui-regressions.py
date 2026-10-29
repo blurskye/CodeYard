@@ -38,6 +38,8 @@ with sync_playwright() as pw:
     context = browser.new_context(viewport={"width": 1280, "height": 800})
     context.add_cookies([{"name": "session_id", "value": os.environ["CODEYARD_TEST_SESSION"], "url": base}])
     page = context.new_page()
+    browser_errors = []
+    page.on('pageerror', lambda error: browser_errors.append(str(error)))
 
     def open_hydrated(path):
         page.goto(base + path)
@@ -142,18 +144,20 @@ with sync_playwright() as pw:
             reviews.close()
             print(f'PASS hydrated {width}px range publication, reload, unified/split navigation and layout')
 
+        native_text = f'Preserve refused range ({secrets.token_hex(8)})'
         native.goto(base + target)
         native.get_by_label('First line of the comment range', exact=True).fill('5')
-        native.get_by_label('Comment on this line (Markdown)', exact=True).fill('Preserve refused range')
+        native.get_by_label('Comment on this line (Markdown)', exact=True).fill(native_text)
         native.get_by_role('button', name='Add single comment', exact=True).click()
         expect(native.get_by_label('First line of the comment range', exact=True)).to_have_value('5')
-        expect(native.get_by_label('Comment on this line (Markdown)', exact=True)).to_have_value('Preserve refused range')
+        expect(native.get_by_label('Comment on this line (Markdown)', exact=True)).to_have_value(native_text)
         native.get_by_label('First line of the comment range', exact=True).fill('1')
         native.get_by_role('button', name='Add single comment', exact=True).click()
-        thread = native.locator('.collaboration-diff-thread').filter(has_text='Preserve refused range')
+        thread = native.locator('.collaboration-diff-thread').filter(has_text=native_text)
         expect(thread.locator('.collaboration-comment-range')).to_have_text('Lines RIGHT 1–RIGHT 3')
         native.evaluate('window.scrollTo(0, 0)')
         native.screenshot(path=str(output / 'range-no-javascript.png'), full_page=True)
         print('PASS JavaScript-disabled refusal preservation and real range publication')
         print(f'Screenshots: {output}')
+    assert not browser_errors, browser_errors
     browser.close()

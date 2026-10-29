@@ -1,5 +1,5 @@
 //! Repository property definitions and owner-only bulk value forms; all forms work without scripts.
-use super::Page;
+use super::{fields::draft_checked as checked_action, Page};
 use crate::webui::{
     components::{DraftCheckbox, DraftInput, DraftSelect, DraftTextarea, SelectOption},
     navigation::NavLink,
@@ -41,17 +41,6 @@ fn value(page: &Page, action: &str, key: &str, fallback: &str) -> String {
         page.draft.get(key).cloned().unwrap_or_default()
     } else {
         fallback.to_owned()
-    }
-}
-fn checked_action(page: &Page, action: &str, key: &str, fallback: bool) -> bool {
-    if page
-        .draft
-        .get("action")
-        .is_some_and(|value| value == action)
-    {
-        page.draft.get(key).is_some_and(|value| value == "true")
-    } else {
-        fallback
     }
 }
 fn checked(page: &Page, key: &str, fallback: bool) -> bool {
