@@ -63,6 +63,7 @@ pub(crate) fn list_sql(query: &RepositoryListQuery<'_>, access: &str, readable: 
         "stars" => "r.stars_count",
         "watchers" => "r.watchers_count",
         "id" => "r.id",
+        "name" => "LOWER(r.name)",
         _ => "LOWER(COALESCE(owners.username, organizations.name) || '/' || r.name)",
     };
     let direction = if query.descending { "DESC" } else { "ASC" };
