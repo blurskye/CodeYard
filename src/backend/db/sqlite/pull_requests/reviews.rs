@@ -143,7 +143,7 @@ async fn ensure_pending_review(
     match pending {
         Some(id) => Ok(id),
         None => Ok(sqlx::query_scalar(
-            "INSERT INTO pr_reviews (pull_request_id, author_id, state) VALUES (?1, ?2, 'pending') RETURNING id",
+            "INSERT INTO pr_reviews (pull_request_id, author_id, state, commit_sha) SELECT id, ?2, 'pending', head_sha FROM pull_requests WHERE id=?1 RETURNING id",
         )
         .bind(pr_id)
         .bind(author_id)
@@ -800,7 +800,7 @@ pub async fn create_pending_review(
         crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview
     );
     let review = sqlx::query_as("INSERT INTO pr_reviews (pull_request_id,author_id,state,body,commit_sha) VALUES (?1,?2,'pending',?3,?4) RETURNING *")
-        .bind(pr_id).bind(author_id).bind(body).bind(commit_sha).fetch_one(&mut *tx).await?;
+        .bind(pr_id).bind(author_id).bind(body).bind(&head).fetch_one(&mut *tx).await?;
     touch_revision(&mut tx, pr_id).await?;
     tx.commit().await?;
     Ok(review)

@@ -143,7 +143,7 @@ async fn ensure_pending_review(
     match pending {
         Some(id) => Ok(id),
         None => Ok(sqlx::query_scalar(
-            "INSERT INTO pr_reviews (pull_request_id, author_id, state) VALUES ($1, $2, 'pending') RETURNING id",
+            "INSERT INTO pr_reviews (pull_request_id, author_id, state, commit_sha) SELECT id, $2, 'pending', head_sha FROM pull_requests WHERE id=$1 RETURNING id",
         )
         .bind(pr_id)
         .bind(author_id)
@@ -707,7 +707,7 @@ pub async fn save_pull_request_review(
     // The author's pending review, if any, is submitted with its comments by this review. It keeps
     // the commit it was drafted on, so after a push it counts for that commit, never the new head.
     let submitted = sqlx::query_as::<_, PullRequestReview>(
-        "UPDATE pr_reviews SET state = $3, body = $4, commit_sha = COALESCE(commit_sha, $5), created_at = NOW()
+        "UPDATE pr_reviews SET state = $3, body = $4, commit_sha = COALESCE(commit_sha, $5), created_at = clock_timestamp()
          WHERE pull_request_id = $1 AND author_id = $2 AND state = 'pending'
          RETURNING *",
     )
@@ -723,8 +723,8 @@ pub async fn save_pull_request_review(
         None => {
             sqlx::query_as::<_, PullRequestReview>(
                 r#"
-                INSERT INTO pr_reviews (pull_request_id, author_id, state, body, commit_sha)
-                VALUES ($1, $2, $3, $4, $5)
+                INSERT INTO pr_reviews (pull_request_id, author_id, state, body, commit_sha, created_at)
+                VALUES ($1, $2, $3, $4, $5, clock_timestamp())
                 RETURNING *
                 "#,
             )
@@ -769,7 +769,7 @@ pub async fn create_pending_review(
         crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview
     );
     let review = sqlx::query_as("INSERT INTO pr_reviews (pull_request_id,author_id,state,body,commit_sha) VALUES ($1,$2,'pending',$3,$4) RETURNING *")
-        .bind(pr_id).bind(author_id).bind(body).bind(commit_sha).fetch_one(&mut *tx).await?;
+        .bind(pr_id).bind(author_id).bind(body).bind(&head).fetch_one(&mut *tx).await?;
     touch_revision(&mut tx, pr_id).await?;
     tx.commit().await?;
     Ok(review)
