@@ -11,6 +11,7 @@ use uuid::Uuid;
 fn prepared(sha: &str) -> codeyard::backend::repositories::store::PreparedFile {
     use codeyard::backend::repositories::store::{CommitInfo, PreparedFile};
     PreparedFile {
+        staging: None,
         authority: None,
         branch: "main".into(),
         reference: "refs/heads/main".into(),
@@ -403,6 +404,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (
             Operation::PublishFile {
                 prepared: codeyard::backend::repositories::store::PreparedFile {
+                    staging: None,
                     authority: None,
                     branch: "main".into(),
                     reference: "refs/heads/main".into(),

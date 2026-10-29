@@ -601,7 +601,7 @@ impl RpcHandler {
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                 actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
                 import,
-                &body
+                body
             )),
             Operation::LockMigration { migration } => json!(store.lock_migration_as(
                 pool,
