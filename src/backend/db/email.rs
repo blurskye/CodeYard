@@ -100,7 +100,7 @@ native_operation!(crate::backend::db::postgres::email::get_email_notifications,
 
 native_operation!(crate::backend::db::postgres::email::set_email_notifications,
     crate::backend::db::sqlite::email::set_email_notifications,
-    fn set_email_notifications(pool: &DbPool, user_id: i64, enabled: bool) -> Result<()>);
+    fn set_email_notifications(pool: &DbPool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, enabled: bool) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::email::notification_email_address,
     crate::backend::db::sqlite::email::notification_email_address,

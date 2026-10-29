@@ -248,7 +248,7 @@ mod tests {
         assert!(db::email::get_email_notifications(&f.pool, f.admin)
             .await
             .unwrap());
-        db::email::set_email_notifications(&f.pool, f.admin, false)
+        db::email::set_email_notifications(&f.pool, f.admin, &db::users::accounts::AccountCredential::Session("live"), false)
             .await
             .unwrap();
         assert!(!db::email::get_email_notifications(&f.pool, f.admin)

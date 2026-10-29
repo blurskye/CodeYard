@@ -222,12 +222,15 @@ pub async fn get_email_notifications(pool: &PgPool, user_id: i64) -> Result<bool
     )
 }
 
-pub async fn set_email_notifications(pool: &PgPool, user_id: i64, enabled: bool) -> Result<()> {
+pub async fn set_email_notifications(pool: &PgPool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, enabled: bool) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    super::users::transitions::require_account(&mut tx, user_id, credential).await?;
     sqlx::query("UPDATE users SET email_notifications = $2 WHERE id = $1")
         .bind(user_id)
         .bind(enabled)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(())
 }
 
