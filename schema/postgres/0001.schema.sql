@@ -3833,3 +3833,37 @@ CREATE TABLE actions_job_concurrency (
     FOREIGN KEY(repo_id, name_key) REFERENCES actions_concurrency_groups(repo_id, name_key) ON DELETE CASCADE
 );
 CREATE INDEX actions_job_concurrency_group ON actions_job_concurrency(repo_id, name_key);
+
+-- A publication retains this row after checking the policy revision it evaluated.
+CREATE TABLE repository_merge_epochs (
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    version BIGINT NOT NULL DEFAULT 0 CHECK(version>=0)
+);
+CREATE FUNCTION advance_merge_policy_epoch() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE previous_repo BIGINT; next_repo BIGINT;
+BEGIN
+    IF TG_TABLE_NAME IN ('pr_reviews','pr_comments') THEN
+        IF TG_OP<>'INSERT' THEN
+            SELECT repo_id INTO previous_repo FROM pull_requests WHERE id=OLD.pull_request_id;
+        END IF;
+        IF TG_OP<>'DELETE' THEN
+            SELECT repo_id INTO next_repo FROM pull_requests WHERE id=NEW.pull_request_id;
+        END IF;
+    ELSE
+        IF TG_OP<>'INSERT' THEN previous_repo:=OLD.repo_id; END IF;
+        IF TG_OP<>'DELETE' THEN next_repo:=NEW.repo_id; END IF;
+    END IF;
+    INSERT INTO repository_merge_epochs(repo_id,version)
+        SELECT id,1 FROM repositories WHERE id=previous_repo OR id=next_repo ORDER BY id
+        ON CONFLICT(repo_id) DO UPDATE SET version=repository_merge_epochs.version+1;
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER merge_policy_rules AFTER INSERT OR UPDATE OR DELETE ON branch_protection_rules FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
+CREATE TRIGGER merge_policy_pulls AFTER INSERT OR UPDATE OR DELETE ON pull_requests FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
+CREATE TRIGGER merge_policy_reviews AFTER INSERT OR UPDATE OR DELETE ON pr_reviews FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
+CREATE TRIGGER merge_policy_threads AFTER INSERT OR UPDATE OR DELETE ON pr_comments FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
+CREATE TRIGGER merge_policy_statuses AFTER INSERT OR UPDATE OR DELETE ON commit_statuses FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
+CREATE TRIGGER merge_policy_checks AFTER INSERT OR UPDATE OR DELETE ON check_runs FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
+CREATE TRIGGER merge_policy_suites AFTER INSERT OR UPDATE OR DELETE ON check_suites FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
+CREATE TRIGGER merge_policy_ci AFTER INSERT OR UPDATE OR DELETE ON ci_runs FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();

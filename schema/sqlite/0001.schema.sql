@@ -3674,3 +3674,81 @@ CREATE TABLE actions_job_concurrency (
     FOREIGN KEY(repo_id, name_key) REFERENCES actions_concurrency_groups(repo_id, name_key) ON DELETE CASCADE
 );
 CREATE INDEX actions_job_concurrency_group ON actions_job_concurrency(repo_id, name_key);
+
+-- A publication retains a write transaction after checking the evaluated policy revision.
+CREATE TABLE repository_merge_epochs (
+    repo_id INTEGER PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL DEFAULT 0 CHECK(version>=0)
+);
+CREATE TRIGGER merge_policy_rules_insert AFTER INSERT ON branch_protection_rules BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_rules_update AFTER UPDATE ON branch_protection_rules BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (OLD.repo_id,NEW.repo_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_rules_delete AFTER DELETE ON branch_protection_rules BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=OLD.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_pulls_insert AFTER INSERT ON pull_requests BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_pulls_update AFTER UPDATE ON pull_requests BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (OLD.repo_id,NEW.repo_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_pulls_delete AFTER DELETE ON pull_requests BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=OLD.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_reviews_insert AFTER INSERT ON pr_reviews BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=(SELECT repo_id FROM pull_requests WHERE id=NEW.pull_request_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_reviews_update AFTER UPDATE ON pr_reviews BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (SELECT repo_id FROM pull_requests WHERE id IN (OLD.pull_request_id,NEW.pull_request_id)) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_reviews_delete AFTER DELETE ON pr_reviews BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=(SELECT repo_id FROM pull_requests WHERE id=OLD.pull_request_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_threads_insert AFTER INSERT ON pr_comments BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=(SELECT repo_id FROM pull_requests WHERE id=NEW.pull_request_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_threads_update AFTER UPDATE ON pr_comments BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (SELECT repo_id FROM pull_requests WHERE id IN (OLD.pull_request_id,NEW.pull_request_id)) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_threads_delete AFTER DELETE ON pr_comments BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=(SELECT repo_id FROM pull_requests WHERE id=OLD.pull_request_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_statuses_insert AFTER INSERT ON commit_statuses BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_statuses_update AFTER UPDATE ON commit_statuses BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (OLD.repo_id,NEW.repo_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_statuses_delete AFTER DELETE ON commit_statuses BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=OLD.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_checks_insert AFTER INSERT ON check_runs BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_checks_update AFTER UPDATE ON check_runs BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (OLD.repo_id,NEW.repo_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_checks_delete AFTER DELETE ON check_runs BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=OLD.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_suites_insert AFTER INSERT ON check_suites BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_suites_update AFTER UPDATE ON check_suites BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (OLD.repo_id,NEW.repo_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_suites_delete AFTER DELETE ON check_suites BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=OLD.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_ci_insert AFTER INSERT ON ci_runs BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_ci_update AFTER UPDATE ON ci_runs BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (OLD.repo_id,NEW.repo_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_ci_delete AFTER DELETE ON ci_runs BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=OLD.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
