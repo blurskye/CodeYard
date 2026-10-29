@@ -16,14 +16,14 @@ pub async fn add_pull_request_comment(
     pool: &PgPool,
     input: NewPullRequestComment<'_>,
 ) -> Result<PullRequestComment> {
-    insert_comment(pool, input, false, None).await
+    insert_comment(pool, input, false, None).await.map(|(comment, _)| comment)
 }
 
 pub async fn add_pending_pull_request_comment(
     pool: &PgPool,
     input: NewPullRequestComment<'_>,
 ) -> Result<PullRequestComment> {
-    insert_comment(pool, input, true, None).await
+    insert_comment(pool, input, true, None).await.map(|(comment, _)| comment)
 }
 
 pub async fn add_comment_to_pending_review(
@@ -31,16 +31,16 @@ pub async fn add_comment_to_pending_review(
     input: NewPullRequestComment<'_>,
     review_id: i64,
 ) -> Result<PullRequestComment> {
-    insert_comment(pool, input, true, Some(review_id)).await
+    insert_comment(pool, input, true, Some(review_id)).await.map(|(comment, _)| comment)
 }
 
 /// A reply joins the review of the thread it answers, so `pending` only applies to a new thread.
-async fn insert_comment(
+pub async fn insert_comment(
     pool: &PgPool,
     input: NewPullRequestComment<'_>,
     pending: bool,
     expected_review: Option<i64>,
-) -> Result<PullRequestComment> {
+) -> Result<(PullRequestComment, bool)> {
     let mut tx = pool.begin().await?;
     discussions::lock_pull_request_contribution(&mut tx, input.author_id, input.pr_id).await?;
     if let Some((head, base)) = input.expected_revisions {
@@ -121,10 +121,12 @@ async fn insert_comment(
     .bind(input.start_side)
     .fetch_one(&mut *tx)
     .await?;
+    let deferred: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews WHERE id=$1 AND state='pending')")
+        .bind(review_id).fetch_one(&mut *tx).await?;
     touch_revision(&mut tx, input.pr_id).await?;
     tx.commit().await?;
 
-    Ok(comment)
+    Ok((comment, deferred))
 }
 
 /// The author's pending review on a pull request, started when there is none.

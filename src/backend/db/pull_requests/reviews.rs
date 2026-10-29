@@ -29,6 +29,10 @@ pub struct NewPullRequestComment<'a> {
     pub expected_revisions: Option<(&'a str, &'a str)>,
 }
 
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::insert_comment,
+    crate::backend::db::sqlite::pull_requests::reviews::insert_comment,
+    /// The visibility decision is made in the insertion transaction, never by a post-commit read.
+    fn insert_comment(pool: &DbPool, input: NewPullRequestComment<'_>, pending: bool, expected_review: Option<i64>) -> Result<(PullRequestComment, bool)>);
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull_request_comment,
     crate::backend::db::sqlite::pull_requests::reviews::add_pull_request_comment,
     fn add_pull_request_comment(
