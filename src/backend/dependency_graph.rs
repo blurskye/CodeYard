@@ -83,8 +83,12 @@ impl Snapshot {
             && (1..=255).contains(&self.job.correlator.len())
             && (1..=255).contains(&self.detector.name.len())
             && valid_metadata(&self.metadata)
-            && self.manifests.values().all(|manifest| {
-                valid_metadata(&manifest.metadata)
+            && self.manifests.iter().all(|(name, manifest)| {
+                !name.chars().any(char::is_control)
+                    && !manifest.name.chars().any(char::is_control)
+                    && manifest.file.as_ref().and_then(|file| file.source_location.as_ref())
+                        .is_none_or(|location| !location.chars().any(char::is_control))
+                    && valid_metadata(&manifest.metadata)
                     && manifest.resolved.values().all(|dependency| {
                         dependency.package_url.as_deref().is_none_or(|p| {
                             crate::backend::db::dependency_inventory::package_parts(p).is_some()

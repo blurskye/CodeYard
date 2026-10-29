@@ -128,25 +128,18 @@ pub(crate) async fn refresh(tx: &mut Transaction<'_, Postgres>, repo: i64) -> Re
             .bind(repo)
             .fetch_all(&mut **tx)
             .await?;
+    let matched: std::collections::HashSet<_> = matches.iter().map(|(p, a, _)| (a["ghsa_id"].as_str().unwrap(), p.manifest.as_str(), p.ecosystem.as_str(), p.name.as_str())).collect();
+    let known: std::collections::HashMap<_, _> = previous.iter().map(|row| ((row.ghsa_id.as_str(), row.manifest.as_str(), row.ecosystem.as_str(), row.package.as_str()), row)).collect();
     for row in &previous {
-        let found = matches.iter().any(|(p, a, _)| {
-            a["ghsa_id"] == row.ghsa_id
-                && p.manifest == row.manifest
-                && p.ecosystem == row.ecosystem
-                && p.name == row.package
-        });
+        let found = matched.contains(&(row.ghsa_id.as_str(), row.manifest.as_str(), row.ecosystem.as_str(), row.package.as_str()));
         if !found && row.state == "open" {
             sqlx::query("UPDATE dependabot_alerts SET state='fixed',fixed_at=$3,updated_at=$3 WHERE repo_id=$1 AND number=$2").bind(repo).bind(row.number).bind(now).execute(&mut **tx).await?;
         }
     }
+    drop(matched);
     let mut next = previous.last().map_or(1, |r| r.number + 1);
     for (p, a, v) in matches {
-        let old = previous.iter().find(|r| {
-            a["ghsa_id"] == r.ghsa_id
-                && p.manifest == r.manifest
-                && p.ecosystem == r.ecosystem
-                && p.name == r.package
-        });
+        let old = known.get(&(a["ghsa_id"].as_str().unwrap(), p.manifest.as_str(), p.ecosystem.as_str(), p.name.as_str())).copied();
         let number = old.map_or(next, |r| r.number);
         if old.is_none() {
             next += 1;
@@ -162,8 +155,8 @@ pub(crate) async fn refresh(tx: &mut Transaction<'_, Postgres>, repo: i64) -> Re
         }) {
             continue;
         }
-        sqlx::query("INSERT INTO dependabot_alerts(repo_id,number,ghsa_id,manifest,ecosystem,package,version,scope,advisory,vulnerability,created_at,updated_at,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,'open') ON CONFLICT(repo_id,number) DO UPDATE SET version=$7,scope=$8,advisory=$9,vulnerability=$10,updated_at=$11,state=CASE WHEN dependabot_alerts.state='fixed' THEN 'open' ELSE dependabot_alerts.state END,fixed_at=NULL")
-            .bind(repo).bind(number).bind(a["ghsa_id"].as_str().unwrap()).bind(&p.manifest).bind(&p.ecosystem).bind(&p.name).bind(&p.version).bind(&p.scope).bind(advisory).bind(vulnerability).bind(now).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO dependabot_alerts(repo_id,number,ghsa_id,manifest,ecosystem,package,version,scope,advisory,vulnerability,created_at,updated_at,state,manifest_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,'open',$12) ON CONFLICT(repo_id,number) DO UPDATE SET version=$7,scope=$8,advisory=$9,vulnerability=$10,updated_at=$11,state=CASE WHEN dependabot_alerts.state='fixed' THEN 'open' ELSE dependabot_alerts.state END,fixed_at=NULL")
+            .bind(repo).bind(number).bind(a["ghsa_id"].as_str().unwrap()).bind(&p.manifest).bind(&p.ecosystem).bind(&p.name).bind(&p.version).bind(&p.scope).bind(advisory).bind(vulnerability).bind(now).bind(dependabot_alerts::manifest_digest(&p.manifest)).execute(&mut **tx).await?;
     }
     Ok(())
 }

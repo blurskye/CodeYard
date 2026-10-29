@@ -3473,6 +3473,7 @@ CREATE TABLE dependabot_alerts (
     number INTEGER NOT NULL,
     ghsa_id TEXT NOT NULL,
     manifest TEXT NOT NULL,
+    manifest_hash TEXT NOT NULL CHECK(length(manifest_hash)=64),
     ecosystem TEXT NOT NULL,
     package TEXT NOT NULL,
     version TEXT NOT NULL,
@@ -3488,7 +3489,7 @@ CREATE TABLE dependabot_alerts (
     dismissed_reason TEXT,
     dismissed_comment TEXT,
     PRIMARY KEY(repo_id,number),
-    UNIQUE(repo_id,ghsa_id,manifest,ecosystem,package)
+    UNIQUE(repo_id,ghsa_id,manifest_hash,ecosystem,package)
 );
 
 -- Actions concurrency groups

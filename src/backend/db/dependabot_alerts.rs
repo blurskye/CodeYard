@@ -9,6 +9,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+pub(crate) fn manifest_digest(manifest: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(manifest.as_bytes()))
+}
+
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Alert {
     pub repo_id: i64,
