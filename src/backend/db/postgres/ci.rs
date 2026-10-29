@@ -251,7 +251,7 @@ async fn enqueue_ci_run_inner(
         if let Some(token) = request.credential {
             let owns:Option<i64>=sqlx::query_scalar("SELECT id FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE").bind(token).bind(input.triggered_by_id).fetch_optional(&mut *tx).await?;
             ensure!(
-                owns.is_some() && super::fine_grained_tokens::repository_permission(&mut tx, token, input.triggered_by_id, input.repo_id, "actions").await?,
+                owns.is_some() && super::fine_grained_tokens::repository_permission(&mut tx, token, input.triggered_by_id, input.repo_id, "actions", true).await?,
                 CiAdmissionRefusal::Denied("CI credential is no longer authorized")
             );
         }
@@ -1054,7 +1054,7 @@ async fn request_cancellation(
         Some(token) => {
             let live: Option<i64> = sqlx::query_scalar("SELECT id FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE")
                 .bind(token).bind(actor_id).fetch_optional(&mut *tx).await?;
-            ensure!(live.is_some() && super::fine_grained_tokens::repository_permission(&mut tx, token, actor_id, run.repo_id, "actions").await?, CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
+            ensure!(live.is_some() && super::fine_grained_tokens::repository_permission(&mut tx, token, actor_id, run.repo_id, "actions", true).await?, CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
             super::ci_tokens::may_cancel(&mut tx, actor_id, run.repo_id, token).await?
         }
         None => false,

@@ -1,4 +1,5 @@
 use crate::backend::db::{
+    credentials::Actor,
     models::{AccessLevel, OrgRole, Repository, Team},
     organizations::*,
 };
@@ -75,15 +76,10 @@ pub(in crate::backend::db::sqlite) async fn read_authority(
     )
 }
 pub(in crate::backend::db::sqlite) async fn owner_credential(
-    tx: &mut Transaction<'_, Sqlite>, actor: &OwnerActor, org: i64,
+    tx: &mut Transaction<'_, Sqlite>, actor: &Actor, org: i64,
 ) -> Result<bool> {
-    match &actor.credential {
-        None => Ok(true),
-        Some(OwnerCredential::Session(session)) => super::super::users::transitions::live_session(tx, actor.user_id, session).await,
-        Some(OwnerCredential::Token { id, hash }) => {
-            let live: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND token_hash=$3 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))")
-                .bind(id).bind(actor.user_id).bind(hash).fetch_one(&mut **tx).await?;
-            if !live { return Ok(false); }
+    if !super::super::credentials::live(tx, actor, true).await? { return Ok(false); }
+    let Some(id) = actor.token_id() else { return Ok(true); };
             let bounds: Option<crate::backend::db::fine_grained_tokens::Bounds> = sqlx::query_as(super::super::fine_grained_tokens::BOUNDS)
                 .bind(id).fetch_optional(&mut **tx).await?;
             if let Some(bounds) = bounds {
@@ -93,8 +89,6 @@ pub(in crate::backend::db::sqlite) async fn owner_credential(
             }
             Ok(!sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organization_token_policies WHERE org_id=$2 AND NOT classic_allowed) AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)")
                 .bind(id).bind(org).fetch_one(&mut **tx).await?)
-        }
-    }
 }
 
 pub(in crate::backend::db::sqlite) async fn authority(

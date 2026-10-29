@@ -63,7 +63,7 @@ pub(crate) async fn shutdown(deadline: tokio::time::Instant) {
 /// repositories and organization available for a retry; concurrent creation refuses the final delete.
 pub async fn delete(
     state: &AppState,
-    actor: impl Into<organizations::OwnerActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
     let actor = actor.into();

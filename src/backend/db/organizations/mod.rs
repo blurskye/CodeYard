@@ -3,32 +3,6 @@
 //! Ingress must supply a verified actor; IDs never imply user/org equivalence.
 use crate::backend::db::models::OrgRole;
 
-/// Owner mutations keep the credential that initiated the operation. Bare IDs are for
-/// trusted in-process callers, never HTTP admission.
-#[derive(Clone)]
-pub struct OwnerActor {
-    pub(crate) user_id: i64,
-    pub(crate) credential: Option<OwnerCredential>,
-}
-#[derive(Clone)]
-pub(crate) enum OwnerCredential {
-    Session(String),
-    Token { id: i64, hash: String },
-}
-impl From<i64> for OwnerActor {
-    fn from(user_id: i64) -> Self { Self { user_id, credential: None } }
-}
-impl From<(i64, String)> for OwnerActor {
-    fn from((user_id, session): (i64, String)) -> Self {
-        Self { user_id, credential: Some(OwnerCredential::Session(session)) }
-    }
-}
-impl OwnerActor {
-    pub fn token(user_id: i64, id: i64, hash: String) -> Self {
-        Self { user_id, credential: Some(OwnerCredential::Token { id, hash }) }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OrganizationOutcome<T> {
     Missing,

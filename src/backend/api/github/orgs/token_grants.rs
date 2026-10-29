@@ -455,7 +455,7 @@ async fn review(
     db::fine_grained_tokens::review(
         &state.pool,
         org.id,
-        reviewer.owner_actor(headers)?,
+        reviewer.database_actor(headers)?,
         &ids,
         "pending",
         status,
@@ -513,7 +513,7 @@ async fn revoke(
     db::fine_grained_tokens::review(
         &state.pool,
         org.id,
-        reviewer.owner_actor(headers)?,
+        reviewer.database_actor(headers)?,
         &ids,
         "approved",
         "revoked",

@@ -1,7 +1,8 @@
 use crate::backend::db::{
     fine_grained_tokens::{Bounds, NewToken, Policy, Token},
     models::OrgRole,
-    organizations::{OrganizationOutcome, OwnerActor},
+    organizations::OrganizationOutcome,
+    credentials::Actor,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -155,7 +156,7 @@ async fn active_owner(connection: &mut PgConnection, actor: i64, org: i64) -> Re
     ))
 }
 
-pub async fn set_policy(pool: &PgPool, actor: impl Into<OwnerActor>, org: i64, policy: &Policy) -> Result<bool> {
+pub async fn set_policy(pool: &PgPool, actor: impl Into<Actor>, org: i64, policy: &Policy) -> Result<bool> {
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = pool.begin().await?;
@@ -176,7 +177,7 @@ pub async fn organization_tokens(pool: &PgPool, org: i64, status: &str) -> Resul
 pub async fn review(
     pool: &PgPool,
     org: i64,
-    reviewer: impl Into<OwnerActor>,
+    reviewer: impl Into<Actor>,
     tokens: &[i64],
     from: &str,
     status: &str,
@@ -205,6 +206,7 @@ pub(crate) async fn repository_permission(
     actor: i64,
     repo: i64,
     permission: &str,
+    write: bool,
 ) -> Result<bool> {
     let _: Option<i64> = sqlx::query_scalar("SELECT token_id FROM fine_grained_tokens WHERE token_id=$1 FOR SHARE")
         .bind(token).fetch_optional(&mut **tx).await?;
@@ -216,7 +218,7 @@ pub(crate) async fn repository_permission(
     let permissions: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&bounds.permissions)?;
     let scoped: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE r.id=$1 AND NOT r.is_gist AND (($2::bigint IS NULL AND r.owner_kind='user' AND r.owner_user_id=$3) OR (r.owner_kind='org' AND r.owner_org_id=$2)) AND ($4='all' OR EXISTS(SELECT 1 FROM fine_grained_token_repositories s WHERE s.token_id=$5 AND s.repo_id=r.id)))")
         .bind(repo).bind(bounds.owner_org_id).bind(actor).bind(&bounds.repository_access).bind(token).fetch_one(&mut **tx).await?;
-    Ok(bounds.user_id == actor && bounds.active() && scoped && permissions.get(permission).and_then(serde_json::Value::as_str) == Some("write"))
+    Ok(bounds.user_id == actor && bounds.active() && scoped && crate::backend::identity::fine_grained::allows(&permissions, permission, write))
 }
 
 pub async fn classic_refused(pool: &PgPool, token: i64, org: i64) -> Result<bool> {

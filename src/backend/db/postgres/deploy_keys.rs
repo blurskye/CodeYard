@@ -68,7 +68,7 @@ async fn require_admin(
                 Some(Some(expiry)) => sqlx::query_scalar("SELECT $1>clock_timestamp()").bind(expiry).fetch_one(&mut **tx).await?,
                 None => false,
             };
-            live && super::fine_grained_tokens::repository_permission(tx, id, actor, repo, "administration").await?
+            live && super::fine_grained_tokens::repository_permission(tx, id, actor, repo, "administration", true).await?
         },
     };
     anyhow::ensure!(

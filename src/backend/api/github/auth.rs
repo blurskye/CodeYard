@@ -29,8 +29,8 @@ pub(super) fn read_method(method: &Method) -> bool {
 }
 
 impl Authentication {
-    pub fn owner_actor(&self, headers: &HeaderMap) -> Result<db::organizations::OwnerActor> {
-        Ok(db::organizations::OwnerActor::token(self.user.id, self.token.id,
+    pub fn database_actor(&self, headers: &HeaderMap) -> Result<db::credentials::Actor> {
+        Ok(db::credentials::Actor::token(self.user.id, self.token.id,
             token_hash(credential(headers).ok_or_else(required)?)))
     }
 

@@ -53,7 +53,7 @@ async fn require_admin(
         crate::backend::db::deploy_keys::Credential::Token { id, hash } => {
             let live = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=?1 AND user_id=?2 AND token_hash=?3 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))")
                 .bind(id).bind(actor).bind(hash).fetch_one(&mut **tx).await?;
-            live && super::fine_grained_tokens::repository_permission(tx, id, actor, repo, "administration").await?
+            live && super::fine_grained_tokens::repository_permission(tx, id, actor, repo, "administration", true).await?
         },
     };
     let locked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=?1)")

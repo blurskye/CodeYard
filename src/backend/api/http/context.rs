@@ -81,6 +81,10 @@ pub struct PageContext {
 }
 
 impl PageContext {
+    pub(crate) fn database_actor(&self, user_id: i64) -> db::credentials::Actor {
+        (user_id, session::extract_session_id(&self.headers).unwrap_or_default()).into()
+    }
+
     pub async fn load(
         state: Arc<AppState>,
         headers: HeaderMap,

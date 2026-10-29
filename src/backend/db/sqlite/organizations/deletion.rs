@@ -1,4 +1,4 @@
-use crate::backend::db::{models::OrgRole, organizations::*};
+use crate::backend::db::{credentials::Actor, models::OrgRole, organizations::*};
 use anyhow::Result;
 use sqlx::{SqliteConnection, SqlitePool};
 use OrganizationOutcome::{Applied, Conflict, Denied};
@@ -7,7 +7,7 @@ use super::authority::*;
 
 pub async fn delete_organization(
     pool: &SqlitePool,
-    actor: impl Into<OwnerActor>,
+    actor: impl Into<Actor>,
     org: i64,
 ) -> Result<OrganizationOutcome<()>> {
     let owner = actor.into();
@@ -75,7 +75,7 @@ pub async fn list_organization_deletion_repositories(
 /// An owner may delete even archived repositories, but only while they belong to this organization.
 pub async fn delete_organization_repository(
     pool: &SqlitePool,
-    actor: impl Into<OwnerActor>,
+    actor: impl Into<Actor>,
     org: i64,
     repo: i64,
 ) -> Result<OrganizationOutcome<crate::backend::db::models::Repository>> {
