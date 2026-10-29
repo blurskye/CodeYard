@@ -384,6 +384,21 @@ async fn blame_refuses_oversized_and_amplified_summaries() {
 
 // One compressed blob a GiB larger than the default child memory limit, written with fixed
 // memory and shared by the read tests.
+const REGRESSION_MEMORY_MIB: u64 = 256;
+
+async fn memory_regression_child(test: &str) -> bool {
+    const MARKER: &str = "CODEYARD_GIT_MEMORY_REGRESSION";
+    if std::env::var(MARKER).ok().as_deref() == Some(test) { return false; }
+    let module = module_path!().split_once("::").unwrap().1;
+    let status = tokio::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", &format!("{module}::{test}"), "--nocapture"])
+        .env(MARKER, test)
+        .env("GIT_COMMAND_MEMORY_MIB", REGRESSION_MEMORY_MIB.to_string())
+        .status().await.unwrap();
+    assert!(status.success(), "isolated memory regression failed");
+    true
+}
+
 fn oversized_history() -> &'static (tempfile::TempDir, String, String, String) {
     use sha1::{Digest, Sha1};
     use std::{io::Write, sync::OnceLock};
@@ -395,7 +410,7 @@ fn oversized_history() -> &'static (tempfile::TempDir, String, String, String) {
             tempfile::tempfile().unwrap(),
             flate2::Compression::fast(),
         );
-        let mib = process::DEFAULT_COMMAND_MEMORY_MIB + 1024;
+        let mib = REGRESSION_MEMORY_MIB + 128;
         let header = format!("blob {}\0", mib * 1024 * 1024);
         let mut hash = Sha1::new();
         hash.update(header.as_bytes());
@@ -465,6 +480,7 @@ fn oversized_history() -> &'static (tempfile::TempDir, String, String, String) {
 
 #[tokio::test]
 async fn blame_keeps_oversized_historical_blobs_out_of_the_server() {
+    if memory_regression_child("blame_keeps_oversized_historical_blobs_out_of_the_server").await { return; }
     let (directory, _, _, _) = oversized_history();
     let error = blame_file(directory.path(), "main", "file.txt")
         .await
@@ -474,6 +490,7 @@ async fn blame_keeps_oversized_historical_blobs_out_of_the_server() {
 
 #[tokio::test]
 async fn search_refuses_a_blob_larger_than_its_child_memory_limit() {
+    if memory_regression_child("search_refuses_a_blob_larger_than_its_child_memory_limit").await { return; }
     let (directory, huge, _, _) = oversized_history();
     let error = search_code(directory.path(), huge, "absent", 0, 10)
         .await
@@ -486,6 +503,7 @@ async fn search_refuses_a_blob_larger_than_its_child_memory_limit() {
 
 #[tokio::test]
 async fn diff_refuses_blobs_larger_than_its_child_memory_limit() {
+    if memory_regression_child("diff_refuses_blobs_larger_than_its_child_memory_limit").await { return; }
     let (directory, huge, _, _) = oversized_history();
     let error = get_commit_diff(directory.path(), huge).await.unwrap_err();
     assert!(
@@ -496,6 +514,7 @@ async fn diff_refuses_blobs_larger_than_its_child_memory_limit() {
 
 #[tokio::test]
 async fn merge_and_replay_refuse_a_base_larger_than_the_child_memory_limit() {
+    if memory_regression_child("merge_and_replay_refuse_a_base_larger_than_the_child_memory_limit").await { return; }
     let (directory, huge, head, other) = oversized_history();
     let person = checked::Person {
         name: "Test",

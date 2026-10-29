@@ -105,7 +105,7 @@ fn repository_urls(repository: &Value) -> Vec<String> {
     }
     if let Some(url) = repository["issues_url"]
         .as_str()
-        .and_then(|url| url.split_once("/issues").map(|(root, _)| root))
+        .and_then(|url| url.rsplit_once("/issues").map(|(root, _)| root))
         .and_then(canonical_url)
     {
         roots.push(url);
@@ -386,13 +386,13 @@ pub fn refs(source: &ArchiveSource) -> Result<(HashMap<String, String>, Option<S
             refs.insert(path.clone(), sha.to_owned());
         }
     }
+    // A migration carries user history, not another server's publication attestations.
+    // Discard server evidence before charging the user-history quota.
+    refs.retain(|name, _| name != "refs/codeyard" && !name.starts_with("refs/codeyard/"));
     ensure!(
         refs.len() <= crate::backend::git::MAX_REPOSITORY_REFS,
         "Too many migration refs"
     );
-    // A migration carries user history, not another server's publication attestations.
-    // The importer creates fresh evidence under the importing actor's authority.
-    refs.retain(|name, _| name != "refs/codeyard" && !name.starts_with("refs/codeyard/"));
     let head = source
         .git_files
         .get("HEAD")

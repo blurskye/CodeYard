@@ -1620,6 +1620,7 @@ pub(crate) async fn pull_request_commits(
     repo_path: &Path,
     base: &str,
     head: &str,
+    limit: usize,
 ) -> Result<(u64, Vec<CommitInfo>)> {
     let (base, head) = {
         let repo = Repository::open_bare(repo_path)?;
@@ -1634,8 +1635,9 @@ pub(crate) async fn pull_request_commits(
     let (status, output) = process::buffered(command, b"", 32, COMMIT_WALK_TIMEOUT).await?;
     ensure!(status.success(), "Git commit range count failed");
     let total: u64 = std::str::from_utf8(&output)?.trim().parse()?;
-    let offset = usize::try_from(total.saturating_sub(250))?;
-    let mut commits = range_commits(repo_path, &base, &head, offset, 250).await?;
+    let limit = limit.min(250);
+    let offset = usize::try_from(total.saturating_sub(limit as u64))?;
+    let mut commits = range_commits(repo_path, &base, &head, offset, limit).await?;
     commits.reverse();
     Ok((total, commits))
 }
@@ -1663,6 +1665,7 @@ async fn range_commits(
     command
         .args([
             "rev-list",
+            "--topo-order",
             &format!("--max-count={count}"),
             &format!("--skip={offset}"),
             &format!("{base}..{head}"),
@@ -1863,6 +1866,7 @@ pub(crate) async fn list_path_commits(
 ) -> Result<Vec<CommitInfo>> {
     // No tree entry is named empty, `.` or `..`, so such a path changed in no commit. Git would
     // refuse it as a pathspec outside the repository instead.
+    let path = path.trim_end_matches('/');
     if limit == 0 || path.split('/').any(|part| matches!(part, "" | "." | "..")) {
         return Ok(Vec::new());
     }
@@ -1887,10 +1891,10 @@ pub(crate) async fn list_path_commits(
     }
     let offset = if needs_filter { offset } else { 0 };
     if let Some(since) = filter.since {
-        command.arg(format!("--since-as-filter={since}"));
+        command.arg(format!("--since-as-filter=@{since} +0000"));
     }
     if let Some(until) = filter.until {
-        command.arg(format!("--until={until}"));
+        command.arg(format!("--until=@{until} +0000"));
     }
     command.arg(&tip).arg("--").arg(path).current_dir(repo_path);
     let (status, output) = process::buffered(
