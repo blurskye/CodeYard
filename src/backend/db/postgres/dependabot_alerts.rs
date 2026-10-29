@@ -34,6 +34,36 @@ async fn global_in(tx: &mut Transaction<'_, Postgres>, keys: Option<&str>) -> Re
     }
     Ok(documents.into_values().collect())
 }
+/// Page identifiers under one read snapshot without retaining the catalogue's documents.
+pub async fn global_page(pool: &PgPool, query: &dependabot_alerts::CatalogueQuery) -> Result<dependabot_alerts::CataloguePage> {
+    use futures_util::TryStreamExt;
+    ensure!((1..=100).contains(&query.limit) && query.offset <= 1_000_000, Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+    let (statement, args, offset_applied) = dependabot_alerts::catalogue_statement(true, query);
+    let mut selected = dependabot_alerts::CatalogueSelection::new(query, offset_applied);
+    {
+        let mut candidates = sqlx::query_as::<_, (String, String)>(&statement);
+        for value in &args { candidates = candidates.bind(value); }
+        let mut candidates = candidates.fetch(&mut *tx);
+        while let Some((id, metadata)) = candidates.try_next().await? {
+            if !selected.push(id, serde_json::from_str(&metadata)?) { break; }
+        }
+    }
+    let (ids, previous, next) = selected.finish();
+    let mut documents = Vec::with_capacity(ids.len());
+    for id in ids {
+        match global_one_in(&mut tx, &id).await {
+            Ok(Some(value)) => documents.push(value),
+            Ok(None) => (),
+            Err(error) if error.downcast_ref::<Refusal>().is_some() => tracing::warn!(%id, "Invalid published advisory excluded from catalogue"),
+            Err(error) => return Err(error),
+        }
+    }
+    tx.commit().await?;
+    Ok(dependabot_alerts::CataloguePage { documents, previous, next })
+}
+
 /// The whole advisory catalogue.
 pub async fn global(pool: &PgPool) -> Result<Vec<Value>> {
     let mut tx = pool.begin().await?;
@@ -66,17 +96,21 @@ pub async fn without_osv(pool: &PgPool) -> Result<Vec<Value>> {
 }
 /// One catalogue advisory by GHSA ID through the key index. An imported document wins over a published one, as in `global_in`.
 pub async fn global_one(pool: &PgPool, ghsa_id: &str) -> Result<Option<Value>> {
+    let mut connection = pool.acquire().await?;
+    global_one_in(&mut connection, ghsa_id).await
+}
+async fn global_one_in(connection: &mut sqlx::PgConnection, ghsa_id: &str) -> Result<Option<Value>> {
     let imported: Option<String> =
         sqlx::query_scalar("SELECT document FROM global_advisories WHERE ghsa_id=$1")
             .bind(ghsa_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *connection)
             .await?;
     if let Some(body) = imported {
         return Ok(Some(serde_json::from_str(&body)?));
     }
     let published: Option<Advisory> = sqlx::query_as("SELECT a.* FROM repository_advisories a JOIN repositories r ON r.id=a.repo_id WHERE a.state='published' AND NOT r.is_private AND a.ghsa_id=$1")
         .bind(ghsa_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *connection)
         .await?;
     match published {
         Some(row) => Ok(Some(dependabot_alerts::published(row)?)),
