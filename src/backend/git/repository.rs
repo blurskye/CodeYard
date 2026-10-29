@@ -19,7 +19,7 @@ mod release_notes;
 mod replay;
 mod revert;
 pub(crate) use checked::{
-    adds_merge_commit, checkout, commit_is_ancestor, current_branch_head, current_pull_head,
+    adds_merge_commit, checkout, materialize_checkout, commit_is_ancestor, current_branch_head, current_pull_head,
     initialize_repository, initialize_repository_copy, introduced_signatures, prepare_merge,
     prepare_pull_branch_update, prepare_pull_head, prepare_squash, prepare_upstream_merge,
     publish_branch_rename, publish_merge, publish_pull_branch_update, publish_pull_head,
