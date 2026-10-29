@@ -151,6 +151,9 @@ pub async fn update_reference(
         .update_reference_as(pool, repo_id, actor, reference, sha, force)
         .await
         .map_err(publication_error)?;
+    if old == sha {
+        return Ok(sha);
+    }
     let refreshed = if let Some(branch) = reference.strip_prefix("refs/heads/") {
         pull_requests::refresh_open_pull_requests(
             pool,

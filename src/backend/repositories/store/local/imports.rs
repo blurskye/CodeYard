@@ -10,14 +10,18 @@ impl LocalStore {
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
-        import: GitImport,
+        mut import: GitImport,
         pack: &[u8],
     ) -> Result<(), RepoError> {
+        // Pull refs are local discussion identities, never source-import metadata.
+        import.refs.retain(|name, _| !name.starts_with("refs/pull/"));
         if pack.len() > MAX_IMPORT_PACK_BYTES || import.refs.len() > git::MAX_REPOSITORY_REFS {
             return Err(RepoError::response_too_large());
         }
         for (name, sha) in &import.refs {
             if !name.starts_with("refs/")
+                || ((name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
+                    && !git::is_canonical_ref(name))
                 || name == "refs/codeyard"
                 || name.starts_with("refs/codeyard/")
                 || !git2::Reference::is_valid_name(name)
@@ -163,15 +167,25 @@ impl LocalStore {
         }
         let mut refs = self.mirror_refs().await?;
         refs.extend(import.refs.clone());
+        let branch = import.default_branch.as_deref()
+            .filter(|branch| import.refs.contains_key(&format!("refs/heads/{branch}")))
+            .or_else(|| crate::backend::repositories::reads::preferred_branch(
+                import.refs.keys().filter_map(|name| name.strip_prefix("refs/heads/")),
+            ));
+        // Finish fallible default-branch preparation before publishing user refs. A failed
+        // import remains empty and retryable, even if HEAD already names the future branch.
+        if let Some(branch) = branch {
+            self.set_head_target(&format!("refs/heads/{branch}")).await?;
+            db::repositories::records::update_repo_default_branch(pool, repo_id, branch)
+                .await.map_err(|_| RepoError::authority_unavailable())?;
+        }
+        self.import_authority(pool, repo_id, actor, &import).await?;
         self.set_refs(&refs).await?;
-        if let Some(branch) = &import.default_branch {
-            if git::branch_ref(branch).is_some_and(|reference| import.refs.contains_key(&reference))
-            {
-                self.set_head_target(&format!("refs/heads/{branch}"))
-                    .await?;
-                db::repositories::records::update_repo_default_branch(pool, repo_id, branch)
-                    .await
-                    .map_err(|_| RepoError::authority_unavailable())?;
+        for tip in import.refs.values().collect::<std::collections::HashSet<_>>() {
+            if let Ok(commit) = self.commit(tip).await {
+                if let Err(error) = db::secret_scanning::enqueue(pool, repo_id, &commit.sha, actor).await {
+                    tracing::warn!(repo_id, %error, "imported history scan could not be queued");
+                }
             }
         }
         refresh_storage_size(pool.clone(), repo_id, self.clone());
@@ -195,12 +209,14 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        let user = import
-            .credential
-            .user(pool)
-            .await
-            .map_err(|_| RepoError::authority_unavailable())?
-            .ok_or_else(RepoError::write_denied)?;
+        let user = match &import.credential {
+            ImportCredential::Token(token) => crate::backend::repositories::git_sessions::ReceiveCredential::Token(*token)
+                .authorize(pool, &repository, true).await
+                .map_err(|_| RepoError::write_denied())?.0,
+            ImportCredential::Session(session) => db::users::sessions::get_session_user(pool, session)
+                .await.map_err(|_| RepoError::authority_unavailable())?
+                .ok_or_else(RepoError::write_denied)?,
+        };
         if user.id != actor
             || !access::can_admin(pool, &user, &repository)
                 .await
