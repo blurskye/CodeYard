@@ -42,8 +42,8 @@ async fn visible(
 ) -> Result<(db::models::Repository, Option<auth::Authentication>)> {
     repository(state, headers, &params["owner"], &params["repo"], write).await
 }
-async fn require_site(state: &AppState, repo: i64) -> Result<pages::Site> {
-    pages::site(&state.pool, repo)
+async fn require_site(state: &AppState, repo: i64, viewer: Option<i64>) -> Result<pages::Site> {
+    pages::site(&state.pool, viewer, repo)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)
@@ -60,9 +60,10 @@ async fn settings(
     headers: HeaderMap,
     Path(params): Path<Params>,
 ) -> Result<Json<Value>> {
-    let (repo, _) = visible(&state, &headers, &params, false).await?;
-    let site = require_site(&state, repo.id).await?;
-    let builds = pages::builds(&state.pool, repo.id, 0, 1)
+    let (repo, actor) = visible(&state, &headers, &params, false).await?;
+    let viewer = actor.as_ref().map(|actor| actor.user.id);
+    let site = require_site(&state, repo.id, viewer).await?;
+    let builds = pages::builds(&state.pool, viewer, repo.id, 0, 1)
         .await
         .map_err(failure)?;
     Ok(Json(site_document(
@@ -81,7 +82,7 @@ async fn mutate(
 ) -> Result<Response> {
     let (repo, actor) = visible(&state, &headers, &params, true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    if !access::can_admin(&state.pool, &actor.user, &repo)
+    if !access::can_maintain(&state.pool, &actor.user, &repo)
         .await
         .map_err(Error::unavailable)?
     {
@@ -104,7 +105,7 @@ async fn mutate(
                 }
             })?;
     }
-    let site = pages::save(&state.pool, actor.user.id, repo.id, &update, create)
+    let site = pages::save(&state.pool, (actor.user.id, actor.token.id), repo.id, &update, create)
         .await
         .map_err(failure)?;
     if create {
@@ -163,10 +164,11 @@ async fn builds(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, _) = visible(&state, &headers, &params, false).await?;
-    require_site(&state, repo.id).await?;
+    let (repo, actor) = visible(&state, &headers, &params, false).await?;
+    let viewer = actor.as_ref().map(|actor| actor.user.id);
+    require_site(&state, repo.id, viewer).await?;
     let (offset, limit) = page.window()?;
-    let rows = pages::builds(&state.pool, repo.id, offset as i64, (limit + 1) as i64)
+    let rows = pages::builds(&state.pool, viewer, repo.id, offset as i64, (limit + 1) as i64)
         .await
         .map_err(failure)?;
     let has_next = rows.len() > limit;
@@ -181,18 +183,20 @@ async fn build(
     headers: HeaderMap,
     Path(params): Path<Params>,
 ) -> Result<Json<Value>> {
-    let (repo, _) = visible(&state, &headers, &params, false).await?;
-    require_site(&state, repo.id).await?;
+    let (repo, actor) = visible(&state, &headers, &params, false).await?;
+    let viewer = actor.as_ref().map(|actor| actor.user.id);
+    require_site(&state, repo.id, viewer).await?;
     let row = if let Some(id) = params.get("build_id") {
         pages::build(
             &state.pool,
+            viewer,
             repo.id,
             id.parse().map_err(|_| Error::missing())?,
         )
         .await
         .map_err(failure)?
     } else {
-        pages::builds(&state.pool, repo.id, 0, 1)
+        pages::builds(&state.pool, viewer, repo.id, 0, 1)
             .await
             .map_err(failure)?
             .into_iter()
@@ -210,7 +214,7 @@ async fn request_build(
 ) -> Result<Response> {
     let (repo, actor) = visible(&state, &headers, &params, true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let site = require_site(&state, repo.id).await?;
+    let site = require_site(&state, repo.id, Some(actor.user.id)).await?;
     let branch = site
         .branch
         .ok_or_else(|| Error::validation("Pages", "source", "invalid"))?;
@@ -240,7 +244,7 @@ async fn create_deployment(
 ) -> Result<Json<Value>> {
     let (repo, actor) = visible(&state, &headers, &params, true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let site = require_site(&state, repo.id).await?;
+    let site = require_site(&state, repo.id, Some(actor.user.id)).await?;
     let invalid = || Error::validation("PagesDeployment", "configuration", "invalid");
     if input.oidc_token.is_empty()
         || input.oidc_token.len() > 16384
@@ -308,12 +312,13 @@ async fn deployment(
     headers: HeaderMap,
     Path(params): Path<Params>,
 ) -> Result<Json<Value>> {
-    let (repo, _) = visible(&state, &headers, &params, false).await?;
-    require_site(&state, repo.id).await?;
+    let (repo, actor) = visible(&state, &headers, &params, false).await?;
+    let viewer = actor.as_ref().map(|actor| actor.user.id);
+    require_site(&state, repo.id, viewer).await?;
     let id = params["pages_deployment_id"]
         .parse()
         .map_err(|_| Error::missing())?;
-    let row = pages::deployment(&state.pool, repo.id, id)
+    let row = pages::deployment(&state.pool, viewer, repo.id, id)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -325,7 +330,7 @@ async fn cancel(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, actor) = visible(&state, &headers, &params, true).await?;
-    require_site(&state, repo.id).await?;
+    require_site(&state, repo.id, actor.as_ref().map(|actor| actor.user.id)).await?;
     let id = params["pages_deployment_id"]
         .parse()
         .map_err(|_| Error::missing())?;
@@ -344,8 +349,8 @@ async fn health(
     headers: HeaderMap,
     Path(params): Path<Params>,
 ) -> Result<Json<Value>> {
-    let (repo, _) = visible(&state, &headers, &params, false).await?;
-    let site = require_site(&state, repo.id).await?;
+    let (repo, actor) = visible(&state, &headers, &params, false).await?;
+    let site = require_site(&state, repo.id, actor.as_ref().map(|actor| actor.user.id)).await?;
     let host = site
         .cname
         .ok_or_else(|| Error::invalid("No custom Pages domain is configured"))?;
