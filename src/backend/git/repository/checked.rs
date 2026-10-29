@@ -752,25 +752,21 @@ pub(crate) async fn prepare_pull_head(
     head: &str,
 ) -> Result<PreparedPullHead> {
     validate_merge_revision("main", head)?;
-    let source = std::path::absolute(source)?;
-    ensure!(source.is_dir(), "Repository storage is unavailable");
-    let source = source
-        .to_str()
-        .ok_or_else(|| anyhow!("Invalid source storage path"))?;
-    let temporary = tempfile::tempdir()?;
+    let (base, source) = (base.to_owned(), source.to_owned());
+    let (source, temporary, mut alternates, refs) = process::blocking_until(std::time::Instant::now() + process::RPC_TIMEOUT, move || {
+        use std::os::unix::ffi::OsStringExt;
+        let source = std::path::absolute(source)?;
+        ensure!(source.is_dir(), "Repository storage is unavailable");
+        let source = source.to_str().ok_or_else(|| anyhow!("Invalid source storage path"))?.to_owned();
+        let temporary = tempfile::tempdir()?;
+        let base = std::fs::canonicalize(base)?;
+        let alternates = quote_alternate(&base.join("objects")).into_vec();
+        let refs = super::list_mirror_refs(&base)?;
+        Ok((source, temporary, alternates, refs))
+    }).await?;
     initialize_repository(temporary.path(), None, "main").await?;
-    let base = std::fs::canonicalize(base)?;
-    let objects = base.join("objects");
-    let objects = objects
-        .to_str()
-        .ok_or_else(|| anyhow!("Invalid base storage path"))?;
-    ensure!(!objects.contains(['\n', '\r']), "Invalid base storage path");
-    tokio::fs::write(
-        temporary.path().join("objects/info/alternates"),
-        format!("{objects}\n"),
-    )
-    .await?;
-    let refs = super::list_mirror_refs(&base)?;
+    alternates.push(b'\n');
+    tokio::fs::write(temporary.path().join("objects/info/alternates"), alternates).await?;
     let mut script = String::from("start\n");
     for (index, target) in refs.values().enumerate() {
         script.push_str(&format!("update refs/known/{index} {target}\n"));
@@ -795,7 +791,7 @@ pub(crate) async fn prepare_pull_head(
             "--no-tags",
             "--no-write-fetch-head",
             "--",
-            source,
+            &source,
             &refspec,
         ],
         b"",

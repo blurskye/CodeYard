@@ -112,7 +112,7 @@ impl Client {
         ensure!(npm::registry_url(tarball), "Untrusted npm archive URL");
         let bytes = Self::body(
             self.http.get(self.archive_url(tarball)?).send().await?,
-            8 * 1024 * 1024,
+            npm::MAX_ARCHIVE,
         )
         .await?;
         let expected = expected.map(str::to_owned);

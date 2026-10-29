@@ -187,6 +187,10 @@ pub(crate) async fn verify_local(
     })
 }
 
+pub(crate) fn namespace_url(owner: &str, name: &str) -> String {
+    format!("{}/{}/{}", link_origin(), crate::webui::encode_component(owner), crate::webui::encode_component(name))
+}
+
 pub(crate) async fn candidate(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
@@ -228,12 +232,7 @@ pub(crate) async fn candidate(
         .map_err(super::unavailable)?
         .remove(&repository.id)
         .ok_or(ReleaseError::Unavailable)?;
-    let url = format!(
-        "{}/{}/{}",
-        link_origin(),
-        crate::webui::encode_component(&owner),
-        crate::webui::encode_component(&repository.name)
-    );
+    let url = namespace_url(&owner, &repository.name);
     let statement = Statement::new(repository.id, &url, tag, &tag_oid, &commit.sha, assets)
         .map_err(super::unavailable)?;
     let key = match cluster {

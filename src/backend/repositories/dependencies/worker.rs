@@ -73,7 +73,7 @@ async fn process(
         // Only proposals need an npm lockfile. Without a usable one they are skipped, and the
         // alerts from the shared scan stay active. A storage failure is still retried.
         let (manifest, lock) = match (
-            file(&store, &sha, "package.json", 256 * 1024).await,
+            file(&store, &sha, "package.json", npm::MAX_MANIFEST).await,
             file(&store, &sha, "package-lock.json", npm::MAX_LOCK_BYTES).await,
         ) {
             (Ok(manifest), Ok(lock))

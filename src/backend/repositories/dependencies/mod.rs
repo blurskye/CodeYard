@@ -71,6 +71,11 @@ pub async fn status(
         || !current.same_owner(&repository)
         || (repository.is_private && !current.private_consent)
         || current.last_status == "unsupported";
+    if let Some(settings) = db::code_security::repository_settings(pool, repo).await.map_err(|error| DependencyError::Store(store_error(error)))? {
+        let settings: serde_json::Value = serde_json::from_str(&settings.security_and_analysis).map_err(|error| DependencyError::Store(store_error(error.into())))?;
+        paused |= settings["dependabot_alerts"]["status"] == "disabled"
+            || (matches!(feature, Feature::Updates) && settings["dependabot_security_updates"]["status"] == "disabled");
+    }
     if !paused {
         paused = !delegated_admin(pool, repo, current.alerts_actor_id).await?;
     }

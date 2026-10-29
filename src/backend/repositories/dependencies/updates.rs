@@ -139,6 +139,9 @@ pub(crate) async fn propose(
 ) -> Result<()> {
     let actor = job.updates_actor_id.ok_or(Refusal::Denied)?;
     let snapshot = records::snapshot(pool, actor, pinned.repository.id).await?;
+    let mut proposals = snapshot.alerts.values().filter_map(|alert| alert.update.as_ref().map(|update| (
+        (alert.finding.package.path.clone(), alert.finding.package.name.clone(), update.old_version.clone(), update.fixed_version.clone(), update.base_sha.clone()), update.clone(),
+    ))).collect::<std::collections::HashMap<_, _>>();
     let packages = npm::Lockfile::parse(&pinned.manifest, &pinned.lock)?.packages;
     let store = repo_store(&pinned.repository, ci.cluster.as_ref());
     // The advisories without OSV records veto every candidate too, and they are read once for
@@ -291,10 +294,16 @@ pub(crate) async fn propose(
             continue;
         };
         records::check_job(pool, job, Feature::Updates).await?;
-        let digest = hex::encode(Sha256::digest(
-            format!("{}\0{}\0{}", package.version, version, pinned.sha).as_bytes(),
-        ));
-        let branch = format!("codeyard/security/{key}-{digest}");
+        let target = (package.path.clone(), package.name.clone(), package.version.to_string(), version.to_string(), pinned.sha.clone());
+        if let Some(update) = proposals.get(&target) {
+            let mut receipt = update.clone();
+            receipt.pull_request_id = None;
+            records::plan_update(pool, job, &key, &receipt).await?;
+            open(pool, ci, broadcaster, job, pinned, &key, &receipt).await?;
+            continue;
+        }
+        let digest = hex::encode(Sha256::digest(serde_json::to_vec(&target)?));
+        let branch = format!("codeyard/security/{digest}");
         if branch == pinned.repository.default_branch {
             records::manual(pool,job,&key,&alert.finding.package.version,"The generated proposal branch is the default branch; update manually or choose another default branch").await?;
             continue;
@@ -377,6 +386,7 @@ pub(crate) async fn propose(
             }
         }
         open(pool, ci, broadcaster, job, pinned, &key, &update).await?;
+        proposals.insert(target, update);
         proposed += 1;
     }
     Ok(())

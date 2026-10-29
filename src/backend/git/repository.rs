@@ -2125,11 +2125,16 @@ pub(crate) fn check_tag_budget(
                 .ok_or_else(|| anyhow::anyhow!("invalid quarantine path"))?,
         )?;
     }
+    // Deletions reduce storage even when an imported repository already exceeds today's limit.
+    if replacements.iter().all(|(_, new)| new.bytes().all(|byte| byte == b'0')) { return Ok(()); }
     let mut tags = std::collections::HashMap::new();
-    repo.tag_foreach(|oid, name| {
-        tags.insert(String::from_utf8_lossy(name).into_owned(), oid);
-        tags.len() <= MAX_REPOSITORY_REFS
-    })?;
+    for reference in repo.references_glob("refs/tags/*")? {
+        let reference = reference?;
+        let name = String::from_utf8_lossy(reference.name_bytes()).into_owned();
+        let oid = reference.resolve()?.target().ok_or_else(|| anyhow!("Tag has no direct target"))?;
+        tags.insert(name, oid);
+        if tags.len() > MAX_REPOSITORY_REFS { return Err(ObjectTooLarge.into()); }
+    }
     for (reference, new) in replacements {
         if new.bytes().all(|b| b == b'0') {
             tags.remove(reference);
@@ -2146,6 +2151,7 @@ pub(crate) fn check_tag_budget(
             return Err(ObjectTooLarge.into());
         }
         let (size, kind) = odb.read_header(oid)?;
+        peel_revision(&repo, &oid.to_string())?;
         if kind == ObjectType::Tag && size > MAX_TAG_OBJECT_BYTES {
             return Err(ObjectTooLarge.into());
         }
@@ -2167,10 +2173,10 @@ pub(crate) fn list_tags(repo_path: &Path) -> Result<Vec<TagInfo>> {
     let mut tags = Vec::new();
     let mut total_bytes = 0usize;
     let mut message_bytes = 0usize;
-    let mut failure = None;
-
-    repo.tag_foreach(|oid, name| {
-        let result = (|| {
+    for reference in repo.references_glob("refs/tags/*")? {
+        let reference = reference?;
+        let name = reference.name_bytes();
+        let oid = reference.resolve()?.target().ok_or_else(|| anyhow!("Tag has no direct target"))?;
             if tags.len() >= MAX_REPOSITORY_REFS || name.len() > MAX_REF_NAME_BYTES {
                 return Err(ObjectTooLarge.into());
             }
@@ -2193,9 +2199,7 @@ pub(crate) fn list_tags(repo_path: &Path) -> Result<Vec<TagInfo>> {
                 });
                 (message.map(ToOwned::to_owned), date)
             } else {
-                let date = find_commit_checked(&repo, oid)
-                    .ok()
-                    .map(|commit| commit.time().seconds());
+                let date = if kind == ObjectType::Commit { Some(find_commit_checked(&repo, oid)?.time().seconds()) } else { None };
                 (None, date)
             };
             let bytes = name.len() + 40;
@@ -2203,8 +2207,8 @@ pub(crate) fn list_tags(repo_path: &Path) -> Result<Vec<TagInfo>> {
                 .checked_add(bytes)
                 .filter(|total| *total <= MAX_TAG_RESPONSE_BYTES)
                 .ok_or(ObjectTooLarge)?;
-            let commit = match peel_revision(&repo, &oid.to_string()) {
-                Ok((commit, ObjectType::Commit)) => commit.to_string(),
+            let commit = match peel_revision(&repo, &oid.to_string())? {
+                (commit, ObjectType::Commit) => commit.to_string(),
                 _ => String::new(),
             };
             tags.push(TagInfo {
@@ -2214,17 +2218,6 @@ pub(crate) fn list_tags(repo_path: &Path) -> Result<Vec<TagInfo>> {
                 message,
                 date,
             });
-            Ok::<_, anyhow::Error>(())
-        })();
-        if let Err(error) = result {
-            failure = Some(error);
-            false
-        } else {
-            true
-        }
-    })?;
-    if let Some(error) = failure {
-        return Err(error);
     }
     Ok(tags)
 }
@@ -2242,20 +2235,27 @@ pub(crate) fn prepare_create_tag(
     let repo = Repository::open_bare(repo_path)?;
     let reference =
         crate::backend::git::tag_ref(tag_name).ok_or_else(|| anyhow!("Invalid tag name"))?;
-    if repo.find_reference(&reference).is_ok() {
-        return Err(RefConflict(format!("Tag '{tag_name}' already exists")).into());
+    match repo.find_reference(&reference) {
+        Ok(_) => return Err(RefConflict(format!("Tag '{tag_name}' already exists")).into()),
+        Err(error) if error.code() == git2::ErrorCode::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
     let oid = commit_oid(target_sha)?;
-    let (size, _) = check_object_size(&repo, oid)?;
-    let commit = peel_to_commit_checked(&repo, target_sha).ok();
+    let (_, target_kind) = check_object_size(&repo, oid)?;
+    let commit = match peel_revision(&repo, target_sha)? {
+        (oid, ObjectType::Commit) => Some(find_commit_checked(&repo, oid)?),
+        _ => None,
+    };
     let (target, date) = if let Some(message) = message {
-        if size > MAX_TAG_OBJECT_BYTES {
-            return Err(ObjectTooLarge.into());
-        }
-        let object = repo.find_object(oid, None)?;
         let signature = git2::Signature::now(tagger_name, tagger_email)?;
-        let target = repo.tag_annotation_create(tag_name, &object, &signature, message)?;
-        (target, Some(signature.when().seconds()))
+        let time = signature.when();
+        let zone = time.offset_minutes();
+        let sign = if zone < 0 { '-' } else { '+' };
+        let mut raw = format!("object {oid}\ntype {}\ntag {tag_name}\ntagger {} <{}> {} {sign}{:02}{:02}\n\n{message}", target_kind.str(), signature.name().unwrap_or_default(), signature.email().unwrap_or_default(), time.seconds(), zone.abs() / 60, zone.abs() % 60);
+        if !raw.ends_with('\n') { raw.push('\n'); }
+        if raw.len() > MAX_TAG_OBJECT_BYTES { return Err(ObjectTooLarge.into()); }
+        let target = repo.odb()?.write(ObjectType::Tag, raw.as_bytes())?;
+        (target, Some(time.seconds()))
     } else {
         (oid, commit.as_ref().map(|commit| commit.time().seconds()))
     };

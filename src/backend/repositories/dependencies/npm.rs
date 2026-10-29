@@ -11,9 +11,9 @@ use std::{
 };
 
 pub const MAX_LOCK_BYTES: usize = 4 * 1024 * 1024;
-pub const MAX_PACKAGES: usize = 2000;
-const MAX_MANIFEST: usize = 256 * 1024;
-const MAX_ARCHIVE: usize = 8 * 1024 * 1024;
+pub use crate::backend::db::repositories::dependencies::MAX_PACKAGES;
+pub const MAX_MANIFEST: usize = 256 * 1024;
+pub const MAX_ARCHIVE: usize = 8 * 1024 * 1024;
 const MAX_EXPANDED: u64 = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
