@@ -388,11 +388,13 @@ async fn assign(
 async fn place_and_start(
     context: &NodeContext,
     primaries: &[Primary],
-    retry: &Retry,
+    retry: &mut Retry,
     copying: &mut Copying,
 ) -> Result<()> {
     let node = context.node_id;
     let mut held = db::cluster::list_held_replicas(context.database()?, node).await?;
+    let live: HashSet<_> = held.iter().map(|row| row.repository_id).collect();
+    retry.failures.retain(|repository, _| live.contains(repository));
     let failed = locate(&context.repos_path, node, primaries, &held, copying).await;
     held.retain(|row| !failed.contains(&row.repository_id));
     copying.start(context, &held, retry);
@@ -674,16 +676,15 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
             if keep.contains(&uuid) {
                 continue;
             }
+            let path = entry.path();
+            // Never wait behind an admitted Git session in the maintenance loop.
+            let Ok(_reader_guard) = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::lock(&path)).await else { continue; };
+            match db::cluster::storage_needed(pool, &uuid.to_string(), context.node_id).await {
+                Ok(true) => continue,
+                Ok(false) => {},
+                Err(error) => { warn!(%error, "could not check storage assignment; none removed"); return; }
+            }
             if directory == context.repos_path {
-                // The keep list may predate a promotion that made this node a copy holder.
-                match needed_here(pool, context.node_id, uuid).await {
-                    Ok(true) => continue,
-                    Ok(false) => {}
-                    Err(error) => {
-                        warn!(%error, "could not check former primary; none removed");
-                        return;
-                    }
-                }
                 // A repository whose deletion is still retiring it has no row yet. Keep its
                 // directory in deleted/, as a retirement does, instead of removing it.
                 let path = entry.path();
@@ -723,21 +724,6 @@ fn copy_directory_uuid(name: &str) -> Option<Uuid> {
     Uuid::parse_str(name.strip_suffix(".git")?).ok()
 }
 
-/// Whether this node still needs the directory of `uuid`: an unplaced repository, a primary
-/// here, or a copy held here. Read the repository before its copies so a concurrent promotion's
-/// new primary and former-primary copy row are both visible.
-async fn needed_here(pool: &DbPool, node: i64, uuid: Uuid) -> Result<bool> {
-    let Some(repo) = db::cluster::get_repository_by_uuid(pool, &uuid.to_string()).await? else {
-        return Ok(false);
-    };
-    // Rows without placement belong to pre-cluster installations and must survive.
-    if repo.storage_node_id.is_none() || repo.storage_node_id == Some(node) {
-        return Ok(true);
-    }
-    let copies = db::cluster::list_replicas(pool, repo.id).await?;
-    Ok(copies.iter().any(|(copy, _)| *copy == node))
-}
-
 /// Removes pack files that a crash left in the copies directory. A pack that a running copy
 /// is writing has a fresh modification time, so it is kept.
 async fn remove_stale_packs(context: &NodeContext) {
@@ -758,8 +744,11 @@ async fn keep_directories(context: &NodeContext) -> Result<HashSet<Uuid>> {
     for row in db::cluster::list_held_replicas(pool, node).await? {
         keep.insert(rpc::repository_uuid(&row.disk_path)?);
     }
-    for (_, disk_path, _, _, _) in db::cluster::list_primary_repositories(pool, node).await? {
+    for (_, disk_path) in db::cluster::list_primary_paths(pool, node).await? {
         keep.insert(rpc::repository_uuid(&disk_path)?);
+    }
+    for (_, disk_path) in db::cluster::list_unplaced_repositories(pool).await? {
+        if let Ok(uuid) = rpc::repository_uuid(&disk_path) { keep.insert(uuid); }
     }
     Ok(keep)
 }

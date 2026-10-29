@@ -18,7 +18,6 @@ use crate::backend::{
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use chrono::{DateTime, Utc};
 use std::{path::Path, time::Duration};
-const STALE_AFTER_SECONDS: i64 = 60;
 
 /// The address this node last reported while serving, for putting in a ticket.
 pub async fn own_address(pool: &DbPool, key: &NodeKey) -> Result<NodeAddress> {
@@ -28,9 +27,9 @@ pub async fn own_address(pool: &DbPool, key: &NodeKey) -> Result<NodeAddress> {
     let node = db::cluster::get_node_by_public_key(pool, &key.public_hex())
         .await?
         .ok_or_else(not_serving)?;
-    let hint = node.addr_hint.ok_or_else(not_serving)?;
+    let hint = node.addr_hint.as_deref().ok_or_else(not_serving)?;
     match node.last_seen {
-        Some(seen) if (Utc::now() - seen).num_seconds() <= STALE_AFTER_SECONDS => {}
+        Some(_) if node.is_online() => {}
         Some(seen) => eprintln!(
             "warning: this node last reported {}; make sure `codeyard serve` is running or the ticket will not work",
             ago(seen)
@@ -39,7 +38,7 @@ pub async fn own_address(pool: &DbPool, key: &NodeKey) -> Result<NodeAddress> {
             "warning: this node is not reporting; make sure `codeyard serve` is running or the ticket will not work"
         ),
     }
-    serde_json::from_str(&hint).context("the stored node address is unreadable")
+    serde_json::from_str(hint).context("the stored node address is unreadable")
 }
 
 /// `codeyard cluster ...`
@@ -446,12 +445,8 @@ async fn promote_command(
         }
         (None, Some(node)) => {
             let primary = node_id(pool, node).await?;
-            let mut repositories: Vec<i64> = db::cluster::list_primary_repositories(pool, primary)
-                .await?
-                .into_iter()
-                .map(|(id, _, _, _, _)| id)
-                .collect();
-            repositories.dedup();
+            let repositories: Vec<i64> = db::cluster::list_primary_paths(pool, primary)
+                .await?.into_iter().map(|(id, _)| id).collect();
             if repositories.is_empty() {
                 println!("No repository has '{node}' as its primary.");
                 return Ok(());
@@ -472,13 +467,16 @@ async fn promote_command(
                     Err(error) => failures.push((repository, error)),
                 }
             }
-            // A repository that a later family promotion moved is not counted as failed.
-            let mut failed = 0;
-            for (repository, error) in failures {
-                if is_primary(pool, repository, primary).await? {
-                    failed += 1;
-                    let name = replicas::repository_name(pool, repository).await?;
+            // Check every remaining family member, including one whose root moved before
+            // a later member failed. Successful later retries are not counted as failures.
+            let remaining = db::cluster::list_primary_paths(pool, primary).await?;
+            let failed = remaining.len();
+            for (repository, _) in remaining {
+                let name = replicas::repository_name(pool, repository).await?;
+                if let Some((_, error)) = failures.iter().find(|(id, _)| *id == repository) {
                     eprintln!("{name}: {error:#}");
+                } else {
+                    eprintln!("{name}: fork-family promotion left this member on its original primary");
                 }
             }
             ensure!(

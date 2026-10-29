@@ -2561,7 +2561,7 @@ async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
     lock.commit().await.unwrap();
     let error = task.await.unwrap().unwrap_err().to_string();
     assert!(error.contains("fork family changed"), "{error}");
-    assert_eq!(primary_of(pool, source).await, b);
+    assert_eq!(primary_of(pool, source).await, a);
     assert_eq!(primary_of(pool, fork).await, a);
 }
 

@@ -36,7 +36,7 @@ pub(super) async fn copy(
 ) -> Result<()> {
     // A copy Git cannot open has no refs to offer, so the primary sends everything.
     let have = if super::connected(mirror).await? {
-        tips(mirror).await?
+        tips(context, repository, mirror).await?
     } else {
         Vec::new()
     };
@@ -46,13 +46,15 @@ pub(super) async fn copy(
 }
 
 /// The distinct commits at the copy's refs. The primary leaves their history out of the pack.
-async fn tips(mirror: &Path) -> Result<Vec<String>> {
+async fn tips(context: &NodeContext, repository: Uuid, mirror: &Path) -> Result<Vec<String>> {
     let path = mirror.to_str().context("replica copy path is not text")?;
-    let mut tips: Vec<String> = RepoStore::from_disk_path(path)
-        .mirror_refs()
-        .await?
-        .into_values()
-        .collect();
+    let store = RepoStore::from_disk_path(path);
+    let mut tips: Vec<String> = store.mirror_refs().await?.into_values().collect();
+    let pool = context.database()?;
+    let row = crate::backend::db::cluster::get_repository_by_uuid(pool, &repository.to_string()).await?.context("replica repository was deleted")?;
+    let mut retained = crate::backend::db::ci::retained_ci_commits(pool, row.id).await?;
+    retained.extend(crate::backend::db::pull_requests::records::retained_revisions(pool, row.id).await?);
+    tips.extend(store.existing_commits(&retained).await?);
     tips.sort();
     tips.dedup();
     Ok(tips)
