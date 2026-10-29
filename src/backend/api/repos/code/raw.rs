@@ -177,6 +177,7 @@ pub(crate) fn raw_response(
         size,
         offset,
         mode: _,
+        ..
     } = blob;
     let length = if head { size } else { bytes.len() as u64 };
     let mut response = Response::new(match permit {

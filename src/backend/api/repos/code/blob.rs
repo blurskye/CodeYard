@@ -9,6 +9,7 @@ use crate::backend::api::repos::paging::number;
 use crate::backend::api::repos::refs::references::resolve_references;
 use crate::backend::app::AppState;
 use crate::backend::git::{MAX_BLAME_FILE_BYTES, MAX_BLAME_LINES};
+use crate::backend::git::repository::{PREVIEW_BYTES, PREVIEW_LINES};
 use crate::backend::repositories::files;
 use crate::backend::repositories::store::{
     repo_store, BlobBytes, BlobRange, RepoError, RepoStore, MAX_EDITOR_BYTES,
@@ -221,9 +222,6 @@ pub async fn get_blob(
         .expect("valid JSON response"))
 }
 
-const PREVIEW_BYTES: u64 = 256 * 1024;
-const PREVIEW_LINES: usize = 2000;
-
 /// The source bytes up to the end of the preview's last line. Lines are cut before text
 /// conversion, which can change the length, so the next page starts at the right byte.
 fn limit_lines(bytes: &[u8]) -> &[u8] {
@@ -239,7 +237,7 @@ fn limit_lines(bytes: &[u8]) -> &[u8] {
     bytes
 }
 
-/// Scan bounded chunks, keeping only the window to display and its global line number.
+/// The owning store scans one cat-file stream, including over RPC.
 async fn preview_at(
     store: &RepoStore,
     reference: &str,
@@ -247,93 +245,11 @@ async fn preview_at(
     offset: u64,
     target: Option<usize>,
 ) -> Result<(BlobBytes, usize), RepoError> {
-    let mut position = 0;
-    let mut line = 1;
-    let mut start = offset;
-    // Lines end at LF, CRLF or a lone CR, as in `limit_lines`. A CR that ends a chunk is a
-    // break unless the next chunk starts with LF.
-    let mut pending_cr = false;
-    loop {
-        if target.is_none() && position >= offset || target == Some(line) {
-            break;
-        }
-        let length = if target.is_none() {
-            PREVIEW_BYTES.min(offset - position)
-        } else {
-            PREVIEW_BYTES
-        };
-        let chunk = store
-            .blob_range(
-                reference,
-                path,
-                BlobRange::Window {
-                    offset: position,
-                    length,
-                },
-            )
-            .await?;
-        if chunk.is_binary {
-            return Ok((chunk, 1));
-        }
-        if chunk.bytes.is_empty() {
-            start = chunk.size;
-            break;
-        }
-        let bytes = &chunk.bytes;
-        let mut found = false;
-        if std::mem::take(&mut pending_cr) && bytes.first() != Some(&b'\n') {
-            line += 1;
-            if target == Some(line) {
-                start = position;
-                found = true;
-            }
-        }
-        for (index, byte) in bytes.iter().enumerate() {
-            if found {
-                break;
-            }
-            let lone_cr = *byte == b'\r' && bytes.get(index + 1) != Some(&b'\n');
-            if lone_cr && index + 1 == bytes.len() {
-                pending_cr = true;
-            } else if *byte == b'\n' || lone_cr {
-                line += 1;
-                if target == Some(line) {
-                    start = position + index as u64 + 1;
-                    found = true;
-                    break;
-                }
-            }
-        }
-        if found {
-            break;
-        }
-        position += chunk.bytes.len() as u64;
-        if position >= chunk.size {
-            start = chunk.size;
-            break;
-        }
-    }
-    // The previous page ended after that CR, so it closed a line.
-    if pending_cr && target.is_none() {
-        line += 1;
-    }
-    let mut chunk = store
-        .blob_range(
-            reference,
-            path,
-            BlobRange::Window {
-                offset: start,
-                length: PREVIEW_BYTES + 1,
-            },
-        )
-        .await?;
-    if chunk.bytes.len() > PREVIEW_BYTES as usize {
-        let boundary = PREVIEW_BYTES as usize;
-        // Keep a CRLF pair together, rather than rendering the next LF as an empty line.
-        if chunk.bytes[boundary - 1] != b'\r' || chunk.bytes[boundary] != b'\n' {
-            chunk.bytes.truncate(boundary);
-        }
-    }
+    let chunk = store.blob_range(reference, path, BlobRange::Preview {
+        offset, line: target.map(|line| line as u32),
+    }).await?;
+    let line = chunk.preview.as_ref().map(|metadata| metadata.first_line)
+        .ok_or_else(|| RepoError::new(crate::backend::repositories::store::ErrorKind::Unavailable, "Preview metadata is unavailable"))?;
     Ok((chunk, line))
 }
 
@@ -390,6 +306,7 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         size,
         offset: start,
         mode,
+        preview: metadata,
     } = preview;
     // Blame refuses a file with too many lines. The line count is known only when the preview
     // holds the whole file.
@@ -424,9 +341,6 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
     } else {
         false
     };
-    check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
-        .await
-        .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     let mut page = view::blob::BlobPage {
         reference: if !on_branch && !resolved.reference.starts_with("refs/") {
             head.sha.clone()
@@ -445,7 +359,7 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
             None
         },
         previous: if start > 0 && !binary {
-            Some(start.saturating_sub(PREVIEW_BYTES))
+            metadata.and_then(|metadata| metadata.previous)
         } else {
             None
         },
@@ -493,6 +407,9 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         )
         .await?;
     }
+    check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
+        .await
+        .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     let title = page.path.clone();
     Ok(ctx.page_model(
         &title,
