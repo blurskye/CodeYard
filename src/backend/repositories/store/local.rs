@@ -4,7 +4,7 @@
 mod branches;
 mod gists;
 use super::{
-    allowed_merge_methods, editor, AsyncMergePublication, BlobBytes, BlobRange, ErrorKind,
+    allowed_merge_methods, editor, AsyncMergePublication, BlobBytes, BlobPreviewMetadata, BlobRange, ErrorKind,
     FileWrite, GitService, MergeMethod, MergeRequest, RepoError, RestackMove,
     MAX_ARCHIVE_RESPONSE_BYTES, MAX_BLOB_RESPONSE_BYTES,
 };
