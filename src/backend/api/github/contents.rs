@@ -315,7 +315,8 @@ async fn save(
 ) -> Result<Response> {
     let (owner, name, path) = (&params["owner"], &params["repo"], &params["path"]);
     let (repo, auth) = repository(&state, &headers, owner, name, true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let auth = auth.ok_or_else(auth::required)?;
+    let actor = auth.user;
     let branch = input.branch.as_deref().unwrap_or(&repo.default_branch);
     let store = repo_store(&repo, state.cluster.as_ref());
     let refs = store.refs_from_primary().await.map_err(store_error)?;
@@ -370,7 +371,7 @@ async fn save(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
-            actor.id,
+            (actor.id, auth.token.id),
             owner,
             repo.id,
             write,
@@ -382,7 +383,7 @@ async fn save(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
-            actor.id,
+            (actor.id, auth.token.id),
             owner,
             repo.id,
             write,
