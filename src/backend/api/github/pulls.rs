@@ -183,7 +183,7 @@ pub(super) async fn document(
             .await
             .map_err(store_error)?;
         let (commits, _) = store
-            .pull_request_commits(pull.diff_base(), &pull.head_sha)
+            .pull_request_commits(pull.diff_base(), &pull.head_sha, 0)
             .await
             .map_err(store_error)?;
         let (comments, review_comments) =
@@ -304,7 +304,7 @@ pub(super) async fn diff_response(
     let store = repo_store(repo, state.cluster.as_ref());
     if media == super::diff_media::Media::Patch {
         let (total, commits) = store
-            .pull_request_commits(pull.diff_base(), &pull.head_sha)
+            .pull_request_commits(pull.diff_base(), &pull.head_sha, 250)
             .await
             .map_err(store_error)?;
         let total = usize::try_from(total).unwrap_or(usize::MAX);
@@ -348,7 +348,7 @@ async fn commits(
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
     let (offset, limit) = page.window()?;
     let (_, rows) = repo_store(&repo, state.cluster.as_ref())
-        .pull_request_commits(pull.diff_base(), &pull.head_sha)
+        .pull_request_commits(pull.diff_base(), &pull.head_sha, offset.saturating_add(limit).saturating_add(1))
         .await
         .map_err(store_error)?;
     let has_next = rows.len() > offset + limit;

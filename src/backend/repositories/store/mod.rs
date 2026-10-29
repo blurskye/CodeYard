@@ -819,21 +819,22 @@ impl RepoStore {
         }
     }
 
-    /// The full commit count and the first 250 commits of a pull request, oldest first.
+    /// The full count and up to `limit` (at most 250) oldest commits. Zero requests count only.
     pub async fn pull_request_commits(
         &self,
         base_ref: &str,
         head_ref: &str,
+        limit: usize,
     ) -> Result<(u64, Vec<CommitInfo>), RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.pull_request_commits(base_ref, head_ref).await,
+            Backend::Local(local) => local.pull_request_commits(base_ref, head_ref, limit).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
                         Operation::CommitsBetween {
                             base_ref: base_ref.into(),
                             head_ref: head_ref.into(),
-                            limit: 250,
+                            limit: limit.min(250),
                             raw_json: true,
                             pull_request: true,
                         },

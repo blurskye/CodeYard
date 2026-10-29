@@ -1020,8 +1020,9 @@ impl LocalStore {
         &self,
         base: &str,
         head: &str,
+        limit: usize,
     ) -> Result<(u64, Vec<CommitInfo>), RepoError> {
-        git::pull_request_commits(self.path(), base, head)
+        git::pull_request_commits(self.path(), base, head, limit)
             .await
             .map_err(RepoError::from)
     }
