@@ -170,11 +170,13 @@ pub async fn review(
 }
 
 pub async fn classic_refused(pool: &SqlitePool, token: i64, org: i64) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organization_token_policies p WHERE p.org_id=$2 AND NOT p.classic_allowed) AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)")
+    let allowed = crate::backend::db::fine_grained_tokens::classic_allowed_condition("$1", "$2");
+    Ok(sqlx::query_scalar(&format!("SELECT NOT ({allowed})"))
         .bind(token).bind(org).fetch_one(pool).await?)
 }
 
 pub async fn classic_refused_repository(pool: &SqlitePool, token: i64, repo: i64) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN organization_token_policies p ON p.org_id=r.owner_org_id WHERE r.id=$2 AND NOT p.classic_allowed) AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)")
+    let allowed = crate::backend::db::fine_grained_tokens::classic_allowed_condition("$1", "r.owner_org_id");
+    Ok(sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r WHERE r.id=$2 AND NOT ({allowed}))"))
         .bind(token).bind(repo).fetch_one(pool).await?)
 }

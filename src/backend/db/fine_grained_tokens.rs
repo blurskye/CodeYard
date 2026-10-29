@@ -22,6 +22,13 @@ pub struct Token {
     pub last_used_ip: Option<String>,
 }
 
+/// Portable policy predicate for trusted SQL parameter/column expressions, never request values.
+/// Non-classic credentials retain their own grant checks; an absent policy allows classic tokens.
+pub(in crate::backend::db) fn classic_allowed_condition(token: &str, organization: &str) -> String {
+    let token = format!("CAST({token} AS BIGINT)");
+    format!("NOT EXISTS(SELECT 1 FROM organization_token_policies policy WHERE policy.org_id={organization} AND NOT policy.classic_allowed AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id={token}))")
+}
+
 /// A token's bounds with the live organization facts its access depends on.
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Bounds {
