@@ -344,12 +344,10 @@ pub async fn configure_organization(
     org: i64,
     actor: i64,
     d: &Definition,
-) -> Result<i64> {
+) -> Result<Attribute> {
     d.validate()?;
     let tx = begin_organization_write(pool, org, actor).await?;
-    configure_owner(tx, actor, (None, Some(org)), d)
-        .await
-        .map(|attribute| attribute.id)
+    configure_owner(tx, actor, (None, Some(org)), d).await
 }
 pub async fn create_organization_field(
     pool: &PgPool,

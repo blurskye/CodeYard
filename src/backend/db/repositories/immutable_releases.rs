@@ -52,7 +52,12 @@ pub async fn enabled(pool: &DbPool, repo: i64) -> Result<bool> {
         }
     }
 }
-pub async fn set_enabled(pool: &DbPool, actor: i64, repo: i64, enabled: bool) -> Result<()> {
+native_operation!(crate::backend::db::postgres::repositories::immutable_releases::owner_enforced,
+    crate::backend::db::sqlite::repositories::immutable_releases::owner_enforced,
+    fn owner_enforced(pool: &DbPool, repo: i64) -> Result<bool>);
+
+pub async fn set_enabled(pool: &DbPool, actor: impl Into<super::super::users::tokens::Actor>, repo: i64, enabled: bool) -> Result<()> {
+    let actor = actor.into();
     match pool {
         DbPool::Sqlite(p) => {
             db::sqlite::repositories::immutable_releases::set_enabled(p, actor, repo, enabled).await

@@ -288,12 +288,7 @@ pub async fn inherited(
     kind: Kind,
 ) -> Result<Vec<OrganizationValue>, ValueError> {
     let mut tx = pool.begin().await?;
-    let allowed = if kind == Kind::Secret {
-        super::super::discussions::lock_admin_authority(&mut tx, actor, repo).await
-    } else {
-        super::super::discussions::lock_contribution_authority(&mut tx, actor, repo).await
-    }
-    .map_err(ValueError::Authority)?;
+    let allowed = super::super::discussions::lock_settings_read_authority(&mut tx, actor, repo, kind == Kind::Secret).await.map_err(ValueError::Authority)?;
     if !allowed {
         return Err(ValueError::Denied);
     }

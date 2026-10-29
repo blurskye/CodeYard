@@ -253,7 +253,7 @@ native_operation!(crate::backend::db::postgres::issue_attributes::catalog,crate:
 native_operation!(crate::backend::db::postgres::issue_attributes::organization_catalog,crate::backend::db::sqlite::issue_attributes::organization_catalog,
     fn organization_catalog(pool:&DbPool,org:i64,actor:i64,kind:&str)->Result<Vec<Attribute>>);
 native_operation!(crate::backend::db::postgres::issue_attributes::configure_organization,crate::backend::db::sqlite::issue_attributes::configure_organization,
-    fn configure_organization(pool:&DbPool,org:i64,actor:i64,definition:&Definition)->Result<i64>);
+    fn configure_organization(pool:&DbPool,org:i64,actor:i64,definition:&Definition)->Result<Attribute>);
 native_operation!(crate::backend::db::postgres::issue_attributes::create_organization_field,crate::backend::db::sqlite::issue_attributes::create_organization_field,
     fn create_organization_field(pool:&DbPool,org:i64,actor:i64,definition:&Definition)->Result<Attribute>);
 native_operation!(crate::backend::db::postgres::issue_attributes::patch_organization_field,crate::backend::db::sqlite::issue_attributes::patch_organization_field,
