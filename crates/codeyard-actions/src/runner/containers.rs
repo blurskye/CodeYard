@@ -330,6 +330,15 @@ impl Podman {
         Ok((command, id))
     }
 
+    pub async fn cleanup_active_actions(&mut self) -> bool {
+        let prefix = format!("{}-action-", self.prefix);
+        let actions: Vec<_> = self.containers.iter().filter(|id| id.starts_with(&prefix)).cloned().collect();
+        for action in actions {
+            if !self.cleanup_action(&action).await { return false; }
+        }
+        true
+    }
+
     pub async fn cleanup_action(&mut self, id: &str) -> bool {
         let mut pending = Cleanup { url: self.url.clone(), containers: vec![id.into()], network: None, images: vec![] };
         if !pending.run().await { return false; }

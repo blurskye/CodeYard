@@ -62,10 +62,21 @@ pub(super) enum Stopped {
 /// Runs `command`, passing each output line to `on_line(line, is_stderr)`.
 /// Every return path terminates descendants left in the command's process group.
 pub(super) async fn run<F, Fut>(
-    mut command: Command,
+    command: Command,
     timeout: Duration,
     cancel: watch::Receiver<bool>,
     on_line: F,
+) -> Result<ExitStatus>
+where
+    F: Fn(String, bool) -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
+    run_with_grace(command, timeout, TERM_GRACE, cancel, on_line).await
+}
+
+pub(super) async fn run_with_grace<F, Fut>(
+    mut command: Command, timeout: Duration, grace: Duration,
+    cancel: watch::Receiver<bool>, on_line: F,
 ) -> Result<ExitStatus>
 where
     F: Fn(String, bool) -> Fut,
@@ -78,7 +89,7 @@ where
         return Err(Stopped::TimedOut.into());
     }
     let mut child = command.spawn()?;
-    let mut group = ProcessGroup::new(child.id());
+    let mut group = ProcessGroup::new(child.id(), grace);
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     // Output is read until the group is gone, also while a cancelled or timed-out command shuts
@@ -111,7 +122,7 @@ where
         let (_, status) = tokio::try_join!(&mut forwarding, async {
             let status = child.wait().await?;
             // Descendants can inherit the output pipes after the runner exits.
-            stop_process_group(&mut child, group.pid()).await?;
+            stop_process_group(&mut child, group.pid(), grace).await?;
             group.disarm();
             Ok::<_, anyhow::Error>(status)
         })?;
@@ -125,7 +136,7 @@ where
         _ = cancelled(cancel) => Err(Stopped::Cancelled.into()),
         Some(error) = error_rx.recv() => Err(error),
     };
-    let stopping = stop_process_group(&mut child, group.pid());
+    let stopping = stop_process_group(&mut child, group.pid(), grace);
     tokio::pin!(stopping);
     loop {
         tokio::select! {
@@ -153,11 +164,11 @@ pub(super) async fn cancelled(mut cancel: watch::Receiver<bool>) {
     }
 }
 
-struct ProcessGroup(Option<u32>);
+struct ProcessGroup(Option<u32>, Duration);
 
 impl ProcessGroup {
-    fn new(pid: Option<u32>) -> Self {
-        Self(pid)
+    fn new(pid: Option<u32>, grace: Duration) -> Self {
+        Self(pid, grace)
     }
 
     fn pid(&self) -> Option<u32> {
@@ -175,9 +186,10 @@ impl Drop for ProcessGroup {
             return;
         };
         let _ = signal_group(pid, libc::SIGTERM);
+        let grace = self.1;
         if std::thread::Builder::new()
             .name("ci-process-cleanup".into())
-            .spawn(move || stop_process_group_blocking(pid))
+            .spawn(move || stop_process_group_blocking(pid, grace))
             .is_err()
         {
             let _ = signal_group(pid, libc::SIGKILL);
@@ -185,7 +197,7 @@ impl Drop for ProcessGroup {
     }
 }
 
-async fn stop_process_group(child: &mut Child, pid: Option<u32>) -> Result<()> {
+async fn stop_process_group(child: &mut Child, pid: Option<u32>, grace: Duration) -> Result<()> {
     let Some(pid) = pid else {
         return Ok(());
     };
@@ -195,7 +207,7 @@ async fn stop_process_group(child: &mut Child, pid: Option<u32>) -> Result<()> {
     }
     signal_group(pid, libc::SIGTERM)
         .map_err(|_| anyhow::anyhow!("could not stop CI process group"))?;
-    if wait_for_group(child, pid, TERM_GRACE).await? {
+    if wait_for_group(child, pid, grace).await? {
         return Ok(());
     }
     signal_group(pid, libc::SIGKILL)
@@ -222,8 +234,8 @@ async fn wait_for_group(child: &mut Child, pid: u32, duration: Duration) -> Resu
     }
 }
 
-fn stop_process_group_blocking(pid: u32) {
-    let deadline = Instant::now() + TERM_GRACE;
+fn stop_process_group_blocking(pid: u32, grace: Duration) {
+    let deadline = Instant::now() + grace;
     while Instant::now() < deadline {
         if matches!(group_alive(pid), Ok(false)) {
             return;

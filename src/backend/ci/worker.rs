@@ -623,7 +623,8 @@ async fn run_workflows(
                     None => std::future::pending().await,
                 }
             };
-            let output = process::run(command, remaining, cancel.clone(), |line, stderr| {
+            let grace = if native { codeyard_actions::runner::SHUTDOWN_GRACE } else { Duration::from_secs(3) };
+            let output = process::run_with_grace(command, remaining, grace, cancel.clone(), |line, stderr| {
                 let completed = if native && !claim.github_tokens.completion_secret.is_empty() {
                     line.strip_prefix(&completion_prefix)
                         .map(|job| format!("{workflow}:{job}"))

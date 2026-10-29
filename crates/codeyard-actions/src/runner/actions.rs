@@ -599,8 +599,8 @@ impl Job {
             "Post action started: {}",
             post.directory.display()
         ));
-        // Cleanup handlers get their own cancellation grace period after a job timeout.
-        let deadline = Instant::now() + Duration::from_secs(60);
+        // Explicit cleanup steps and every post handler share one job cleanup deadline.
+        let deadline = self.deadline;
         let original = self.cancel.clone();
         let (_tx, cancel) = watch::channel(false);
         self.cancel = cancel;

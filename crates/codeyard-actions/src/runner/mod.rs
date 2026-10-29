@@ -395,6 +395,9 @@ impl JobTokens {
 }
 
 pub const CANCELLED_EXIT_CODE: i32 = 130;
+pub const CLEANUP_GRACE: Duration = Duration::from_secs(60);
+/// Includes the shared cleanup grace, container removal, and final process reaping.
+pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(95);
 
 #[derive(Debug, thiserror::Error)]
 #[error("The workflow was cancelled")]
@@ -1245,6 +1248,7 @@ struct Job {
     anonymous_action: usize,
     command_stopped: Option<String>,
     public_step: u32,
+    next_step: usize,
     active_files: PathBuf,
     posts: Vec<actions::Post>,
     matchers: matchers::Matchers,
@@ -1309,6 +1313,7 @@ async fn run_job(
             anonymous_action: 0,
             command_stopped: None,
             public_step:1,
+            next_step: 0,
             active_files: PathBuf::new(),
             posts: Vec::new(),
             matchers: matchers::Matchers::default(),
@@ -1324,7 +1329,24 @@ async fn run_job(
         job.sync_status();
         if result.is_err(){job.log.interrupt_step(interrupted.unwrap_or(Conclusion::Failure));}
         let mut result = result;
+        job.deadline = Instant::now() + CLEANUP_GRACE;
+        let (_cleanup_tx, cleanup_cancel) = watch::channel(false);
+        job.cancel = cleanup_cancel;
+        if interrupted.is_some() && !job.podman.cleanup_active_actions().await {
+            containment.store(true, std::sync::atomic::Ordering::Release);
+        }
+        if interrupted.is_some() && !containment.load(std::sync::atomic::Ordering::Acquire) {
+            let remaining = job.plan.steps[job.next_step..].to_vec();
+            let mut outputs = BTreeMap::new();
+            for step in remaining {
+                if Instant::now() >= job.deadline { break; }
+                job.public_step += 1;
+                let deadline = job.deadline;
+                let _ = tokio::time::timeout_at(deadline.into(), job.step(&step, 0, &mut outputs)).await;
+            }
+        }
         while let Some(post) = job.posts.pop() {
+            if Instant::now() >= job.deadline || containment.load(std::sync::atomic::Ordering::Acquire) { break; }
             job.sync_status();
             job.public_step+=1;
             let number=job.public_step;
@@ -1492,7 +1514,8 @@ impl Job {
         self.log.finish_step(1, Conclusion::Success, setup);
         let steps = self.plan.steps.clone();
         let mut outputs = BTreeMap::new();
-        for step in &steps {
+        for (index, step) in steps.iter().enumerate() {
+            self.next_step = index + 1;
             anyhow::ensure!(!self.options.containment_lost.load(std::sync::atomic::Ordering::Acquire),
                 "Container cleanup failed; refusing further execution");
             self.public_step += 1;
@@ -1623,7 +1646,7 @@ impl Job {
             if depth > 20 {
                 bail!("Composite actions nested more than 20 levels");
             }
-            self.status.cancelled = *self.cancel.borrow();
+            self.status.cancelled |= *self.cancel.borrow();
             self.matchers.reset();
             self.prepare_files()?;
             let action = match &step.id {
@@ -1690,7 +1713,7 @@ impl Job {
                         false
                     }
                 };
-                outcome = if self.status.cancelled || *self.cancel.borrow() {
+                outcome = if *self.cancel.borrow() {
                     "cancelled"
                 } else if ok {
                     "success"
