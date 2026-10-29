@@ -1096,7 +1096,7 @@ pub async fn review_request_origins(
     pool: &PgPool,
     pull: i64,
 ) -> Result<Vec<crate::backend::db::pull_requests::reviews::ReviewRequestOrigin>> {
-    Ok(sqlx::query_as("SELECT user_id,NULL::bigint AS team_id,as_code_owner FROM pr_reviewers WHERE pull_request_id=$1 UNION ALL SELECT NULL::bigint,team_id,as_code_owner FROM pr_team_reviewers WHERE pull_request_id=$1").bind(pull).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT user_id,team_id,as_code_owner FROM (SELECT r.user_id,NULL::bigint AS team_id,r.as_code_owner,0 AS kind,u.username AS sort_name FROM pr_reviewers r JOIN users u ON u.id=r.user_id WHERE r.pull_request_id=$1 UNION ALL SELECT NULL::bigint,r.team_id,r.as_code_owner,1,t.name FROM pr_team_reviewers r JOIN teams t ON t.id=r.team_id WHERE r.pull_request_id=$1) requests ORDER BY kind,sort_name,COALESCE(user_id,team_id)").bind(pull).fetch_all(pool).await?)
 }
 
 pub async fn list_pull_request_reviewers(pool: &PgPool, pr_id: i64) -> Result<Vec<User>> {
