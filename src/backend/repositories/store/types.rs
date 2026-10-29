@@ -1,6 +1,6 @@
 //! The values that cross the store boundary: Git sessions, blob reads, merge requests and
 //! the size limits that apply to them.
-use crate::backend::db::models::Repository;
+use crate::backend::db::{self, models::Repository};
 use crate::backend::git::{MAX_CI_WORKFLOW_BYTES, MAX_WORKFLOW_DIRECTORY_ENTRIES};
 use serde::{Deserialize, Serialize};
 
@@ -230,9 +230,7 @@ pub struct BranchMergePublication {
     pub head_branch: Option<String>,
     pub head: String,
     pub result: String,
-    /// The token the request came with, for the workflows permission; `None` for a session.
-    #[serde(default)]
-    pub token: Option<i64>,
+    pub authority: db::users::accounts::AccountActor,
 }
 
 /// One branch that a restack moves: the commit it must still be at, and the commit it moves to.

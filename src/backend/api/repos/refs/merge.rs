@@ -49,7 +49,10 @@ pub(super) async fn merge_json(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        actor.id,
+        crate::backend::db::users::accounts::AccountActor::Session {
+            user_id: actor.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         repo,
         &owner,
         BranchMerge {
@@ -58,7 +61,6 @@ pub(super) async fn merge_json(
             message: input.message.as_deref(),
             expected_base: input.expected_base.as_deref(),
             expected_head: input.expected_head.as_deref(),
-            token: None,
         },
     )
     .await
@@ -225,11 +227,12 @@ async fn submit(
             &ctx.state.pool,
             ctx.state.cluster.as_ref(),
             &ctx.state.ci_runs,
-            ctx.require_user()
-                .map_err(|_| {
+            crate::backend::db::users::accounts::AccountActor::Session {
+                user_id: ctx.require_user().map_err(|_| {
                     RefError::Access(crate::backend::repositories::access::AccessError::WriteDenied)
-                })?
-                .id,
+                })?.id,
+                session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+            },
             loaded.repository.id,
             &loaded.chrome.owner,
             BranchMerge {
@@ -238,7 +241,6 @@ async fn submit(
                 message,
                 expected_base: Some(expected_base),
                 expected_head: Some(expected_head),
-                token: None,
             },
         )
         .await

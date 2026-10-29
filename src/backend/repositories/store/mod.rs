@@ -2065,7 +2065,11 @@ impl RepoStore {
                         &publication.result,
                         MergeMethod::Merge,
                         WriteVia::Direct,
-                        publication.token,
+                        match &publication.authority {
+                            db::users::accounts::AccountActor::Token { token_id, .. } => Some(*token_id),
+                            _ => None,
+                        },
+                        Some(&publication.authority),
                     )
                     .await
             }
@@ -2116,6 +2120,7 @@ impl RepoStore {
                         method,
                         WriteVia::Merge,
                         token,
+                        None,
                     )
                     .await
             }
@@ -2175,6 +2180,7 @@ impl RepoStore {
                         MergeMethod::Merge,
                         WriteVia::Merge,
                         token,
+                        None,
                     )
                     .await
             }

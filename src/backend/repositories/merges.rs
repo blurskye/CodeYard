@@ -21,9 +21,6 @@ pub struct BranchMerge<'a> {
     pub message: Option<&'a str>,
     pub expected_base: Option<&'a str>,
     pub expected_head: Option<&'a str>,
-    /// The token the request came with, so publication can check its workflows permission.
-    /// `None` for a browser session.
-    pub token: Option<i64>,
 }
 
 fn moved() -> RefError {
@@ -38,11 +35,13 @@ pub async fn merge_branch(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repo_id: i64,
     owner: &str,
     input: BranchMerge<'_>,
 ) -> Result<Option<CommitInfo>, RefError> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let (repository, user) = access::check_write(pool, repo_id, actor)
         .await
         .map_err(RefError::Access)?;
@@ -140,7 +139,7 @@ pub async fn merge_branch(
                 head_branch,
                 head,
                 result: result.clone(),
-                token: input.token,
+                authority,
             },
         )
         .await

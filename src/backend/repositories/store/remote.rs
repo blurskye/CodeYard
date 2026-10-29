@@ -371,7 +371,7 @@ impl RemoteStore {
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
         drop(output);
         let lock = crate::backend::git::locks::lock(destination).await;
-        LocalStore::checkout_pack(destination, sha, pack, permit, lock).await
+        LocalStore::checkout_pack(destination, sha, &self.disk_path, pack, permit, lock).await
     }
 }
 

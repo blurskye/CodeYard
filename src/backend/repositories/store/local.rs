@@ -1290,12 +1290,14 @@ impl LocalStore {
     pub(super) async fn checkout_pack(
         destination: &Path,
         sha: &str,
+        source: &str,
         pack: tempfile::NamedTempFile,
         permit: tokio::sync::OwnedSemaphorePermit,
         lock: tokio::sync::OwnedMutexGuard<()>,
     ) -> Result<(), RepoError> {
         let destination = destination.to_owned();
         let sha = sha.to_owned();
+        let source = source.to_owned();
         tokio::spawn(async move {
         let (_permit, _lock) = (permit, lock);
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -1307,7 +1309,7 @@ impl LocalStore {
             return Err(unavailable("Invalid upload-pack response"));
         }
         let result = git::repository::materialize_checkout(
-            &destination, &sha, "codeyard", Some(input),
+            &destination, &sha, &source, Some(input),
         ).await.map_err(RepoError::from);
         if result.is_err() {
             let _ = tokio::fs::remove_dir_all(&destination).await;
@@ -2272,6 +2274,7 @@ impl LocalStore {
         method: MergeMethod,
         via: WriteVia,
         token: Option<i64>,
+        credential: Option<&db::users::accounts::AccountActor>,
     ) -> Result<(), RepoError> {
         self.publish_merge_authorized(
             pool,
@@ -2285,6 +2288,7 @@ impl LocalStore {
             via,
             token,
             None,
+            credential,
         )
         .await
     }
@@ -2312,6 +2316,7 @@ impl LocalStore {
             WriteVia::Merge,
             Some(request.token_id),
             Some(request),
+            None,
         )
         .await
     }
@@ -2332,6 +2337,7 @@ impl LocalStore {
         via: WriteVia,
         token: Option<i64>,
         authority: Option<&AsyncMergePublication>,
+        credential: Option<&db::users::accounts::AccountActor>,
     ) -> Result<(), RepoError> {
         let publication = git::locks::publication(self.path())
             .await
@@ -2403,6 +2409,10 @@ impl LocalStore {
             {
                 return Err(RepoError::write_denied());
             }
+        }
+        if let Some(credential) = credential {
+            if credential.user_id() != actor { return Err(RepoError::write_denied()); }
+            crate::backend::repositories::access::check_publication_actor(pool, credential, &repository).await?;
         }
         publication
             .scope(git::publish_merge(

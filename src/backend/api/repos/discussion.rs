@@ -1129,6 +1129,9 @@ pub(crate) async fn render_detail(
         }
         _ => Vec::new(),
     };
+    super::access::check_repo_read_access(&ctx.state.pool, &repo.record, &ctx.headers)
+        .await
+        .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     Ok(with_status(
         ctx.page_model(
             &format!("{} #{}", value.title, value.number),

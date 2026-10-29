@@ -38,6 +38,9 @@ impl std::fmt::Display for StorageError {
 impl std::error::Error for StorageError {}
 
 pub(crate) fn storage_error(error: anyhow::Error) -> StorageError {
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return StorageError { kind: LifecycleFailure::Denied, message: "A live unrestricted account credential is required." };
+    }
     if let Some(refusal) = error.downcast_ref::<db::organizations::properties::Refusal>() {
         return match refusal {
             db::organizations::properties::Refusal::Invalid { message, .. } => StorageError {

@@ -549,7 +549,7 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
         let path = destination.clone();
         let task = tokio::spawn(async move {
             entered.send(()).unwrap();
-            super::local::LocalStore::checkout_pack(&path, &"1".repeat(40), pack, permit, lock)
+            super::local::LocalStore::checkout_pack(&path, &"1".repeat(40), "/repository.git", pack, permit, lock)
                 .await
         });
         queued.await.unwrap();
