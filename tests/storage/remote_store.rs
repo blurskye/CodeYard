@@ -379,13 +379,13 @@ async fn compare_reads(remote: &RepoStore, local: &RepoStore, sha: &str) {
         local.commit_diff(sha).await.unwrap(),
     );
     let parent = local.commit(sha).await.unwrap().parents[0].clone();
-    let (count, commits) = remote.pull_request_commits(&parent, sha, 250).await.unwrap();
+    let (count, commits) = remote.pull_request_commits(&parent, sha, 0, 250).await.unwrap();
     assert_eq!(count, 1);
     assert_eq!(commits.len(), 1);
     assert_eq!(commits[0].sha, sha);
     equal(
         (count, commits),
-        local.pull_request_commits(&parent, sha, 250).await.unwrap(),
+        local.pull_request_commits(&parent, sha, 0, 250).await.unwrap(),
     );
     equal(
         remote.diff(sha, "main").await.unwrap(),

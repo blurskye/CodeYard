@@ -237,6 +237,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::CommitsBetween {
                 base_ref: "main".into(),
                 head_ref: "main".into(),
+                offset: 0,
                 limit: 10,
                 raw_json: false,
                 pull_request: false,

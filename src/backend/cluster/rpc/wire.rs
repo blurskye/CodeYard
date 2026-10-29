@@ -196,8 +196,10 @@ pub enum Operation {
     CommitsBetween {
         base_ref: String,
         head_ref: String,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        offset: usize,
         limit: usize,
-        /// Include the full count and GitHub's first 250 commits, oldest first.
+        /// Include the full count and the requested window of GitHub's oldest 250 commits.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         pull_request: bool,
         /// The caller can decode JSON from the raw response frame.

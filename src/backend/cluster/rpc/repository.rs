@@ -770,12 +770,13 @@ impl RpcHandler {
             Operation::CommitsBetween {
                 base_ref,
                 head_ref,
+                offset,
                 limit,
                 raw_json,
                 pull_request,
             } => {
                 if pull_request {
-                    let commits = store.pull_request_commits(&base_ref, &head_ref, limit).await?;
+                    let commits = store.pull_request_commits(&base_ref, &head_ref, offset, limit).await?;
                     encode_json(&commits, raw_json, &mut output)?
                 } else {
                     let commits = store.commits_between(&base_ref, &head_ref, limit).await?;

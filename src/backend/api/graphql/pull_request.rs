@@ -62,18 +62,15 @@ pub(super) async fn resolve(
         }
         "commits" => {
             let (count, _) = store
-                .pull_request_commits(pull.diff_base(), &pull.head_sha, 0)
+                .pull_request_commits(pull.diff_base(), &pull.head_sha, 0, 0)
                 .await
                 .map_err(unavailable)?;
             let page = connection::Page::new(args, count as i64)?;
             let (offset, limit) = (page.offset as usize, page.limit as usize);
-            let rows = if offset.saturating_add(limit) <= 250 {
-                store.pull_request_commits(pull.diff_base(), &pull.head_sha, offset.saturating_add(limit)).await.map_err(unavailable)?.1
-            } else { Vec::new() };
-            // The store lists the oldest 250 commits. A page past them, such as `last: 1` for
-            // the head commit, reads from the newest end of the range instead.
-            let window: Vec<_> = if offset + limit <= rows.len() {
-                rows.into_iter().skip(offset).take(limit).collect()
+            // The store pages within the oldest 250 commits. A page past them, such as
+            // `last: 1` for the head commit, reads from the newest end instead.
+            let window: Vec<_> = if offset.saturating_add(limit) <= 250 {
+                store.pull_request_commits(pull.diff_base(), &pull.head_sha, offset, limit).await.map_err(unavailable)?.1
             } else {
                 let newest = (count as usize).saturating_sub(offset);
                 if newest > 250 {
