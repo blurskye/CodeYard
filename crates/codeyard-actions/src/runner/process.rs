@@ -86,12 +86,29 @@ pub(super) async fn output(
         .stderr(std::process::Stdio::piped());
     #[cfg(unix)]
     command.process_group(0);
-    let child = command.spawn().context("Unable to start process")?;
-    let _group = ProcessGroup(child.id());
-    tokio::time::timeout(timeout, child.wait_with_output())
-        .await
-        .context("The operation has timed out.")?
-        .map_err(Into::into)
+    let mut child = command.spawn().context("Unable to start process")?;
+    let mut group = ProcessGroup(child.id());
+    let stdout = child.stdout.take().context("No stdout")?;
+    let stderr = child.stderr.take().context("No stderr")?;
+    async fn capture(reader: impl AsyncRead + Unpin) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        reader.take(1024 * 1024 + 1).read_to_end(&mut bytes).await?;
+        anyhow::ensure!(bytes.len() <= 1024 * 1024, "Process output exceeds the capture limit");
+        Ok(bytes)
+    }
+    let result = tokio::time::timeout(timeout, async {
+        let (status, stdout, stderr) = tokio::try_join!(
+            async { child.wait().await.map_err(anyhow::Error::from) },
+            capture(stdout), capture(stderr),
+        )?;
+        Ok::<_, anyhow::Error>(std::process::Output { status, stdout, stderr })
+    }).await.context("The operation has timed out.").and_then(|result| result);
+    group.terminate();
+    if result.is_err() {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+    }
+    result
 }
 
 pub(super) async fn execute(

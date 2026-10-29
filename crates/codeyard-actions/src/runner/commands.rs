@@ -155,7 +155,7 @@ impl Progress {
     }
 }
 /// The longest prefix of `text` within `max` bytes, cut on a character boundary.
-fn bounded(text: &str, max: usize) -> String {
+pub(super) fn bounded(text: &str, max: usize) -> String {
     let mut end = text.len().min(max);
     while !text.is_char_boundary(end) {
         end -= 1;

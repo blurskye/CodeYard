@@ -67,7 +67,7 @@ impl Matcher {
             "Matcher owner must not be empty"
         );
         ensure!(
-            severity(&definition.severity).is_some(),
+            severity(&definition.severity).is_some() && definition.from_path.len() <= 1024,
             "Invalid matcher severity"
         );
         ensure!(
@@ -116,28 +116,36 @@ impl Matcher {
             let running = if index == 0 {
                 Some(Issue::default())
             } else {
-                self.state[index - 1].clone()
+                self.state[index - 1].take()
             };
+            let repeated_header = running.clone();
             let Some(mut issue) = running else {
                 continue;
             };
             let (regex, pattern) = &self.patterns[index];
             if let Some(captures) = regex.captures(line)? {
+                let mut oversized = false;
                 for (field, group) in &pattern.groups {
-                    issue.0.entry(field.clone()).or_insert_with(|| {
-                        captures
-                            .get(*group)
-                            .map_or("", |value| value.as_str())
-                            .to_owned()
-                    });
+                    let value = captures.get(*group).map_or("", |value| value.as_str());
+                    let limit = match field.as_str() {
+                        "message" => 1536,
+                        "file" | "code" => 256,
+                        "fromPath" => 1024,
+                        _ => 32,
+                    };
+                    if value.len() > limit {
+                        oversized = true;
+                        break;
+                    }
+                    issue.0.entry(field.clone()).or_insert_with(|| value.to_owned());
+                }
+                if oversized {
+                    self.state.fill(None);
+                    continue;
                 }
                 if index + 1 == self.patterns.len() {
                     let repeat = pattern.repeat;
-                    let running = if index > 0 {
-                        self.state[index - 1].clone()
-                    } else {
-                        None
-                    };
+                    let running = repeated_header;
                     self.state.fill(None);
                     if repeat {
                         self.state[index - 1] = running;
@@ -177,25 +185,23 @@ impl Matchers {
         let mut bytes = Vec::new();
         file.take(1024 * 1024 + 1).read_to_end(&mut bytes)?;
         ensure!(bytes.len() <= 1024 * 1024, "Matcher file is too large");
-        let config: Config = serde_json::from_slice(&bytes).context("Invalid matcher JSON")?;
+        let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+        let config: Config = serde_json::from_slice(bytes).context("Invalid matcher JSON")?;
+        ensure!(config.matchers.len() <= 64, "Too many problem matchers");
         let mut owners = BTreeSet::new();
-        let mut added = Vec::new();
-        for definition in config.matchers {
-            ensure!(
-                owners.insert(definition.owner.clone()),
-                "Duplicate matcher owner"
-            );
-            added.push(Matcher::new(definition)?);
+        for definition in &config.matchers {
+            ensure!(owners.insert(definition.owner.clone()), "Duplicate matcher owner");
         }
         ensure!(
             self.0
                 .iter()
                 .filter(|matcher| !owners.contains(&matcher.owner))
                 .count()
-                + added.len()
+                + config.matchers.len()
                 <= 64,
             "Too many problem matchers"
         );
+        let added = config.matchers.into_iter().map(Matcher::new).collect::<Result<Vec<_>>>()?;
         self.0.retain(|matcher| !owners.contains(&matcher.owner));
         self.0.extend(added);
         Ok(())

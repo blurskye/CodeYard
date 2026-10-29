@@ -18,7 +18,6 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
@@ -28,7 +27,6 @@ use tokio::time::{sleep, timeout, timeout_at, Instant};
 
 pub const WORKSPACE: &str = "C:/codeyard/workspace";
 const GUEST_TEMP: &str = "C:/codeyard/tmp";
-static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Platform {
@@ -116,41 +114,15 @@ pub enum Stream {
 }
 
 /// Owns all per-job files. Construct this before the first cancellable operation.
-struct JobFiles(PathBuf);
+struct JobFiles(tempfile::TempDir);
 
 impl JobFiles {
     fn create() -> Result<Self> {
-        loop {
-            let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-            let path =
-                std::env::temp_dir().join(format!("codeyard-vm-{}-{id}", std::process::id()));
-            let mut builder = fs::DirBuilder::new();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::DirBuilderExt;
-                builder.mode(0o700);
-            }
-            match builder.create(&path) {
-                Ok(()) => return Ok(Self(path)),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(error).context("Creating VM job directory"),
-            }
-        }
+        Ok(Self(crate::fs::private_tempdir("codeyard-vm-", None)?))
     }
 
     fn path(&self, name: &str) -> PathBuf {
-        self.0.join(name)
-    }
-}
-
-impl Drop for JobFiles {
-    fn drop(&mut self) {
-        if let Err(error) = fs::remove_dir_all(&self.0) {
-            eprintln!(
-                "##[warning]Could not remove VM job directory {}: {error}",
-                self.0.display()
-            );
-        }
+        self.0.path().join(name)
     }
 }
 
@@ -617,7 +589,7 @@ mod tests {
         let mut directory = PathBuf::new();
         let result: Result<()> = (|| {
             let files = JobFiles::create()?;
-            directory = files.0.clone();
+            directory = files.0.path().to_path_buf();
             for name in ["overlay.qcow2", "id_ed25519", "known_hosts", "seed.iso"] {
                 fs::write(files.path(name), "secret")?;
             }
@@ -630,7 +602,7 @@ mod tests {
     #[tokio::test]
     async fn cancellation_kills_qemu_and_removes_files() {
         let files = JobFiles::create().unwrap();
-        let directory = files.0.clone();
+        let directory = files.0.path().to_path_buf();
         fs::write(files.path("overlay.qcow2"), "overlay").unwrap();
         let child = Command::new("sleep")
             .arg("60")
@@ -668,7 +640,7 @@ mod tests {
     #[tokio::test]
     async fn stop_requests_acpi_and_cleans_files() {
         let files = JobFiles::create().unwrap();
-        let directory = files.0.clone();
+        let directory = files.0.path().to_path_buf();
         let result = tempfile::tempdir().unwrap();
         let received = result.path().join("monitor-command");
         let child = Command::new("sh")
@@ -697,7 +669,7 @@ mod tests {
     #[tokio::test]
     async fn stop_kills_an_unresponsive_guest() {
         let files = JobFiles::create().unwrap();
-        let directory = files.0.clone();
+        let directory = files.0.path().to_path_buf();
         let child = Command::new("sleep")
             .arg("60")
             .stdin(Stdio::piped())
@@ -765,7 +737,7 @@ mod tests {
         assert!(fs::read_to_string(destination.path().join("result.txt"))
             .unwrap()
             .contains("copied back"));
-        let files = vm.files.0.clone();
+        let files = vm.files.0.path().to_path_buf();
         vm.stop().await.unwrap();
         assert!(!files.exists());
     }

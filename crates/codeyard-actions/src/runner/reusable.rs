@@ -157,22 +157,22 @@ pub(super) fn contexts(
     if let Some(supplied) = call.get("secrets").and_then(Yaml::as_mapping) {
         for (key, value) in supplied {
             ensure!(
-                declared.is_some_and(|values| values.contains_key(key)),
+                declared.is_some_and(|values| values.keys().any(|name| name.as_str().zip(key.as_str()).is_some_and(|(a, b)| a.eq_ignore_ascii_case(b)))),
                 "Unknown workflow_call secret"
             );
-            secrets.insert(
-                key.as_str().context("Invalid secret name")?.into(),
-                evaluate(value, caller)?,
-            );
+            let value = evaluate(value, caller)?;
+            if !masker.add_requested(&value.to_text()) {
+                masker.hide_all();
+                anyhow::bail!("Called workflow secrets exceed the masking budget");
+            }
+            secrets.insert(key.as_str().context("Invalid secret name")?.into(), value);
         }
     }
     for (key, spec) in declared.into_iter().flatten() {
         let name = key.as_str().context("Invalid secret name")?;
         ensure!(
             spec.get("required").and_then(Yaml::as_bool) != Some(true)
-                || secrets
-                    .get(name)
-                    .is_some_and(|value| !value.to_text().is_empty()),
+                || secrets.iter().any(|(key, value)| key.eq_ignore_ascii_case(name) && !value.to_text().is_empty()),
             "Missing required workflow_call secret: {name}"
         );
     }
@@ -180,11 +180,6 @@ pub(super) fn contexts(
         if let Some(token) = values.get("GITHUB_TOKEN") {
             secrets.insert("GITHUB_TOKEN".into(), token.clone());
         }
-    }
-    // An evaluated secret can be part of a larger secret, such as a token inside JSON. Register
-    // each value so the called workflow's output masks it.
-    for value in secrets.values() {
-        masker.add(&value.to_text());
     }
     let mut contexts = caller.clone();
     contexts

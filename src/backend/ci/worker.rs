@@ -558,6 +558,22 @@ async fn run_workflows(
             tokio::fs::copy(&definition, target).await?;
         }
     }
+    let mut runtime_env = Vec::new();
+    if !native && claim.github_tokens.oidc_jobs.contains("act") {
+        runtime_env.extend([
+            ("ACTIONS_ID_TOKEN_REQUEST_URL".to_owned(), claim.github_tokens.oidc_url.clone()),
+            ("ACTIONS_ID_TOKEN_REQUEST_TOKEN".to_owned(), claim.github_tokens.act.clone()),
+        ]);
+    }
+    if !claim.runtime.token.is_empty() {
+        runtime_env.extend([
+            ("ACTIONS_RUNTIME_TOKEN".to_owned(), claim.runtime.token.clone()),
+            ("ACTIONS_RESULTS_URL".to_owned(), claim.runtime.results_url.clone()),
+            ("ACTIONS_CACHE_URL".to_owned(), claim.runtime.results_url.clone()),
+            ("ACTIONS_CACHE_SERVICE_V2".to_owned(), "True".to_owned()),
+        ]);
+    }
+    let runtime_file = workspace.write_values("runtime.env", &runtime_env, !native)?;
     for workflow in run.workflow_path.split(',').filter(|path| !path.is_empty()) {
         let definition = workspace.definition(workflow);
         let mut command = act_command(
@@ -569,6 +585,9 @@ async fn run_workflows(
             secret_file.as_deref(),
             podman_label.as_deref(),
         );
+        if let Some(file) = &runtime_file {
+            command.arg("--env-file").arg(file);
+        }
         if let Some(file) = &variable_file {
             command.arg("--var-file").arg(file);
         }
@@ -902,30 +921,11 @@ fn act_command(
         .env("GITSERV_REPO_NAME", &claim.repository_name)
         .env("GITSERV_BRANCH", &run.branch)
         .env("GITSERV_HEAD_SHA", run.head_sha.as_deref().unwrap_or(""));
-    if !native && claim.github_tokens.oidc_jobs.contains("act") {
-        for (name, value) in [
-            (
-                "ACTIONS_ID_TOKEN_REQUEST_URL",
-                &claim.github_tokens.oidc_url,
-            ),
-            ("ACTIONS_ID_TOKEN_REQUEST_TOKEN", &claim.github_tokens.act),
-        ] {
-            command.arg("--env").arg(format!("{name}={value}"));
-        }
-    }
     if !claim.runtime.token.is_empty() {
         // act derives RESULTS_URL from its parent's RUNTIME_URL after loading --env.
         command
             .env("ACTIONS_RUNTIME_URL", &claim.runtime.results_url)
             .env("ACTIONS_RUNTIME_TOKEN", &claim.runtime.token);
-        for (name, value) in [
-            ("ACTIONS_RUNTIME_TOKEN", claim.runtime.token.as_str()),
-            ("ACTIONS_RESULTS_URL", claim.runtime.results_url.as_str()),
-            ("ACTIONS_CACHE_URL", claim.runtime.results_url.as_str()),
-            ("ACTIONS_CACHE_SERVICE_V2", "True"),
-        ] {
-            command.arg("--env").arg(format!("{name}={value}"));
-        }
     }
     // Workflow URLs come from the core, so a runner without PUBLIC_URL still names the forge.
     let origin = if claim.forge_origin.is_empty() {
@@ -1551,17 +1551,10 @@ impl Workspace {
     ) -> Result<Self> {
         tokio::fs::create_dir_all(directory).await?;
         let workspace = Self {
-            temp: Some(tempfile::tempdir_in(directory).context("could not create a CI workspace")?),
+            temp: Some(codeyard_actions::fs::private_tempdir("workspace-", Some(directory)).context("could not create a CI workspace")?),
             cleanups,
             cleaned: Some(cleaned),
         };
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            tokio::fs::set_permissions(workspace.root(), std::fs::Permissions::from_mode(0o700))
-                .await
-                .context("could not secure the CI workspace")?;
-        }
         for dir in ["home/.docker", "definitions"] {
             tokio::fs::create_dir_all(workspace.root().join(dir)).await?;
         }
@@ -1885,7 +1878,7 @@ fn native_dotenv_value(value: &str) -> String {
         match character {
             '\\' => encoded.push_str("\\\\"),
             '\n' => encoded.push_str("\\n"),
-            '\r' => encoded.push_str("\\r"),
+            '\r' => encoded.push('\r'),
             '"' => encoded.push_str("\\\""),
             '$' => encoded.push_str("\\$"),
             _ => encoded.push(character),

@@ -147,6 +147,8 @@ impl Podman {
         self.containers.push(id.clone());
         let mut args = vec!["create".into(), "--name".into(), id.clone()];
         args.extend(self.options.clone());
+        let auth_directory = container.credentials.as_ref()
+            .map(|_| crate::fs::private_tempdir("codeyard-registry-", None)).transpose()?;
         if let Some((username, password)) = &container.credentials {
             let first = container.image.split('/').next().unwrap_or("docker.io");
             let registry = if container.image.contains('/')
@@ -158,7 +160,7 @@ impl Podman {
             };
             let auth =
                 base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
-            let path = temp.join(format!("registry-{name}.json"));
+            let path = auth_directory.as_ref().expect("registry directory exists").path().join("auth.json");
             std::fs::write(
                 &path,
                 serde_json::to_vec(&serde_json::json!({"auths": {registry: {"auth": auth}}}))?,
@@ -180,8 +182,8 @@ impl Podman {
                 name.into(),
             ]);
         }
-        for (key, value) in &container.env {
-            args.extend(["--env".into(), format!("{key}={value}")]);
+        for key in container.env.keys() {
+            args.extend(["--env".into(), key.clone()]);
         }
         for port in &container.ports {
             args.extend(["--publish".into(), port.clone()]);
@@ -207,7 +209,13 @@ impl Podman {
         if job {
             args.extend(["-f".into(), "/dev/null".into()]);
         }
-        self.output(&args).await?;
+        let mut command = self.command();
+        command.args(&args).envs(&container.env);
+        let output = super::process::output(&mut command, Duration::from_secs(120)).await?;
+        if !output.status.success() {
+            bail!("Podman: {}", String::from_utf8_lossy(&output.stderr).trim());
+        }
+        drop(auth_directory);
         Ok(id)
     }
 
@@ -221,7 +229,7 @@ impl Podman {
         let mut command = self.command();
         command.args(["exec", "--workdir"]).arg(directory);
         for (key, value) in env {
-            command.arg("--env").arg(format!("{key}={value}"));
+            command.arg("--env").arg(key).env(key, value);
         }
         if let Some(job) = &self.job {
             command.arg(job);
@@ -294,7 +302,7 @@ impl Podman {
         }
         command.arg("--workdir").arg(workspace);
         for (key, value) in env {
-            command.arg("--env").arg(format!("{key}={value}"));
+            command.arg("--env").arg(key).env(key, value);
         }
         if let Some(entrypoint) = entrypoint {
             command.args(["--entrypoint", entrypoint]);

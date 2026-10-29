@@ -41,6 +41,8 @@ pub struct Options {
     pub directory: PathBuf,
     #[arg(long = "env")]
     pub env: Vec<String>,
+    #[arg(long)]
+    pub env_file: Option<PathBuf>,
     #[arg(long, default_value = "codeyard")]
     pub actor: String,
     #[arg(long)]
@@ -492,7 +494,7 @@ async fn run_workflow(
     } else {
         serde_json::json!({})
     };
-    let mut env = BTreeMap::new();
+    let mut env = environment_file(options.env_file.as_deref())?;
     for pair in &options.env {
         let (key, value) = pair.split_once('=').context("--env requires KEY=VALUE")?;
         env.insert(key.to_owned(), value.to_owned());
@@ -761,7 +763,7 @@ impl WorkflowRun {
                     workflow::expand(&workflow, &id, &contexts, status)?
                 };
                 // A matrix whose excludes remove every combination runs nothing, like a skipped job.
-                let Some(plans) = expanded.filter(|plans| !plans.is_empty()) else {
+                let Some(mut plans) = expanded.filter(|plans| !plans.is_empty()) else {
                     if let Some(progress) = tokens.progress(&id, 0) {
                         let name = raw
                             .get("jobs")
@@ -775,8 +777,8 @@ impl WorkflowRun {
                             "job metadata exceeds the progress limit"
                         );
                         progress.emit(Update::Queued {
-                            workflow_name: masker.mask(&workflow_name),
-                            name: masker.mask(name),
+                            workflow_name: commands::bounded(&masker.mask(&workflow_name), 1024),
+                            name: commands::bounded(&masker.mask(name), 1024),
                             labels: vec![],
                             matrix: None,
                         });
@@ -823,6 +825,12 @@ impl WorkflowRun {
                         );
                     }
                 }
+                for job in &mut plans {
+                    job.name = masker.mask(&job.name);
+                    if job.name.chars().count() > 100 {
+                        job.name = job.name.chars().take(97).collect::<String>() + "...";
+                    }
+                }
                 for (index, job) in plans.iter().enumerate() {
                     if variants.is_some_and(|variants| !variants.contains(&(index as u32))) {
                         continue;
@@ -835,8 +843,8 @@ impl WorkflowRun {
                             "job metadata exceeds the progress limit"
                         );
                         progress.emit(Update::Queued {
-                            workflow_name: masker.mask(&workflow_name),
-                            name: masker.mask(&job.name),
+                            workflow_name: commands::bounded(&masker.mask(&workflow_name), 1024),
+                            name: job.name.clone(),
                             labels: job.runs_on.iter().map(|label| masker.mask(label)).collect(),
                             matrix: matrix_metadata(&job.matrix, masker),
                         });
@@ -1216,9 +1224,7 @@ async fn run_job(
     let cancelled = cancel.clone();
     let mut interrupted = None;
     let result = async {
-        let temp = tempfile::Builder::new()
-            .prefix("codeyard-actions-")
-            .tempdir()?;
+        let temp = crate::fs::private_tempdir("codeyard-actions-", None)?;
         let prefix = format!(
             "codeyard-{}-{index}-{}",
             std::process::id(),

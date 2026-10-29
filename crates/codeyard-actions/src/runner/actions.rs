@@ -264,7 +264,21 @@ impl Job {
             .map(|name| directory.join(name))
             .find(|path| path.exists());
         let metadata: Metadata = match file {
-            Some(file) => serde_yaml::from_str(&std::fs::read_to_string(file)?)?,
+            Some(file) => until_deadline(deadline, async move {
+                tokio::task::spawn_blocking(move || -> Result<Metadata> {
+                    use std::io::Read;
+                    let mut options = std::fs::OpenOptions::new();
+                    options.read(true);
+                    #[cfg(unix)]
+                    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+                    let file = options.open(file)?;
+                    anyhow::ensure!(file.metadata()?.is_file(), "Action metadata must be a regular file");
+                    let mut content = String::new();
+                    file.take(1024 * 1024 + 1).read_to_string(&mut content)?;
+                    anyhow::ensure!(content.len() <= 1024 * 1024, "Action metadata is too large");
+                    Ok(serde_yaml::from_str(&content)?)
+                }).await?
+            }).await?,
             // A directory with only a Dockerfile is a Docker action without inputs.
             None if directory.join("Dockerfile").is_file() => Metadata {
                 runs: Runs {
@@ -296,9 +310,15 @@ impl Job {
                 }
             }
         }
+        // Inputs and step environment were evaluated in caller scope; action-owned
+        // defaults, templates and composite steps never receive the secrets context.
+        let old_secrets = self.contexts.values.remove("secrets");
+        let result = async {
         let mut inputs = BTreeMap::new();
         for (key, input) in metadata.inputs {
-            inputs.insert(key, text(&input.default, &self.contexts, self.status)?);
+            if !supplied.keys().any(|name| name.eq_ignore_ascii_case(&key)) {
+                inputs.insert(key, text(&input.default, &self.contexts, self.status)?);
+            }
         }
         // Input names compare without case, so a supplied value replaces any default.
         for key in supplied.keys() {
@@ -315,7 +335,6 @@ impl Job {
         self.contexts
             .values
             .insert("inputs".into(), object(&inputs));
-        let result = async {
             match metadata.runs.using.as_str() {
                 "composite" => {
                     let outer_steps = self
@@ -323,6 +342,8 @@ impl Job {
                         .values
                         .insert("steps".into(), Value::Object(BTreeMap::new()));
                     let outer_env = self.env.clone();
+                    let outer_env_context = self.contexts.values.get("env").cloned();
+                    let first_post = self.posts.len();
                     let outer_status = self.status;
                     let outer_saved_env = std::mem::take(&mut self.saved_env);
                     let outer_shell = self.plan.default_shell.take();
@@ -347,6 +368,14 @@ impl Job {
                     }
                     .await;
                     self.env = outer_env;
+                    for post in &mut self.posts[first_post..] {
+                        for (key, value) in &outer_saved_env {
+                            post.exported.entry(key.clone()).or_insert_with(|| value.clone());
+                        }
+                    }
+                    if let Some(env) = outer_env_context {
+                        self.contexts.values.insert("env".into(), env);
+                    }
                     let updates = std::mem::replace(&mut self.saved_env, outer_saved_env);
                     self.saved_env.extend(updates);
                     self.plan.default_shell = outer_shell;
@@ -428,7 +457,9 @@ impl Job {
                     };
                     if let Some(index) = post {
                         self.posts[index].state = state;
-                        self.posts[index].main_files = None;
+                        if result.is_ok() {
+                            self.posts[index].main_files = None;
+                        }
                     }
                     result
                 }
@@ -462,6 +493,9 @@ impl Job {
             }
         }
         .await;
+        if let Some(secrets) = old_secrets {
+            self.contexts.values.insert("secrets".into(), secrets);
+        }
         if let Some(inputs) = old_inputs {
             self.contexts.values.insert("inputs".into(), inputs);
         }

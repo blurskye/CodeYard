@@ -600,9 +600,6 @@ pub(super) fn expand(
         if !custom_matrix_name && !combination.name.is_empty() {
             name = format!("{name} ({})", combination.name.join(", "));
         }
-        if name.chars().count() > 100 {
-            name = name.chars().take(97).collect::<String>() + "...";
-        }
         let runs_on = if job.contains_key("uses") {
             Yaml::Sequence(Vec::new())
         } else {
