@@ -20,7 +20,6 @@ use crate::backend::{
 };
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use chrono::Utc;
 use iroh::{
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler},
@@ -230,7 +229,6 @@ pub async fn create_invite(
         ticket.encode().len() <= MAX_TICKET_LEN,
         "too many advertised addresses for a join ticket (maximum {MAX_TICKET_LEN} bytes)"
     );
-    let expires_at = Utc::now() + chrono::Duration::from_std(options.expires_in)?;
     db::cluster::create_join_token(
         pool,
         NewJoinToken {
@@ -238,7 +236,7 @@ pub async fn create_invite(
             roles: &options.roles.names(),
             reusable: options.reusable,
             requires_approval: options.requires_approval,
-            expires_at,
+            lifetime_seconds: i64::try_from(options.expires_in.as_secs())?,
         },
     )
     .await?;

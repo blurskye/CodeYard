@@ -403,7 +403,7 @@ async fn a_reusable_invite_admits_many_nodes_within_its_roles() {
             roles: &["web".to_owned()],
             reusable: true,
             requires_approval: false,
-            expires_at: Utc::now() - Age::minutes(1),
+            lifetime_seconds: -60,
         },
     )
     .await
@@ -1048,7 +1048,7 @@ async fn membership_contract(pool: &DbPool) {
     let hash = |byte: u8| cluster::hash_secret(&[byte; 32]);
     let key = |_: u8| NodeKey::generate().public_hex();
     let storage = ["storage".to_owned()];
-    let token = |hash: &str, roles: &[String], reusable: bool, approval: bool, expires_at| {
+    let token = |hash: &str, roles: &[String], reusable: bool, approval: bool, expires_at: chrono::DateTime<Utc>| {
         let hash = hash.to_owned();
         let roles = roles.to_vec();
         async move {
@@ -1059,7 +1059,7 @@ async fn membership_contract(pool: &DbPool) {
                     roles: &roles,
                     reusable,
                     requires_approval: approval,
-                    expires_at,
+                    lifetime_seconds: (expires_at - Utc::now()).num_seconds(),
                 },
             )
             .await

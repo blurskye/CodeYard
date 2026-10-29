@@ -27,13 +27,13 @@ fn name_conflict(error: sqlx::Error, name: &str) -> anyhow::Error {
 pub async fn create_join_token(pool: &SqlitePool, token: NewJoinToken<'_>) -> Result<()> {
     sqlx::query(
         "INSERT INTO join_tokens (token_hash, roles, reusable, requires_approval, expires_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+         VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ','now',printf('%+d seconds',?5)))",
     )
     .bind(token.token_hash)
     .bind(serde_json::to_string(token.roles)?)
     .bind(token.reusable)
     .bind(token.requires_approval)
-    .bind(time::encode(token.expires_at))
+    .bind(token.lifetime_seconds)
     .execute(pool)
     .await?;
     Ok(())
@@ -353,8 +353,16 @@ pub async fn get_node_by_id(pool: &SqlitePool, id: i64) -> Result<Option<Cluster
     .await?)
 }
 
+pub async fn storage_needed(pool: &SqlitePool, uuid: &str, node: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE substr(r.disk_path,-40)=$1||'.git' AND (r.storage_node_id IS NULL OR r.storage_node_id=$2 OR EXISTS(SELECT 1 FROM repository_replicas rr WHERE rr.repository_id=r.id AND rr.node_id=$2)))").bind(uuid).bind(node).fetch_one(pool).await?)
+}
+
+pub async fn list_primary_paths(pool: &SqlitePool, node: i64) -> Result<Vec<(i64, String)>> {
+    Ok(sqlx::query_as("SELECT id,disk_path FROM repositories WHERE storage_node_id=$1 ORDER BY id").bind(node).fetch_all(pool).await?)
+}
+
 pub async fn read_candidates(pool: &SqlitePool, uuid: &str, previous: i64) -> Result<Vec<(i64, bool)>> {
-    Ok(sqlx::query_as("WITH repository AS (SELECT id,storage_node_id,write_version FROM repositories WHERE substr(disk_path,-40)=$1||'.git'), candidates AS (SELECT storage_node_id AS node_id,1 AS moved,write_version AS applied_version FROM repository UNION ALL SELECT rr.node_id,0,rr.applied_version FROM repository r JOIN repository_replicas rr ON rr.repository_id=r.id WHERE rr.node_id IS NOT r.storage_node_id AND rr.applied_version>=0) SELECT c.node_id,c.moved FROM candidates c JOIN nodes n ON n.id=c.node_id WHERE c.node_id<>$2 AND n.status='active' AND EXISTS(SELECT 1 FROM json_each(n.roles) WHERE value='storage') AND julianday(n.last_seen) BETWEEN julianday('now','-60 seconds') AND julianday('now') ORDER BY c.moved DESC,c.applied_version DESC,c.node_id")
+    Ok(sqlx::query_as("WITH repository AS (SELECT id,storage_node_id,write_version FROM repositories WHERE substr(disk_path,-40)=$1||'.git'), candidates AS (SELECT storage_node_id AS node_id,1 AS moved,write_version AS applied_version FROM repository UNION ALL SELECT rr.node_id,0,rr.applied_version FROM repository r JOIN repository_replicas rr ON rr.repository_id=r.id WHERE rr.node_id IS NOT r.storage_node_id AND rr.applied_version>=0) SELECT c.node_id,c.moved FROM candidates c JOIN nodes n ON n.id=c.node_id WHERE c.node_id<>$2 AND n.status='active' AND EXISTS(SELECT 1 FROM json_each(n.roles) WHERE value='storage') AND n.disk_free IS NOT NULL AND julianday(n.last_seen) BETWEEN julianday('now','-60 seconds') AND julianday('now') ORDER BY c.moved DESC,c.applied_version DESC,c.node_id")
         .bind(uuid).bind(previous).fetch_all(pool).await?)
 }
 
@@ -668,7 +676,7 @@ pub async fn promote_repository(
     }
     // A repository moved to a node that is down would have no primary to serve it.
     let target = node_at_db_time(&mut tx, to).await?;
-    if !target.is_some_and(|node| node.status == "active" && node.is_online()) {
+    if !target.is_some_and(|node| node.is_serving_storage()) {
         return Ok(PromoteOutcome::TargetOffline);
     }
     move_primary(&mut tx, repo_id, from, to, applied_version).await?;
@@ -682,12 +690,15 @@ pub async fn promote_repository(
 /// Moves the whole fork family of `repo_id` from `from` to `to` in one transaction, or not at
 /// all. The family is read and its rows checked inside the write transaction, so a member that
 /// another node has already moved is refused, and two take-overs cannot split a family.
-pub async fn promote_fork_family(
-    pool: &SqlitePool,
-    repo_id: i64,
-    from: i64,
-    to: i64,
-) -> Result<FamilyOutcome> {
+pub async fn promote_fork_family(pool: &SqlitePool, repo_id: i64, from: i64, to: i64) -> Result<FamilyOutcome> {
+    promote_family(pool, repo_id, from, to, true).await
+}
+
+pub async fn promote_manual_family(pool: &SqlitePool, repo_id: i64, from: i64, to: i64) -> Result<FamilyOutcome> {
+    promote_family(pool, repo_id, from, to, false).await
+}
+
+async fn promote_family(pool: &SqlitePool, repo_id: i64, from: i64, to: i64, automatic: bool) -> Result<FamilyOutcome> {
     // BEGIN IMMEDIATE: one writer at a time, so the family read and the moves see the same
     // state. Every early return drops the transaction, which rolls it back.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -699,12 +710,12 @@ pub async fn promote_fork_family(
         return Ok(FamilyOutcome::Refused);
     }
     let primary = node_at_db_time(&mut tx, from).await?;
-    if primary.is_none_or(|node| node.status != "active" || node.is_online()) {
+    if automatic && primary.is_none_or(|node| node.status != "active" || node.is_online()) {
         return Ok(FamilyOutcome::Refused);
     }
     // The taker must be reporting in too, or the family would move onto a node that is down.
     let target = node_at_db_time(&mut tx, to).await?;
-    if !target.is_some_and(|node| node.status == "active" && node.is_online()) {
+    if !target.is_some_and(|node| node.is_serving_storage()) {
         return Ok(FamilyOutcome::Refused);
     }
     for &(member, _, write_version) in &members {

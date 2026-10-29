@@ -55,7 +55,7 @@ pub struct NewJoinToken<'a> {
     pub roles: &'a [String],
     pub reusable: bool,
     pub requires_approval: bool,
-    pub expires_at: DateTime<Utc>,
+    pub lifetime_seconds: i64,
 }
 
 pub struct JoinRequest<'a> {
@@ -171,6 +171,15 @@ native_operation!(crate::backend::db::postgres::cluster::get_node_by_id,
     crate::backend::db::sqlite::cluster::get_node_by_id,
     fn get_node_by_id(pool: &DbPool, id: i64) -> Result<Option<ClusterNode>>);
 
+native_operation!(crate::backend::db::postgres::cluster::promote_manual_family,
+    crate::backend::db::sqlite::cluster::promote_manual_family,
+    fn promote_manual_family(pool: &DbPool, repository: i64, from: i64, to: i64) -> Result<FamilyOutcome>);
+native_operation!(crate::backend::db::postgres::cluster::storage_needed,
+    crate::backend::db::sqlite::cluster::storage_needed,
+    fn storage_needed(pool: &DbPool, uuid: &str, node: i64) -> Result<bool>);
+native_operation!(crate::backend::db::postgres::cluster::list_primary_paths,
+    crate::backend::db::sqlite::cluster::list_primary_paths,
+    fn list_primary_paths(pool: &DbPool, node: i64) -> Result<Vec<(i64, String)>>);
 native_operation!(crate::backend::db::postgres::cluster::read_candidates,
     crate::backend::db::sqlite::cluster::read_candidates,
     fn read_candidates(pool: &DbPool, uuid: &str, previous: i64) -> Result<Vec<(i64, bool)>>);

@@ -4,9 +4,9 @@ pub mod local;
 pub mod s3;
 
 use anyhow::Result;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncRead;
 use tokio::sync::{OwnedMutexGuard, OwnedSemaphorePermit, Semaphore};
@@ -68,7 +68,7 @@ pub struct ObjectStore {
     backend: Backend,
     io: Arc<Semaphore>,
     downloads: Arc<Semaphore>,
-    file_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    file_locks: crate::backend::locks::KeyedMutex<String>,
 }
 
 impl ObjectStore {
@@ -81,7 +81,7 @@ impl ObjectStore {
             backend,
             io: Arc::new(Semaphore::new(IO_SLOTS)),
             downloads: Arc::new(Semaphore::new(DOWNLOAD_SLOTS)),
-            file_locks: Mutex::new(HashMap::new()),
+            file_locks: Default::default(),
         })
     }
 
@@ -126,15 +126,7 @@ impl ObjectStore {
         if !valid_key(key) {
             return Err(StorageError::Invalid);
         }
-        let lock = {
-            let mut locks = self
-                .file_locks
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            locks.retain(|_, lock| Arc::strong_count(lock) > 1);
-            locks.entry(key.to_owned()).or_default().clone()
-        };
-        Ok(lock.lock_owned().await)
+        Ok(self.file_locks.lock(key.to_owned()).await)
     }
 
     /// An I/O slot, or `Unavailable` at once when every slot is busy. Nothing waits for a

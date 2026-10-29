@@ -1,27 +1,21 @@
 //! Repository serialization. Ordinary operations use the process mutex and Git CAS;
 //! branch provenance additionally uses an interprocess lease. Publication subprocesses
 //! inherit that lease, so cancellation or a backend crash cannot release it before Git exits.
-use std::collections::HashMap;
 use std::fs::File;
 use std::future::Future;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
 use tokio::sync::OwnedMutexGuard;
 
-static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
+static LOCKS: LazyLock<crate::backend::locks::KeyedMutex<PathBuf>> =
     LazyLock::new(Default::default);
 
 pub async fn lock(path: &Path) -> OwnedMutexGuard<()> {
     // Receive sessions use canonical paths; API writes may retain a symlink alias.
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let mutex = {
-        let mut locks = LOCKS.lock().unwrap_or_else(|poison| poison.into_inner());
-        locks.retain(|_, mutex| Arc::strong_count(mutex) > 1);
-        locks.entry(path).or_default().clone()
-    };
-    mutex.lock_owned().await
+    LOCKS.lock(path).await
 }
 
 #[derive(Debug)]

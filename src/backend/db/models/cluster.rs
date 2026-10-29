@@ -27,6 +27,10 @@ pub struct ClusterNode {
 }
 
 impl ClusterNode {
+    pub fn is_serving_storage(&self) -> bool {
+        self.is_online() && self.disk_free.is_some() && self.roles.iter().any(|role| role == "storage")
+    }
+
     /// Active and reporting in when read from the database.
     pub fn is_online(&self) -> bool {
         self.status == "active"
