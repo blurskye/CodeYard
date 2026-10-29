@@ -219,6 +219,10 @@ impl LocalStore {
                 }
             }
         }
+        let contributors = if import.refs.is_empty() { Ok(()) } else {
+            db::repositories::records::advance_contribution_version(pool, repo_id)
+                .await.map_err(|_| RepoError::applied_followup_failed())
+        };
         for tip in import.refs.values().collect::<std::collections::HashSet<_>>() {
             if let Ok(commit) = self.commit(tip).await {
                 if let Err(error) = db::secret_scanning::enqueue(pool, repo_id, &commit.sha, actor).await {
@@ -227,7 +231,7 @@ impl LocalStore {
             }
         }
         refresh_storage_size(pool.clone(), repo_id, self.clone());
-        Ok(())
+        contributors
     }
 
     async fn import_authority(

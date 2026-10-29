@@ -295,7 +295,7 @@ fn refresh_storage_size(pool: db::DbPool, repo_id: i64, store: LocalStore) {
             drop(git::locks::lock(&path).await);
             let result = async {
                 let size = store.size_bytes().await?.min(i64::MAX as u64) as i64;
-                db::repositories::records::update_repo_size(&pool, repo_id, size)
+                db::repositories::records::update_repo_size_at(&pool, repo_id, size, store.node_id.unwrap_or(None))
                     .await
                     .map_err(RepoError::from)
             }
@@ -1973,6 +1973,10 @@ impl LocalStore {
         actor: i64,
         moves: &[crate::backend::webhooks::ref_changes::RefMove],
     ) -> Result<(), RepoError> {
+        // In-flight contributor proofs may have observed the pre-publication head after
+        // the preparation-time version bump. Invalidate them before other follow-ups.
+        let contributors = db::repositories::records::advance_contribution_version(pool, repo_id)
+            .await.map_err(|_| RepoError::applied_followup_failed());
         let activity = crate::backend::repositories::activity::record_moves(
             pool,
             repo_id,
@@ -2025,7 +2029,7 @@ impl LocalStore {
         )
         .await;
         git::maintenance::after_push(repo_id, self.path().to_owned());
-        accepted.and(metadata).and(activity)
+        accepted.and(metadata).and(activity).and(contributors)
     }
 
     /// Git has already published the branch. A metadata failure must not imply rollback.

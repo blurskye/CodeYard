@@ -303,7 +303,7 @@ async fn provision_from(
     properties.retain(|value| {
         !chosen
             .iter()
-            .any(|chosen| chosen.property_name == value.property_name)
+            .any(|chosen| chosen.property_name.eq_ignore_ascii_case(&value.property_name))
     });
     properties.extend_from_slice(chosen);
     provision_stored(
@@ -370,6 +370,43 @@ struct ProvisionOptions<'a> {
     gist: bool,
 }
 async fn provision_stored(
+    node: (&db::DbPool, Option<&NodeContext>),
+    repos_path: &Path,
+    creation: CreationInput<'_>,
+    name: &str,
+    description: Option<&str>,
+    options: ProvisionOptions<'_>,
+) -> Result<Repository, StorageError> {
+    let (pool, context, repos_path, name, description, properties) = (
+        node.0.clone(), node.1.cloned(), repos_path.to_owned(), name.to_owned(),
+        description.map(str::to_owned), creation.properties.to_vec(),
+    );
+    let owner = creation.owner;
+    let (private, gist) = (options.private, options.gist);
+    let source = options.creation_source.map(|source| source.repository().clone());
+    let template = matches!(options.creation_source, Some(CreationSource::Template { .. }));
+    let branch_option = match options.creation_source {
+        Some(CreationSource::Fork { default_branch_only, .. }) => default_branch_only,
+        Some(CreationSource::Template { all_branches, .. }) => all_branches,
+        None => false,
+    };
+    // Once the row is inserted, initialization or conservative cleanup must outlive the
+    // caller. Otherwise cancellation leaves a discoverable but unusable reservation.
+    tokio::spawn(async move {
+        let creation_source = source.as_ref().map(|repository| if template {
+            CreationSource::Template { repository, all_branches: branch_option }
+        } else {
+            CreationSource::Fork { repository, default_branch_only: branch_option }
+        });
+        provision_stored_owned(
+            (&pool, context.as_ref()), &repos_path,
+            CreationInput { owner, properties: &properties }, &name, description.as_deref(),
+            ProvisionOptions { private, creation_source, gist },
+        ).await
+    }).await.map_err(|_| unavailable())?
+}
+
+async fn provision_stored_owned(
     node: (&db::DbPool, Option<&NodeContext>),
     repos_path: &Path,
     creation: CreationInput<'_>,
@@ -491,7 +528,7 @@ async fn provision_stored(
         // The fork is already usable. Accounting failures must not report creation as failed.
         let accounting = async {
             let size = store.size_bytes().await?.min(i64::MAX as u64) as i64;
-            db::repositories::records::update_repo_size(pool, repository.id, size).await?;
+            db::repositories::records::update_repo_size_at(pool, repository.id, size, repository.storage_node_id).await?;
             Ok::<_, anyhow::Error>(size)
         }
         .await;
@@ -502,7 +539,7 @@ async fn provision_stored(
             }
         }
     }
-    if source.is_none() {
+    if source.is_none() || template {
         let created = repository.clone();
         let actor = owner.actor_id;
         webhooks::emit(
@@ -1043,6 +1080,14 @@ async fn existing_fork(
             },
             message: "Fork is unavailable.",
         })?;
+    if !db::interactions::source(pool, repo.id).await.map_err(|_| unavailable())?
+        .is_some_and(|source| source.write_version > 0)
+    {
+        return Err(StorageError {
+            kind: LifecycleFailure::Conflict,
+            message: "The existing fork is still being initialized. Try again shortly.",
+        });
+    }
     Ok(Some(repo))
 }
 
