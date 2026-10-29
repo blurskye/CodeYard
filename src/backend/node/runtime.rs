@@ -89,25 +89,10 @@ async fn prepare_application(
     if secret_encryptor.is_none() {
         tracing::warn!("SECRETS_MASTER_KEY not set, secrets API disabled");
     }
-    let has_s3 = [
-        "S3_ENDPOINT",
-        "S3_PUBLIC_ENDPOINT",
-        "S3_ACCESS_KEY",
-        "S3_SECRET_KEY",
-        "S3_BUCKET",
-        "S3_REGION",
-    ]
-    .iter()
-    .any(|name| std::env::var_os(name).is_some());
-    let s3 = if has_s3 {
-        let config = S3Config::from_env()?;
-        if serves_web {
-            config.validate_browser_cookie_scope_from_env()?;
-        }
-        Some(config)
-    } else {
-        None
-    };
+    let s3 = S3Config::optional_from_env()?;
+    if let Some(config) = s3.as_ref().filter(|_| serves_web) {
+        config.validate_browser_cookie_scope_from_env()?;
+    }
     let storage = Arc::new(ObjectStore::open(state_dir, s3).await?);
     // Only web nodes take uploads, so an object storage outage does not keep a Git-only
     // node from starting.
