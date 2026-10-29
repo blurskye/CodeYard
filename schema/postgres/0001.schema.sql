@@ -3093,7 +3093,7 @@ CREATE TABLE secret_scanning_alerts (
     assigned_to BIGINT REFERENCES users(id) ON DELETE SET NULL,
     validity TEXT CHECK (validity IN ('active','inactive')),
     state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open','resolved')),
-    resolution TEXT CHECK (resolution IN ('false_positive','wont_fix','revoked','used_in_tests')),
+    resolution TEXT CHECK (resolution IN ('false_positive','wont_fix','revoked','used_in_tests','pattern_deleted','pattern_edited')),
     resolution_comment TEXT,
     resolved_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
     resolved_at TIMESTAMPTZ,

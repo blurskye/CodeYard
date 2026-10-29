@@ -41,6 +41,12 @@ async fn read(tx: &mut Transaction<'_, Sqlite>, owner: Owner) -> Result<Vec<Patt
         .map(|row| Ok(serde_json::from_str(&row)?))
         .collect()
 }
+async fn read_one(tx: &mut Transaction<'_, Sqlite>, owner: Owner, id: i64) -> Result<Pattern> {
+    let (repo, org) = owner.ids();
+    let document: String = sqlx::query_scalar("SELECT document FROM secret_scanning_patterns WHERE id=$1 AND (repo_id=$2 OR org_id=$3)")
+        .bind(id).bind(repo).bind(org).fetch_optional(&mut **tx).await?.ok_or(Refusal::Missing)?;
+    Ok(serde_json::from_str(&document)?)
+}
 async fn save(tx: &mut Transaction<'_, Sqlite>, pattern: &Pattern) -> Result<()> {
     sqlx::query("UPDATE secret_scanning_patterns SET document=$2 WHERE id=$1")
         .bind(pattern.id)
@@ -75,18 +81,17 @@ pub async fn create(
     input: &[Create],
 ) -> Result<Vec<Pattern>> {
     ensure!(!input.is_empty() && input.len() <= 100, Refusal::Invalid);
-    for item in input {
-        item.validate().map_err(|_| Refusal::Invalid)?;
-    }
+    let mut admission = pool.begin().await?;
+    authority(&mut admission, actor, owner, true).await?;
+    admission.commit().await?;
+    crate::backend::repositories::secret_scanning::patterns::validate_batch(input).await.map_err(|_| Refusal::Invalid)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authority(&mut tx, actor, owner, true).await?;
-    let previous = read(&mut tx, owner).await?;
-    ensure!(previous.len() + input.len() <= 500, Refusal::Invalid);
-    let mut names = previous
-        .into_iter()
-        .map(|pattern| pattern.name)
-        .collect::<std::collections::HashSet<_>>();
     let (repo, org) = owner.ids();
+    let previous: Vec<String> = sqlx::query_scalar("SELECT name FROM secret_scanning_patterns WHERE repo_id=$1 OR org_id=$2")
+        .bind(repo).bind(org).fetch_all(&mut *tx).await?;
+    ensure!(previous.len() + input.len() <= 500, Refusal::Invalid);
+    let mut names = previous.into_iter().collect::<std::collections::HashSet<_>>();
     let mut patterns = Vec::new();
     for item in input {
         ensure!(names.insert(item.name.clone()), Refusal::Invalid);
@@ -107,11 +112,7 @@ pub async fn update(
 ) -> Result<Pattern> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authority(&mut tx, actor, owner, true).await?;
-    let mut pattern = read(&mut tx, owner)
-        .await?
-        .into_iter()
-        .find(|pattern| pattern.id == id)
-        .ok_or(Refusal::Missing)?;
+    let mut pattern = read_one(&mut tx, owner, id).await?;
     ensure!(
         input.custom_pattern_version.is_null() || input.custom_pattern_version.is_string(),
         Refusal::Invalid
@@ -131,11 +132,11 @@ pub async fn update(
 pub async fn publish(pool: &SqlitePool, actor: i64, owner: Owner, id: i64) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authority(&mut tx, actor, owner, true).await?;
-    let mut pattern = read(&mut tx, owner)
-        .await?
-        .into_iter()
-        .find(|pattern| pattern.id == id)
-        .ok_or(Refusal::Missing)?;
+    let mut pattern = read_one(&mut tx, owner, id).await?;
+    if pattern.state == "published" {
+        tx.commit().await?;
+        return Ok(());
+    }
     pattern.state = "published".into();
     pattern.push_protection_enabled = true;
     if let Owner::Organization(org) = owner {
@@ -177,7 +178,7 @@ pub async fn delete(
             Refusal::Version
         );
         if resolve {
-            sqlx::query("UPDATE secret_scanning_alerts SET state='resolved',resolution='wont_fix',resolution_comment='Custom pattern deleted',resolved_by=$4,resolved_at=$5,updated_at=$5 WHERE state='open' AND secret_type=$3 AND repo_id IN (SELECT id FROM repositories WHERE id=$1 OR owner_org_id=$2)").bind(repo).bind(org).bind(&pattern.slug).bind(actor).bind(chrono::Utc::now()).execute(&mut *tx).await?;
+            sqlx::query("UPDATE secret_scanning_alerts SET state='resolved',resolution='pattern_deleted',resolution_comment='Custom pattern deleted',resolved_by=$4,resolved_at=$5,updated_at=$5 WHERE state='open' AND secret_type=$3 AND repo_id IN (SELECT id FROM repositories WHERE id=$1 OR owner_org_id=$2)").bind(repo).bind(org).bind(&pattern.slug).bind(actor).bind(chrono::Utc::now()).execute(&mut *tx).await?;
         } else {
             sqlx::query("DELETE FROM secret_scanning_alerts WHERE secret_type=$3 AND repo_id IN (SELECT id FROM repositories WHERE id=$1 OR owner_org_id=$2)").bind(repo).bind(org).bind(&pattern.slug).execute(&mut *tx).await?;
         }
@@ -185,6 +186,16 @@ pub async fn delete(
             .bind(pattern.id)
             .execute(&mut *tx)
             .await?;
+    }
+    if let Owner::Organization(org) = owner {
+        let mut settings = config(&mut tx, org).await?;
+        for item in input {
+            settings.settings.remove(&format!("cp_{}", item.pattern_id));
+        }
+        let version = uuid::Uuid::new_v4().to_string();
+        settings.version = Some(version.clone());
+        sqlx::query("INSERT INTO secret_scanning_pattern_configs(org_id,version,document) VALUES($1,$2,$3) ON CONFLICT(org_id) DO UPDATE SET version=$2,document=$3")
+            .bind(org).bind(version).bind(serde_json::to_string(&settings)?).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(())
@@ -201,7 +212,7 @@ async fn config(tx: &mut Transaction<'_, Sqlite>, org: i64) -> Result<PatternCon
         .unwrap_or_default())
 }
 pub async fn effective(pool: &SqlitePool, repo: i64) -> Result<(Vec<Pattern>, Vec<String>)> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut tx = pool.begin().await?;
     let org: Option<i64> = sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=$1")
         .bind(repo)
         .fetch_one(&mut *tx)
