@@ -11,7 +11,7 @@ or supply a properly licensed image as needed. macOS is not supported.
 1. Download the **official Windows Server 2025 evaluation ISO** from Microsoft's
    Evaluation Center yourself, verify it, and review/accept its licence.
 2. On a Linux KVM host install `qemu-system-x86_64`, `qemu-img`, `xorriso`, Python 3,
-   GNU coreutils, and OpenSSH 9+ clients (`ssh`, `scp`, `ssh-keygen`). The runtime
+   GNU coreutils, util-linux (`setsid`), and OpenSSH 9+ clients (`ssh`, `scp`, `ssh-keygen`). The runtime
    needs those tools except Python. Allow the service user access to `/dev/kvm`.
 3. Run (the output must not already exist):
 
@@ -48,14 +48,9 @@ and should be writable only by an administrator during deliberate maintenance.
 
 ## Runtime and seed contract
 
-Use the platform mapping:
-
-```text
--P windows-latest=vm:/srv/images/windows.qcow2,cpus=4,memory=8G
-```
-
-The runner integration calls `vm::JobVm::start`, `copy_in`, `run`, `copy_out`, then
-`stop`. The default workspace is `C:/codeyard/workspace`. These APIs expect absolute
+This is an experimental library API, not a connected workflow executor. `vm:`
+platform mappings are explicitly rejected rather than sent to Podman as image names.
+Call `vm::JobVm::start`, `copy_in`, `run`, `copy_out`, then `stop` directly. The default workspace is `C:/codeyard/workspace`. These APIs expect absolute
 Windows guest paths and execute PowerShell scripts using GitHub's Stop/LASTEXITCODE
 conventions. Output streams line by line. Directory copies use SFTP-backed `scp -r`,
 include dotfiles, merge into the destination, and do **not** propagate deletions.
@@ -98,4 +93,4 @@ CODEYARD_WINDOWS_IMAGE=/srv/images/windows.qcow2 \
 This ignored test checks boot, hidden-file upload, environment and streamed output,
 nonzero step exit, download, shutdown and overlay removal. It is marked
 `#[ignore = "needs kvm and a windows image"]`; regular unit tests do not need QEMU.
-Run it after every image/script change before assigning Windows workflows.
+Run it after every image/script change before using the experimental VM API.

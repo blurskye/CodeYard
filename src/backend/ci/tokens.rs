@@ -168,7 +168,7 @@ pub(crate) async fn issue_selected(
         policies: &mut BTreeMap<String, Permissions>,
     ) -> Result<()> {
         ensure!(
-            prefix.matches('/').count() < 8,
+            prefix.split_once(':').map_or(prefix, |(_, job)| job).matches('/').count() < codeyard_actions::workflow::MAX_REUSABLE_LEVELS,
             "called workflow nesting exceeds limit"
         );
         let yaml = definitions.get(path).ok_or_else(|| anyhow::anyhow!("missing called workflow"))?;

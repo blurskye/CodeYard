@@ -1039,6 +1039,7 @@ fn prepare_workflow_for_engine(
     limits: &str,
 ) -> Result<(BTreeSet<String>, Option<WorkflowName>)> {
     let mut value = super::workflows::parse_yaml(&std::fs::read(path)?)?;
+    ensure!(native || !codeyard_actions::workflow::has_job_concurrency(&value), "Job concurrency requires the codeyard-actions engine");
     if config.mode != CiExecutionMode::Local {
         for job in value.get_mut("jobs").and_then(Value::as_mapping_mut).into_iter().flat_map(|jobs| jobs.values_mut()) {
             if let Some(selector) = job.get_mut("runs-on").and_then(Value::as_mapping_mut) {

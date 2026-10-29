@@ -26,6 +26,14 @@ pub fn validate_timeout_minutes(value: f64) -> anyhow::Result<()> {
 
 pub const MAX_REUSABLE_LEVELS: usize = 4;
 pub const MAX_CALLED_WORKFLOWS: usize = 20;
+pub fn has_job_concurrency(raw: &serde_yaml::Value) -> bool {
+    raw.get("jobs").and_then(serde_yaml::Value::as_mapping)
+        .is_some_and(|jobs| jobs.values().any(|job| job.get("concurrency").is_some()))
+}
+pub fn validate_called_concurrency(raw: &serde_yaml::Value) -> anyhow::Result<()> {
+    anyhow::ensure!(raw.get("concurrency").is_none() && !has_job_concurrency(raw), "Called workflow concurrency is unsupported");
+    Ok(())
+}
 pub const MAX_CONCURRENCY_GROUP_BYTES: usize = 256;
 pub fn valid_concurrency_group(group: &str) -> bool {
     !group.is_empty() && group.len() <= MAX_CONCURRENCY_GROUP_BYTES && !group.chars().any(char::is_control)

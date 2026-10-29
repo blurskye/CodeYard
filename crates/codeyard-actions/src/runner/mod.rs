@@ -431,18 +431,6 @@ async fn run_workflow(
     }
     let yaml = std::fs::read_to_string(&options.workflow).context("Unable to read workflow")?;
     let raw: serde_yaml::Value = serde_yaml::from_str(&yaml)?;
-    let workflow_name = raw
-        .get("name")
-        .and_then(serde_yaml::Value::as_str)
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| {
-            options
-                .workflow
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("workflow")
-        })
-        .to_owned();
     let workflow = workflow::parse(&yaml)?;
     let order = workflow::job_order(&workflow)?;
     let replay = if let Some(path) = &options.replay_file {
@@ -513,6 +501,12 @@ async fn run_workflow(
         let (key, value) = pair.split_once('=').context("--env requires KEY=VALUE")?;
         env.insert(key.to_owned(), value.to_owned());
     }
+    let workflow_name = raw.get("name").and_then(serde_yaml::Value::as_str)
+        .filter(|name| !name.trim().is_empty()).map(str::to_owned).unwrap_or_else(|| {
+            env.get("GITHUB_WORKFLOW_REF").and_then(|reference| reference.split_once('@'))
+                .and_then(|(path, _)| path.splitn(3, '/').nth(2)).map(str::to_owned)
+                .unwrap_or_else(|| options.workflow.strip_prefix(&options.directory).unwrap_or(&options.workflow).to_string_lossy().replace('\\', "/"))
+        });
     if options.debug {
         for (key, value) in [
             ("ACTIONS_RUNNER_DEBUG", "true"),
@@ -762,9 +756,23 @@ impl WorkflowRun {
                     && !direct_status.cancelled
                     || status != direct_status
                 {
-                    expand_with_dependency_status(&raw, &id, &contexts, status, dependency_success)?
+                    expand_with_dependency_status(&raw, &id, &contexts, status, dependency_success)
                 } else {
-                    workflow::expand(&workflow, &id, &contexts, status)?
+                    workflow::expand(&workflow, &id, &contexts, status)
+                };
+                let expanded = match expanded {
+                    Ok(expanded) => expanded,
+                    Err(error) => {
+                        Log { prefix: format!("{name_prefix}{id}"), masker: masker.clone(), progress: None }
+                            .line(&format!("Job expansion failed: {error:#}"));
+                        let result = JobResult { result: "failure".into(), outputs: BTreeMap::new() };
+                        saved.jobs.insert(id.clone(), result.clone());
+                        save_job_state(options, &mut saved, masker)?;
+                        results.insert(id, result);
+                        successful = false;
+                        tokens.completed(&token_id);
+                        continue;
+                    }
                 };
                 // A matrix whose excludes remove every combination runs nothing, like a skipped job.
                 let Some(mut plans) = expanded.filter(|plans| !plans.is_empty()) else {
@@ -1415,6 +1423,7 @@ impl Job {
                 })
             });
             match mapped {
+                Some(image) if image.starts_with("vm:") => bail!("VM platform mappings are not integrated with workflow execution; use the JobVm API explicitly"),
                 Some(image) if image != "-self-hosted" => {
                     container = Some(Container {
                         image: image.into(),

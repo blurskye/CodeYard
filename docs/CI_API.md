@@ -237,7 +237,9 @@ workflows from moving branches. Calls support typed `workflow_call` inputs,
 explicit or inherited secrets, outputs in the caller's `needs`, matrices, and
 `caller / called` job names. There are at most four levels including the caller
 and twenty distinct called workflows. Called token permissions cannot exceed the
-caller's. Private cross-repository calls require a private caller in the same
+caller's. Called workflows declaring workflow- or job-level concurrency are rejected;
+act job-level concurrency is unsupported and refused rather than silently ignored.
+Private cross-repository calls require a private caller in the same
 owner namespace and the actor's read access, checked again at claim time.
 
 The patched `act` engine uses the same pinned files and inherits secrets from the

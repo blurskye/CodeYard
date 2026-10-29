@@ -158,11 +158,8 @@ impl<'a> Resolver<'a> {
                 yaml
             } else {
                 let parsed = super::admission::parse_admission_workflow(path.clone(), content, self.environment.clone()).await?;
-                if parsed.concurrency.is_some() || parsed.yaml.get("jobs").and_then(Value::as_mapping)
-                    .is_some_and(|jobs| jobs.values().any(|job| job.get("concurrency").is_some()))
-                {
-                    return Err(AdmissionError::Invalid("Called workflow concurrency is unsupported"));
-                }
+                codeyard_actions::workflow::validate_called_concurrency(&parsed.yaml)
+                    .map_err(|_| AdmissionError::Invalid("Called workflow concurrency is unsupported"))?;
                 super::admission::merge_scheduling(&mut self.scheduling, parsed.scheduling)?;
                 self.environment = parsed.environment;
                 parsed.yaml

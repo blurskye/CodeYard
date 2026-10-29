@@ -50,7 +50,9 @@ pub(super) fn files(root: &Yaml, directory: &Path) -> Result<BTreeMap<String, Ya
                     workflow::listens_to(&parsed, "workflow_call"),
                     "Called workflow does not declare workflow_call"
                 );
-                result.insert(reference.into(), serde_yaml::from_str(&source)?);
+                let called = Yaml::Mapping(parsed.fields);
+                workflow::validate_called_concurrency(&called)?;
+                result.insert(reference.into(), called);
             }
             let child_height = if let Some(height) = heights.get(reference) {
                 *height
