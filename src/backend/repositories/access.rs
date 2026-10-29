@@ -72,6 +72,9 @@ pub async fn can_read(
     let Some(user) = user else {
         return Ok(false);
     };
+    if user.is_banned || user.must_change_password {
+        return Ok(false);
+    }
     if repository.owner_kind == "user" && (user.is_admin || repository.is_personal_owner(user.id)) {
         return Ok(true);
     }
@@ -300,7 +303,7 @@ pub async fn check_write(
 /// Personal repository owners retain the existing collaborator policy.
 pub async fn change_collaborator(
     pool: &db::DbPool,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repo_id: i64,
     username: &str,
     permission: Option<db::models::AccessLevel>,
@@ -309,7 +312,11 @@ pub async fn change_collaborator(
         pool, actor, repo_id, username, permission,
     )
     .await
-    .map_err(|_| AccessError::Unavailable)?;
+    .map_err(|error| if error.is::<db::users::accounts::AccountRestricted>() {
+        AccessError::NotFound
+    } else {
+        AccessError::Unavailable
+    })?;
     match change {
         CollaboratorChange::Applied(user) => Ok(*user),
         CollaboratorChange::NotFound => Err(AccessError::NotFound),

@@ -252,15 +252,10 @@ async fn record_branch_update(
             return;
         }
     };
-    // A save must not wait behind a busy database for the sake of a profile feed entry.
-    let record = db::activity::record_repository_push(pool, repo_id, actor, branch, count);
-    match tokio::time::timeout(std::time::Duration::from_millis(500), record).await {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => tracing::warn!(repo_id, %error, "could not record a branch update"),
-        Err(_) => tracing::warn!(
-            repo_id,
-            "gave up recording a branch update on a busy database"
-        ),
+    // This receipt also owns pushed-commit totals, not just optional feed decoration.
+    // Let database admission finish instead of cancelling a valid insert under contention.
+    if let Err(error) = db::activity::record_repository_push(pool, repo_id, actor, branch, count).await {
+        tracing::warn!(repo_id, %error, "could not record a branch update");
     }
 }
 
@@ -2795,7 +2790,7 @@ impl LocalStore {
             )
             .await?;
             db::repositories::records::transfer_repository_checked(
-                &pool, actor, repo_id, target, &owner,
+                &pool, actor, repo_id, target, &owner, &repository.name,
             )
             .await
             .map_err(|error| {

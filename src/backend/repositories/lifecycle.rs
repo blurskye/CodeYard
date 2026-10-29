@@ -727,10 +727,11 @@ pub fn validate_description(description: &str) -> Result<(), StorageError> {
 pub async fn delete(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repo_id: i64,
 ) -> Result<(), StorageError> {
-    super::access::check_admin(pool, repo_id, actor)
+    let actor = actor.into();
+    super::access::check_admin(pool, repo_id, actor.user_id())
         .await
         .map_err(|error| StorageError {
             kind: if error == super::access::AccessError::Unavailable {

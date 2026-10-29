@@ -342,7 +342,10 @@ pub async fn delete_repo(
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
-    lifecycle::delete(&state.pool, state.cluster.as_ref(), actor.id, repository.id)
+    lifecycle::delete(&state.pool, state.cluster.as_ref(), db::users::accounts::AccountActor::Session {
+        user_id: actor.id,
+        session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+    }, repository.id)
         .await
         .map_err(lifecycle_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -1917,7 +1920,10 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "delete" => {
-            lifecycle::delete(pool, cluster, actor.id, repository.id)
+            lifecycle::delete(pool, cluster, db::users::accounts::AccountActor::Session {
+                user_id: actor.id,
+                session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+            }, repository.id)
                 .await
                 .map_err(lifecycle_error)?;
             Ok(crate::webui::profile_path(owner))
@@ -2054,7 +2060,10 @@ async fn mutate(
             };
             crate::backend::repositories::access::change_collaborator(
                 pool,
-                actor.id,
+                db::users::accounts::AccountActor::Session {
+                    user_id: actor.id,
+                    session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+                },
                 repository.id,
                 &field(form, "username"),
                 permission,
