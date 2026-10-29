@@ -37,18 +37,23 @@ pub async fn get_pins(
 }
 pub async fn set_pin(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     repo: i64,
     item: AssignedItem,
     comment: i64,
     pinned: bool,
 ) -> Result<()> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let s = scope(item);
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         PinRefusal::Denied
     );
+    if let Some(token) = grant.token_id {
+        anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, if s.pull { "pull_requests" } else { "issues" }).await?, PinRefusal::Denied);
+    }
     let present: Option<i64> = sqlx::query_scalar(&format!(
         "SELECT id FROM {} WHERE id=$1 AND repo_id=$2 FOR UPDATE",
         s.parent

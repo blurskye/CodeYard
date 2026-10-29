@@ -58,4 +58,4 @@ native_operation!(crate::backend::db::postgres::pins::get_pins,crate::backend::d
     /// The pins of the issues, or of the pull requests, among `ids` (at most 500).
     fn get_pins(pool:&DbPool,pull_requests:bool,ids:&[i64])->Result<Vec<ItemPin>>);
 native_operation!(crate::backend::db::postgres::pins::set_pin,crate::backend::db::sqlite::pins::set_pin,
-    fn set_pin(pool:&DbPool,actor:i64,repo:i64,item:AssignedItem,comment:i64,pinned:bool)->Result<()>);
+    fn set_pin(pool:&DbPool,actor:impl Into<crate::backend::db::users::tokens::Actor>,repo:i64,item:AssignedItem,comment:i64,pinned:bool)->Result<()>);
