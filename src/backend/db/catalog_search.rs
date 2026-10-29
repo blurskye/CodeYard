@@ -386,7 +386,11 @@ pub(crate) fn extract_fields(
 ) -> Result<(), &'static str> {
     match expr {
         Expr::Term(k, v) if k == "in" => {
-            fields.extend(v.split(',').map(str::to_owned));
+            for field in v.split(',') {
+                if !fields.iter().any(|known| known == field) {
+                    fields.push(field.to_owned());
+                }
+            }
             *expr = Expr::And(Vec::new());
         }
         Expr::And(v) => {
