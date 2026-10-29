@@ -2253,6 +2253,7 @@ CREATE TABLE repository_deployments (
     payload TEXT NOT NULL DEFAULT '{}',
     original_environment TEXT NOT NULL,
     environment TEXT NOT NULL,
+    environment_key TEXT NOT NULL,
     description TEXT,
     transient_environment BOOLEAN NOT NULL DEFAULT false,
     production_environment BOOLEAN NOT NULL DEFAULT false,
@@ -2260,6 +2261,7 @@ CREATE TABLE repository_deployments (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 CREATE INDEX repository_deployments_repo ON repository_deployments(repo_id,id);
+CREATE INDEX repository_deployments_inactivation ON repository_deployments(repo_id,environment_key,id) WHERE NOT transient_environment AND NOT production_environment;
 
 CREATE TABLE deployment_statuses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
