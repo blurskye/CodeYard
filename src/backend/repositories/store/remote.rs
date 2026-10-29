@@ -98,6 +98,9 @@ impl RemoteStore {
         let raw_json = matches!(
             &operation,
             Operation::FilePaths { .. }
+                | Operation::GitTree { .. }
+                | Operation::GitTag { .. }
+                | Operation::TemplateTexts { .. }
                 | Operation::CommitsBetween { .. }
                 | Operation::Blame { .. }
                 | Operation::Commits { .. }

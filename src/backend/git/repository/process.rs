@@ -385,6 +385,19 @@ pub(crate) async fn operation_slot(timeout: Duration) -> Result<OwnedSemaphorePe
         .context("Git operation limit closed")
 }
 
+/// Blocking Git work keeps its admission permit even if its caller is cancelled.
+pub(crate) async fn blocking_until<T: Send + 'static>(
+    deadline: std::time::Instant,
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
+    let permit = operation_slot(deadline.saturating_duration_since(std::time::Instant::now())).await?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        ensure!(std::time::Instant::now() < deadline, "Git operation timed out");
+        work()
+    }).await.context("Git blocking task failed")?
+}
+
 /// Runs a command to completion, feeding `input` and collecting bounded output.
 pub(crate) async fn run(
     mut command: Command,

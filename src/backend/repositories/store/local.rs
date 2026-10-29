@@ -454,18 +454,7 @@ impl LocalStore {
         work: impl FnOnce(&Path) -> anyhow::Result<T> + Send + 'static,
     ) -> Result<T, RepoError> {
         let path: PathBuf = self.path().to_owned();
-        let permit = process::operation_slot(deadline.saturating_duration_since(Instant::now()))
-            .await
-            .map_err(|_| unavailable("Git operation timed out"))?;
-        match tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            work(&path)
-        })
-        .await
-        {
-            Ok(result) => result.map_err(RepoError::from),
-            Err(_) => Err(unavailable("Git did not finish")),
-        }
+        process::blocking_until(deadline, move || work(&path)).await.map_err(RepoError::from)
     }
 
     /// Refuses a new branch or tag once the repository is at the limit.
@@ -586,9 +575,7 @@ impl LocalStore {
         revision: &str,
         recursive: bool,
     ) -> Result<git::objects::TreeObject, RepoError> {
-        let revision = revision.to_owned();
-        self.blocking(move |path| git::objects::read_tree(path, &revision, recursive))
-            .await
+        git::objects::read_tree(self.path(), revision, recursive).await.map_err(RepoError::from)
     }
 
     pub(super) async fn git_object_kind(&self, sha: &str) -> Result<String, RepoError> {
@@ -919,9 +906,7 @@ impl LocalStore {
         revision: &str,
         paths: &[String],
     ) -> Result<Vec<Option<(String, String)>>, RepoError> {
-        let (revision, paths) = (revision.to_owned(), paths.to_vec());
-        self.blocking(move |repo| git::repository::template_texts(repo, &revision, &paths))
-            .await
+        git::repository::template_texts(self.path(), revision, paths).await.map_err(RepoError::from)
     }
 
     async fn read_blob_object_range(
@@ -999,9 +984,7 @@ impl LocalStore {
     }
 
     pub(super) async fn blob_by_id(&self, id: &str) -> Result<Vec<u8>, RepoError> {
-        let id = id.to_owned();
-        self.blocking(move |repo| git::get_blob_by_id(repo, &id))
-            .await
+        git::get_blob_by_id(self.path(), id).await.map_err(RepoError::from)
     }
 
     /// Like `RepoStore::commits`, but the walk gives up at `deadline`, and its Git permit with it.

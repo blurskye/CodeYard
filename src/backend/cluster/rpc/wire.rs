@@ -67,9 +67,13 @@ pub enum Operation {
     GitTree {
         revision: String,
         recursive: bool,
+        #[serde(default)]
+        raw_json: bool,
     },
     GitTag {
         sha: String,
+        #[serde(default)]
+        raw_json: bool,
     },
     GitObjectKind {
         sha: String,
@@ -106,6 +110,8 @@ pub enum Operation {
     TemplateTexts {
         revision: String,
         paths: Vec<String>,
+        #[serde(default)]
+        raw_json: bool,
     },
     Blob {
         git_ref: String,

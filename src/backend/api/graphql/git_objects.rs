@@ -65,7 +65,7 @@ pub(super) async fn load(
                 ));
             }
             Ok(
-                json!({"__typename":"Tree","_repo":repo.id,"id":node_id::git("T",oid),"oid":oid,"entries":tree.tree.iter().map(|e|json!({"_repo":repo.id,"name":e.path,"nameRaw":STANDARD.encode(&e.path),"path":e.path,"pathRaw":STANDARD.encode(&e.path),"submodule":null,"mode":i32::from_str_radix(&e.mode,8).unwrap_or(0),"oid":e.sha,"size":e.size.unwrap_or(0),"type":e.kind})).collect::<Vec<_>>()}),
+                json!({"__typename":"Tree","_repo":repo.id,"id":node_id::git("T",oid),"oid":oid,"entries":tree.tree.iter().map(|e|json!({"_repo":repo.id,"name":e.path,"nameRaw":STANDARD.encode(&e.path_raw),"path":e.path,"pathRaw":STANDARD.encode(&e.path_raw),"submodule":null,"mode":i32::from_str_radix(&e.mode,8).unwrap_or(0),"oid":e.sha,"size":e.size.unwrap_or(0),"type":e.kind})).collect::<Vec<_>>()}),
             )
         }
         "tag" => {

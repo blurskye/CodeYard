@@ -581,8 +581,9 @@ impl RpcHandler {
             Operation::GitTree {
                 revision,
                 recursive,
-            } => json!(store.git_tree(&revision, recursive)),
-            Operation::GitTag { sha } => json!(store.git_tag(&sha)),
+                raw_json,
+            } => encode_json(&store.git_tree(&revision, recursive).await?, raw_json, &mut output)?,
+            Operation::GitTag { sha, raw_json } => encode_json(&store.git_tag(&sha).await?, raw_json, &mut output)?,
             Operation::GitObjectKind { sha } => json!(store.git_object_kind(&sha)),
             Operation::UpdateReference {
                 reference,
@@ -645,8 +646,8 @@ impl RpcHandler {
             Operation::SidebarTrees { git_ref, paths } => {
                 json!(store.sidebar_trees(&git_ref, &paths))
             }
-            Operation::TemplateTexts { revision, paths } => {
-                json!(store.template_texts(&revision, &paths))
+            Operation::TemplateTexts { revision, paths, raw_json } => {
+                encode_json(&store.template_texts(&revision, &paths).await?, raw_json, &mut output)?
             }
             Operation::WorkflowFiles { revision } => {
                 let files = store.workflow_files(&revision).await?;

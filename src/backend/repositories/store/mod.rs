@@ -145,6 +145,7 @@ impl RepoStore {
                         Operation::GitTree {
                             revision: revision.into(),
                             recursive,
+                            raw_json: true,
                         },
                         b"",
                     )
@@ -169,7 +170,7 @@ impl RepoStore {
             Backend::Local(local) => local.git_tag(sha).await,
             Backend::Remote(remote) => {
                 remote
-                    .call(Operation::GitTag { sha: sha.into() }, b"")
+                    .call(Operation::GitTag { sha: sha.into(), raw_json: true }, b"")
                     .await
             }
         }
@@ -674,6 +675,7 @@ impl RepoStore {
                         Operation::TemplateTexts {
                             revision: revision.into(),
                             paths: paths.to_vec(),
+                            raw_json: true,
                         },
                         b"",
                     )
@@ -717,7 +719,7 @@ impl RepoStore {
                     .bytes_with_limit(
                         Operation::BlobById { id: id.into() },
                         b"",
-                        MAX_BLOB_RESPONSE_BYTES,
+                        git::objects::MAX_BLOB_WRITE_BYTES,
                     )
                     .await
             }
