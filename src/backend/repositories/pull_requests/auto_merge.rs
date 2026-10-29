@@ -134,10 +134,9 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
             if current.is_none_or(|current| current.enabled_at != entry.enabled_at) {
                 continue;
             }
-            let merged = merge::merge_pull_request(
+            let prepared = merge::prepare_pull_request_merge(
                 pool,
                 &state.ci_runs,
-                &state.notification_broadcaster,
                 entry.enabled_by,
                 (owner, repository.name, pull.number),
                 merge::MergeRequest {
@@ -153,6 +152,13 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
                 },
             )
             .await;
+            let merged = match prepared {
+                Ok(mut prepared) => {
+                    prepared.bind_auto_merge(entry.pull_request_id, entry.enabled_at);
+                    merge::publish_prepared_merge(pool, &state.ci_runs, &state.notification_broadcaster, prepared).await
+                }
+                Err(error) => Err(error),
+            };
             match merged {
                 Ok(_) | Err(OperationError::BranchMerged { .. }) => {
                     db::pull_requests::auto_merge::disable_auto_merge(pool, pull.id).await?;

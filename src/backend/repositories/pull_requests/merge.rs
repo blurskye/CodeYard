@@ -975,11 +975,15 @@ pub struct PreparedMerge {
     merge_sha: String,
     token: Option<i64>,
     async_request: Option<(String, i64)>,
+    auto_merge: Option<db::pull_requests::merge_policy::AutoMergeIdentity>,
 }
 
 impl PreparedMerge {
     pub(super) fn bind_async_request(&mut self, uuid: &str, token_id: i64) {
         self.async_request = Some((uuid.into(), token_id));
+    }
+    pub(super) fn bind_auto_merge(&mut self, pull_request_id: i64, enabled_at: chrono::DateTime<chrono::Utc>) {
+        self.auto_merge = Some(db::pull_requests::merge_policy::AutoMergeIdentity { pull_request_id, enabled_at });
     }
     pub(super) fn matches_request(&self, repo_id: i64, pull_id: i64) -> bool {
         self.repository.id == repo_id && self.pull_request.id == pull_id
@@ -1146,6 +1150,7 @@ pub async fn prepare_pull_request_merge(
         merge_sha,
         token,
         async_request: None,
+        auto_merge: None,
     })
 }
 
@@ -1244,7 +1249,12 @@ pub async fn publish_prepared_merge(
         merge_sha,
         token,
         async_request,
+        auto_merge,
     } = prepared;
+    let policy = db::pull_requests::merge_policy::Snapshot {
+        revision: db::pull_requests::merge_policy::revision(pool, repository.id).await.map_err(database_error)?,
+        auto_merge,
+    };
     let repository = db::repositories::records::get_repository_by_id(pool, repository.id)
         .await
         .map_err(database_error)?
@@ -1293,6 +1303,7 @@ pub async fn publish_prepared_merge(
                 repository.id,
                 user.id,
                 &crate::backend::repositories::store::AsyncMergePublication {
+                    policy: Some(policy),
                     uuid,
                     token_id,
                     pull_request_id: pull_request.id,
@@ -1316,7 +1327,7 @@ pub async fn publish_prepared_merge(
                 &merge.base,
                 &merge_sha,
                 merge.method,
-                token,
+                crate::backend::repositories::store::MergeAuthorization { token, policy: Some(policy) },
             )
             .await
     } else {
@@ -1333,7 +1344,7 @@ pub async fn publish_prepared_merge(
                 &merge.base_branch,
                 &merge.base,
                 &merge_sha,
-                token,
+                crate::backend::repositories::store::MergeAuthorization { token, policy: Some(policy) },
             )
             .await
     };
