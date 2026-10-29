@@ -43,8 +43,11 @@ fn entries(repo: &Repository, commit: &Commit<'_>) -> Result<Vec<TreeObjectEntry
     ensure!(!tree.is_empty() && tree.len() <= MAX_GIST_FILES, invalid());
     let mut total = 0usize;
     let mut files = Vec::new();
+    let mut previous_name: Option<String> = None;
     for entry in &tree {
         let name = entry.name().ok_or_else(invalid)?;
+        ensure!(previous_name.as_deref().is_none_or(|previous| previous < name), invalid());
+        previous_name = Some(name.to_owned());
         ensure!(
             valid_gist_filename(name)
                 && entry.kind() == Some(ObjectType::Blob)
@@ -193,7 +196,7 @@ pub(crate) fn prepare(
     } else {
         BTreeMap::new()
     };
-    let mut files = original.clone();
+    let mut files = original.iter().map(|(name, (oid, mode))| (name.clone(), (*oid, mode.clone(), None))).collect::<BTreeMap<_, _>>();
     for (name, change) in &input.files {
         if change
             .as_ref()
@@ -215,28 +218,34 @@ pub(crate) fn prepare(
             !files.contains_key(target) && destinations.insert(target.clone()),
             RepoError::new(ErrorKind::Invalid, "Gist filenames must be unique")
         );
-        let (oid, mode) = if let Some(content) = &change.content {
+        let (oid, mode, content) = if let Some(content) = &change.content {
             (
-                repo.blob(content.as_bytes())?,
+                Oid::zero(),
                 original
                     .get(name)
                     .map(|(_, mode)| mode.clone())
                     .unwrap_or_else(|| "100644".to_owned()),
+                Some(content.as_str()),
             )
         } else {
-            original.get(name).cloned().ok_or_else(invalid)?
+            let (oid, mode) = original.get(name).cloned().ok_or_else(invalid)?;
+            (oid, mode, None)
         };
-        files.insert(target.clone(), (oid, mode));
+        files.insert(target.clone(), (oid, mode, content));
     }
     ensure!(
         !files.is_empty() && files.len() <= MAX_GIST_FILES,
         invalid()
     );
     let mut total = 0usize;
-    let mut builder = repo.treebuilder(None)?;
-    for (name, (oid, mode)) in files {
-        total = total.saturating_add(repo.odb()?.read_header(oid)?.0);
+    for (oid, _, content) in files.values() {
+        let size = match content { Some(content) => content.len(), None => repo.odb()?.read_header(*oid)?.0 };
+        total = total.saturating_add(size);
         ensure!(total <= MAX_GIST_BYTES, RepoError::response_too_large());
+    }
+    let mut builder = repo.treebuilder(None)?;
+    for (name, (oid, mode, content)) in files {
+        let oid = match content { Some(content) => repo.blob(content.as_bytes())?, None => oid };
         builder.insert(
             name,
             oid,
@@ -258,17 +267,18 @@ pub(crate) fn prepare(
         &tree,
         &parents,
     )?;
+    bounded_graph(&repo, sha)?;
     Ok(PreparedGist {
         base,
         sha: sha.to_string(),
     })
 }
-pub(crate) fn history(
+fn history_metadata(
     path: &Path,
     revision: Option<&str>,
     offset: usize,
     limit: usize,
-) -> Result<Vec<GistRevision>> {
+) -> Result<Vec<(GistRevision, Option<String>)>> {
     let repo = Repository::open_bare(path)?;
     let head = selected_commit(&repo, revision)?;
     let graph = bounded_graph(&repo, head.id())?;
@@ -308,27 +318,47 @@ pub(crate) fn history(
         }
         let commit = repo.find_commit(oid)?;
         entries(&repo, &commit)?;
-        let tree = commit.tree()?;
-        let previous = if commit.parent_count() > 0 {
-            let parent = commit.parent(0)?;
-            entries(&repo, &parent)?;
-            Some(parent.tree()?)
-        } else {
-            None
-        };
-        let mut diff = repo.diff_tree_to_tree(previous.as_ref(), Some(&tree), None)?;
-        diff.find_similar(None)?;
-        let stats = diff.stats()?;
-        result.push(GistRevision {
+        let previous = if commit.parent_count() > 0 { Some(commit.parent_id(0)?.to_string()) } else { None };
+        result.push((GistRevision {
             sha: oid.to_string(),
-            author_email: commit.author().email().unwrap_or_default().into(),
+            author_email: commit.author().email().filter(|email| email.len() <= super::repository::MAX_COMMIT_EMAIL_BYTES).unwrap_or_default().into(),
             timestamp: commit.time().seconds(),
-            additions: stats.insertions().try_into()?,
-            deletions: stats.deletions().try_into()?,
-        });
+            additions: 0,
+            deletions: 0,
+        }, previous));
     }
     Ok(result)
 }
+pub(crate) async fn history(path: &Path, revision: Option<&str>, offset: usize, limit: usize) -> Result<Vec<GistRevision>> {
+    use super::repository::process;
+    let permit = process::operation_slot(super::COMMIT_WALK_TIMEOUT).await?;
+    let owned_path = path.to_owned();
+    let revision = revision.map(str::to_owned);
+    let entries = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        history_metadata(&owned_path, revision.as_deref(), offset, limit)
+    }).await??;
+    let mut result = Vec::new();
+    for (mut revision, previous) in entries {
+        let mut command = process::git_command()?;
+        command.arg("--git-dir").arg(path);
+        match previous {
+            Some(previous) => { command.args(["diff", "--numstat", "-z", "--find-renames", &previous, &revision.sha, "--"]); }
+            None => { command.args(["diff-tree", "--root", "-r", "--no-commit-id", "--numstat", "-z", &revision.sha, "--"]); }
+        }
+        let (status, bytes) = process::buffered(command, b"", 128 * 1024, super::COMMIT_WALK_TIMEOUT).await?;
+        ensure!(status.success(), "Git could not read gist change statistics");
+        for record in bytes.split(|byte| *byte == 0).filter(|record| record.contains(&b'\t')) {
+            let mut fields = record.splitn(3, |byte| *byte == b'\t');
+            let count = |field: &[u8]| -> Result<i32> { if field == b"-" { Ok(0) } else { Ok(std::str::from_utf8(field)?.parse()?) } };
+            revision.additions += count(fields.next().ok_or_else(invalid)?)?;
+            revision.deletions += count(fields.next().ok_or_else(invalid)?)?;
+        }
+        result.push(revision);
+    }
+    Ok(result)
+}
+
 pub(crate) fn validate_push(
     path: &Path,
     quarantine: Option<&Path>,
