@@ -254,11 +254,11 @@ pub(super) async fn resolve(
             };
             let mut path = format!(
                 "/{}/{}/discussions/{number}",
-                repository::owner(&repo, request).await?,
-                repo.name
+                crate::webui::encode_component(&repository::owner(&repo, request).await?),
+                crate::webui::encode_component(&repo.name)
             );
             if ty == "DiscussionComment" {
-                path.push_str(&format!("#discussioncomment-{}", parent["databaseId"]));
+                path.push_str(&format!("?comment={0}#discussioncomment-{0}", parent["databaseId"]));
             }
             Ok(json!(url(&path)))
         }
