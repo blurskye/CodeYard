@@ -84,6 +84,8 @@ async fn fetch(
         .prefix(TEMP_PREFIX)
         .tempfile_in(copies)?;
     let mut output = tokio::fs::File::from_std(pack.reopen()?);
+    let mut input = tokio::io::empty();
+    let mut errors = tokio::io::sink();
     let (listing, status) = tokio::select! {
         biased;
         _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),
@@ -98,9 +100,9 @@ async fn fetch(
                 ci_run: None,
             },
             GitStreams {
-                input: &mut tokio::io::empty(),
+                input: &mut input,
                 output: &mut output,
-                errors: &mut tokio::io::sink(),
+                errors: &mut errors,
             },
         ) => downloaded?,
     };

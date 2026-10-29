@@ -84,7 +84,10 @@ impl LocalStore {
             self.recover_gist(pool, id).await?;
         }
         let revision = revision.map(str::to_owned);
-        self.blocking(move |path| git::gists::snapshot(path, revision.as_deref()))
+        self.blocking(move |path| {
+            let _lock = _lock;
+            git::gists::snapshot(path, revision.as_deref())
+        })
             .await
     }
     pub(in crate::backend::repositories::store) async fn gist_history(
@@ -101,7 +104,10 @@ impl LocalStore {
             self.recover_gist(pool, id).await?;
         }
         let revision = revision.map(str::to_owned);
-        self.blocking(move |path| git::gists::history(path, revision.as_deref(), offset, limit))
+        self.blocking(move |path| {
+            let _lock = _lock;
+            git::gists::history(path, revision.as_deref(), offset, limit)
+        })
             .await
     }
     pub(in crate::backend::repositories::store) async fn gist_write(
