@@ -2022,6 +2022,23 @@ impl LocalStore {
             .map_err(|_| RepoError::applied_followup_failed())?
             .ok_or_else(RepoError::applied_followup_failed)?;
         crate::backend::repositories::dependencies::observe_refs(pool, &repository, moves).await;
+        // Evaluate-only reporting must neither hide accepted native writes nor skip other
+        // follow-ups when its storage is unavailable.
+        let suites: anyhow::Result<()> = async {
+            let user = db::users::accounts::get_user_by_id(pool, actor).await?
+                .ok_or_else(|| anyhow::anyhow!("rule suite actor is unavailable"))?;
+            let updates: Vec<_> = moves.iter().map(|(reference, old, new)| {
+                crate::backend::repositories::git_sessions::validation::RefUpdate {
+                    reference: reference.clone(), old: old.clone(), new: new.clone(),
+                }
+            }).collect();
+            crate::backend::repositories::rule_suites::record_push(
+                pool, &repository, &user, &updates, &History::Stored { repository: self.path() }, None,
+            ).await
+        }.await;
+        if let Err(error) = suites {
+            tracing::warn!(repo_id, %error, "could not record native rule suites");
+        }
         let accepted = async {
             for (reference, _, new) in moves.iter().filter(|(_, _, new)| new != editor::ZERO) {
                 // Web and API saves get the same incremental secret scan that a push gets.

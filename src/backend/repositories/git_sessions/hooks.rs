@@ -303,7 +303,7 @@ impl Gateway {
             .await?;
         // Evaluate-mode rulesets only report; a suite that cannot be recorded is not a refusal.
         if let Err(error) = crate::backend::repositories::rule_suites::record_push(
-            &self.pool, &repo, &identity, updates, &history,
+            &self.pool, &repo, &identity, updates, &history, Some(operation.credential),
         )
         .await
         {
