@@ -87,6 +87,13 @@ pub struct Options {
     pub deny_docker: bool,
 }
 
+fn validate_replay_matrix(expected: &BTreeMap<u32, serde_json::Value>, plans: &[PlannedJob]) -> Result<()> {
+    anyhow::ensure!(expected.len() == plans.len() && plans.iter().enumerate().all(|(index, plan)| {
+        expected.get(&(index as u32)).is_some_and(|matrix| Value::from_json(matrix) == plan.matrix)
+    }), "Matrix context has changed; re-run the whole workflow");
+    Ok(())
+}
+
 fn object(values: &BTreeMap<String, String>) -> Value {
     Value::Object(
         values
@@ -746,6 +753,11 @@ impl WorkflowRun {
                             .get(&id)
                             .context("Source dependency state is unavailable")?
                             .clone();
+                        if let Some(expected) = replay.matrices.get(&id) {
+                            let plans = workflow::expand(&workflow, &id, &contexts, status)?
+                                .context("Retained matrix context has changed; re-run the whole workflow")?;
+                            validate_replay_matrix(expected, &plans)?;
+                        }
                         successful &= matches!(result.result.as_str(), "success" | "skipped");
                         results.insert(id, result);
                         continue;
@@ -821,20 +833,12 @@ impl WorkflowRun {
                         && variants.iter().all(|index| (*index as usize) < plans.len())),
                     "selected matrix variant is unavailable"
                 );
-                if let Some(selected) = variants {
-                    let source = replay
-                        .as_ref()
-                        .expect("variant selection requires a replay");
-                    for index in selected {
-                        let expected = source
-                            .matrices
-                            .get(&id)
-                            .and_then(|matrices| matrices.get(index))
-                            .context("Source matrix metadata is unavailable")?;
-                        anyhow::ensure!(
-                            Value::from_json(expected) == plans[*index as usize].matrix,
-                            "Selected matrix context has changed; re-run the whole workflow"
-                        );
+                if variants.is_some() {
+                    if let Some(expected) = replay.as_ref().and_then(|source| source.matrices.get(&id)) {
+                        validate_replay_matrix(expected, &plans)?;
+                    } else {
+                        anyhow::ensure!(raw["jobs"][id.as_str()]["strategy"].get("matrix").is_none(),
+                            "Source matrix metadata is unavailable");
                     }
                 }
                 for job in &mut plans {

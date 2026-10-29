@@ -60,6 +60,46 @@ fn severity(value: &str) -> Option<&'static str> {
     }
 }
 
+/// Whether every successful match consumes input. Backreferences and subroutines may be
+/// empty, so they cannot establish this guarantee without a separate capture analysis.
+fn consumes(expr: &fancy_regex::Expr) -> bool {
+    use fancy_regex::Expr;
+    match expr {
+        Expr::Literal { val, .. } => !val.is_empty(),
+        Expr::Any { .. } => true,
+        Expr::Delegate { size, .. } => *size > 0,
+        Expr::Concat(children) => children.iter().any(consumes),
+        Expr::Alt(children) => !children.is_empty() && children.iter().all(consumes),
+        Expr::Group(child) | Expr::AtomicGroup(child) => consumes(child),
+        Expr::Repeat { child, lo, .. } => *lo > 0 && consumes(child),
+        Expr::Conditional { true_branch, false_branch, .. } => consumes(true_branch) && consumes(false_branch),
+        _ => false,
+    }
+}
+
+fn validate_repetitions(expr: &fancy_regex::Expr) -> Result<()> {
+    use fancy_regex::Expr;
+    match expr {
+        Expr::Repeat { child, lo, hi, .. } => {
+            // The VM's backtrack counter does not charge successful zero-width iterations.
+            ensure!(consumes(child) || (*lo <= 1 && (*hi == usize::MAX || *hi <= 1)),
+                "Counted repetition of a possibly empty matcher expression is unsupported");
+            validate_repetitions(child)?;
+        }
+        Expr::Concat(children) | Expr::Alt(children) => {
+            for child in children { validate_repetitions(child)?; }
+        }
+        Expr::Group(child) | Expr::AtomicGroup(child) | Expr::LookAround(child, _) => validate_repetitions(child)?,
+        Expr::Conditional { condition, true_branch, false_branch } => {
+            validate_repetitions(condition)?;
+            validate_repetitions(true_branch)?;
+            validate_repetitions(false_branch)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 impl Matcher {
     fn new(definition: Definition) -> Result<Self> {
         ensure!(
@@ -87,6 +127,8 @@ impl Matcher {
                 pattern.regexp.len() <= 128 * 1024,
                 "Matcher regexp is too large"
             );
+            let tree = fancy_regex::Expr::parse_tree(&pattern.regexp).context("Invalid matcher regexp")?;
+            validate_repetitions(&tree.expr)?;
             let regex = RegexBuilder::new(&pattern.regexp)
                 .backtrack_limit(100_000)
                 .build()
