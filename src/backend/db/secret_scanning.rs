@@ -102,6 +102,8 @@ pub struct Filter {
     pub state: Option<String>,
     pub secret_type: Option<String>,
     pub exclude_secret_types: Option<String>,
+    pub providers: Option<String>,
+    pub exclude_providers: Option<String>,
     pub resolution: Option<String>,
     pub validity: Option<String>,
     pub assignee: Option<String>,

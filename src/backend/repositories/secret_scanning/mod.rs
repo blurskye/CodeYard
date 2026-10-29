@@ -6,6 +6,12 @@ mod scanner;
 
 pub use scanner::{scan, secret_types, Detection, MAX_BLOB_BYTES};
 
+/// Native detector families are the provider slugs exposed by alert documents and filters.
+pub fn provider(secret_type: &str) -> &str {
+    if secret_type.starts_with("custom-pattern-") { "custom" }
+    else { secret_type.split('_').next().unwrap_or(secret_type) }
+}
+
 pub fn scan_with_patterns(
     path: &str,
     commit: &str,
