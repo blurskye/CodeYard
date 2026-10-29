@@ -87,10 +87,11 @@ on the host with no container isolation.
   ```
 
 - **HTTPS.** Public repositories can be cloned anonymously. For private repositories
-  or pushes, create a personal access token in **Settings → Access tokens**. Choose
+  or pushes, create a personal access token in **Settings → Tokens (classic)**. Choose
   `read` for clone/fetch or `write` for clone/fetch/push. Git asks for a username
   (any value) and password: enter the token as the password, not your account password.
-  Tokens are shown once and can be given an expiry or deleted in settings.
+  Tokens are shown once and can be given an expiry or deleted in settings. **Settings →
+  Fine-grained tokens** makes tokens limited to chosen repositories and permissions.
 
   ```bash
   git clone https://your-host/owner/repo.git

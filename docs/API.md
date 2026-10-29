@@ -129,8 +129,10 @@ require access to the current repository. Lists support GitHub's pagination and 
 Nonempty rulesets must remain `disabled`: activation and evaluation return 422 until native
 ref admission consumes these policies. Security-product bulk changes likewise return 422
 because this build has no native scanners; they never report that a job was started.
-GitHub App installations, external app properties and fine-grained PAT governance are not
-implemented in this build.
+Owners review fine-grained tokens through `/api/v3/orgs/{org}/personal-access-token-requests`
+and `/api/v3/orgs/{org}/personal-access-tokens` (list, approve or deny, revoke). Apps and
+fine-grained tokens cannot call them. GitHub App installations and external app properties
+are not implemented in this build.
 
 ### Teams
 
@@ -200,6 +202,20 @@ Token values are stored only as SHA-256 hashes. Bans and password resets revoke 
 along with sessions; account suspension, required password changes and expiry deny Git
 authentication. Creation and deletion require an active session. Token settings are
 not cached.
+
+### Fine-grained tokens
+
+`/settings/personal-access-tokens` creates fine-grained tokens (`cy_fgpat_` plus 64 hex
+digits). Each has a resource owner (you or one of your organizations), an expiry of at most
+a year (30 days by default), a repository selection (public only, all of the owner's
+repositories, or up to 100 selected ones) and GitHub's permission names with `read`,
+`write` or `admin`. A request is allowed only when both the token and your current access
+allow it, so leaving a repository or organization takes effect at once. Responses carry
+`X-Accepted-GitHub-Permissions`, naming the permission an endpoint needs.
+
+Organization owners set the policy on the organization's **Personal access tokens** tab:
+whether fine-grained tokens need approval, whether classic tokens may reach the
+organization, and a maximum lifetime. A token waiting for approval reads public data only.
 
 ## Repositories
 
