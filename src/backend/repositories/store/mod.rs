@@ -708,6 +708,14 @@ impl RepoStore {
         self.blob_range(git_ref, path, BlobRange::Full).await
     }
 
+    /// Bounded bytes and metadata of a blob addressed by its immutable ID.
+    pub async fn blob_by_id_range(&self, id: &str, range: BlobRange) -> Result<BlobBytes, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.blob_by_id_range(id, range).await,
+            Backend::Remote(remote) => remote.call(Operation::BlobByIdRange { id: id.into(), range }, b"").await,
+        }
+    }
+
     /// A blob by its object ID, wherever it appears in the repository.
     pub async fn blob_by_id(&self, id: &str) -> Result<Vec<u8>, RepoError> {
         match &self.0 {

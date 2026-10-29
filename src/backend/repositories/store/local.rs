@@ -1038,6 +1038,17 @@ impl LocalStore {
         self.read_blob_object_range(&id, size, mode, range).await
     }
 
+    pub(super) async fn blob_by_id_range(&self, id: &str, range: BlobRange) -> Result<BlobBytes, RepoError> {
+        let oid = id.to_owned();
+        let size = self.blocking(move |path| {
+            let repo = git2::Repository::open_bare(path)?;
+            let (size, kind) = repo.odb()?.read_header(git2::Oid::from_str(&oid)?)?;
+            anyhow::ensure!(kind == git2::ObjectType::Blob, "Not a blob");
+            Ok(size as u64)
+        }).await?;
+        self.read_blob_object_range(id, size, 0o100644, range).await
+    }
+
     pub(super) async fn blob_by_id(&self, id: &str) -> Result<Vec<u8>, RepoError> {
         let id = id.to_owned();
         self.blocking(move |repo| git::get_blob_by_id(repo, &id))

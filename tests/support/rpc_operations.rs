@@ -201,6 +201,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             false,
         ),
         (Operation::BlobById { id: sha.into() }, true),
+        (Operation::BlobByIdRange { id: sha.into(), range: BlobRange::Window { offset: 0, length: 0 } }, false),
         (
             Operation::Commits {
                 git_ref: "main".into(),

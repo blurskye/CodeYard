@@ -67,6 +67,7 @@ pub fn authorize_operation(
         Operation::Blob { .. } => ("Blob", false),
         Operation::BlobBytes { .. } => ("BlobBytes", false),
         Operation::BlobById { .. } => ("BlobById", true),
+        Operation::BlobByIdRange { .. } => ("BlobByIdRange", false),
         Operation::Commits { .. } => ("Commits", false),
         Operation::CommitPage { .. } => ("CommitPage", false),
         Operation::SearchCode { .. } => ("SearchCode", false),
@@ -699,6 +700,7 @@ impl RpcHandler {
                 output = store.blob_by_id(&id).await?;
                 Value::Null
             }
+            Operation::BlobByIdRange { id, range } => json!(store.blob_by_id_range(&id, range).await?),
             Operation::Commits {
                 git_ref,
                 limit,

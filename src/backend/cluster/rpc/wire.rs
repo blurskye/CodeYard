@@ -121,6 +121,10 @@ pub enum Operation {
     BlobById {
         id: String,
     },
+    BlobByIdRange {
+        id: String,
+        range: BlobRange,
+    },
     Commits {
         git_ref: String,
         limit: usize,
@@ -430,6 +434,7 @@ impl Operation {
             | Self::Blob { .. }
             | Self::BlobBytes { .. }
             | Self::BlobById { .. }
+            | Self::BlobByIdRange { .. }
             | Self::Commits { .. }
             | Self::CommitPage { .. }
             | Self::SearchCode { .. }
