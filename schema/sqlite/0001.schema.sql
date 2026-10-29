@@ -1075,7 +1075,6 @@ INSERT INTO file_reason_limits (reason, max_file_size_bytes, max_uploads_per_hou
 ('avatar', 2097152, 5, 10485760, 20, 41943040, '["image/jpeg", "image/png", "image/gif", "image/webp"]', 'User profile avatars'),
 ('org_avatar', 2097152, 5, 10485760, 20, 41943040, '["image/jpeg", "image/png", "image/gif", "image/webp"]', 'Organization avatars'),
 ('release_asset', 104857600, 20, 524288000, 100, 2147483648, NULL, 'Release binary assets'),
-('package', 104857600, 100, 1073741824, 500, 5368709120, NULL, 'Package blob uploads'),
 ('issue_attachment', 10485760, 20, 104857600, 100, 524288000, '["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf", "text/plain", "text/markdown"]', 'Issue attachments'),
 ('pr_attachment', 10485760, 20, 104857600, 100, 524288000, '["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf", "text/plain", "text/markdown"]', 'PR attachments'),
 ('readme_image', 5242880, 10, 52428800, 50, 262144000, '["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"]', 'README and wiki images'),
@@ -2646,8 +2645,6 @@ CREATE TABLE code_scanning_uploads (
     sarif TEXT NOT NULL,
     checkout_uri TEXT,
     processing_status TEXT NOT NULL DEFAULT 'pending' CHECK(processing_status IN ('pending','complete','failed')),
-    claim_id TEXT,
-    claim_until TEXT,
     error TEXT,
     created_at TEXT NOT NULL
 );

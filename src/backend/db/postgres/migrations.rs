@@ -5,11 +5,10 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use tracing::info;
 
-const MIGRATIONS: &[(i64, &str, &str)] = &[(
-    1,
-    "schema",
-    include_str!("../../../../schema/postgres/0001.schema.sql"),
-)];
+const MIGRATIONS: &[(i64, &str, &str)] = &[
+    (1, "schema", include_str!("../../../../schema/postgres/0001.schema.sql")),
+    (2, "admission", include_str!("../../../../schema/postgres/0002.admission.sql")),
+];
 
 static MIGRATION_TURNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 

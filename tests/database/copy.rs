@@ -540,7 +540,7 @@ async fn non_empty_destination_is_refused_and_left_untouched() {
     let target_pool = &target.raw;
     assert_eq!(postgres_count(target_pool, "users").await, 1);
     assert_eq!(postgres_count(target_pool, "repositories").await, 0);
-    assert_eq!(postgres_count(target_pool, "file_reason_limits").await, 8);
+    assert_eq!(postgres_count(target_pool, "file_reason_limits").await, 9);
 }
 
 #[tokio::test]
@@ -716,7 +716,7 @@ async fn failed_copy_leaves_destination_empty() {
     for table in sqlite_tables(&source.raw).await {
         // Only the rows the migrations seed remain.
         let expected = match table.as_str() {
-            "file_reason_limits" => 8,
+            "file_reason_limits" => 9,
             "issue_attribute_guard" | "issue_relation_guard" | "vulnerability_settings" => 1,
             "organization_roles" => 6,
             _ => 0,
