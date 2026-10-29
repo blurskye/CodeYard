@@ -142,16 +142,15 @@ pub async fn prepare_rebase(
                 Err(_) => return Err(prepare_timeout()),
             }
         };
-        if new_head != head {
-            moves.push(RestackMove {
-                branch: layer.head_branch.clone(),
-                old: head,
-                new: new_head.clone(),
-            });
-        }
+        // Unchanged dependency heads still participate in the final CAS transaction.
+        moves.push(RestackMove {
+            branch: layer.head_branch.clone(),
+            old: head,
+            new: new_head.clone(),
+        });
         onto = new_head;
     }
-    if moves.is_empty() {
+    if moves.iter().all(|restack| restack.old == restack.new) {
         return Ok(None);
     }
     Ok(Some(PreparedRestack {
@@ -207,7 +206,8 @@ pub async fn publish_rebase(
     };
     // Finish admission after recording the heads; an unchanged refresh cannot retry it.
     branches_moved(pool, &repository, ci, actor_id).await;
-    for restack in &moves {
+    let rebased = moves.iter().filter(|restack| restack.old != restack.new).count();
+    for restack in moves.iter().filter(|restack| restack.old != restack.new) {
         ci.queue_push_runs(
             &repository,
             &owner,
@@ -226,12 +226,12 @@ pub async fn publish_rebase(
             code: "restack_followup_failed",
             message: format!(
                 "{} branches were rebased, but repository metadata could not be updated.",
-                moves.len()
+                rebased
             ),
         });
     }
     Ok(RestackResponse {
-        rebased: moves.len(),
+        rebased,
     })
 }
 

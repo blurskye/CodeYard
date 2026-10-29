@@ -710,6 +710,7 @@ impl LocalStore {
             Some(source.path()),
             default_branch,
             options.default_branch_only,
+            options.template,
         )
         .await
         .map_err(RepoError::from)?;
@@ -2453,7 +2454,7 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        for restack in moves {
+        for restack in moves.iter().filter(|restack| restack.old != restack.new) {
             let write = BranchWrite {
                 branch: &restack.branch,
                 old: Some(&restack.old),
@@ -2513,6 +2514,7 @@ impl LocalStore {
         }
         let writes = moves
             .iter()
+            .filter(|restack| restack.old != restack.new)
             .map(|restack| BranchWrite {
                 branch: &restack.branch,
                 old: Some(&restack.old),
@@ -2535,6 +2537,7 @@ impl LocalStore {
             .map_err(RepoError::from)?;
         let updates = moves
             .iter()
+            .filter(|restack| restack.old != restack.new)
             .map(|restack| {
                 (
                     format!("refs/heads/{}", restack.branch),
@@ -2544,7 +2547,7 @@ impl LocalStore {
             })
             .collect::<Vec<_>>();
         let followup = self.after_ref_change(pool, repo_id, actor, &updates).await;
-        for restack in moves {
+        for restack in moves.iter().filter(|restack| restack.old != restack.new) {
             record_branch_update(
                 pool,
                 repo_id,
