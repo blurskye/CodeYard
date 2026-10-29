@@ -289,24 +289,29 @@ async fn dispatch(
     }
     if path == "publish" && request.method() == Method::PUT {
         let auth = super::writer(auth.as_ref())?;
-        let _slot = super::upload_slot(state)?;
+        let slot = super::upload_slot(state)?;
         let bytes = payload(request).await?;
-        let spec = super::archives::nuspec(&bytes)?;
-        let (name, version, mut catalog) = nuspec(&spec)?;
+        // ZIP indexing, XML projection and whole-archive hashing are CPU/blocking
+        // work. Cancellation must retain upload admission until that work ends.
+        let (bytes, name, version, catalog, _slot) = tokio::task::spawn_blocking(move || {
+            let spec = super::archives::nuspec(&bytes)?;
+            let (name, version, mut catalog) = nuspec(&spec)?;
+            catalog["packageHash"] = json!(STANDARD.encode(Sha512::digest(&bytes)));
+            catalog["packageHashAlgorithm"] = json!("SHA512");
+            catalog["nuspec"] = json!(String::from_utf8(spec).map_err(|_| Error::invalid())?);
+            catalog["semver2"] = json!(crate::backend::nuget::metadata_semver2(&version, &catalog).map_err(Error::db)?);
+            Ok::<_, Error>((bytes, name, version, catalog, slot))
+        }).await.map_err(|_| Error::unavailable())??;
         let package = super::package(state, &owner, "nuget", &name, Some(auth), true).await?;
         let blob = packages::store(
             &state.pool,
             &state.storage,
             package.id,
             auth.token.id,
-            bytes.clone(),
+            bytes,
         )
         .await
         .map_err(Error::db)?;
-        catalog["packageHash"] = json!(STANDARD.encode(Sha512::digest(&bytes)));
-        catalog["packageHashAlgorithm"] = json!("SHA512");
-        catalog["nuspec"] = json!(String::from_utf8(spec).map_err(|_| Error::invalid())?);
-        catalog["semver2"] = json!(crate::backend::nuget::metadata_semver2(&version, &catalog).map_err(Error::db)?);
         db::packages::publish(
             &state.pool,
             auth.token.id,
