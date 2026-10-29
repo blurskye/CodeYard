@@ -260,6 +260,7 @@ pub(crate) fn read_tag(path: &Path, sha: &str) -> Result<TagObject> {
     let signature_start = [
         b"\n-----BEGIN PGP SIGNATURE-----".as_slice(),
         b"\n-----BEGIN SSH SIGNATURE-----",
+        b"\n-----BEGIN SIGNED MESSAGE-----",
     ]
     .iter()
     .filter_map(|marker| {
@@ -273,8 +274,10 @@ pub(crate) fn read_tag(path: &Path, sha: &str) -> Result<TagObject> {
         let block = raw[*offset..].trim_ascii_end();
         let end: &[u8] = if block.starts_with(b"-----BEGIN PGP") {
             b"-----END PGP SIGNATURE-----"
-        } else {
+        } else if block.starts_with(b"-----BEGIN SSH") {
             b"-----END SSH SIGNATURE-----"
+        } else {
+            b"-----END SIGNED MESSAGE-----"
         };
         block.ends_with(end)
             && block
@@ -303,7 +306,7 @@ pub(crate) fn read_tag(path: &Path, sha: &str) -> Result<TagObject> {
     Ok(TagObject {
         sha: id.to_string(),
         tag: String::from_utf8_lossy(tag.name_bytes()).into_owned(),
-        message: String::from_utf8_lossy(tag.message_bytes().unwrap_or_default()).into_owned(),
+        message: String::from_utf8_lossy(raw.windows(2).position(|bytes| bytes == b"\n\n").map_or(&[][..], |offset| &raw[offset + 2..])).into_owned(),
         object: tag.target_id().to_string(),
         kind: tag
             .target_type()
@@ -331,6 +334,18 @@ fn held_tree<'repo>(
         return Err(invalid("The changed directories are too large").into());
     }
     Ok(tree)
+}
+
+fn write_tree(builder: &mut git2::TreeBuilder<'_>) -> Result<Oid> {
+    let mut size = 0usize;
+    let mut valid = true;
+    builder.filter(|entry| {
+        size = size.saturating_add(format!("{:o}", entry.filemode()).len() + 1 + entry.name_bytes().len() + 1 + 20);
+        valid &= entry.name_bytes().len() <= 255 && !(entry.name_bytes().eq_ignore_ascii_case(b".gitmodules") && entry.filemode() == 0o120000);
+        true
+    })?;
+    if !valid || size > MAX_BYTES { return Err(invalid("Invalid or oversized resulting tree").into()); }
+    Ok(builder.write()?)
 }
 
 /// Applies `changes` to the tree `base`: each is a slash-separated path and the entry to put
@@ -403,22 +418,19 @@ fn change_trees(
         .collect();
     directories.sort_by_key(|key| std::cmp::Reverse(key.matches('/').count()));
     for directory in directories {
-        let id = builders
-            .remove(&directory)
-            .ok_or_else(|| invalid("Invalid tree path"))?
-            .write()?;
+        let mut builder = builders.remove(&directory).ok_or_else(|| invalid("Invalid tree path"))?;
+        let id = if builder.is_empty() { None } else { Some(write_tree(&mut builder)?) };
         let (parent, name) = directory
             .rsplit_once('/')
             .unwrap_or(("", directory.as_str()));
-        builders
-            .get_mut(parent)
-            .ok_or_else(|| invalid("Invalid tree path"))?
-            .insert(name, id, 0o040000)?;
+        let parent = builders.get_mut(parent).ok_or_else(|| invalid("Invalid tree path"))?;
+        if let Some(id) = id { parent.insert(name, id, 0o040000)?; }
+        else if parent.get(name)?.is_some() { parent.remove(name)?; }
     }
-    let root = builders
+    let mut root = builders
         .remove("")
         .ok_or_else(|| invalid("Invalid tree path"))?;
-    Ok(root.write()?)
+    write_tree(&mut root)
 }
 
 pub(crate) fn write(path: &Path, input: ObjectWrite, bytes: &[u8]) -> Result<String> {
@@ -445,7 +457,7 @@ pub(crate) fn write(path: &Path, input: ObjectWrite, bytes: &[u8]) -> Result<Str
                 if size > MAX_BYTES
                     || path.len() > MAX_DEPTH
                     || path.iter().any(|part| {
-                        part.is_empty()
+                        part.is_empty() || part.len() > 255
                             || matches!(*part, "." | ".." | ".git")
                             || part.contains('\0')
                     })
@@ -460,6 +472,9 @@ pub(crate) fn write(path: &Path, input: ObjectWrite, bytes: &[u8]) -> Result<Str
                     ("160000", "commit") => 0o160000,
                     _ => return Err(invalid("Tree mode does not match its type").into()),
                 };
+                if mode == 0o120000 && path.last().is_some_and(|name| name.eq_ignore_ascii_case(".gitmodules")) {
+                    return Err(invalid(".gitmodules must not be a symlink").into());
+                }
                 let target = match (entry.sha, entry.content) {
                     (Some(_), Some(_)) => {
                         return Err(invalid("Specify sha or content, not both").into())

@@ -927,32 +927,88 @@ pub(crate) async fn list_tree(
     list_tree_with_history(repo_path, git_ref, path, true, true).await
 }
 
+fn tree_entries(repo: &Repository, tree: &git2::Tree<'_>, path: &str, sizes: bool) -> Result<Vec<TreeEntry>> {
+    check_tree_materialization(tree.len(), 0)?;
+    let odb = repo.odb()?;
+    let mut bytes = 0usize;
+    let mut entries = Vec::with_capacity(tree.len());
+    for entry in tree.iter() {
+        let name = String::from_utf8_lossy(entry.name_bytes()).into_owned();
+        let entry_path = if path.is_empty() { name.clone() } else { format!("{path}/{name}") };
+        if entry_path.len() > MAX_TREE_PATH_BYTES { return Err(ObjectTooLarge.into()); }
+        bytes = bytes.checked_add(entry_path.len()).ok_or(ObjectTooLarge)?;
+        check_tree_materialization(entries.len() + 1, bytes)?;
+        let (entry_type, size) = match entry.kind() {
+            Some(ObjectType::Blob) => {
+                let size = if sizes {
+                    let (size, kind) = odb.read_header(entry.id())?;
+                    ensure!(kind == ObjectType::Blob, "Expected blob");
+                    Some(size as u64)
+                } else { None };
+                ("file", size)
+            }
+            Some(ObjectType::Tree) => ("dir", None),
+            Some(ObjectType::Commit) => ("gitlink", None),
+            _ => ("unknown", None),
+        };
+        entries.push(TreeEntry { sha: entry.id().to_string(), name, path: entry_path, entry_type: entry_type.into(), size, last_commit: None });
+    }
+    Ok(entries)
+}
+
 /// Sidebar folders need names and kinds only, with one budget for the whole panel.
 pub(crate) async fn list_sidebar_trees(
     repo_path: &Path,
     git_ref: &str,
     paths: &[String],
 ) -> Result<Vec<(String, Vec<TreeEntry>)>> {
-    let mut folders = Vec::new();
-    let mut count = 0;
-    let mut bytes = 0;
-    for path in paths.iter().take(256) {
-        let entries = match list_tree_with_history(repo_path, git_ref, path, false, false).await {
-            Ok(entries) => entries,
-            Err(error) if error.is::<ObjectTooLarge>() => continue,
+    let deadline = Instant::now() + process::RPC_TIMEOUT;
+    let (path, revision, paths) = (repo_path.to_owned(), git_ref.to_owned(), paths.iter().take(256).cloned().collect::<Vec<_>>());
+    process::blocking_until(deadline, move || {
+        let repo = Repository::open_bare(&path)?;
+        let commit = peel_to_commit_checked(&repo, &revision)?;
+        let root = match directory_tree(&repo, &commit, "") {
+            Ok(root) => root,
+            Err(error) if error.is::<ObjectTooLarge>() => return Ok(Vec::new()),
             Err(error) => return Err(error),
         };
-        count += entries.len();
-        bytes += entries
-            .iter()
-            .map(|entry| entry.path.len() + entry.name.len())
-            .sum::<usize>();
-        if count > 5_000 || bytes > 256 * 1024 {
-            break;
+        let odb = repo.odb()?;
+        let mut work = root.len();
+        let mut work_bytes = odb.read_header(root.id())?.0;
+        let mut trees = HashMap::from([(String::new(), root)]);
+        let (mut folders, mut bytes) = (Vec::new(), 0usize);
+        'paths: for path in paths {
+            ensure!(Instant::now() < deadline, "Git sidebar listing timed out");
+            let mut prefix = String::new();
+            for name in path.split('/').filter(|name| !name.is_empty()) {
+                let next = if prefix.is_empty() { name.to_owned() } else { format!("{prefix}/{name}") };
+                if !trees.contains_key(&next) {
+                    let parent = trees.get(&prefix).ok_or_else(|| anyhow!("Missing sidebar directory"))?;
+                    let entry = parent.get_name(name).ok_or_else(|| git2::Error::from_str("Missing sidebar directory"))?;
+                    ensure!(entry.kind() == Some(ObjectType::Tree), "Sidebar path is not a directory");
+                    let (size, kind) = odb.read_header(entry.id())?;
+                    ensure!(kind == ObjectType::Tree, "Expected tree");
+                    work_bytes = work_bytes.saturating_add(size);
+                    if work_bytes > 2 * 1024 * 1024 { break 'paths; }
+                    if size > MAX_TREE_OBJECT_BYTES { continue 'paths; }
+                    let tree = repo.find_tree(entry.id())?;
+                    work += tree.len();
+                    if work > 5_000 { break 'paths; }
+                    trees.insert(next.clone(), tree);
+                }
+                prefix = next;
+            }
+            let entries = match tree_entries(&repo, &trees[&prefix], &path, false) {
+                Ok(entries) => entries,
+                Err(error) if error.is::<ObjectTooLarge>() => continue,
+                Err(error) => return Err(error),
+            };
+            bytes += entries.iter().map(|entry| entry.path.len() + entry.name.len()).sum::<usize>();
+            if work > 5_000 || bytes > 256 * 1024 { break; }
+            folders.push((path, entries));
         }
-        folders.push((path.clone(), entries));
-    }
-    Ok(folders)
+        Ok(folders)
+    }).await
 }
 
 pub(crate) async fn list_tree_with_history(
@@ -972,50 +1028,7 @@ pub(crate) async fn list_tree_with_history(
             let commit = peel_to_commit_checked(&repo, &git_ref)?;
             let commit_sha = commit.id().to_string();
             let target_tree = directory_tree(&repo, &commit, &path)?;
-            check_tree_materialization(target_tree.len(), 0)?;
-
-            let odb = repo.odb()?;
-            let mut total_path_bytes = 0usize;
-            let mut entries = Vec::with_capacity(target_tree.len());
-            for entry in target_tree.iter() {
-                let name = String::from_utf8_lossy(entry.name_bytes()).into_owned();
-                let entry_path = if path.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{path}/{name}")
-                };
-                if entry_path.len() > MAX_TREE_PATH_BYTES {
-                    return Err(ObjectTooLarge.into());
-                }
-                total_path_bytes = total_path_bytes
-                    .checked_add(entry_path.len())
-                    .ok_or(ObjectTooLarge)?;
-                check_tree_materialization(entries.len() + 1, total_path_bytes)?;
-
-                let (entry_type, size) = match entry.kind() {
-                    Some(ObjectType::Blob) => {
-                        let size = if sizes {
-                            let (size, kind) = odb.read_header(entry.id())?;
-                            ensure!(kind == ObjectType::Blob, "Expected blob");
-                            Some(size as u64)
-                        } else {
-                            None
-                        };
-                        ("file".to_string(), size)
-                    }
-                    Some(ObjectType::Tree) => ("dir".to_string(), None),
-                    Some(ObjectType::Commit) => ("gitlink".to_string(), None),
-                    _ => ("unknown".to_string(), None),
-                };
-                entries.push(TreeEntry {
-                    sha: entry.id().to_string(),
-                    name,
-                    path: entry_path,
-                    entry_type,
-                    size,
-                    last_commit: None,
-                });
-            }
+            let entries = tree_entries(&repo, &target_tree, &path, sizes)?;
             Ok::<_, anyhow::Error>((commit_sha, entries))
         })
         .await
@@ -1032,6 +1045,7 @@ pub(crate) async fn list_tree_with_history(
             .arg(format!("--max-count={}", MAX_TREE_HISTORY_COMMITS + 1))
             .arg("--format=%x00%H%x00%T%x00%s%x00%an%x00%ae%x00%at%x00%cn%x00%ce%x00%ct")
             .arg("--name-only")
+            .arg("--no-renames")
             .arg("-c")
             .arg("-z")
             .arg(&commit_sha)
@@ -1435,24 +1449,27 @@ fn resolve_revision(repo: &Repository, revision: &str) -> Result<git2::Oid> {
     }
     // A name that starts with `refs/` is a full ref name and is looked up exactly. A short name
     // prefers a branch over a tag with the same name, where Git's own rule would pick the tag.
-    let reference = if revision.starts_with("refs/") {
+    let reference = if revision.starts_with("refs/") || revision == "HEAD" {
         repo.find_reference(revision)
     } else {
-        repo.find_reference(&format!("refs/heads/{revision}"))
-            .or_else(|_| repo.resolve_reference_from_short_name(revision))
+        match repo.find_reference(&format!("refs/heads/{revision}")) {
+            Err(error) if error.code() == git2::ErrorCode::NotFound => repo.resolve_reference_from_short_name(revision),
+            result => result,
+        }
     };
-    if let Some(oid) = reference
-        .ok()
-        .and_then(|reference| reference.resolve().ok())
-        .and_then(|direct| direct.target())
-    {
-        return Ok(oid);
+    match reference {
+        Ok(reference) => return reference.resolve()?.target().ok_or_else(|| anyhow!("Reference has no direct target")),
+        Err(error) if error.code() == git2::ErrorCode::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
     let abbreviated = (4..40).contains(&revision.len());
     if abbreviated && revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         let padded = git2::Oid::from_str(&format!("{revision:0<40}"))?;
-        let oid = repo.odb()?.exists_prefix(padded, revision.len())?;
-        return Ok(oid);
+        return repo.odb()?.exists_prefix(padded, revision.len()).map_err(|error| {
+            if error.code() == git2::ErrorCode::Ambiguous {
+                git2::Error::new(git2::ErrorCode::InvalidSpec, git2::ErrorClass::Object, "Ambiguous abbreviated revision").into()
+            } else { error.into() }
+        });
     }
     Err(git2::Error::new(
         git2::ErrorCode::NotFound,
@@ -2430,7 +2447,7 @@ pub(crate) async fn get_file_diff(
     drop(repo);
     let revision = format!("{base}...{head}");
     let metadata = diff_metadata(repo_path, &revision, false, &[]).await?;
-    let Some(file) = metadata.iter().find(|file| file.filename == path) else {
+    let Some(file) = metadata.iter().find(|file| file.new_path == path.as_bytes()) else {
         return Ok(DiffInfo {
             files: Vec::new(),
             additions: 0,
@@ -2444,17 +2461,25 @@ pub(crate) async fn get_file_diff(
         .collect();
     paths.dedup();
     let pathspecs = literal_pathspecs(&paths);
-    diff_in_repository(repo_path, &revision, false, &pathspecs).await
+    let mut diff = diff_in_repository(repo_path, &revision, false, &pathspecs).await?;
+    diff.files.retain(|file| file.filename == path);
+    diff.additions = diff.files.iter().map(|file| file.additions).sum();
+    diff.deletions = diff.files.iter().map(|file| file.deletions).sum();
+    diff.changed_files = diff.files.len() as i32;
+    Ok(diff)
 }
 
 /// Literal pathspecs: the `:(literal)` magic makes every character of a path an ordinary one.
 fn literal_pathspecs(paths: &[&[u8]]) -> Vec<OsString> {
     paths
         .iter()
-        .map(|path| {
+        .flat_map(|path| {
             let mut spec = b":(literal)".to_vec();
             spec.extend_from_slice(path);
-            OsString::from_vec(spec)
+            let mut descendants = b":(literal,exclude)".to_vec();
+            descendants.extend_from_slice(path);
+            descendants.push(b'/');
+            [OsString::from_vec(spec), OsString::from_vec(descendants)]
         })
         .collect()
 }

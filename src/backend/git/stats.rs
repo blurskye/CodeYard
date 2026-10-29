@@ -250,7 +250,7 @@ fn check_contributor_count(count: usize) -> Result<()> {
 }
 
 fn parse_contributors(output: &[u8]) -> Result<Vec<ContributorInfo>> {
-    let mut contributors = Vec::new();
+    let mut contributors = std::collections::BTreeMap::<String, ContributorInfo>::new();
     for line in String::from_utf8_lossy(output).lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -259,7 +259,6 @@ fn parse_contributors(output: &[u8]) -> Result<Vec<ContributorInfo>> {
         if line.len() > MAX_CONTRIBUTOR_LINE_BYTES {
             return Err(ObjectTooLarge.into());
         }
-        check_contributor_count(contributors.len() + 1)?;
         let (commits, author) = line
             .split_once('\t')
             .ok_or_else(|| anyhow::anyhow!("Malformed Git contributor record"))?;
@@ -278,12 +277,15 @@ fn parse_contributors(output: &[u8]) -> Result<Vec<ContributorInfo>> {
             .find('>')
             .ok_or_else(|| anyhow::anyhow!("Malformed Git contributor email"))?;
         let email_end = email_start + 1 + email_end;
-        contributors.push(ContributorInfo {
-            name: author[..email_start].trim().to_owned(),
-            email: author[email_start + 1..email_end].to_owned(),
-            commits,
+        let email = author[email_start + 1..email_end].to_owned();
+        let entry = contributors.entry(email.to_ascii_lowercase()).or_insert_with(|| ContributorInfo {
+            name: author[..email_start].trim().to_owned(), email, commits: 0,
         });
+        entry.commits = entry.commits.checked_add(commits).filter(|count| *count <= i32::MAX as u32).ok_or(ObjectTooLarge)?;
+        check_contributor_count(contributors.len())?;
     }
+    let mut contributors = contributors.into_values().collect::<Vec<_>>();
+    contributors.sort_by(|a, b| b.commits.cmp(&a.commits).then(a.email.cmp(&b.email)));
     Ok(contributors)
 }
 
@@ -344,6 +346,7 @@ async fn cached_by_refs<T, F, Fut>(
     caches: &RefCaches<T>,
     repo_path: &Path,
     key: String,
+    branch: Option<&str>,
     read: F,
 ) -> Result<T>
 where
@@ -353,7 +356,11 @@ where
 {
     let cache = ref_cache(caches, repo_path);
     let mut cached = tokio::time::timeout(process::RPC_TIMEOUT, cache.lock()).await?;
-    let refs = current_refs(repo_path).await?;
+    let select = |mut refs: HashMap<String, String>| {
+        if let Some(branch) = branch { let reference = format!("refs/heads/{branch}"); refs.retain(|name, _| name == &reference); }
+        refs
+    };
+    let refs = select(current_refs(repo_path).await?);
     if let Some(snapshot) = cached
         .as_ref()
         .filter(|snapshot| snapshot.refs == refs && snapshot.key == key)
@@ -361,7 +368,7 @@ where
         return Ok(snapshot.value.clone());
     }
     let value = read(refs.clone()).await?;
-    if refs == current_refs(repo_path).await? {
+    if refs == select(current_refs(repo_path).await?) {
         *cached = Some(Snapshot {
             refs,
             key,
@@ -372,7 +379,7 @@ where
 }
 
 pub(crate) async fn get_contributors(repo_path: &Path) -> Result<Vec<ContributorInfo>> {
-    cached_by_refs(&CONTRIBUTOR_CACHES, repo_path, String::new(), |_| async {
+    cached_by_refs(&CONTRIBUTOR_CACHES, repo_path, String::new(), None, |_| async {
         let mut command = process::git_command()?;
         command
             .args(["shortlog", "-sne", "--exclude=refs/codeyard/*", "--all"])
@@ -459,7 +466,7 @@ pub(crate) async fn get_code_frequency(repo_path: &Path, branch: &str) -> Result
     let first = week_start(today) - chrono::Days::new((CODE_FREQUENCY_WEEKS as u64 - 1) * 7);
     let reference = format!("refs/heads/{branch}");
     let key = format!("{reference} {first}");
-    cached_by_refs(&CODE_FREQUENCY_CACHES, repo_path, key, |refs| async move {
+    cached_by_refs(&CODE_FREQUENCY_CACHES, repo_path, key, Some(branch), |refs| async move {
         // The snapshot's commit, not the live branch, so a branch that moves and returns
         // cannot leave another commit's chart cached under this one.
         let Some(tip) = refs.get(&reference) else {
@@ -574,29 +581,32 @@ pub struct AuthorWeek {
     pub deletions: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub enum StatisticsMode { #[default] Full, Counts, Contributors }
+
 static COMMIT_STATISTICS_CACHES: LazyLock<RefCaches<CommitStatistics>> =
     LazyLock::new(Mutex::default);
 
 pub(crate) async fn get_commit_statistics(
     repo_path: &Path,
     branch: &str,
+    mode: StatisticsMode,
 ) -> Result<CommitStatistics> {
     cached_by_refs(
         &COMMIT_STATISTICS_CACHES,
         repo_path,
-        branch.to_owned(),
+        format!("{branch}:{mode:?}"),
+        Some(branch),
         |refs| async move {
             let Some(id) = refs.get(&format!("refs/heads/{branch}")) else {
                 return parse_commit_statistics(b"");
             };
             let mut command = process::git_command()?;
+            command.arg("log");
+            if !matches!(mode, StatisticsMode::Contributors) { command.arg("--no-merges"); }
+            if matches!(mode, StatisticsMode::Full) { command.arg("--numstat"); }
             command
-                .args([
-                    "log",
-                    "--no-merges",
-                    "--format=%x00%at%x00%aN%x00%aE%x00",
-                    "--numstat",
-                ])
+                .arg("--format=%x00%at %aI%x00%aN%x00%aE%x00")
                 .arg(id)
                 .arg("--")
                 .current_dir(repo_path);
@@ -609,7 +619,7 @@ pub(crate) async fn get_commit_statistics(
             )
             .await?;
             ensure!(status.success(), "Git commit statistics listing failed");
-            parse_commit_statistics(&output)
+            process::blocking_until(std::time::Instant::now() + process::RPC_TIMEOUT, move || parse_commit_statistics(&output)).await
         },
     )
     .await
@@ -635,17 +645,19 @@ fn parse_commit_statistics(output: &[u8]) -> Result<CommitStatistics> {
     let mut weeks = BTreeMap::<i64, CommitWeek>::new();
     let mut authors = BTreeMap::<String, (AuthorStatistics, BTreeMap<i64, AuthorWeek>)>::new();
     for record in fields[1..].as_chunks::<4>().0 {
-        let timestamp = std::str::from_utf8(record[0])?.parse::<i64>()?;
-        let date = chrono::DateTime::from_timestamp(timestamp, 0)
-            .ok_or_else(|| anyhow::anyhow!("Invalid commit timestamp"))?;
-        let day = date.weekday().num_days_from_sunday() as usize;
-        let week = date
-            .date_naive()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc()
-            .timestamp()
-            - day as i64 * 86_400;
+        let field = std::str::from_utf8(record[0])?;
+        let (timestamp, local) = field.split_once(' ').map_or((field, None), |(timestamp, local)| (timestamp, Some(local)));
+        let timestamp = timestamp.parse::<i64>()?;
+        let date = chrono::DateTime::from_timestamp(timestamp, 0);
+        let calendar = if let Some(date) = date {
+            let local = local.map(chrono::DateTime::parse_from_rfc3339).transpose()?.unwrap_or_else(|| date.fixed_offset());
+            let day = date.weekday().num_days_from_sunday() as usize;
+            let week = date.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp() - day as i64 * 86_400;
+            Some((week, day, local))
+        } else {
+            tracing::warn!(timestamp, "Git statistics omitted calendar buckets for an out-of-range date");
+            None
+        };
         let mut additions = 0;
         let mut deletions = 0;
         let mut changed = false;
@@ -667,15 +679,14 @@ fn parse_commit_statistics(output: &[u8]) -> Result<CommitStatistics> {
             }
             changed = true;
         }
-        let entry = weeks.entry(week).or_insert_with(|| CommitWeek {
-            week,
-            ..Default::default()
-        });
-        entry.days[day] += 1;
-        entry.additions += additions;
-        entry.deletions += deletions;
         result.commits += 1;
-        result.punch_card[day * 24 + date.hour() as usize][2] += 1;
+        if let Some((week, day, local)) = calendar {
+            let entry = weeks.entry(week).or_insert_with(|| CommitWeek { week, ..Default::default() });
+            entry.days[day] += 1;
+            entry.additions += additions;
+            entry.deletions += deletions;
+            result.punch_card[local.weekday().num_days_from_sunday() as usize * 24 + local.hour() as usize][2] += 1;
+        }
         let email = String::from_utf8_lossy(record[2]).into_owned();
         let (author, author_weeks) = authors.entry(email.clone()).or_insert_with(|| {
             (
@@ -688,16 +699,15 @@ fn parse_commit_statistics(output: &[u8]) -> Result<CommitStatistics> {
             )
         });
         author.commits += 1;
-        let entry = author_weeks.entry(week).or_insert_with(|| AuthorWeek {
-            week,
-            ..Default::default()
-        });
-        entry.all_commits += 1;
-        if changed {
-            author.total += 1;
-            entry.commits += 1;
-            entry.additions += additions;
-            entry.deletions += deletions;
+        if changed { author.total += 1; }
+        if let Some((week, _, _)) = calendar {
+            let entry = author_weeks.entry(week).or_insert_with(|| AuthorWeek { week, ..Default::default() });
+            entry.all_commits += 1;
+            if changed {
+                entry.commits += 1;
+                entry.additions += additions;
+                entry.deletions += deletions;
+            }
         }
         check_contributor_count(authors.len())?;
     }
