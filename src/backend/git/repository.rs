@@ -19,6 +19,7 @@ pub(crate) mod locks;
 pub(crate) mod process;
 mod release_notes;
 mod replay;
+pub(crate) mod retained;
 mod revert;
 pub(crate) use checked::{
     adds_merge_commit, checkout, materialize_checkout, commit_is_ancestor, current_branch_head, current_pull_head,
