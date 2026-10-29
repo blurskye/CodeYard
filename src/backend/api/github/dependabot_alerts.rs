@@ -20,6 +20,10 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 
+fn authority(actor: &auth::Authentication) -> db::users::accounts::AccountActor {
+    db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token_id() }
+}
+
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("security-advisories/list-global-advisories", get(global)),
@@ -42,7 +46,7 @@ pub(super) async fn import(
         .await?
         .ok_or_else(auth::required)?;
     actor.require_write()?;
-    let value = store::import(&state.pool, actor.user.id, &value)
+    let value = store::import(&state.pool, authority(&actor), &value)
         .await
         .map_err(failure)?;
     Ok((StatusCode::CREATED, Json(value)).into_response())
@@ -436,7 +440,7 @@ async fn list(
     };
     let mut documents = Vec::new();
     for id in ids {
-        let rows = match store::alerts(&state.pool, actor.user.id, id).await {
+        let rows = match store::alerts(&state.pool, authority(&actor), id).await {
             Ok(rows) => rows,
             // A repository with alerts disabled is left out of an organization listing.
             Err(error)
@@ -478,7 +482,7 @@ async fn detail(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let row = store::alerts(&state.pool, actor.user.id, repo.id)
+    let row = store::alerts(&state.pool, authority(&actor), repo.id)
         .await
         .map_err(failure)?
         .into_iter()
@@ -494,7 +498,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let row = store::update(&state.pool, actor.user.id, repo.id, number, &input)
+    let row = store::update(&state.pool, authority(&actor), repo.id, number, &input)
         .await
         .map_err(failure)?;
     Ok(Json(document(&state, &row, &owner, &name).await?))

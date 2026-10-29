@@ -49,7 +49,16 @@ async fn open(
     }
     Ok((ctx, loaded))
 }
+fn authority(ctx: &PageContext, user_id: i64) -> db::users::accounts::AccountActor {
+    db::users::accounts::AccountActor::Session {
+        user_id,
+        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    }
+}
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return ctx.error(StatusCode::FORBIDDEN, "A live unrestricted credential is required.");
+    }
     use db::advisories::Refusal;
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => {
@@ -87,7 +96,7 @@ async fn list(
     }
     let rows = match store::alerts(
         &ctx.state.pool,
-        ctx.user.as_ref().unwrap().id,
+        authority(&ctx, ctx.user.as_ref().unwrap().id),
         loaded.repository.id,
     )
     .await
@@ -163,7 +172,7 @@ async fn mutate(
     {
         return ctx.error(StatusCode::CONFLICT, "The repository changed.");
     }
-    let actor = ctx.user.as_ref().unwrap().id;
+    let actor = authority(&ctx, ctx.user.as_ref().unwrap().id);
     let result = if let Some(number) = number {
         let input = Update {
             state: values.get("state").cloned().unwrap_or_default(),
