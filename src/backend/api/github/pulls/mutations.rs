@@ -141,6 +141,7 @@ async fn create_value(
         owner.clone(),
         name,
         mutations::CreatePullRequestRequest {
+            suppress_ci: false,
             head_repo_id: Some(head.id),
             source,
             head_branch: branch.to_owned(),
