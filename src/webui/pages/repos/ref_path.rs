@@ -22,7 +22,7 @@ pub fn resolve_repo_ref_path(
     }
     // A full object ID is an immutable address, never a prefix of a named ref.
     let tail = parts.join("/");
-    let commit = parts[0].len() == 40 && parts[0].bytes().all(|byte| byte.is_ascii_hexdigit());
+    let commit = crate::git_ids::is_full_commit_id(&parts[0]);
     let reference = if commit {
         parts[0].as_str()
     } else {
@@ -97,7 +97,7 @@ pub fn branch_url(base: &str, kind: &str, branch: &str, path: &str) -> String {
 
 fn qualified_ref(reference: &str) -> String {
     if reference.starts_with("refs/")
-        || (reference.len() == 40 && reference.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        || crate::git_ids::is_full_commit_id(reference)
     {
         reference.to_owned()
     } else {

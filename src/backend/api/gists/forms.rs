@@ -71,7 +71,7 @@ fn submitted(
     let expected = field(form, "expected").to_owned();
     anyhow::ensure!(
         id.is_none()
-            || (expected.len() == 40 && expected.bytes().all(|byte| byte.is_ascii_hexdigit())),
+            || crate::git_ids::is_full_commit_id(expected),
         InvalidInput("Reload the gist before editing; its revision is missing.")
     );
     Ok(view::Editor {

@@ -44,7 +44,7 @@ impl<'a> RefActivity<'a> {
         anyhow::ensure!(
             [before, after]
                 .iter()
-                .all(|sha| sha.len() == 40 && sha.bytes().all(|ch| ch.is_ascii_hexdigit())),
+                .all(crate::git_ids::is_full_commit_id),
             "Invalid activity commit ID"
         );
         Ok(Self {

@@ -276,7 +276,7 @@ pub(crate) fn ref_names(loaded: &Loaded) -> Vec<String> {
 /// Whether `reference` is a branch. Only a branch takes a commit from the file pages, so only a
 /// branch offers edit and delete there.
 pub(crate) fn is_branch(loaded: &Loaded, reference: &str) -> bool {
-    if reference.len() == 40 && hex_revision(reference) {
+    if crate::git_ids::is_full_commit_id(reference) {
         return false;
     }
     if reference.starts_with("refs/") {

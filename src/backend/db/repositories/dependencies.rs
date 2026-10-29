@@ -178,10 +178,7 @@ fn bounded(text: &str, limit: usize) -> bool {
     text.len() <= limit && !text.contains('\0')
 }
 pub fn sha(sha: &str) -> bool {
-    sha.len() == 40
-        && sha
-            .bytes()
-            .all(|c| c.is_ascii_digit() || matches!(c, b'a'..=b'f'))
+    crate::git_ids::is_full_commit_id(sha) && !sha.bytes().any(|byte| byte.is_ascii_uppercase())
 }
 impl InstalledPackage {
     pub fn validate(&self) -> Result<()> {

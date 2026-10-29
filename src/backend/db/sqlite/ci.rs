@@ -1369,8 +1369,7 @@ pub async fn record_ci_accepted_push(
 ) -> Result<()> {
     ensure!(
         (reference.starts_with("refs/heads/") || reference.starts_with("refs/tags/"))
-            && sha.len() == 40
-            && sha.bytes().all(|b| b.is_ascii_hexdigit()),
+            && crate::git_ids::is_full_commit_id(sha),
         "invalid accepted push fact"
     );
     sqlx::query("INSERT INTO ci_accepted_pushes(repo_id,actor_id,reference,sha) VALUES (?1,?2,?3,?4) ON CONFLICT(repo_id,actor_id,reference,sha) DO UPDATE SET accepted_at=excluded.accepted_at")
