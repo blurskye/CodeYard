@@ -60,13 +60,15 @@ fn deleted_entries(root: &Path) -> Result<Vec<(u64, String, PathBuf)>> {
     Ok(kept)
 }
 
-/// The newest kept copy of the repository whose directory was named `name`.
-pub(crate) fn deleted_copy(root: &Path, name: &str) -> Result<Option<PathBuf>> {
-    Ok(deleted_entries(root)?
-        .into_iter()
-        .filter(|(_, kept, _)| kept == name)
-        .max_by_key(|(seconds, _, _)| *seconds)
-        .map(|(_, _, path)| path))
+/// Index the newest retained copy of each repository in one root-directory scan.
+pub(crate) fn deleted_copies(root: &Path) -> Result<std::collections::HashMap<String, PathBuf>> {
+    let mut copies = std::collections::HashMap::<String, (u64, PathBuf)>::new();
+    for (seconds, name, path) in deleted_entries(root)? {
+        if copies.get(&name).is_none_or(|(previous, _)| seconds >= *previous) {
+            copies.insert(name, (seconds, path));
+        }
+    }
+    Ok(copies.into_iter().map(|(name, (_, path))| (name, path)).collect())
 }
 
 /// Removes the kept deleted repositories under `root` older than `window`.
@@ -437,9 +439,9 @@ mod tests {
 
         retire(&repository).unwrap();
         assert!(!repository.exists());
-        let kept = deleted_copy(root.path(), "one.git").unwrap().unwrap();
+        let kept = deleted_copies(root.path()).unwrap().remove("one.git").unwrap();
         assert!(kept.join("HEAD").is_file());
-        assert_eq!(deleted_copy(root.path(), "two.git").unwrap(), None);
+        assert_eq!(deleted_copies(root.path()).unwrap().remove("two.git"), None);
         // Retiring a repository that is already gone is not an error.
         retire(&repository).unwrap();
 
