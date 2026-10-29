@@ -2445,6 +2445,7 @@ CREATE TABLE repository_advisories (
     cve_requested_at TEXT, published_at TEXT, closed_at TEXT,
     publisher_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     report_accepted BOOLEAN NOT NULL DEFAULT FALSE,
+    revision INTEGER NOT NULL DEFAULT 0 CHECK (typeof(revision)='integer' AND revision >= 0),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 );
 CREATE INDEX repository_advisories_repo ON repository_advisories(repo_id,id);

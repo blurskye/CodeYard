@@ -2589,6 +2589,7 @@ CREATE TABLE repository_advisories (
     cve_requested_at TIMESTAMPTZ, published_at TIMESTAMPTZ, closed_at TIMESTAMPTZ,
     publisher_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     report_accepted BOOLEAN NOT NULL DEFAULT FALSE,
+    revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX repository_advisories_repo ON repository_advisories(repo_id,id);

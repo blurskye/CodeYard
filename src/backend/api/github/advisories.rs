@@ -320,9 +320,15 @@ async fn create(
         .await
         .map_err(failure)?;
     if value["start_private_fork"] == true {
-        workflow::private_fork(&state, actor.user.id, &repo, &row.ghsa_id)
-            .await
-            .map_err(failure)?;
+        if let Err(error) = workflow::private_fork(&state, actor.user.id, &repo, &row.ghsa_id).await {
+            match advisories::discard_created(&state.pool, actor.user.id, &row).await {
+                Ok(true) => return Err(failure(error)),
+                Ok(false) => {}
+                Err(cleanup) => tracing::error!(ghsa_id=%row.ghsa_id,%cleanup,"Failed advisory provisioning left a draft requiring cleanup"),
+            }
+            tracing::warn!(ghsa_id=%row.ghsa_id,%error,"Private-fork provisioning failed; retained advisory is reported to the caller");
+            return Err(Error::new(StatusCode::SERVICE_UNAVAILABLE, format!("Advisory {} was created but its private fork could not be provisioned", row.ghsa_id)));
+        }
         row = advisories::get(&state.pool, Some(actor.user.id), repo.id, &row.ghsa_id)
             .await
             .map_err(failure)?
