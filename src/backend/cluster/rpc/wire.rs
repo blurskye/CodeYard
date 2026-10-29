@@ -368,6 +368,8 @@ pub enum Operation {
         method: MergeMethod,
         #[serde(default)]
         token: Option<i64>,
+        #[serde(default)]
+        credential: Option<crate::backend::db::users::accounts::AccountActor>,
     },
     /// Publishes a stacked merge commit. Each head is `(head branch or pull ref, commit)`.
     PublishStackedMerge {
@@ -377,6 +379,8 @@ pub enum Operation {
         result: String,
         #[serde(default)]
         token: Option<i64>,
+        #[serde(default)]
+        credential: Option<crate::backend::db::users::accounts::AccountActor>,
     },
     /// Builds the commits of a restack: `from..head` replayed onto `onto`.
     PrepareRestack {

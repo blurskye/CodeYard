@@ -2104,7 +2104,7 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         head_branch: &str,
         base_branch: &str,
         head: &str,
@@ -2113,6 +2113,9 @@ impl RepoStore {
         method: MergeMethod,
         token: Option<i64>,
     ) -> Result<(), RepoError> {
+        let authority = actor.into();
+        let actor = authority.user_id();
+        let token = match &authority { db::users::accounts::AccountActor::Token { token_id, .. } => Some(*token_id), _ => token };
         match &self.0 {
             Backend::Local(local) => {
                 local
@@ -2127,7 +2130,7 @@ impl RepoStore {
                         method,
                         WriteVia::Merge,
                         token,
-                        None,
+                        Some(&authority),
                     )
                     .await
             }
@@ -2143,6 +2146,7 @@ impl RepoStore {
                             result: result.into(),
                             method,
                             token,
+                            credential: Some(authority),
                         },
                         b"",
                     )
@@ -2162,13 +2166,16 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         heads: &[(String, String)],
         base_branch: &str,
         base: &str,
         result: &str,
         token: Option<i64>,
     ) -> Result<(), RepoError> {
+        let authority = actor.into();
+        let actor = authority.user_id();
+        let token = match &authority { db::users::accounts::AccountActor::Token { token_id, .. } => Some(*token_id), _ => token };
         match &self.0 {
             Backend::Local(local) => {
                 let heads: Vec<(&str, &str)> = heads
@@ -2187,7 +2194,7 @@ impl RepoStore {
                         MergeMethod::Merge,
                         WriteVia::Merge,
                         token,
-                        None,
+                        Some(&authority),
                     )
                     .await
             }
@@ -2201,6 +2208,7 @@ impl RepoStore {
                             base: base.into(),
                             result: result.into(),
                             token,
+                            credential: Some(authority),
                         },
                         b"",
                     )
