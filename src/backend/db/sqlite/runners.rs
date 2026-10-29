@@ -207,6 +207,12 @@ pub async fn save_group(
         Some(id)=> { sqlx::query("UPDATE action_runner_groups SET name=?2,visibility=?3,allows_public_repositories=?4,restricted_to_workflows=?5,selected_workflows=?6 WHERE id=?1").bind(id).bind(name).bind(visibility).bind(public).bind(restricted).bind(workflows).execute(&mut *tx).await?;id },
         None=>sqlx::query_scalar("INSERT INTO action_runner_groups(org_id,name,visibility,allows_public_repositories,restricted_to_workflows,selected_workflows) VALUES(?1,?2,?3,?4,?5,?6) RETURNING id").bind(org).bind(name).bind(visibility).bind(public).bind(restricted).bind(workflows).fetch_one(&mut *tx).await?,
     };
+    if let Some(old) = &existing {
+        if old.name != name {
+            sqlx::query("UPDATE ci_runs SET runner_group=?3 WHERE status='queued' AND lower(runner_group)=lower(?2) AND repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?1)")
+                .bind(org).bind(&old.name).bind(name).execute(&mut *tx).await?;
+        }
+    }
     if let Some(ids) = &input.selected_repository_ids {
         if visibility == "selected" {
             repositories_in(&mut tx, org, id, &Selection::Replace(ids.clone())).await?;
@@ -241,6 +247,9 @@ pub async fn delete_group(pool: &Pool, actor: i64, org: i64, id: i64) -> Result<
         Refusal::Conflict("The default runner group cannot be deleted")
     );
     let default = default_group(&mut tx, org).await?;
+    let queued: Vec<i64> = sqlx::query_scalar("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id WHERE c.status='queued' AND lower(c.runner_group)=lower(?2) AND r.owner_kind='org' AND r.owner_org_id=?1")
+        .bind(org).bind(&row.name).fetch_all(&mut *tx).await?;
+    super::ci::stop_ci_runs(&mut tx, &queued).await?;
     stop_runners(&mut tx, None, Some(id)).await?;
     sqlx::query("UPDATE action_runners SET group_id=?2 WHERE group_id=?1 AND org_id=?3")
         .bind(id)
@@ -265,8 +274,15 @@ pub async fn group_repositories(
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, Scope::Organization(org)).await?;
+    let previous = group(&mut tx, org, id).await?.repositories;
     repositories_in(&mut tx, org, id, selection).await?;
-    stop_runners(&mut tx, None, Some(id)).await?;
+    let current = group(&mut tx, org, id).await?.repositories;
+    let removed: Vec<i64> = previous.into_iter().filter(|repo| !current.contains(repo)).collect();
+    if !removed.is_empty() {
+        let runs: Vec<i64> = sqlx::query_scalar("SELECT c.id FROM ci_runs c WHERE c.status='running' AND c.repo_id IN (SELECT value FROM json_each(?2)) AND EXISTS(SELECT 1 FROM action_runners a JOIN nodes n ON n.id=a.node_id WHERE a.group_id=?1 AND c.worker LIKE n.public_key || '/%')")
+            .bind(id).bind(serde_json::to_string(&removed)?).fetch_all(&mut *tx).await?;
+        super::ci::stop_ci_runs(&mut tx, &runs).await?;
+    }
     tx.commit().await?;
     Ok(())
 }
@@ -286,10 +302,10 @@ pub async fn group_runners(
     tx.commit().await?;
     Ok(())
 }
-const RUNNERS:&str="SELECT a.*,COALESCE(n.status='active' AND n.last_seen>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-60 seconds'),false) AS online,EXISTS(SELECT 1 FROM ci_runs c WHERE c.status='running' AND c.worker LIKE n.public_key || '/%') AS busy,n.version FROM action_runners a LEFT JOIN nodes n ON n.id=a.node_id WHERE a.org_id IS NOT DISTINCT FROM ?1 AND a.repo_id IS NOT DISTINCT FROM ?2 ORDER BY a.id";
+const RUNNERS:&str="SELECT a.*,COALESCE(n.status='active' AND n.last_seen>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-60 seconds'),false) AS online,EXISTS(SELECT 1 FROM ci_runs c WHERE c.status='running' AND c.worker LIKE n.public_key || '/%') AS busy,n.version FROM action_runners a LEFT JOIN nodes n ON n.id=a.node_id WHERE a.org_id IS NOT DISTINCT FROM ?1 AND a.repo_id IS NOT DISTINCT FROM ?2";
 async fn runner_rows(c: &mut Connection, scope: Scope) -> Result<Vec<Runner>> {
     let (org, repo) = scope.ids();
-    Ok(sqlx::query_as(RUNNERS)
+    Ok(sqlx::query_as(&format!("{RUNNERS} ORDER BY a.id"))
         .bind(org)
         .bind(repo)
         .fetch_all(c)
@@ -303,11 +319,9 @@ pub async fn list_runners(pool: &Pool, actor: i64, scope: Scope) -> Result<Vec<R
     Ok(rows)
 }
 async fn runner(c: &mut Connection, scope: Scope, id: i64) -> Result<Runner> {
-    runner_rows(c, scope)
-        .await?
-        .into_iter()
-        .find(|r| r.id == id)
-        .ok_or_else(|| Refusal::Missing.into())
+    let (org, repo) = scope.ids();
+    sqlx::query_as(&format!("{RUNNERS} AND a.id=?3"))
+        .bind(org).bind(repo).bind(id).fetch_optional(c).await?.ok_or_else(|| Refusal::Missing.into())
 }
 async fn delete_in(tx: &mut Transaction<'_, Sqlite>, scope: Scope, id: i64) -> Result<()> {
     let row = runner(tx, scope, id).await?;
@@ -381,6 +395,9 @@ pub async fn labels(
         .bind(serde_json::to_string(&current)?)
         .execute(&mut *tx)
         .await?;
+    if serde_json::from_str::<Vec<String>>(&row.labels)? != current {
+        stop_runners(&mut tx, Some(id), None).await?;
+    }
     let row = runner(&mut tx, scope, id).await?;
     tx.commit().await?;
     Ok(row)
@@ -409,6 +426,10 @@ pub async fn registration(
         );
         None
     };
+    sqlx::query("DELETE FROM join_tokens WHERE expires_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND token_hash IN (SELECT t.token_hash FROM action_runner_tokens t JOIN action_runners a ON a.id=t.runner_id WHERE a.org_id IS NOT DISTINCT FROM ?1 AND a.repo_id IS NOT DISTINCT FROM ?2 AND a.ephemeral AND a.node_id IS NULL AND NOT a.used)")
+        .bind(org).bind(repo).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM action_runners WHERE org_id IS NOT DISTINCT FROM ?1 AND repo_id IS NOT DISTINCT FROM ?2 AND ephemeral AND node_id IS NULL AND NOT used AND NOT EXISTS(SELECT 1 FROM action_runner_tokens t WHERE t.runner_id=action_runners.id)")
+        .bind(org).bind(repo).execute(&mut *tx).await?;
     let runner_id = if let Some(name) = input.name {
         anyhow::ensure!(
             !name.trim().is_empty() && name.len() <= 100 && !name.chars().any(char::is_control),

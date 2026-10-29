@@ -117,12 +117,7 @@ impl GroupInput {
                                 && !parts[1].is_empty()
                                 && parts[2] == ".github"
                                 && parts[3] == "workflows"
-                                && !parts[4].is_empty()
-                                && !parts[4].contains("..")
-                                && parts[4]
-                                    .bytes()
-                                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-                                && (parts[4].ends_with(".yml") || parts[4].ends_with(".yaml"))
+                                && crate::backend::git::ci::is_ci_workflow_filename(parts[4])
                                 && !reference.is_empty()
                                 && !reference.contains("${{")
                                 && git2::Reference::is_valid_name(
