@@ -264,13 +264,12 @@ pub(crate) async fn release_assets(
     owner: &str,
     release: &Release,
 ) -> anyhow::Result<Vec<Value>> {
-    let mut assets = Vec::new();
-    for asset in db::releases::list_release_assets(pool, release.id).await? {
-        if let Some(value) = release_asset(pool, owner, &repo.name, release, &asset).await? {
-            assets.push(value);
-        }
-    }
-    Ok(assets)
+    Ok(db::releases::list_asset_files(pool, release.id).await?.into_iter().map(|row| {
+        let uploader = row.uploader_id.zip(row.uploader_name).map(|(id, login)| {
+            payloads::simple_person(&payloads::Person { id, login, site_admin: row.uploader_is_admin.unwrap_or(false) })
+        });
+        payloads::release_asset(&row.asset, release, owner, &repo.name, uploader, &row.sha256_hex)
+    }).collect())
 }
 
 /// A release asset as REST and webhooks show it. `None` when its stored file is gone.
