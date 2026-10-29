@@ -422,7 +422,7 @@ pub fn team_organization(
         "repos_url":format!("{url}/repos"),"events_url":format!("{url}/events"),
         "hooks_url":format!("{url}/hooks"),"issues_url":format!("{url}/issues"),
         "members_url":format!("{url}/members{{/member}}"),"public_members_url":format!("{url}/public_members{{/member}}"),
-        "has_organization_projects":false,"has_repository_projects":false,"public_repos":public_repos,
+        "has_organization_projects":true,"has_repository_projects":false,"public_repos":public_repos,
         "public_gists":0,"followers":0,"following":0,"type":"Organization",
         "created_at":time(org.created_at),"updated_at":time(org.updated_at),"archived_at":null})
 }
@@ -452,7 +452,7 @@ pub fn environment(
     }
     json!({"id": environment.id, "node_id": node_id::encode("EN", environment.id), "name": environment.name,
         "url": format!("{}/environments/{name}", repo_url(owner, repo)),
-        "html_url": format!("{}/{}/{}/deployments/activity_log?environments_filter={name}", link_origin(), crate::webui::encode_component(owner), crate::webui::encode_component(repo)),
+        "html_url": format!("{}/settings?tab=secrets&environment={name}", repository_url(owner, repo)),
         "created_at": time(environment.created_at), "updated_at": time(environment.updated_at),
         "protection_rules": rules, "deployment_branch_policy": environment.branch_policy.as_ref().map(|policy| json!({"protected_branches": policy == "protected", "custom_branch_policies": policy == "custom"}))})
 }
@@ -737,6 +737,8 @@ pub fn repository(repo: &Repository, owner: &str) -> Value {
     let full_name = format!("{owner}/{}", repo.name);
     let html_url = repository_url(owner, &repo.name);
     let api = crate::backend::api::github::repo_url(owner, &repo.name);
+    let ssh = crate::backend::api::http::config::ssh_clone_base();
+    let ssh_url = (!ssh.trim().is_empty()).then(|| format!("{}/{owner}/{}.git", ssh.trim_end_matches('/'), repo.name));
     let mut value = json!({
         "id": repo.id,
         "node_id": crate::backend::api::github::node_id::encode("R", repo.id),
@@ -748,7 +750,7 @@ pub fn repository(repo: &Repository, owner: &str) -> Value {
         "html_url": html_url,
         "clone_url": format!("{}/{owner}/{}.git", http_clone_base().trim_end_matches('/'), repo.name),
         "git_url": format!("{}/{owner}/{}.git", http_clone_base().trim_end_matches('/'), repo.name),
-        "ssh_url": format!("{}/{owner}/{}.git", crate::backend::api::http::config::ssh_clone_base().trim_end_matches('/'), repo.name),
+        "ssh_url": ssh_url,
         "svn_url": html_url, "homepage": repo.website, "language": null, "license": null,
         "mirror_url": null, "pushed_at": null, "size": repo.size_bytes / 1024,
         "has_issues": true, "has_downloads": true, "has_projects": false, "has_wiki": false,
@@ -1356,6 +1358,7 @@ pub fn pull_request_review_comment_json(
         pull.number,
         id = comment.id
     );
+    let current = comment.commit_sha.as_deref().is_none_or(|sha| sha == pull.head_sha);
     let mut value = json!({"id":comment.id,"node_id":node_id::encode("PRRC",comment.id),"url":url,"html_url":html,"pull_request_url":pull_url,
         "pull_request_review_id":comment.review_id,"body":comment.body,"path":comment.path,"diff_hunk":"",
         "commit_id":comment.commit_sha.as_deref().unwrap_or(&pull.head_sha),"original_commit_id":comment.commit_sha.as_deref().unwrap_or(&pull.head_sha),
@@ -1363,14 +1366,14 @@ pub fn pull_request_review_comment_json(
         "subject_type":if comment.line.is_some(){"line"}else{"file"},
         "_links":{"self":{"href":url},"html":{"href":html},"pull_request":{"href":pull_url}}});
     if let Some(line) = comment.line {
-        value["line"] = json!(line);
+        value["line"] = json!(current.then_some(line));
         value["original_line"] = json!(line);
     }
     if let Some(side) = &comment.side {
         value["side"] = json!(side);
     }
     if let Some(start) = comment.start_line {
-        value["start_line"] = json!(start);
+        value["start_line"] = json!(current.then_some(start));
         value["original_start_line"] = json!(start);
         value["start_side"] = json!(comment.start_side);
     }
