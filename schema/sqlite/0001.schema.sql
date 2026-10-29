@@ -586,6 +586,7 @@ CREATE TABLE pr_comments (
     line INTEGER CHECK (line IS NULL OR typeof(line)='integer') CHECK (line BETWEEN -2147483648 AND 2147483647),
     side TEXT CHECK (length(side)<=5), 
     commit_sha TEXT CHECK (length(commit_sha)<=40),
+    diff_base_sha TEXT CHECK (length(diff_base_sha)=40),
     in_reply_to_comment_id INTEGER REFERENCES pr_comments(id) ON DELETE CASCADE CHECK (in_reply_to_comment_id IS NULL OR typeof(in_reply_to_comment_id)='integer'),
     resolved_at TEXT,
     resolved_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL CHECK (resolved_by_id IS NULL OR typeof(resolved_by_id)='integer'),

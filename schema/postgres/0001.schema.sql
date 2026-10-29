@@ -697,6 +697,7 @@ CREATE TABLE IF NOT EXISTS pr_comments (
     line INTEGER,
     side VARCHAR(5), -- LEFT, RIGHT
     commit_sha VARCHAR(40),
+    diff_base_sha TEXT CHECK (length(diff_base_sha)=40),
     in_reply_to_comment_id BIGINT REFERENCES pr_comments(id) ON DELETE CASCADE,
     resolved_at TIMESTAMPTZ,
     resolved_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,

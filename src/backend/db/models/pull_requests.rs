@@ -81,6 +81,10 @@ pub struct PullRequestComment {
     pub start_line: Option<i32>,
     pub start_side: Option<String>,
     pub commit_sha: Option<String>,
+    /// The immutable comparison base captured when this inline thread was created.
+    #[serde(default)]
+    #[sqlx(default)]
+    pub diff_base_sha: Option<String>,
     pub in_reply_to_comment_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
