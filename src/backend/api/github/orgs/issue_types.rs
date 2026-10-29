@@ -65,7 +65,7 @@ async fn save(
     let value = issue_attributes::configure_organization(
         &state.pool,
         org.id,
-        actor.user.id,
+        (actor.user.id, actor.token.id),
         &Definition {
             id,
             kind: "type".into(),
@@ -95,7 +95,7 @@ async fn remove(
     issue_attributes::delete_organization_definition(
         &state.pool,
         org.id,
-        actor.user.id,
+        (actor.user.id, actor.token.id),
         id,
         "type",
     )
