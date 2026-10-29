@@ -261,6 +261,7 @@ fn item() -> Item {
         updated: "revision-1".into(),
         labels: vec![],
         comment_count: 0,
+        can_edit: true,
         can_tick: false,
         tasks: Default::default(),
         commit_count: None,

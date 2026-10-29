@@ -345,10 +345,10 @@ pub(crate) async fn native_edit(
     let draft = submitted_detail(&form, "edit");
     let title = field(&form, "title");
     let body = field(&form, "body");
-    if !repo.view.can_write {
+    if !value.can_edit {
         return Err(ctx.error(
             StatusCode::FORBIDDEN,
-            "Write access is required to edit this entry.",
+            "Only the author or a repository writer may edit this entry.",
         ));
     }
     if let Err(message) = expected(&form, &value) {
@@ -548,6 +548,7 @@ mod tests {
             labels: vec![],
             comparison: None,
             comment_count: 0,
+            can_edit: false,
             can_tick: false,
             tasks: Default::default(),
             commit_count: None,

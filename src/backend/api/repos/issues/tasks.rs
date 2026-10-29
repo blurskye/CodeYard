@@ -1,6 +1,6 @@
 //! Ticking a task box in an issue or pull request body, or in a comment. The box flips in the
-//! stored text and the text is saved through the same update the edit forms use. A writer may tick
-//! a box in the body, the author of a comment may tick one in it, and a stale page is refused.
+//! stored text and the text is saved through the same update the edit forms use. An author or writer
+//! may tick a box in the body, a comment author may tick one in it, and a stale page is refused.
 
 use super::issue::{save_entry_change, EntryChange};
 use crate::backend::api::http::context::PageContext;
@@ -32,7 +32,7 @@ pub(crate) async fn native_toggle_task(
     authorize_post(&ctx, &form)?;
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
-    let value = item(&ctx, &repo, kind, number).await?;
+    let value = item_metadata(&ctx, &repo, kind, number).await?;
     let actor_id = ctx.require_user()?.id;
     let index = field(&form, "task")
         .parse::<usize>()
@@ -92,6 +92,7 @@ pub(crate) async fn native_toggle_task(
         Ok(location) => Ok(ctx.redirect(&location)),
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);
+            let value = item(&ctx, &repo, kind, number).await?;
             render_detail(
                 &ctx,
                 &repo,

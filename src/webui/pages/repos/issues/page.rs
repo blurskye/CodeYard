@@ -178,7 +178,10 @@ pub struct Item {
     /// The comments on the issue or pull request, for the counts in the lists and tabs.
     #[serde(default)]
     pub comment_count: i64,
-    /// Whether the viewer may tick the task boxes of the body: a writer.
+    /// Presentation of author-or-writer title/body authority; mutations recheck live admission.
+    #[serde(default)]
+    pub can_edit: bool,
+    /// Whether the viewer may tick the task boxes of the body.
     #[serde(default)]
     pub can_tick: bool,
     /// The task boxes in the body and how many are ticked. Lists show it; the detail page does not.

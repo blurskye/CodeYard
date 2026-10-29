@@ -224,6 +224,12 @@ pub(crate) async fn issue_reference(
     })
 }
 
+fn can_edit_entry(ctx: &PageContext, repo: &RepositoryData, author_id: i64) -> bool {
+    !repo.record.is_archived && ctx.user.as_ref().is_some_and(|user| {
+        !user.is_banned && !user.must_change_password && (repo.view.can_write || user.id == author_id)
+    })
+}
+
 pub(crate) fn issue_item(
     issue: db::models::Issue,
     author: String,
@@ -246,6 +252,7 @@ pub(crate) fn issue_item(
         milestone: None,
         comparison: None,
         comment_count: 0,
+        can_edit: false,
         can_tick: false,
         tasks: Default::default(),
         commit_count: None,
@@ -407,7 +414,8 @@ pub(crate) fn pull_item(
             .user
             .as_ref()
             .is_some_and(|user| user.id != pull.author_id);
-    let can_tick = repo.view.can_write;
+    let can_edit = can_edit_entry(ctx, repo, pull.author_id);
+    let can_tick = can_edit;
     Ok(view::Item {
         id: pull.id,
         number: pull.number,
@@ -424,6 +432,7 @@ pub(crate) fn pull_item(
         assignees: Vec::new(),
         milestone: None,
         comment_count: 0,
+        can_edit,
         can_tick,
         tasks: Default::default(),
         commit_count: None,
@@ -504,6 +513,26 @@ pub(crate) async fn item(
     kind: Kind,
     number: i32,
 ) -> ResultPage<view::Item> {
+    item_with_comparison(ctx, repo, kind, number, true).await
+}
+
+/// Mutation admission needs the stored text and revision, not Git comparisons or CI verdicts.
+pub(crate) async fn item_metadata(
+    ctx: &PageContext,
+    repo: &RepositoryData,
+    kind: Kind,
+    number: i32,
+) -> ResultPage<view::Item> {
+    item_with_comparison(ctx, repo, kind, number, false).await
+}
+
+async fn item_with_comparison(
+    ctx: &PageContext,
+    repo: &RepositoryData,
+    kind: Kind,
+    number: i32,
+    comparison: bool,
+) -> ResultPage<view::Item> {
     if number <= 0 {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Entry not found."));
     }
@@ -529,9 +558,10 @@ pub(crate) async fn item(
                 .map_err(|_| unavailable(ctx))?
                 .first()
                 .map_or(0, |(_, count)| *count);
-            let can_tick = repo.view.can_write;
+            let can_edit = can_edit_entry(ctx, repo, value.author_id);
             let mut shown = issue_item(value, author, labels);
-            shown.can_tick = can_tick;
+            shown.can_edit = can_edit;
+            shown.can_tick = can_edit;
             shown.assignees = assignees;
             shown.milestone = milestone;
             shown.comment_count = comment_count;
@@ -547,6 +577,10 @@ pub(crate) async fn item(
             .map_err(|_| unavailable(ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
             let author = author(ctx, value.author_id).await?;
+            if !comparison {
+                return pull_item(ctx, repo, value, author, HeadRepository::Unreadable)
+                    .map_err(|response| *response);
+            }
             let head = match value.head_repo_id {
                 Some(id) if id != repo.record.id => {
                     db::repositories::records::get_repository_by_id(&ctx.state.pool, id)
