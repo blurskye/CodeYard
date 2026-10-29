@@ -530,7 +530,7 @@ pub(crate) async fn initialize_repository(
     source: Option<&Path>,
     default_branch: &str,
 ) -> Result<()> {
-    initialize_repository_copy(path, source, default_branch, false).await
+    initialize_repository_copy(path, source, default_branch, false, false).await
 }
 
 pub(crate) async fn initialize_repository_copy(
@@ -538,6 +538,7 @@ pub(crate) async fn initialize_repository_copy(
     source: Option<&Path>,
     default_branch: &str,
     default_branch_only: bool,
+    template: bool,
 ) -> Result<()> {
     validate_merge_revision(default_branch, "0000000000000000000000000000000000000000")?;
     let branch = format!("--initial-branch={default_branch}");
@@ -550,14 +551,9 @@ pub(crate) async fn initialize_repository_copy(
             .to_str()
             .ok_or_else(|| anyhow!("Invalid source storage path"))?;
         let default_ref = format!("+refs/heads/{default_branch}:refs/heads/{default_branch}");
-        let mut arguments = vec![
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            "--no-write-fetch-head",
-            "--",
-            source,
-        ];
+        let mut arguments = vec!["fetch", "--quiet", "--no-tags", "--no-write-fetch-head"];
+        if template { arguments.push("--depth=1"); }
+        arguments.extend(["--", source]);
         if default_branch_only {
             arguments.push(&default_ref);
         } else {
@@ -567,6 +563,10 @@ pub(crate) async fn initialize_repository_copy(
         if !status.success() {
             bail!("Git fork snapshot failed");
         }
+        let (status, heads) = command(path, &["for-each-ref", "--format=%(refname)", "refs/heads/"], b"", None).await?;
+        ensure!(status.success(), "Git fork branch listing failed");
+        let expected = format!("refs/heads/{default_branch}");
+        ensure!(heads.is_empty() || heads.split(|byte| *byte == b'\n').any(|name| name == expected.as_bytes()), "The source default branch changed while copying");
     }
     Ok(())
 }
@@ -623,6 +623,11 @@ pub(crate) async fn rewrite_template_history(
         Ok(())
     })
     .await??;
+    match tokio::fs::remove_file(path.join("shallow")).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     for arguments in [
         &["reflog", "expire", "--expire=now", "--all"][..],
         &[
@@ -1178,7 +1183,11 @@ pub(crate) async fn publish_restack(
         validate_merge_revision(branch, new)?;
         let reference = crate::backend::git::branch_ref(branch)
             .ok_or_else(|| anyhow!("Invalid head branch"))?;
-        input.push_str(&format!("update {reference} {new} {old}\n"));
+        if old == new {
+            input.push_str(&format!("verify {reference} {old}\n"));
+        } else {
+            input.push_str(&format!("update {reference} {new} {old}\n"));
+        }
     }
     input.push_str("prepare\ncommit\n");
     run_ref_transaction(

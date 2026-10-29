@@ -26,7 +26,9 @@ pub(crate) async fn compare_commits(
     limit: usize,
 ) -> Result<CommitComparison> {
     let deadline = Instant::now() + COMMIT_WALK_TIMEOUT;
-    let (temporary, base, head) = comparison_repository(base_path, head_path, base_ref, head_ref)?;
+    let (base_path, head_path, base_ref, head_ref) = (base_path.to_owned(), head_path.to_owned(), base_ref.to_owned(), head_ref.to_owned());
+    let (prepare_base, prepare_head) = (base_path.clone(), head_path.clone());
+    let (temporary, base, head) = process::blocking_until(deadline, move || comparison_repository(&prepare_base, &prepare_head, &base_ref, &head_ref)).await?;
     let path = temporary.path();
     let mut command = process::git_command()?;
     command
@@ -70,7 +72,7 @@ pub(crate) async fn compare_commits(
         }
         anyhow::bail!("Git merge base lookup failed");
     }
-    let merge_base = std::str::from_utf8(&output)?.trim();
+    let merge_base = git2::Oid::from_str(std::str::from_utf8(&output)?.trim())?;
     let mut ids = Vec::new();
     let count = ahead_by.saturating_sub(offset).min(limit);
     if count > 0 {
@@ -81,7 +83,6 @@ pub(crate) async fn compare_commits(
         command
             .args([
                 "rev-list",
-                "--topo-order",
                 "--reverse",
                 &format!("--skip={skip}"),
                 &format!("--max-count={count}"),
@@ -102,7 +103,8 @@ pub(crate) async fn compare_commits(
             ids.push(git2::Oid::from_str(std::str::from_utf8(line)?)?);
         }
     }
-    let repo = git2::Repository::open_bare(path)?;
+    process::blocking_until(deadline, move || {
+    let repo = git2::Repository::open_bare(temporary.path())?;
     let odb = repo.odb()?;
     // Git accepts quoted alternates in its file, but libgit2 does not unquote them.
     // Install the paths explicitly on this handle before reading metadata.
@@ -129,10 +131,11 @@ pub(crate) async fn compare_commits(
     }
     Ok(CommitComparison {
         base_commit: metadata(base)?,
-        merge_base_commit: metadata(git2::Oid::from_str(merge_base)?)?,
+        merge_base_commit: metadata(merge_base)?,
         head_sha: head.to_string(),
         ahead_by,
         behind_by,
         commits,
     })
+    }).await
 }

@@ -72,7 +72,11 @@ pub(crate) fn resolve_ci_commit(
         full_ref.starts_with("refs/heads/") || full_ref.starts_with("refs/tags/"),
         "invalid CI ref kind"
     );
-    let tip = peel_to_commit_checked(&git, &full_ref).ok().map(|c| c.id());
+    let tip = match git.find_reference(&full_ref) {
+        Ok(_) => Some(peel_to_commit_checked(&git, &full_ref).map_err(|error| anyhow::anyhow!("CI reference target is unreadable: {error:#}"))?.id()),
+        Err(error) if error.code() == git2::ErrorCode::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
     let oid = match sha {
         Some(sha) => {
             if !super::is_full_commit_id(sha) {
@@ -199,12 +203,11 @@ fn workflow_files_in_commit(
 }
 
 /// A workflow file directly in `.github/workflows/`. Spaces and non-ASCII letters are valid, as
-/// on GitHub. A separator, a comma, a control character or `..` is not, and neither is a colon,
+/// on GitHub. A separator, a comma or a control character is not, and neither is a colon,
 /// which job identities use to split the path from the job.
 pub(crate) fn is_ci_workflow_filename(name: &str) -> bool {
     name.len() + ".github/workflows/".len() <= 255
         && (name.ends_with(".yml") || name.ends_with(".yaml"))
-        && !name.contains("..")
         && !name
             .chars()
             .any(|c| c.is_control() || matches!(c, '/' | '\\' | ',' | ':'))
@@ -213,6 +216,9 @@ pub(crate) fn is_ci_workflow_filename(name: &str) -> bool {
 fn bounded_ancestor(git: &Repository, tip: Oid, ancestor: Oid) -> Result<bool> {
     let mut pending = std::collections::VecDeque::from([tip]);
     let mut visited = std::collections::HashSet::new();
+    let deadline = std::time::Instant::now() + super::repository::COMMIT_WALK_TIMEOUT;
+    let mut bytes = 0usize;
+    let odb = git.odb()?;
     while let Some(oid) = pending.pop_front() {
         if oid == ancestor {
             return Ok(true);
@@ -224,6 +230,8 @@ fn bounded_ancestor(git: &Repository, tip: Oid, ancestor: Oid) -> Result<bool> {
             visited.len() <= 16384,
             "CI ref ancestry exceeds admission traversal bound"
         );
+        ensure!(std::time::Instant::now() < deadline, "CI ancestry exceeded its time budget");
+        bytes = bytes.checked_add(odb.read_header(oid)?.0).filter(|bytes| *bytes <= super::repository::MAX_COMMIT_WALK_BYTES).ok_or(super::ObjectTooLarge)?;
         let commit = find_commit_checked(git, oid)?;
         ensure!(
             commit.parent_count() <= 64,

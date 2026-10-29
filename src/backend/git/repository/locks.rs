@@ -14,8 +14,21 @@ static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
     LazyLock::new(Default::default);
 
 pub async fn lock(path: &Path) -> OwnedMutexGuard<()> {
-    // Receive sessions use canonical paths; API writes may retain a symlink alias.
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    // Resolve the nearest existing ancestor, including before a destination directory exists.
+    // Creating that directory must not change the mutex selected by a symlinked parent.
+    let absolute = if path.is_absolute() { path.to_owned() } else { std::env::current_dir().unwrap_or_default().join(path) };
+    let mut ancestor = absolute.as_path();
+    let mut tail = Vec::new();
+    let path = loop {
+        if let Ok(mut canonical) = tokio::fs::canonicalize(ancestor).await {
+            for component in tail.iter().rev() { canonical.push(component); }
+            break canonical;
+        }
+        let Some(name) = ancestor.file_name() else { break absolute.clone(); };
+        tail.push(name.to_owned());
+        let Some(parent) = ancestor.parent() else { break absolute.clone(); };
+        ancestor = parent;
+    };
     let mutex = {
         let mut locks = LOCKS.lock().unwrap_or_else(|poison| poison.into_inner());
         locks.retain(|_, mutex| Arc::strong_count(mutex) > 1);
