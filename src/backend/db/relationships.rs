@@ -45,12 +45,12 @@ impl Kind {
     }
     pub(crate) fn selection(self) -> (&'static str, &'static str) {
         match self {
-            Self::BlockedBy | Self::Parent => ("e.source_id", "e.target_id"),
+            Self::BlockedBy | Self::Parent => ("e.source_id", "e.target_id=$2"),
             Self::Related => (
                 "CASE WHEN e.source_id=$2 THEN e.target_id ELSE e.source_id END",
-                "CASE WHEN e.source_id=$2 THEN e.source_id ELSE e.target_id END",
+                "(e.source_id=$2 OR e.target_id=$2)",
             ),
-            _ => ("e.target_id", "e.source_id"),
+            _ => ("e.target_id", "e.source_id=$2"),
         }
     }
 }

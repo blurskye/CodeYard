@@ -16,7 +16,7 @@ pub async fn list(
     let (target, source) = kind.selection();
     let target = target.replace('$', "?");
     let source = source.replace('$', "?");
-    Ok(sqlx::query_as(&format!("SELECT i.id,i.repo_id,i.number,i.title,i.state,COALESCE(owners.username,orgs.name) AS owner,r.name AS repo FROM issue_relations e JOIN issues i ON i.id={target} JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=?1 LEFT JOIN users owners ON r.owner_kind='user' AND owners.id=r.owner_user_id LEFT JOIN organizations orgs ON r.owner_kind='org' AND orgs.id=r.owner_org_id WHERE {source}=?2 AND e.kind=?3 AND {} AND (COALESCE(u.username,'')<>?6 OR i.repo_id=(SELECT repo_id FROM issues WHERE id=?2)) ORDER BY e.position,i.id LIMIT ?4 OFFSET ?5",super::repositories::access::readable_condition())).bind(viewer).bind(root).bind(kind.storage()).bind(limit).bind(offset).bind(crate::backend::db::ci_tokens::BOT).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&format!("SELECT i.id,i.repo_id,i.number,i.title,i.state,COALESCE(owners.username,orgs.name) AS owner,r.name AS repo FROM issue_relations e JOIN issues i ON i.id={target} JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=?1 LEFT JOIN users owners ON r.owner_kind='user' AND owners.id=r.owner_user_id LEFT JOIN organizations orgs ON r.owner_kind='org' AND orgs.id=r.owner_org_id WHERE {source} AND e.kind=?3 AND {} AND EXISTS(SELECT 1 FROM issues root JOIN repositories r ON r.id=root.repo_id WHERE root.id=?2 AND {}) AND (COALESCE(u.username,'')<>?6 OR i.repo_id=(SELECT repo_id FROM issues WHERE id=?2)) ORDER BY e.position,i.id LIMIT ?4 OFFSET ?5",super::repositories::access::readable_condition(),super::repositories::access::readable_condition())).bind(viewer).bind(root).bind(kind.storage()).bind(limit).bind(offset).bind(crate::backend::db::ci_tokens::BOT).fetch_all(pool).await?)
 }
 pub async fn summaries(pool: &SqlitePool, roots: &[i64]) -> Result<Vec<RelationCounts>> {
     anyhow::ensure!(roots.len() <= 100, Refusal::Limit);
@@ -61,7 +61,8 @@ async fn change_once(
     mutation: Mutation,
 ) -> Result<()> {
     let tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let tx = change_in_transaction(tx, actor, repo, root, mutation, false).await?;
+    let triage = matches!(mutation, Mutation::Move { .. } | Mutation::Add { kind: Kind::Children | Kind::Parent, .. } | Mutation::Remove { kind: Kind::Children | Kind::Parent, .. });
+    let tx = change_in_transaction(tx, actor, repo, root, mutation, triage).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -136,6 +137,7 @@ pub(crate) async fn change_in_transaction<'a>(
         );
     }
     let mut changed = true;
+    let mut former_parent = None;
     match mutation {
         Mutation::Add { kind, replace, .. } => {
             let (source, target) = kind.edge(root, other);
@@ -164,13 +166,14 @@ pub(crate) async fn change_in_transaction<'a>(
                         Refusal::Invalid
                     );
                     let old:Option<(i64,i64)>=sqlx::query_as("SELECT e.source_id,i.repo_id FROM issue_relations e JOIN issues i ON i.id=e.source_id WHERE e.kind='parent' AND e.target_id=?1").bind(target).fetch_optional(&mut *tx).await?;
-                    if let Some((_, old_repo)) = old {
+                    if let Some((old_parent, old_repo)) = old {
                         anyhow::ensure!(!restricted || old_repo == repo, Refusal::Missing);
                         anyhow::ensure!(replace, Refusal::HasParent);
                         anyhow::ensure!(
                             authority(&mut tx, actor, old_repo, triage).await?,
                             Refusal::Denied
                         );
+                        former_parent = Some(old_parent);
                     }
                 }
                 if storage != "related" {
@@ -186,10 +189,11 @@ pub(crate) async fn change_in_transaction<'a>(
                         .await?;
                 }
                 let count: i64 = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM issue_relations WHERE kind=?1 AND source_id=?2",
+                    "SELECT MAX(n) FROM (SELECT COUNT(*) AS n FROM issue_relations WHERE kind=?1 AND (source_id=?2 OR (kind='related' AND target_id=?2)) UNION ALL SELECT COUNT(*) AS n FROM issue_relations WHERE kind=?1 AND kind='related' AND (source_id=?3 OR target_id=?3)) counts",
                 )
                 .bind(storage)
                 .bind(source)
+                .bind(target)
                 .fetch_one(&mut *tx)
                 .await?;
                 anyhow::ensure!(count < 100, Refusal::Limit);
@@ -236,6 +240,9 @@ pub(crate) async fn change_in_transaction<'a>(
     }
     if changed {
         touch(&mut tx, root, other).await?;
+        if let Some(parent) = former_parent {
+            touch(&mut tx, parent, parent).await?;
+        }
     }
     Ok(tx)
 }
