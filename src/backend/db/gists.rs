@@ -76,6 +76,8 @@ pub enum GistRefusal {
 
 native_operation!(crate::backend::db::postgres::gists::is_identifier,crate::backend::db::sqlite::gists::is_identifier,
     fn is_identifier(pool:&DbPool,id:&str)->Result<bool>);
+native_operation!(crate::backend::db::postgres::gists::orphaned_for_owner,crate::backend::db::sqlite::gists::orphaned_for_owner,
+    fn orphaned_for_owner(pool:&DbPool,owner:i64)->Result<Vec<i64>>);
 native_operation!(crate::backend::db::postgres::gists::unready_for_owner,crate::backend::db::sqlite::gists::unready_for_owner,
     fn unready_for_owner(pool:&DbPool,owner:i64)->Result<Vec<String>>);
 native_operation!(crate::backend::db::postgres::gists::get,crate::backend::db::sqlite::gists::get,
@@ -103,7 +105,7 @@ native_operation!(crate::backend::db::postgres::gists::pushed,crate::backend::db
 native_operation!(crate::backend::db::postgres::gists::delete,crate::backend::db::sqlite::gists::delete,
     fn delete(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,repo:i64) -> Result<Repository>);
 native_operation!(crate::backend::db::postgres::gists::discard,crate::backend::db::sqlite::gists::discard,
-    fn discard(pool:&DbPool,repo:i64) -> Result<Option<Repository>>);
+    fn discard(pool:&DbPool,repo:i64,orphan_only:bool) -> Result<Option<Repository>>);
 native_operation!(crate::backend::db::postgres::gists::starred,crate::backend::db::sqlite::gists::starred,
     fn starred(pool:&DbPool,actor:i64,repo:i64) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::gists::star,crate::backend::db::sqlite::gists::star,

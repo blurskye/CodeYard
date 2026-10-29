@@ -1,4 +1,4 @@
-use crate::backend::db::pull_requests::async_merge::{AsyncMerge, NewAsyncMerge};
+use crate::backend::db::pull_requests::async_merge::{AsyncMerge, NewAsyncMerge, PENDING_TIMEOUT_SECONDS, TIMEOUT_MESSAGE};
 use anyhow::Result;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -22,10 +22,11 @@ pub async fn recover(pool: &PgPool, node_id: Option<i64>, details: &Value) -> Re
     Ok(sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=$2,expires_at=NOW()+INTERVAL '1 day' WHERE (worker_node_id IS NULL OR worker_node_id=$1) AND status='pending'").bind(node_id).bind(details).execute(pool).await?.rows_affected())
 }
 pub async fn prune(pool: &PgPool) -> Result<u64> {
-    Ok(
-        sqlx::query("DELETE FROM pull_request_async_merges WHERE expires_at<=NOW()")
-            .execute(pool)
-            .await?
-            .rows_affected(),
-    )
+    let mut tx = pool.begin().await?;
+    let failed = sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=$2,expires_at=NOW()+INTERVAL '1 day' WHERE status='pending' AND created_at<=NOW()-$1::bigint*INTERVAL '1 second'")
+        .bind(PENDING_TIMEOUT_SECONDS).bind(serde_json::json!({"message":TIMEOUT_MESSAGE})).execute(&mut *tx).await?.rows_affected();
+    let deleted = sqlx::query("DELETE FROM pull_request_async_merges WHERE expires_at<=NOW()")
+        .execute(&mut *tx).await?.rows_affected();
+    tx.commit().await?;
+    Ok(failed + deleted)
 }

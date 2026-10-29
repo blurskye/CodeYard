@@ -146,7 +146,7 @@ async fn cleanup_failed_initialization(
     // Re-read the row because a delete may commit even when its response is lost.
     // A row that has accepted writes is kept, so a failed creation never discards a push.
     let deleted = if repository.is_gist {
-        db::gists::discard(pool, repository.id)
+        db::gists::discard(pool, repository.id, false)
             .await
             .and_then(|row| {
                 row.ok_or_else(|| anyhow::anyhow!("Gist initialization is no longer discardable"))

@@ -1,4 +1,4 @@
-use crate::backend::db::pull_requests::async_merge::{AsyncMerge, NewAsyncMerge};
+use crate::backend::db::pull_requests::async_merge::{AsyncMerge, NewAsyncMerge, PENDING_TIMEOUT_SECONDS, TIMEOUT_MESSAGE};
 use anyhow::Result;
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -22,10 +22,11 @@ pub async fn recover(pool: &SqlitePool, node_id: Option<i64>, details: &Value) -
     Ok(sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=?2,expires_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 day') WHERE (worker_node_id IS NULL OR worker_node_id=?1) AND status='pending'").bind(node_id).bind(details).execute(pool).await?.rows_affected())
 }
 pub async fn prune(pool: &SqlitePool) -> Result<u64> {
-    Ok(sqlx::query(
-        "DELETE FROM pull_request_async_merges WHERE julianday(expires_at)<=julianday('now')",
-    )
-    .execute(pool)
-    .await?
-    .rows_affected())
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let failed = sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=?2,expires_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 day') WHERE status='pending' AND julianday(created_at)<=julianday('now')-(?1/86400.0)")
+        .bind(PENDING_TIMEOUT_SECONDS).bind(serde_json::json!({"message":TIMEOUT_MESSAGE})).execute(&mut *tx).await?.rows_affected();
+    let deleted = sqlx::query("DELETE FROM pull_request_async_merges WHERE julianday(expires_at)<=julianday('now')")
+        .execute(&mut *tx).await?.rows_affected();
+    tx.commit().await?;
+    Ok(failed + deleted)
 }
