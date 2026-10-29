@@ -49,13 +49,7 @@ impl LocalStore {
 
     /// Streams into a temporary file and renames it into place only after the
     /// size, checksum and file signature check out.
-    #[cfg(test)]
-    pub async fn put(&self, upload: &Upload<'_>, reader: impl AsyncRead + Unpin) -> Result<(), StorageError> {
-        let guard = std::sync::Arc::new(std::sync::Arc::new(tokio::sync::Semaphore::new(1)).try_acquire_owned().unwrap());
-        self.put_guarded(upload, reader, guard).await
-    }
-
-    pub(super) async fn put_guarded(
+    pub(super) async fn put(
         &self,
         upload: &Upload<'_>,
         mut reader: impl AsyncRead + Unpin,
@@ -255,6 +249,10 @@ mod tests {
     use super::*;
     use std::time::SystemTime;
 
+    fn io_guard() -> IoGuard {
+        std::sync::Arc::new(std::sync::Arc::new(tokio::sync::Semaphore::new(1)).try_acquire_owned().unwrap())
+    }
+
     fn upload<'a>(key: &'a str, bytes: &[u8], sha: &'a str) -> Upload<'a> {
         Upload {
             key,
@@ -271,7 +269,7 @@ mod tests {
         let png = b"\x89PNG\r\n\x1a\nrest";
         let sha = hex::encode(Sha256::digest(png));
         let key = "uploads/one";
-        store.put(&upload(key, png, &sha), &png[..]).await.unwrap();
+        store.put(&upload(key, png, &sha), &png[..], io_guard()).await.unwrap();
         store.verify(&upload(key, png, &sha)).await.unwrap();
         let (_, bytes) = store.open_file(key).await.unwrap();
         assert_eq!(bytes, png.len() as u64);
@@ -279,16 +277,16 @@ mod tests {
         let fake = b"<html>not png";
         let fake_sha = hex::encode(Sha256::digest(fake));
         assert!(store
-            .put(&upload("uploads/two", fake, &fake_sha), &fake[..])
+            .put(&upload("uploads/two", fake, &fake_sha), &fake[..], io_guard())
             .await
             .is_err());
         assert!(store
-            .put(&upload("uploads/three", png, &fake_sha), &png[..])
+            .put(&upload("uploads/three", png, &fake_sha), &png[..], io_guard())
             .await
             .is_err());
         let mut short = upload("uploads/four", png, &sha);
         short.bytes -= 1;
-        assert!(store.put(&short, &png[..]).await.is_err());
+        assert!(store.put(&short, &png[..], io_guard()).await.is_err());
         assert!(store
             .verify(&upload("uploads/two", fake, &fake_sha))
             .await
@@ -333,7 +331,7 @@ mod tests {
                 assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &limit), 0);
             }
             assert!(store
-                .put(&upload("uploads/full", png, &sha), &png[..])
+                .put(&upload("uploads/full", png, &sha), &png[..], io_guard())
                 .await
                 .is_err());
             assert!(!root.path().join("uploads/full").exists());
@@ -350,7 +348,7 @@ mod tests {
         png.extend(vec![b'x'; 256 * 1024]);
         let sha = hex::encode(Sha256::digest(&png));
         store
-            .put(&upload("uploads/new", &png, &sha), png.as_slice())
+            .put(&upload("uploads/new", &png, &sha), png.as_slice(), io_guard())
             .await
             .unwrap();
         let (mut file, size) = store.open_file("uploads/new").await.unwrap();

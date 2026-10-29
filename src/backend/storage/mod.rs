@@ -189,7 +189,7 @@ impl ObjectStore {
         reader: impl AsyncRead + Unpin,
     ) -> Result<(), StorageError> {
         match &self.backend {
-            Backend::Local(store) => store.put_guarded(upload, reader, Arc::new(self.try_acquire_io()?)).await,
+            Backend::Local(store) => store.put(upload, reader, Arc::new(self.try_acquire_io()?)).await,
             Backend::S3(_) => Err(StorageError::Rejected),
         }
     }
@@ -199,7 +199,7 @@ impl ObjectStore {
     /// storage is in use.
     pub async fn put_bytes(&self, upload: &Upload<'_>, bytes: Vec<u8>) -> Result<(), StorageError> {
         match &self.backend {
-            Backend::Local(store) => store.put_guarded(upload, bytes.as_slice(), Arc::new(self.try_acquire_io()?)).await,
+            Backend::Local(store) => store.put(upload, bytes.as_slice(), Arc::new(self.try_acquire_io()?)).await,
             Backend::S3(store) => store
                 .put_object(upload, bytes, Arc::new(self.try_acquire_io()?))
                 .await
