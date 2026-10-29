@@ -19,7 +19,7 @@ pub(super) fn mapping<'a>(value: &'a Value, path: &str) -> Result<&'a Mapping> {
         .with_context(|| format!("{path}: Expected a mapping"))
 }
 
-pub(super) fn text(value: &Value, path: &str) -> Result<String> {
+pub fn text(value: &Value, path: &str) -> Result<String> {
     match value {
         Value::String(s) => Ok(s.clone()),
         Value::Bool(b) => Ok(b.to_string()),

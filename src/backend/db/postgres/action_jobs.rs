@@ -168,14 +168,7 @@ pub async fn save_state(
     workflow: &str,
     state: &State,
 ) -> Result<()> {
-    ensure!(
-        state.has_valid_variant_order(),
-        "invalid observed variant order"
-    );
-    ensure!(
-        serde_json::to_vec(state)?.len() <= 8 * 1024 * 1024,
-        "job state exceeds the native limit"
-    );
+    state.validate()?;
     let mut tx = pool.begin().await?;
     sqlx::query("SET LOCAL statement_timeout='10s'").execute(&mut *tx).await?;
     lease(&mut tx, worker, run, generation, workflow).await?;

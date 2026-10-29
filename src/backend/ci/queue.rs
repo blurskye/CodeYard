@@ -725,10 +725,7 @@ impl RunQueue {
         workflow: &str,
         state: &codeyard_actions::progress::State,
     ) -> Result<()> {
-        ensure!(
-            serde_json::to_vec(state)?.len() <= 8 * 1024 * 1024,
-            "job state exceeds native limits"
-        );
+        state.validate()?;
         match self {
             Self::Database { pool, .. } => {
                 db::action_jobs::save_state(pool, worker, id, generation, workflow, state).await

@@ -98,10 +98,14 @@ fn text(template: &str, contexts: &Contexts, status: Status) -> Result<String> {
 }
 
 fn boolean(template: &str, contexts: &Contexts, status: Status) -> Result<bool> {
-    if template.contains("${{") {
-        Ok(expressions::interpolate(template, contexts, status)?.is_truthy())
+    let value = if template.contains("${{") {
+        expressions::interpolate(template, contexts, status)?
     } else {
-        Ok(expressions::evaluate(template, contexts, status)?.is_truthy())
+        expressions::evaluate(template, contexts, status)?
+    };
+    match value {
+        Value::Bool(value) => Ok(value),
+        _ => bail!("Expected a boolean value"),
     }
 }
 
@@ -183,13 +187,7 @@ fn expand_with_dependency_status(
         .get("jobs")
         .and_then(|jobs| jobs.get(id))
         .and_then(|job| job.get("if"));
-    let condition = match condition {
-        Some(serde_yaml::Value::Bool(true)) => "true",
-        Some(serde_yaml::Value::Bool(false)) => "false",
-        value => value
-            .and_then(serde_yaml::Value::as_str)
-            .unwrap_or("success()"),
-    };
+    let condition = condition.map(|value| workflow::scalar_text(value, "job.if")).transpose()?.unwrap_or_else(|| "success()".into());
     let condition = condition.trim();
     let condition = condition
         .strip_prefix("${{")
@@ -313,7 +311,7 @@ async fn git_value(directory: &Path, args: &[&str]) -> String {
     .await
     {
         Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).trim().into()
+            String::from_utf8_lossy(&output.stdout).trim_end_matches(['\r', '\n']).into()
         }
         _ => String::new(),
     }
@@ -529,14 +527,14 @@ async fn run_workflow(
             masker.add(value);
         }
     }
-    let sha = env
-        .get("GITHUB_SHA")
-        .cloned()
-        .unwrap_or(git_value(&options.directory, &["rev-parse", "HEAD"]).await);
-    let reference = env
-        .get("GITHUB_REF")
-        .cloned()
-        .unwrap_or(git_value(&options.directory, &["symbolic-ref", "-q", "HEAD"]).await);
+    let sha = match env.get("GITHUB_SHA") {
+        Some(sha) => sha.clone(),
+        None => git_value(&options.directory, &["rev-parse", "HEAD"]).await,
+    };
+    let reference = match env.get("GITHUB_REF") {
+        Some(reference) => reference.clone(),
+        None => git_value(&options.directory, &["symbolic-ref", "-q", "HEAD"]).await,
+    };
     let repository = env
         .get("GITHUB_REPOSITORY")
         .cloned()
@@ -568,7 +566,7 @@ async fn run_workflow(
         "ref_type":if reference.starts_with("refs/tags/") {"tag"} else {"branch"},
         "sha":sha,"head_ref":event.pointer("/pull_request/head/ref").and_then(serde_json::Value::as_str).unwrap_or(""),"base_ref":event.pointer("/pull_request/base/ref").and_then(serde_json::Value::as_str).unwrap_or(""),"workspace":options.directory,"run_id":run_id,"run_number":number,"run_attempt":env.get("GITHUB_RUN_ATTEMPT").cloned().unwrap_or_else(||"1".into()),
         "server_url":server,"api_url":api_url,"graphql_url":graphql_url,
-        "workflow":workflow_name,"job":"", "action":"", "token":secrets.get("GITHUB_TOKEN").cloned().unwrap_or_default()
+        "workflow":workflow_name,"workflow_ref":env.get("GITHUB_WORKFLOW_REF"),"workflow_sha":env.get("GITHUB_WORKFLOW_SHA"),"job":"", "action":"", "token":secrets.get("GITHUB_TOKEN").cloned().unwrap_or_default()
     });
     let mut contexts = Contexts::default();
     contexts
@@ -721,12 +719,9 @@ impl WorkflowRun {
                     .and_then(|jobs| jobs.get(&id))
                     .and_then(|job| job.get("needs"));
                 let needs_ids: Vec<String> = match needs_ids {
-                    Some(serde_yaml::Value::String(name)) => vec![name.clone()],
-                    Some(serde_yaml::Value::Sequence(names)) => names
-                        .iter()
-                        .filter_map(|value| value.as_str().map(str::to_owned))
-                        .collect(),
-                    _ => Vec::new(),
+                    Some(serde_yaml::Value::Sequence(names)) => names.iter().map(|value| workflow::scalar_text(value, "needs")).collect::<Result<_>>()?,
+                    Some(value) => vec![workflow::scalar_text(value, "needs")?],
+                    None => Vec::new(),
                 };
                 let mut needs = BTreeMap::new();
                 let mut status = Status::default();
@@ -853,15 +848,13 @@ impl WorkflowRun {
                     }
                     if let Some(progress) = tokens.progress(&id, index) {
                         anyhow::ensure!(
-                            id.len() <= 128
-                                && job.name.len() <= 1024
-                                && job.runs_on.iter().map(String::len).sum::<usize>() <= 1024,
+                            id.len() <= 128 && job.name.len() <= 1024,
                             "job metadata exceeds the progress limit"
                         );
                         progress.emit(Update::Queued {
                             workflow_name: commands::bounded(&masker.mask(&workflow_name), 1024),
                             name: job.name.clone(),
-                            labels: job.runs_on.iter().map(|label| masker.mask(label)).collect(),
+                            labels: job.runs_on.iter().map(|label| commands::bounded(&masker.mask(label), 1024)).take(64).collect(),
                             matrix: matrix_metadata(&job.matrix, masker),
                         });
                     }
@@ -936,14 +929,16 @@ impl WorkflowRun {
                         );
                         contexts.values.insert("matrix".into(), job.matrix.clone());
                         let env = env.clone();
+                        let job_masker = masker.fork();
                         let name = format!("{name_prefix}{}", job.name);
                         let log = Log {
                             prefix: format!("{workflow_name}/{name}"),
-                            masker: masker.clone(),
+                            masker: job_masker.clone(),
                             progress: tokens.progress(&id, index),
                         };
                         let cancel = matrix_cancel.clone();
                         let mut execution = self.clone();
+                        execution.masker = job_masker;
                         execution.cancel = cancel.clone();
                         let mut nested_options = (*options).clone();
                         nested_options.job_state_file = None;
@@ -1096,7 +1091,7 @@ impl WorkflowRun {
                     "failure"
                 }
                 .into(),
-                outputs: reusable::outputs(&raw, &contexts, masker)?,
+                outputs: if token_prefix.is_empty() { BTreeMap::new() } else { reusable::outputs(&raw, &contexts, masker)? },
             })
         })
     }
@@ -1129,18 +1124,13 @@ async fn admit(
     else {
         return Some(cancel);
     };
-    // A masked name could match other groups, so it keeps a digest of the real name.
-    let mut group = log.masker.mask(&concurrency.group);
-    if group != concurrency.group {
-        let digest = <sha2::Sha256 as sha2::Digest>::digest(concurrency.group.to_lowercase());
-        let digest = format!("{digest:x}");
-        group = format!("{group} #{}", &digest[..16]);
-    }
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(concurrency.group.to_lowercase());
+    let group = format!("{digest:x}");
     log.emit(Update::Concurrency {
-        group: group.clone(),
+        group,
         cancel_in_progress: concurrency.cancel_in_progress,
     });
-    log.line(&format!("Waiting for concurrency group '{group}'"));
+    log.line(&format!("Waiting for concurrency group '{}'", log.masker.mask(&concurrency.group)));
     let path = directory.join(format!("{}.{index}", job.job_id));
     loop {
         match admission(&path) {
@@ -1192,7 +1182,27 @@ fn save_job_state(options: &Options, state: &mut JobState, masker: &Masker) -> R
         path.parent()
             .context("job state needs a parent directory")?,
     )?;
-    serde_json::to_writer(file.as_file_mut(), state)?;
+    struct Bounded<'a> { file: &'a mut std::fs::File, remaining: usize }
+    impl std::io::Write for Bounded<'_> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > self.remaining { return Err(std::io::ErrorKind::FileTooLarge.into()); }
+            let written = std::io::Write::write(self.file, bytes)?;
+            self.remaining -= written;
+            Ok(written)
+        }
+        fn flush(&mut self) -> std::io::Result<()> { std::io::Write::flush(self.file) }
+    }
+    let written = serde_json::to_writer(Bounded { file: file.as_file_mut(), remaining: crate::progress::MAX_STATE_BYTES }, state);
+    if written.as_ref().err().is_some_and(|error| error.io_error_kind() == Some(std::io::ErrorKind::FileTooLarge)) {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        eprintln!("::warning::Private replay state exceeds its budget; replay snapshot omitted");
+        return Ok(());
+    }
+    written?;
     file.persist(path)
         .context("Unable to save private job replay state")?;
     Ok(())

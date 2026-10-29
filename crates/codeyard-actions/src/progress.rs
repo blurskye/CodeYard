@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub const MAX_STATE_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Event {
@@ -113,6 +115,21 @@ pub struct State {
     pub variant_order: BTreeMap<String, Vec<u32>>,
 }
 impl State {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(self.has_valid_variant_order(), "invalid observed variant order");
+        struct Count(usize);
+        impl std::io::Write for Count {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0 = self.0.saturating_add(bytes.len());
+                if self.0 > MAX_STATE_BYTES { return Err(std::io::ErrorKind::FileTooLarge.into()); }
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        }
+        serde_json::to_writer(Count(0), self)?;
+        Ok(())
+    }
+
     pub fn has_valid_variant_order(&self) -> bool {
         self.variant_order.iter().all(|(job, order)| {
             self.variants.get(job).is_some_and(|variants| {

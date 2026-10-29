@@ -1632,11 +1632,11 @@ impl Workspace {
             Err(error) => return Err(error.into()),
         };
         let mut body = Vec::new();
-        file.take(8 * 1024 * 1024 + 1)
+        file.take((codeyard_actions::progress::MAX_STATE_BYTES + 1) as u64)
             .read_to_end(&mut body)
             .await?;
         ensure!(
-            body.len() <= 8 * 1024 * 1024,
+            body.len() <= codeyard_actions::progress::MAX_STATE_BYTES,
             "job state exceeds the native limit"
         );
         Ok(Some(

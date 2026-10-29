@@ -12,6 +12,7 @@ pub mod dispatch_inputs;
 pub mod events;
 mod parser;
 mod planner;
+pub use parser::text as scalar_text;
 #[cfg(test)]
 mod tests;
 use std::collections::BTreeMap;

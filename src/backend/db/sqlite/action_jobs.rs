@@ -162,14 +162,7 @@ pub async fn save_state(
     workflow: &str,
     state: &State,
 ) -> Result<()> {
-    ensure!(
-        state.has_valid_variant_order(),
-        "invalid observed variant order"
-    );
-    ensure!(
-        serde_json::to_vec(state)?.len() <= 8 * 1024 * 1024,
-        "job state exceeds the native limit"
-    );
+    state.validate()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     lease(&mut tx, worker, run, generation, workflow).await?;
     sqlx::query("UPDATE actions_steps SET status='completed',completed_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE status='in_progress' AND job_id IN(SELECT id FROM actions_jobs WHERE run_id=$1 AND generation<>$2)").bind(run).bind(generation).execute(&mut *tx).await?;
