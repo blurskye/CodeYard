@@ -37,6 +37,10 @@ native_operation!(crate::backend::db::postgres::repositories::discovery::list_fo
     crate::backend::db::sqlite::repositories::discovery::list_forks,
     fn list_forks(pool: &DbPool, repo_id: i64, limit: i64, offset: i64) -> Result<Vec<Repository>>);
 
+native_operation!(crate::backend::db::postgres::repositories::discovery::comparison_forks,
+    crate::backend::db::sqlite::repositories::discovery::comparison_forks,
+    fn comparison_forks(pool: &DbPool, repo: i64, owner: &str) -> Result<Vec<Repository>>);
+
 /// What a repository search matches. `org:alice`, `user:alice` and `alice/proj` name an
 /// owner; any other text matches the name, the description or the owner's name.
 #[derive(Debug, PartialEq, Eq)]
