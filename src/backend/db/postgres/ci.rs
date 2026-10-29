@@ -724,6 +724,17 @@ pub async fn ci_run_allows_repository_read(
 
 /// Records that the worker is alive. Returns whether cancellation was requested,
 /// or `None` if this worker no longer owns the run.
+pub async fn heartbeat_ci_run_on_node(pool: &PgPool, id: i64, worker: &str, node_key: &str) -> Result<Option<bool>> {
+    let mut tx = pool.begin().await?;
+    let active: Option<i64> = sqlx::query_scalar("SELECT id FROM nodes WHERE public_key=$1 AND status='active' AND 'runner'=ANY(roles) FOR SHARE")
+        .bind(node_key).fetch_optional(&mut *tx).await?;
+    if active.is_none() || !worker.starts_with(&format!("{node_key}/")) { return Ok(None); }
+    let cancelled = sqlx::query_scalar("UPDATE ci_runs SET heartbeat_at=clock_timestamp() WHERE id=$1 AND worker=$2 AND status='running' RETURNING cancel_requested")
+        .bind(id).bind(worker).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(cancelled)
+}
+
 pub async fn heartbeat_ci_run(pool: &PgPool, id: i64, worker: &str) -> Result<Option<bool>> {
     Ok(sqlx::query_scalar(
         "UPDATE ci_runs SET heartbeat_at = clock_timestamp() WHERE id = $1 AND worker = $2 AND status = 'running' RETURNING cancel_requested",

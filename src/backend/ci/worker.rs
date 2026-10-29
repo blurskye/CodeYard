@@ -201,6 +201,10 @@ pub(super) async fn run(
                 if *stop.borrow() {
                     break;
                 }
+                if error.to_string() == "not an active runner" {
+                    service.request_stop();
+                    break;
+                }
                 warn!(%error, "CI worker could not claim a run");
                 tokio::select! {
                     _ = tokio::time::sleep(backoff) => {}

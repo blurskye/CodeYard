@@ -688,6 +688,12 @@ pub async fn ci_run_allows_repository_read(
 
 /// Records that the worker is alive. Returns whether cancellation was requested,
 /// or `None` if this worker no longer owns the run.
+pub async fn heartbeat_ci_run_on_node(pool: &SqlitePool, id: i64, worker: &str, node_key: &str) -> Result<Option<bool>> {
+    if !worker.starts_with(&format!("{node_key}/")) { return Ok(None); }
+    Ok(sqlx::query_scalar("UPDATE ci_runs SET heartbeat_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND worker=?2 AND status='running' AND EXISTS(SELECT 1 FROM nodes n,json_each(n.roles) role WHERE n.public_key=?3 AND n.status='active' AND role.value='runner') RETURNING cancel_requested")
+        .bind(id).bind(worker).bind(node_key).fetch_optional(pool).await?)
+}
+
 pub async fn heartbeat_ci_run(pool: &SqlitePool, id: i64, worker: &str) -> Result<Option<bool>> {
     Ok(sqlx::query_scalar(
         "UPDATE ci_runs SET heartbeat_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = ?1 AND worker = ?2 AND status = 'running' RETURNING cancel_requested",

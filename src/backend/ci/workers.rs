@@ -167,6 +167,12 @@ impl CiWorkers {
         self.workers.stop.send_replace(true);
     }
 
+    /// Completes when membership refusal or shutdown retires this worker process.
+    pub async fn stopped(&self) {
+        let mut stop = self.workers.stop.subscribe();
+        let _ = stop.wait_for(|stopped| *stopped).await;
+    }
+
     /// Cancels running jobs and waits briefly for results and workspace cleanup.
     pub async fn shutdown(&self) -> Result<()> {
         self.request_stop();

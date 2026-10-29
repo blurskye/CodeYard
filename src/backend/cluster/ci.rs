@@ -15,6 +15,16 @@ use std::sync::{
 };
 use tokio::sync::Semaphore;
 
+fn transient_database_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| match cause.downcast_ref::<sqlx::Error>() {
+        Some(sqlx::Error::PoolTimedOut | sqlx::Error::Io(_) | sqlx::Error::Tls(_) | sqlx::Error::WorkerCrashed) => true,
+        Some(sqlx::Error::Database(error)) => error.code().is_some_and(|code| {
+            matches!(code.as_ref(), "40001" | "40P01" | "55P03" | "57014" | "57P01" | "57P02" | "57P03" | "53300" | "5" | "6")
+        }),
+        _ => false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,7 +472,7 @@ impl CiHandler {
             Err(error) => {
                 // Never return database errors or decrypted secret contents to the peer.
                 tracing::warn!(%error, "CI queue request failed");
-                Err(if error.to_string() == CORE_UNAVAILABLE {
+                Err(if error.to_string() == CORE_UNAVAILABLE || transient_database_error(&error) {
                     CORE_UNAVAILABLE.to_owned()
                 } else {
                     REFUSED.to_owned()

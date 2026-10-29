@@ -204,6 +204,10 @@ native_operation!(crate::backend::db::postgres::ci::ci_run_allows_repository_rea
         public_key: &str,
     ) -> Result<bool>);
 
+native_operation!(crate::backend::db::postgres::ci::heartbeat_ci_run_on_node,
+    crate::backend::db::sqlite::ci::heartbeat_ci_run_on_node,
+    fn heartbeat_ci_run_on_node(pool: &DbPool, id: i64, worker: &str, node_key: &str) -> Result<Option<bool>>);
+
 native_operation!(crate::backend::db::postgres::ci::heartbeat_ci_run,
     crate::backend::db::sqlite::ci::heartbeat_ci_run,
     fn heartbeat_ci_run(pool: &DbPool, id: i64, worker: &str) -> Result<Option<bool>>);
