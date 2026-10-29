@@ -329,18 +329,15 @@ pub async fn find_cache(
     version: &str,
 ) -> Result<Option<ActionObject>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let entries: Vec<ActionObject> = sqlx::query_as("SELECT * FROM actions_objects WHERE repo_id=$1 AND kind='cache' AND version=$2 AND finalized AND expires_at>$3 AND (scope=$4 OR scope=$5 OR scope=$6) ORDER BY created_at DESC,id DESC")
-        .bind(run.repo_id).bind(version).bind(chrono::Utc::now().timestamp()).bind(&run.branch).bind(&run.default_branch).bind(&run.base_branch).fetch_all(&mut *tx).await?;
-    let found = crate::backend::db::action_objects::matching_cache(&entries, run, keys);
-    if let Some(entry) = found {
-        sqlx::query("UPDATE actions_objects SET expires_at=?2+(expires_at-accessed_at),accessed_at=?2 WHERE id=?1")
-            .bind(entry.id)
-            .bind(chrono::Utc::now().timestamp())
-            .execute(&mut *tx)
-            .await?;
-    }
+    let sql = crate::backend::db::action_objects::cache_lookup_sql(false);
+    let id: Option<i64> = sqlx::query_scalar(&sql)
+        .bind(run.repo_id).bind(version).bind(chrono::Utc::now().timestamp()).bind(&run.branch).bind(&run.default_branch).bind(&run.base_branch).bind(serde_json::to_string(keys)?).fetch_optional(&mut *tx).await?;
+    let found = if let Some(id) = id {
+        sqlx::query_as("UPDATE actions_objects SET expires_at=?2+(expires_at-accessed_at),accessed_at=?2 WHERE id=?1 RETURNING *")
+            .bind(id).bind(chrono::Utc::now().timestamp()).fetch_optional(&mut *tx).await?
+    } else { None };
     tx.commit().await?;
-    Ok(found.cloned())
+    Ok(found)
 }
 
 pub async fn list_artifacts(pool: &SqlitePool, run_id: i64) -> Result<Vec<ActionObject>> {

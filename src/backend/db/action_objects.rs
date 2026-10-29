@@ -85,31 +85,12 @@ pub struct NewObject<'a> {
     pub expires_at: i64,
 }
 
-/// A branch's prefix matches take priority over even an exact match on the default branch.
-pub(super) fn matching_cache<'a>(
-    entries: &'a [ActionObject],
-    run: &RuntimeRun,
-    keys: &[String],
-) -> Option<&'a ActionObject> {
-    let scopes = [
-        Some(&run.branch),
-        run.base_branch.as_ref(),
-        Some(&run.default_branch),
-    ];
-    for branch in scopes.into_iter().flatten() {
-        for key in keys {
-            if let Some(exact) = entries.iter().find(|entry| entry.scope == *branch && entry.name == *key) {
-                return Some(exact);
-            }
-            if let Some(entry) = entries
-                .iter()
-                .find(|entry| entry.scope == *branch && entry.name.starts_with(key))
-            {
-                return Some(entry);
-            }
-        }
-    }
-    None
+/// Scope precedes restore-key order, and each key's exact match precedes its prefixes.
+/// Choose only an ID before loading the winning manifest.
+pub(crate) fn cache_lookup_sql(pg: bool) -> String {
+    let keys = if pg { "jsonb_array_elements_text($7::jsonb) WITH ORDINALITY AS k(value,key)" } else { "json_each($7) k" };
+    let sql = format!("SELECT o.id FROM actions_objects o JOIN {keys} ON substr(o.name,1,length(k.value))=k.value WHERE o.repo_id=$1 AND o.kind='cache' AND o.version=$2 AND o.finalized AND o.expires_at>$3 AND (o.scope=$4 OR o.scope=$5 OR o.scope=$6) ORDER BY CASE o.scope WHEN $4 THEN 0 WHEN $6 THEN 1 ELSE 2 END,CAST(k.key AS BIGINT),CASE WHEN o.name=k.value THEN 0 ELSE 1 END,o.created_at DESC,o.id DESC LIMIT 1");
+    if pg { sql } else { sql.replace('$', "?") }
 }
 
 native_operation!(crate::backend::db::postgres::action_objects::issue_token,
