@@ -162,7 +162,7 @@ pub async fn update_organization_team(
     // members that it takes below write access; runs already below it are left alone.
     let team_id = team;
     let reparented = parent != current.parent_team_id && current.parent_team_id.is_some();
-    let denied_runs = format!("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id JOIN users u ON u.id=c.triggered_by_id WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND c.triggered_by_id IN (SELECT user_id FROM effective_team_memberships WHERE team_id=$2) AND (c.status IN ('queued','running') OR c.completed_at > NOW() - INTERVAL '1 hour') AND ({USER_REPO_ACCESS_SQL}) < 3");
+    let denied_runs = format!("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id JOIN users u ON u.id=c.triggered_by_id WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND c.triggered_by_id IN (SELECT user_id FROM effective_team_memberships WHERE team_id=$2) AND (c.status IN ('queued','running') OR c.completed_at > NOW() - INTERVAL '1 hour') AND ({USER_REPO_ACCESS_SQL}) < CASE WHEN c.pipeline IN ('cd','full') OR c.environment IS NOT NULL THEN 5 ELSE 3 END");
     let denied_before: Vec<i64> = if reparented {
         sqlx::query_scalar(&denied_runs)
             .bind(org)
