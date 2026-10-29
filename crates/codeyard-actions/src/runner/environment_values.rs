@@ -1,6 +1,7 @@
 //! The core binds job IDs to environment scopes; engines never infer scope from global values.
 use super::{Contexts, Masker, Value};
 use anyhow::{ensure, Result};
+use crate::values;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -22,18 +23,11 @@ struct Values {
 }
 fn valid(values: &BTreeMap<String, String>, budget: usize) -> bool {
     let mut names = BTreeSet::new();
-    values.len() <= 100
+    values.len() <= values::MAX_SCOPE_VALUES
         && values.iter().all(|(name, value)| {
-            let mut bytes = name.bytes();
-            let first = bytes
-                .next()
-                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_');
-            first
-                && name.len() <= 255
-                && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-                && !name.to_ascii_uppercase().starts_with("GITHUB_")
+            values::valid_name(name) && !values::reserved_name(name)
                 && names.insert(name.to_ascii_uppercase())
-                && value.len() <= 48 * 1024
+                && value.len() <= values::MAX_VALUE_BYTES
                 && !value.contains('\0')
         })
         && values
@@ -50,11 +44,11 @@ impl EnvironmentValues {
         let invalid = || anyhow::anyhow!("Invalid environment values file");
         let file = std::fs::File::open(path).map_err(|_| invalid())?;
         let mut bytes = Vec::new();
-        file.take(16 * 1024 * 1024 + 1)
+        file.take(values::MAX_ENVIRONMENT_FILE_BYTES as u64 + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| invalid())?;
         ensure!(
-            bytes.len() <= 16 * 1024 * 1024,
+            bytes.len() <= values::MAX_ENVIRONMENT_FILE_BYTES,
             "Environment values file is too large"
         );
         let values: Self = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
@@ -73,8 +67,8 @@ impl EnvironmentValues {
             ensure!(
                 !name.is_empty()
                     && name.len() <= 2048
-                    && valid(&scope.secrets, 1024 * 1024)
-                    && valid(&scope.variables, 256 * 1024),
+                    && valid(&scope.secrets, values::MAX_SECRET_BYTES)
+                    && valid(&scope.variables, values::MAX_VARIABLE_BYTES),
                 "Invalid environment value scope"
             );
             for secret in scope.secrets.values() {

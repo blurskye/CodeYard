@@ -25,13 +25,9 @@ impl SecretKind {
     }
 }
 
-pub const MAX_SECRET_NAME_BYTES: usize = 255;
-pub const MAX_SECRET_VALUE_BYTES: usize = 48 * 1024;
-/// Most repository secrets one CI claim carries.
-pub const MAX_REPOSITORY_SECRETS: usize = 100;
-/// Names and values of one claim together. A claim is one RPC reply of at most 8 MiB, and
-/// JSON escapes a control byte as six bytes, so 1 MiB of secret text stays inside the frame.
-pub const MAX_REPOSITORY_SECRETS_BYTES: usize = 1024 * 1024;
+pub use codeyard_actions::values::{MAX_NAME_BYTES as MAX_SECRET_NAME_BYTES,
+    MAX_VALUE_BYTES as MAX_SECRET_VALUE_BYTES, MAX_SCOPE_VALUES as MAX_REPOSITORY_SECRETS,
+    MAX_SECRET_BYTES as MAX_REPOSITORY_SECRETS_BYTES};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SecretsError {
@@ -87,18 +83,10 @@ impl SecretsError {
 }
 
 pub fn validate_repository_secret(name: &str, value: &str) -> Result<(), SecretsError> {
-    let mut bytes = name.bytes();
-    let first = bytes.next().ok_or(SecretsError::InvalidName)?;
-    if name.len() > MAX_SECRET_NAME_BYTES
-        || !(first.is_ascii_alphabetic() || first == b'_')
-        || !bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-    {
+    if !codeyard_actions::values::valid_name(name) {
         return Err(SecretsError::InvalidName);
     }
-    if name
-        .get(.."GITHUB_".len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("GITHUB_"))
-    {
+    if codeyard_actions::values::reserved_name(name) {
         return Err(SecretsError::ReservedName);
     }
     if value.as_bytes().contains(&0) {

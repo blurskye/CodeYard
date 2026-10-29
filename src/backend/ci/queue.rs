@@ -42,7 +42,7 @@ pub(super) async fn run_variables(pool: &DbPool, repo: i64) -> Result<Vec<(Strin
         if variables.contains_key(&name) {
             continue;
         }
-        if bytes + name.len() + value.len() > 256 * 1024 {
+        if bytes + name.len() + value.len() > codeyard_actions::values::MAX_VARIABLE_BYTES {
             break;
         }
         bytes += name.len() + value.len();

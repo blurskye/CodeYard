@@ -1,6 +1,7 @@
 //! Environment values are delivered only to jobs targeting that environment.
 pub use super::organization_values::Kind;
 use super::DbPool;
+use codeyard_actions::values::{MAX_VALUE_BYTES, MAX_SCOPE_VALUES};
 use crate::backend::crypto::{SecretEncryptor, SecretError};
 use chrono::{DateTime, Utc};
 
@@ -60,7 +61,7 @@ pub fn environment_key(name: &str) -> Result<String, ValueError> {
 
 pub fn validate(name: &str, value: &str) -> Result<(), ValueError> {
     super::secrets::validate_repository_secret(name, "").map_err(|_| ValueError::InvalidName)?;
-    if value.len() > 48 * 1024 || value.contains('\0') {
+    if value.len() > MAX_VALUE_BYTES || value.contains('\0') {
         return Err(ValueError::InvalidValue);
     }
     Ok(())
@@ -111,7 +112,7 @@ pub async fn for_run(
         .into_iter()
         .map(|row| (row.name, row.value))
         .collect();
-    if variables.len() > 100 {
+    if variables.len() > MAX_SCOPE_VALUES {
         return Err(ValueError::Limit);
     }
     super::variables::validate_all(&variables).map_err(|_| ValueError::Size)?;

@@ -1734,7 +1734,7 @@ impl Workspace {
                 .collect();
             db::secrets::validate_repository_secrets(&secrets)?;
             ensure!(
-                scope.variables.len() <= 100,
+                scope.variables.len() <= codeyard_actions::values::MAX_SCOPE_VALUES,
                 "Too many environment variables"
             );
             let variables: Vec<_> = scope
@@ -1748,7 +1748,7 @@ impl Workspace {
         let bytes =
             serde_json::to_vec(&serde_json::json!({"jobs":jobs,"environments":environments}))?;
         ensure!(
-            bytes.len() <= 16 * 1024 * 1024,
+            bytes.len() <= codeyard_actions::values::MAX_ENVIRONMENT_FILE_BYTES,
             "Environment values file is too large"
         );
         let path = self
