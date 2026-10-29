@@ -30,8 +30,17 @@ async fn show(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
 }
 
 async fn render(ctx: &PageContext, status: StatusCode, message: Option<String>) -> Response {
-    let nodes = match db::cluster::list_nodes(&ctx.state.pool).await {
+    let Some(administrator) = ctx.administrator() else {
+        return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
+    };
+    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let authority = (administrator.id, session).into();
+    let after = ctx.query.get("after").map(String::as_str).unwrap_or("");
+    let mut nodes = match db::cluster::admin_node_page(&ctx.state.pool, &authority, after).await {
         Ok(nodes) => nodes,
+        Err(error) if error.is::<db::users::accounts::AccountRestricted>() => {
+            return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
+        }
         Err(_) => {
             return ctx.error(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -39,6 +48,9 @@ async fn render(ctx: &PageContext, status: StatusCode, message: Option<String>) 
             )
         }
     };
+    let more = nodes.len() > 100;
+    nodes.truncate(100);
+    let next_after = more.then(|| nodes.last().map(|node| node.name.clone())).flatten();
     let Ok(cluster_enabled) = db::cluster::cluster_enabled(&ctx.state.pool).await else {
         return ctx.error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -48,6 +60,8 @@ async fn render(ctx: &PageContext, status: StatusCode, message: Option<String>) 
     let model = view::Page {
         csrf_token: ctx.csrf_token.clone(),
         cluster_enabled,
+        next_after,
+        has_previous: !after.is_empty(),
         nodes: nodes
             .into_iter()
             .map(|node| view::Node {
@@ -101,10 +115,11 @@ async fn change(
     form: HashMap<String, String>,
     change: Change,
 ) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await {
+    let mut ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
+    ctx.return_to = Some("/admin/nodes".into());
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
