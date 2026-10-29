@@ -1,7 +1,7 @@
 use super::{auth, repository, Error, Pagination, Result};
 use crate::backend::{
     app::AppState,
-    db::{self, events::EventScope},
+    db::{self, events::{EventScope, EventViewer}},
     webhooks::payloads,
 };
 use axum::{
@@ -27,7 +27,7 @@ enum Listing {
 
 pub(super) async fn documents(
     state: &AppState,
-    viewer: Option<i64>,
+    viewer: Option<EventViewer<'_>>,
     scope: EventScope,
     public: bool,
     offset: usize,
@@ -168,7 +168,8 @@ async fn list(
             }
         };
         let (offset, limit) = page.window()?;
-        let (values, more) = documents(&state, viewer, scope, public, offset, limit).await?;
+        let reader = identity.as_ref().map(|auth| EventViewer::Token { user: auth.user.id, token: auth.token.id });
+        let (values, more) = documents(&state, reader, scope, public, offset, limit).await?;
         let etag = format!(
             "\"{:x}\"",
             Sha256::digest(serde_json::to_vec(&values).map_err(Error::unavailable)?)
