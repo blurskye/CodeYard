@@ -194,18 +194,32 @@ async fn transition(
     Ok(sqlx::query_as("UPDATE issue_suggestions SET state=?2,resolved_by=?3,issue_event_id=?4,updated_at=?5 WHERE id=?1 AND state='pending' RETURNING *").bind(s.id).bind(state).bind(actor).bind(event).bind(updated.to_rfc3339_opts(chrono::SecondsFormat::Micros,true)).fetch_optional(&mut **tx).await?.ok_or(Refusal::NotPending)?)
 }
 pub async fn propose(
-    pool: &SqlitePool,
-    repo: i64,
-    actor: i64,
-    issue: i64,
-    p: &Proposal,
+    pool: &SqlitePool, repo: i64, actor: i64, issue: i64, p: &Proposal,
+) -> Result<Suggestion> {
+    propose_scoped(pool, repo, actor, issue, p, None).await
+}
+pub async fn propose_scoped(
+    pool: &SqlitePool, repo: i64, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, issue: i64, p: &Proposal, target_repository: Option<i64>,
 ) -> Result<Suggestion> {
     p.validate()?;
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::discussions::require_contribution_authority(&mut tx, actor, repo).await?;
     super::issue_attributes::lock_metadata(&mut tx).await?;
     super::discussions::lock_issue_contribution(&mut tx, actor, issue).await?;
     issue_scope(&mut tx, repo, issue).await?;
+    if let Some(expected) = target_repository {
+        anyhow::ensure!(p.action == Action::CloseIssue, Refusal::Invalid);
+        let current: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM issues WHERE id=?1")
+            .bind(p.target_id).fetch_optional(&mut *tx).await?;
+        anyhow::ensure!(current == Some(expected), Refusal::Missing);
+    }
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await.map_err(|error| {
+            if error.is::<crate::backend::db::users::accounts::AccountRestricted>() { anyhow::anyhow!(Refusal::Denied) } else { error }
+        })?;
+    }
     let record: Issue = sqlx::query_as("SELECT * FROM issues WHERE id=?1 AND repo_id=?2")
         .bind(issue)
         .bind(repo)
