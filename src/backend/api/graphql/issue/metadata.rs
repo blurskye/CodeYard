@@ -143,7 +143,7 @@ pub(super) async fn list(
         query.push_str(&format!(" {key}:{}", quote(value)?));
         Ok(())
     };
-    for (arg, key) in [("baseRefName", "base"), ("headRefName", "head")] {
+    for (arg, key) in [("baseRefName", "exact-base"), ("headRefName", "exact-head")] {
         if let Some(value) = args.args.get(arg).filter(|v| !v.is_null()) {
             // `gh pr status` outside a clone asks for the head branch "", which no pull has.
             if value.string()?.is_empty() {

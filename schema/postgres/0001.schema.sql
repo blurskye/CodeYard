@@ -3400,6 +3400,7 @@ CREATE TABLE check_runs (
 );
 CREATE INDEX check_runs_latest ON check_runs(suite_id,name,id);
 CREATE INDEX check_runs_repo ON check_runs(repo_id,id);
+CREATE INDEX check_runs_publisher_latest ON check_runs(repo_id,name,id);
 
 CREATE TABLE check_annotations (
     id BIGSERIAL PRIMARY KEY,
