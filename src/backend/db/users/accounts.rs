@@ -13,6 +13,16 @@ pub enum AccountCredential<'a> {
 #[error("A live unrestricted account credential is required")]
 pub struct AccountRestricted;
 
+pub struct AdminUserPage {
+    pub counts: (i64, i64, i64),
+    pub page: usize,
+    pub users: Vec<AdminUser>,
+}
+
+native_operation!(crate::backend::db::postgres::users::accounts::admin_users_page,
+    crate::backend::db::sqlite::users::accounts::admin_users_page,
+    fn admin_users_page(pool: &DbPool, administrator: &crate::backend::db::users::transitions::AdministratorActor, text: &str, role: &str, limit: i64, page: usize) -> Result<AdminUserPage>);
+
 native_operation!(crate::backend::db::postgres::users::accounts::create_user,
     crate::backend::db::sqlite::users::accounts::create_user,
     fn create_user(pool: &DbPool, username: &str, email: Option<&str>) -> Result<User>);

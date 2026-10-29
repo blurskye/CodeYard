@@ -3,7 +3,7 @@ use crate::backend::db::models::User;
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
-/// Browser mutations retain the original session. Trusted local database callers use an ID.
+/// Browser operations retain the original session. Trusted local database callers use an ID.
 pub struct AdministratorActor {
     pub(crate) user_id: i64,
     pub(crate) session: Option<String>,

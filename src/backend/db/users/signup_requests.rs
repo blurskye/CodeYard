@@ -43,6 +43,16 @@ pub struct SignupSummary {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+pub struct AdminSignupPage {
+    pub requests: Vec<SignupSummary>,
+    pub total: i64,
+    pub page: usize,
+}
+
+native_operation!(crate::backend::db::postgres::users::signup_requests::admin_pending_page,
+    crate::backend::db::sqlite::users::signup_requests::admin_pending_page,
+    fn admin_pending_page(pool: &DbPool, administrator: &crate::backend::db::users::transitions::AdministratorActor, limit: i64, page: usize) -> Result<AdminSignupPage>);
+
 native_operation!(crate::backend::db::postgres::users::signup_requests::count_signup_requests,
     crate::backend::db::sqlite::users::signup_requests::count_signup_requests,
     fn count_signup_requests(pool: &DbPool, status: &str) -> Result<i64>);

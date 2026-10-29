@@ -278,7 +278,7 @@ pub async fn update_user_profile(
 }
 
 /// Accounts that match the search: all of them, the administrators and the banned ones.
-pub async fn count_matching_users(pool: &SqlitePool, text: &str) -> Result<(i64, i64, i64)> {
+pub async fn count_matching_users<'a>(pool: impl sqlx::Executor<'a, Database=sqlx::Sqlite>, text: &str) -> Result<(i64, i64, i64)> {
     Ok(sqlx::query_as(
         "SELECT COUNT(*), COALESCE(SUM(is_admin),0), COALESCE(SUM(is_banned),0) FROM users WHERE username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1",
     )
@@ -287,8 +287,8 @@ pub async fn count_matching_users(pool: &SqlitePool, text: &str) -> Result<(i64,
     .await?)
 }
 
-pub async fn list_admin_users(
-    pool: &SqlitePool,
+pub async fn list_admin_users<'a>(
+    pool: impl sqlx::Executor<'a, Database=sqlx::Sqlite>,
     text: &str,
     role: &str,
     limit: i64,
@@ -296,6 +296,18 @@ pub async fn list_admin_users(
 ) -> Result<Vec<AdminUser>> {
     Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE (username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1) AND CASE ?4 WHEN 'admins' THEN is_admin WHEN 'banned' THEN is_banned ELSE 1 END ORDER BY username,id LIMIT ?2 OFFSET ?3")
         .bind(super::super::search::contains(text.trim())).bind(limit.clamp(1,100)).bind(offset.max(0)).bind(role).fetch_all(pool).await?)
+}
+
+pub async fn admin_users_page(pool: &SqlitePool, administrator: &crate::backend::db::users::transitions::AdministratorActor, text: &str, role: &str, limit: i64, requested: usize) -> Result<crate::backend::db::users::accounts::AdminUserPage> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    anyhow::ensure!(super::transitions::active_admin_session(&mut tx, administrator).await?, crate::backend::db::users::accounts::AccountRestricted);
+    let counts = count_matching_users(&mut *tx, text).await?;
+    let total = match role { "admins" => counts.1, "banned" => counts.2, _ => counts.0 } as usize;
+    let limit = limit.clamp(1,100);
+    let page = requested.clamp(1, total.div_ceil(limit as usize).max(1));
+    let users = list_admin_users(&mut *tx, text, role, limit, ((page-1) * limit as usize) as i64).await?;
+    tx.commit().await?;
+    Ok(crate::backend::db::users::accounts::AdminUserPage { counts, page, users })
 }
 
 pub async fn list_admin_account_summaries(

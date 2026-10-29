@@ -30,7 +30,7 @@ pub async fn create_signup_request(
     Ok(request)
 }
 
-pub async fn count_signup_requests(pool: &PgPool, status: &str) -> Result<i64> {
+pub async fn count_signup_requests<'a>(pool: impl sqlx::Executor<'a, Database=sqlx::Postgres>, status: &str) -> Result<i64> {
     Ok(
         sqlx::query_scalar("SELECT COUNT(*) FROM signup_requests WHERE status=$1")
             .bind(status)
@@ -39,8 +39,8 @@ pub async fn count_signup_requests(pool: &PgPool, status: &str) -> Result<i64> {
     )
 }
 
-pub async fn list_signup_requests(
-    pool: &PgPool,
+pub async fn list_signup_requests<'a>(
+    pool: impl sqlx::Executor<'a, Database=sqlx::Postgres>,
     status: &str,
     limit: i64,
     offset: i64,
@@ -57,6 +57,18 @@ pub async fn list_signup_requests(
     .await?;
 
     Ok(requests)
+}
+
+pub async fn admin_pending_page(pool: &PgPool, administrator: &AdministratorActor, limit: i64, requested: usize) -> Result<crate::backend::db::users::signup_requests::AdminSignupPage> {
+    let mut tx = pool.begin().await?;
+    super::transitions::lock_membership_shared(&mut tx).await?;
+    require_reviewer(&mut tx, administrator).await?;
+    let total = count_signup_requests(&mut *tx, "pending").await?;
+    let limit = limit.clamp(1,100);
+    let page = requested.clamp(1, (total as usize).div_ceil(limit as usize).max(1));
+    let requests = list_signup_requests(&mut *tx, "pending", limit, ((page-1) * limit as usize) as i64, 0).await?;
+    tx.commit().await?;
+    Ok(crate::backend::db::users::signup_requests::AdminSignupPage { requests, total, page })
 }
 
 pub async fn get_pending_signup_request_by_identity(
