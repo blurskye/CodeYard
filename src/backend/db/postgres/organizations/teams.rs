@@ -688,6 +688,23 @@ pub async fn get_team_parent(pool: &PgPool, team: i64) -> Result<Option<Team>> {
         .await?)
 }
 
+pub async fn team_identity(pool: &PgPool, actor: i64, token: i64, identity: crate::backend::db::organizations::teams::TeamIdentity<'_>) -> Result<Option<Team>> {
+    use crate::backend::{db::organizations::teams::TeamIdentity, identity::oauth_apps};
+    let mut tx = begin_read(pool).await?;
+    let scopes: Option<Option<String>> = sqlx::query_scalar("SELECT oa.scopes FROM personal_access_tokens t JOIN users u ON u.id=t.user_id LEFT JOIN oauth_app_tokens oa ON oa.token_id=t.id WHERE t.id=$1 AND t.user_id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens f WHERE f.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens j WHERE j.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM github_app_tokens a WHERE a.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM github_apps a WHERE a.client_id=oa.client_id) AND (oa.client_id IS NULL OR oa.client_id=$3 OR EXISTS(SELECT 1 FROM oauth_applications a WHERE a.client_id=oa.client_id))")
+        .bind(token).bind(actor).bind(oauth_apps::CLI_CLIENT).fetch_optional(&mut *tx).await?;
+    let Some(scopes) = scopes else { return Ok(None); };
+    if scopes.as_ref().is_some_and(|scopes| !oauth_apps::has_scope(scopes, "read:org")) { return Ok(None); }
+    let (id, org, slug) = match identity { TeamIdentity::Id(id) => (Some(id), None, None), TeamIdentity::Slug(org, slug) => (None, Some(org), Some(slug)) };
+    let Some(team) = sqlx::query_as::<_, Team>("SELECT * FROM teams WHERE (id=$1 AND $2::bigint IS NULL) OR (org_id=$2 AND slug=$3)")
+        .bind(id).bind(org).bind(slug).fetch_optional(&mut *tx).await? else { return Ok(None); };
+    if scopes.is_none() && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organization_token_policies WHERE org_id=$1 AND NOT classic_allowed)").bind(team.org_id).fetch_one(&mut *tx).await? { return Ok(None); }
+    let Applied(role) = read_authority(&mut tx, actor, team.org_id).await? else { return Ok(None); };
+    if !team_visible(&mut tx, actor, role, &team).await? { return Ok(None); }
+    tx.commit().await?;
+    Ok(Some(team))
+}
+
 pub async fn get_team_by_id(pool: &PgPool, actor: i64, team: i64) -> Result<Option<Team>> {
     let mut tx = begin_read(pool).await?;
     let Some(team) = sqlx::query_as::<_, Team>("SELECT * FROM teams WHERE id=$1")

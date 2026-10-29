@@ -6,6 +6,15 @@ use crate::backend::db::{
 };
 use anyhow::Result;
 
+/// A lean identity read: credential, organization policy and team visibility share one snapshot.
+pub enum TeamIdentity<'a> {
+    Id(i64),
+    Slug(i64, &'a str),
+}
+native_operation!(crate::backend::db::postgres::organizations::teams::team_identity,
+    crate::backend::db::sqlite::organizations::teams::team_identity,
+    fn team_identity(pool: &DbPool, actor: i64, token: i64, identity: TeamIdentity<'_>) -> Result<Option<Team>>);
+
 native_operation!(crate::backend::db::postgres::organizations::teams::create_organization_team, crate::backend::db::sqlite::organizations::teams::create_organization_team,
     fn create_organization_team(pool: &DbPool, actor: i64, org: i64, input: &NewTeam) -> Result<OrganizationOutcome<Team>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::update_organization_team, crate::backend::db::sqlite::organizations::teams::update_organization_team,
