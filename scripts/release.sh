@@ -69,14 +69,7 @@ mkdir -p dist/release
 WEBUI_DIST="$PWD/dist/release/webui" bash scripts/build-webui.sh release
 cargo build --release --locked --workspace --bins --message-format=json >dist/release/cargo-artifacts.json
 for binary in codeyard codeyard-actions; do
-    executable=$(python3 -I -c '
-import json, sys
-paths = [m["executable"] for line in sys.stdin if (m := json.loads(line)).get("reason") == "compiler-artifact"
-         and m["target"]["name"] == sys.argv[1] and "bin" in m["target"]["kind"] and m.get("executable")]
-if len(paths) != 1:
-    sys.exit(f"Expected one {sys.argv[1]} executable from Cargo")
-print(paths[0])
-' "$binary" <dist/release/cargo-artifacts.json)
+    executable=$(python3 -I scripts/cargo-executable.py "$binary" <dist/release/cargo-artifacts.json)
     install -m 0755 "$executable" "dist/release/$binary"
 done
 rm dist/release/cargo-artifacts.json

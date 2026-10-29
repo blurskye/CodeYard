@@ -114,7 +114,7 @@ class Client:
             "alice": (directory.parent / "state-files/write_token").read_text(),
             "bob": (directory.parent / "state-files/gh_bob_token").read_text(),
         }
-        self.env = dict(os.environ)
+        self.env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
         for name in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "ALL_PROXY", "all_proxy"):
             self.env.pop(name, None)
         self.env.update({
@@ -609,11 +609,17 @@ jobs:
         self.step("gh browse", "browse", "--no-browser", "-R", REPO, expect=f"/{REPO}")
         self.step("gh api paginate", "api", f"repos/{REPO}/commits", "--paginate", "--jq", ".[].sha")
         self.step("gh api include", "api", f"repos/{REPO}", "--include", expect="200")
-        self.step("gh search repos", "search", "repos", "gh-client", "--json", "fullName")
-        self.step("gh search issues", "search", "issues", "Real gh issue", "--repo", REPO, "--json", "number")
-        self.step("gh search prs", "search", "prs", "Real gh pull", "--repo", REPO, "--json", "number")
-        self.step("gh search commits", "search", "commits", "feature", "--repo", REPO, "--json", "sha")
-        self.step("gh search code", "search", "code", "Real", "--repo", REPO, "--json", "path")
+        for kind, query, field, expected in [
+            ("repos", "gh-client", "fullName", REPO),
+            ("issues", "Real gh issue", "number", self.issue),
+            ("prs", "Real gh pull", "number", self.pull),
+            ("commits", "feature", "sha", self.git("rev-parse", "gh-feature")),
+            ("code", "Real", "path", "README.md"),
+        ]:
+            with self.check(f"gh search {kind}"):
+                scope = [] if kind == "repos" else ["--repo", REPO]
+                rows = self.data("search", kind, query, *scope, "--json", field)
+                assert any(row[field] == expected for row in rows), rows
 
     def sweep_issues(self):
         issue = self.issue
@@ -714,11 +720,17 @@ jobs:
         self.step("gh run list", "run", "list", "-R", REPO, "--json", "databaseId", expect=str(self.run_id))
         self.step("gh run view --json", "run", "view", self.run_id, "-R", REPO, "--json", "jobs")
         self.step("gh run view --log-failed", "run", "view", self.run_id, "-R", REPO, "--log-failed")
-        self.step("gh run rerun", "run", "rerun", self.run_id, "-R", REPO)
+        with self.check("gh run rerun"):
+            self.gh("run", "rerun", self.run_id, "-R", REPO)
+            self.gh("run", "watch", self.run_id, "-R", REPO, "--exit-status", "--interval", "1")
+            result = self.data("run", "view", self.run_id, "-R", REPO, "--json", "status,conclusion")
+            assert result == {"status": "completed", "conclusion": "success"}, result
         self.step("gh cache list", "cache", "list", "-R", REPO)
-        self.step("gh secret delete", "secret", "delete", "CLIENT_TOKEN", "-R", REPO)
+        self.step("gh disposable secret set", "secret", "set", "DELETE_ME", "-R", REPO, "--body", "disposable")
+        self.step("gh secret delete", "secret", "delete", "DELETE_ME", "-R", REPO)
         self.step("gh variable get", "variable", "get", "REGION", "-R", REPO, expect="e2e-visible")
-        self.step("gh variable delete", "variable", "delete", "REGION", "-R", REPO)
+        self.step("gh disposable variable set", "variable", "set", "DELETE_ME", "-R", REPO, "--body", "disposable")
+        self.step("gh variable delete", "variable", "delete", "DELETE_ME", "-R", REPO)
         self.step("gh org secret set", "secret", "set", "ORG_TOKEN", "--org", "e2e-org", "--visibility", "all", "--body", "x")
         self.step("gh org secret list", "secret", "list", "--org", "e2e-org", expect="ORG_TOKEN")
         self.step("gh org secret delete", "secret", "delete", "ORG_TOKEN", "--org", "e2e-org")
