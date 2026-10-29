@@ -400,7 +400,7 @@ pub(crate) async fn blocking_until<T: Send + 'static>(
 
 /// Runs a command to completion, feeding `input` and collecting bounded output.
 pub(crate) async fn run(
-    mut command: Command,
+    command: Command,
     input: &[u8],
     output_limit: usize,
     timeout: Duration,
@@ -409,6 +409,28 @@ pub(crate) async fn run(
     let started = Instant::now();
     let _permit = operation_slot(timeout).await?;
     let remaining = timeout.saturating_sub(started.elapsed());
+    if command.as_std().get_args().any(|arg| arg == "update-ref") {
+        // A started publication owns its permit and inherited lease until Git finishes,
+        // even if the request disappears while Git holds ref lockfiles.
+        let input = input.to_vec();
+        return tokio::spawn(async move {
+            let _permit = _permit;
+            run_admitted(command, &input, output_limit, remaining).await
+        }).await.context("Git publication task failed")?;
+    }
+    run_admitted(command, input, output_limit, remaining).await
+}
+
+/// For callers already admitted to a blocking Git worker, without nested admission.
+pub(crate) fn run_in_blocking(command: Command, input: &[u8], output_limit: usize, timeout: Duration) -> Result<Output> {
+    let work = run_admitted(command, input, output_limit, timeout);
+    match tokio::runtime::Handle::try_current() {
+        Ok(runtime) => runtime.block_on(work),
+        Err(_) => tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(work),
+    }
+}
+
+async fn run_admitted(mut command: Command, input: &[u8], output_limit: usize, remaining: Duration) -> Result<Output> {
     let mut child = command.spawn().context("start git")?;
     let mut group = ProcessGroup(child.id());
     let mut stdin = child.stdin.take().context("git stdin")?;
@@ -432,9 +454,21 @@ pub(crate) async fn run(
             stderr,
         })
     };
-    let result = tokio::time::timeout(remaining, work)
-        .await
-        .context("git timed out")?;
+    let result = match tokio::time::timeout(remaining, work).await {
+        Ok(result) => result,
+        Err(_) => {
+            if let Some(pid) = child.id() {
+                // Give Git's signal handler a chance to remove its lockfiles.
+                unsafe { libc::kill(-(pid as i32), libc::SIGTERM); }
+            }
+            if tokio::time::timeout(Duration::from_secs(2), child.wait()).await.is_err() {
+                kill_group(child.id());
+                let _ = child.wait().await;
+            }
+            group.0 = None;
+            bail!("git timed out");
+        }
+    };
     if result.is_ok() {
         group.0 = None;
     }
