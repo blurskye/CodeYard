@@ -3,7 +3,21 @@ use crate::backend::db::models::{Repository, Star, User, Watch};
 use crate::backend::db::repositories::engagement::StarSort;
 use crate::backend::db::sqlite::search::contains;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use sqlx::{SqlitePool, Sqlite, Transaction};
+
+async fn begin_change(pool: &SqlitePool, actor: crate::backend::db::users::accounts::AccountActor, repo_id: i64) -> Result<(Transaction<'_, Sqlite>, i64)> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let user_id = actor.user_id();
+    super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
+    if let Some(credential) = actor.credential() {
+        super::super::users::transitions::require_account(&mut tx, user_id, &credential).await?;
+    }
+    let visible: Option<i64> = sqlx::query_scalar(&format!(
+        "SELECT r.id FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND {}", readable_condition()
+    )).bind(user_id).bind(repo_id).fetch_optional(&mut *tx).await?;
+    anyhow::ensure!(visible.is_some(), crate::backend::db::users::blocks::InteractionBlocked);
+    Ok((tx, user_id))
+}
 
 pub async fn list_star_history(
     pool: &SqlitePool,
@@ -59,21 +73,22 @@ pub async fn list_watched_repositories(
         .await?)
 }
 
-pub async fn watch_repo(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Result<bool> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
+pub async fn watch_repo(pool: &SqlitePool, user_id: impl Into<crate::backend::db::users::accounts::AccountActor>, repo_id: i64) -> Result<bool> {
+    let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
     let result = sqlx::query("INSERT INTO watches (user_id, repo_id, level) VALUES (?1,?2,'watching') ON CONFLICT (user_id,repo_id) DO UPDATE SET level='watching',events='' WHERE watches.level<>'watching'")
         .bind(user_id).bind(repo_id).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn unwatch_repo(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Result<bool> {
+pub async fn unwatch_repo(pool: &SqlitePool, user_id: impl Into<crate::backend::db::users::accounts::AccountActor>, repo_id: i64) -> Result<bool> {
+    let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
     let result = sqlx::query("DELETE FROM watches WHERE user_id = ?1 AND repo_id = ?2")
         .bind(user_id)
         .bind(repo_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -90,9 +105,8 @@ pub async fn is_repo_watched(pool: &SqlitePool, user_id: i64, repo_id: i64) -> R
     Ok(watch.is_some())
 }
 
-pub async fn star_repo(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Result<bool> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
+pub async fn star_repo(pool: &SqlitePool, user_id: impl Into<crate::backend::db::users::accounts::AccountActor>, repo_id: i64) -> Result<bool> {
+    let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
     let result =
         sqlx::query("INSERT INTO stars (user_id, repo_id) VALUES (?1, ?2) ON CONFLICT DO NOTHING")
             .bind(user_id)
@@ -103,12 +117,14 @@ pub async fn star_repo(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Result<
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn unstar_repo(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Result<bool> {
+pub async fn unstar_repo(pool: &SqlitePool, user_id: impl Into<crate::backend::db::users::accounts::AccountActor>, repo_id: i64) -> Result<bool> {
+    let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
     let result = sqlx::query("DELETE FROM stars WHERE user_id = ?1 AND repo_id = ?2")
         .bind(user_id)
         .bind(repo_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -227,14 +243,13 @@ pub async fn count_starred_repositories(
 /// Saves a watch level. `custom` keeps `events`; the other levels clear them.
 pub async fn set_watch_level(
     pool: &SqlitePool,
-    user_id: i64,
+    user_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     level: &str,
     events: &str,
 ) -> Result<()> {
     let events = if level == "custom" { events } else { "" };
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
+    let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
     sqlx::query(
         r#"
         INSERT INTO watches (user_id, repo_id, level, events)

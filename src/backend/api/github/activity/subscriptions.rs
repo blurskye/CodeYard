@@ -73,7 +73,7 @@ async fn set_value(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let actor = viewer.ok_or_else(auth::required)?;
     let input: Subscription =
         serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid subscription"))?;
     let subscribed = input.subscribed.unwrap_or(false);
@@ -86,14 +86,14 @@ async fn set_value(
     engagement::set_subscription(
         &state.pool,
         &state.notification_broadcaster,
-        actor.id,
+        db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id },
         repo.id,
         subscribed,
         ignored,
     )
     .await
     .map_err(engagement_error)?;
-    let watch = db::repositories::engagement::get_repo_watch(&state.pool, actor.id, repo.id)
+    let watch = db::repositories::engagement::get_repo_watch(&state.pool, actor.user.id, repo.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(|| Error::unavailable(()))?;
@@ -105,8 +105,8 @@ async fn remove(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
-    engagement::set_level(&state.pool, actor.id, repo.id, "participating", &[])
+    let actor = viewer.ok_or_else(auth::required)?;
+    engagement::set_level(&state.pool, db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id }, repo.id, "participating", &[])
         .await
         .map_err(engagement_error)?;
     Ok(StatusCode::NO_CONTENT)
