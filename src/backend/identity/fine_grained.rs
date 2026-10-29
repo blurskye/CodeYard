@@ -492,6 +492,11 @@ impl Grant {
         })
     }
 
+    pub fn create_repository(&self, owner: Owner) -> bool {
+        self.active && self.access == Access::All && self.owner == owner
+            && allows(&self.permissions, "administration", true)
+    }
+
     /// The permissions in one group, with metadata read implied for repositories.
     pub fn group(&self, group: Group) -> Map<String, Value> {
         self.permissions

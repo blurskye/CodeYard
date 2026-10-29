@@ -146,7 +146,7 @@ pub async fn write(
             super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
             Refusal::Denied
         );
-        sqlx::query("INSERT INTO repository_discussion_settings(repo_id,enabled) VALUES (?1,?2) ON CONFLICT(repo_id) DO UPDATE SET enabled=excluded.enabled").bind(repo).bind(value).execute(&mut *tx).await?;
+        super::repositories::records::features_on(&mut tx, repo, None, Some(*value)).await?;
         tx.commit().await?;
         return Ok(repo);
     }

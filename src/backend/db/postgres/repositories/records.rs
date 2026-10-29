@@ -382,6 +382,9 @@ async fn patch_core(
             .await?,
         Refusal::Denied
     );
+    if let Some(token) = changes.token {
+        anyhow::ensure!(super::super::users::tokens::repository_write_on(&mut tx, token, actor, repo_id, "administration").await?, Refusal::Denied);
+    }
     let previous = sqlx::query_as::<_, Repository>("SELECT * FROM repositories WHERE id=$1")
         .bind(repo_id)
         .fetch_one(&mut *tx)
@@ -439,6 +442,7 @@ async fn patch_core(
             .await?;
     }
     apply_merge_methods(&mut tx, repo_id, changes.merge_methods).await?;
+    features_on(&mut tx, repo_id, changes.wiki, changes.discussions).await?;
     let updated=sqlx::query_as::<_,Repository>("UPDATE repositories SET name=COALESCE($2,name),description=CASE WHEN $3 THEN $4 ELSE description END,website=CASE WHEN $5 THEN $6 ELSE website END,is_private=$7,is_archived=$8,is_template=COALESCE($9,is_template),default_branch=COALESCE($10,default_branch),updated_at=NOW() WHERE id=$1 AND NOT is_archived RETURNING *")
         .bind(repo_id).bind(changes.name).bind(changes.description.is_some()).bind(changes.description.flatten()).bind(website.is_some()).bind(website.as_ref().and_then(|value|value.as_deref())).bind(private).bind(changes.archived.unwrap_or(previous.is_archived)).bind(changes.is_template).bind(default_branch).fetch_one(&mut *tx).await.map_err(name_conflict_error)?;
     tx.commit().await?;
@@ -479,10 +483,7 @@ async fn apply_merge_methods(
     .bind(repo_id)
     .fetch_one(&mut **tx)
     .await?;
-    let merge = update.merge.unwrap_or(merge);
-    let squash = update.squash.unwrap_or(squash);
-    let rebase = update.rebase.unwrap_or(rebase);
-    anyhow::ensure!(merge || squash || rebase, Refusal::NoMergeMethod);
+    let (merge, squash, rebase) = update.resolve((merge, squash, rebase))?;
     // The guard keeps the invariant on the write itself, so no later change to the read above
     // can leave every method off.
     let result = sqlx::query(
@@ -923,6 +924,18 @@ pub async fn set_repository_archived(
     Ok(result.rows_affected() == 1)
 }
 
+pub(crate) async fn features_on(tx: &mut Transaction<'_, Postgres>, repo: i64, wiki: Option<bool>, discussions: Option<bool>) -> Result<()> {
+    if let Some(enabled) = wiki {
+        sqlx::query("INSERT INTO repository_features(repo_id,wiki_enabled) VALUES($1,$2) ON CONFLICT(repo_id) DO UPDATE SET wiki_enabled=excluded.wiki_enabled")
+            .bind(repo).bind(enabled).execute(&mut **tx).await?;
+    }
+    if let Some(enabled) = discussions {
+        sqlx::query("INSERT INTO repository_discussion_settings(repo_id,enabled) VALUES($1,$2) ON CONFLICT(repo_id) DO UPDATE SET enabled=excluded.enabled")
+            .bind(repo).bind(enabled).execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
 pub async fn repository_wiki(pool: &PgPool, repo_id: i64) -> Result<bool> {
     Ok(
         sqlx::query_scalar("SELECT wiki_enabled FROM repository_features WHERE repo_id=$1")
@@ -945,11 +958,7 @@ pub async fn set_repository_wiki(
             .await?,
         crate::backend::db::repositories::records::RepositorySettingsRefusal::Denied
     );
-    sqlx::query("INSERT INTO repository_features (repo_id,wiki_enabled) VALUES ($1,$2) ON CONFLICT(repo_id) DO UPDATE SET wiki_enabled=$2")
-        .bind(repo_id)
-        .bind(enabled)
-        .execute(&mut *tx)
-        .await?;
+    features_on(&mut tx, repo_id, Some(enabled), None).await?;
     tx.commit().await?;
     Ok(())
 }
