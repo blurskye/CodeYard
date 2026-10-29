@@ -78,6 +78,38 @@ pub async fn list_forks(
     Ok(repos)
 }
 
+const FORK_VIEWER_JOIN: &str = "LEFT JOIN users u ON u.id=$1 AND ($2::text IS NULL OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=$2 AND s.user_id=u.id AND s.expires_at>clock_timestamp()))";
+
+pub async fn visible_fork_counts(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    session: Option<&str>,
+    ids: &[i64],
+) -> Result<std::collections::HashMap<i64, i32>> {
+    anyhow::ensure!(ids.len() <= 100, "Too many repository counts");
+    if ids.is_empty() { return Ok(std::collections::HashMap::new()); }
+    let rows = sqlx::query_as::<_, (i64, i32)>(&format!(
+        "SELECT r.forked_from_id, COUNT(*)::integer FROM repositories r {FORK_VIEWER_JOIN} WHERE r.forked_from_id=ANY($3) AND {} GROUP BY r.forked_from_id",
+        readable_condition(),
+    )).bind(viewer).bind(session).bind(ids).fetch_all(pool).await?;
+    Ok(rows.into_iter().collect())
+}
+
+pub async fn list_visible_forks(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    session: Option<&str>,
+    repo: i64,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Repository>> {
+    anyhow::ensure!(offset >= 0, "Page offset must be nonnegative");
+    Ok(sqlx::query_as(&format!(
+        "SELECT r.* FROM repositories r {FORK_VIEWER_JOIN} WHERE r.forked_from_id=$3 AND {} ORDER BY r.created_at DESC, r.id DESC LIMIT $4 OFFSET $5",
+        readable_condition(),
+    )).bind(viewer).bind(session).bind(repo).bind(limit.clamp(1, 101)).bind(offset).fetch_all(pool).await?)
+}
+
 /// Joins the owner of `r` and the viewer, which the access projection reads as `u`. `$1` is the
 /// viewer.
 const OWNER_JOINS: &str =

@@ -37,6 +37,16 @@ native_operation!(crate::backend::db::postgres::repositories::discovery::list_fo
     crate::backend::db::sqlite::repositories::discovery::list_forks,
     fn list_forks(pool: &DbPool, repo_id: i64, limit: i64, offset: i64) -> Result<Vec<Repository>>);
 
+/// Displayed fork counts and pages share the repository-read predicate. Browser callers
+/// retain their session; a missing viewer always gets the anonymous/public projection.
+native_operation!(crate::backend::db::postgres::repositories::discovery::visible_fork_counts,
+    crate::backend::db::sqlite::repositories::discovery::visible_fork_counts,
+    fn visible_fork_counts(pool: &DbPool, viewer: Option<i64>, session: Option<&str>, ids: &[i64]) -> Result<std::collections::HashMap<i64, i32>>);
+
+native_operation!(crate::backend::db::postgres::repositories::discovery::list_visible_forks,
+    crate::backend::db::sqlite::repositories::discovery::list_visible_forks,
+    fn list_visible_forks(pool: &DbPool, viewer: Option<i64>, session: Option<&str>, repo: i64, limit: i64, offset: i64) -> Result<Vec<Repository>>);
+
 /// What a repository search matches. `org:alice`, `user:alice` and `alice/proj` name an
 /// owner; any other text matches the name, the description or the owner's name.
 #[derive(Debug, PartialEq, Eq)]

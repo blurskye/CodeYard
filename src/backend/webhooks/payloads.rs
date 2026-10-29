@@ -735,6 +735,15 @@ pub fn repository_owner(repo: &Repository, owner: &str) -> Value {
     })
 }
 
+/// Unscoped builders cannot expose the cached, private-inclusive fork totals. Readers and
+/// delivery enrichment add only counts projected for their audience.
+pub fn set_fork_counts(repository: &mut Value, count: i32) {
+    if !repository.is_object() { return; }
+    for field in ["forks", "forks_count", "network_count"] {
+        repository[field] = json!(count);
+    }
+}
+
 pub fn repository(repo: &Repository, owner: &str) -> Value {
     let full_name = format!("{owner}/{}", repo.name);
     let html_url = repository_url(owner, &repo.name);
@@ -755,8 +764,7 @@ pub fn repository(repo: &Repository, owner: &str) -> Value {
         "mirror_url": null, "pushed_at": null, "size": repo.size_bytes / 1024,
         "has_issues": true, "has_downloads": true, "has_projects": false, "has_wiki": false,
         "has_pages": false, "has_discussions": false, "disabled": false,
-        "forks": repo.forks_count, "watchers": repo.stars_count, "open_issues": repo.open_issues_count,
-        "network_count": repo.forks_count,
+        "watchers": repo.stars_count, "open_issues": repo.open_issues_count,
         "description": repo.description,
         "fork": repo.is_fork,
         "is_template": repo.is_template,
@@ -765,7 +773,6 @@ pub fn repository(repo: &Repository, owner: &str) -> Value {
         "stargazers_count": repo.stars_count,
         "watchers_count": repo.stars_count,
         "subscribers_count": repo.watchers_count,
-        "forks_count": repo.forks_count,
         "open_issues_count": repo.open_issues_count,
         "created_at": time(repo.created_at),
         "updated_at": time(repo.updated_at),
@@ -2029,7 +2036,7 @@ mod tests {
         );
         assert_eq!(value["repository"]["size"], 12);
         assert_eq!(value["repository"]["stargazers_count"], 2);
-        assert_eq!(value["repository"]["forks_count"], 3);
+        assert!(value["repository"].get("forks_count").is_none());
         // GitHub's historical watchers aliases mean stars; subscriptions are separate.
         assert_eq!(value["repository"]["watchers_count"], 2);
         assert_eq!(value["repository"]["watchers"], 2);

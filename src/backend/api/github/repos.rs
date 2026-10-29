@@ -67,6 +67,12 @@ pub(super) async fn search_document(
     Ok(value)
 }
 
+async fn public_fork_count(state: &AppState, repo: i64) -> Result<i32> {
+    // The source token does not necessarily select any of its private forks.
+    Ok(db::repositories::discovery::visible_fork_counts(&state.pool, None, None, &[repo])
+        .await.map_err(Error::unavailable)?.remove(&repo).unwrap_or_default())
+}
+
 /// A repository's REST document for `viewer`. Its fork parent and source appear only when the
 /// viewer's credential may read them too.
 pub(super) async fn document(
@@ -79,6 +85,7 @@ pub(super) async fn document(
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let mut value = payloads::repository(repo, &owner);
+    payloads::set_fork_counts(&mut value, public_fork_count(state, repo.id).await?);
     let facts = db::repository_stats::repository_document_facts(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?;
@@ -122,7 +129,8 @@ pub(super) async fn document(
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-            let document = payloads::repository(&ancestor, &owner);
+            let mut document = payloads::repository(&ancestor, &owner);
+            payloads::set_fork_counts(&mut document, public_fork_count(state, id).await?);
             if repo.forked_from_id == Some(id) {
                 value["parent"] = document.clone();
             }
