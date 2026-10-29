@@ -10,6 +10,8 @@ pub struct RepositoryTeam {
     #[sqlx(flatten)]
     pub team: crate::backend::db::models::Team,
     pub permission: i16,
+    #[sqlx(skip)]
+    pub parent: Option<crate::backend::db::models::Team>,
 }
 
 native_operation!(crate::backend::db::postgres::repositories::github::repository_teams,

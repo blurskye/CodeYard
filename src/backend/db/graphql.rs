@@ -13,6 +13,8 @@ pub struct RateLimit {
 /// before calling the same record readers as REST. Prefixes never supply SQL identifiers.
 pub(crate) fn node_repository_sql(kind: &str) -> Option<&'static str> {
     Some(match kind {
+        "I" => "SELECT repo_id FROM issues WHERE id=$1",
+        "PR" => "SELECT repo_id FROM pull_requests WHERE id=$1",
         "CC" => "SELECT repo_id FROM commit_comments WHERE id=$1",
         "M" => "SELECT repo_id FROM milestones WHERE id=$1",
         "REA" => "SELECT repo_id FROM reactions WHERE id=$1",
