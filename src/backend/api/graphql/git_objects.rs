@@ -266,6 +266,18 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
         }
         offset += rows.len() as i64;
         for repo in rows {
+            // A fine-grained token looks only in the repositories it reaches.
+            if request.personal.is_some() {
+                match request
+                    .auth
+                    .repository_scope(&request.state.pool, repo.id, "contents", false)
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(super::auth::ScopeError::Unavailable) => return Err(unavailable(())),
+                    Err(_) => continue,
+                }
+            }
             repository::by_id(repo.id, request).await?;
             match repo_store(&repo, request.state.cluster.as_ref())
                 .git_object_kind(oid)

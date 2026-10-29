@@ -90,7 +90,10 @@ async fn authenticate(
             .await
             .map_err(|_| unavailable())?
         {
-            Some(user) => return Ok(Some((token, user))),
+            Some(user) => {
+                crate::backend::api::github::auth::touch(state, &token, headers).await;
+                return Ok(Some((token, user)));
+            }
             None => user_id = Some(token.user_id),
         }
     }
@@ -174,19 +177,42 @@ async fn authorize_repository(
         .await
         .map_err(|_| unavailable())?
     {
-        if !bounds
-            .contains(&state.pool, user.id, repo.id)
+        let granted = bounds
+            .repository(&state.pool, user.id, repo.id)
             .await
-            .map_err(|_| unavailable())?
-            || !crate::backend::identity::github_apps::allows(
-                &bounds.permissions,
-                "contents",
-                write,
-            )
-        {
+            .map_err(|_| unavailable())?;
+        if !granted.as_ref().is_some_and(|granted| {
+            crate::backend::identity::github_apps::allows(granted, "contents", write)
+        }) {
+            // A repository outside a fine-grained token, or one its user cannot read, reads
+            // as missing, as on GitHub.
+            if bounds.personal().is_some()
+                && (granted.is_none()
+                    || crate::backend::repositories::access::user_git_access(
+                        &state.pool,
+                        &user,
+                        &repo,
+                    )
+                    .await
+                    .map_err(|_| unavailable())?
+                        < AccessLevel::Read)
+            {
+                return Err(StatusCode::NOT_FOUND.into_response());
+            }
             return Err((
                 StatusCode::FORBIDDEN,
                 "Resource not accessible by integration",
+            )
+                .into_response());
+        }
+    } else if let Some(org) = repo.owner_org_id {
+        if db::fine_grained_tokens::classic_refused(&state.pool, token.id, org)
+            .await
+            .map_err(|_| unavailable())?
+        {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "This organization forbids access with a personal access token (classic)",
             )
                 .into_response());
         }

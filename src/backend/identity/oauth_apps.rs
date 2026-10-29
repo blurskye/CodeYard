@@ -226,6 +226,10 @@ pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
 /// Git access to a gist needs the `gist` scope; to any other repository, `repo`.
 pub async fn allows_git(pool: &DbPool, token_id: i64, gist: bool) -> anyhow::Result<bool> {
     if let Some(bounds) = super::github_apps::authority(pool, token_id).await? {
+        // A fine-grained token's per-repository check follows, including public reads.
+        if bounds.personal().is_some() {
+            return Ok(true);
+        }
         return Ok(super::github_apps::allows(
             &bounds.permissions,
             "contents",

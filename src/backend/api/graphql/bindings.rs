@@ -414,7 +414,7 @@ impl Object {
             };
             request.authorize(repo, scope, false).await?;
         }
-        if request.auth.is_job()
+        if request.bounded()
             && ((ty == "Query" && matches!(field, "user" | "organization" | "repositoryOwner"))
                 || (matches!(ty, "User" | "Organization")
                     && matches!(
@@ -486,7 +486,7 @@ impl Object {
             }
             ("Query", "repository") => boxed(|| repository::query(arguments, request)).await,
             ("Query", "search") => {
-                if request.auth.is_job() {
+                if request.bounded() {
                     return Err(super::token_denied());
                 }
                 request.require_oauth_scope("repo")?;

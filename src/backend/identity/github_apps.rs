@@ -301,36 +301,86 @@ pub async fn authenticate(pool: &DbPool, value: &str) -> anyhow::Result<Option<A
     Ok(Some(app))
 }
 
-/// Effective bounds shared by REST, Git and receive-pack revalidation.
+/// Effective bounds shared by REST, Git and receive-pack revalidation: an App's grant or a
+/// fine-grained personal token's.
 #[derive(Clone)]
 pub struct Authority {
-    pub app_id: i64,
-    pub installation: Option<i64>,
+    /// An App's granted permissions, or a fine-grained token's repository permissions.
     pub permissions: Value,
-    pub repositories: Vec<i64>,
+    pub source: Source,
+}
+#[derive(Clone)]
+pub enum Source {
+    App {
+        app_id: i64,
+        installation: Option<i64>,
+        repositories: Vec<i64>,
+    },
+    Personal(super::fine_grained::Grant),
 }
 impl Authority {
-    pub async fn contains(&self, pool: &DbPool, user: i64, repo: i64) -> anyhow::Result<bool> {
-        if !self.repositories.is_empty() && !self.repositories.contains(&repo) {
-            return Ok(false);
+    pub fn installation(&self) -> Option<i64> {
+        match &self.source {
+            Source::App { installation, .. } => *installation,
+            Source::Personal(_) => None,
         }
-        let installations = if let Some(id) = self.installation {
+    }
+    pub fn personal(&self) -> Option<&super::fine_grained::Grant> {
+        match &self.source {
+            Source::Personal(grant) => Some(grant),
+            Source::App { .. } => None,
+        }
+    }
+    /// The permissions this credential holds on `repo`, or `None` when it cannot reach it.
+    /// The user's own rights still apply on top.
+    pub async fn repository(
+        &self,
+        pool: &DbPool,
+        user: i64,
+        repo: i64,
+    ) -> anyhow::Result<Option<Value>> {
+        let (app_id, installation, repositories) = match &self.source {
+            Source::Personal(grant) => return grant.repository(pool, repo).await,
+            Source::App {
+                app_id,
+                installation,
+                repositories,
+            } => (*app_id, *installation, repositories),
+        };
+        if !repositories.is_empty() && !repositories.contains(&repo) {
+            return Ok(None);
+        }
+        let installations = if let Some(id) = installation {
             db::github_apps::installation(pool, id)
                 .await?
                 .into_iter()
                 .collect()
         } else {
-            db::github_apps::installations(pool, Some(self.app_id), Some(user)).await?
+            db::github_apps::installations(pool, Some(app_id), Some(user)).await?
         };
         for installation in installations {
-            if installation.app_id == self.app_id
+            if installation.app_id == app_id
                 && installation.suspended_at.is_none()
                 && db::github_apps::has_repository(pool, installation.id, repo, true).await?
             {
-                return Ok(true);
+                return Ok(Some(self.permissions.clone()));
             }
         }
-        Ok(false)
+        Ok(None)
+    }
+    /// Whether this credential reaches `repo` with permission `key`.
+    pub async fn allows(
+        &self,
+        pool: &DbPool,
+        user: i64,
+        repo: i64,
+        key: &str,
+        write: bool,
+    ) -> anyhow::Result<bool> {
+        Ok(self
+            .repository(pool, user, repo)
+            .await?
+            .is_some_and(|permissions| allows(&permissions, key, write)))
     }
 }
 pub async fn authority(pool: &DbPool, id: i64) -> anyhow::Result<Option<Authority>> {
@@ -340,21 +390,31 @@ pub async fn authority(pool: &DbPool, id: i64) -> anyhow::Result<Option<Authorit
             return Ok(None);
         };
         return Ok(Some(Authority {
-            app_id: installation.app_id,
-            installation: Some(installation.id),
             permissions: serde_json::from_str(&token.permissions)?,
-            repositories: serde_json::from_str(&token.repositories)?,
+            source: Source::App {
+                app_id: installation.app_id,
+                installation: Some(installation.id),
+                repositories: serde_json::from_str(&token.repositories)?,
+            },
         }));
     }
     if let Some(token) = db::oauth_apps::token(pool, id).await? {
         if let Some(app) = db::github_apps::app(pool, &token.client_id).await? {
             return Ok(Some(Authority {
-                app_id: app.id,
-                installation: None,
                 permissions: serde_json::from_str(&app.permissions)?,
-                repositories: vec![],
+                source: Source::App {
+                    app_id: app.id,
+                    installation: None,
+                    repositories: vec![],
+                },
             }));
         }
+    }
+    if let Some(grant) = super::fine_grained::grant(pool, id).await? {
+        return Ok(Some(Authority {
+            permissions: Value::Object(grant.group(super::fine_grained::Group::Repository)),
+            source: Source::Personal(grant),
+        }));
     }
     Ok(None)
 }

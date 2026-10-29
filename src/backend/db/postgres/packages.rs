@@ -19,6 +19,23 @@ async fn begin(pool: &PgPool) -> Result<Tx<'_>> {
 struct Actor {
     id: Option<i64>,
     repo: Option<i64>,
+    /// A fine-grained token acts only on its resource owner's packages, as `(kind, id)`.
+    owner: Option<(&'static str, i64)>,
+}
+
+impl Actor {
+    const ANONYMOUS: Self = Self {
+        id: None,
+        repo: None,
+        owner: None,
+    };
+    /// A fine-grained token reads another owner's packages as an anonymous request would.
+    fn for_owner(self, kind: &str, id: Option<i64>) -> Self {
+        match self.owner {
+            Some((owner_kind, owner)) if owner_kind != kind || Some(owner) != id => Self::ANONYMOUS,
+            _ => self,
+        }
+    }
 }
 
 async fn actor<'a>(
@@ -31,10 +48,7 @@ async fn actor<'a>(
             matches!(permission, Permission::Read),
             Refusal::Unauthorized
         );
-        return Ok(Actor {
-            id: None,
-            repo: None,
-        });
+        return Ok(Actor::ANONYMOUS);
     };
     let token = match token {
         Credential::Token(id) => id,
@@ -44,6 +58,7 @@ async fn actor<'a>(
             return Ok(Actor {
                 id: Some(id.ok_or(Refusal::Unauthorized)?),
                 repo: None,
+                owner: None,
             });
         }
     };
@@ -55,6 +70,28 @@ async fn actor<'a>(
     ensure!(!integration, Refusal::Forbidden);
     let write = !matches!(permission, Permission::Read);
     ensure!(!write || scope == "write", Refusal::Forbidden);
+    let mut owner = None;
+    let bounds: Option<crate::backend::db::fine_grained_tokens::Bounds> =
+        sqlx::query_as(super::fine_grained_tokens::BOUNDS)
+            .bind(token)
+            .fetch_optional(&mut **tx)
+            .await?;
+    if let Some(bounds) = bounds {
+        let permissions: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&bounds.permissions)?;
+        let level = permissions
+            .get("packages")
+            .and_then(serde_json::Value::as_str);
+        if !(bounds.active() && (level == Some("write") || (!write && level == Some("read")))) {
+            // Without a packages grant the token reads public packages only.
+            ensure!(!write, Refusal::Forbidden);
+            return Ok(Actor::ANONYMOUS);
+        }
+        owner = Some(match bounds.owner_org_id {
+            Some(org) => ("org", org),
+            None => ("user", id),
+        });
+    }
     let mut repo = None;
     if name == crate::backend::db::ci_tokens::BOT {
         let job: Option<(i64, String)> = sqlx::query_as("SELECT r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=$1 AND (t.revoked_at IS NULL OR t.revoked_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint-60) AND (r.status='running' OR r.completed_at>clock_timestamp()-INTERVAL '1 minute')")
@@ -65,7 +102,11 @@ async fn actor<'a>(
         ensure!(permissions.allows("packages", write), Refusal::Forbidden);
         repo = Some(repo_id);
     }
-    Ok(Actor { id: Some(id), repo })
+    Ok(Actor {
+        id: Some(id),
+        repo,
+        owner,
+    })
 }
 
 fn read_condition() -> String {
@@ -106,6 +147,14 @@ async fn authorize<'a>(
             .fetch_optional(&mut **tx)
             .await?
             .ok_or(Refusal::Missing)?;
+    let actor = actor.for_owner(
+        &package.owner_kind,
+        package.owner_user_id.or(package.owner_org_id),
+    );
+    ensure!(
+        actor.id.is_some() || matches!(permission, Permission::Read),
+        Refusal::Forbidden
+    );
     ensure!(
         actor.repo.is_none() || actor.repo == package.repo_id,
         Refusal::Missing
@@ -186,6 +235,11 @@ pub async fn list(
 ) -> Result<Vec<Package>> {
     let mut tx = begin(pool).await?;
     let actor = actor(&mut tx, token, Permission::Read).await?;
+    let actor = match query.owner {
+        Some(owner) => actor.for_owner(&owner.kind, Some(owner.id)),
+        None if actor.owner.is_some() => Actor::ANONYMOUS,
+        None => actor,
+    };
     let rows = sqlx::query_as(&format!("SELECT p.* FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$5 WHERE ($1::text IS NULL OR p.owner_kind=$1) AND ($2::bigint IS NULL OR COALESCE(p.owner_user_id,p.owner_org_id)=$2) AND ($3::text IS NULL OR p.package_type=$3) AND p.deleted_at IS NULL AND ($4::text IS NULL OR p.visibility=$4) AND ($6::bigint IS NULL OR (p.repo_id=$6 AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id))) AND ($9::bigint IS NULL OR p.repo_id=$9) AND {} ORDER BY p.id DESC LIMIT $7 OFFSET $8",read_condition()))
         .bind(query.owner.map(|o| o.kind.as_str())).bind(query.owner.map(|o| o.id)).bind(query.kind).bind(query.visibility).bind(actor.id).bind(actor.repo).bind(query.limit).bind(query.offset).bind(query.repo).fetch_all(&mut *tx).await?;
     tx.commit().await?;
@@ -195,6 +249,12 @@ pub async fn list(
 pub async fn count_linked(pool: &PgPool, token: Option<Credential<'_>>, repo: i64) -> Result<i64> {
     let mut tx = begin(pool).await?;
     let actor = actor(&mut tx, token, Permission::Read).await?;
+    // A fine-grained token counts public packages; its own owner's are listed on their page.
+    let actor = if actor.owner.is_some() {
+        Actor::ANONYMOUS
+    } else {
+        actor
+    };
     let count = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.repo_id=$1 AND p.deleted_at IS NULL AND ($3::bigint IS NULL OR p.repo_id=$3) AND {}",read_condition()))
         .bind(repo).bind(actor.id).bind(actor.repo).fetch_one(&mut *tx).await?;
     tx.commit().await?;
@@ -233,6 +293,12 @@ pub async fn create(
         deleted_at: None,
     };
     ensure!(actor.repo.is_none() || actor.repo == repo, Refusal::Missing);
+    ensure!(
+        actor
+            .owner
+            .is_none_or(|(kind, id)| kind == owner.kind && id == owner.id),
+        Refusal::Forbidden
+    );
     let user = actor.id.ok_or(Refusal::Unauthorized)?;
     let owner_access = owner_level(&mut tx, &candidate, user).await?;
     let mut allowed = owner_access >= 3;

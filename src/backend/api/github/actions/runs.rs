@@ -125,8 +125,8 @@ pub(super) async fn document(
             .ok_or_else(|| {
                 Error::new(StatusCode::GONE, "Head repository metadata is unavailable")
             })?;
-        // An App token reads only the repositories its grant covers, so other private forks
-        // are redacted even when its user could read them.
+        // An App or fine-grained token reads only the repositories its grant covers, so other
+        // private forks are redacted even when its user could read them.
         let bounds = match auth {
             Some(auth) => {
                 crate::backend::identity::github_apps::authority(&state.pool, auth.token.id)
@@ -145,10 +145,11 @@ pub(super) async fn document(
             let bot_private = head.is_private
                 && auth.is_some_and(|auth| auth.user.username == db::ci_tokens::BOT);
             let outside_app = match &bounds {
-                Some((bounds, user)) if head.is_private => !bounds
-                    .contains(&state.pool, *user, head.id)
+                Some((bounds, user)) if head.is_private => bounds
+                    .repository(&state.pool, *user, head.id)
                     .await
-                    .map_err(Error::unavailable)?,
+                    .map_err(Error::unavailable)?
+                    .is_none(),
                 _ => false,
             };
             if bot_private

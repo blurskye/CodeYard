@@ -8,6 +8,7 @@ pub mod avatars;
 pub mod blocks;
 pub mod credentials;
 pub mod emails;
+pub mod fine_grained;
 pub mod following;
 pub mod github_apps;
 pub mod gpg;

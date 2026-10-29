@@ -108,7 +108,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         lifecycle::validate_name(name).map_err(provision)?;
     }
     let saved = if matches!(field, "createRepository" | "cloneTemplateRepository") {
-        if request.auth.is_job() {
+        if request.bounded() {
             return Err(token_denied());
         }
         // Checked before provisioning, which commits the repository.

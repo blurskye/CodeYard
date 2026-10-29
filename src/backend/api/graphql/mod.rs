@@ -52,6 +52,9 @@ struct RequestContext {
     auth: auth::Authentication,
     /// Scopes granted to an OAuth token; other credentials have none.
     oauth_scopes: Option<String>,
+    /// A fine-grained token's repository permissions. Like a job token, it reaches
+    /// repositories through `authorize` only, and no account or organization fields.
+    personal: Option<Value>,
     nodes: AtomicUsize,
     /// Bytes of text the request has loaded or returned, bounded by `MAX_RESPONSE_BYTES`.
     bytes: AtomicUsize,
@@ -91,6 +94,23 @@ impl RequestContext {
 
     /// Each resolver checks the grant it needs, as the REST routes check theirs.
     fn require_oauth_scope(&self, scope: &str) -> Result<()> {
+        if let Some(permissions) = &self.personal {
+            // Repository reads and writes were checked by `authorize`, and cross-repository
+            // lists stop at `bounded`.
+            return match scope {
+                "repo" => Ok(()),
+                "workflow"
+                    if crate::backend::identity::github_apps::allows(
+                        permissions,
+                        "workflows",
+                        true,
+                    ) =>
+                {
+                    Ok(())
+                }
+                _ => Err(token_denied()),
+            };
+        }
         match &self.oauth_scopes {
             Some(scopes) if !crate::backend::identity::oauth_apps::has_scope(scopes, scope) => {
                 Err(token_denied())
@@ -101,6 +121,12 @@ impl RequestContext {
 
     fn is_oauth(&self) -> bool {
         self.oauth_scopes.is_some()
+    }
+
+    /// Job and fine-grained tokens are bounded to repositories: they reach no account,
+    /// organization, team or search fields.
+    fn bounded(&self) -> bool {
+        self.auth.is_job() || self.personal.is_some()
     }
 }
 
@@ -153,7 +179,7 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
         id /= 2;
     }
     let pool = &request.state.pool;
-    if request.auth.is_job()
+    if request.bounded()
         && (matches!(kind, "O" | "T") || (kind == "U" && id != request.auth.user.id))
     {
         return Err(token_denied());
@@ -292,11 +318,12 @@ async fn execute(
             return error.into_response();
         }
     };
-    match crate::backend::identity::github_apps::authority(&state.pool, authentication.token.id).await {
+    let personal = match crate::backend::identity::github_apps::authority(&state.pool, authentication.token.id).await {
+        Ok(Some(bounds)) if bounds.personal().is_some() => Some(bounds.permissions),
         Ok(Some(_)) => return (StatusCode::FORBIDDEN, Json(json!({"message":"Integration credentials require repository-scoped REST or Git access"}))).into_response(),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
-        Ok(None) => {}
-    }
+        Ok(None) => None,
+    };
     let oauth_scopes = match db::oauth_apps::token(&state.pool, authentication.token.id).await {
         Ok(token) => token.map(|token| token.scopes),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
@@ -338,6 +365,7 @@ async fn execute(
         state,
         auth: authentication,
         oauth_scopes: oauth_scopes.clone(),
+        personal,
         nodes: AtomicUsize::new(0),
         bytes: AtomicUsize::new(0),
         rate,

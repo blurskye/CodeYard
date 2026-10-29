@@ -219,7 +219,7 @@ async fn item_object(item: &store::Item, request: &RequestContext) -> Result<Val
 
 /// Projects belong to accounts. Job tokens share one bot identity, so they never reach them.
 fn authorize_account(request: &RequestContext) -> Result<()> {
-    if request.auth.is_job() {
+    if request.bounded() {
         return Err(super::token_denied());
     }
     request.require_oauth_scope("repo")

@@ -195,11 +195,21 @@ impl Scanner {
             toml::from_str(include_str!("../../../../spec/gitleaks/gitleaks.toml"))?;
         // Personal tokens issued before prefixes were introduced remain valid, but cannot be
         // distinguished reliably from arbitrary hexadecimal values in source code.
-        for (id, regex) in [
-            ("codeyard-pat", r"(?-u:\b)cy_pat_[a-f0-9]{64}(?-u:\b)"),
+        for (id, regex, keyword) in [
+            (
+                "codeyard-pat",
+                r"(?-u:\b)cy_pat_[a-f0-9]{64}(?-u:\b)",
+                "cy_pat_",
+            ),
+            (
+                "codeyard-fine-grained-pat",
+                r"(?-u:\b)cy_fgpat_[a-f0-9]{64}(?-u:\b)",
+                "cy_fgpat_",
+            ),
             (
                 "codeyard-actions-token",
                 r"(?-u:\b)ghs_[a-f0-9]{64}(?-u:\b)",
+                "ghs_",
             ),
         ] {
             config.rules.insert(
@@ -208,12 +218,7 @@ impl Scanner {
                     id: id.into(),
                     regex: Some(regex.into()),
                     path: None,
-                    keywords: vec![if id == "codeyard-pat" {
-                        "cy_pat_"
-                    } else {
-                        "ghs_"
-                    }
-                    .into()],
+                    keywords: vec![keyword.into()],
                     entropy: 0.0,
                     secret_group: None,
                     allowlists: vec![],
@@ -380,6 +385,10 @@ fn identity(id: &str) -> (String, String) {
         "codeyard-pat" => (
             "codeyard_personal_access_token",
             "Codeyard Personal Access Token",
+        ),
+        "codeyard-fine-grained-pat" => (
+            "codeyard_fine_grained_personal_access_token",
+            "Codeyard Fine-grained Personal Access Token",
         ),
         "codeyard-actions-token" => ("codeyard_actions_token", "Codeyard Actions Token"),
         "slack-bot-token" => ("slack_bot_token", "Slack Bot Token"),

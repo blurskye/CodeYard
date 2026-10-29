@@ -391,14 +391,9 @@ pub async fn agent_propose(
     {
         Some(
             bounds
-                .contains(&state.pool, auth.user.id, repo.id)
+                .allows(&state.pool, auth.user.id, repo.id, "issues", true)
                 .await
-                .map_err(unavailable)?
-                && crate::backend::identity::github_apps::allows(
-                    &bounds.permissions,
-                    "issues",
-                    true,
-                ),
+                .map_err(unavailable)?,
         )
     } else {
         db::oauth_apps::token(&state.pool, auth.token.id)

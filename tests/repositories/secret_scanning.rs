@@ -50,6 +50,7 @@ fn secret_scanning_rules_and_locations() {
 fn secret_scanning_own_tokens_and_entropy() {
     for (prefix, kind) in [
         ("cy_pat_", "codeyard_personal_access_token"),
+        ("cy_fgpat_", "codeyard_fine_grained_personal_access_token"),
         ("ghs_", "codeyard_actions_token"),
     ] {
         let value = format!(

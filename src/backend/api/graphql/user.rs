@@ -109,7 +109,7 @@ pub(super) async fn query(field: &str, ctx: &Arguments, request: &RequestContext
     if field == "viewer" {
         return by_id(request.auth.user.id, request).await;
     }
-    if request.auth.is_job() {
+    if request.bounded() {
         return Err(missing());
     }
     let login = arg(ctx, "login")?;

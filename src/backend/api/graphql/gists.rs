@@ -13,7 +13,7 @@ fn object(gist: &Gist) -> Value {
 
 /// The gist a REST `node_id` names. Like the REST read, its ID is enough to read a secret gist.
 pub(super) async fn node(key: &str, request: &RequestContext) -> Result<Value> {
-    if request.auth.is_job() {
+    if request.bounded() {
         return Err(missing());
     }
     request.require_oauth_scope("gist")?;
@@ -31,7 +31,7 @@ pub(super) async fn node(key: &str, request: &RequestContext) -> Result<Value> {
 }
 
 pub(super) async fn list(ctx: &Arguments, request: &RequestContext, user: &Value) -> Result<Value> {
-    if request.auth.is_job() {
+    if request.bounded() {
         return Err(missing());
     }
     request.require_oauth_scope("gist")?;
@@ -77,7 +77,7 @@ pub(super) async fn files(
     request: &RequestContext,
     gist: &Value,
 ) -> Result<Value> {
-    if request.auth.is_job() {
+    if request.bounded() {
         return Err(missing());
     }
     let id = gist["name"].as_str().ok_or_else(missing)?;
@@ -113,7 +113,7 @@ pub(super) async fn files(
 }
 
 pub(super) async fn text(ctx: &Arguments, request: &RequestContext, file: &Value) -> Result<Value> {
-    if request.auth.is_job() {
+    if request.bounded() {
         return Err(missing());
     }
     let repo = file["repoId"].as_i64().ok_or_else(missing)?;

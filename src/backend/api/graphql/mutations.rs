@@ -210,7 +210,7 @@ pub(super) async fn resolve(
             "Codeyard does not support {field}.{name} yet"
         )));
     }
-    if request.auth.is_job()
+    if request.bounded()
         && matches!(
             field,
             "addStar" | "removeStar" | "updateSubscription" | "followUser" | "unfollowUser"

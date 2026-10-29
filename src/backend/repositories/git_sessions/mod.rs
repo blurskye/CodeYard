@@ -167,13 +167,15 @@ impl ReceiveCredential {
             if let Some(bounds) = crate::backend::identity::github_apps::authority(pool, id).await?
             {
                 anyhow::ensure!(
-                    bounds.contains(pool, identity.id, repo.id).await?
-                        && crate::backend::identity::github_apps::allows(
-                            &bounds.permissions,
-                            "contents",
-                            write
-                        ),
+                    bounds
+                        .allows(pool, identity.id, repo.id, "contents", write)
+                        .await?,
                     "integration repository access denied"
+                );
+            } else if let Some(org) = repo.owner_org_id {
+                anyhow::ensure!(
+                    !db::fine_grained_tokens::classic_refused(pool, id, org).await?,
+                    "the organization refuses classic tokens"
                 );
             }
         }
