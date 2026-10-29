@@ -175,7 +175,7 @@ async fn add_item(
         Content::PullRequest(id)
     };
     let actor = auth.as_ref().ok_or_else(auth::required)?.user.id;
-    let item = projects::add_item(&state.pool, actor, project.id, &content)
+    let item = projects::add_item(&state.pool, actor, &auth.as_ref().ok_or_else(auth::required)?.credential(), project.id, &content)
         .await
         .map_err(project_error)?;
     let fields = projects::fields(&state.pool, Some(actor), project.id)
@@ -207,10 +207,12 @@ async fn draft(
         context(&state, &headers, &params, true, !params.contains_key("org")).await?;
     let Json(input) =
         input.map_err(|_| Error::validation("DraftIssue", "title", "missing_field"))?;
-    let actor = auth.ok_or_else(auth::required)?.user.id;
+    let auth = auth.ok_or_else(auth::required)?;
+    let actor = auth.user.id;
     let item = projects::add_item(
         &state.pool,
         actor,
+        &auth.credential(),
         project.id,
         &Content::Draft {
             title: input.title,
@@ -344,7 +346,7 @@ async fn update_item(
     let Json(input) = input.map_err(|_| Error::validation("ProjectV2Item", "fields", "invalid"))?;
     let actor = auth.as_ref().ok_or_else(auth::required)?.user.id;
     let id: i64 = params["item_id"].parse().map_err(|_| Error::missing())?;
-    let item = projects::update_item(&state.pool, actor, project.id, id, &input.fields)
+    let item = projects::update_item(&state.pool, actor, &auth.as_ref().ok_or_else(auth::required)?.credential(), project.id, id, &input.fields)
         .await
         .map_err(project_error)?;
     let fields = projects::fields(&state.pool, Some(actor), project.id)
@@ -362,9 +364,10 @@ async fn delete_item(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (project, _, auth) = context(&state, &headers, &params, true, false).await?;
-    let actor = auth.ok_or_else(auth::required)?.user.id;
+    let auth = auth.ok_or_else(auth::required)?;
+    let actor = auth.user.id;
     let id: i64 = params["item_id"].parse().map_err(|_| Error::missing())?;
-    projects::delete_item(&state.pool, actor, project.id, id)
+    projects::delete_item(&state.pool, actor, &auth.credential(), project.id, id)
         .await
         .map_err(project_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -379,8 +382,9 @@ async fn create_view(
     let (project, name, auth) =
         context(&state, &headers, &params, true, !params.contains_key("org")).await?;
     let Json(input) = input.map_err(|_| Error::validation("ProjectV2View", "layout", "invalid"))?;
-    let actor = auth.ok_or_else(auth::required)?.user;
-    let view = projects::create_view(&state.pool, actor.id, project.id, &input)
+    let auth = auth.ok_or_else(auth::required)?;
+    let actor = &auth.user;
+    let view = projects::create_view(&state.pool, actor.id, &auth.credential(), project.id, &input)
         .await
         .map_err(project_error)?;
     let html = format!(

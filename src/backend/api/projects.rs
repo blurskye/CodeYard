@@ -63,10 +63,28 @@ pub(crate) async fn sidebar(
     } else {
         Content::PullRequest(id)
     };
-    let mut assigned = projects::item_projects(pool, viewer, &content).await?;
-    for project in projects::repository_projects(pool, viewer, repo).await? {
-        if !assigned.iter().any(|p| p.id == project.id) {
-            assigned.push(project);
+    let mut item_ids = HashMap::new();
+    let mut offset = 0;
+    loop {
+        let (count, items) = projects::content_items(pool, viewer, &content, true, offset, 100).await?;
+        for item in items { item_ids.insert(item.project_id, item.id); }
+        offset += 100;
+        if offset >= count { break; }
+    }
+    let mut assigned = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for filter in [
+        projects::ListFilter { content: Some((matches!(content, Content::Issue(_)), id)), ..Default::default() },
+        projects::ListFilter { repo: Some(repo), ..Default::default() },
+    ] {
+        let mut offset = 0;
+        loop {
+            let (count, rows) = projects::list(pool, viewer, &filter, offset, 100).await?;
+            for project in rows {
+                if seen.insert(project.id) { assigned.push(project); }
+            }
+            offset += 100;
+            if offset >= count { break; }
         }
     }
     let mut result = Vec::new();
@@ -80,15 +98,7 @@ pub(crate) async fn sidebar(
             Some(id) => projects::can_write(pool, id, owner).await?,
             None => false,
         };
-        let item_id = projects::items(pool, viewer, project.id)
-            .await?
-            .into_iter()
-            .find(|i| match content {
-                Content::Issue(id) => i.issue_id == Some(id),
-                Content::PullRequest(id) => i.pull_request_id == Some(id),
-                Content::Draft { .. } => false,
-            })
-            .map(|i| i.id);
+        let item_id = item_ids.get(&project.id).copied();
         if item_id.is_none() && !can_edit {
             continue;
         }
@@ -203,11 +213,21 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         next: None,
     };
     let Some(number) = params.get("project_number") else {
-        page.projects = projects::list(pool, viewer, owner)
-            .await?
-            .into_iter()
-            .map(summary)
-            .collect();
+        let number = ctx.query.get("page").map(|value| value.parse::<i64>()).transpose()?.unwrap_or(1);
+        anyhow::ensure!(number > 0, projects::Refusal::Invalid);
+        let offset = (number - 1).checked_mul(50).ok_or(projects::Refusal::Invalid)?;
+        let mut filter = projects::ListFilter::search(Some(owner), &page.filter);
+        filter.order = projects::ListOrder::Number;
+        filter.descending = true;
+        let (count, rows) = projects::list(pool, viewer, &filter, offset, 50).await?;
+        page.projects = rows.into_iter().map(summary).collect();
+        let link = |number: i64| {
+            let mut query = url::form_urlencoded::Serializer::new(String::new());
+            query.append_pair("page", &number.to_string()).append_pair("q", &page.filter);
+            format!("{}?{}", ctx.path, query.finish())
+        };
+        page.previous = (number > 1).then(|| link(number - 1));
+        page.next = (count.saturating_sub(offset) > 50).then(|| link(number + 1));
         return Ok(page);
     };
     let number = number.parse().map_err(|_| projects::Refusal::Missing)?;
@@ -447,11 +467,14 @@ async fn show(
 async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Result<String> {
     let pool = &ctx.state.pool;
     let actor = ctx.user.as_ref().ok_or(projects::Refusal::Denied)?.id;
+    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).ok_or(projects::Refusal::Denied)?;
+    let credential = db::users::accounts::AccountCredential::Session(&session);
     let (owner, _, base) = owner(ctx, params).await?;
     let Some(number) = params.get("project_number") else {
         let project = projects::create(
             pool,
             actor,
+            &credential,
             owner,
             field(form, "title"),
             None,
@@ -478,6 +501,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             projects::save(
                 pool,
                 actor,
+                &credential,
                 project.id,
                 &projects::Settings {
                     title: Some(field(form, "title").into()),
@@ -490,7 +514,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             return Ok(format!("{path}/settings"));
         }
         "delete" => {
-            projects::delete(pool, actor, project.id).await?;
+            projects::delete(pool, actor, &credential, project.id).await?;
             return Ok(base);
         }
         "add-field" => {
@@ -530,6 +554,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             projects::add_field(
                 pool,
                 actor,
+                &credential,
                 project.id,
                 &projects::NewField {
                     name: field(form, "name").into(),
@@ -542,13 +567,14 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             return Ok(format!("{path}/settings"));
         }
         "delete-field" => {
-            projects::delete_field(pool, actor, project.id, integer("field_id")?).await?;
+            projects::delete_field(pool, actor, &credential, project.id, integer("field_id")?).await?;
             return Ok(format!("{path}/settings"));
         }
         "draft" => {
             projects::add_item(
                 pool,
                 actor,
+                &credential,
                 project.id,
                 &Content::Draft {
                     title: field(form, "title").into(),
@@ -569,6 +595,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 projects::link_repository(
                     pool,
                     actor,
+                    &credential,
                     project.id,
                     repo.id,
                     !form.contains_key("unlink"),
@@ -599,7 +626,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 ),
                 _ => return Err(projects::Refusal::Invalid.into()),
             };
-            projects::add_item(pool, actor, project.id, &content).await?;
+            projects::add_item(pool, actor, &credential, project.id, &content).await?;
         }
         "update-item" => {
             let fields = projects::fields(pool, Some(actor), project.id).await?;
@@ -621,16 +648,17 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 };
                 updates.push(projects::FieldUpdate { id: f.id, value });
             }
-            projects::update_item(pool, actor, project.id, integer("item_id")?, &updates).await?;
+            projects::update_item(pool, actor, &credential, project.id, integer("item_id")?, &updates).await?;
         }
         "delete-item" => {
-            projects::delete_item(pool, actor, project.id, integer("item_id")?).await?
+            projects::delete_item(pool, actor, &credential, project.id, integer("item_id")?).await?
         }
         "view" => {
             let group = field(form, "group");
             let view = projects::create_view(
                 pool,
                 actor,
+                &credential,
                 project.id,
                 &NewView {
                     name: field(form, "name").into(),

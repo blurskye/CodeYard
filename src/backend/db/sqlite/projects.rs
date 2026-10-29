@@ -2,6 +2,7 @@ mod exports;
 use crate::backend::db::projects::{
     validate_project, Field, NewField, NewView, Owner, Project, Refusal, SelectOption, Settings,
 };
+use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
 pub use exports::{fields_page, list_page};
 use sqlx::{Sqlite, SqlitePool, Transaction};
@@ -31,7 +32,7 @@ async fn owner_authority(tx: &mut Transaction<'_, Sqlite>, actor: i64, owner: Ow
     Ok(())
 }
 
-async fn write_project(tx: &mut Transaction<'_, Sqlite>, actor: i64, id: i64) -> Result<Project> {
+async fn write_project(tx: &mut Transaction<'_, Sqlite>, actor: i64, credential: &AccountCredential<'_>, id: i64) -> Result<Project> {
     let project: Project =
         sqlx::query_as("SELECT * FROM projects WHERE id=$1 AND deleted_at IS NULL")
             .bind(id)
@@ -44,6 +45,7 @@ async fn write_project(tx: &mut Transaction<'_, Sqlite>, actor: i64, id: i64) ->
         Owner::User(project.owner_id)
     };
     owner_authority(tx, actor, owner).await?;
+    anyhow::ensure!(super::users::transitions::credential_live(tx, actor, credential, true).await?, Refusal::Denied);
     Ok(project)
 }
 
@@ -63,6 +65,7 @@ async fn readable(tx: &mut Transaction<'_, Sqlite>, viewer: Option<i64>, id: i64
 pub async fn create(
     pool: &SqlitePool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     owner: Owner,
     title: &str,
     description: Option<&str>,
@@ -71,6 +74,7 @@ pub async fn create(
     validate_project(title, description)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     owner_authority(&mut tx, actor, owner).await?;
+    anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
     let (kind, id) = owner.parts();
     let now = chrono::Utc::now();
     let project: Project = sqlx::query_as("INSERT INTO projects(owner_user_id,owner_org_id,number,creator_id,title,description,public,created_at,updated_at) SELECT $1,$2,COALESCE(MAX(number),0)+1,$3,$4,$5,$6,$7,$7 FROM projects WHERE owner_kind=$8 AND owner_id=$9 RETURNING *")
@@ -123,10 +127,20 @@ pub async fn create(
     Ok(project)
 }
 
-pub async fn list(pool: &SqlitePool, viewer: Option<i64>, owner: Owner) -> Result<Vec<Project>> {
-    let (kind, id) = owner.parts();
-    Ok(sqlx::query_as(&format!("SELECT * FROM projects p WHERE p.owner_kind=$1 AND p.owner_id=$2 AND {} ORDER BY number DESC", crate::backend::db::projects::readable_condition("$3")))
-        .bind(kind).bind(id).bind(viewer).fetch_all(pool).await?)
+pub async fn list(pool: &SqlitePool, viewer: Option<i64>, filter: &crate::backend::db::projects::ListFilter, offset: i64, limit: i64) -> Result<(i64, Vec<Project>)> {
+    anyhow::ensure!(offset >= 0 && (0..=101).contains(&limit), Refusal::Invalid);
+    let statement = filter.statement(false);
+    let mut tx = pool.begin().await?;
+    let count_sql = format!("SELECT COUNT(*) {}", statement.prefix);
+    let mut count = sqlx::query_scalar::<_, i64>(&count_sql).bind(viewer);
+    for arg in &statement.args { count = count.bind(arg); }
+    let count = count.fetch_one(&mut *tx).await?;
+    let query = format!("SELECT {} {} ORDER BY {} LIMIT {} OFFSET {}", crate::backend::db::projects::SUMMARY_COLUMNS, statement.prefix, filter.order(false), statement.placeholder(statement.args.len()+2), statement.placeholder(statement.args.len()+3));
+    let mut rows = sqlx::query_as(&query).bind(viewer);
+    for arg in &statement.args { rows = rows.bind(arg); }
+    let rows = rows.bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok((count, rows))
 }
 
 pub async fn get(
@@ -146,6 +160,7 @@ pub async fn get(
 pub async fn save(
     pool: &SqlitePool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     project: i64,
     settings: &Settings,
 ) -> Result<Project> {
@@ -156,7 +171,7 @@ pub async fn save(
         closed,
     } = settings;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    write_project(&mut tx, actor, project).await?;
+    write_project(&mut tx, actor, credential, project).await?;
     let now = chrono::Utc::now();
     // Omitted fields come from the locked row, not from a copy the caller read earlier.
     let project: Project = sqlx::query_as("UPDATE projects SET title=COALESCE($2,title),description=COALESCE($3,description),public=COALESCE($4,public),closed_at=CASE WHEN $5 IS NULL THEN closed_at WHEN $5 THEN COALESCE(closed_at,$6) ELSE NULL END,updated_at=$6 WHERE id=$1 RETURNING *")
@@ -166,9 +181,9 @@ pub async fn save(
     Ok(project)
 }
 
-pub async fn delete(pool: &SqlitePool, actor: i64, project: i64) -> Result<()> {
+pub async fn delete(pool: &SqlitePool, actor: i64, credential: &AccountCredential<'_>, project: i64) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    write_project(&mut tx, actor, project).await?;
+    write_project(&mut tx, actor, credential, project).await?;
     for table in ["project_items", "project_views", "project_fields", "project_repositories", "project_teams"] {
         sqlx::query(&format!("DELETE FROM {table} WHERE project_id=$1")).bind(project).execute(&mut *tx).await?;
     }
@@ -195,12 +210,13 @@ pub async fn fields(pool: &SqlitePool, viewer: Option<i64>, project: i64) -> Res
 pub async fn add_field(
     pool: &SqlitePool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     project: i64,
     input: &NewField,
 ) -> Result<Field> {
     let config = input.configuration()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    write_project(&mut tx, actor, project).await?;
+    write_project(&mut tx, actor, credential, project).await?;
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM project_fields WHERE project_id=$1")
         .bind(project)
         .fetch_one(&mut *tx)

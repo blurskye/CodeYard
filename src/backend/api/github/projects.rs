@@ -136,29 +136,19 @@ async fn list(
 ) -> Result<Response> {
     let auth = auth::authenticate(&state, &headers, false).await?;
     let (owner, name) = owner(&state, &params, false).await?;
-    let projects = projects::list(&state.pool, auth.as_ref().map(|a| a.user.id), owner)
+    let (offset, limit) = page.window()?;
+    let mut filter = projects::ListFilter::search(Some(owner), query.q.as_deref().unwrap_or(""));
+    filter.order = projects::ListOrder::Number;
+    filter.descending = true;
+    let (_, projects) = projects::list(&state.pool, auth.as_ref().map(|a| a.user.id), &filter, offset as i64, (limit + 1) as i64)
         .await
         .map_err(project_error)?;
-    let (offset, limit) = page.window()?;
     let mut documents = Vec::new();
-    for project in projects
-        .into_iter()
-        .filter(|p| matches_project(p, query.q.as_deref().unwrap_or("")))
-        .skip(offset)
-        .take(limit + 1)
-    {
+    for project in projects {
         documents.push(document(&state, &project, &name).await?);
     }
     let more = documents.len() > limit;
     page.response(&uri, documents, more)
-}
-
-fn matches_project(project: &Project, query: &str) -> bool {
-    query.split_whitespace().all(|word| match word {
-        "is:open" => project.closed_at.is_none(),
-        "is:closed" => project.closed_at.is_some(),
-        _ => project.title.to_lowercase().contains(&word.to_lowercase()),
-    })
 }
 
 async fn get_project(
@@ -222,9 +212,11 @@ async fn add_field(
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
     let Json(input) =
         input.map_err(|_| Error::validation("ProjectV2Field", "data_type", "invalid"))?;
+    let auth = auth.ok_or_else(auth::required)?;
     let field = projects::add_field(
         &state.pool,
-        auth.ok_or_else(auth::required)?.user.id,
+        auth.user.id,
+        &auth.credential(),
         project.id,
         &input,
     )

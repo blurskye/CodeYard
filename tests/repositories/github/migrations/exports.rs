@@ -257,6 +257,7 @@ pub(super) async fn run(
             db::projects::create(
                 f.pool(),
                 alice,
+                &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
                 owner,
                 "Migration project",
                 Some("Private owner project"),
@@ -269,6 +270,7 @@ pub(super) async fn run(
     db::projects::create(
         f.pool(),
         bob,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), bob).await),
         db::projects::Owner::User(bob),
         "Unrelated private project",
         None,
@@ -281,6 +283,7 @@ pub(super) async fn run(
         db::projects::add_field(
             f.pool(),
             alice,
+            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
             projects[0].id,
             &db::projects::NewField {
                 name: format!("Migration field {n}"),

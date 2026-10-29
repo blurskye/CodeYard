@@ -267,6 +267,7 @@ pub(super) async fn content_items(
     ctx: &Arguments,
     request: &RequestContext,
 ) -> Result<Value> {
+    authorize_account(request)?;
     let pool = &request.state.pool;
     let viewer = Some(request.auth.user.id);
     let content = if ty == "Issue" {
@@ -281,33 +282,19 @@ pub(super) async fn content_items(
         .map(|v| v.deserialize::<bool>())
         .transpose()?
         .unwrap_or(true);
+    connection::validate(ctx)?;
+    let (count, _) = store::content_items(pool, viewer, &content, include_archived, 0, 0).await.map_err(operation)?;
+    let page = connection::Page::new(ctx, count)?;
+    let (_, rows) = store::content_items(pool, viewer, &content, include_archived, page.offset, page.limit).await.map_err(operation)?;
     let mut nodes = Vec::new();
-    for project in store::item_projects(pool, viewer, &content)
-        .await
-        .map_err(operation)?
-    {
-        for item in store::items(pool, viewer, project.id)
-            .await
-            .map_err(operation)?
-        {
-            if (if ty == "Issue" {
-                item.issue_id == Some(id)
-            } else {
-                item.pull_request_id == Some(id)
-            }) && (include_archived || !item.archived)
-            {
-                nodes.push(item_object(&item, request).await?);
-            }
-        }
-    }
-    nodes.sort_by_key(|item| item["_item"].as_i64());
-    connection::slice(ctx, nodes)
+    for item in rows { nodes.push(item_object(&item, request).await?); }
+    Ok(page.finish(nodes))
 }
 
 async fn project_connection(
     ctx: &Arguments,
     request: &RequestContext,
-    mut projects: Vec<store::Project>,
+    mut filter: store::ListFilter,
 ) -> Result<Value> {
     let query = ctx
         .args
@@ -315,51 +302,42 @@ async fn project_connection(
         .filter(|q| !q.is_null())
         .map(|q| q.string())
         .transpose()?
-        .unwrap_or("")
-        .to_lowercase();
+        .unwrap_or("");
+    connection::validate(ctx)?;
     let mut terms = Vec::new();
     for term in query.split_whitespace() {
-        match term {
-            "is:open" => projects.retain(|p| p.closed_at.is_none()),
-            "is:closed" => projects.retain(|p| p.closed_at.is_some()),
+        match term.to_ascii_lowercase().as_str() {
+            "is:open" => filter.open = true,
+            "is:closed" => filter.closed = true,
             _ => terms.push(term),
         }
     }
-    let title = terms.join(" ");
-    projects.retain(|p| p.title.to_lowercase().contains(&title));
+    if !terms.is_empty() { filter.titles.push(terms.join(" ")); }
     if let Some(permission) = ctx.args.get("minPermissionLevel").filter(|p| !p.is_null()) {
-        if permission.enum_name()? != "READ" {
-            let mut writable = Vec::new();
-            for project in projects {
-                if store::can_write(
-                    &request.state.pool,
-                    request.auth.user.id,
-                    project_owner(&project),
-                )
-                .await
-                .map_err(operation)?
-                {
-                    writable.push(project);
-                }
-            }
-            projects = writable;
-        }
+        filter.writable = permission.enum_name()? != "READ";
     }
-    projects.sort_by_key(|p| p.id);
     if let Some(order) = ctx.args.get("orderBy").filter(|o| !o.is_null()) {
         let order: Value = order.deserialize()?;
-        match order["field"].as_str() {
-            Some("TITLE") => projects.sort_by(|a, b| a.title.cmp(&b.title)),
-            Some("UPDATED_AT") => projects.sort_by_key(|p| p.updated_at),
-            Some("CREATED_AT") => projects.sort_by_key(|p| p.created_at),
-            Some("NUMBER") => projects.sort_by_key(|p| p.number),
+        filter.order = match order["field"].as_str() {
+            Some("TITLE") => store::ListOrder::Title,
+            Some("UPDATED_AT") => store::ListOrder::Updated,
+            Some("CREATED_AT") => store::ListOrder::Created,
+            Some("NUMBER") => store::ListOrder::Number,
             _ => return Err(Error::new("Unsupported project order")),
-        }
-        if order["direction"] == "DESC" {
-            projects.reverse();
-        }
+        };
+        filter.descending = order["direction"] == "DESC";
     }
-    connection::slice(ctx, projects.iter().map(project_object).collect())
+    let pool = &request.state.pool;
+    let viewer = Some(request.auth.user.id);
+    let (count, _) = store::list(pool, viewer, &filter, 0, 0).await.map_err(operation)?;
+    let page = connection::Page::new(ctx, count)?;
+    let (_, projects) = store::list(pool, viewer, &filter, page.offset, page.limit).await.map_err(operation)?;
+    let nodes = projects.iter().map(|project| {
+        let mut value = project_object(project);
+        value.as_object_mut().unwrap().remove("readme");
+        value
+    }).collect();
+    Ok(page.finish(nodes))
 }
 
 pub(super) async fn resource(ctx: &Arguments, request: &RequestContext) -> Result<Value> {
@@ -420,10 +398,8 @@ pub(super) async fn resolve(
     }
     if ty == "Repository" && field == "projectsV2" {
         let repo = parent["databaseId"].as_i64().ok_or_else(missing)?;
-        let projects = store::repository_projects(pool, viewer, repo)
-            .await
-            .map_err(operation)?;
-        return project_connection(ctx, request, projects).await;
+        repository::by_id(repo, request).await?;
+        return project_connection(ctx, request, store::ListFilter { repo: Some(repo), ..Default::default() }).await;
     }
     if matches!(ty, "User" | "Organization") {
         let target = parent["databaseId"].as_i64().ok_or_else(missing)?;
@@ -453,8 +429,7 @@ pub(super) async fn resolve(
                     .map_err(operation)?,
             )),
             "projectsV2" => {
-                let projects = store::list(pool, viewer, owner).await.map_err(operation)?;
-                project_connection(ctx, request, projects).await
+                project_connection(ctx, request, store::ListFilter { owner: Some(owner), ..Default::default() }).await
             }
             "viewerCanCreateProjects" => Ok(json!(store::can_write(pool, actor, owner)
                 .await
@@ -489,6 +464,10 @@ pub(super) async fn resolve(
         };
     }
     match (ty, field) {
+        ("ProjectV2", "readme") => {
+            let project = store::by_id(pool, viewer, parent["databaseId"].as_i64().ok_or_else(missing)?).await.map_err(operation)?;
+            Ok(json!(project.readme))
+        }
         (_, "project") => {
             node(
                 "PVT",
@@ -749,6 +728,7 @@ pub(super) async fn mutation(
         let project = store::create(
             pool,
             actor,
+            &request.auth.credential(),
             owner(&input["ownerId"])?,
             input["title"].as_str().ok_or_else(missing)?,
             None,
@@ -769,6 +749,7 @@ pub(super) async fn mutation(
         let item = store::edit_draft(
             pool,
             actor,
+            &request.auth.credential(),
             id(&input["draftIssueId"], &["DI"])?,
             input["title"].as_str(),
             input["body"].as_str(),
@@ -787,7 +768,7 @@ pub(super) async fn mutation(
         .await
         .map_err(operation)?;
         let object = field_object(&f)?;
-        store::delete_field(pool, actor, f.project_id, f.id)
+        store::delete_field(pool, actor, &request.auth.credential(), f.project_id, f.id)
             .await
             .map_err(operation)?;
         payload["projectV2Field"] = object;
@@ -807,11 +788,11 @@ pub(super) async fn mutation(
                 public: input["public"].as_bool(),
                 closed: input["closed"].as_bool(),
             };
-            let mut updated = store::save(pool, actor, project.id, &settings)
+            let mut updated = store::save(pool, actor, &request.auth.credential(), project.id, &settings)
                 .await
                 .map_err(operation)?;
             if let Some(readme) = input["readme"].as_str() {
-                updated = store::metadata(pool, actor, project.id, Some(readme), None)
+                updated = store::metadata(pool, actor, &request.auth.credential(), project.id, Some(readme), None)
                     .await
                     .map_err(operation)?;
             }
@@ -822,6 +803,7 @@ pub(super) async fn mutation(
                 &store::metadata(
                     pool,
                     actor,
+                    &request.auth.credential(),
                     project.id,
                     None,
                     Some(field == "markProjectV2AsTemplate"),
@@ -845,7 +827,7 @@ pub(super) async fn mutation(
                 items.push(item_object(&item, request).await?);
             }
             object["_deletedItems"] = json!(items);
-            store::delete(pool, actor, project.id)
+            store::delete(pool, actor, &request.auth.credential(), project.id)
                 .await
                 .map_err(operation)?;
             payload["projectV2"] = object;
@@ -855,6 +837,7 @@ pub(super) async fn mutation(
                 &store::copy(
                     pool,
                     actor,
+                    &request.auth.credential(),
                     project.id,
                     owner(&input["ownerId"])?,
                     input["title"].as_str().ok_or_else(missing)?,
@@ -912,7 +895,7 @@ pub(super) async fn mutation(
                 iteration_configuration: iteration,
             };
             payload["projectV2Field"] = field_object(
-                &store::add_field(pool, actor, project.id, &new)
+                &store::add_field(pool, actor, &request.auth.credential(), project.id, &new)
                     .await
                     .map_err(operation)?,
             )?;
@@ -941,7 +924,7 @@ pub(super) async fn mutation(
                     store::Content::PullRequest(target)
                 }
             };
-            let item = store::add_item(pool, actor, project.id, &content)
+            let item = store::add_item(pool, actor, &request.auth.credential(), project.id, &content)
                 .await
                 .map_err(operation)?;
             payload[if field == "addProjectV2DraftIssue" {
@@ -979,6 +962,7 @@ pub(super) async fn mutation(
             let item = store::update_item(
                 pool,
                 actor,
+                &request.auth.credential(),
                 project.id,
                 id(&input["itemId"], &["PVTI"])?,
                 &[store::FieldUpdate {
@@ -994,6 +978,7 @@ pub(super) async fn mutation(
             let item = store::archive_item(
                 pool,
                 actor,
+                &request.auth.credential(),
                 project.id,
                 id(&input["itemId"], &["PVTI"])?,
                 field == "archiveProjectV2Item",
@@ -1003,7 +988,7 @@ pub(super) async fn mutation(
             payload["item"] = item_object(&item, request).await?;
         }
         "deleteProjectV2Item" => {
-            store::delete_item(pool, actor, project.id, id(&input["itemId"], &["PVTI"])?)
+            store::delete_item(pool, actor, &request.auth.credential(), project.id, id(&input["itemId"], &["PVTI"])?)
                 .await
                 .map_err(operation)?;
             payload["deletedItemId"] = input["itemId"].clone();
@@ -1017,6 +1002,7 @@ pub(super) async fn mutation(
             let item = store::reorder_item(
                 pool,
                 actor,
+                &request.auth.credential(),
                 project.id,
                 id(&input["itemId"], &["PVTI"])?,
                 after,
@@ -1029,6 +1015,7 @@ pub(super) async fn mutation(
             store::link_team(
                 pool,
                 actor,
+                &request.auth.credential(),
                 project.id,
                 id(&input["teamId"], &["T"])?,
                 field == "linkProjectV2ToTeam",
@@ -1041,6 +1028,7 @@ pub(super) async fn mutation(
             store::link_repository(
                 pool,
                 actor,
+                &request.auth.credential(),
                 project.id,
                 repo.id,
                 field == "linkProjectV2ToRepository",
