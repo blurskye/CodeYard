@@ -46,6 +46,7 @@ pub fn authorize_operation(
         Operation::FetchPullHead { .. } => ("FetchPullHead", false),
         Operation::Exists => ("Exists", false),
         Operation::SizeBytes => ("SizeBytes", false),
+        Operation::RefreshStorageSize => ("RefreshStorageSize", false),
         Operation::Refs => ("Refs", false),
         Operation::PrimaryRefs => ("PrimaryRefs", false),
         Operation::BranchPublication { .. } => ("BranchPublication", false),
@@ -567,6 +568,7 @@ impl RpcHandler {
             }
             Operation::Exists => serde_json::json!(store.exists().await),
             Operation::SizeBytes => json!(store.size_bytes()),
+            Operation::RefreshStorageSize => json!(store.refresh_storage_size_now(pool, repo_id.ok_or_else(unavailable)?)),
             Operation::Refs | Operation::PrimaryRefs => json!(store.refs()),
             Operation::BranchPublication {
                 repository_id,

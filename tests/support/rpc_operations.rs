@@ -130,6 +130,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (Operation::Exists, false),
         (Operation::SizeBytes, false),
+        (Operation::RefreshStorageSize, false),
         (Operation::Refs, false),
         (Operation::PrimaryRefs, false),
         (
@@ -150,6 +151,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (Operation::GitTag { sha: sha.into() }, false),
         (Operation::GitObjectKind { sha: sha.into() }, false),
+        (Operation::IntroducedBlobs { sha: sha.into() }, false),
         (
             Operation::WriteGitObject {
                 input: codeyard::backend::git::objects::ObjectWrite::Blob,

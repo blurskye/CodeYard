@@ -54,6 +54,7 @@ pub enum Operation {
     },
     Exists,
     SizeBytes,
+    RefreshStorageSize,
     Refs,
     /// The same refs as `Refs`, answered only by the primary. For a caller that writes the
     /// answer into the database.
