@@ -554,7 +554,7 @@ pub(super) async fn settings_model(
             }));
         }
         settings.secrets_enabled = ctx.state.secret_encryptor.is_some();
-        settings.variables = db::variables::list(&ctx.state.pool, viewer.id, loaded.repository.id)
+        settings.variables = db::variables::list(&ctx.state.pool, viewer.id, &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), loaded.repository.id)
             .await
             .map_err(|_| unavailable(ctx))?
             .into_iter()
@@ -1209,8 +1209,8 @@ const FORM_ACTIONS: &[FormAction] = &[
     form_action("code-security", "/settings", BOUND | ADMIN),
     form_action("secret-pattern-publish", "/settings", BOUND | ADMIN),
     form_action("secret-save", "/settings?tab=secrets", BOUND | ADMIN),
-    form_action("variable-save", "/settings?tab=secrets", BOUND | ADMIN),
-    form_action("variable-delete", "/settings?tab=secrets", BOUND | ADMIN | CONFIRM),
+    form_action("variable-save", "/settings?tab=secrets", BOUND | WRITE),
+    form_action("variable-delete", "/settings?tab=secrets", BOUND | WRITE | CONFIRM),
     form_action("secret-delete", "/settings?tab=secrets", BOUND | ADMIN | CONFIRM),
     form_action("rename", "/settings", BOUND | ADMIN | CONFIRM),
     form_action("transfer", "/settings", BOUND | ADMIN),

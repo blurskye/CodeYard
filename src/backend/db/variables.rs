@@ -1,4 +1,4 @@
-//! Actions variables are plain text; repository readers may inspect their values.
+//! Actions variables are plain text; repository collaborators may inspect their values.
 use super::DbPool;
 use chrono::{DateTime, Utc};
 
@@ -28,6 +28,11 @@ pub enum VariableError {
     InvalidValue,
     #[error("Repository variables exceed the count or size limit")]
     Limit,
+}
+
+pub(crate) fn authority(error: anyhow::Error) -> VariableError {
+    if error.is::<super::users::accounts::AccountRestricted>() { VariableError::Denied }
+    else { VariableError::Authority(error) }
 }
 
 pub fn validate(name: &str, value: &str) -> Result<(), VariableError> {
@@ -76,15 +81,15 @@ pub(crate) fn ensure_room(
 
 native_operation!(crate::backend::db::postgres::variables::list,
     crate::backend::db::sqlite::variables::list,
-    fn list(pool: &DbPool, actor: i64, repo: i64) -> Result<Vec<Variable>, VariableError>);
+    fn list(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64) -> Result<Vec<Variable>, VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::save,
     crate::backend::db::sqlite::variables::save,
-    fn save(pool: &DbPool, actor: i64, repo: i64, previous: Option<&str>, name: &str, value: Option<&str>) -> Result<(), VariableError>);
+    fn save(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, previous: Option<&str>, name: &str, value: Option<&str>) -> Result<(), VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::delete,
     crate::backend::db::sqlite::variables::delete,
-    fn delete(pool: &DbPool, actor: i64, repo: i64, name: &str) -> Result<(), VariableError>);
+    fn delete(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, name: &str) -> Result<(), VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::for_run,
     crate::backend::db::sqlite::variables::for_run,

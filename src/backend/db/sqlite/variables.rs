@@ -4,13 +4,13 @@ use sqlx::SqlitePool;
 pub async fn list(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
 ) -> Result<Vec<Variable>, VariableError> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::discussions::lock_settings_read_authority(&mut tx, actor, repo, false)
-        .await
-        .map_err(VariableError::Authority)?
-    {
+    let mut tx = pool.begin().await?;
+    let collaborator: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM (SELECT id,owner_kind,owner_user_id,owner_org_id,is_gist,TRUE AS is_private FROM repositories WHERE id=?2) r JOIN users u ON u.id=?1 WHERE NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({})>=1))", super::repositories::access::USER_REPO_ACCESS_SQL))
+        .bind(actor).bind(repo).fetch_one(&mut *tx).await?;
+    if !collaborator || !super::users::transitions::credential_live(&mut tx, actor, credential, false).await.map_err(VariableError::Authority)? {
         return Err(VariableError::Denied);
     }
     let variables = sqlx::query_as("SELECT name, value, created_at, updated_at FROM repo_actions_variables WHERE repo_id=?1 ORDER BY name")
@@ -22,6 +22,7 @@ pub async fn list(
 pub async fn save(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
     previous: Option<&str>,
     name: &str,
@@ -29,7 +30,8 @@ pub async fn save(
 ) -> Result<(), VariableError> {
     validate(name, value.unwrap_or_default())?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::discussions::lock_admin_authority(&mut tx, actor, repo)
+    super::users::transitions::require_account(&mut tx, actor, credential).await.map_err(super::super::variables::authority)?;
+    if !super::discussions::lock_write_authority(&mut tx, actor, repo)
         .await
         .map_err(VariableError::Authority)?
     {
@@ -81,11 +83,13 @@ pub async fn save(
 pub async fn delete(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
     name: &str,
 ) -> Result<(), VariableError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::discussions::lock_admin_authority(&mut tx, actor, repo)
+    super::users::transitions::require_account(&mut tx, actor, credential).await.map_err(super::super::variables::authority)?;
+    if !super::discussions::lock_write_authority(&mut tx, actor, repo)
         .await
         .map_err(VariableError::Authority)?
     {

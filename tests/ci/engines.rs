@@ -190,6 +190,7 @@ async fn contract(pg: bool) {
         db::variables::save(
             f.pool(),
             actor,
+            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), actor).await),
             repo.id,
             None,
             "REGION",

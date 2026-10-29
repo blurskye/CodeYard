@@ -543,6 +543,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     db::variables::save(
         pool,
         owner.id,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await),
         repo.id,
         None,
         "REGION",
@@ -3619,6 +3620,7 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
         db::variables::save(
             pool,
             owner.id,
+            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await),
             repo.id,
             None,
             "REGION",
