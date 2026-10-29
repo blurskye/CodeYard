@@ -156,12 +156,9 @@ async fn collection(
     .map_err(Error::unavailable)?;
     let mut items = Vec::new();
     let has_next = rows.len() > limit;
-    for repo in rows.iter().take(limit) {
-        let owner = db::repositories::records::repository_owner_name(&state.pool, repo.id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        items.push(payloads::repository(repo, &owner));
+    let readable = auth::readable_repositories(&state, viewer.as_ref(), &rows.iter().map(|repo| repo.id).collect::<Vec<_>>(), "metadata").await?;
+    for repo in rows.iter().take(limit).filter(|repo| readable.contains(&repo.id)) {
+        items.push(super::super::repos::document(&state, repo, viewer.as_ref()).await?);
     }
     page.response(&uri, items, has_next)
 }
