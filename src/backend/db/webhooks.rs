@@ -58,6 +58,8 @@ pub struct WebhookPatch {
     pub payload_url: Option<String>,
     pub content_type: Option<String>,
     pub events: Option<String>,
+    pub add_events: Vec<String>,
+    pub remove_events: Vec<String>,
     pub active: Option<bool>,
     pub ssl_verify: Option<bool>,
     pub clear_secret: bool,
@@ -72,10 +74,33 @@ impl From<&WebhookFields> for WebhookPatch {
             payload_url: Some(fields.payload_url.clone()),
             content_type: Some(fields.content_type.clone()),
             events: Some(fields.events.clone()),
+            add_events: Vec::new(),
+            remove_events: Vec::new(),
             active: Some(fields.active),
             ssl_verify: Some(fields.ssl_verify),
             clear_secret: false,
         }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct InvalidEvents(pub &'static str);
+
+impl WebhookPatch {
+    /// Resolve event deltas against the row locked by the webhook's write transaction.
+    pub(crate) fn changed_events(&self, current: &str) -> Result<Option<String>, InvalidEvents> {
+        use crate::backend::webhooks::events;
+        if self.events.is_none() && self.add_events.is_empty() && self.remove_events.is_empty() { return Ok(None); }
+        for delta in [&self.add_events, &self.remove_events] {
+            if !delta.is_empty() { events::subscription(delta).map_err(InvalidEvents)?; }
+        }
+        let mut selected: Vec<_> = self.events.as_deref().unwrap_or(current).split(',').filter(|name| !name.is_empty()).map(str::to_owned).collect();
+        for event in &self.add_events {
+            if !selected.contains(event) { selected.push(event.clone()); }
+        }
+        selected.retain(|event| !self.remove_events.contains(event));
+        events::subscription(&selected).map(Some).map_err(InvalidEvents)
     }
 }
 

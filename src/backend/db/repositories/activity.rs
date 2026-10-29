@@ -79,4 +79,4 @@ pub struct Filter<'a> {
 native_operation!(crate::backend::db::postgres::repositories::activity::record,crate::backend::db::sqlite::repositories::activity::record,
     fn record(pool:&DbPool,repo_id:i64,actor:i64,operation:&Uuid,changes:&[RefActivity<'_>])->Result<()>);
 native_operation!(crate::backend::db::postgres::repositories::activity::list,crate::backend::db::sqlite::repositories::activity::list,
-    fn list(pool:&DbPool,repo_id:i64,filter:&Filter<'_>,limit:i64)->Result<Vec<Activity>>);
+    fn list(pool:&DbPool,repo_id:i64,filter:&Filter<'_>,limit:i64,viewer:Option<i64>)->Result<Vec<Activity>>);

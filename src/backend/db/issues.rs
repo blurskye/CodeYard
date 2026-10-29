@@ -5,6 +5,10 @@ use crate::backend::db::models::{Issue, IssueComment};
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
+native_operation!(crate::backend::db::postgres::issues::issue_repositories,
+    crate::backend::db::sqlite::issues::issue_repositories,
+    fn issue_repositories(pool: &DbPool, ids: &[i64]) -> Result<Vec<(i64, i64)>>);
+
 /// What a new issue starts with besides its text: a parent issue, labels, assignees, a milestone
 /// and a type. The parent and labels and assignees need triage access, and the milestone and type
 /// need write access, as when they are set later. The creating transaction checks all of it, so

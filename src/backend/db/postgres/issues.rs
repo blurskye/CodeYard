@@ -11,6 +11,11 @@ use crate::backend::db::relationships::{Kind, Mutation};
 use crate::backend::db::issues::IssueListEntry;
 use crate::backend::db::issues::{IssueRelation, ViewerIssueEntry};
 use anyhow::Result;
+
+pub async fn issue_repositories(pool: &PgPool, ids: &[i64]) -> Result<Vec<(i64, i64)>> {
+    anyhow::ensure!(ids.len() <= 101, "Issue page exceeds its limit");
+    Ok(sqlx::query_as("SELECT id,repo_id FROM issues WHERE id=ANY($1)").bind(ids).fetch_all(pool).await?)
+}
 use sqlx::{PgPool, Postgres, Transaction};
 
 pub async fn create_issue_with_metadata(
