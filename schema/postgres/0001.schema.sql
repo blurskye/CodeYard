@@ -3383,7 +3383,7 @@ CREATE INDEX check_annotations_run ON check_annotations(run_id,id);
 
 CREATE TABLE check_suite_preferences (
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    app_id BIGINT NOT NULL REFERENCES oauth_applications(id) ON DELETE CASCADE,
+    app_id BIGINT NOT NULL REFERENCES github_apps(id) ON DELETE CASCADE,
     setting BOOLEAN NOT NULL,
     PRIMARY KEY(repo_id,app_id)
 );

@@ -31,11 +31,11 @@ async fn authority(
         let live: Option<i64> = sqlx::query_scalar("SELECT id FROM personal_access_tokens WHERE id=$1 AND scope='write' AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE")
             .bind(id).fetch_optional(&mut **tx).await?;
         ensure!(live.is_some() && super::fine_grained_tokens::repository_permission(tx, id, actor, repo, "checks").await?, Refusal::Denied);
-        let oauth: Option<(String, String, Option<i64>)> = sqlx::query_as("SELECT o.client_id,o.scopes,a.id FROM oauth_app_tokens o LEFT JOIN oauth_applications a ON a.client_id=o.client_id WHERE o.token_id=$1")
+        let oauth: Option<(String, String, Option<i64>, bool)> = sqlx::query_as("SELECT o.client_id,o.scopes,g.id,a.id IS NOT NULL FROM oauth_app_tokens o LEFT JOIN oauth_applications a ON a.client_id=o.client_id LEFT JOIN github_apps g ON g.client_id=o.client_id WHERE o.token_id=$1")
             .bind(id).fetch_optional(&mut **tx).await?;
-        if let Some((client, scopes, app_id)) = oauth {
+        if let Some((client, scopes, app_id, registered)) = oauth {
             ensure!(
-                (app_id.is_some() || client == crate::backend::identity::oauth_apps::CLI_CLIENT)
+                (registered || client == crate::backend::identity::oauth_apps::CLI_CLIENT)
                     && crate::backend::identity::oauth_apps::allows(
                         &scopes,
                         "/repos/owner/repo/check-runs",
@@ -81,7 +81,7 @@ async fn authority(
 /// The GitHub App behind the newest check run named `name` in the repository, if that run
 /// came from an App.
 pub async fn recent_app(pool: &PgPool, repo: i64, name: &str) -> Result<Option<i64>> {
-    Ok(sqlx::query_scalar::<_, Option<i64>>("SELECT g.id FROM check_runs r JOIN check_suites s ON s.id=r.suite_id LEFT JOIN oauth_applications o ON o.id=s.app_id LEFT JOIN github_apps g ON g.client_id=o.client_id WHERE r.repo_id=$1 AND r.name=$2 ORDER BY r.id DESC LIMIT 1")
+    Ok(sqlx::query_scalar::<_, Option<i64>>("SELECT s.app_id FROM check_runs r JOIN check_suites s ON s.id=r.suite_id WHERE r.repo_id=$1 AND r.name=$2 ORDER BY r.id DESC LIMIT 1")
         .bind(repo)
         .bind(name)
         .fetch_optional(pool)
@@ -94,7 +94,7 @@ pub async fn application(
     id: i64,
 ) -> Result<Option<crate::backend::db::oauth_apps::Application>> {
     Ok(
-        sqlx::query_as("SELECT * FROM oauth_applications WHERE id=$1")
+        sqlx::query_as("SELECT g.id,o.owner_id,o.client_id,o.secret_hash,o.name,o.homepage,o.redirect_uri,o.created_at FROM github_apps g JOIN oauth_applications o ON o.client_id=g.client_id WHERE g.id=$1")
             .bind(id)
             .fetch_optional(pool)
             .await?,
@@ -419,7 +419,7 @@ pub async fn preferences(
     authority(&mut tx, credential, repo, true).await?;
     for preference in preferences {
         let known: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM oauth_applications WHERE id=$1)")
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM github_apps WHERE id=$1)")
                 .bind(preference.app_id)
                 .fetch_one(&mut *tx)
                 .await?;
