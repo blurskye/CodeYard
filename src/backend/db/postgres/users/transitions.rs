@@ -49,6 +49,12 @@ pub(crate) async fn organization_name_exists(
     )
 }
 
+pub(crate) async fn email_owned(tx: &mut Transaction<'_, Postgres>, email: Option<&str>, except: i64) -> Result<bool> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),37004)").execute(&mut **tx).await?;
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE lower(email)=lower($1) AND id<>$2) OR EXISTS(SELECT 1 FROM user_emails WHERE lower(email)=lower($1) AND user_id<>$2)")
+        .bind(email).bind(except).fetch_one(&mut **tx).await?)
+}
+
 pub(crate) async fn require_user_namespace(
     tx: &mut Transaction<'_, Postgres>,
     username: &str,
@@ -275,6 +281,9 @@ pub async fn create_cli_user(
         return Ok(AccountAdmission::SetupRequired);
     }
     require_user_namespace(&mut tx, username).await?;
+    if email_owned(&mut tx, email, -1).await? {
+        return Ok(AccountAdmission::Conflict);
+    }
     let user =
         sqlx::query_as::<_, User>("INSERT INTO users (username,email) VALUES ($1,$2) RETURNING *")
             .bind(username)
@@ -398,12 +407,7 @@ pub async fn change_email(
     if !current_password(&mut tx, user_id, expected, session, false).await? {
         return Ok(EmailChange::Missing);
     }
-    if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE lower(email)=lower($1) AND id<>$2) OR EXISTS(SELECT 1 FROM user_emails WHERE lower(email)=lower($1) AND user_id<>$2)")
-        .bind(email)
-        .bind(user_id)
-        .fetch_one(&mut *tx)
-        .await?
-    {
+    if email_owned(&mut tx, Some(email), user_id).await? {
         return Ok(EmailChange::Taken);
     }
     let changed: bool = sqlx::query_scalar("SELECT email IS DISTINCT FROM $2 FROM users WHERE id=$1")
@@ -516,9 +520,8 @@ pub async fn register_password(
     if organization_name_exists(&mut tx, username).await? {
         return Ok(AccountAdmission::Conflict);
     }
-    if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username=$1 OR ($2::text IS NOT NULL AND lower(email)=lower($2)))
-         OR ($2::text IS NOT NULL AND EXISTS(SELECT 1 FROM user_emails WHERE lower(email)=lower($2)))")
-        .bind(username).bind(email).fetch_one(&mut *tx).await? { return Ok(AccountAdmission::Conflict); }
+    if email_owned(&mut tx, email, -1).await? || sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username=$1)")
+        .bind(username).fetch_one(&mut *tx).await? { return Ok(AccountAdmission::Conflict); }
     if config.node_mode == "private" && administrator.is_none() {
         if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM signup_requests WHERE status='pending' AND (username_key=$1 OR ($2::text IS NOT NULL AND email_key=$2)))")
             .bind(username.to_lowercase()).bind(email.map(str::to_lowercase)).fetch_one(&mut *tx).await? { return Ok(AccountAdmission::Conflict); }
@@ -704,9 +707,11 @@ pub async fn reset_password_with_link(
     let mut tx = pool.begin().await?;
     // The membership lock comes before the link row, as in the other account changes.
     lock_membership(&mut tx).await?;
+    sqlx::query("SELECT user_id FROM email_tokens WHERE purpose='reset' AND token_hash=$1 FOR UPDATE")
+        .bind(token_hash).execute(&mut *tx).await?;
     let taken: Option<i64> = sqlx::query_scalar(
         "DELETE FROM email_tokens
-         WHERE purpose = 'reset' AND token_hash = $1 AND expires_at > NOW()
+         WHERE purpose = 'reset' AND token_hash = $1 AND expires_at > clock_timestamp()
            AND EXISTS (SELECT 1 FROM users u
                        WHERE u.id = email_tokens.user_id AND u.email = email_tokens.email
                          AND NOT u.is_banned)
