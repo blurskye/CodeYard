@@ -62,6 +62,7 @@ fn entries(repo: &Repository, commit: &Commit<'_>) -> Result<Vec<TreeObjectEntry
         );
         files.push(TreeObjectEntry {
             path: name.into(),
+            path_raw: name.as_bytes().to_vec(),
             mode: format!("{:06o}", entry.filemode()),
             kind: "blob".into(),
             sha: entry.id().to_string(),

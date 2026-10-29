@@ -106,6 +106,8 @@ pub struct TreeObject {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreeObjectEntry {
     pub path: String,
+    #[serde(default)]
+    pub path_raw: Vec<u8>,
     pub mode: String,
     pub kind: String,
     pub sha: String,
@@ -156,53 +158,58 @@ fn checked_tree(repo: &Repository, id: Oid) -> Result<git2::Tree<'_>> {
     Ok(repo.find_tree(id)?)
 }
 
-pub(crate) fn read_tree(path: &Path, revision: &str, recursive: bool) -> Result<TreeObject> {
-    let repo = Repository::open_bare(path)?;
-    let (id, kind) = super::repository::peel_revision(&repo, revision)?;
-    let id = if kind == ObjectType::Commit {
-        super::repository::find_commit_checked(&repo, id)?.tree_id()
-    } else {
-        id
-    };
-    let root = checked_tree(&repo, id)?;
-    let mut result = TreeObject {
-        sha: id.to_string(),
-        tree: Vec::new(),
-        truncated: false,
-    };
-    let mut pending = vec![(root.id(), String::new(), 0usize)];
-    let mut path_bytes = 0;
+pub(crate) async fn read_tree(path: &Path, revision: &str, recursive: bool) -> Result<TreeObject> {
+    use super::repository::process;
+    let deadline = std::time::Instant::now() + process::RPC_TIMEOUT;
+    let (owned_path, revision) = (path.to_owned(), revision.to_owned());
+    let id = process::blocking_until(deadline, move || {
+        let repo = Repository::open_bare(owned_path)?;
+        let (id, kind) = super::repository::peel_revision(&repo, &revision)?;
+        Ok(if kind == ObjectType::Commit { super::repository::find_commit_checked(&repo, id)?.tree_id() } else { id })
+    }).await?;
+    let mut result = TreeObject { sha: id.to_string(), tree: Vec::new(), truncated: false };
+    let mut pending = vec![(id.to_string(), Vec::new(), 0usize)];
+    let mut path_bytes = 0usize;
     while let Some((id, prefix, depth)) = pending.pop() {
-        let tree = checked_tree(&repo, id)?;
+        let (owned_path, tree_id) = (path.to_owned(), id.clone());
+        process::blocking_until(deadline, move || {
+            let repo = Repository::open_bare(owned_path)?;
+            let (size, kind) = repo.odb()?.read_header(oid(&tree_id)?)?;
+            anyhow::ensure!(kind == ObjectType::Tree && size <= MAX_BYTES, invalid("Invalid or oversized tree"));
+            Ok(())
+        }).await?;
+        // Header sizes alone do not bound packed delta bases. Only the resource-limited
+        // child inflates tree payloads, including very large bases of small delta trees.
+        let mut command = process::git_command()?;
+        command.arg("--git-dir").arg(path).args(["ls-tree", "-z", "-l", &id]);
+        let (status, bytes) = process::buffered(command, b"", 4 * MAX_BYTES, deadline.saturating_duration_since(std::time::Instant::now())).await?;
+        anyhow::ensure!(status.success(), "Git could not read tree");
         let mut subtrees = Vec::new();
-        for entry in &tree {
-            let name = String::from_utf8_lossy(entry.name_bytes());
-            let path = format!("{prefix}{name}");
-            path_bytes += path.len();
-            if result.tree.len() == MAX_ENTRIES || path_bytes > MAX_BYTES || depth > MAX_DEPTH {
+        for record in bytes.split(|byte| *byte == 0).filter(|record| !record.is_empty()) {
+            let tab = record.iter().position(|byte| *byte == b'\t').ok_or_else(|| invalid("Invalid tree entry"))?;
+            let fields = std::str::from_utf8(&record[..tab])?.split_ascii_whitespace().collect::<Vec<_>>();
+            anyhow::ensure!(fields.len() == 4, invalid("Invalid tree entry"));
+            let mut raw = prefix.clone();
+            raw.extend_from_slice(&record[tab + 1..]);
+            path_bytes = path_bytes.saturating_add(raw.len());
+            if recursive && (result.tree.len() == MAX_ENTRIES || path_bytes > MAX_BYTES || depth > MAX_DEPTH) {
                 result.truncated = true;
                 return Ok(result);
             }
-            let entry_kind = entry.kind().ok_or_else(|| invalid("Invalid tree entry"))?;
-            let size = if entry_kind == ObjectType::Blob {
-                Some(repo.odb()?.read_header(entry.id())?.0)
-            } else {
-                None
+            let entry = TreeObjectEntry {
+                path: String::from_utf8_lossy(&raw).into_owned(),
+                path_raw: raw.clone(), mode: fields[0].into(), kind: fields[1].into(), sha: fields[2].into(),
+                size: if fields[3] == "-" { None } else { Some(fields[3].parse()?) },
             };
-            result.tree.push(TreeObjectEntry {
-                path: path.clone(),
-                mode: format!("{:06o}", entry.filemode()),
-                kind: entry_kind.str().into(),
-                sha: entry.id().to_string(),
-                size,
-            });
-            if recursive && entry_kind == ObjectType::Tree {
-                subtrees.push((entry.id(), format!("{path}/"), depth + 1));
+            if recursive && entry.kind == "tree" {
+                raw.push(b'/');
+                subtrees.push((entry.sha.clone(), raw, depth + 1));
             }
+            result.tree.push(entry);
         }
         pending.extend(subtrees.into_iter().rev());
     }
-    result.tree.sort_by(|a, b| a.path.cmp(&b.path));
+    result.tree.sort_by(|a, b| a.path_raw.cmp(&b.path_raw));
     Ok(result)
 }
 

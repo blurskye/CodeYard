@@ -346,11 +346,11 @@ pub(crate) struct NotFile;
 
 /// Reads a bounded set of template texts in one repository reader at one commit.
 /// Missing, non-file, oversized and binary entries are absent; disk failures remain errors.
-pub(crate) fn template_texts(
+fn template_metadata(
     repo_path: &Path,
     revision: &str,
     paths: &[String],
-) -> Result<Vec<Option<(String, String)>>> {
+) -> Result<Vec<Option<(String, u64)>>> {
     use crate::backend::repositories::issue_templates::{MAX_TEMPLATES, MAX_TEMPLATE_BYTES};
     ensure!(
         paths.len() <= MAX_TEMPLATES + 2
@@ -381,15 +381,24 @@ pub(crate) fn template_texts(
             if size as u64 > MAX_TEMPLATE_BYTES {
                 return Ok(None);
             }
-            let blob = repo.find_blob(entry.id())?;
-            if blob.is_binary() {
-                return Ok(None);
-            }
-            Ok(std::str::from_utf8(blob.content())
-                .ok()
-                .map(|text| (entry.id().to_string(), text.to_owned())))
+            Ok(Some((entry.id().to_string(), size as u64)))
         })
         .collect()
+}
+
+pub(crate) async fn template_texts(repo_path: &Path, revision: &str, paths: &[String]) -> Result<Vec<Option<(String, String)>>> {
+    let (owned_path, revision, paths) = (repo_path.to_owned(), revision.to_owned(), paths.to_vec());
+    let metadata = process::blocking_until(Instant::now() + process::RPC_TIMEOUT, move || template_metadata(&owned_path, &revision, &paths)).await?;
+    let mut result = Vec::with_capacity(metadata.len());
+    for metadata in metadata {
+        let text = if let Some((id, size)) = metadata {
+            let _permit = process::operation_slot(process::RPC_TIMEOUT).await?;
+            let (bytes, binary) = read_blob_range(repo_path, &id, size, 0, size as usize).await?;
+            if binary { None } else { String::from_utf8(bytes).ok().map(|text| (id, text)) }
+        } else { None };
+        result.push(text);
+    }
+    Ok(result)
 }
 
 /// Resolves a path without materializing its blob and returns its object ID, size and file mode.
@@ -1099,16 +1108,17 @@ pub(crate) async fn list_tree_with_history(
 }
 
 /// A blob by object ID, wherever it appears in the repository.
-pub(crate) fn get_blob_by_id(repo_path: &Path, id: &str) -> Result<Vec<u8>> {
-    let repo = Repository::open_bare(repo_path)?;
-    let id = git2::Oid::from_str(id)?;
-    let (size, kind) = repo.odb()?.read_header(id)?;
-    anyhow::ensure!(kind == ObjectType::Blob, "Not a blob");
-    if size > MAX_BLOB_MATERIALIZE_BYTES {
-        return Err(ObjectTooLarge.into());
-    }
-    let blob = repo.find_blob(id)?;
-    Ok(blob.content().to_vec())
+pub(crate) async fn get_blob_by_id(repo_path: &Path, id: &str) -> Result<Vec<u8>> {
+    let (owned_path, owned_id) = (repo_path.to_owned(), id.to_owned());
+    let size = process::blocking_until(Instant::now() + process::RPC_TIMEOUT, move || {
+        let repo = Repository::open_bare(owned_path)?;
+        let (size, kind) = repo.odb()?.read_header(git2::Oid::from_str(&owned_id)?)?;
+        anyhow::ensure!(kind == ObjectType::Blob, "Not a blob");
+        if size > super::objects::MAX_BLOB_WRITE_BYTES { return Err(ObjectTooLarge.into()); }
+        Ok(size)
+    }).await?;
+    let _permit = process::operation_slot(process::RPC_TIMEOUT).await?;
+    Ok(read_blob_range(repo_path, id, size as u64, 0, size).await?.0)
 }
 
 /// Blame bounds the selected file, subprocess output, memory and execution time.
@@ -1148,7 +1158,7 @@ pub struct FileBlame {
 /// Blames a text file as of `git_ref`. The content and the hunks come from the same commit,
 /// so the lines always match the hunks.
 pub(crate) async fn blame_file(repo_path: &Path, git_ref: &str, path: &str) -> Result<FileBlame> {
-    let (revision, size, content) = {
+    let (revision, size, blob_id) = {
         let (repo_path, git_ref, path) =
             (repo_path.to_owned(), git_ref.to_owned(), path.to_owned());
         let permit = process::operation_slot(process::RPC_TIMEOUT).await?;
@@ -1162,19 +1172,15 @@ pub(crate) async fn blame_file(repo_path: &Path, git_ref: &str, path: &str) -> R
             if size > MAX_BLAME_FILE_BYTES {
                 return Err(BlameRefused(BLAME_TOO_LARGE).into());
             }
-            let blob = repo.find_blob(entry.id())?;
-            if blob.is_binary() {
-                return Err(BlameRefused(BLAME_BINARY).into());
-            }
-            let content = String::from_utf8_lossy(blob.content()).into_owned();
-            if content.lines().count() > MAX_BLAME_LINES {
-                return Err(BlameRefused(BLAME_TOO_LARGE).into());
-            }
-            Ok::<_, anyhow::Error>((commit.id().to_string(), size as u64, content))
+            Ok::<_, anyhow::Error>((commit.id().to_string(), size as u64, entry.id().to_string()))
         })
         .await
         .context("Git blame file read stopped")??
     };
+    let (bytes, binary) = read_blob_range(repo_path, &blob_id, size, 0, size as usize).await?;
+    if binary { return Err(BlameRefused(BLAME_BINARY).into()); }
+    let content = String::from_utf8_lossy(&bytes).into_owned();
+    if content.lines().count() > MAX_BLAME_LINES { return Err(BlameRefused(BLAME_TOO_LARGE).into()); }
     let mut command = process::git_command()?;
     command
         .arg("--literal-pathspecs")
