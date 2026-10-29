@@ -1054,21 +1054,31 @@ pub(crate) async fn publish_branch_rename(
     new: &str,
     target: &str,
 ) -> Result<()> {
-    let old = crate::backend::git::branch_ref(old).ok_or_else(|| anyhow!("Invalid branch"))?;
-    let new = crate::backend::git::branch_ref(new).ok_or_else(|| anyhow!("Invalid branch"))?;
+    let old_ref = crate::backend::git::branch_ref(old).ok_or_else(|| anyhow!("Invalid branch"))?;
+    let new_ref = crate::backend::git::branch_ref(new).ok_or_else(|| anyhow!("Invalid branch"))?;
     validate_merge_revision("main", target)?;
-    let input = format!(
-        "start\noption no-deref\ncreate {new} {target}\ndelete {old} {target}\nprepare\ncommit\n"
-    );
-    let (status, _) = command(
-        path,
-        &["update-ref", "--stdin", "-m", "rename branch"],
-        input.as_bytes(),
-        None,
-    )
-    .await?;
-    ensure!(status.success(), "Reference changed while renaming");
-    Ok(())
+    let prefix_related = old_ref.starts_with(&format!("{new_ref}/")) || new_ref.starts_with(&format!("{old_ref}/"));
+    let outcome = if prefix_related {
+        // The caller retains the interprocess publication lease through this operation. Git's
+        // native rename handles file/directory conflicts that a create/delete transaction cannot.
+        ensure!(current_branch_head(path, old).await?.as_deref() == Some(target), "Reference changed while renaming");
+        command(path, &["branch", "--move", "--", old, new], b"", None).await
+    } else {
+        let input = format!(
+            "start\noption no-deref\ncreate {new_ref} {target}\ndelete {old_ref} {target}\nprepare\ncommit\n"
+        );
+        command(path, &["update-ref", "--stdin", "-m", "rename branch"], input.as_bytes(), None).await
+    };
+    if outcome.as_ref().is_ok_and(|(status, _)| status.success()) { return Ok(()); }
+    // A timeout or failed exit may still follow an accepted ref move. Finish its metadata.
+    // Prefix-related refs cannot coexist; avoid probing through the new parent ref's file.
+    if current_branch_head(path, new).await?.as_deref() == Some(target)
+        && (prefix_related || current_branch_head(path, old).await?.is_none())
+    {
+        return Ok(());
+    }
+    outcome?;
+    bail!("Reference changed while renaming")
 }
 
 pub(crate) async fn publish_ref_create(path: &Path, reference: &str, target: &str) -> Result<()> {

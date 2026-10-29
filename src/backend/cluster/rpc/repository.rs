@@ -888,13 +888,16 @@ impl RpcHandler {
             Operation::CiWorkflowFile { sha, workflow_path } => {
                 json!(store.ci_workflow_file(&sha, &workflow_path))
             }
-            Operation::RenameBranch { old, new } => json!(store.rename_branch_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                &old,
-                &new
-            )),
+            Operation::RenameBranch { old, new } => {
+                let (authority, new) = new.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.rename_branch_as(
+                    pool,
+                    repo_id.ok_or_else(|| invalid("repository unavailable"))?,
+                    authority,
+                    &old,
+                    &new
+                ))
+            },
             Operation::MergeUpstream {
                 source,
                 branch,

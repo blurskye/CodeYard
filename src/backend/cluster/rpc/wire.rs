@@ -42,8 +42,37 @@ impl PublicationCredential {
             Self::LegacyToken(token_id) => AccountActor::Token { user_id: expected, token_id },
             Self::Actor(actor) => actor,
         };
-        if actor.user_id() != expected { return Err(invalid("merge credential actor mismatch")); }
+        if actor.user_id() != expected { return Err(invalid("publication credential actor mismatch")); }
         Ok(actor)
+    }
+}
+
+/// Bind a mutation's original text input to its initiating credential. Keeping the
+/// credential in a formerly string-valued slot makes older peers reject it safely.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PublicationText {
+    Legacy(String),
+    Retained { value: String, authority: crate::backend::db::users::accounts::AccountActor },
+}
+impl From<&str> for PublicationText {
+    fn from(value: &str) -> Self { Self::Legacy(value.into()) }
+}
+impl From<String> for PublicationText {
+    fn from(value: String) -> Self { Self::Legacy(value) }
+}
+impl PublicationText {
+    pub fn retain(value: &str, authority: crate::backend::db::users::accounts::AccountActor) -> Self {
+        match authority {
+            crate::backend::db::users::accounts::AccountActor::Trusted(_) => Self::Legacy(value.into()),
+            authority => Self::Retained { value: value.into(), authority },
+        }
+    }
+    pub fn into_parts(self, actor: i64) -> Result<(crate::backend::db::users::accounts::AccountActor, String), RepoError> {
+        match self {
+            Self::Legacy(value) => Ok((actor.into(), value)),
+            Self::Retained { value, authority } => Ok((PublicationCredential::Actor(authority).into_actor(actor)?, value)),
+        }
     }
 }
 
@@ -300,7 +329,7 @@ pub enum Operation {
     },
     RenameBranch {
         old: String,
-        new: String,
+        new: PublicationText,
     },
     MergeUpstream {
         source: Uuid,

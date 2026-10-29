@@ -1449,19 +1449,20 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         old: &str,
         new: &str,
     ) -> Result<String, RepoError> {
+        let authority = actor.into();
         match &self.0 {
-            Backend::Local(local) => local.rename_branch(pool, repo_id, actor, old, new).await,
+            Backend::Local(local) => local.rename_branch(pool, repo_id, authority, old, new).await,
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor,
+                        authority.user_id(),
                         Operation::RenameBranch {
                             old: old.into(),
-                            new: new.into(),
+                            new: rpc::wire::PublicationText::retain(new, authority),
                         },
                         b"",
                     )
