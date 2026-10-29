@@ -155,6 +155,7 @@ async fn list(
         actor,
         owner: org,
         repo,
+        session: None,
         digests: Some(&digests),
         predicate: checked_predicate(page.predicate_type.as_deref())?,
         after,
@@ -210,6 +211,7 @@ async fn bulk_list(
         actor,
         owner: org,
         repo,
+        session: None,
         digests: Some(&input.subject_digests),
         predicate: checked_predicate(input.predicate_type.as_deref())?,
         after,
@@ -260,6 +262,7 @@ async fn repositories(
         actor,
         owner: org,
         repo,
+        session: None,
         digests: None,
         predicate: checked_predicate(page.predicate_type.as_deref())?,
         after,
@@ -346,7 +349,7 @@ async fn remove(
         }
         (vec![], vec![digest.clone()])
     };
-    let count = attestations::delete(&state.pool, actor.user.id, owner, &ids, &digests)
+    let count = attestations::delete(&state.pool, actor.user.id, &db::users::accounts::AccountCredential::Token(actor.token.id), owner, &ids, &digests)
         .await
         .map_err(failure)?;
     if count == 0 {
