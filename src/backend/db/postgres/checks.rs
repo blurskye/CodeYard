@@ -285,6 +285,19 @@ pub async fn update_run(
 }
 
 const RUNS: &str = " FROM check_runs r JOIN check_suites s ON s.id=r.suite_id WHERE r.repo_id=$1 AND ($2::bigint IS NULL OR r.suite_id=$2) AND ($3::text IS NULL OR s.head_sha=$3) AND ($4::text IS NULL OR r.name=$4) AND ($5::text IS NULL OR r.status=$5) AND ($6::bigint IS NULL OR s.app_id=$6) AND ($7 OR NOT EXISTS(SELECT 1 FROM check_runs n WHERE n.suite_id=r.suite_id AND n.name=r.name AND n.id>r.id))";
+pub async fn rollup_runs(pool: &PgPool, repo: i64, sha: &str, offset: i64, limit: i64) -> Result<Vec<Run>> {
+    anyhow::ensure!(offset >= 0 && (0..=100).contains(&limit), Refusal::Invalid);
+    Ok(sqlx::query_as(&format!("SELECT r.id,r.repo_id,r.suite_id,r.name,r.status,r.conclusion,jsonb_build_object('details_url',r.data->'details_url','external_id',r.data->'external_id','started_at',r.data->'started_at','completed_at',r.data->'completed_at','images','[]'::jsonb,'actions','[]'::jsonb) AS data,r.created_at,r.updated_at{RUNS} ORDER BY r.id DESC LIMIT $8 OFFSET $9"))
+        .bind(repo).bind(None::<i64>).bind(sha).bind(None::<String>).bind(None::<String>).bind(None::<i64>).bind(false).bind(limit).bind(offset).fetch_all(pool).await?)
+}
+pub async fn rollup_counts(pool: &PgPool, repo: i64, sha: &str) -> Result<Vec<(String, i64)>> {
+    Ok(sqlx::query_as(&format!("SELECT UPPER(CASE WHEN r.status='completed' THEN COALESCE(r.conclusion,r.status) ELSE r.status END),COUNT(*){RUNS} GROUP BY 1 ORDER BY 1"))
+        .bind(repo).bind(None::<i64>).bind(sha).bind(None::<String>).bind(None::<String>).bind(None::<i64>).bind(false).fetch_all(pool).await?)
+}
+pub async fn workflow_metadata(pool: &PgPool, repo: i64, suite: i64) -> Result<Option<(String, String, Option<String>)>> {
+    Ok(sqlx::query_as("SELECT c.event,c.workflow_path,w.name FROM check_suites s JOIN ci_runs c ON c.id=s.ci_run_id AND c.repo_id=s.repo_id LEFT JOIN actions_workflows w ON w.repo_id=c.repo_id AND w.path=c.workflow_path WHERE s.repo_id=$1 AND s.id=$2").bind(repo).bind(suite).fetch_optional(pool).await?)
+}
+
 pub async fn runs(
     pool: &PgPool,
     repo: i64,
