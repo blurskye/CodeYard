@@ -546,11 +546,11 @@ mod tests {
             std::slice::from_ref(&snapshot),
             std::slice::from_ref(&document),
             &osv,
-        );
+        ).unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].0.version, "1.0rc1");
         osv.values_mut().next().unwrap().withdrawn = Some(chrono::Utc::now());
-        assert!(db::dependabot_alerts::matches(&[snapshot], &[document], &osv).is_empty());
+        assert!(db::dependabot_alerts::matches(&[snapshot], &[document], &osv).unwrap().is_empty());
     }
     #[test]
     fn local_maven_advisories_match_namespaced_package_urls() {
@@ -571,7 +571,7 @@ mod tests {
             &[snapshot],
             &[document],
             &std::collections::BTreeMap::new(),
-        );
+        ).unwrap();
         assert_eq!(matches.len(), 1);
     }
     #[test]

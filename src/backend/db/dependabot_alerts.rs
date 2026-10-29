@@ -334,12 +334,68 @@ pub fn affected(version: &str, range: &str) -> bool {
         semver::VersionReq::parse(&range).is_ok_and(|r| r.matches(&version))
     })
 }
+pub(crate) fn osv_records(rows: Vec<String>) -> Result<(std::collections::BTreeMap<String, crate::backend::vulnerabilities::Advisory>, Vec<String>)> {
+    let mut records = std::collections::BTreeMap::new();
+    let mut aliases = std::collections::BTreeSet::new();
+    for data in rows {
+        let record: crate::backend::vulnerabilities::Advisory = serde_json::from_str(&data)?;
+        aliases.insert(record.global_document()?["ghsa_id"].as_str().unwrap().to_owned());
+        records.insert(record.id.clone(), record);
+    }
+    Ok((records, aliases.into_iter().collect()))
+}
+
+pub(crate) fn catalogue_for_records(
+    catalogue: &mut Vec<Value>,
+    records: &mut std::collections::BTreeMap<String, crate::backend::vulnerabilities::Advisory>,
+    overrides: Vec<(String, Option<String>)>,
+) -> Result<()> {
+    let mut manual = std::collections::HashSet::new();
+    let mut documents = std::collections::BTreeMap::new();
+    for document in catalogue.drain(..) {
+        let ghsa = document["ghsa_id"].as_str().ok_or(Refusal::Invalid)?.to_owned();
+        documents.insert(ghsa, document);
+    }
+    for (data, osv_id) in overrides {
+        let document: Value = serde_json::from_str(&data)?;
+        let ghsa = document["ghsa_id"].as_str().ok_or(Refusal::Invalid)?.to_owned();
+        if osv_id.is_none() { manual.insert(ghsa.clone()); }
+        documents.insert(ghsa, document);
+    }
+    let mut remove = Vec::new();
+    for (id, record) in records.iter() {
+        if manual.contains(record.global_document()?["ghsa_id"].as_str().unwrap()) { remove.push(id.clone()); }
+    }
+    for id in remove { records.remove(&id); }
+    *catalogue = documents.into_values().collect();
+    Ok(())
+}
+
 pub(crate) fn matches(
     snapshots: &[Snapshot],
     advisories: &[Value],
     osv: &std::collections::BTreeMap<String, crate::backend::vulnerabilities::Advisory>,
-) -> Vec<(Package, Value, Value)> {
+) -> Result<Vec<(Package, Value, Value)>> {
     use crate::backend::vulnerabilities;
+    // Catalogue metadata has one winner per GHSA. Matching retains every indexed OSV
+    // record's affected packages and withdrawal state, including older alias records.
+    let display: std::collections::HashMap<&str, &Value> = advisories.iter().filter_map(|document| document["ghsa_id"].as_str().map(|id| (id, document))).collect();
+    let mut sources = Vec::new();
+    let mut represented = std::collections::HashSet::new();
+    for record in osv.values() {
+        let mut document = record.global_document()?;
+        let ghsa = document["ghsa_id"].as_str().unwrap().to_owned();
+        represented.insert(ghsa.clone());
+        if let Some(display) = display.get(ghsa.as_str()) {
+            for (key, value) in display.as_object().ok_or(Refusal::Invalid)? {
+                if key != "vulnerabilities" && key != "withdrawn_at" { document[key] = value.clone(); }
+            }
+        }
+        sources.push((document, Some(record)));
+    }
+    for document in advisories {
+        if !represented.contains(document["ghsa_id"].as_str().unwrap_or("")) { sources.push((document.clone(), None)); }
+    }
     let normalized = |ecosystem: &str, name: &str| {
         vulnerabilities::name(vulnerabilities::ecosystem(ecosystem).unwrap_or(""), name)
     };
@@ -347,8 +403,8 @@ pub(crate) fn matches(
     // only with the entries that name it.
     let mut candidates: std::collections::HashMap<(String, String), Vec<_>> =
         std::collections::HashMap::new();
-    for advisory in advisories {
-        let osv = advisory["ghsa_id"].as_str().and_then(|id| osv.get(id));
+    for (advisory, osv) in &sources {
+        let osv = *osv;
         if !advisory["withdrawn_at"].is_null()
             || (advisory["severity"] == "unknown" && osv.is_none())
         {
@@ -416,7 +472,7 @@ pub(crate) fn matches(
             });
         }
     }
-    matches.into_values().collect()
+    Ok(matches.into_values().collect())
 }
 
 native_operation!(crate::backend::db::postgres::dependabot_alerts::global,crate::backend::db::sqlite::dependabot_alerts::global,
