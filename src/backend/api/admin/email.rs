@@ -60,16 +60,19 @@ async fn save(
             "The password is too long.".to_owned(),
         ));
     }
-    // The first save from the environment's settings keeps the environment's password.
-    if password.is_empty() {
-        let source = config::describe(&state.pool).await.map_err(|_| {
+    // Inherit credentials only for an authenticated relay and only from valid environment
+    // settings. An invalid old environment must not prevent saving its replacement.
+    if password.is_empty() && !server.username.is_empty() {
+        let saved = db::email::get_email_settings(&state.pool).await.map_err(|_| {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Unable to read the current mail settings.".to_owned(),
             )
         })?;
-        if let Some((env, Source::Environment, _)) = source {
-            password = env.password.unwrap_or_default();
+        if saved.is_none() {
+            if let Ok(Some(env)) = config::from_env() {
+                password = env.password.unwrap_or_default();
+            }
         }
     }
     let sealed = if password.is_empty() {
