@@ -327,64 +327,70 @@ pub async fn organization_catalog(
 async fn begin_organization_write(
     pool: &PgPool,
     org: i64,
-    actor: i64,
+    actor: crate::backend::db::users::tokens::Actor,
 ) -> Result<Transaction<'_, Postgres>> {
     use crate::backend::db::{models::OrgRole, organizations::OrganizationOutcome};
     let mut tx = pool.begin().await?;
-    match super::organizations::authority::authority(&mut tx, actor, org).await? {
+    match super::organizations::authority::authority(&mut tx, actor.user_id, org).await? {
         OrganizationOutcome::Applied(OrgRole::Owner) => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
     }
     lock_metadata(&mut tx).await?;
+    if let Some(token) = actor.token_id {
+        anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor.user_id, token, None, Some(org), "organization_administration").await?, Refusal::Denied);
+    }
     Ok(tx)
 }
 pub async fn configure_organization(
     pool: &PgPool,
     org: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     d: &Definition,
 ) -> Result<Attribute> {
     d.validate()?;
+    let actor = actor.into();
     let tx = begin_organization_write(pool, org, actor).await?;
-    configure_owner(tx, actor, (None, Some(org)), d).await
+    configure_owner(tx, actor.user_id, (None, Some(org)), d).await
 }
 pub async fn create_organization_field(
     pool: &PgPool,
     org: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     d: &Definition,
 ) -> Result<Attribute> {
     anyhow::ensure!(d.id.is_none() && d.kind == "field", Refusal::Invalid);
     d.validate()?;
+    let actor = actor.into();
     let tx = begin_organization_write(pool, org, actor).await?;
-    configure_owner(tx, actor, (None, Some(org)), d).await
+    configure_owner(tx, actor.user_id, (None, Some(org)), d).await
 }
 pub async fn patch_organization_field(
     pool: &PgPool,
     org: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     id: i64,
     changes: &FieldChanges,
 ) -> Result<Attribute> {
+    let actor = actor.into();
     let mut tx = begin_organization_write(pool, org, actor).await?;
-    let current = catalog_owner(&mut tx, None, Some(org), Some(actor), "field")
+    let current = catalog_owner(&mut tx, None, Some(org), Some(actor.user_id), "field")
         .await?
         .into_iter()
         .find(|attribute| attribute.id == id)
         .ok_or(Refusal::Missing)?;
     let definition = changes.apply_to(&current);
     definition.validate()?;
-    configure_owner(tx, actor, (None, Some(org)), &definition).await
+    configure_owner(tx, actor.user_id, (None, Some(org)), &definition).await
 }
 pub async fn delete_organization_definition(
     pool: &PgPool,
     org: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     id: i64,
     kind: &str,
 ) -> Result<()> {
-    let mut tx = begin_organization_write(pool, org, actor).await?;
+    let mut tx = begin_organization_write(pool, org, actor.into()).await?;
     let deleted =
         sqlx::query("DELETE FROM issue_attributes WHERE id=$1 AND owner_org_id=$2 AND kind=$3")
             .bind(id)
