@@ -117,10 +117,8 @@ fn global_matches(a: &Value, q: &Params) -> bool {
                 .any(|v| {
                     v["package"]["name"] == name
                         && version.is_none_or(|version| {
-                            store::affected(
-                                version,
-                                v["vulnerable_version_range"].as_str().unwrap_or(""),
-                            )
+                            crate::backend::vulnerabilities::ecosystem(v["package"]["ecosystem"].as_str().unwrap_or(""))
+                                .is_some_and(|ecosystem| crate::backend::vulnerabilities::in_range(ecosystem, version, v["vulnerable_version_range"].as_str().unwrap_or("")))
                         })
                 })
         }) {

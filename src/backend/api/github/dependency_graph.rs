@@ -116,6 +116,9 @@ async fn compare(
     let has_more = offset.saturating_add(limit) < changes.len();
     // Only the requested page gets vulnerability lookups.
     let mut changes: Vec<_> = changes.into_iter().skip(offset).take(limit).collect();
+    let local = if changes.iter().any(|change| change["version"].as_str().is_some_and(|v| !v.is_empty())) {
+        db::dependabot_alerts::without_osv(&state.pool).await.map_err(Error::unavailable)?
+    } else { Vec::new() };
     for change in &mut changes {
         let package = crate::backend::repositories::dependency_graph::Package {
             manifest: change["manifest"].as_str().unwrap_or_default().into(),
@@ -125,13 +128,31 @@ async fn compare(
             package_url: change["package_url"].as_str().unwrap_or_default().into(),
             scope: change["scope"].as_str().unwrap_or("unknown").into(),
         };
-        change["vulnerabilities"] = json!(crate::backend::vulnerabilities::findings(&state.pool,&package)
+        if package.version.is_empty() {
+            change["vulnerabilities"] = json!([]);
+            continue;
+        }
+        let mut vulnerabilities = crate::backend::vulnerabilities::findings(&state.pool,&package)
             .await.map_err(Error::unavailable)?.iter().map(|a|json!({
                 "severity":a.severity(),
-                "advisory_ghsa_id":a.aliases.iter().chain(std::iter::once(&a.id)).find(|id|id.starts_with("GHSA-")).unwrap_or(&a.id),
+                "advisory_ghsa_id":a.catalogue_id(),
                 "advisory_summary":a.summary,
                 "advisory_url":format!("https://osv.dev/vulnerability/{}",crate::webui::encode_component(&a.id)),
-            })).collect::<Vec<_>>());
+            })).collect::<Vec<_>>();
+        if let Some(ecosystem) = crate::backend::vulnerabilities::ecosystem(&package.ecosystem) {
+            for advisory in &local {
+                if !advisory["withdrawn_at"].is_null() { continue }
+                let affected = advisory["vulnerabilities"].as_array().into_iter().flatten().any(|entry| {
+                    crate::backend::vulnerabilities::ecosystem(entry["package"]["ecosystem"].as_str().unwrap_or("")) == Some(ecosystem)
+                        && crate::backend::vulnerabilities::name(ecosystem, entry["package"]["name"].as_str().unwrap_or("")) == crate::backend::vulnerabilities::name(ecosystem, &package.name)
+                        && crate::backend::vulnerabilities::in_range(ecosystem, &package.version, entry["vulnerable_version_range"].as_str().unwrap_or(""))
+                });
+                if affected {
+                    vulnerabilities.push(json!({"severity":advisory["severity"],"advisory_ghsa_id":advisory["ghsa_id"],"advisory_summary":advisory["summary"],"advisory_url":super::api_url(&format!("/advisories/{}", advisory["ghsa_id"].as_str().unwrap_or("")))}));
+                }
+            }
+        }
+        change["vulnerabilities"] = json!(vulnerabilities);
     }
     Ok((page.headers(&uri, has_more)?, Json(changes)).into_response())
 }
