@@ -271,6 +271,27 @@ pub(crate) async fn check(path: &Path) -> Result<Option<String>> {
     Ok(Some(report))
 }
 
+/// Resolve commit IDs in bounded batches, retaining the supplied identity for annotated tags.
+pub(crate) async fn existing_commits(path: &Path, ids: &[String]) -> Result<std::collections::HashSet<String>> {
+    let mut found = std::collections::HashSet::new();
+    for batch in ids.chunks(1024) {
+        anyhow::ensure!(batch.iter().all(|id| crate::backend::git::is_full_commit_id(id)), "invalid commit ID");
+        let input = batch.iter().map(|id| format!("{id}^{{commit}}\n")).collect::<String>();
+        let mut command = git(path)?;
+        command.args(["cat-file", "--batch-check"]);
+        let output = run(command, input.as_bytes()).await?;
+        let output = String::from_utf8(output)?;
+        let lines = output.lines().collect::<Vec<_>>();
+        anyhow::ensure!(lines.len() == batch.len(), "incomplete commit existence response");
+        for (id, line) in batch.iter().zip(lines) {
+            if line.split_whitespace().nth(1) == Some("commit") {
+                found.insert(id.clone());
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// Whether the repository holds the commit `sha`.
 pub(crate) async fn has_commit(path: &Path, sha: &str) -> Result<bool> {
     let mut command = git(path)?;

@@ -525,6 +525,13 @@ impl RepoStore {
         }
     }
 
+    pub(crate) async fn existing_commits(&self, ids: &[String]) -> Result<std::collections::HashSet<String>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.existing_commits(ids).await,
+            Backend::Remote(_) => Err(rpc::wire::invalid("replica commit checks run on their node")),
+        }
+    }
+
     /// Every ref the repository stores, including pull request heads, for a replica. Only a
     /// repository on this node has them.
     pub async fn mirror_refs(&self) -> Result<HashMap<String, String>, RepoError> {
