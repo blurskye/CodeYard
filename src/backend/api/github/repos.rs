@@ -590,7 +590,7 @@ async fn tags(
     let next = tags.len() > offset + limit;
     let base = repo_url(&owner, &name);
     let values = tags.into_iter().skip(offset).take(limit).map(|tag| {
-        let reference = super::contents::path_url(&tag.name);
+        let reference = super::contents::path_url(&format!("refs/tags/{}", tag.name));
         json!({"name": tag.name,
             "node_id": super::node_id::reference(repo.id, &format!("refs/tags/{}", tag.name)),
             "commit": {"sha": tag.commit, "url": format!("{base}/commits/{}", tag.commit)},
