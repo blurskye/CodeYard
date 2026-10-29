@@ -537,10 +537,9 @@ async fn user_teams(
         {
             continue;
         }
-        let org = orgs::get_public_organization_by_id(&state.pool, team.org_id)
+        let Some(org) = orgs::get_public_organization_by_id(&state.pool, team.org_id)
             .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+            .map_err(Error::unavailable)? else { continue; };
         // A team hidden or deleted since the list was read is left out.
         let Some(public) = orgs::get_public_team_by_id(&state.pool, auth.user.id, team.id)
             .await

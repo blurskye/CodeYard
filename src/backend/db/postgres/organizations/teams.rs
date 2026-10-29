@@ -717,6 +717,6 @@ pub async fn list_user_teams(
         (0..=1_000_000).contains(&offset) && (1..=101).contains(&limit),
         "Invalid page"
     );
-    Ok(sqlx::query_as("SELECT t.* FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id JOIN org_memberships om ON om.org_id=t.org_id AND om.user_id=tm.user_id JOIN users u ON u.id=tm.user_id WHERE u.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND om.role IN ('owner','admin','member') AND tm.role IN ('member','maintainer') AND t.privacy IN ('visible','secret') ORDER BY t.id LIMIT $2 OFFSET $3")
+    Ok(sqlx::query_as("SELECT t.* FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id JOIN org_memberships om ON om.org_id=t.org_id AND om.user_id=tm.user_id JOIN users u ON u.id=tm.user_id WHERE u.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND om.role IN ('owner','admin','member') AND tm.role IN ('member','maintainer') AND t.privacy IN ('visible','secret') AND NOT EXISTS(SELECT 1 FROM organization_blocks b WHERE b.org_id=t.org_id AND b.user_id=u.id) AND EXISTS(SELECT 1 FROM org_memberships own JOIN users usable ON usable.id=own.user_id WHERE own.org_id=t.org_id AND own.role='owner' AND NOT usable.is_banned AND NOT usable.must_change_password) ORDER BY t.id LIMIT $2 OFFSET $3")
         .bind(actor).bind(limit).bind(offset).fetch_all(pool).await?)
 }
