@@ -88,6 +88,7 @@ pub async fn set_enabled(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     actor: i64,
+    credential: db::users::accounts::OwnedAccountCredential,
     repo: i64,
     feature: Feature,
     enabled: bool,
@@ -103,7 +104,7 @@ pub async fn set_enabled(
         )));
     }
     repo_store(&repository, cluster)
-        .configure_dependency_security_as(pool, repo, actor, feature, enabled, private_consent)
+        .configure_dependency_security_as(pool, repo, actor, credential, feature, enabled, private_consent)
         .await
         .map_err(DependencyError::Store)
 }
