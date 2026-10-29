@@ -130,7 +130,7 @@ pub async fn save_snapshot(
     generation: i64,
     snapshot: &Snapshot,
 ) -> Result<()> {
-    snapshot.validate()?;
+    snapshot.validate_native()?;
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_membership_shared(&mut tx).await?;
     let branch: String =

@@ -130,7 +130,7 @@ pub async fn save_snapshot(
     generation: i64,
     snapshot: &Snapshot,
 ) -> Result<()> {
-    snapshot.validate()?;
+    snapshot.validate_native()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let current: Option<i64> =
         sqlx::query_scalar("SELECT generation FROM vulnerability_jobs WHERE repo_id=$1")
