@@ -15,10 +15,11 @@ pub async fn closing_candidates(
     repo: i64,
     scope: &str,
     number: i32,
+    before: i64,
 ) -> Result<Vec<crate::backend::db::models::PullRequest>> {
     Ok(sqlx::query_as(&format!(
         "SELECT p.* FROM pull_requests p JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$1
-         WHERE (p.body LIKE $2 OR p.body LIKE $5) AND (p.repo_id=$3 OR p.body LIKE $4) AND {}
+         WHERE (p.body LIKE $2 OR p.body LIKE $5) AND (p.repo_id=$3 OR p.body LIKE $4) AND p.base_branch=r.default_branch AND ($6<=0 OR p.id<$6) AND {}
          ORDER BY p.id DESC LIMIT 100",
         super::super::repositories::access::readable_condition()
     ))
@@ -27,6 +28,7 @@ pub async fn closing_candidates(
     .bind(repo)
     .bind(format!("%{scope}%"))
     .bind(format!("%/issues/{number}%"))
+    .bind(before)
     .fetch_all(pool)
     .await?)
 }
