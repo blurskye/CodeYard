@@ -1,5 +1,5 @@
 //! Ported from actions/runner's `src/Sdk/Expressions/EvaluationResult.cs` and `Sdk/{Operators,Functions}`.
-use std::{cmp::Ordering, collections::BTreeMap, rc::Rc};
+use std::{cell::RefCell, cmp::Ordering, collections::BTreeMap, rc::Rc};
 
 use super::parser::{Kind, Node, Op};
 use super::{fold, json_text, lookup, parse_number, Contexts, Error, Status, Value};
@@ -112,27 +112,26 @@ fn compare(a: &Item, b: &Item) -> Option<Ordering> {
 
 pub(super) fn evaluate(tree: &Node, contexts: &Contexts, status: Status) -> Result<Value, Error> {
     let evaluator = Evaluator {
-        contexts: contexts
-            .values
-            .iter()
-            .map(|(k, v)| (k.clone(), Data::from_value(v)))
-            .collect(),
+        contexts: &contexts.values,
+        cache: RefCell::new(BTreeMap::new()),
         status,
     };
     Ok(evaluator.eval(tree)?.value())
 }
 
-struct Evaluator {
-    contexts: BTreeMap<String, Item>,
+struct Evaluator<'a> {
+    contexts: &'a BTreeMap<String, Value>,
+    cache: RefCell<BTreeMap<String, Item>>,
     status: Status,
 }
 
-impl Evaluator {
+impl Evaluator<'_> {
     fn eval(&self, node: &Node) -> Result<Item, Error> {
         match &node.kind {
             Kind::Literal(v) => Ok(Data::from_value(v)),
             Kind::Wildcard => Ok(text("*".into())),
-            Kind::Context(name) => Ok(lookup(&self.contexts, name).cloned().unwrap_or_else(null)),
+            Kind::Context(name) => Ok(self.cache.borrow_mut().entry(name.clone())
+                .or_insert_with(|| lookup(self.contexts, name).map(Data::from_value).unwrap_or_else(null)).clone()),
             Kind::Not(child) => Ok(boolean(!self.eval(child)?.truthy())),
             Kind::Binary(op, a, b) => {
                 let a = self.eval(a)?;
@@ -245,14 +244,14 @@ impl Evaluator {
                 Ok(Data::from_value(&Value::from_json(&value)))
             }
             "hashfiles" => {
-                let github = lookup(&self.contexts, "github");
+                let github = lookup(self.contexts, "github");
                 let workspace = github
-                    .and_then(|github| match github.as_ref() {
-                        Data::Object(values) => lookup(values, "workspace"),
+                    .and_then(|github| match github {
+                        Value::Object(values) => lookup(values, "workspace"),
                         _ => None,
                     })
                     .ok_or_else(|| Error::Evaluation("hashFiles requires github.workspace".into()))?
-                    .text();
+                    .to_text();
                 let patterns = args
                     .iter()
                     .map(|arg| self.eval(arg).map(|v| v.text()))

@@ -334,19 +334,21 @@ impl Parser<'_> {
         } else {
             let left = self.pop()?;
             if matches!(op, Op::And | Op::Or) {
-                let mut children = Vec::new();
-                for operand in [left, right] {
-                    match operand.kind {
-                        Kind::Logical(previous, nested) if previous == op => {
-                            children.extend(nested)
-                        }
-                        kind => children.push(Node {
-                            kind,
-                            depth: operand.depth,
-                        }),
+                let (mut children, mut depth) = match left.kind {
+                    Kind::Logical(previous, nested) if previous == op => (nested, left.depth - 1),
+                    kind => (vec![Node { kind, depth: left.depth }], left.depth),
+                };
+                match right.kind {
+                    Kind::Logical(previous, nested) if previous == op => {
+                        depth = depth.max(right.depth - 1);
+                        children.extend(nested);
+                    }
+                    kind => {
+                        depth = depth.max(right.depth);
+                        children.push(Node { kind, depth: right.depth });
                     }
                 }
-                let depth = children.iter().map(|n| n.depth).max().unwrap_or(0) + 1;
+                let depth = depth + 1;
                 node(Kind::Logical(op, children), depth)?
             } else {
                 let depth = left.depth.max(right.depth) + 1;

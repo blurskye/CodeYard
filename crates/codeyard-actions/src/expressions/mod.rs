@@ -197,11 +197,10 @@ fn fold(value: &str) -> String {
         .map(|c| {
             let mut upper = c.to_uppercase();
             let first = upper.next().unwrap_or(c);
-            if upper.next().is_some() {
-                c
-            } else {
-                first
-            }
+            let simple = if upper.next().is_some() { c } else { first };
+            let mut lower = simple.to_lowercase();
+            let first = lower.next().unwrap_or(simple);
+            if lower.next().is_none() { first } else { simple }
         })
         .collect()
 }
