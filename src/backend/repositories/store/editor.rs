@@ -337,6 +337,8 @@ impl Repo<'_> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PreparedFile {
+    #[serde(default)]
+    pub authority: Option<crate::backend::db::users::accounts::AccountActor>,
     pub branch: String,
     pub reference: String,
     pub expected: Option<String>,
@@ -436,6 +438,7 @@ async fn prepare_commit(
         return Err(unavailable());
     }
     Ok(PreparedFile {
+        authority: None,
         branch: branch.to_owned(),
         reference,
         expected,

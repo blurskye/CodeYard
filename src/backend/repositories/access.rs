@@ -13,13 +13,15 @@ pub(crate) async fn check_publication_actor(
     repository: &Repository,
 ) -> Result<()> {
     use db::users::accounts::AccountActor;
+    let repository = db::repositories::records::get_repository_by_id(pool, repository.id).await?
+        .ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
     let user = match actor {
         AccountActor::Trusted(id) => db::users::accounts::get_user_by_id(pool, *id).await?,
         AccountActor::Session { session, .. } => db::users::sessions::get_session_user(pool, session).await?,
         AccountActor::Token { token_id, .. } => Some(super::git_sessions::ReceiveCredential::Token(*token_id)
-            .authorize(pool, repository, true).await?.0),
+            .authorize(pool, &repository, true).await?.0),
     }.ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
-    anyhow::ensure!(user.id == actor.user_id() && !user.is_banned && !user.must_change_password,
+    anyhow::ensure!(user.id == actor.user_id() && can_write(pool, &user, &repository).await?,
         db::users::accounts::AccountRestricted);
     Ok(())
 }

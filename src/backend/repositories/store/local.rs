@@ -1815,6 +1815,22 @@ impl LocalStore {
         prepared: &editor::PreparedFile,
         dependency_publication: Option<&db::repositories::dependencies::Publication>,
     ) -> Result<CommitInfo, RepoError> {
+        let (store, pool, prepared, dependency_publication) = (
+            self.clone(), pool.clone(), prepared.clone(), dependency_publication.cloned(),
+        );
+        tokio::spawn(async move {
+            store.publish_file_owned(&pool, repo_id, actor, &prepared, dependency_publication.as_ref()).await
+        }).await.map_err(|_| RepoError::applied_followup_failed())?
+    }
+
+    async fn publish_file_owned(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        prepared: &editor::PreparedFile,
+        dependency_publication: Option<&db::repositories::dependencies::Publication>,
+    ) -> Result<CommitInfo, RepoError> {
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -1902,6 +1918,16 @@ impl LocalStore {
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
+        if let Some(authority) = &prepared.authority {
+            if authority.user_id() != actor { return Err(RepoError::write_denied()); }
+            if let db::users::accounts::AccountActor::Token { token_id, .. } = authority {
+                self.check_workflow_grant(pool, Some(*token_id), vec![(
+                    prepared.expected.clone().unwrap_or_else(|| editor::ZERO.to_owned()),
+                    prepared.commit.sha.clone(),
+                )], None).await?;
+            }
+            access::check_publication_actor(pool, authority, &repository).await?;
+        }
         let commit = publication
             .scope(editor::publish(self.path(), prepared))
             .await?;

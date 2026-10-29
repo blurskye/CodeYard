@@ -113,7 +113,10 @@ async fn write_file(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        actor.id,
+        crate::backend::db::users::accounts::AccountActor::Session {
+            user_id: actor.id,
+            session: crate::backend::api::http::session::extract_session_id(headers).unwrap_or_default(),
+        },
         &owner,
         repository_id,
         FileWrite {
@@ -155,7 +158,10 @@ pub async fn delete_file_content(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        actor.id,
+        crate::backend::db::users::accounts::AccountActor::Session {
+            user_id: actor.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         &owner,
         repository.id,
         FileWrite {
@@ -433,10 +439,10 @@ pub(in crate::backend::api::repos) async fn write_form(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
-        ctx.user
-            .as_ref()
-            .expect("authenticated editor submission")
-            .id,
+        crate::backend::db::users::accounts::AccountActor::Session {
+            user_id: ctx.user.as_ref().expect("authenticated editor submission").id,
+            session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+        },
         &loaded.chrome.owner,
         loaded.repository.id,
         input,
@@ -581,10 +587,10 @@ pub(in crate::backend::api::repos) async fn delete_form(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
-        ctx.user
-            .as_ref()
-            .expect("authenticated delete submission")
-            .id,
+        crate::backend::db::users::accounts::AccountActor::Session {
+            user_id: ctx.user.as_ref().expect("authenticated delete submission").id,
+            session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+        },
         &loaded.chrome.owner,
         loaded.repository.id,
         input,
