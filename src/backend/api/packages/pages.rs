@@ -465,7 +465,12 @@ async fn model(
         cards.push(card(ctx, &owner, &package).await?);
     }
     let base = ctx.path.clone();
+    let container_namespace = match owner.as_ref() {
+        Some(owner) => Some(db::packages::container_namespace(&ctx.state.pool, owner).await.map_err(|error| failure(ctx, error))?),
+        None => None,
+    };
     Ok(view::Page::List(Box::new(view::Listing {
+        container_namespace,
         title: if explore {
             "Explore packages".into()
         } else {
