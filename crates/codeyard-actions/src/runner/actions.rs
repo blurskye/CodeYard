@@ -487,10 +487,27 @@ impl Job {
         } else {
             &["24", "20"]
         };
-        // The probe sees the PATH the action will run with, including GITHUB_PATH additions.
-        let effective = self.environment(env.clone());
+        // Action runtimes belong to the runner, not setup-node or GITHUB_PATH. Resolve an
+        // absolute executable against the initial host/container PATH and retain it for posts.
+        let mut effective = self.environment(env.clone());
+        effective.insert("PATH".into(), self.runtime_path.clone());
+        effective.remove("NODE_OPTIONS");
         for major in majors {
-            for candidate in [format!("node{major}"), "node".into()] {
+            for name in [format!("node{major}"), "node".into()] {
+                let candidate = if self.podman.job.is_some() {
+                    let args = ["-c".into(), "command -v \"$1\"".into(), "sh".into(), name];
+                    let output = process::output(&mut self.podman.exec(&effective, &self.options.directory, "/bin/sh", &args), Duration::from_secs(10)).await;
+                    match output {
+                        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+                        _ => continue,
+                    }
+                } else {
+                    let Some(path) = std::env::split_paths(&self.runtime_path)
+                        .filter(|path| path.is_absolute()).map(|path| path.join(&name))
+                        .find_map(|path| path.canonicalize().ok().filter(|path| path.is_file())) else { continue; };
+                    path.display().to_string()
+                };
+                if !Path::new(&candidate).is_absolute() { continue; }
                 let args = ["--version".into()];
                 let mut command = if self.podman.job.is_some() {
                     self.podman

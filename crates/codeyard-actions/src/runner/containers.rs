@@ -18,6 +18,7 @@ pub(super) struct Podman {
     pub(super) network: Option<String>,
     deny_docker: bool,
     pub job: Option<String>,
+    pub path: Option<String>,
 }
 
 impl Podman {
@@ -32,6 +33,7 @@ impl Podman {
             images: Vec::new(),
             network: None,
             job: None,
+            path: None,
         })
     }
 
@@ -136,6 +138,9 @@ impl Podman {
                 .create("job", container, workspace, temp, cache, true)
                 .await?;
             self.output(&["start".into(), id.clone()]).await?;
+            let environment = self.output(&["inspect".into(), "--format".into(), "{{json .Config.Env}}".into(), id.clone()]).await?;
+            self.path = serde_json::from_str::<Vec<String>>(&environment)?.into_iter()
+                .find_map(|entry| entry.strip_prefix("PATH=").map(str::to_owned));
             self.job = Some(id);
         }
         Ok(serde_json::Value::Object(contexts))

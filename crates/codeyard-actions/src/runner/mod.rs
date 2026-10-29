@@ -1231,6 +1231,7 @@ struct Job {
     podman: Podman,
     explicit_container: bool,
     default_shell: Option<String>,
+    runtime_path: String,
     default_working_directory: Option<String>,
     sequence: usize,
     anonymous_action: usize,
@@ -1294,6 +1295,7 @@ async fn run_job(
             podman,
             explicit_container: false,
             default_shell: None,
+            runtime_path: std::env::var("PATH").unwrap_or_default(),
             default_working_directory: None,
             sequence: 0,
             anonymous_action: 0,
@@ -1473,6 +1475,9 @@ impl Job {
                 &self.cache,
             )
             .await?;
+        if self.podman.job.is_some() {
+            self.runtime_path = self.podman.path.clone().unwrap_or_else(|| "/usr/bin:/bin".into());
+        }
         self.contexts.values.insert("job".into(), Value::from_json(&serde_json::json!({"status":"success","services":services,"container":{"id":self.podman.job,"network":self.podman.network}})));
         self.default_shell = self.plan.default_shell.as_ref().map(|value| text(value, &self.contexts, self.status)).transpose()?;
         self.default_working_directory = self.plan.default_working_directory.as_ref().map(|value| text(value, &self.contexts, self.status)).transpose()?;
@@ -1856,14 +1861,12 @@ impl Job {
             self.cache.join("tool_cache").display().to_string(),
         );
         let mut paths = self.paths.iter().rev().cloned().collect::<Vec<_>>();
-        paths.push(env.get("PATH").cloned().unwrap_or_else(|| {
-            if self.podman.job.is_some() {
-                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".into()
-            } else {
-                std::env::var("PATH").unwrap_or_default()
-            }
-        }));
-        env.insert("PATH".into(), paths.join(":"));
+        let base = env.get("PATH").cloned().or_else(|| {
+            if self.podman.job.is_some() { self.podman.path.clone() }
+            else { Some(self.runtime_path.clone()) }
+        });
+        if let Some(base) = base { paths.push(base); }
+        if !paths.is_empty() { env.insert("PATH".into(), paths.join(":")); }
         env
     }
 
