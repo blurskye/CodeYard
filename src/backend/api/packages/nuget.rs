@@ -224,6 +224,24 @@ struct Search {
     skip: Option<usize>,
     take: Option<usize>,
     prerelease: Option<bool>,
+    #[serde(rename = "semVerLevel")]
+    semver_level: Option<String>,
+}
+
+fn supports_semver2(level: Option<&str>) -> Result<bool> {
+    level.map(|level| normalize(level).map(|level| compare(&level, "2.0.0").is_ge())).transpose().map(|level| level.unwrap_or(false))
+}
+
+fn compatible_versions(versions: Vec<Version>, semver2: bool) -> Result<Vec<Version>> {
+    let mut output = Vec::with_capacity(versions.len());
+    for version in versions {
+        if semver2 || !metadata(&version)?["semver2"].as_bool()
+            .unwrap_or_else(|| crate::backend::nuget::semver2(&version.name))
+        {
+            output.push(version);
+        }
+    }
+    Ok(output)
 }
 async fn dispatch(
     state: &AppState,
@@ -259,7 +277,7 @@ async fn dispatch(
         let resources = [
             ("PackagePublish/2.0.0", "publish"),
             ("PackageBaseAddress/3.0.0", "flatcontainer/"),
-            ("RegistrationsBaseUrl/3.6.0", "registration/"),
+            ("RegistrationsBaseUrl/3.6.0", "registration-semver2/"),
             ("RegistrationsBaseUrl/3.0.0-rc", "registration/"),
             ("SearchQueryService/3.5.0", "query"),
             ("SearchQueryService/3.0.0-beta", "query"),
@@ -288,6 +306,7 @@ async fn dispatch(
         catalog["packageHash"] = json!(STANDARD.encode(Sha512::digest(&bytes)));
         catalog["packageHashAlgorithm"] = json!("SHA512");
         catalog["nuspec"] = json!(String::from_utf8(spec).map_err(|_| Error::invalid())?);
+        catalog["semver2"] = json!(crate::backend::nuget::metadata_semver2(&version, &catalog).map_err(Error::db)?);
         db::packages::publish(
             &state.pool,
             auth.token.id,
@@ -315,10 +334,13 @@ async fn dispatch(
     if path == "query" {
         let Query(query) =
             Query::<Search>::try_from_uri(request.uri()).map_err(|_| Error::invalid())?;
+        let semver2 = supports_semver2(query.semver_level.as_deref())?;
+        let registration_kind = if semver2 { "registration-semver2" } else { "registration" };
         let needle = query.q.unwrap_or_default().to_lowercase();
         let mut data = Vec::new();
         for package in super::owner_packages(state, &owner, "nuget", auth.as_ref()).await? {
             let mut versions = versions(state, &package, auth.as_ref()).await?;
+            versions = compatible_versions(versions, semver2)?;
             let downloads = versions.iter().try_fold(0u64, |n, v| {
                 n.checked_add(v.downloads as u64)
                     .ok_or_else(Error::unavailable)
@@ -339,7 +361,7 @@ async fn dispatch(
             {
                 continue;
             }
-            data.push(json!({"id":catalog["id"],"version":latest.name,"description":catalog["description"],"title":catalog["title"],"authors":catalog["authors"].as_str().unwrap_or("").split(',').map(str::trim).collect::<Vec<_>>(),"tags":catalog["tags"],"totalDownloads":downloads,"registration":format!("{base}/registration/{}/index.json",package.name),"versions":versions.iter().map(|v| json!({"version":v.name,"downloads":v.downloads,"@id":format!("{base}/registration/{}/{}.json",package.name,v.name)})).collect::<Vec<_>>()}));
+            data.push(json!({"id":catalog["id"],"version":latest.name,"description":catalog["description"],"title":catalog["title"],"authors":catalog["authors"].as_str().unwrap_or("").split(',').map(str::trim).collect::<Vec<_>>(),"tags":catalog["tags"],"totalDownloads":downloads,"registration":format!("{base}/{registration_kind}/{}/index.json",package.name),"versions":versions.iter().map(|v| json!({"version":v.name,"downloads":v.downloads,"@id":format!("{base}/{registration_kind}/{}/{}.json",package.name,v.name)})).collect::<Vec<_>>()}));
         }
         data.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
         let total = data.len();
@@ -409,18 +431,19 @@ async fn dispatch(
         }
         return Ok(response);
     }
-    if parts[0] == "registration" && parts.len() == 3 {
-        let versions = versions(state, &package, auth.as_ref()).await?;
+    if matches!(parts[0], "registration" | "registration-semver2") && parts.len() == 3 {
+        let registration_kind = parts[0];
+        let versions = compatible_versions(versions(state, &package, auth.as_ref()).await?, registration_kind == "registration-semver2")?;
         if versions.is_empty() {
             return Err(Error::missing());
         }
         let items = versions
             .iter()
-            .map(|v| registration(&base, &package, v))
+            .map(|v| registration(&base, registration_kind, &package, v))
             .collect::<Result<Vec<_>>>()?;
-        let page = json!({"@id":format!("{base}/registration/{id}/page.json"),"count":items.len(),"lower":versions.first().map(|v| &v.name),"upper":versions.last().map(|v| &v.name),"items":items});
+        let page = json!({"@id":format!("{base}/{registration_kind}/{id}/page.json"),"count":items.len(),"lower":versions.first().map(|v| &v.name),"upper":versions.last().map(|v| &v.name),"items":items});
         if parts[2] == "index.json" {
-            return Ok(Json(json!({"@id":format!("{base}/registration/{id}/index.json"),"count":1,"items":[page]})).into_response());
+            return Ok(Json(json!({"@id":format!("{base}/{registration_kind}/{id}/index.json"),"count":1,"items":[page]})).into_response());
         }
         if parts[2] == "page.json" {
             return Ok(Json(page).into_response());
@@ -430,7 +453,7 @@ async fn dispatch(
                 .iter()
                 .find(|v| v.name == key)
                 .ok_or_else(Error::missing)?;
-            let mut leaf = registration(&base, &package, version)?;
+            let mut leaf = registration(&base, registration_kind, &package, version)?;
             leaf["catalogEntry"] = json!(format!("{base}/catalog/{id}/{key}.json"));
             return Ok(Json(leaf).into_response());
         }
@@ -441,7 +464,7 @@ async fn dispatch(
             .await
             .map_err(Error::db)?;
         return Ok(
-            Json(registration(&base, &package, &version)?["catalogEntry"].clone()).into_response(),
+            Json(registration(&base, "registration-semver2", &package, &version)?["catalogEntry"].clone()).into_response(),
         );
     }
     Err(Error::missing())
@@ -455,12 +478,11 @@ async fn versions(
     versions.sort_by(|a, b| compare(&a.name, &b.name));
     Ok(versions)
 }
-fn registration(base: &str, package: &Package, version: &Version) -> Result<Value> {
+fn registration(base: &str, registration_kind: &str, package: &Package, version: &Version) -> Result<Value> {
     let mut catalog = metadata(version)?;
-    catalog
-        .as_object_mut()
-        .ok_or_else(Error::unavailable)?
-        .remove("nuspec");
+    let object = catalog.as_object_mut().ok_or_else(Error::unavailable)?;
+    object.remove("nuspec");
+    object.remove("semver2");
     let published = chrono::DateTime::from_timestamp(version.created_at, 0)
         .ok_or_else(Error::unavailable)?
         .to_rfc3339();
@@ -470,7 +492,7 @@ fn registration(base: &str, package: &Package, version: &Version) -> Result<Valu
         package.name, version.name
     ));
     Ok(
-        json!({"@id":format!("{base}/registration/{}/{}.json",package.name,version.name),"catalogEntry":catalog,"listed":true,"published":published,"packageContent":format!("{base}/flatcontainer/{}/{}/{}.{}.nupkg",package.name,version.name,package.name,version.name),"registration":format!("{base}/registration/{}/index.json",package.name)}),
+        json!({"@id":format!("{base}/{registration_kind}/{}/{}.json",package.name,version.name),"catalogEntry":catalog,"listed":true,"published":published,"packageContent":format!("{base}/flatcontainer/{}/{}/{}.{}.nupkg",package.name,version.name,package.name,version.name),"registration":format!("{base}/{registration_kind}/{}/index.json",package.name)}),
     )
 }
 

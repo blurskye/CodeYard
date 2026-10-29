@@ -181,6 +181,10 @@ async fn owner(state: &AppState, name: &str) -> Result<Owner> {
         .ok_or_else(Error::missing)
 }
 
+async fn container_owner(state: &AppState, name: &str) -> Result<Owner> {
+    db::packages::container_owner(&state.pool, name).await.map_err(Error::db)?.ok_or_else(Error::missing)
+}
+
 async fn package(
     state: &AppState,
     owner: &Owner,

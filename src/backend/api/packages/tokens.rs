@@ -143,7 +143,7 @@ pub(super) async fn exchange(
                 return Err(Error::invalid());
             }
             if auth.is_none() {
-                let owner = super::owner(state, owner).await?;
+                let owner = super::container_owner(state, owner).await?;
                 super::package(state, &owner, "container", name, None, false).await?;
             }
             // Anonymous tokens can only pull.

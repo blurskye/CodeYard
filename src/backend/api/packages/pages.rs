@@ -291,13 +291,14 @@ async fn model(
             .or_else(|| origin.strip_prefix("http://"))
             .unwrap_or(&origin);
         let (command, registry) = if package.package_type == "container" {
+            let namespace = db::packages::container_namespace(&ctx.state.pool, owner).await.map_err(|error| failure(ctx, error))?;
             let reference = selected
                 .as_ref()
                 .map_or(":latest".into(), |version| format!("@{}", version.digest));
             (
                 format!(
                     "docker pull {host}/{}/{}{reference}",
-                    owner.name, package.name
+                    namespace, package.name
                 ),
                 None,
             )
