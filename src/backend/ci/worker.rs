@@ -520,17 +520,6 @@ async fn run_workflows(
         };
         names.extend(name);
         all_labels.extend(labels);
-        if super::reusable::content(&run.workflow_blobs[workflow]).is_some() {
-            let target = workspace.checkout().join(workflow);
-            // Replace a tracked file rather than following a repository-controlled symlink.
-            match tokio::fs::remove_file(&target).await {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-            tokio::fs::create_dir_all(target.parent().context("invalid workflow path")?).await?;
-            tokio::fs::copy(&definition, target).await?;
-        }
     }
     let mut runtime_env = Vec::new();
     if !native && claim.github_tokens.oidc_jobs.contains("act") {
@@ -549,6 +538,7 @@ async fn run_workflows(
     }
     let runtime_file = workspace.write_values("runtime.env", &runtime_env, !native)?;
     for workflow in run.workflow_path.split(',').filter(|path| !path.is_empty()) {
+        workspace.restore_called_workflows(run)?;
         let definition = workspace.definition(workflow);
         let mut command = act_command(
             service,
@@ -610,7 +600,6 @@ async fn run_workflows(
         let (lines_tx, lines_rx) = mpsc::channel(LOG_QUEUE_LINES);
         let stalled = Arc::new(AtomicBool::new(false));
         let remote = matches!(&service.queue, RunQueue::Remote { .. });
-        let (output_done, output_ended) = oneshot::channel();
         let running = async {
             let admitting = async {
                 match &concurrency_dir {
@@ -691,6 +680,9 @@ async fn run_workflows(
                                     .unwrap_or_else(|error| error.into_inner())
                                     .insert(key.clone(), id);
                             }
+                            if matches!(event.update, codeyard_actions::progress::Update::Finished { .. }) {
+                                admissions.lock().unwrap_or_else(|error| error.into_inner()).remove(&key);
+                            }
                             records
                                 .lock()
                                 .unwrap_or_else(|error| error.into_inner())
@@ -717,15 +709,15 @@ async fn run_workflows(
                             .outputs
                             .retain(|_, value| !masker.contains(value));
                     }
-                    service
-                        .queue
-                        .job_state(worker, run.id, &generation, workflow, &state)
-                        .await?;
+                    tokio::select! {
+                        result = deliver(|| service.queue.job_state(worker, run.id, &generation, workflow, &state)) => result?,
+                        _ = process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
+                        _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => return Err(Stopped::TimedOut.into()),
+                    }
                 }
             }
             // The batches end once the last sender is gone, which is when the output ends.
             drop(lines_tx);
-            let _ = output_done.send(());
             status
         };
         let sending = async {
@@ -733,10 +725,6 @@ async fn run_workflows(
                 sent = send_log_batches(service, worker, run, lines_rx, &mut log_open) => sent,
                 _ = process::cancelled(cancel.clone()) => Ok(()),
                 _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => Ok(()),
-                _ = async {
-                    let _ = output_ended.await;
-                    tokio::time::sleep(LOG_FLUSH_GRACE).await;
-                }, if remote => Ok(()),
             }
         };
         let (status, sent) = tokio::join!(running, sending);
@@ -1384,9 +1372,9 @@ async fn send_log_lines(
     lines: &[LogLine],
 ) -> Result<bool> {
     let result = service.queue.logs(worker, run.id, lines).await;
-    // A disconnected core must not stop a job; its normal deadline still applies.
+    // Log ingestion is best effort on both database and remote workers.
     match result {
-        Err(error) if matches!(&service.queue, RunQueue::Remote { .. }) => {
+        Err(error) => {
             warn!(%error, "could not send CI log lines");
             Ok(true)
         }
@@ -1505,6 +1493,41 @@ impl Drop for Workspace {
 }
 
 impl Workspace {
+    fn restore_called_workflows(&self, run: &CiRun) -> Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let blobs = run.workflow_blobs.as_object().context("run has no workflow files")?;
+        let called: Vec<_> = blobs.keys().filter(|path| !run.workflow_path.split(',').any(|root| root == path.as_str())).collect();
+        if called.is_empty() { return Ok(()); }
+        let checkout = self.checkout();
+        for path in [".github", ".github/workflows", ".git", ".git/info"] {
+            let directory = checkout.join(path);
+            match std::fs::create_dir(&directory) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    ensure!(std::fs::symlink_metadata(&directory)?.is_dir(), "Unsafe workflow directory");
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let mut exclude = std::fs::OpenOptions::new().append(true).create(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(checkout.join(".git/info/exclude"))?;
+        ensure!(exclude.metadata()?.is_file(), "Unsafe Git exclude file");
+        for workflow in called {
+            ensure!(workflow.starts_with(".github/workflows/codeyard-call-") && super::admission::is_safe_workflow_path(workflow), "Invalid called workflow path");
+            let target = checkout.join(workflow);
+            match std::fs::remove_file(&target) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(target)?;
+            file.write_all(&std::fs::read(self.definition(workflow))?)?;
+            writeln!(exclude, "\n/{workflow}")?;
+        }
+        Ok(())
+    }
+
     async fn prepare(
         queue: &RunQueue,
         claim: &ClaimedRun,

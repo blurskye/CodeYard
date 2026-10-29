@@ -177,6 +177,7 @@ pub async fn save_state(
         "job state exceeds the native limit"
     );
     let mut tx = pool.begin().await?;
+    sqlx::query("SET LOCAL statement_timeout='10s'").execute(&mut *tx).await?;
     lease(&mut tx, worker, run, generation, workflow).await?;
     // Recovery abandons prior lease executions, without manufacturing a successful result.
     sqlx::query("UPDATE actions_steps SET status='completed',completed_at=clock_timestamp() WHERE status='in_progress' AND job_id IN(SELECT id FROM actions_jobs WHERE run_id=$1 AND generation<>$2)").bind(run).bind(generation).execute(&mut *tx).await?;
