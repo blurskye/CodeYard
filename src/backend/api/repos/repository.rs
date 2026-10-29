@@ -1701,7 +1701,7 @@ async fn mutate(
             } else {
                 Owner::Repository(repository.id)
             };
-            db::secret_scanning::publish_pattern(pool, actor.id, scope, id)
+            db::secret_scanning::publish_pattern(pool, actor.id, &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), scope, id)
                 .await
                 .map_err(
                     |error| match error.downcast_ref::<db::secret_scanning::Refusal>() {
