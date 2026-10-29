@@ -2,6 +2,7 @@ use super::{request, roles::repo};
 use crate::support::{database::Database, http_client::Client, organizations::applied};
 use codeyard::backend::{
     db::{
+        self,
         models::OrgRole,
         organizations::{self, NewOrganization, OrganizationProfile},
     },
@@ -227,6 +228,18 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(list, json!([]));
+    let browser = Client::login(&router, f.pool(), owner).await;
+    let response = browser.form_reply("/settings/apps/new", &[
+        ("name", "Scanner"),
+        ("slug", "scanner"),
+        ("homepage", "https://example.test/scanner"),
+        ("permissions", r#"{"organization_external_properties_for_repos":"write"}"#),
+        ("events", ""),
+    ]).await;
+    assert_eq!(response.status, 200, "{}", response.text());
+    let app = db::github_apps::app(f.pool(), "scanner").await.unwrap().unwrap();
+    let installation = db::github_apps::install(f.pool(), owner, &browser.session, app.id, None, Some(orgs[0].id), None).await.unwrap().unwrap();
+    request(&router, "orgs/external-properties-for-repos-register-organization-app-installation", "POST", base, write, json!({"display_name":"Scanner","installation_id":installation.id}), 201).await;
     request(
         &router,
         "orgs/external-properties-for-repos-get-organization-definitions",

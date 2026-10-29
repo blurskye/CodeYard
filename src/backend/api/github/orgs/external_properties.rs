@@ -83,7 +83,7 @@ async fn register(
     Json(input): Json<Registration>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (actor, org) = scope(&state, &headers, &name, true).await?;
-    let installation = match input.installation_id {
+    let installation_id = match input.installation_id {
         Some(id) => Some(id),
         None => crate::backend::identity::github_apps::authority(&state.pool, actor.token.id)
             .await.map_err(Error::unavailable)?.and_then(|authority| authority.installation()),
@@ -94,7 +94,7 @@ async fn register(
             actor.user.id,
             org,
             &input.display_name,
-            installation,
+            installation_id,
         )
         .await
         .map_err(Error::unavailable)?,
