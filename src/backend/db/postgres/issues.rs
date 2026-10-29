@@ -421,15 +421,16 @@ pub async fn add_issue_comment(
     Ok(comment)
 }
 
-pub async fn list_issue_comments(
-    pool: &PgPool,
-    issue_id: i64,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<IssueCommentEntry>> {
+pub async fn list_issue_comments(pool: &PgPool, issue_id: i64, limit: i64, offset: i64) -> Result<Vec<IssueCommentEntry>> {
+    list_issue_comments_ordered(pool, issue_id, limit, offset, false, false).await
+}
+
+pub async fn list_issue_comments_ordered(pool: &PgPool, issue_id: i64, limit: i64, offset: i64, updated: bool, descending: bool) -> Result<Vec<IssueCommentEntry>> {
+    let order = if updated { "updated_at" } else { "created_at" };
+    let direction = if descending { "DESC" } else { "ASC" };
     let columns = crate::backend::db::postgres::users::accounts::AUTHOR_DISPLAY_COLUMNS;
     let comments = sqlx::query_as::<_, IssueCommentEntry>(
-        &format!("SELECT i.*, {columns} FROM issue_comments i JOIN users u ON u.id=i.author_id WHERE i.issue_id = $1 ORDER BY i.created_at, i.id LIMIT $2 OFFSET $3"),
+        &format!("SELECT i.*, {columns} FROM issue_comments i JOIN users u ON u.id=i.author_id WHERE i.issue_id = $1 ORDER BY i.{order} {direction}, i.id {direction} LIMIT $2 OFFSET $3"),
     )
     .bind(issue_id)
     .bind(limit)

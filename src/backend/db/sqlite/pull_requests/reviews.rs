@@ -181,12 +181,17 @@ pub async fn list_pull_request_comments(
     Ok(comments)
 }
 
-pub async fn list_pull_request_conversation_comments(
-    pool: &SqlitePool,
-    pr_id: i64,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<PullRequestCommentEntry>> {
+pub async fn conversation_comment_position(pool: &SqlitePool, comment: i64) -> Result<i64> {
+    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM pr_comments i JOIN pr_comments target ON target.pull_request_id=i.pull_request_id WHERE target.id=?1 AND i.path IS NULL AND NOT EXISTS(SELECT 1 FROM pr_reviews v WHERE v.id=i.review_id AND v.state='pending') AND (i.created_at,i.id)<=(target.created_at,target.id)").bind(comment).fetch_one(pool).await?)
+}
+
+pub async fn list_pull_request_conversation_comments(pool: &SqlitePool, pr_id: i64, limit: i64, offset: i64) -> Result<Vec<PullRequestCommentEntry>> {
+    list_pull_request_conversation_comments_ordered(pool, pr_id, limit, offset, false, false).await
+}
+
+pub async fn list_pull_request_conversation_comments_ordered(pool: &SqlitePool, pr_id: i64, limit: i64, offset: i64, updated: bool, descending: bool) -> Result<Vec<PullRequestCommentEntry>> {
+    let order = if updated { "updated_at" } else { "created_at" };
+    let direction = if descending { "DESC" } else { "ASC" };
     let columns = crate::backend::db::sqlite::users::accounts::AUTHOR_DISPLAY_COLUMNS;
     // A path over the budget reads as absent, so it cannot expand a discussion page.
     let max_path_bytes = crate::backend::db::pull_requests::reviews::MAX_COMMENT_PATH_BYTES;
@@ -198,7 +203,7 @@ pub async fn list_pull_request_conversation_comments(
             i.start_line,i.start_side,{columns} FROM pr_comments i JOIN users u ON u.id=i.author_id
             WHERE i.pull_request_id = ?1 AND i.path IS NULL
               AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = i.review_id AND v.state = 'pending')
-            ORDER BY i.created_at, i.id LIMIT ?2 OFFSET ?3"),
+            ORDER BY i.{order} {direction}, i.id {direction} LIMIT ?2 OFFSET ?3"),
     )
     .bind(pr_id)
     .bind(limit)

@@ -125,6 +125,9 @@ native_operation!(crate::backend::db::postgres::issues::add_issue_comment,
     body: &str,
 ) -> Result<IssueComment>);
 
+native_operation!(crate::backend::db::postgres::issues::list_issue_comments_ordered,
+    crate::backend::db::sqlite::issues::list_issue_comments_ordered,
+    fn list_issue_comments_ordered(pool: &DbPool, issue_id: i64, limit: i64, offset: i64, updated: bool, descending: bool) -> Result<Vec<IssueCommentEntry>>);
 native_operation!(crate::backend::db::postgres::issues::list_issue_comments,
     crate::backend::db::sqlite::issues::list_issue_comments,
     fn list_issue_comments(

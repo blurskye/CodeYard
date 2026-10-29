@@ -107,15 +107,17 @@ pub(crate) async fn native_change(
                     "Issue not found. Use a number or owner/repository#number.",
                 )
             })?;
-            store::close_duplicate(
+            crate::backend::issues::mutations::close_duplicate(
                 &ctx.state.pool,
+                &ctx.state.notification_broadcaster,
                 actor,
                 repo.record.id,
                 issue.id,
                 duplicate.id,
             )
             .await
-            .map(|_| ())
+            .map_err(|error| crate::backend::api::repos::discussion::api_error(&ctx, super::operation_error(error)))?;
+            Ok(())
         }
         "branch" => {
             let oid = crate::backend::repositories::store::repo_store(

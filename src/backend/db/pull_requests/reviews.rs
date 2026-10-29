@@ -129,10 +129,16 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::pull_req
     crate::backend::db::sqlite::pull_requests::reviews::pull_request_comment_counts,
     fn pull_request_comment_counts(pool: &DbPool, pr_id: i64) -> Result<(i64, i64)>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pull_request_conversation_comments_ordered,
+    crate::backend::db::sqlite::pull_requests::reviews::list_pull_request_conversation_comments_ordered,
+    fn list_pull_request_conversation_comments_ordered(pool: &DbPool, pr_id: i64, limit: i64, offset: i64, updated: bool, descending: bool) -> Result<Vec<PullRequestCommentEntry>>);
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pull_request_conversation_comments,
     crate::backend::db::sqlite::pull_requests::reviews::list_pull_request_conversation_comments,
     fn list_pull_request_conversation_comments(pool: &DbPool, pr_id: i64, limit: i64, offset: i64) -> Result<Vec<PullRequestCommentEntry>>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::conversation_comment_position,
+    crate::backend::db::sqlite::pull_requests::reviews::conversation_comment_position,
+    fn conversation_comment_position(pool: &DbPool, comment: i64) -> Result<i64>);
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pull_request_conversation_comments,
     crate::backend::db::sqlite::pull_requests::reviews::count_pull_request_conversation_comments,
     fn count_pull_request_conversation_comments(pool: &DbPool, pr_id: i64) -> Result<i64>);
