@@ -295,11 +295,12 @@ async fn contract(pg: bool) {
             assert_eq!(reply["status"], status.to_string());
             assert!(reply["documentation_url"].is_string());
             if status == 404 {
+                // The implemented handlers answer with the API's standard error document.
                 assert_eq!(reply["message"], "Not Found");
-                assert!(reply["documentation_url"]
-                    .as_str()
-                    .unwrap()
-                    .contains("/orgs/personal-access-tokens#"));
+                assert_eq!(
+                    reply["documentation_url"],
+                    "https://docs.github.com/en/rest"
+                );
             }
         }
     }

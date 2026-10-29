@@ -192,8 +192,8 @@ pub async fn section_tabs(f: &Fixture) {
         }
         let tabs = tab_links(&reply.body);
         // Owners also see Dependabot, private registries, properties, roles, settings,
-        // webhooks, actions and code security.
-        assert_eq!(tabs.len(), 11, "{query}");
+        // webhooks, actions, personal access tokens and code security.
+        assert_eq!(tabs.len(), 12, "{query}");
         for tab in [
             "overview",
             "members",
@@ -205,6 +205,7 @@ pub async fn section_tabs(f: &Fixture) {
             "settings",
             "webhooks",
             "actions",
+            "personal-access-tokens",
         ] {
             let link = tabs
                 .iter()

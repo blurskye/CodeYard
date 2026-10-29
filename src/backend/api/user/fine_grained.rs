@@ -21,7 +21,7 @@ use crate::webui::pages::{
 use axum::extract::{rejection::FormRejection, Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::Router;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde_json::{Map, Value};
