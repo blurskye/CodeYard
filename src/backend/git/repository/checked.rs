@@ -1,7 +1,7 @@
 //! Merge commits, repository creation and CI checkouts from exact revisions.
 //! Ref updates go through `update-ref` transactions that check the old value.
 use super::{
-    find_commit_checked, process, COMMIT_WALK_TIMEOUT, MAX_COMMIT_EMAIL_BYTES,
+    find_commit_checked, open_quarantined, process, COMMIT_WALK_TIMEOUT, MAX_COMMIT_EMAIL_BYTES,
     MAX_COMMIT_NAME_BYTES, MAX_COMMIT_WALK_BYTES,
 };
 use anyhow::{anyhow, bail, ensure, Result};
@@ -220,14 +220,7 @@ pub(crate) async fn introduced_signatures(
     tokio::task::spawn_blocking(move || -> Result<Vec<CommitSignature>> {
         let _permit = permit;
         let deadline = Instant::now() + COMMIT_WALK_TIMEOUT;
-        let repo = git2::Repository::open_bare(path)?;
-        if let Some(quarantine) = quarantine {
-            repo.odb()?.add_disk_alternate(
-                quarantine
-                    .to_str()
-                    .ok_or_else(|| anyhow::anyhow!("invalid quarantine path"))?,
-            )?;
-        }
+        let repo = open_quarantined(&path, quarantine.as_deref())?;
         let mut signatures = Vec::new();
         // The payloads are kept until every signature is checked, so their total is bounded.
         let mut bytes = 0usize;

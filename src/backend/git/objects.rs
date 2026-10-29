@@ -51,14 +51,17 @@ impl Signature {
         {
             return Err(invalid("Git dates must fall between 1970 and 2106").into());
         }
-        Ok(match self.date {
+        let signature = match self.date {
             Some(date) => git2::Signature::new(
                 &self.name,
                 &self.email,
                 &git2::Time::new(date.timestamp(), date.offset().local_minus_utc() / 60),
-            )?,
-            None => git2::Signature::now(&self.name, &self.email)?,
-        })
+            ),
+            None => git2::Signature::now(&self.name, &self.email),
+        };
+        signature.map_err(|error| if error.class() == git2::ErrorClass::Invalid {
+            invalid("Invalid Git identity").into()
+        } else { error.into() })
     }
 }
 

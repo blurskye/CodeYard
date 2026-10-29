@@ -1,5 +1,5 @@
 //! Credentials without the workflows permission may not change the workflows they publish.
-use super::repository::{peel_revision, tree_entry};
+use super::repository::{open_quarantined, peel_revision, tree_entry};
 use anyhow::{ensure, Result};
 use git2::{ErrorCode, ObjectType, Oid, Repository};
 use std::{
@@ -83,14 +83,7 @@ pub(crate) fn check_workflows(
     quarantine: Option<&Path>,
     updates: &[(String, String)],
 ) -> Result<()> {
-    let repo = Repository::open_bare(path)?;
-    if let Some(quarantine) = quarantine {
-        repo.odb()?.add_disk_alternate(
-            quarantine
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("invalid quarantine path"))?,
-        )?;
-    }
+    let repo = open_quarantined(path, quarantine)?;
     let mut wanted = BTreeSet::new();
     for (old, new) in updates {
         if new.bytes().all(|b| b == b'0') {

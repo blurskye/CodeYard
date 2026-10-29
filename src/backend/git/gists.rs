@@ -365,11 +365,7 @@ pub(crate) fn validate_push(
     old: &str,
     revision: &str,
 ) -> Result<()> {
-    let repo = Repository::open_bare(path)?;
-    if let Some(quarantine) = quarantine {
-        repo.odb()?
-            .add_disk_alternate(quarantine.to_str().ok_or_else(invalid)?)?;
-    }
+    let repo = super::repository::open_quarantined(path, quarantine)?;
     let graph = bounded_graph(&repo, Oid::from_str(revision)?)?;
     let previous = if old == "0000000000000000000000000000000000000000" {
         None

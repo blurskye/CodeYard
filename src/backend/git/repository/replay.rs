@@ -1,5 +1,5 @@
 //! Replays the commits of one history onto another, one at a time, the way a rebase does.
-use super::checked::{command, commit_tree, merge_tree_result, tree_of, Person, UnsupportedMerge};
+use super::checked::{command, commit_tree, merge_tree_with_base, tree_of, Person, UnsupportedMerge};
 use super::validate_merge_revision;
 use super::MAX_COMMIT_OBJECT_BYTES;
 use anyhow::{bail, ensure, Context, Result};
@@ -61,22 +61,7 @@ async fn replay(
     let mut tip_tree = tree_of(path, onto).await?;
     let mut replayed = 0;
     for commit in &commits {
-        let merge_base = format!("--merge-base={}", commit.parent);
-        let (status, output) = command(
-            path,
-            &[
-                "merge-tree",
-                "--write-tree",
-                "--name-only",
-                &merge_base,
-                tip.as_str(),
-                commit.id.as_str(),
-            ],
-            b"",
-            None,
-        )
-        .await?;
-        let tree = merge_tree_result(status, &output)?;
+        let tree = merge_tree_with_base(path, &commit.parent, &tip, &commit.id).await?;
         if tree == tip_tree {
             continue;
         }

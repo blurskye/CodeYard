@@ -1,5 +1,5 @@
 //! Push protection reads the receive quarantine without publishing its objects.
-use super::repository::{peel_revision, process, quarantined_command, walk_commits};
+use super::repository::{open_quarantined, peel_revision, process, quarantined_command, walk_commits};
 use crate::backend::{
     db::secret_scanning::Location,
     repositories::secret_scanning::{
@@ -7,7 +7,7 @@ use crate::backend::{
     },
 };
 use anyhow::{ensure, Context, Result};
-use git2::{ObjectType, Oid, Repository};
+use git2::{ObjectType, Oid};
 use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -24,18 +24,6 @@ const SCAN_TIME: Duration = Duration::from_secs(10);
 const MAX_LISTING_BYTES: usize = 16 * 1024 * 1024;
 const BUDGET: &str = "Secret scanning exceeded its push budget; split this push";
 
-fn open(path: &Path, quarantine: Option<&Path>) -> Result<Repository> {
-    let repo = Repository::open_bare(path)?;
-    if let Some(quarantine) = quarantine {
-        repo.odb()?.add_disk_alternate(
-            quarantine
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("Invalid quarantine path"))?,
-        )?;
-    }
-    Ok(repo)
-}
-
 /// The commits that `heads` bring and no ref has yet.
 async fn new_commits(
     path: PathBuf,
@@ -45,7 +33,7 @@ async fn new_commits(
 ) -> Result<Vec<Oid>> {
     let (read_path, read_quarantine) = (path.clone(), quarantine.clone());
     let tips = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
-        let repo = open(&read_path, read_quarantine.as_deref())?;
+        let repo = open_quarantined(&read_path, read_quarantine.as_deref())?;
         let mut tips = Vec::new();
         for head in heads {
             ensure!(Instant::now() < deadline, BUDGET);
@@ -125,7 +113,7 @@ fn scan(
     disabled: &[String],
     deadline: Instant,
 ) -> Result<Vec<Finding>> {
-    let repo = open(path, quarantine)?;
+    let repo = open_quarantined(path, quarantine)?;
     // Object headers give blob sizes without reading a large blob into memory.
     let odb = repo.odb()?;
     let small = |id: Oid| {

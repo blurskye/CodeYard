@@ -60,6 +60,15 @@ pub(crate) fn opens_as_repository(path: &Path) -> Result<bool> {
     }
 }
 
+/// Open incoming objects through the same quarantine-aware libgit2 view everywhere.
+pub(crate) fn open_quarantined(path: &Path, quarantine: Option<&Path>) -> Result<Repository> {
+    let repo = Repository::open_bare(path)?;
+    if let Some(quarantine) = quarantine {
+        repo.odb()?.add_disk_alternate(quarantine.to_str().ok_or_else(|| anyhow!("Invalid quarantine path"))?)?;
+    }
+    Ok(repo)
+}
+
 pub const MAX_REPOSITORY_REFS: usize = 10_000;
 pub const MAX_PULL_HEAD_REFS: usize = 4 * MAX_REPOSITORY_REFS;
 pub const MAX_PULL_HEAD_REF_BYTES: usize = 3 * 1024 * 1024;
@@ -2102,15 +2111,8 @@ pub(crate) fn check_tag_budget(
     quarantine: Option<&Path>,
     replacements: &[(String, String)],
 ) -> Result<()> {
-    let repo = Repository::open_bare(repo_path)?;
+    let repo = open_quarantined(repo_path, quarantine)?;
     let odb = repo.odb()?;
-    if let Some(quarantine) = quarantine {
-        odb.add_disk_alternate(
-            quarantine
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("invalid quarantine path"))?,
-        )?;
-    }
     // Deletions reduce storage even when an imported repository already exceeds today's limit.
     if replacements.iter().all(|(_, new)| new.bytes().all(|byte| byte == b'0')) { return Ok(()); }
     let mut tags = std::collections::HashMap::new();
@@ -2711,6 +2713,14 @@ fn split_diff_patches(output: &[u8], files: &[DiffFileMetadata]) -> Result<Vec<S
     Ok(patches)
 }
 
+fn diff_command(repo_path: &Path, revision: &str, root: bool, pathspecs: &[OsString], output: &[&str]) -> Result<tokio::process::Command> {
+    let mut command = process::git_command()?;
+    if root { command.args(["diff-tree", "--root", "--no-commit-id", "-r"]); } else { command.arg("diff"); }
+    command.args(["--no-ext-diff", "--no-textconv", "--find-renames"]).args(output).arg(revision).arg("--").args(pathspecs).current_dir(repo_path);
+    process::limit_memory(&mut command);
+    Ok(command)
+}
+
 /// The comparison's per-file metadata, without patches. `pathspecs` limits it when not empty.
 async fn diff_metadata(
     repo_path: &Path,
@@ -2718,27 +2728,7 @@ async fn diff_metadata(
     root: bool,
     pathspecs: &[OsString],
 ) -> Result<Vec<DiffFileMetadata>> {
-    let mut metadata = process::git_command()?;
-    if root {
-        metadata.args(["diff-tree", "--root", "--no-commit-id", "-r"]);
-    } else {
-        metadata.arg("diff");
-    }
-    metadata
-        .args([
-            "--no-ext-diff",
-            "--no-textconv",
-            "--find-renames",
-            "--raw",
-            "--abbrev=40",
-            "--numstat",
-            "-z",
-            revision,
-            "--",
-        ])
-        .args(pathspecs)
-        .current_dir(repo_path);
-    process::limit_memory(&mut metadata);
+    let metadata = diff_command(repo_path, revision, root, pathspecs, &["--raw", "--abbrev=40", "--numstat", "-z"])?;
     let (status, output) =
         process::buffered(metadata, b"", MAX_DIFF_METADATA_BYTES, process::RPC_TIMEOUT).await?;
     ensure!(status.success(), "Failed to get diff metadata");
@@ -2757,24 +2747,7 @@ async fn diff_in_repository(
     let patches = if metadata.is_empty() {
         Vec::new()
     } else {
-        let mut command = process::git_command()?;
-        if root {
-            command.args(["diff-tree", "--root", "--no-commit-id", "-r"]);
-        } else {
-            command.arg("diff");
-        }
-        command
-            .args([
-                "--no-ext-diff",
-                "--no-textconv",
-                "--find-renames",
-                "--patch",
-                revision,
-                "--",
-            ])
-            .args(pathspecs)
-            .current_dir(repo_path);
-        process::limit_memory(&mut command);
+        let command = diff_command(repo_path, revision, root, pathspecs, &["--patch"])?;
         let (status, output) = process::buffered(
             command,
             b"",
