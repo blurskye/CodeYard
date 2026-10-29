@@ -400,10 +400,16 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
             println!("Copied {copied} changed upload files.");
         }
     }
-    let key = places.state_dir.join(NODE_KEY);
-    if key.is_file() {
-        copy_synced(&key, &dir.join(NODE_KEY))?;
-        private_file(&dir.join(NODE_KEY))?;
+    // Offline backups also migrate the legacy standalone signer before copying keys.
+    if places.repos_path.join(NODE_KEY).is_file() {
+        crate::backend::cluster::identity::release_key(places.state_dir, places.repos_path)?;
+    }
+    for name in [NODE_KEY, "release.key"] {
+        let key = places.state_dir.join(name);
+        if key.is_file() {
+            copy_synced(&key, &dir.join(name))?;
+            private_file(&dir.join(name))?;
+        }
     }
     // Publish the new database last. Until this rename the previous backup is still complete:
     // nothing it names has been removed yet.
@@ -523,11 +529,13 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<db::DbPool> {
                 .await??;
         println!("Restored {copied} upload files.");
     }
-    let key = places.state_dir.join(NODE_KEY);
-    if dir.join(NODE_KEY).is_file() && !key.exists() {
-        private_dir(places.state_dir)?;
-        copy_synced(&dir.join(NODE_KEY), &key)?;
-        private_file(&key)?;
+    for name in [NODE_KEY, "release.key"] {
+        let key = places.state_dir.join(name);
+        if dir.join(name).is_file() && !key.exists() {
+            private_dir(places.state_dir)?;
+            copy_synced(&dir.join(name), &key)?;
+            private_file(&key)?;
+        }
     }
     let problems = verify(&pool, true).await?;
     rebuild(&pool).await?;

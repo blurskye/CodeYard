@@ -73,6 +73,10 @@ async fn prepare_application(
     serves_web: bool,
     cluster: Option<crate::backend::cluster::NodeContext>,
 ) -> Result<AppState> {
+    if cluster.is_none() {
+        let (state_dir, repos) = (state_dir.to_owned(), repos_path.clone());
+        tokio::task::spawn_blocking(move || crate::backend::repositories::releases::immutable::configure_local_identity(&state_dir, &repos)).await??;
+    }
     let secret_encryptor = SecretEncryptor::configured_from_env()?.map(Arc::new);
     let sample = if cluster.is_some() {
         crate::backend::db::webhooks::webhook_secret_sample(&pool).await?

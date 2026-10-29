@@ -3,7 +3,7 @@
 //! starts only when cluster settings are present in the environment.
 pub mod ci;
 pub mod context;
-mod identity;
+pub(crate) mod identity;
 pub mod link;
 mod pairing;
 pub mod placement;
