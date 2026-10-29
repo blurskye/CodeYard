@@ -38,13 +38,14 @@ pub async fn add_ssh_key_for_token(
     pool: &SqlitePool,
     user_id: i64,
     token: i64,
+    hash: &str,
     name: &str,
     public_key: &str,
 ) -> Result<SshKey> {
     insert_ssh_key(
         pool,
         user_id,
-        Some(&AccountCredential::Token(token)),
+        Some(&AccountCredential::Token(token, hash)),
         name,
         public_key,
     )
@@ -56,7 +57,7 @@ async fn require_key_account(
     user: i64,
     credential: Option<&AccountCredential<'_>>,
 ) -> Result<()> {
-    if let Some(credential @ AccountCredential::Token(_)) = credential {
+    if let Some(credential @ AccountCredential::Token(_, _)) = credential {
         return super::transitions::require_account(tx, user, credential)
             .await
             .map_err(|error| {
@@ -234,12 +235,13 @@ pub async fn delete_user_ssh_key_for_token(
     pool: &SqlitePool,
     user_id: i64,
     token: i64,
+    hash: &str,
     key_id: i64,
 ) -> Result<bool> {
     delete_key(
         pool,
         user_id,
-        Some(&AccountCredential::Token(token)),
+        Some(&AccountCredential::Token(token, hash)),
         key_id,
     )
     .await

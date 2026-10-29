@@ -6,7 +6,7 @@ use anyhow::Result;
 /// A settings mutation retains the live credential while it changes account data.
 pub enum AccountCredential<'a> {
     Session(&'a str),
-    Token(i64),
+    Token(i64, &'a str),
 }
 
 #[derive(Debug, thiserror::Error)]

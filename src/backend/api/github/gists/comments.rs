@@ -74,7 +74,7 @@ async fn create(
     let comment = db::gists::create_comment(
         &state.pool,
         actor.user.id,
-        &db::users::accounts::AccountCredential::Token(actor.token.id),
+        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         loaded.repository.id,
         &input.body,
     )
@@ -102,7 +102,7 @@ async fn update(
     let comment = db::gists::change_comment(
         &state.pool,
         actor.user.id,
-        &db::users::accounts::AccountCredential::Token(actor.token.id),
+        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         loaded.repository.id,
         comment_id(&comment)?,
         Some(&input.body),
@@ -123,7 +123,7 @@ async fn remove(
     db::gists::change_comment(
         &state.pool,
         actor.user.id,
-        &db::users::accounts::AccountCredential::Token(actor.token.id),
+        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         loaded.repository.id,
         comment_id(&comment)?,
         None,

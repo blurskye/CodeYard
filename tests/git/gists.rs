@@ -440,6 +440,7 @@ async fn gists_http_ssh_remote_and_promotion() {
             .unwrap()
             .unwrap()
             .id,
+            &hex::encode(Sha256::digest(token.as_bytes())),
         ),
         &db::gists::Admission {
             repo_id: repo.id,

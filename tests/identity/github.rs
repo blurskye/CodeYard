@@ -1200,7 +1200,7 @@ async fn contract(pg: bool) {
     let denied = codeyard::backend::identity::profiles::save(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Token(read_token.id),
+        &db::users::accounts::AccountCredential::Token(read_token.id, ""),
         &patch,
     )
     .await
@@ -1221,7 +1221,7 @@ async fn contract(pg: bool) {
     let denied = codeyard::backend::identity::profiles::save(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Token(write_token.id),
+        &db::users::accounts::AccountCredential::Token(write_token.id, ""),
         &patch,
     )
     .await
@@ -1243,6 +1243,7 @@ async fn contract(pg: bool) {
             f.pool(),
             alice,
             token,
+            "",
             "Must not be added",
             public_key,
         )
@@ -1255,7 +1256,7 @@ async fn contract(pg: bool) {
         let error = codeyard::backend::identity::keys::enroll_signing(
             f.pool(),
             alice,
-            &db::users::accounts::AccountCredential::Token(token),
+            &db::users::accounts::AccountCredential::Token(token, ""),
             "Must not be added",
             public_key,
         )
@@ -1270,7 +1271,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     let error =
-        db::users::ssh_keys::delete_user_ssh_key_for_token(f.pool(), alice, write_token.id, key.id)
+        db::users::ssh_keys::delete_user_ssh_key_for_token(f.pool(), alice, write_token.id, "", key.id)
             .await
             .unwrap_err();
     assert_eq!(

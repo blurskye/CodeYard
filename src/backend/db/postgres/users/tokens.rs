@@ -62,7 +62,7 @@ pub async fn delete_token(
 
 // Include expired and suspended tokens here so failures share the account's login budget.
 pub async fn find_token(pool: &PgPool, hash: &str) -> Result<Option<PersonalAccessToken>> {
-    Ok(sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at,last_used_at,last_used_ip FROM personal_access_tokens WHERE token_hash=$1")
+    Ok(sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at,last_used_at,last_used_ip,token_hash FROM personal_access_tokens WHERE token_hash=$1")
         .bind(hash).fetch_optional(pool).await?)
 }
 

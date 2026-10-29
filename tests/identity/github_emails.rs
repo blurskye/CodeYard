@@ -387,7 +387,7 @@ async fn contract(pg: bool) {
     let result = identity::emails::change(
         f.pool(),
         alice,
-        &AccountCredential::Token(i64::MAX),
+        &AccountCredential::Token(i64::MAX, ""),
         &["stale@example.com".into()],
         true,
     )

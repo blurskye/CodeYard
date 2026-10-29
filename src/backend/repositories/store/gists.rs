@@ -10,7 +10,7 @@ pub const MAX_GIST_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 #[derive(Clone, Serialize, Deserialize)]
 pub enum GistCredential {
     Session(String),
-    Token(i64),
+    Token(i64, String),
 }
 impl std::fmt::Debug for GistCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -21,13 +21,13 @@ impl GistCredential {
     pub fn borrowed(&self) -> AccountCredential<'_> {
         match self {
             Self::Session(session) => AccountCredential::Session(session),
-            Self::Token(id) => AccountCredential::Token(*id),
+            Self::Token(id, hash) => AccountCredential::Token(*id, hash),
         }
     }
     pub fn from_credential(credential: &AccountCredential<'_>) -> Self {
         match credential {
             AccountCredential::Session(session) => Self::Session((*session).into()),
-            AccountCredential::Token(id) => Self::Token(*id),
+            AccountCredential::Token(id, hash) => Self::Token(*id, (*hash).into()),
         }
     }
 }

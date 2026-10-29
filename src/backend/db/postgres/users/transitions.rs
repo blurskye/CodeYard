@@ -91,9 +91,9 @@ pub(crate) async fn require_account(
     anyhow::ensure!(active, AccountRestricted);
     let live = match credential {
         AccountCredential::Session(session) => live_session(tx, actor, session).await?,
-        AccountCredential::Token(id) => {
-            let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar("SELECT expires_at FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' FOR SHARE")
-                .bind(id).bind(actor).fetch_optional(&mut **tx).await?;
+        AccountCredential::Token(id, hash) => {
+            let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar("SELECT expires_at FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND token_hash=$3 FOR SHARE")
+                .bind(id).bind(actor).bind(hash).fetch_optional(&mut **tx).await?;
             match expiry {
                 Some(None) => true,
                 Some(Some(expiry)) => {
