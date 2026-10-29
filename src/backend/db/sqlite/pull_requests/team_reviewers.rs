@@ -8,6 +8,22 @@ use sqlx::SqlitePool;
 
 const SCOPED: &str = "SELECT t.*,o.name AS org_slug,COALESCE(a.permission,0) AS permission FROM teams t JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL JOIN organizations o ON o.id=t.org_id LEFT JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id WHERE r.id=?1 AND (t.privacy='visible' OR EXISTS(SELECT 1 FROM org_memberships om WHERE om.org_id=t.org_id AND om.user_id=?2 AND om.role IN ('owner','admin')) OR EXISTS(SELECT 1 FROM effective_team_memberships tm JOIN org_memberships om ON om.org_id=t.org_id AND om.user_id=tm.user_id WHERE tm.team_id=t.id AND tm.user_id=?2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member')))";
 
+pub async fn request_page(pool: &SqlitePool, window: &crate::backend::db::pull_requests::team_reviewers::RequestWindow) -> Result<(i64, Vec<crate::backend::db::pull_requests::reviews::ReviewRequestOrigin>)> {
+    ensure!(window.offset >= 0 && (0..=100).contains(&window.limit), InvalidReviewTeam);
+    let sql = crate::backend::db::pull_requests::team_reviewers::request_roster_sql("?", SCOPED, &super::super::repositories::access::readable_condition());
+    let mut tx = pool.begin().await?;
+    let total = if window.count { sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({sql}) visible")).bind(window.repo).bind(window.viewer).bind(window.pull).bind(window.target.map(|target| target.0)).bind(window.target.map(|target| target.1)).fetch_one(&mut *tx).await? } else { 0 };
+    let rows = if window.limit == 0 { Vec::new() } else { sqlx::query_as(&format!("{sql} ORDER BY kind,sort_name,COALESCE(user_id,team_id) LIMIT ?6 OFFSET ?7")).bind(window.repo).bind(window.viewer).bind(window.pull).bind(window.target.map(|target| target.0)).bind(window.target.map(|target| target.1)).bind(window.limit).bind(window.offset).fetch_all(&mut *tx).await? };
+    tx.commit().await?;
+    Ok((total, rows))
+}
+
+pub async fn by_ids(pool: &SqlitePool, repo: i64, viewer: Option<i64>, ids: &[i64]) -> Result<Vec<Team>> {
+    ensure!(ids.len() <= 100, InvalidReviewTeam);
+    let readable = super::super::repositories::access::readable_condition();
+    Ok(sqlx::query_as(&format!("{SCOPED} AND t.id IN (SELECT value FROM json_each(?3)) AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?2 WHERE r.id=?1 AND {readable})")).bind(repo).bind(viewer).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
+}
+
 pub async fn list(
     pool: &SqlitePool,
     repo: i64,
@@ -50,7 +66,8 @@ pub async fn set_requests(pool: &SqlitePool, actor: i64, pull: i64, input: &crat
     let replace = !input.union && !input.rerequest;
     if replace {
         sqlx::query("DELETE FROM pr_reviewers WHERE pull_request_id=?1 AND user_id NOT IN (SELECT value FROM json_each(?2))").bind(pull).bind(serde_json::to_string(input.users)?).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM pr_team_reviewers WHERE pull_request_id=?1 AND team_id NOT IN (SELECT value FROM json_each(?2))").bind(pull).bind(serde_json::to_string(input.teams)?).execute(&mut *tx).await?;
+        // Replacement changes only the roster the actor can see, including stale visible grants.
+        sqlx::query(&format!("DELETE FROM pr_team_reviewers WHERE pull_request_id=?3 AND team_id IN (SELECT id FROM ({SCOPED}) visible) AND team_id NOT IN (SELECT value FROM json_each(?4))")).bind(repo).bind(actor).bind(pull).bind(serde_json::to_string(input.teams)?).execute(&mut *tx).await?;
     }
     let mut added_users = Vec::new();
     for user in users {
