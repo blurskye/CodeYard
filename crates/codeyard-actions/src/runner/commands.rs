@@ -2,7 +2,7 @@
 use crate::progress::{Event, Update};
 use anyhow::{bail, Result};
 use base64::Engine;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
     Arc, Mutex,
@@ -10,11 +10,19 @@ use std::sync::{
 
 #[derive(Clone, Default)]
 pub struct Masker {
-    masks: Arc<Mutex<Vec<String>>>,
+    masks: Arc<Mutex<MaskSet>>,
     /// Bytes of the masks that steps asked for. The job's own secrets do not count.
     requested: Arc<AtomicUsize>,
     /// Set when a requested mask did not fit, after which no output is shown.
     hidden: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Default)]
+struct MaskSet {
+    values: BTreeSet<String>,
+    bytes: usize,
+    matcher: Option<aho_corasick::AhoCorasick>,
+    build_bytes: usize,
 }
 
 /// The masks a workflow's steps add are held in memory, so they may total this much.
@@ -23,6 +31,15 @@ const MAX_MASKS: usize = 16_384;
 const MAX_EXPANDED_MASK_BYTES: usize = 16 << 20;
 
 impl Masker {
+    /// New jobs inherit credentials, but not each other's subsequent stdout commands.
+    pub(super) fn fork(&self) -> Self {
+        Self {
+            masks: Arc::new(Mutex::new(self.masks.lock().unwrap_or_else(|error| error.into_inner()).clone())),
+            requested: Arc::new(AtomicUsize::new(0)),
+            hidden: Arc::new(AtomicBool::new(self.hidden.load(Ordering::Relaxed))),
+        }
+    }
+
     /// Adds a mask a step asked for, unless the steps' masks would pass their budget.
     pub fn add_requested(&self, value: &str) -> bool {
         let total = self
@@ -71,36 +88,41 @@ impl Masker {
                 uri,
                 base64::engine::general_purpose::STANDARD.encode(part),
             ] {
-                if !masks.contains(&encoded) {
-                    if masks.len() >= MAX_MASKS
-                        || masks.iter().map(String::len).sum::<usize>().saturating_add(encoded.len()) > MAX_EXPANDED_MASK_BYTES
+                if !masks.values.contains(&encoded) {
+                    if masks.values.len() >= MAX_MASKS
+                        || masks.bytes.saturating_add(encoded.len()) > MAX_EXPANDED_MASK_BYTES
                     {
                         self.hide_all();
                         return;
                     }
-                    masks.push(encoded);
+                    masks.bytes += encoded.len();
+                    masks.values.insert(encoded);
+                    masks.matcher = None;
                 }
             }
         }
-        masks.sort_by_key(|value| std::cmp::Reverse(value.len()));
     }
 
     pub fn mask(&self, value: &str) -> String {
         if self.hidden.load(Ordering::Relaxed) {
             return "***".into();
         }
-        let masks = self.masks.lock().unwrap_or_else(|error| error.into_inner());
-        // Match the original text: replacement text must never be matched again, and
-        // overlapping secrets must be redacted together rather than exposing a suffix.
+        let mut masks = self.masks.lock().unwrap_or_else(|error| error.into_inner());
+        if masks.values.is_empty() { return value.to_owned(); }
+        if masks.matcher.is_none() {
+            masks.build_bytes = masks.build_bytes.saturating_add(masks.bytes);
+            if masks.build_bytes > 64 * 1024 * 1024 { self.hide_all(); return "***".into(); }
+            let matcher = aho_corasick::AhoCorasick::builder()
+                .kind(Some(aho_corasick::AhoCorasickKind::ContiguousNFA)).build(masks.values.iter().map(String::as_bytes));
+            let Ok(matcher) = matcher else { self.hide_all(); return "***".into(); };
+            masks.matcher = Some(matcher);
+        }
+        // Redact the union of original-text matches, without sequential replacement.
         let mut boundaries = vec![0i32; value.len() + 1];
-        for mask in masks.iter() {
-            let mut start = 0;
-            while let Some(index) = value[start..].find(mask) {
-                let index = start + index;
-                boundaries[index] += 1;
-                boundaries[index + mask.len()] -= 1;
-                start = index + value[index..].chars().next().expect("nonempty mask").len_utf8();
-            }
+        for (index, found) in masks.matcher.as_ref().expect("compiled masks").find_overlapping_iter(value).enumerate() {
+            if index >= 100_000 { return "***".into(); }
+            boundaries[found.start()] += 1;
+            boundaries[found.end()] -= 1;
         }
         let mut result = String::new();
         let mut active = 0;
