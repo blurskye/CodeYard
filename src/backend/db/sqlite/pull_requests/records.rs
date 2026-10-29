@@ -688,12 +688,12 @@ pub async fn update_pull_request(
     {
         return Ok(None);
     }
-    let stored: Option<(String, String)> =
-        sqlx::query_as("SELECT state,updated_at FROM pull_requests WHERE id=?1")
+    let stored: Option<(String, String, String)> =
+        sqlx::query_as("SELECT state,updated_at,base_branch FROM pull_requests WHERE id=?1")
             .bind(pr_id)
             .fetch_optional(&mut *tx)
             .await?;
-    let Some((state, stored_revision)) = stored else {
+    let Some((state, stored_revision, old_branch)) = stored else {
         return Ok(None);
     };
     let previous = crate::backend::db::sqlite::time::decode(&stored_revision)?;
@@ -742,6 +742,12 @@ pub async fn update_pull_request(
         .bind(base.as_ref().map(|base| base.branch)).bind(base.as_ref().map(|base| base.sha))
         .bind(maintainer_can_modify).bind(edit.actor_id)
         .fetch_optional(&mut *tx).await?;
+    if let (Some(pr), Some(base)) = (&pr, base.as_ref().filter(|base| base.branch != old_branch)) {
+        let patterns: Vec<String> = sqlx::query_scalar("SELECT pattern FROM branch_protection_rules WHERE repo_id=?1 AND dismiss_stale_reviews").bind(repo).fetch_all(&mut *tx).await?;
+        if crate::backend::db::pull_requests::records::retarget_dismisses_reviews(&patterns, base.branch)? {
+            sqlx::query("UPDATE pr_reviews SET state='dismissed',dismissed_by_id=?2,dismissed_reason='Base branch changed',dismissed_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE pull_request_id=?1 AND state='approved'").bind(pr.id).bind(edit.actor_id).execute(&mut *tx).await?;
+        }
+    }
     tx.commit().await?;
     Ok(pr)
 }

@@ -73,6 +73,17 @@ pub fn can_grant_maintainer_edit(
     head.id == base || (head.owner_kind == "user" && head.owner_user_id == Some(actor))
 }
 
+pub(crate) fn retarget_dismisses_reviews(patterns: &[String], branch: &str) -> Result<bool> {
+    let mut budget = crate::backend::ci::workflows::WorkflowMatchBudget::new();
+    for pattern in patterns {
+        if crate::backend::db::repositories::protection::branch_pattern_matches(pattern, branch, &mut budget)
+            .map_err(|_| anyhow::anyhow!("branch protection could not be checked"))? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The commits a pull request records for its branches. Comparing them with the
 /// branches' tips shows whether a branch has moved.
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]

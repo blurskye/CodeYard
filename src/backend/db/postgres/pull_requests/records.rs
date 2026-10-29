@@ -691,8 +691,8 @@ pub async fn update_pull_request(
         return Ok(None);
     }
     // Lock the row so the checked update below sees the latest revision.
-    let stored: Option<(String,bool,chrono::DateTime<chrono::Utc>)> = sqlx::query_as("SELECT state,is_draft,updated_at FROM pull_requests WHERE id = $1 AND repo_id = $2 FOR UPDATE").bind(pr_id).bind(repo).fetch_optional(&mut *tx).await?;
-    let Some((state, draft, updated)) = stored else {
+    let stored: Option<(String,bool,chrono::DateTime<chrono::Utc>,String)> = sqlx::query_as("SELECT state,is_draft,updated_at,base_branch FROM pull_requests WHERE id = $1 AND repo_id = $2 FOR UPDATE").bind(pr_id).bind(repo).fetch_optional(&mut *tx).await?;
+    let Some((state, draft, updated, old_branch)) = stored else {
         return Ok(None);
     };
     if state != edit.expected_state || updated != edit.expected_updated {
@@ -737,6 +737,12 @@ pub async fn update_pull_request(
         .bind(base.as_ref().map(|base| base.branch)).bind(base.as_ref().map(|base| base.sha))
         .bind(maintainer_can_modify).bind(edit.actor_id)
         .fetch_optional(&mut *tx).await?;
+    if let (Some(pr), Some(base)) = (&pr, base.as_ref().filter(|base| base.branch != old_branch)) {
+        let patterns: Vec<String> = sqlx::query_scalar("SELECT pattern FROM branch_protection_rules WHERE repo_id=$1 AND dismiss_stale_reviews FOR SHARE").bind(repo).fetch_all(&mut *tx).await?;
+        if crate::backend::db::pull_requests::records::retarget_dismisses_reviews(&patterns, base.branch)? {
+            sqlx::query("UPDATE pr_reviews SET state='dismissed',dismissed_by_id=$2,dismissed_reason='Base branch changed',dismissed_at=clock_timestamp() WHERE pull_request_id=$1 AND state='approved'").bind(pr.id).bind(edit.actor_id).execute(&mut *tx).await?;
+        }
+    }
     tx.commit().await?;
     Ok(pr)
 }
