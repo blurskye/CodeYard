@@ -25,6 +25,12 @@ impl Owner {
 
 /// Fields one project may have, the title included. One item update may set every field.
 pub const MAX_FIELDS: usize = 100;
+pub type ItemLink = (i64, String, String, String, i32);
+
+native_operation!(crate::backend::db::postgres::projects::content_item_id, crate::backend::db::sqlite::projects::content_item_id,
+    fn content_item_id(pool: &DbPool, viewer: Option<i64>, project: i64, content: &Content) -> Result<Option<i64>>);
+native_operation!(crate::backend::db::postgres::projects::item_links, crate::backend::db::sqlite::projects::item_links,
+    fn item_links(pool: &DbPool, viewer: Option<i64>, project: i64, items: &[i64]) -> Result<Vec<ItemLink>>);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {

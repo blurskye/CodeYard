@@ -80,15 +80,7 @@ pub(crate) async fn sidebar(
             Some(id) => projects::can_write(pool, id, owner).await?,
             None => false,
         };
-        let item_id = projects::items(pool, viewer, project.id)
-            .await?
-            .into_iter()
-            .find(|i| match content {
-                Content::Issue(id) => i.issue_id == Some(id),
-                Content::PullRequest(id) => i.pull_request_id == Some(id),
-                Content::Draft { .. } => false,
-            })
-            .map(|i| i.id);
+        let item_id = projects::content_item_id(pool, viewer, project.id, &content).await?;
         if item_id.is_none() && !can_edit {
             continue;
         }
@@ -320,6 +312,9 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         .skip((page_number - 1) * ITEMS_PAGE)
         .take(ITEMS_PAGE)
         .collect();
+    let item_ids: Vec<_> = items.iter().map(|item| item.id).collect();
+    let links: HashMap<_, _> = projects::item_links(pool, viewer, project.id, &item_ids).await?
+        .into_iter().map(|(id, owner, name, kind, number)| (id, format!("/{}/{}/{kind}/{number}", crate::webui::encode_component(&owner), crate::webui::encode_component(&name)))).collect();
     let group = if config.layout == "board" {
         config
             .vertical_group_by
@@ -344,47 +339,10 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         }
     }
     for item in items {
-        let url = if let Some(repo) = item.repo_id {
-            let owner = db::repositories::records::repository_owner_name(pool, repo)
-                .await?
-                .ok_or(projects::Refusal::Missing)?;
-            let repo = db::repositories::records::get_repository_by_id(pool, repo)
-                .await?
-                .ok_or(projects::Refusal::Missing)?;
-            // Recheck before projecting content links after the item query's snapshot ends.
-            anyhow::ensure!(
-                crate::backend::repositories::access::can_read(pool, ctx.user.as_ref(), &repo)
-                    .await?,
-                projects::Refusal::Missing
-            );
-            let number = if let Some(id) = item.issue_id {
-                db::issues::get_issue_by_id(pool, id)
-                    .await?
-                    .ok_or(projects::Refusal::Missing)?
-                    .number
-            } else {
-                db::pull_requests::records::get_pull_request_by_id(
-                    pool,
-                    item.pull_request_id.ok_or(projects::Refusal::Missing)?,
-                )
-                .await?
-                .ok_or(projects::Refusal::Missing)?
-                .number
-            };
-            Some(format!(
-                "/{}/{}/{}/{}",
-                crate::webui::encode_component(&owner),
-                crate::webui::encode_component(&repo.name),
-                if item.issue_id.is_some() {
-                    "issues"
-                } else {
-                    "pulls"
-                },
-                number
-            ))
-        } else {
-            None
-        };
+        // The batched projection rechecks repository access after loading and sorting items.
+        let url = if item.repo_id.is_some() {
+            Some(links.get(&item.id).cloned().ok_or(projects::Refusal::Missing)?)
+        } else { None };
         let mut values = Vec::new();
         for field in fields.iter().filter(|f| f.data_type != "title") {
             let value = item.value(field)?;

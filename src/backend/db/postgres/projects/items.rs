@@ -2,6 +2,26 @@ use super::*;
 use crate::backend::db::projects::{valid_name, Content, FieldUpdate, Item, NewView, View};
 use serde_json::Value;
 
+pub async fn content_item_id(pool: &PgPool, viewer: Option<i64>, project: i64, content: &Content) -> Result<Option<i64>> {
+    let (issue, pull) = match content { Content::Issue(id) => (Some(*id), None), Content::PullRequest(id) => (None, Some(*id)), Content::Draft { .. } => return Ok(None) };
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, viewer, project).await?;
+    let id = sqlx::query_scalar(&format!("SELECT i.id FROM project_items i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (i.issue_id=$3 OR i.pull_request_id=$4) AND {}", super::super::repositories::access::readable_condition()))
+        .bind(project).bind(viewer).bind(issue).bind(pull).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(id)
+}
+
+pub async fn item_links(pool: &PgPool, viewer: Option<i64>, project: i64, items: &[i64]) -> Result<Vec<crate::backend::db::projects::ItemLink>> {
+    anyhow::ensure!(items.len() <= 50, Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, viewer, project).await?;
+    let links = sqlx::query_as(&format!("SELECT i.id,COALESCE(owner_user.username,owner_org.name),r.name,CASE WHEN i.issue_id IS NOT NULL THEN 'issues' ELSE 'pulls' END,COALESCE(issues.number,pr.number) FROM project_items i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 LEFT JOIN users owner_user ON owner_user.id=r.owner_user_id LEFT JOIN organizations owner_org ON owner_org.id=r.owner_org_id LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id WHERE i.project_id=$1 AND i.id=ANY($3) AND {}", super::super::repositories::access::readable_condition()))
+        .bind(project).bind(viewer).bind(items).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(links)
+}
+
 pub async fn item_projects(
     pool: &PgPool,
     viewer: Option<i64>,
