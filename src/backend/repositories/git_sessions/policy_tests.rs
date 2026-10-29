@@ -225,7 +225,9 @@ mod fixture {
                     (Some(organization.id), Some((organization.id, team.id)))
                 }
             };
-            let bare = git2::Repository::init_bare(&path).unwrap();
+            let mut options = git2::RepositoryInitOptions::new();
+            options.bare(true).initial_head("main");
+            let bare = git2::Repository::init_opts(&path, &options).unwrap();
             let path = std::fs::canonicalize(path).unwrap();
             let tree_oid = bare.treebuilder(None).unwrap().write().unwrap();
             let tree = bare.find_tree(tree_oid).unwrap();

@@ -204,9 +204,8 @@ pub(crate) fn prepare(
             .is_some_and(|change| change.filename.is_none() && change.content.is_none())
         {
             ensure!(original.contains_key(name), invalid());
-        } else {
-            files.remove(name);
         }
+        files.remove(name);
     }
     let mut destinations = HashSet::new();
     for (name, change) in &input.files {

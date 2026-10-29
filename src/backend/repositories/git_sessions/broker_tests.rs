@@ -796,7 +796,7 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
     std::fs::create_dir_all(source_path.join(".github/workflows")).unwrap();
     std::fs::write(
         source_path.join(".github/workflows/deploy.yml"),
-        "name: deploy\non: push\njobs: {}\n",
+        "name: deploy\non: push\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo deploy\n",
     )
     .unwrap();
     let mut index = source.index().unwrap();
