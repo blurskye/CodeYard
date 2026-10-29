@@ -93,7 +93,7 @@ async fn convert(
     let result = if input.asynchronous {
         crate::backend::organizations::enqueue_outside_conversion(
             &state.pool,
-            actor.user.id,
+            (actor.user.id, actor.token.id),
             org.id,
             user.id,
         )
@@ -130,7 +130,7 @@ async fn remove(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let result = organizations::outside::remove(&state.pool, actor.user.id, org.id, user.id)
+    let result = organizations::outside::remove(&state.pool, (actor.user.id, actor.token.id), org.id, user.id)
         .await
         .map_err(Error::unavailable)?;
     if matches!(result, OrganizationOutcome::Conflict) {
