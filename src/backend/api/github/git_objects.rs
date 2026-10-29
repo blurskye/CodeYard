@@ -22,10 +22,10 @@ pub(crate) const BLOB_ROUTE: &str = "/api/v3/repos/:owner/:repo/git/blobs";
 // JSON can escape each input byte as six ASCII characters.
 const BLOB_BODY_LIMIT: usize = MAX_BLOB_WRITE_BYTES * 6 + 64 * 1024;
 
-fn tree_document(tree: TreeObject, owner: &str, name: &str) -> Value {
+fn tree_document(tree: TreeObject, owner: &str, name: &str, repo: i64) -> Value {
     let url = repo_url(owner, name);
     json!({
-        "sha": tree.sha, "url": format!("{url}/git/trees/{}", tree.sha), "truncated": tree.truncated,
+        "sha": tree.sha, "node_id": super::node_id::git_object("T", repo, &tree.sha), "url": format!("{url}/git/trees/{}", tree.sha), "truncated": tree.truncated,
         "tree": tree.tree.into_iter().map(|entry| {
             let mut value = json!({"path": entry.path, "mode": entry.mode, "type": entry.kind, "sha": entry.sha,
                 "url": format!("{url}/git/{}s/{}", entry.kind, entry.sha)});
@@ -35,7 +35,7 @@ fn tree_document(tree: TreeObject, owner: &str, name: &str) -> Value {
     })
 }
 
-async fn tag_document(state: &AppState, tag: TagObject, owner: &str, name: &str) -> Result<Value> {
+async fn tag_document(state: &AppState, tag: TagObject, owner: &str, name: &str, repo: i64) -> Result<Value> {
     let url = repo_url(owner, name);
     let verification = crate::backend::identity::signatures::verification(
         &state.pool,
@@ -48,7 +48,7 @@ async fn tag_document(state: &AppState, tag: TagObject, owner: &str, name: &str)
     .await
     .map_err(Error::unavailable)?;
     Ok(json!({
-        "sha": tag.sha, "node_id": super::node_id::git("TAG", &tag.sha), "url": format!("{url}/git/tags/{}", tag.sha),
+        "sha": tag.sha, "node_id": super::node_id::git_object("TAG", repo, &tag.sha), "url": format!("{url}/git/tags/{}", tag.sha),
         "tag": tag.tag, "message": tag.message, "tagger": tag.tagger,
         "object": {"sha": tag.object, "type": tag.kind, "url": format!("{url}/git/{}s/{}", tag.kind, tag.object)},
         "verification": verification,
@@ -67,7 +67,7 @@ async fn tree(
         .await
         .map_err(store_error)?;
     super::auth::revalidate_repository(&state, auth.as_ref(), repo.id, "contents").await?;
-    Ok(Json(tree_document(tree, &owner, &name)))
+    Ok(Json(tree_document(tree, &owner, &name, repo.id)))
 }
 
 async fn tag(
@@ -80,7 +80,7 @@ async fn tag(
         .git_tag(&sha)
         .await
         .map_err(store_error)?;
-    Ok(Json(tag_document(&state, tag, &owner, &name).await?))
+    Ok(Json(tag_document(&state, tag, &owner, &name, repo.id).await?))
 }
 
 #[derive(Deserialize)]
@@ -136,7 +136,7 @@ async fn create_blob(
         .map_err(write_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(json!({"sha": sha, "url": format!("{}/git/blobs/{sha}", repo_url(&owner, &name))})),
+        Json(json!({"sha": sha, "node_id": super::node_id::git_object("B", repo.id, &sha), "url": format!("{}/git/blobs/{sha}", repo_url(&owner, &name))})),
     )
         .into_response())
 }
@@ -187,7 +187,7 @@ async fn create_tree(
     let tree = store.git_tree(&sha, false).await.map_err(store_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(tree_document(tree, &owner, &name)),
+        Json(tree_document(tree, &owner, &name, repo.id)),
     )
         .into_response())
 }
@@ -253,7 +253,7 @@ async fn create_commit(
     let commit = store.commit(&sha).await.map_err(store_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(super::commits::git_document(&state, &commit, &owner, &name).await?),
+        Json(super::commits::git_document(&state, &commit, &owner, &name, repo.id).await?),
     )
         .into_response())
 }
@@ -305,7 +305,7 @@ async fn create_tag(
     let tag = store.git_tag(&sha).await.map_err(store_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(tag_document(&state, tag, &owner, &name).await?),
+        Json(tag_document(&state, tag, &owner, &name, repo.id).await?),
     )
         .into_response())
 }

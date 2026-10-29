@@ -878,12 +878,12 @@ pub fn simple_commit(commit: &CommitInfo) -> Value {
 }
 
 /// The Git object shared by the contents API and commit responses.
-pub fn git_commit(commit: &CommitInfo, owner: &str, repo: &str) -> Value {
+pub fn git_commit(commit: &CommitInfo, owner: &str, repo: &str, repo_id: i64) -> Value {
     let url = repo_url(owner, repo);
     let html = repository_url(owner, repo);
     let signature = |name: &str, email: &str, timestamp: i64| json!({"name": name, "email": email, "date": chrono::DateTime::from_timestamp(timestamp, 0)});
     json!({
-        "sha": commit.sha, "node_id": node_id::git("C", &commit.sha),
+        "sha": commit.sha, "node_id": node_id::git_object("C", repo_id, &commit.sha),
         "url": format!("{url}/git/commits/{}", commit.sha),
         "html_url": format!("{html}/commit/{}", commit.sha),
         "message": commit.message,

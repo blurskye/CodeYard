@@ -13,7 +13,7 @@ pub(super) fn commit(repo: i64, row: &CommitInfo, scope: &str) -> Result<Value> 
     let committed = date(row.committer_timestamp)?;
     Ok(
         json!({"__typename":"Commit","_repo":repo,"_scope":scope,"_parents":row.parents,
-        "id":node_id::git("C",&row.sha),"oid":row.sha,"abbreviatedOid":row.sha.chars().take(7).collect::<String>(),
+        "id":node_id::git_object("C",repo,&row.sha),"oid":row.sha,"abbreviatedOid":row.sha.chars().take(7).collect::<String>(),
         "message":row.message,"messageHeadline":row.message.lines().next().unwrap_or(""),"messageBody":row.message.split_once('\n').map(|(_,s)|s.trim_start_matches('\n')).unwrap_or(""),
         "authoredDate":authored,"committedDate":committed,
         "author":{"name":row.author_name,"email":row.author_email,"date":authored,"user":null},

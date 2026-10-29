@@ -27,8 +27,9 @@ pub(super) async fn git_document(
     commit: &CommitInfo,
     owner: &str,
     name: &str,
+    repo: i64,
 ) -> Result<Value> {
-    let mut value = commit_json(commit, owner, name);
+    let mut value = commit_json(commit, owner, name, repo);
     value["verification"] = crate::backend::identity::signatures::verification(
         &state.pool,
         crate::backend::identity::signatures::Signed {
@@ -49,12 +50,13 @@ fn document(
     name: &str,
     count: i64,
     people: &HashMap<String, Person>,
+    repo: i64,
 ) -> Value {
     detail["parents"].take();
     let parents: Vec<_> = commit.parents.iter().map(|sha| json!({"sha": sha, "url": format!("{}/commits/{sha}", repo_url(owner, name)), "html_url": format!("{}/{owner}/{name}/commit/{sha}", crate::backend::api::http::config::link_origin())})).collect();
     detail["comment_count"] = json!(count);
     json!({
-        "sha": commit.sha, "node_id": super::node_id::git("C", &commit.sha),
+        "sha": commit.sha, "node_id": super::node_id::git_object("C", repo, &commit.sha),
         "url": format!("{}/commits/{}", repo_url(owner, name), commit.sha),
         "html_url": detail["html_url"],
         "comments_url": format!("{}/commits/{}/comments", repo_url(owner, name), commit.sha),
@@ -96,11 +98,12 @@ pub(super) async fn documents(
     for commit in commits {
         values.push(document(
             commit,
-            git_document(state, commit, owner, name).await?,
+            git_document(state, commit, owner, name, repo).await?,
             owner,
             name,
             counts.get(&commit.sha).copied().unwrap_or(0),
             &people,
+            repo,
         ));
     }
     Ok(values)
@@ -156,7 +159,7 @@ async fn read(
     let store = repo_store(&repo, state.cluster.as_ref());
     let commit = store.commit(reference).await.map_err(store_error)?;
     if route.as_str().contains("/git/commits/") {
-        return Ok(Json(git_document(&state, &commit, owner, name).await?).into_response());
+        return Ok(Json(git_document(&state, &commit, owner, name, repo.id).await?).into_response());
     }
     let diff = store.commit_diff(&commit.sha).await.map_err(store_error)?;
     if let Some(media) = super::diff_media::requested(&headers) {
@@ -272,7 +275,7 @@ async fn blob(
         return Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response());
     }
     Ok(Json(
-        json!({"sha":sha.to_ascii_lowercase(),"node_id":super::node_id::git("B", &sha.to_ascii_lowercase()),"url":format!("{}/git/blobs/{sha}", repo_url(&owner, &name)),"size":bytes.len(),"encoding":"base64","content":STANDARD.encode(bytes)}),
+        json!({"sha":sha.to_ascii_lowercase(),"node_id":super::node_id::git_object("B", repo.id, &sha.to_ascii_lowercase()),"url":format!("{}/git/blobs/{sha}", repo_url(&owner, &name)),"size":bytes.len(),"encoding":"base64","content":STANDARD.encode(bytes)}),
     ).into_response())
 }
 

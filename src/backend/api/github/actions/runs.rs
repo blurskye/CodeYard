@@ -161,7 +161,7 @@ async fn document(
         } else {
         match repo_store(repo, state.cluster.as_ref()).commit(sha).await {
             Ok(commit) => {
-                let git = payloads::git_commit(&commit, owner, &repo.name);
+                let git = payloads::git_commit(&commit, owner, &repo.name, repo.id);
                 let signature = |name: &str| {
                     if git[name]["email"]
                         .as_str()

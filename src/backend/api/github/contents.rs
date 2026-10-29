@@ -399,7 +399,7 @@ async fn save(
     };
     Ok((
         status,
-        Json(json!({"content": content, "commit": commit_json(&saved.commit, owner, name)})),
+        Json(json!({"content": content, "commit": commit_json(&saved.commit, owner, name, repo.id)})),
     )
         .into_response())
 }
