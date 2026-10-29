@@ -138,7 +138,9 @@ async fn refuse_unreadable_objects() -> Result<()> {
     let Some(quarantine) = std::env::var_os("GIT_QUARANTINE_PATH") else {
         return Ok(());
     };
-    let mut command = process::command(&process::executable()?)?;
+    // Receive-pack owns the group, including this hook and its nested inspection child.
+    let mut command = tokio::process::Command::from(process::std_command(&process::executable()?));
+    process::limit_memory(&mut command);
     command
         .env("GIT_DIR", std::env::var_os("GIT_DIR").unwrap_or(".".into()))
         .env("GIT_OBJECT_DIRECTORY", quarantine)
@@ -150,23 +152,17 @@ async fn refuse_unreadable_objects() -> Result<()> {
         ])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    let mut child = command.spawn()?;
-    let mut lines = BufReader::new(child.stdout.take().expect("piped stdout")).lines();
-    while let Some(line) = lines.next_line().await? {
-        let size = match line.split_once(' ') {
-            Some(("commit" | "tag", size)) => size.parse::<usize>().unwrap_or(usize::MAX),
-            _ => continue,
-        };
-        ensure!(
-            size <= MAX_COMMIT_OBJECT_BYTES,
-            "this push contains a commit or tag larger than {} KiB",
-            MAX_COMMIT_OBJECT_BYTES / 1024
-        );
-    }
-    ensure!(
-        child.wait().await?.success(),
-        "could not list pushed objects"
-    );
+    process::read_stream_inherited(command, CONTROL_TIMEOUT, |stdout, _| async move {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Some(line) = lines.next_line().await? {
+            let size = match line.split_once(' ') {
+                Some(("commit" | "tag", size)) => size.parse::<usize>().unwrap_or(usize::MAX),
+                _ => continue,
+            };
+            ensure!(size <= MAX_COMMIT_OBJECT_BYTES, "this push contains a commit or tag larger than {} KiB", MAX_COMMIT_OBJECT_BYTES / 1024);
+        }
+        Ok(process::ReadEnd::Complete(()))
+    }).await?;
     Ok(())
 }
 

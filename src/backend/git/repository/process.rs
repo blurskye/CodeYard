@@ -398,6 +398,85 @@ pub(crate) async fn blocking_until<T: Send + 'static>(
     }).await.context("Git blocking task failed")?
 }
 
+/// A parser may stop a read-only child once its requested prefix is complete.
+pub(crate) enum ReadEnd<T> { Complete(T), Prefix(T) }
+
+#[derive(Clone)]
+pub(crate) struct ReadAdmission {
+    permit: Arc<OwnedSemaphorePermit>,
+    deadline: Instant,
+}
+impl ReadAdmission {
+    /// Synchronous parsing/object metadata inherits the stream's permit across cancellation.
+    pub(crate) async fn blocking<T: Send + 'static>(&self, work: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
+        let admission = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = admission.permit;
+            ensure!(Instant::now() < admission.deadline, "git timed out");
+            work()
+        }).await.context("Git streamed reader failed")?
+    }
+}
+
+/// Admission, stdin/stderr draining, process-group lifetime and child completion share one
+/// absolute deadline. Parsers retain only their own bounded records, not all command output.
+pub(crate) async fn read_stream<T, F, Fut>(
+    command: Command, input: &[u8], timeout: Duration, read: F,
+) -> Result<(ExitStatus, T)>
+where F: FnOnce(tokio::process::ChildStdout, ReadAdmission) -> Fut,
+      Fut: std::future::Future<Output = Result<ReadEnd<T>>>,
+{
+    read_stream_group(command, input, timeout, true, read).await
+}
+
+/// Hook children remain in receive-pack's group; they must never signal that entire group.
+pub(crate) async fn read_stream_inherited<T, F, Fut>(command: Command, timeout: Duration, read: F) -> Result<(ExitStatus, T)>
+where F: FnOnce(tokio::process::ChildStdout, ReadAdmission) -> Fut,
+      Fut: std::future::Future<Output = Result<ReadEnd<T>>>,
+{
+    read_stream_group(command, b"", timeout, false, read).await
+}
+
+async fn read_stream_group<T, F, Fut>(mut command: Command, input: &[u8], timeout: Duration, own_group: bool, read: F) -> Result<(ExitStatus, T)>
+where F: FnOnce(tokio::process::ChildStdout, ReadAdmission) -> Fut,
+      Fut: std::future::Future<Output = Result<ReadEnd<T>>>,
+{
+    ensure!(input.len() <= RPC_LIMIT, "git request exceeded its limit");
+    let deadline = Instant::now() + timeout;
+    let no_match_ok = command.as_std().get_args().any(|arg| arg == "grep");
+    let permit = Arc::new(operation_slot(timeout).await?);
+    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    let mut child = command.spawn().context("start git")?;
+    let mut group = ProcessGroup(if own_group { child.id() } else { None });
+    let mut stdin = child.stdin.take().context("git stdin")?;
+    let stdout = child.stdout.take().context("git stdout")?;
+    let stderr = child.stderr.take().context("git stderr")?;
+    let pid = child.id();
+    let work = async {
+        let write = async { stdin.write_all(input).await?; drop(stdin); Ok::<_, anyhow::Error>(()) };
+        let parse = async {
+            let result = read(stdout, ReadAdmission { permit: permit.clone(), deadline }).await?;
+            if matches!(&result, ReadEnd::Prefix(_)) {
+                // Keep the leader unreaped until stderr is drained and group cleanup is done.
+                if let Some(pid) = pid { unsafe { libc::kill(if own_group { -(pid as i32) } else { pid as i32 }, libc::SIGTERM); } }
+            }
+            Ok::<_, anyhow::Error>(result)
+        };
+        let (_, result, errors) = tokio::try_join!(write, parse, read_bounded(stderr, STDERR_LIMIT))?;
+        let status = child.wait().await?;
+        group.0 = None;
+        let value = match result {
+            ReadEnd::Complete(value) => {
+                ensure!(status.success() || (no_match_ok && status.code() == Some(1)), "Git streamed read failed: {}", String::from_utf8_lossy(&errors));
+                value
+            }
+            ReadEnd::Prefix(value) => value,
+        };
+        Ok((status, value))
+    };
+    tokio::time::timeout_at(deadline, work).await.context("git timed out")?
+}
+
 /// Runs a command to completion, feeding `input` and collecting bounded output.
 pub(crate) async fn run(
     command: Command,
