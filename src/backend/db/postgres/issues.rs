@@ -380,7 +380,7 @@ pub(crate) async fn update_issue_in_transaction(
         r#"UPDATE issues SET
             title = COALESCE($2, title), body = COALESCE($3, body),
             state = COALESCE($4, state),
-            state_reason = CASE WHEN $4 IS NULL OR $4=state THEN state_reason WHEN $4='open' THEN 'reopened' WHEN $4='closed' THEN COALESCE($9,'completed') ELSE state_reason END,
+            state_reason = CASE WHEN $4='closed' AND $9::TEXT IS NOT NULL THEN $9 WHEN $4 IS NULL OR $4=state THEN state_reason WHEN $4='open' THEN 'reopened' WHEN $4='closed' THEN COALESCE($9,'completed') ELSE state_reason END,
             closed_at = CASE WHEN $4 = 'open' THEN NULL WHEN $4 = 'closed' AND state <> 'closed' THEN clock_timestamp() ELSE closed_at END,
             closed_by_id = CASE WHEN $4 = 'open' THEN NULL WHEN $4 = 'closed' AND state <> 'closed' THEN $7 ELSE closed_by_id END,
             updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond')

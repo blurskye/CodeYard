@@ -350,18 +350,24 @@ async fn effect(
             )
             .await?
             .ok_or(Refusal::Invalid)?;
-            // As when closing through the issue page, the duplicate keeps its canonical link.
+            // Apply the exact normalized target, clearing an obsolete duplicate link too.
             if let Some(duplicate) = p.target_id {
                 sqlx::query("INSERT INTO issue_duplicates(issue_id,duplicate_id) VALUES($1,$2) ON CONFLICT(issue_id) DO UPDATE SET duplicate_id=excluded.duplicate_id")
                     .bind(id)
                     .bind(duplicate)
                     .execute(&mut **tx)
                     .await?;
+            } else {
+                sqlx::query("DELETE FROM issue_duplicates WHERE issue_id=?1").bind(id).execute(&mut **tx).await?;
             }
+            let event = if issue.state == "closed" {
+                // A reason/duplicate correction is a new action, never a historical close.
+                super::timeline::append(tx, repo, "issue", id, actor, "closed", prepared.value.as_str().unwrap_or("completed"), issue.state_reason.as_deref().unwrap_or("completed")).await?
+            } else {
+                sqlx::query_scalar("SELECT id FROM timeline_events WHERE repo_id=?1 AND subject_kind='issue' AND subject_id=?2 AND actor_id=?3 AND kind='closed' ORDER BY id DESC LIMIT 1").bind(repo).bind(id).bind(actor).fetch_one(&mut **tx).await?
+            };
             Ok((
-                Some(
-                    sqlx::query_scalar("SELECT id FROM timeline_events WHERE repo_id=?1 AND subject_kind='issue' AND subject_id=?2 AND actor_id=?3 AND kind='closed' ORDER BY id DESC LIMIT 1").bind(repo).bind(id).bind(actor).fetch_one(&mut **tx).await?,
-                ),
+                Some(event),
                 None,
                 Some(closed),
             ))
