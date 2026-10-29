@@ -33,6 +33,27 @@ pub enum WriteFailure {
     SavedFollowupFailed,
 }
 
+/// Decode Git content with bounded normalization, accepting conventional base64 whitespace.
+pub fn decode_base64(content: &str, limit: usize) -> Result<Vec<u8>, WriteFailure> {
+    use base64::Engine;
+    let encoded_limit = limit.div_ceil(3).saturating_mul(4);
+    let mut normalized = Vec::with_capacity(content.len().min(encoded_limit));
+    for character in content.chars().filter(|character| !character.is_whitespace()) {
+        if normalized.len() >= encoded_limit {
+            return Err(WriteFailure::TooLarge);
+        }
+        if !character.is_ascii() {
+            return Err(WriteFailure::Encoding);
+        }
+        normalized.push(character as u8);
+    }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(&normalized).map_err(|_| WriteFailure::Encoding)?;
+    if bytes.len() > limit {
+        return Err(WriteFailure::TooLarge);
+    }
+    Ok(bytes)
+}
+
 #[derive(Debug)]
 pub struct WriteError {
     pub kind: WriteFailure,

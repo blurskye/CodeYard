@@ -68,29 +68,10 @@ fn failure(status: StatusCode, code: &str, message: &str) -> Failure {
 }
 
 fn decode_content(content: &str) -> Result<Vec<u8>, Failure> {
-    if content.len() > MAX_EDITOR_BYTES.div_ceil(3) * 4 {
-        return Err(failure(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "too_large",
-            "File writes support at most 1 MiB.",
-        ));
-    }
-    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content)
-        .map_err(|_| {
-            failure(
-                StatusCode::BAD_REQUEST,
-                "validation_error",
-                "Invalid base64 content.",
-            )
-        })?;
-    if bytes.len() > MAX_EDITOR_BYTES {
-        return Err(failure(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "too_large",
-            "File writes support at most 1 MiB.",
-        ));
-    }
-    Ok(bytes)
+    crate::backend::repositories::files::decode_base64(content, MAX_EDITOR_BYTES).map_err(|error| match error {
+        crate::backend::repositories::files::WriteFailure::TooLarge => failure(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "File writes support at most 1 MiB."),
+        _ => failure(StatusCode::BAD_REQUEST, "validation_error", "Invalid base64 content."),
+    })
 }
 
 /// Saves `req` as a new or changed file in one commit.

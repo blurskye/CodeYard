@@ -17,7 +17,7 @@ use crate::backend::db;
 use crate::backend::db::assignees::AssignedItem;
 use crate::backend::db::discussions::{ListFilter, ListSort, Pick};
 use crate::backend::issues::mutations::CreateIssueRequest;
-use crate::backend::notifications::assignments::{notify_assignees, Assignment};
+use crate::backend::notifications::assignments::Assignment;
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::issue_templates::{
     compose_form_body, first_missing_answer, issue_templates, pull_request_template, FormElement,
@@ -707,21 +707,16 @@ async fn apply_issue_choices(
 ) -> anyhow::Result<()> {
     let actor_id = assignment.actor.id;
     let repo_id = assignment.repository.id;
+    let mut users = Vec::new();
     for username in &draft.assignees {
         if let Some(user) = db::users::accounts::get_user_by_username(pool, username).await? {
-            let added = db::assignees::assign_user(
-                pool,
-                actor_id,
-                repo_id,
-                AssignedItem::Issue(issue_id),
-                user.id,
-            )
-            .await?;
-            if added {
-                notify_assignees(pool, broadcaster, assignment, &[user.id]).await;
-            }
+            users.push(user);
         }
     }
+    crate::backend::issues::assignments::assign(pool, broadcaster, &crate::backend::issues::assignments::Target {
+        actor: assignment.actor, repository: assignment.repository, owner: assignment.owner,
+        item: AssignedItem::Issue(issue_id), number: assignment.number, title: assignment.title,
+    }, &users).await?;
     let labels = draft
         .labels
         .iter()

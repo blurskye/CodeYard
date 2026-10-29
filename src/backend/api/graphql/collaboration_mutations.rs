@@ -209,61 +209,24 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     db::timeline::record_for(pool, repo.id, item, actor, "unlabeled", &name).await;
                 }
             }
-        } else if !remove {
-            let mut added = Vec::new();
-            for user in changes {
-                let username = db::users::accounts::get_user_by_id(pool, user)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?
-                    .username;
-                if db::assignees::assign_user(pool, actor, repo.id, item, user)
-                    .await
-                    .map_err(|e| github::issues::assignment_error(e).graphql())?
-                {
-                    added.push(user);
-                    db::timeline::record_for(pool, repo.id, item, actor, "assigned", &username)
-                        .await;
-                }
-            }
-            let owner = repository::owner(&repo, request).await?;
-            let number = value["number"].as_i64().ok_or_else(missing)?;
-            let pull_request = matches!(item, AssignedItem::PullRequest(_));
-            let link = format!(
-                "/{owner}/{}/{}/{number}",
-                repo.name,
-                if pull_request { "pulls" } else { "issues" }
-            );
-            crate::backend::notifications::assignments::notify_assignees(
-                pool,
-                &request.state.notification_broadcaster,
-                &crate::backend::notifications::assignments::Assignment {
-                    actor: &request.auth.user,
-                    repository: &repo,
-                    owner: &owner,
-                    repo: &repo.name,
-                    number: i32::try_from(number).map_err(|_| missing())?,
-                    pull_request,
-                    title: value["title"].as_str().ok_or_else(missing)?,
-                    link: &link,
-                },
-                &added,
-            )
-            .await;
         } else {
-            for user in changes {
-                let username = db::users::accounts::get_user_by_id(pool, user)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?
-                    .username;
-                if db::assignees::unassign_user(pool, actor, repo.id, item, &username)
-                    .await
-                    .map_err(|e| github::issues::assignment_error(e).graphql())?
-                {
-                    db::timeline::record_for(pool, repo.id, item, actor, "unassigned", &username)
-                        .await;
-                }
+            use crate::backend::issues::assignments;
+            let mut ids = changes;
+            ids.sort_unstable();
+            ids.dedup();
+            let users = db::users::accounts::get_users_by_ids(pool, &ids).await.map_err(unavailable)?;
+            if users.len() != ids.len() { return Err(missing()); }
+            let owner = repository::owner(&repo, request).await?;
+            let target = assignments::Target {
+                actor: &request.auth.user, repository: &repo, owner: &owner, item,
+                number: i32::try_from(value["number"].as_i64().ok_or_else(missing)?).map_err(|_| missing())?,
+                title: value["title"].as_str().ok_or_else(missing)?,
+            };
+            if remove {
+                let names: Vec<_> = users.into_iter().map(|user| user.username).collect();
+                assignments::unassign(pool, &target, &names).await.map_err(|e| github::issues::assignment_error(e).graphql())?;
+            } else {
+                assignments::assign(pool, &request.state.notification_broadcaster, &target, &users).await.map_err(|e| github::issues::assignment_error(e).graphql())?;
             }
         }
     }
