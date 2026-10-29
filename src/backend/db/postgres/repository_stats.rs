@@ -8,8 +8,12 @@ pub async fn repository_document_facts(
     pool: &PgPool,
     repo: i64,
 ) -> Result<crate::backend::db::repository_stats::RepositoryDocumentFacts> {
-    Ok(sqlx::query_as("SELECT (SELECT COUNT(*) FROM issues WHERE repo_id=r.id AND state='open')+(SELECT COUNT(*) FROM pull_requests WHERE repo_id=r.id AND state='open') AS open_items,(SELECT MAX(accepted_at) FROM ci_accepted_pushes WHERE repo_id=r.id) AS pushed_at,(SELECT language FROM repo_languages WHERE repo_id=r.id ORDER BY bytes DESC,language LIMIT 1) AS language FROM repositories r WHERE r.id=$1")
-        .bind(repo).fetch_one(pool).await?)
+    repository_document_metadata(pool, &[repo]).await?.into_iter().next().map(|row| row.facts).ok_or_else(|| sqlx::Error::RowNotFound.into())
+}
+
+pub async fn repository_document_metadata(pool: &PgPool, repos: &[i64]) -> Result<Vec<crate::backend::db::repository_stats::RepositoryDocumentMetadata>> {
+    anyhow::ensure!(repos.len() <= 100, "Repository document page exceeds 100 rows");
+    Ok(sqlx::query_as("SELECT r.id AS repo_id,(SELECT COUNT(*) FROM issues WHERE repo_id=r.id AND state='open')+(SELECT COUNT(*) FROM pull_requests WHERE repo_id=r.id AND state='open') AS open_items,(SELECT MAX(accepted_at) FROM ci_accepted_pushes WHERE repo_id=r.id) AS pushed_at,(SELECT language FROM repo_languages WHERE repo_id=r.id ORDER BY bytes DESC,language LIMIT 1) AS language,COALESCE((SELECT MAX(created_at) FROM repository_pushes WHERE repo_id=r.id),r.created_at) AS last_pushed_at,COALESCE((SELECT wiki_enabled FROM repository_features WHERE repo_id=r.id),false) AS wiki,COALESCE((SELECT enabled FROM repository_discussion_settings WHERE repo_id=r.id),false) AS discussions FROM repositories r WHERE r.id=ANY($1)").bind(repos).fetch_all(pool).await?)
 }
 
 pub async fn language_source(pool: &PgPool, repo_id: i64) -> Result<Option<LanguageSource>> {
