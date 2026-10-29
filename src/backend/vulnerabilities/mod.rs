@@ -138,6 +138,8 @@ pub struct Range {
     #[serde(default)]
     pub events: Vec<Value>,
 }
+pub(crate) const MAX_AFFECTED_PACKAGES: usize = 2000;
+
 impl Advisory {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         ensure!(
@@ -149,7 +151,8 @@ impl Advisory {
             !record.id.is_empty()
                 && record.id.len() <= 256
                 && !record.id.chars().any(char::is_control)
-                && record.affected.len() <= 2000,
+                && record.affected.len() <= MAX_AFFECTED_PACKAGES
+                && record.affected.iter().all(|affected| !affected.package.name.contains('\0') && !affected.package.ecosystem.contains('\0')),
             "Invalid OSV record"
         );
         Ok(record)
@@ -317,7 +320,7 @@ impl Advisory {
                 .find_map(|e| e["fixed"].as_str());
             json!({"package":{"ecosystem":ecosystem,"name":affected.package.name},"vulnerable_version_range":if ranges.is_empty() {"unknown".into()} else {ranges.join(" || ")},"first_patched_version":patched,"vulnerable_functions":[]})
         }).collect::<Vec<_>>());
-        db::dependabot_alerts::import_document(&value)
+        db::dependabot_alerts::osv_document(&value)
     }
     pub fn document(&self) -> Value {
         let ghsa = self

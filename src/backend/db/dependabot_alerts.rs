@@ -71,6 +71,14 @@ impl Update {
 }
 
 pub fn import_document(value: &Value) -> Result<Value> {
+    validate_document(value, 100)
+}
+
+pub(crate) fn osv_document(value: &Value) -> Result<Value> {
+    validate_document(value, crate::backend::vulnerabilities::MAX_AFFECTED_PACKAGES)
+}
+
+fn validate_document(value: &Value, max_packages: usize) -> Result<Value> {
     ensure!(
         serde_json::to_vec(value)?.len() <= 1024 * 1024,
         Refusal::Invalid
@@ -243,7 +251,7 @@ pub fn import_document(value: &Value) -> Result<Value> {
         .get("vulnerabilities")
         .and_then(Value::as_array)
         .ok_or(Refusal::Invalid)?;
-    ensure!(vulnerabilities.len() <= 100, Refusal::Invalid);
+    ensure!(vulnerabilities.len() <= max_packages, Refusal::Invalid);
     for v in vulnerabilities {
         ensure!(
             v["first_patched_version"].is_null() || v["first_patched_version"].is_string(),
@@ -259,8 +267,8 @@ pub fn import_document(value: &Value) -> Result<Value> {
         ensure!(
             v["package"]["name"]
                 .as_str()
-                .is_some_and(|s| !s.is_empty() && s.len() <= 255)
-                && v["package"]["ecosystem"].as_str().is_some()
+                .is_some_and(|s| !s.is_empty() && s.len() <= 255 && !s.contains('\0'))
+                && v["package"]["ecosystem"].as_str().is_some_and(|s| !s.contains('\0'))
                 && v["vulnerable_version_range"]
                     .as_str()
                     .is_some_and(|s| !s.is_empty() && s.len() <= 1024),
