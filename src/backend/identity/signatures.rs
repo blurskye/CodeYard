@@ -109,7 +109,8 @@ fn pgp_verifies(signature: &DetachedSignature, public_key: &str, payload: &[u8])
 }
 
 async fn gpg(pool: &DbPool, armored: &str, payload: &[u8], email: &str) -> Result<&'static str> {
-    let Ok((signature, _)) = DetachedSignature::from_string(armored) else {
+    let armored = armored.to_owned();
+    let Some(signature) = super::gpg::crypto(move || DetachedSignature::from_string(&armored).ok().map(|(signature, _)| signature)).await? else {
         return Ok("malformed_signature");
     };
     if !matches!(signature.signature.typ(), Some(SignatureType::Binary | SignatureType::Text)) {
@@ -132,9 +133,10 @@ async fn gpg(pool: &DbPool, armored: &str, payload: &[u8], email: &str) -> Resul
     if keys.is_empty() {
         return Ok("unknown_key");
     }
-    let Some(key) = keys
-        .into_iter()
-        .find(|key| pgp_verifies(&signature, &key.material.public_key, payload))
+    let signed_at = signature.signature.created().map(|created| i64::from(created.as_secs()));
+    let payload = payload.to_owned();
+    let Some(key) = super::gpg::crypto(move || keys.into_iter()
+        .find(|key| pgp_verifies(&signature, &key.material.public_key, &payload))).await?
     else {
         return Ok("invalid");
     };
@@ -152,29 +154,23 @@ async fn gpg(pool: &DbPool, armored: &str, payload: &[u8], email: &str) -> Resul
     if !key.material.can_sign {
         return Ok("not_signing_key");
     }
-    let signed_at = signature
-        .signature
-        .created()
-        .map(|created| i64::from(created.as_secs()));
     let expired = |expires: Option<chrono::DateTime<chrono::Utc>>| {
         expires.is_some_and(|expires| signed_at.is_none_or(|signed| signed >= expires.timestamp()))
     };
     if expired(key.material.expires_at) || expired(primary.material.expires_at) {
         return Ok("expired_key");
     }
-    if !primary
-        .material
-        .emails
-        .iter()
-        .any(|identity| identity.eq_ignore_ascii_case(email))
-    {
+    let Some((raw, at)) = primary.material.raw_key.zip(signed_at) else { return Ok("bad_email") };
+    let identity = email.to_owned();
+    if !super::gpg::crypto(move || super::gpg::certifies_email(&raw, &identity, at)).await? {
         return Ok("bad_email");
     }
     owner_address(pool, key.user_id, email).await
 }
 
 async fn ssh(pool: &DbPool, armored: &str, payload: &[u8], email: &str) -> Result<&'static str> {
-    let Ok(signature) = ssh_key::SshSig::from_pem(armored) else {
+    let armored = armored.to_owned();
+    let Some(signature) = super::gpg::crypto(move || ssh_key::SshSig::from_pem(&armored).ok()).await? else {
         return Ok("malformed_signature");
     };
     // ssh-key verifies SK signature mathematics but does not enforce user presence.
@@ -188,10 +184,10 @@ async fn ssh(pool: &DbPool, armored: &str, payload: &[u8], email: &str) -> Resul
     let Some(key) = db::users::signing_keys::find_signing_key(pool, &fingerprint).await? else {
         return Ok("unknown_key");
     };
-    let Ok(public_key) = ssh_key::PublicKey::from_openssh(&key.key) else {
-        return Ok("invalid");
-    };
-    if public_key.verify("git", payload, &signature).is_err() {
+    let public = key.key.clone();
+    let payload = payload.to_owned();
+    if !super::gpg::crypto(move || ssh_key::PublicKey::from_openssh(&public)
+        .is_ok_and(|public_key| public_key.verify("git", &payload, &signature).is_ok())).await? {
         return Ok("invalid");
     }
     owner_address(pool, key.user_id, email).await
