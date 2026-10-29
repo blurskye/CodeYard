@@ -30,6 +30,11 @@ pub async fn set_enabled(pool: &SqlitePool, actor: i64, repo: i64, enabled: bool
         crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
+    if let Some(configuration) = super::super::code_security::repository_configuration(&mut *tx, repo).await? {
+        if let Some(fixed) = crate::backend::db::code_security::private_reporting(&configuration.settings, true)? {
+            anyhow::ensure!(fixed == enabled, Refusal::Denied);
+        }
+    }
     let private: bool = sqlx::query_scalar("SELECT is_private FROM repositories WHERE id=?1")
         .bind(repo)
         .fetch_one(&mut *tx)
