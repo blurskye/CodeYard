@@ -2236,20 +2236,22 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         stack_id: i64,
         versions: &[(i64, i64)],
         base_branch: &str,
         base: &str,
         moves: &[RestackMove],
     ) -> Result<(), RepoError> {
+        let authority = actor.into();
+        let actor = authority.user_id();
         match &self.0 {
             Backend::Local(local) => {
                 local
                     .publish_restack(
                         pool,
                         repo_id,
-                        actor,
+                        authority,
                         stack_id,
                         versions,
                         base_branch,
@@ -2263,6 +2265,7 @@ impl RepoStore {
                     .call_as(
                         actor,
                         Operation::PublishRestack {
+                            authority,
                             stack_id,
                             versions: versions.to_vec(),
                             base_branch: base_branch.into(),

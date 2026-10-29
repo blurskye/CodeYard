@@ -2472,13 +2472,14 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         stack_id: i64,
         versions: &[(i64, i64)],
         base_branch: &str,
         base: &str,
         moves: &[RestackMove],
     ) -> Result<(), RepoError> {
+        let actor = authority.user_id();
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -2563,6 +2564,8 @@ impl LocalStore {
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &references, &publication, None)
             .await?;
+        let repository = access::current_repository(pool, repo_id).await.map_err(|_| RepoError::write_denied())?;
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(|_| RepoError::write_denied())?;
         publication
             .scope(git::publish_restack(
                 self.path(),

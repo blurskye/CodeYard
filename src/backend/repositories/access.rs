@@ -6,6 +6,24 @@ use crate::backend::db::{
 };
 use anyhow::Result;
 
+/// Recheck the credential retained by a native publication, after preparation and lock waits.
+pub(crate) async fn check_publication_actor(
+    pool: &db::DbPool,
+    actor: &db::users::accounts::AccountActor,
+    repository: &Repository,
+) -> Result<()> {
+    use db::users::accounts::AccountActor;
+    let user = match actor {
+        AccountActor::Trusted(id) => db::users::accounts::get_user_by_id(pool, *id).await?,
+        AccountActor::Session { session, .. } => db::users::sessions::get_session_user(pool, session).await?,
+        AccountActor::Token { token_id, .. } => Some(super::git_sessions::ReceiveCredential::Token(*token_id)
+            .authorize(pool, repository, true).await?.0),
+    }.ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
+    anyhow::ensure!(user.id == actor.user_id() && !user.is_banned && !user.must_change_password,
+        db::users::accounts::AccountRestricted);
+    Ok(())
+}
+
 /// The access projection with the personal-repository administrator policy applied.
 pub async fn user_access(
     pool: &db::DbPool,

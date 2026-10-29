@@ -172,7 +172,7 @@ impl LocalStore {
         use super::super::{UpstreamMerge, UpstreamMergeType};
         let reference =
             git::branch_ref(branch).ok_or_else(|| super::super::invalid_ref("branch"))?;
-        self.upstream_authority(pool, repo, actor, source).await?;
+        self.upstream_authority(pool, repo, actor, source, token).await?;
         let target = git::repository::current_branch_head(source.1.path(), branch)
             .await
             .map_err(RepoError::from)?
@@ -180,7 +180,7 @@ impl LocalStore {
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
-        self.upstream_authority(pool, repo, actor, source).await?;
+        self.upstream_authority(pool, repo, actor, source, token).await?;
         let old = git::repository::current_branch_head(self.path(), branch)
             .await
             .map_err(RepoError::from)?
@@ -232,7 +232,6 @@ impl LocalStore {
                 Some(prepared.path()),
             )
             .await?;
-        self.upstream_authority(pool, repo, actor, source).await?;
         self.check_workflow_grant(
             pool,
             token,
@@ -240,6 +239,12 @@ impl LocalStore {
             Some(prepared.path().to_owned()),
         )
         .await?;
+        let repository = access::current_repository(pool, repo).await.map_err(|_| RepoError::write_denied())?;
+        let quarantine = prepared.path().join("objects");
+        let bypasses = crate::backend::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+            pool, &repository, actor, self.path(), Some(&quarantine), std::slice::from_ref(&target),
+        ).await.map_err(RepoError::from)?;
+        self.upstream_authority(pool, repo, actor, source, token).await?;
         publication
             .scope(git::repository::publish_pull_branch_update(
                 self.path(),
@@ -267,7 +272,9 @@ impl LocalStore {
             &target,
         )
         .await;
+        let bypass_followup = record_secret_bypasses(pool, repo, actor, bypasses).await;
         followup?;
+        bypass_followup?;
         Ok(UpstreamMerge {
             old,
             sha: target,
@@ -281,6 +288,7 @@ impl LocalStore {
         repo: i64,
         actor: i64,
         source: (i64, &LocalStore),
+        token: Option<i64>,
     ) -> Result<(), RepoError> {
         let (repository, _) = access::check_write(pool, repo, actor)
             .await
@@ -301,6 +309,15 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        live_read(pool, source.0, actor, source.1.path(), source.1.node_id).await
+        live_read(pool, source.0, actor, source.1.path(), source.1.node_id).await?;
+        if let Some(token) = token {
+            let credential = crate::backend::repositories::git_sessions::ReceiveCredential::Token(token);
+            let upstream = access::current_repository(pool, source.0).await.map_err(|_| RepoError::write_denied())?;
+            for (repository, write) in [(&repository, true), (&upstream, false)] {
+                let (user, _) = credential.authorize(pool, repository, write).await.map_err(|_| RepoError::write_denied())?;
+                if user.id != actor { return Err(RepoError::write_denied()); }
+            }
+        }
+        Ok(())
     }
 }
