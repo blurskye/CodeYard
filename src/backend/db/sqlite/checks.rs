@@ -72,6 +72,17 @@ async fn authority(
     Ok((publisher, app))
 }
 
+/// The GitHub App behind the newest check run named `name` in the repository, if that run
+/// came from an App.
+pub async fn recent_app(pool: &SqlitePool, repo: i64, name: &str) -> Result<Option<i64>> {
+    Ok(sqlx::query_scalar::<_, Option<i64>>("SELECT g.id FROM check_runs r JOIN check_suites s ON s.id=r.suite_id LEFT JOIN oauth_applications o ON o.id=s.app_id LEFT JOIN github_apps g ON g.client_id=o.client_id WHERE r.repo_id=?1 AND r.name=?2 ORDER BY r.id DESC LIMIT 1")
+        .bind(repo)
+        .bind(name)
+        .fetch_optional(pool)
+        .await?
+        .flatten())
+}
+
 pub async fn application(
     pool: &SqlitePool,
     id: i64,

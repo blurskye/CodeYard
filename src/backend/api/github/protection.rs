@@ -207,16 +207,10 @@ async fn admin(
 }
 
 #[derive(Deserialize)]
-struct Check {
-    context: String,
-    app_id: Option<i64>,
-}
-
-#[derive(Deserialize)]
 struct StatusChecks {
     strict: Option<bool>,
     contexts: Option<Vec<String>>,
-    checks: Option<Vec<Check>>,
+    checks: Option<Vec<super::protection_operations::Check>>,
 }
 
 async fn status_checks(
@@ -243,16 +237,19 @@ async fn status_checks(
             .await
             .map_err(|error| Error::new(error.status(), "Invalid status check policy"))?;
         let mut contexts = input.contexts;
-        let mut bindings = Vec::new();
-        if let Some(checks) = input.checks {
-            let contexts = contexts.get_or_insert_with(Vec::new);
-            for check in checks {
-                super::protection_operations::check_app_exists(&state, check.app_id).await?;
-                bindings.push(
-                    json!({"context":check.context,"app_id":check.app_id.filter(|id| *id != -1)}),
-                );
-                contexts.push(check.context);
-            }
+        let checks = input.checks.unwrap_or_default();
+        let bindings = super::protection_operations::check_bindings(
+            &state,
+            rule.repo_id,
+            contexts.as_deref().unwrap_or_default(),
+            &checks,
+            &rule.github_settings.checks,
+        )
+        .await?;
+        if !checks.is_empty() {
+            contexts
+                .get_or_insert_with(Vec::new)
+                .extend(checks.into_iter().map(|check| check.context));
         }
         rule = protection::update_branch_protection_rule(
             &state.pool,
@@ -315,9 +312,27 @@ async fn contexts(
         let values = match input {
             Contexts::Array(values) | Contexts::Object { contexts: values } => values,
         };
+        let bindings = if method == Method::DELETE {
+            Vec::new()
+        } else {
+            super::protection_operations::check_bindings(
+                &state,
+                rule.repo_id,
+                &values,
+                &[],
+                &rule.github_settings.checks,
+            )
+            .await?
+        };
         let update = match method {
-            Method::POST => ProtectionUpdate::AddContexts(values),
-            Method::PUT => ProtectionUpdate::SetContexts(values),
+            Method::POST => ProtectionUpdate::AddContexts {
+                contexts: values,
+                bindings,
+            },
+            Method::PUT => ProtectionUpdate::SetContexts {
+                contexts: values,
+                bindings,
+            },
             _ => ProtectionUpdate::RemoveContexts(values),
         };
         rule = protection::update_branch_protection_rule(
@@ -429,28 +444,10 @@ async fn users(
         let Json(input) = Json::<Users>::from_request(request, &state)
             .await
             .map_err(|error| Error::new(error.status(), "Invalid user restrictions"))?;
-        let mut names = match input {
+        let names = match input {
             Users::Array(names) | Users::Object { users: names } => names,
         };
-        if names.len() > 100
-            || names.iter().any(|name| {
-                name.is_empty() || name.len() > 255 || name.chars().any(char::is_control)
-            })
-        {
-            return Err(Error::invalid("Supply at most 100 valid usernames"));
-        }
-        names
-            .iter_mut()
-            .for_each(|name| name.make_ascii_lowercase());
-        names.sort_unstable();
-        names.dedup();
-        let accounts = db::users::accounts::get_users_by_usernames(&state.pool, &names)
-            .await
-            .map_err(Error::unavailable)?;
-        if accounts.len() != names.len() {
-            return Err(Error::invalid("Unknown user in push restrictions"));
-        }
-        let ids = accounts.into_iter().map(|user| user.id).collect();
+        let ids = super::protection_operations::user_ids(&state, &names).await?;
         use protection::ActorListUpdate;
         let update = match method {
             Method::POST => ActorListUpdate::Add(ids),

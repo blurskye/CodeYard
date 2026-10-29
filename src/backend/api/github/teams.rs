@@ -56,9 +56,10 @@ async fn organization(state: &AppState, name: &str) -> Result<Organization> {
 
 async fn selected(
     state: &AppState,
-    actor: i64,
+    auth: &auth::Authentication,
     params: &Params,
 ) -> Result<(Organization, orgs::PublicTeam)> {
+    let actor = auth.user.id;
     if let Some(id) = params.get("team_id") {
         let id = id
             .parse::<i64>()
@@ -73,6 +74,9 @@ async fn selected(
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
+        // The legacy route names no organization, so the request middleware cannot apply
+        // its token policy.
+        auth::refuse_classic(state, auth.token.id, org.id).await?;
         let team = orgs::get_public_team(&state.pool, actor, org.id, &team.slug)
             .await
             .map_err(Error::unavailable)?
@@ -370,7 +374,7 @@ async fn team(
     request: Request,
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &method).await?;
-    let (org, mut public) = selected(&state, auth.user.id, &params).await?;
+    let (org, mut public) = selected(&state, &auth, &params).await?;
     if method == Method::DELETE {
         outcome(
             orgs::delete_organization_team(&state.pool, auth.user.id, org.id, public.team.id)
@@ -454,7 +458,7 @@ async fn children(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &Method::GET).await?;
-    let (org, public) = selected(&state, auth.user.id, &params).await?;
+    let (org, public) = selected(&state, &auth, &params).await?;
     let (offset, limit) = page.window()?;
     let (mut after, mut skipped, mut items) = (0, 0, Vec::new());
     loop {
@@ -500,6 +504,13 @@ async fn user_teams(
     let more = rows.len() > limit;
     let mut items = Vec::new();
     for team in rows.into_iter().take(limit) {
+        // An organization that forbids classic tokens keeps its teams out of their lists too.
+        if db::fine_grained_tokens::classic_refused(&state.pool, auth.token.id, team.org_id)
+            .await
+            .map_err(Error::unavailable)?
+        {
+            continue;
+        }
         let org = orgs::get_public_organization_by_id(&state.pool, team.org_id)
             .await
             .map_err(Error::unavailable)?
@@ -527,7 +538,7 @@ async fn members(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &Method::GET).await?;
-    let (org, public) = selected(&state, auth.user.id, &params).await?;
+    let (org, public) = selected(&state, &auth, &params).await?;
     let role = query.role.as_deref().unwrap_or("all");
     if !matches!(role, "all" | "member" | "maintainer") {
         return Err(Error::validation("Team", "role", "invalid"));
@@ -590,7 +601,7 @@ async fn membership(
     request: Request,
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &method).await?;
-    let (org, public) = selected(&state, auth.user.id, &params).await?;
+    let (org, public) = selected(&state, &auth, &params).await?;
     let username = &params["username"];
     let user = db::users::accounts::get_user_by_username(&state.pool, username)
         .await
@@ -748,7 +759,7 @@ async fn invitations(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &Method::GET).await?;
-    let (org, public) = selected(&state, auth.user.id, &params).await?;
+    let (org, public) = selected(&state, &auth, &params).await?;
     let (offset, limit) = page.window()?;
     let (mut after, mut skipped, mut items) = (0, 0, Vec::new());
     loop {
@@ -831,7 +842,7 @@ async fn repositories(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &Method::GET).await?;
-    let (org, public) = selected(&state, auth.user.id, &params).await?;
+    let (org, public) = selected(&state, &auth, &params).await?;
     let (offset, limit) = page.window()?;
     let (mut after, mut skipped, mut items) = (0, 0, Vec::new());
     loop {
@@ -871,7 +882,7 @@ async fn repository(
     request: Request,
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &method).await?;
-    let (org, public) = selected(&state, auth.user.id, &params).await?;
+    let (org, public) = selected(&state, &auth, &params).await?;
     let (repo, _) = super::repository(
         &state,
         &headers,

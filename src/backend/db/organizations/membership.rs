@@ -25,8 +25,9 @@ native_operation!(crate::backend::db::postgres::organizations::membership::count
 // REST's admin role is an owner, not Codeyard's delegated administrator role.
 native_operation!(crate::backend::db::postgres::organizations::membership::update_organization_member_role_by_owner, crate::backend::db::sqlite::organizations::membership::update_organization_member_role_by_owner,
     fn update_organization_member_role_by_owner(pool: &DbPool, actor: i64, org: i64, target: i64, role: OrgRole) -> Result<OrganizationOutcome<OrgMembership>>);
-native_operation!(crate::backend::db::postgres::organizations::membership::remove_organization_member_by_owner, crate::backend::db::sqlite::organizations::membership::remove_organization_member_by_owner,
-    fn remove_organization_member_by_owner(pool: &DbPool, actor: i64, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
+// Ends the membership or, for a non-member, cancels the pending invitations, in one transaction.
+native_operation!(crate::backend::db::postgres::organizations::membership::remove_member_or_invitation_by_owner, crate::backend::db::sqlite::organizations::membership::remove_member_or_invitation_by_owner,
+    fn remove_member_or_invitation_by_owner(pool: &DbPool, actor: i64, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
 
 native_operation!(crate::backend::db::postgres::organizations::membership::convert_to_outside_collaborator, crate::backend::db::sqlite::organizations::membership::convert_to_outside_collaborator,
     fn convert_to_outside_collaborator(pool: &DbPool, actor: i64, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);

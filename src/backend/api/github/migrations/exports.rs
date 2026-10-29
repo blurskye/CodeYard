@@ -400,6 +400,9 @@ pub(in crate::backend::api::github) async fn archive(
     if row.state != "exported" || row.archive_deleted {
         return Err(Error::missing());
     }
+    if let Some(org) = row.owner_org_id {
+        auth::refuse_classic(&state, actor.token.id, org).await?;
+    }
     let permit = state
         .storage
         .try_acquire_download()

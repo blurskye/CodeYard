@@ -91,6 +91,23 @@ fn database_error<E>(_: E) -> OperationError {
     }
 }
 
+/// The repository a caller already resolved, read again by ID with its owner's name.
+pub(super) async fn repository(
+    pool: &db::DbPool,
+    id: i64,
+) -> Result<(db::models::Repository, String), OperationError> {
+    use crate::backend::repositories::access::{current_repository_with_owner, AccessError};
+    current_repository_with_owner(pool, id)
+        .await
+        .map_err(|error| match error {
+            AccessError::Unavailable => database_error(()),
+            _ => OperationError::Missing {
+                code: "not_found",
+                message: "Repository not found".to_owned(),
+            },
+        })
+}
+
 pub(super) async fn actor(pool: &db::DbPool, id: i64) -> Result<db::models::User, OperationError> {
     db::users::accounts::get_user_by_id(pool, id)
         .await

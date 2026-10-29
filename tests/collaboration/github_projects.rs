@@ -234,6 +234,70 @@ async fn fields(pg: bool) {
             .await;
         }
         items(&router, &base, area, alice, &credentials, issue, pull, id).await;
+        if area == "org" {
+            // An organization token cannot reach alice's private repository, so the project
+            // lists its issue and pull request with their content redacted and cannot add them.
+            use codeyard::backend::identity::fine_grained;
+            let created = fine_grained::create(
+                f.pool(),
+                alice,
+                Some(&session.session),
+                fine_grained::Request {
+                    name: "projects".into(),
+                    description: "Project reader".into(),
+                    owner: fine_grained::Owner::Organization(org),
+                    access: fine_grained::Access::All,
+                    repositories: vec![],
+                    permissions: json!({"organization_projects":"write","issues":"read","pull_requests":"read"})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    expires_at: Some(chrono::Utc::now() + chrono::Duration::days(30)),
+                },
+            )
+            .await
+            .unwrap();
+            db::fine_grained_tokens::review(
+                f.pool(),
+                org,
+                alice,
+                &[created.id],
+                "pending",
+                "approved",
+                None,
+            )
+            .await
+            .unwrap();
+            let fine = format!("Bearer {}", created.value);
+            let listed = request(
+                &router,
+                "GET",
+                &format!("{base}/items"),
+                Some(&fine),
+                Value::Null,
+                "projects/list-items-for-org",
+                200,
+            )
+            .await;
+            let linked: Vec<_> = listed
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| item["content_type"] != "DraftIssue")
+                .collect();
+            assert_eq!(linked.len(), 2, "{listed}");
+            assert!(linked.iter().all(|item| item["content"].is_null()), "{listed}");
+            request(
+                &router,
+                "POST",
+                &format!("{base}/items"),
+                Some(&fine),
+                json!({"type":"Issue","id":issue}),
+                "projects/add-item-for-org",
+                404,
+            )
+            .await;
+        }
         projects::save(
             f.pool(),
             alice,

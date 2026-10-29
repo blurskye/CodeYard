@@ -161,7 +161,7 @@ async fn close(forks: &Forks, pull: &PullRequest) {
         &forks.ci,
         &forks.broadcaster,
         forks.alice,
-        ("alice".to_owned(), "proj".to_owned(), pull.number),
+        (forks.base.id, pull.number),
         edit,
     )
     .await

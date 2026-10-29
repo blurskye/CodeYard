@@ -358,20 +358,13 @@ pub async fn run_pull_request_workflows(
     pool: &db::DbPool,
     ci: &CiRuns,
     actor_id: i64,
-    owner: String,
-    repo: String,
+    repository: &db::models::Repository,
     number: i32,
     request: RunWorkflowsRequest,
 ) -> Result<db::models::PullRequest, OperationError> {
-    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
-        .await
-        .map_err(super::write_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Repository not found".to_owned(),
-        })?;
+    // The caller resolved and authorized this repository; a rename must not switch it.
     let user = super::actor(pool, actor_id).await?;
-    super::require_write(pool, &user, &repository).await?;
+    super::require_write(pool, &user, repository).await?;
     // Only trusted actors can queue these workflows, so no one else may record an
     // approval for them.
     if !user.is_admin && !ci.config.trusted_actor_ids.contains(&user.id) {
@@ -387,7 +380,7 @@ pub async fn run_pull_request_workflows(
             code: "not_found",
             message: "Pull request not found".to_owned(),
         })?;
-    super::branches::refresh_open_pull_request(pool, &repository, ci, user.id, pull.id, None)
+    super::branches::refresh_open_pull_request(pool, repository, ci, user.id, pull.id, None)
         .await
         .map_err(|_| OperationError::Unavailable {
             code: "git_unavailable",
@@ -429,7 +422,7 @@ pub async fn run_pull_request_workflows(
     queue_pull_request_ci(
         pool,
         ci,
-        &repository,
+        repository,
         &pull,
         user.id,
         true,

@@ -65,7 +65,8 @@ async fn upstream(
     request: Request,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = &auth.user;
     let Json(input) = Json::<Upstream>::from_request(request, &state)
         .await
         .map_err(|_| Error::invalid("A branch name is required"))?;
@@ -82,6 +83,11 @@ async fn upstream(
             access::AccessError::Unavailable => Error::unavailable(()),
             _ => Error::missing(),
         })?;
+    // The upstream's commits become readable through the fork, so the credential must reach
+    // the upstream too, not only the fork the request names.
+    auth.repository_scope(&state.pool, parent.id, "contents", false)
+        .await
+        .map_err(super::auth::scope_error)?;
     let parent_owner = db::repositories::records::repository_owner_name(&state.pool, parent.id)
         .await
         .map_err(Error::unavailable)?

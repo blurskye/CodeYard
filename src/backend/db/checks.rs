@@ -304,6 +304,8 @@ impl RunPatch {
 
 native_operation!(crate::backend::db::postgres::checks::application, crate::backend::db::sqlite::checks::application,
     fn application(pool: &DbPool, id: i64) -> Result<Option<super::oauth_apps::Application>>);
+native_operation!(crate::backend::db::postgres::checks::recent_app, crate::backend::db::sqlite::checks::recent_app,
+    fn recent_app(pool: &DbPool, repo: i64, name: &str) -> Result<Option<i64>>);
 native_operation!(crate::backend::db::postgres::checks::pulls, crate::backend::db::sqlite::checks::pulls,
     fn pulls(pool: &DbPool, repo: i64, sha: &str) -> Result<Vec<Pull>>);
 

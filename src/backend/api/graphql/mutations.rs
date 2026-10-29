@@ -262,8 +262,7 @@ pub(super) async fn resolve(
                         pool,
                         broadcaster,
                         actor,
-                        repository::owner(&repo, request).await?,
-                        repo.name.clone(),
+                        repo.id,
                         current.number,
                         issues::mutations::UpdateIssueRequest {
                             expected_state: current.state,
@@ -527,7 +526,7 @@ pub(super) async fn resolve(
                         &request.state.ci_runs,
                         broadcaster,
                         actor,
-                        (owner, repo.name, current.number),
+                        (repo.id, current.number),
                         pull_requests::mutations::UpdatePullRequestRequest {
                             expected_state: current.state,
                             expected_updated: current.updated_at.to_rfc3339(),

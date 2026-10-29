@@ -109,12 +109,21 @@ async fn catalog(
     )
     .await
     .map_err(Error::unavailable)?;
+    let mut ids: Vec<i64> = results.items.iter().filter_map(|hit| hit.repository_id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let readable =
+        auth::readable_repositories(&state, authentication.as_ref(), &ids, "metadata").await?;
     let mut items = Vec::new();
     let mut incomplete = git_incomplete;
     for hit in results.items {
         let value = match kind {
             Kind::Repositories | Kind::Labels => {
                 let id = hit.repository_id.ok_or_else(|| Error::unavailable(()))?;
+                if !readable.contains(&id) {
+                    incomplete = true;
+                    continue;
+                }
                 let repo = match access::check_read(&state.pool, id, viewer).await {
                     Ok(repo) => repo,
                     Err(AccessError::NotFound) => {

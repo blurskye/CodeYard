@@ -343,6 +343,10 @@ async fn enqueue_ci_run_inner(
             "CI pull request revision is not open",
         ))?;
         is_fork = fork;
+        ensure!(
+            !fork || super::action_settings::fork_runs_allowed(&mut tx, input.repo_id).await?,
+            CiAdmissionRefusal::Denied("Workflows from fork pull requests are turned off for this private repository")
+        );
         pull_request_id = Some(id);
         pull_request_event = Some(event);
         ensure!(
@@ -586,8 +590,11 @@ async fn claim_queued_run(
         .await?;
         let Some(run) = next else { break };
         after = run.id;
+        // A private repository's fork switch may have been turned off after admission.
+        let fork_refused = run.is_fork
+            && !super::action_settings::fork_runs_allowed(&mut tx, run.repo_id).await?;
         let permitted = match run.triggered_by_id {
-            Some(actor) if !run.cancel_requested => {
+            Some(actor) if !run.cancel_requested && !fork_refused => {
                 ci_actor_has_permission(
                     &mut tx,
                     actor,

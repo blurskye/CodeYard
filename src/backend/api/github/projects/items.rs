@@ -3,6 +3,38 @@ use crate::backend::db::projects::{Content, Field, FieldUpdate, Item, NewView};
 use axum::routing::{delete, patch};
 use serde_json::json;
 
+/// The items among `items` whose linked issue or pull request this request may read: the
+/// user's access and the credential's bounds under the issues or pull requests permission.
+/// The other linked items keep their place in the project with their content redacted.
+async fn readable_items<'a>(
+    state: &AppState,
+    auth: Option<&auth::Authentication>,
+    items: impl IntoIterator<Item = &'a Item>,
+) -> Result<std::collections::HashSet<i64>> {
+    let linked: Vec<(i64, i64, bool)> = items
+        .into_iter()
+        .filter_map(|item| Some((item.id, item.repo_id?, item.pull_request_id.is_some())))
+        .collect();
+    let repositories = |pulls: bool| {
+        let mut ids: Vec<i64> = linked
+            .iter()
+            .filter(|(_, _, pull)| *pull == pulls)
+            .map(|(_, repo, _)| *repo)
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    };
+    let issues = auth::readable_repositories(state, auth, &repositories(false), "issues").await?;
+    let pulls =
+        auth::readable_repositories(state, auth, &repositories(true), "pull-requests").await?;
+    Ok(linked
+        .into_iter()
+        .filter(|(_, repo, pull)| if *pull { &pulls } else { &issues }.contains(repo))
+        .map(|(id, _, _)| id)
+        .collect())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn item_document(
     state: &AppState,
@@ -12,41 +44,43 @@ async fn item_document(
     item: &Item,
     fields: &[Field],
     selected: Option<&str>,
+    readable: &std::collections::HashSet<i64>,
 ) -> Result<Value> {
     let creator = db::users::accounts::get_user_by_id(&state.pool, item.creator_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let content = if let Some(id) = item.repo_id {
-        let repo = db::repositories::records::get_repository_by_id(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        let owner = db::repositories::records::repository_owner_name(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        let (repo, _) = super::super::repository(state, headers, &owner, &repo.name, false).await?;
-        if let Some(id) = item.issue_id {
-            super::super::issues::document(
-                &state.pool,
-                &repo,
-                &owner,
-                db::assignees::AssignedItem::Issue(id),
-            )
-            .await?
-        } else {
-            let pull = db::pull_requests::records::get_pull_request_by_id(
-                &state.pool,
-                item.pull_request_id.ok_or_else(Error::missing)?,
-            )
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-            super::super::pulls::document(state, headers, &repo, &owner, &pull, false).await?
+    let content = match item.repo_id {
+        Some(_) if !readable.contains(&item.id) => Value::Null,
+        Some(id) => {
+            let repo = db::repositories::records::get_repository_by_id(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+            let owner = db::repositories::records::repository_owner_name(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+            if let Some(id) = item.issue_id {
+                super::super::issues::document(
+                    &state.pool,
+                    &repo,
+                    &owner,
+                    db::assignees::AssignedItem::Issue(id),
+                )
+                .await?
+            } else {
+                let pull = db::pull_requests::records::get_pull_request_by_id(
+                    &state.pool,
+                    item.pull_request_id.ok_or_else(Error::missing)?,
+                )
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+                super::super::pulls::document(state, headers, &repo, &owner, &pull, false).await?
+            }
         }
-    } else {
-        payloads::project_draft(item, payloads::user(&creator))
+        None => payloads::project_draft(item, payloads::user(&creator)),
     };
     let mut value = payloads::project_item(
         item,
@@ -95,42 +129,65 @@ async fn add_item(
     if !matches!(input.kind.as_str(), "Issue" | "PullRequest") {
         return Err(Error::validation("ProjectV2Item", "type", "invalid"));
     }
-    let id = match (input.id, input.owner, input.repo, input.number) {
-        (Some(id), None, None, None) => id,
+    let issue = input.kind == "Issue";
+    let (repo_id, id) = match (input.id, input.owner, input.repo, input.number) {
+        (Some(id), None, None, None) if issue => db::issues::get_issue_by_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?
+            .map(|issue| (issue.repo_id, issue.id)),
+        (Some(id), None, None, None) => {
+            db::pull_requests::records::get_pull_request_by_id(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .map(|pull| (pull.repo_id, pull.id))
+        }
         (None, Some(owner), Some(name), Some(number)) => {
-            let (repo, _) =
-                super::super::repository(&state, &headers, &owner, &name, false).await?;
-            if input.kind == "Issue" {
+            let repo = db::repositories::records::get_repository(&state.pool, &owner, &name)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+            if issue {
                 db::issues::get_issue(&state.pool, repo.id, number)
                     .await
                     .map_err(Error::unavailable)?
-                    .ok_or_else(Error::missing)?
-                    .id
+                    .map(|issue| (repo.id, issue.id))
             } else {
                 db::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
                     .await
                     .map_err(Error::unavailable)?
-                    .ok_or_else(Error::missing)?
-                    .id
+                    .map(|pull| (repo.id, pull.id))
             }
         }
         _ => return Err(Error::validation("ProjectV2Item", "content", "invalid")),
-    };
-    let content = if input.kind == "Issue" {
+    }
+    .ok_or_else(Error::missing)?;
+    // The content must be readable by the user and inside the credential's bounds.
+    let scope = if issue { "issues" } else { "pull-requests" };
+    if !auth::readable_repositories(&state, auth.as_ref(), &[repo_id], scope)
+        .await?
+        .contains(&repo_id)
+    {
+        return Err(Error::missing());
+    }
+    let content = if issue {
         Content::Issue(id)
     } else {
         Content::PullRequest(id)
     };
-    let actor = auth.ok_or_else(auth::required)?.user.id;
+    let actor = auth.as_ref().ok_or_else(auth::required)?.user.id;
     let item = projects::add_item(&state.pool, actor, project.id, &content)
         .await
         .map_err(project_error)?;
     let fields = projects::fields(&state.pool, Some(actor), project.id)
         .await
         .map_err(project_error)?;
+    let readable = readable_items(&state, auth.as_ref(), [&item]).await?;
     Ok((
         StatusCode::CREATED,
-        Json(item_document(&state, &headers, &project, &name, &item, &fields, None).await?),
+        Json(
+            item_document(&state, &headers, &project, &name, &item, &fields, None, &readable)
+                .await?,
+        ),
     )
         .into_response())
 }
@@ -167,7 +224,10 @@ async fn draft(
         .map_err(project_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(item_document(&state, &headers, &project, &name, &item, &fields, None).await?),
+        Json(
+            item_document(&state, &headers, &project, &name, &item, &fields, None, &Default::default())
+                .await?,
+        ),
     )
         .into_response())
 }
@@ -214,8 +274,10 @@ async fn list_items(
     )
     .map_err(project_error)?;
     let (offset, limit) = page.window()?;
+    let window: Vec<&Item> = items.iter().skip(offset).take(limit + 1).collect();
+    let readable = readable_items(&state, auth.as_ref(), window.iter().copied()).await?;
     let mut documents = Vec::new();
-    for item in items.iter().skip(offset).take(limit + 1) {
+    for item in window {
         documents.push(
             item_document(
                 &state,
@@ -225,6 +287,7 @@ async fn list_items(
                 item,
                 &fields,
                 query.fields.as_deref(),
+                &readable,
             )
             .await?,
         );
@@ -251,6 +314,7 @@ async fn get_item(
     let fields = projects::fields(&state.pool, viewer, project.id)
         .await
         .map_err(project_error)?;
+    let readable = readable_items(&state, auth.as_ref(), [&item]).await?;
     Ok(Json(
         item_document(
             &state,
@@ -260,6 +324,7 @@ async fn get_item(
             &item,
             &fields,
             query.fields.as_deref(),
+            &readable,
         )
         .await?,
     ))
@@ -277,7 +342,7 @@ async fn update_item(
 ) -> Result<Json<Value>> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
     let Json(input) = input.map_err(|_| Error::validation("ProjectV2Item", "fields", "invalid"))?;
-    let actor = auth.ok_or_else(auth::required)?.user.id;
+    let actor = auth.as_ref().ok_or_else(auth::required)?.user.id;
     let id: i64 = params["item_id"].parse().map_err(|_| Error::missing())?;
     let item = projects::update_item(&state.pool, actor, project.id, id, &input.fields)
         .await
@@ -285,8 +350,9 @@ async fn update_item(
     let fields = projects::fields(&state.pool, Some(actor), project.id)
         .await
         .map_err(project_error)?;
+    let readable = readable_items(&state, auth.as_ref(), [&item]).await?;
     Ok(Json(
-        item_document(&state, &headers, &project, &name, &item, &fields, None).await?,
+        item_document(&state, &headers, &project, &name, &item, &fields, None, &readable).await?,
     ))
 }
 

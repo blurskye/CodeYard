@@ -30,12 +30,12 @@ pub async fn update_issue(
     Json(req): Json<UpdateIssueRequest>,
 ) -> Result<Json<IssueResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let issue = crate::backend::issues::mutations::update_issue(
         &state.pool,
         &state.notification_broadcaster,
         current_actor.id,
-        owner,
-        repo,
+        repository.id,
         number,
         req,
     )
@@ -384,7 +384,7 @@ pub(crate) async fn native_edit(
         &ctx,
         kind,
         ctx.require_user()?.id,
-        (owner, name, number),
+        (repo.record.id, number),
         EntryChange {
             title: Some(title),
             body: Some(body),
@@ -418,7 +418,7 @@ pub(crate) async fn save_entry_change(
     ctx: &PageContext,
     kind: Kind,
     actor_id: i64,
-    (owner, name, number): (String, String, i32),
+    (repository_id, number): (i64, i32),
     text: EntryChange,
 ) -> Result<(), ApiFailure> {
     match kind {
@@ -426,8 +426,7 @@ pub(crate) async fn save_entry_change(
             &ctx.state.pool,
             &ctx.state.notification_broadcaster,
             actor_id,
-            owner,
-            name,
+            repository_id,
             number,
             crate::backend::issues::mutations::UpdateIssueRequest {
                 expected_state: text.expected_state,
@@ -446,7 +445,7 @@ pub(crate) async fn save_entry_change(
             &ctx.state.ci_runs,
             &ctx.state.notification_broadcaster,
             actor_id,
-            (owner, name, number),
+            (repository_id, number),
             crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest {
                 expected_state: text.expected_state,
                 expected_updated: text.expected_updated,
@@ -508,7 +507,7 @@ pub(crate) async fn native_change_state(
         &ctx,
         kind,
         ctx.require_user()?.id,
-        (owner, name, number),
+        (repo.record.id, number),
         EntryChange {
             title: None,
             body: None,

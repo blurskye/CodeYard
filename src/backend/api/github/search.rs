@@ -16,7 +16,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::Arc,
 };
 
@@ -82,12 +82,7 @@ async fn search_issues(
     repo_ids.sort_unstable();
     repo_ids.dedup();
     // Reauthorize the page after the search snapshot, before assembling any private documents.
-    let readable =
-        db::repositories::access::readable_repository_ids(&state.pool, viewer, &repo_ids)
-            .await
-            .map_err(Error::unavailable)?
-            .into_iter()
-            .collect::<HashSet<_>>();
+    let readable = auth::readable_repositories(&state, auth.as_ref(), &repo_ids, "issues").await?;
     let repos = db::repositories::records::get_repositories_by_ids(&state.pool, &repo_ids)
         .await
         .map_err(Error::unavailable)?

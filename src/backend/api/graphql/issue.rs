@@ -500,8 +500,7 @@ pub(super) async fn mutation(
                 pool,
                 broadcaster,
                 actor,
-                owner,
-                repo.name.clone(),
+                repo.id,
                 issue.number,
                 UpdateIssueRequest {
                     expected_state: issue.state,

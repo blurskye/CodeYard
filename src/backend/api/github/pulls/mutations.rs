@@ -63,7 +63,8 @@ async fn create_value(
     body: Bytes,
 ) -> Result<Response> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let viewer = viewer.ok_or_else(auth::required)?;
+    let actor = viewer.user.clone();
     let input: Create =
         serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid pull request"))?;
     let source = match input.issue {
@@ -107,6 +108,14 @@ async fn create_value(
         .map_err(Error::unavailable)?
     {
         return Err(Error::missing());
+    }
+    // The head's commits become readable through this repository, so a credential bounded
+    // to some repositories must reach the head repository as well.
+    if head.id != repo.id {
+        viewer
+            .repository_scope(&state.pool, head.id, "contents", false)
+            .await
+            .map_err(auth::scope_error)?;
     }
     let refs = repo_store(&repo, state.cluster.as_ref())
         .refs()
@@ -205,7 +214,7 @@ async fn update_value(
         &state.ci_runs,
         &state.notification_broadcaster,
         actor.id,
-        (owner.clone(), name, number),
+        (repo.id, number),
         mutations::UpdatePullRequestRequest {
             expected_state: pull.state,
             expected_updated: pull.updated_at.to_rfc3339(),

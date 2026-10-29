@@ -274,6 +274,30 @@ async fn contract(pg: bool) {
         .permissions
         .contains(&"Issues: write".to_owned()));
 
+    // A banned owner keeps the membership row but cannot review requests or set the policy.
+    let erin = f.actor("erin").await;
+    applied(
+        organizations::add_organization_member(f.pool(), alice, org, erin, OrgRole::Owner)
+            .await
+            .unwrap(),
+    );
+    f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[erin])
+        .await;
+    assert_eq!(
+        db::fine_grained_tokens::review(f.pool(), org, erin, &[pending], "pending", "approved", None)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(!db::fine_grained_tokens::set_policy(
+        f.pool(),
+        erin,
+        org,
+        &db::fine_grained_tokens::policy(f.pool(), org).await.unwrap()
+    )
+    .await
+    .unwrap());
+
     // Approval reaches private repositories within the user's own rights.
     request(
         &router,

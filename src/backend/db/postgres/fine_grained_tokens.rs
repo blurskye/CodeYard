@@ -1,7 +1,11 @@
-use crate::backend::db::fine_grained_tokens::{Bounds, NewToken, Policy, Token};
+use crate::backend::db::{
+    fine_grained_tokens::{Bounds, NewToken, Policy, Token},
+    models::OrgRole,
+    organizations::OrganizationOutcome,
+};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 /// A token's bounds with its live membership and policy; package transactions read it too.
 pub(crate) const BOUNDS: &str = "SELECT f.token_id,t.user_id,f.owner_org_id,f.repository_access,f.permissions,f.status,t.expires_at,f.requested_at,(f.owner_org_id IS NULL OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=f.owner_org_id AND m.user_id=t.user_id)) AS member,COALESCE(p.fine_grained_allowed,TRUE) AS fine_grained_allowed,CASE WHEN p.org_id IS NULL THEN 366 ELSE p.max_lifetime_days END AS max_lifetime_days FROM fine_grained_tokens f JOIN personal_access_tokens t ON t.id=f.token_id LEFT JOIN organization_token_policies p ON p.org_id=f.owner_org_id WHERE f.token_id=$1";
@@ -128,9 +132,24 @@ pub async fn policy(pool: &PgPool, org: i64) -> Result<Policy> {
         .bind(org).fetch_optional(pool).await?.unwrap_or_default())
 }
 
+/// Policy and review writes need an active owner of an organization that still has one,
+/// checked by the shared organization guard inside the writing transaction.
+async fn active_owner(connection: &mut PgConnection, actor: i64, org: i64) -> Result<bool> {
+    Ok(matches!(
+        super::organizations::authority::authority(connection, actor, org).await?,
+        OrganizationOutcome::Applied(OrgRole::Owner)
+    ))
+}
+
 pub async fn set_policy(pool: &PgPool, actor: i64, org: i64, policy: &Policy) -> Result<bool> {
-    Ok(sqlx::query("INSERT INTO organization_token_policies(org_id,fine_grained_allowed,fine_grained_approval,classic_allowed,max_lifetime_days) SELECT $1,$2,$3,$4,$5 WHERE EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=$1 AND m.user_id=$6 AND m.role='owner') ON CONFLICT(org_id) DO UPDATE SET fine_grained_allowed=excluded.fine_grained_allowed,fine_grained_approval=excluded.fine_grained_approval,classic_allowed=excluded.classic_allowed,max_lifetime_days=excluded.max_lifetime_days")
-        .bind(org).bind(policy.fine_grained_allowed).bind(policy.fine_grained_approval).bind(policy.classic_allowed).bind(policy.max_lifetime_days).bind(actor).execute(pool).await?.rows_affected() == 1)
+    let mut tx = pool.begin().await?;
+    if !active_owner(&mut tx, actor, org).await? {
+        return Ok(false);
+    }
+    sqlx::query("INSERT INTO organization_token_policies(org_id,fine_grained_allowed,fine_grained_approval,classic_allowed,max_lifetime_days) VALUES($1,$2,$3,$4,$5) ON CONFLICT(org_id) DO UPDATE SET fine_grained_allowed=excluded.fine_grained_allowed,fine_grained_approval=excluded.fine_grained_approval,classic_allowed=excluded.classic_allowed,max_lifetime_days=excluded.max_lifetime_days")
+        .bind(org).bind(policy.fine_grained_allowed).bind(policy.fine_grained_approval).bind(policy.classic_allowed).bind(policy.max_lifetime_days).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(true)
 }
 
 pub async fn organization_tokens(pool: &PgPool, org: i64, status: &str) -> Result<Vec<Token>> {
@@ -148,9 +167,12 @@ pub async fn review(
     reason: Option<&str>,
 ) -> Result<u64> {
     let mut tx = pool.begin().await?;
+    if !active_owner(&mut tx, reviewer, org).await? {
+        return Ok(0);
+    }
     let mut changed = 0;
     for token in tokens {
-        changed += sqlx::query("UPDATE fine_grained_tokens SET status=$4,reason=$5,reviewed_by=$3,reviewed_at=clock_timestamp() WHERE token_id=$1 AND owner_org_id=$2 AND status=$6 AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=$2 AND m.user_id=$3 AND m.role='owner')")
+        changed += sqlx::query("UPDATE fine_grained_tokens SET status=$4,reason=$5,reviewed_by=$3,reviewed_at=clock_timestamp() WHERE token_id=$1 AND owner_org_id=$2 AND status=$6")
             .bind(token).bind(org).bind(reviewer).bind(status).bind(reason).bind(from).execute(&mut *tx).await?.rows_affected();
     }
     tx.commit().await?;

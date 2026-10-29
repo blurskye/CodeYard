@@ -13,7 +13,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::Arc,
 };
 async fn content(
@@ -76,15 +76,7 @@ async fn content(
         .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
-    // The access helper takes at most 100 IDs per call, and a search can match more repositories.
-    let mut readable = HashSet::new();
-    for chunk in ids.chunks(100) {
-        readable.extend(
-            db::repositories::access::readable_repository_ids(&state.pool, viewer, chunk)
-                .await
-                .map_err(Error::unavailable)?,
-        );
-    }
+    let readable = auth::readable_repositories(&state, authentication.as_ref(), &ids, "contents").await?;
     let previous = results.items.len();
     results
         .items

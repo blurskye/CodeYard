@@ -3025,7 +3025,53 @@ async fn postgres_account_transition_includes_a_concurrent_owner_promotion() {
     database.close().await;
 }
 
+// REST removal of a pending invitee and the invitee's acceptance race; whichever commits
+// first, the acknowledged removal must leave no membership behind.
+async fn removal_and_acceptance_race_leaves_no_member(database: &Database) {
+    let owner = database.actor("race_owner").await;
+    let org = database.org(owner, "race_org").await;
+    for round in 0..8 {
+        let invitee = database.actor(&format!("race_invitee_{round}")).await;
+        applied(
+            invite_organization_member(&database.pool, owner, org.id, invitee, OrgRole::Member)
+                .await
+                .unwrap(),
+        );
+        let (pool, accepting_pool) = (database.pool.clone(), database.pool.clone());
+        let removing = tokio::spawn(async move {
+            remove_member_or_invitation_by_owner(&pool, owner, org.id, invitee).await
+        });
+        let accepting = tokio::spawn(async move {
+            accept_organization_invitation(&accepting_pool, invitee, org.id, None).await
+        });
+        let removed = removing.await.unwrap().unwrap();
+        let _ = accepting.await.unwrap().unwrap();
+        assert!(matches!(removed, Applied(())), "round {round}");
+        assert_eq!(
+            database
+                .count(
+                    "SELECT COUNT(*) FROM org_memberships WHERE org_id=$1 AND user_id=$2",
+                    &[org.id, invitee],
+                )
+                .await,
+            0,
+            "round {round}"
+        );
+        assert_eq!(
+            database
+                .count(
+                    "SELECT COUNT(*) FROM organization_invitations WHERE org_id=$1 AND user_id=$2",
+                    &[org.id, invitee],
+                )
+                .await,
+            0,
+            "round {round}"
+        );
+    }
+}
+
 async fn native_suite(database: &Database) {
+    removal_and_acceptance_race_leaves_no_member(database).await;
     atomic_creation_safe_metadata_namespace_and_validation(database).await;
     owner_admin_member_rules_and_inactive_actors(database).await;
     concurrent_last_owner_mutations(database).await;

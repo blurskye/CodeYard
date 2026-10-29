@@ -177,6 +177,18 @@ pub async fn actions_enabled(pool: &DbPool, repo: i64) -> Result<bool> {
     Ok(organization_allows(&org, Setting::Permissions, repo))
 }
 
+/// A private repository runs workflows from fork pull requests only when it turned them on
+/// and its organization, if it chose, did not turn them off. Public repositories always do.
+pub fn fork_workflows_allowed(repo: &Value, org: &Value) -> bool {
+    let allowed = |scope: &Value| {
+        scope
+            .get(Setting::ForkWorkflows.key())
+            .and_then(|v| v.get("run_workflows_from_fork_pull_requests"))
+            .and_then(Value::as_bool)
+    };
+    allowed(org) != Some(false) && allowed(repo).or(allowed(org)).unwrap_or(false)
+}
+
 /// Actions runs may approve reviews only when the narrowest scope that set the switch allows it.
 pub fn can_approve_reviews(repo: &Value, org: &Value) -> bool {
     repo.get("workflow")
@@ -303,4 +315,21 @@ pub(crate) fn policy_update(existing: Option<&str>, input: &Value) -> Result<Val
         Refusal::Invalid
     );
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn private_fork_workflows_follow_the_repository_and_organization_switches() {
+        let on = json!({"fork-pr-workflows-private-repos":{"run_workflows_from_fork_pull_requests":true}});
+        let off = json!({"fork-pr-workflows-private-repos":{"run_workflows_from_fork_pull_requests":false}});
+        let unset = json!({});
+        assert!(!fork_workflows_allowed(&unset, &unset));
+        assert!(fork_workflows_allowed(&on, &unset));
+        assert!(fork_workflows_allowed(&unset, &on));
+        assert!(!fork_workflows_allowed(&off, &on));
+        assert!(!fork_workflows_allowed(&on, &off));
+    }
 }

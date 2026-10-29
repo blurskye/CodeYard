@@ -47,6 +47,19 @@ pub(crate) async fn snapshot(connection: &mut PgConnection, repo: i64) -> Result
     Ok((serde_json::from_str(&own)?, serde_json::from_str(&org)?))
 }
 
+/// Whether a fork pull request run may be admitted or claimed for this repository.
+pub(crate) async fn fork_runs_allowed(connection: &mut PgConnection, repo: i64) -> Result<bool> {
+    let private: Option<bool> = sqlx::query_scalar("SELECT is_private FROM repositories WHERE id=$1")
+        .bind(repo)
+        .fetch_optional(&mut *connection)
+        .await?;
+    if private == Some(false) {
+        return Ok(true);
+    }
+    let (own, org) = snapshot(connection, repo).await?;
+    Ok(crate::backend::db::action_settings::fork_workflows_allowed(&own, &org))
+}
+
 pub async fn effective(pool: &PgPool, repo: i64) -> Result<(Value, Value)> {
     snapshot(&mut *pool.acquire().await?, repo).await
 }

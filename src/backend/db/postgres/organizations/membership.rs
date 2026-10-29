@@ -174,13 +174,15 @@ pub async fn remove_organization_member(
     remove_member(pool, actor, org, target, false, Removal::Remove).await
 }
 
-pub async fn remove_organization_member_by_owner(
+/// REST removal: ends the membership, or cancels the pending invitations when the account is
+/// not a member, in one transaction so an acceptance cannot slip between the two.
+pub async fn remove_member_or_invitation_by_owner(
     pool: &PgPool,
     actor: i64,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
-    remove_member(pool, actor, org, target, true, Removal::Remove).await
+    remove_member(pool, actor, org, target, true, Removal::RemoveOrCancel).await
 }
 
 pub async fn convert_to_outside_collaborator(
@@ -204,6 +206,7 @@ pub async fn prepare_outside_conversion(
 #[derive(PartialEq)]
 enum Removal {
     Remove,
+    RemoveOrCancel,
     Convert,
     ValidateConversion,
 }
@@ -227,10 +230,18 @@ async fn remove_member(
     // Lock target activity even though cleanup does not require it to be active.
     active(&mut tx, target).await?;
     let Some(old) = membership_role(&mut tx, org, target).await? else {
-        return Ok(if mode == Removal::Remove {
-            Missing
-        } else {
-            Denied
+        return Ok(match mode {
+            Removal::Remove => Missing,
+            Removal::RemoveOrCancel => {
+                let outcome =
+                    super::invitations::cancel_offers(&mut tx, actor_role, org, target, false)
+                        .await?;
+                if matches!(outcome, Applied(())) {
+                    tx.commit().await?;
+                }
+                outcome
+            }
+            Removal::Convert | Removal::ValidateConversion => Denied,
         });
     };
     // A role this build does not recognize is refused; it cannot be removed here.
@@ -256,7 +267,7 @@ async fn remove_member(
         .bind(org).bind(target).bind(old.as_str()).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM team_memberships WHERE user_id=$1 AND team_id IN (SELECT id FROM teams WHERE org_id=$2)")
         .bind(target).bind(org).execute(&mut *tx).await?;
-    if mode == Removal::Remove {
+    if matches!(mode, Removal::Remove | Removal::RemoveOrCancel) {
         sqlx::query("DELETE FROM repo_access WHERE user_id=$1 AND repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$2)")
             .bind(target).bind(org).execute(&mut *tx).await?;
     }

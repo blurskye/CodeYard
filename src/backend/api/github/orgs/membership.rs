@@ -118,7 +118,7 @@ async fn remove(
         .await
         .map_err(Error::unavailable)?
         .map_or(-1, |user| user.id);
-    let mut result = organizations::remove_organization_member_by_owner(
+    let result = organizations::remove_member_or_invitation_by_owner(
         &state.pool,
         actor.user.id,
         org.id,
@@ -126,16 +126,6 @@ async fn remove(
     )
     .await
     .map_err(Error::unavailable)?;
-    if matches!(result, OrganizationOutcome::Missing) {
-        result = organizations::cancel_organization_invitation_by_owner(
-            &state.pool,
-            actor.user.id,
-            org.id,
-            user,
-        )
-        .await
-        .map_err(Error::unavailable)?;
-    }
     if matches!(result, OrganizationOutcome::Conflict) {
         return Err(Error::new(
             StatusCode::FORBIDDEN,

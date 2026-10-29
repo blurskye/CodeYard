@@ -307,14 +307,6 @@ pub async fn cancel_organization_invitation(
 ) -> Result<OrganizationOutcome<()>> {
     cancel(pool, actor, org, target, false, false).await
 }
-pub async fn cancel_organization_invitation_by_owner(
-    pool: &SqlitePool,
-    actor: i64,
-    org: i64,
-    target: i64,
-) -> Result<OrganizationOutcome<()>> {
-    cancel(pool, actor, org, target, false, true).await
-}
 pub async fn cancel_invitation_id(
     pool: &SqlitePool,
     actor: i64,
@@ -337,6 +329,23 @@ async fn cancel(
     if !administers(actor_role) || (owner_only && actor_role != OrgRole::Owner) {
         return Ok(Denied);
     }
+    let outcome = cancel_offers(&mut tx, actor_role, org, target, by_id).await?;
+    if matches!(outcome, Applied(())) {
+        tx.commit().await?;
+    }
+    Ok(outcome)
+}
+
+/// Deletes the pending offers that match `target` (a recipient account, or an invitation id
+/// when `by_id`) inside the caller's transaction, after checking that `actor_role` may cancel
+/// each of them.
+pub(super) async fn cancel_offers(
+    tx: &mut SqliteConnection,
+    actor_role: OrgRole,
+    org: i64,
+    target: i64,
+    by_id: bool,
+) -> Result<OrganizationOutcome<()>> {
     // A username also matches a verified email offer; an invitation id is exact.
     let matches = if by_id {
         "i.id=?2".to_owned()
@@ -373,7 +382,6 @@ async fn cancel(
             .execute(&mut *tx)
             .await?;
     }
-    tx.commit().await?;
     Ok(Applied(()))
 }
 

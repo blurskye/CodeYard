@@ -52,7 +52,7 @@ pub async fn client_active(pool: &PgPool, client: &str) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM oauth_applications c WHERE c.client_id=$1 AND c.is_github_app AND NOT EXISTS(SELECT 1 FROM github_apps a JOIN users owner ON owner.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE a.client_id=c.client_id AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password))").bind(client).fetch_one(pool).await?)
 }
 pub async fn app(pool: &PgPool, key: &str) -> Result<Option<App>> {
-    Ok(sqlx::query_as("SELECT a.* FROM github_apps a JOIN users u ON u.id=a.owner_id WHERE (a.slug=$1 OR a.client_id=$1 OR CAST(a.id AS TEXT)=$1) AND NOT u.is_banned AND NOT u.must_change_password").bind(key).fetch_optional(pool).await?)
+    Ok(sqlx::query_as("SELECT a.* FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE (a.slug=$1 OR a.client_id=$1 OR CAST(a.id AS TEXT)=$1) AND NOT u.is_banned AND NOT u.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password").bind(key).fetch_optional(pool).await?)
 }
 pub async fn apps(pool: &PgPool, actor: i64) -> Result<Vec<App>> {
     Ok(

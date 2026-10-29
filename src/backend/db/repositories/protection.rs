@@ -146,8 +146,16 @@ pub enum ProtectionUpdate {
         /// Producer bindings for the named contexts; a binding for a context replaces its old one.
         bindings: Vec<serde_json::Value>,
     },
-    AddContexts(Vec<String>),
-    SetContexts(Vec<String>),
+    /// Adds required contexts; `bindings` pins producers for contexts that have none yet.
+    AddContexts {
+        contexts: Vec<String>,
+        bindings: Vec<serde_json::Value>,
+    },
+    /// Replaces the required contexts; `bindings` as for `AddContexts`.
+    SetContexts {
+        contexts: Vec<String>,
+        bindings: Vec<serde_json::Value>,
+    },
     RemoveContexts(Vec<String>),
     RemoveStatusChecks,
 }
@@ -324,8 +332,14 @@ pub(crate) fn apply_protection_update(
                 .retain(|old| !bindings.iter().any(|new| new["context"] == old["context"]));
             rule.github_settings.checks.extend(bindings);
         }
-        ProtectionUpdate::AddContexts(contexts) => rule.required_status_checks.extend(contexts),
-        ProtectionUpdate::SetContexts(contexts) => rule.required_status_checks = contexts,
+        ProtectionUpdate::AddContexts { contexts, bindings } => {
+            rule.required_status_checks.extend(contexts);
+            add_unbound(&mut rule.github_settings.checks, bindings);
+        }
+        ProtectionUpdate::SetContexts { contexts, bindings } => {
+            rule.required_status_checks = contexts;
+            add_unbound(&mut rule.github_settings.checks, bindings);
+        }
         ProtectionUpdate::RemoveContexts(contexts) => rule
             .required_status_checks
             .retain(|context| !contexts.contains(context)),
@@ -363,6 +377,15 @@ const MAX_PATTERN_CHARS: usize = 255;
 
 /// A pattern is a branch name that may hold `*`, `**` and `?`. Git must accept the name
 /// once each wildcard is a letter. A leading `!` is reserved for negated patterns.
+/// Adds the producer bindings for contexts that have none; an existing binding stays.
+fn add_unbound(checks: &mut Vec<serde_json::Value>, bindings: Vec<serde_json::Value>) {
+    for binding in bindings {
+        if !checks.iter().any(|old| old["context"] == binding["context"]) {
+            checks.push(binding);
+        }
+    }
+}
+
 pub fn validate_branch_pattern(pattern: &str) -> Result<(), ProtectionWriteRefusal> {
     let candidate = pattern.replace(['*', '?'], "x");
     if pattern.is_empty()

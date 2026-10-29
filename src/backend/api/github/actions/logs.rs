@@ -106,6 +106,11 @@ async fn download(
 ) -> Result<Response> {
     let resource = uri.path();
     if let Some(token) = query.codeyard_download {
+        // A snapshot holds up to 32 MiB; the shared download slots bound how many are loaded,
+        // encoded and sent at once, and the slot is held until the client has the last byte.
+        let permit = crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
+            .await
+            .ok_or_else(|| Error::unavailable(()))?;
         let snapshot = action_logs::read(&state.pool, &runtime::token_hash(&token), resource)
             .await
             .map_err(Error::unavailable)?
@@ -123,7 +128,7 @@ async fn download(
                     format!("attachment; filename=\"{filename}\""),
                 ),
             ],
-            bytes,
+            crate::backend::api::http::middleware::buffered_download_body(bytes, permit),
         )
             .into_response());
     }

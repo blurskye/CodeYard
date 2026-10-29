@@ -15,7 +15,7 @@ use axum::{
     routing::{get, MethodRouter},
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::Arc,
 };
 
@@ -133,12 +133,7 @@ async fn run(
         .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
-    let readable =
-        db::repositories::access::readable_repository_ids(&state.pool, Some(viewer), &ids)
-            .await
-            .map_err(Error::unavailable)?
-            .into_iter()
-            .collect::<HashSet<_>>();
+    let readable = auth::readable_repositories(&state, Some(&auth), &ids, "issues").await?;
     let repos = db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
         .await
         .map_err(Error::unavailable)?

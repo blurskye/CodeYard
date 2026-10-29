@@ -117,6 +117,49 @@ impl Authentication {
     }
 }
 
+/// The repositories among `ids` this request may read: the user's own access, and for a
+/// private repository also the credential's bounds (an App's or fine-grained token's
+/// selection, a job's repository, an organization that refuses classic tokens). Cross-
+/// repository lists and searches call this so they reach no more than direct requests do.
+pub(super) async fn readable_repositories(
+    state: &AppState,
+    auth: Option<&Authentication>,
+    ids: &[i64],
+    scope: &str,
+) -> Result<std::collections::HashSet<i64>> {
+    let mut readable = std::collections::HashSet::new();
+    for chunk in ids.chunks(100) {
+        let visible = db::repositories::access::readable_repository_ids(
+            &state.pool,
+            auth.map(|auth| auth.user.id),
+            chunk,
+        )
+        .await
+        .map_err(Error::unavailable)?;
+        let Some(auth) = auth else {
+            readable.extend(visible);
+            continue;
+        };
+        for repo in db::repositories::records::get_repositories_by_ids(&state.pool, &visible)
+            .await
+            .map_err(Error::unavailable)?
+        {
+            if !repo.is_private {
+                readable.insert(repo.id);
+                continue;
+            }
+            match auth.repository_scope(&state.pool, repo.id, scope, false).await {
+                Ok(()) => {
+                    readable.insert(repo.id);
+                }
+                Err(ScopeError::Unavailable) => return Err(Error::unavailable(())),
+                Err(ScopeError::Missing | ScopeError::Denied) => {}
+            }
+        }
+    }
+    Ok(readable)
+}
+
 pub(super) fn required() -> Error {
     Error::new(StatusCode::UNAUTHORIZED, "Requires authentication")
 }
@@ -635,9 +678,29 @@ async fn personal(
         Need::Repository(key) => {
             let params = params.ok_or_else(Error::missing)?;
             // A private repository outside the token reads as missing, as on GitHub.
-            repository_bounds(state, auth, bounds, params, path, write, key)
+            let allowed = repository_bounds(state, auth, bounds, params, path, write, key)
                 .await?
-                .ok_or_else(Error::missing)?
+                .ok_or_else(Error::missing)?;
+            // A public repository outside the token's selection, or a token not yet approved,
+            // reads as an anonymous request does: the user's own rights must not apply.
+            if allowed && !write {
+                let repo = db::repositories::records::get_repository(
+                    &state.pool,
+                    params.get("owner").ok_or_else(Error::missing)?,
+                    params.get("repo").ok_or_else(Error::missing)?,
+                )
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+                if !grant
+                    .reaches(&state.pool, &repo)
+                    .await
+                    .map_err(Error::unavailable)?
+                {
+                    return Ok(true);
+                }
+            }
+            allowed
         }
     };
     if allowed {
@@ -674,16 +737,24 @@ async fn classic_policy(
             .map(|org| org.id),
         _ => None,
     };
-    if let Some(org) = org {
-        if db::fine_grained_tokens::classic_refused(&state.pool, token, org)
-            .await
-            .map_err(Error::unavailable)?
-        {
-            return Err(Error::new(
-                StatusCode::FORBIDDEN,
-                "This organization forbids access with a personal access token (classic). Use a fine-grained personal access token, a GitHub App or an OAuth App.",
-            ));
-        }
+    match org {
+        Some(org) => refuse_classic(state, token, org).await,
+        None => Ok(()),
+    }
+}
+
+/// Refuses a classic personal token for organization `org` when it forbids them. Routes that
+/// name the organization only through another resource (a team or archive ID) call this once
+/// they resolve it.
+pub(super) async fn refuse_classic(state: &AppState, token: i64, org: i64) -> Result<()> {
+    if db::fine_grained_tokens::classic_refused(&state.pool, token, org)
+        .await
+        .map_err(Error::unavailable)?
+    {
+        return Err(Error::new(
+            StatusCode::FORBIDDEN,
+            "This organization forbids access with a personal access token (classic). Use a fine-grained personal access token, a GitHub App or an OAuth App.",
+        ));
     }
     Ok(())
 }

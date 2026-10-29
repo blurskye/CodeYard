@@ -205,6 +205,20 @@ pub async fn current_repository(
         .ok_or(AccessError::NotFound)
 }
 
+/// A repository that a caller already resolved and authorized, read again by ID so that a
+/// rename in between cannot switch it, with its owner's current name for links.
+pub async fn current_repository_with_owner(
+    pool: &db::DbPool,
+    id: i64,
+) -> std::result::Result<(Repository, String), AccessError> {
+    let repository = current_repository(pool, id).await?;
+    let owner = db::repositories::records::repository_owner_name(pool, id)
+        .await
+        .map_err(|_| AccessError::Unavailable)?
+        .ok_or(AccessError::NotFound)?;
+    Ok((repository, owner))
+}
+
 pub async fn check_read(
     pool: &db::DbPool,
     repo_id: i64,

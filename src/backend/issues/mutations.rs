@@ -136,20 +136,13 @@ pub async fn update_issue(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    owner: String,
-    repo: String,
+    repository_id: i64,
     number: i32,
     req: UpdateIssueRequest,
 ) -> Result<db::models::Issue, OperationError> {
     let user = super::actor(pool, actor_id).await?;
-
-    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Repository not found".to_owned(),
-        })?;
+    let (repository, owner) = super::repository(pool, repository_id).await?;
+    let repo = repository.name.clone();
 
     super::require_read(pool, &user, &repository).await?;
 
@@ -342,8 +335,7 @@ pub async fn update_issue_latest(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    owner: String,
-    repo: String,
+    repository_id: i64,
     number: i32,
     mut req: UpdateIssueRequest,
 ) -> Result<db::models::Issue, OperationError> {
@@ -352,8 +344,7 @@ pub async fn update_issue_latest(
             pool,
             broadcaster,
             actor_id,
-            owner.clone(),
-            repo.clone(),
+            repository_id,
             number,
             req.clone(),
         )
@@ -362,15 +353,9 @@ pub async fn update_issue_latest(
             Err(error @ OperationError::Conflict { .. }) => error,
             result => return result,
         };
-        let latest = match db::repositories::records::get_repository(pool, &owner, &repo)
+        let latest = db::issues::get_issue(pool, repository_id, number)
             .await
-            .map_err(database_error)?
-        {
-            Some(repository) => db::issues::get_issue(pool, repository.id, number)
-                .await
-                .map_err(database_error)?,
-            None => None,
-        };
+            .map_err(database_error)?;
         match latest {
             Some(latest)
                 if latest.state != req.expected_state
@@ -382,5 +367,5 @@ pub async fn update_issue_latest(
             _ => return Err(refused),
         }
     }
-    update_issue(pool, broadcaster, actor_id, owner, repo, number, req).await
+    update_issue(pool, broadcaster, actor_id, repository_id, number, req).await
 }

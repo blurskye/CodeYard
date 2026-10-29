@@ -546,16 +546,11 @@ pub async fn update_pull_request(
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    (owner, repo, number): (String, String, i32),
+    (repository_id, number): (i64, i32),
     req: UpdatePullRequestRequest,
 ) -> Result<db::models::PullRequest, OperationError> {
-    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
-        .await
-        .map_err(database_error)?
-        .ok_or_else(|| OperationError::Missing {
-            code: "not_found",
-            message: "Repository not found".to_owned(),
-        })?;
+    let (repository, owner) = super::repository(pool, repository_id).await?;
+    let repo = repository.name.clone();
 
     let user = super::actor(pool, actor_id).await?;
     super::require_read(pool, &user, &repository).await?;
@@ -876,29 +871,18 @@ pub async fn update_pull_request_latest(
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    target: (String, String, i32),
+    target: (i64, i32),
     mut req: UpdatePullRequestRequest,
 ) -> Result<db::models::PullRequest, OperationError> {
     for _ in 0..3 {
         let refused =
-            match update_pull_request(pool, ci, broadcaster, actor_id, target.clone(), req.clone())
-                .await
-            {
+            match update_pull_request(pool, ci, broadcaster, actor_id, target, req.clone()).await {
                 Err(error @ OperationError::Conflict { .. }) => error,
                 result => return result,
             };
-        let (owner, repo, number) = &target;
-        let latest = match db::repositories::records::get_repository(pool, owner, repo)
+        let latest = db::pull_requests::records::get_pull_request(pool, target.0, target.1)
             .await
-            .map_err(database_error)?
-        {
-            Some(repository) => {
-                db::pull_requests::records::get_pull_request(pool, repository.id, *number)
-                    .await
-                    .map_err(database_error)?
-            }
-            None => None,
-        };
+            .map_err(database_error)?;
         match latest {
             Some(latest)
                 if latest.state != req.expected_state

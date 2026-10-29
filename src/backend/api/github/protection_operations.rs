@@ -59,7 +59,7 @@ struct Checks {
 }
 
 #[derive(Deserialize)]
-struct Check {
+pub(super) struct Check {
     context: String,
     app_id: Option<i64>,
 }
@@ -96,9 +96,11 @@ fn valid_names(names: &[String]) -> Result<()> {
     Ok(())
 }
 
-async fn user_ids(state: &AppState, names: &[String]) -> Result<Vec<i64>> {
+/// The accounts named by a protection allowance list. Usernames are exact, as the native
+/// account namespace stores and compares them.
+pub(super) async fn user_ids(state: &AppState, names: &[String]) -> Result<Vec<i64>> {
     valid_names(names)?;
-    let mut names: Vec<_> = names.iter().map(|name| name.to_ascii_lowercase()).collect();
+    let mut names = names.to_vec();
     names.sort_unstable();
     names.dedup();
     let users = db::users::accounts::get_users_by_usernames(&state.pool, &names)
@@ -265,16 +267,13 @@ async fn update(
     if let Some(checks) = input.required_status_checks {
         upsert.require_status_checks = true;
         upsert.require_up_to_date_branch = checks.strict;
+        settings.checks = check_bindings(&state, repo.id, &checks.contexts, &checks.checks, &[])
+            .await
+            .map_err(Error::simple)?;
         upsert.required_status_checks = checks.contexts;
-        for check in checks.checks {
-            check_app_exists(&state, check.app_id)
-                .await
-                .map_err(Error::simple)?;
-            settings.checks.push(
-                json!({"context":check.context,"app_id":check.app_id.filter(|id| *id != -1)}),
-            );
-            upsert.required_status_checks.push(check.context);
-        }
+        upsert
+            .required_status_checks
+            .extend(checks.checks.into_iter().map(|check| check.context));
         upsert.required_status_checks.sort();
         upsert.required_status_checks.dedup();
     }
@@ -512,15 +511,56 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 
 /// A status check may name the app that reports it, but only an installed app. The branch
 /// protection update lists the refusal as a plain string, as GitHub documents for it.
-pub(super) async fn check_app_exists(state: &AppState, app_id: Option<i64>) -> Result<()> {
-    if let Some(id) = app_id.filter(|id| *id != -1) {
-        if db::github_apps::app(&state.pool, &id.to_string())
-            .await
-            .map_err(Error::unavailable)?
-            .is_none()
-        {
-            return Err(Error::invalid("Unknown app"));
+/// Producer bindings for required checks, chosen as GitHub chooses them. An explicit `app_id`
+/// pins that App and -1 allows any producer. An omitted one, and a context named only in the
+/// deprecated `contexts` list without a binding in `existing`, pins the App behind the newest
+/// run of that check, or allows any producer when no App has reported it.
+pub(super) async fn check_bindings(
+    state: &AppState,
+    repo: i64,
+    contexts: &[String],
+    checks: &[Check],
+    existing: &[Value],
+) -> Result<Vec<Value>> {
+    if contexts.len() + checks.len() > 100 {
+        return Err(Error::invalid("Supply at most 100 status checks"));
+    }
+    let mut bindings: Vec<Value> = Vec::new();
+    let bound = |bindings: &[Value], context: &str| {
+        bindings
+            .iter()
+            .chain(existing)
+            .any(|binding| binding["context"] == context)
+    };
+    for check in checks {
+        let app = match check.app_id {
+            Some(-1) => None,
+            Some(id) => {
+                db::github_apps::app(&state.pool, &id.to_string())
+                    .await
+                    .map_err(Error::unavailable)?
+                    .filter(|app| app.id == id)
+                    .ok_or_else(|| Error::invalid("Unknown app"))?;
+                Some(id)
+            }
+            None => recent_producer(state, repo, &check.context).await?,
+        };
+        bindings.retain(|binding| binding["context"] != check.context.as_str());
+        bindings.push(json!({"context": check.context, "app_id": app}));
+    }
+    for context in contexts {
+        if bound(&bindings, context) {
+            continue;
+        }
+        if let Some(app) = recent_producer(state, repo, context).await? {
+            bindings.push(json!({"context": context, "app_id": app}));
         }
     }
-    Ok(())
+    Ok(bindings)
+}
+
+async fn recent_producer(state: &AppState, repo: i64, context: &str) -> Result<Option<i64>> {
+    db::checks::recent_app(&state.pool, repo, context)
+        .await
+        .map_err(Error::unavailable)
 }

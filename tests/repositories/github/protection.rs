@@ -101,6 +101,35 @@ async fn branch_operations_contract(pg: bool) {
         sha,
     )
     .await;
+    // A required check named without an app_id pins the App that reported it last, also from
+    // the deprecated contexts list; -1 keeps any producer.
+    let app = f
+        .scalar("SELECT id FROM github_apps WHERE slug='protection-app'", &[])
+        .await;
+    f.execute("INSERT INTO check_suites(repo_id,publisher,app_id,head_sha,created_at,updated_at) SELECT $1,'app:protection',o.id,'0000000000000000000000000000000000000000',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP FROM oauth_applications o WHERE o.client_id='protection-app-client'", &[repo.id]).await;
+    f.execute("INSERT INTO check_runs(repo_id,suite_id,name,data,created_at,updated_at) SELECT repo_id,id,'security-scan','{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP FROM check_suites WHERE repo_id=$1 AND publisher='app:protection'", &[repo.id]).await;
+    let saved = call(
+        &router,
+        "PUT",
+        &format!("{base}/branches/main/protection"),
+        &tokens[0],
+        json!({
+            "required_status_checks":{"strict":false,"contexts":["security-scan"],
+                "checks":[{"context":"any-producer","app_id":-1}]},
+            "enforce_admins":false,"required_pull_request_reviews":null,"restrictions":null
+        }),
+        ("repos/update-branch-protection", 200),
+    )
+    .await;
+    let checks = saved["required_status_checks"]["checks"].as_array().unwrap();
+    assert!(
+        checks.contains(&json!({"context":"security-scan","app_id":app})),
+        "{checks:?}"
+    );
+    assert!(
+        checks.contains(&json!({"context":"any-producer","app_id":null})),
+        "{checks:?}"
+    );
 }
 
 #[tokio::test]
@@ -205,6 +234,18 @@ async fn extended(
         &path,
         writer,
         json!({}),
+        ("repos/update-branch-protection", 422),
+    )
+    .await;
+    // Usernames are exact: "ALICE" names no account, so it cannot resolve to alice.
+    let mut other_case = input.clone();
+    other_case["restrictions"]["users"] = json!(["ALICE"]);
+    call(
+        router,
+        "PUT",
+        &path,
+        writer,
+        other_case,
         ("repos/update-branch-protection", 422),
     )
     .await;

@@ -738,8 +738,13 @@ async fn list(
     .await
     .map_err(Error::unavailable)?;
     let next = repos.len() > limit;
+    let ids: Vec<i64> = repos.iter().take(limit).map(|repo| repo.id).collect();
+    let readable = auth::readable_repositories(&state, auth.as_ref(), &ids, "metadata").await?;
     let mut values = Vec::new();
     for repo in repos.iter().take(limit) {
+        if !readable.contains(&repo.id) {
+            continue;
+        }
         values.push(document(&state, repo, auth.as_ref().map(|auth| &auth.user)).await?);
     }
     if public {

@@ -30,16 +30,16 @@ pub(super) fn error(error: anyhow::Error) -> Error {
 async fn root(pool: &db::DbPool, repo: i64, p: &Params) -> Result<i64> {
     issues::required_issue(pool, repo, &p["issue_number"]).await
 }
-async fn document(state: &AppState, viewer: Option<i64>, id: i64) -> Result<Value> {
+/// A linked issue may sit in another repository, which the credential must reach as well.
+async fn document(state: &AppState, auth: Option<&auth::Authentication>, id: i64) -> Result<Value> {
     let issue = db::issues::get_issue_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let visible =
-        db::repositories::access::readable_repository_ids(&state.pool, viewer, &[issue.repo_id])
-            .await
-            .map_err(Error::unavailable)?;
-    if visible.is_empty() {
+    if auth::readable_repositories(state, auth, &[issue.repo_id], "issues")
+        .await?
+        .is_empty()
+    {
         return Err(Error::missing());
     }
     let repo = db::repositories::records::get_repository_by_id(&state.pool, issue.repo_id)
@@ -101,14 +101,24 @@ async fn list(
     )
     .await
     .map_err(Error::unavailable)?;
+    // The query checks the user's access; the credential may reach fewer repositories.
+    let mut ids: Vec<i64> = rows.iter().map(|link| link.repo_id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let readable = auth::readable_repositories(&state, auth.as_ref(), &ids, "issues").await?;
+    let next = rows.len() > limit;
+    let rows: Vec<_> = rows
+        .into_iter()
+        .take(limit)
+        .filter(|link| readable.contains(&link.repo_id))
+        .collect();
     if kind == Kind::Parent {
         let link = rows.first().ok_or_else(Error::missing)?;
-        return Ok(Json(document(&state, viewer, link.id).await?).into_response());
+        return Ok(Json(document(&state, auth.as_ref(), link.id).await?).into_response());
     }
-    let next = rows.len() > limit;
     let mut values = Vec::new();
-    for link in rows.into_iter().take(limit) {
-        values.push(document(&state, viewer, link.id).await?);
+    for link in rows {
+        values.push(document(&state, auth.as_ref(), link.id).await?);
     }
     page.response(&uri, values, next)
 }
@@ -131,16 +141,18 @@ async fn apply(
     mutation: Mutation,
 ) -> Result<Value> {
     let (repo, auth) = repository(state, headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let auth = auth.ok_or_else(auth::required)?;
     let root = root(&state.pool, repo.id, p).await?;
     let other = match mutation {
         Mutation::Add { other, .. } | Mutation::Remove { other, .. } => other,
         Mutation::Move { child, .. } => child,
     };
-    db::relationships::change(&state.pool, actor.id, repo.id, root, mutation)
+    // The linked issue's repository must be within the credential's reach before the change.
+    document(state, Some(&auth), other).await?;
+    db::relationships::change(&state.pool, auth.user.id, repo.id, root, mutation)
         .await
         .map_err(error)?;
-    document(state, Some(actor.id), other).await
+    document(state, Some(&auth), other).await
 }
 async fn add(
     State(state): State<Arc<AppState>>,

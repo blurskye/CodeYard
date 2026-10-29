@@ -501,13 +501,15 @@ impl Grant {
             .collect()
     }
 
-    /// The token's permissions on one repository, before the user's own rights apply.
-    pub async fn repository(&self, pool: &DbPool, repo: i64) -> anyhow::Result<Option<Value>> {
-        let Some(repo) = db::repositories::records::get_repository_by_id(pool, repo).await? else {
-            return Ok(None);
-        };
-        let reach = self.active
-            && owned_by(self.owner, &repo)
+    /// Whether the token is live and its repository selection covers `repo`. Other public
+    /// repositories read only as they do anonymously.
+    pub async fn reaches(
+        &self,
+        pool: &DbPool,
+        repo: &Repository,
+    ) -> anyhow::Result<bool> {
+        Ok(self.active
+            && owned_by(self.owner, repo)
             && match self.access {
                 Access::Public => false,
                 Access::All => true,
@@ -515,7 +517,15 @@ impl Grant {
                     !repo.is_gist
                         && db::fine_grained_tokens::selected(pool, self.token_id, repo.id).await?
                 }
-            };
+            })
+    }
+
+    /// The token's permissions on one repository, before the user's own rights apply.
+    pub async fn repository(&self, pool: &DbPool, repo: i64) -> anyhow::Result<Option<Value>> {
+        let Some(repo) = db::repositories::records::get_repository_by_id(pool, repo).await? else {
+            return Ok(None);
+        };
+        let reach = self.reaches(pool, &repo).await?;
         if repo.is_gist {
             // A gist is an account resource: its owner's gists permission covers it.
             if reach && allows(&self.permissions, "gists", true) {

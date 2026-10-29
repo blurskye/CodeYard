@@ -305,6 +305,8 @@ pub fn read(bytes: &[u8], selected: Option<&str>) -> Result<ArchiveSource> {
                 | "team_repository"
                 | "project"
                 | "project_field"
+                | "project_item"
+                | "project_view"
         ) && repositories.len() > 1
         {
             values.retain(|value| belongs_to(value, &repository, &roots));

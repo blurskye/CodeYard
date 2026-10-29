@@ -76,7 +76,7 @@ pub(crate) async fn native_toggle_task(
             &ctx,
             kind,
             actor_id,
-            (owner, name, number),
+            (repo.record.id, number),
             EntryChange {
                 title: Some(value.title.clone()),
                 body: Some(updated),
