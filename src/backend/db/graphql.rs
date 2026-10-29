@@ -3,6 +3,8 @@ use super::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 
+pub const QUERY_LIMIT: i32 = 5000;
+
 #[derive(sqlx::FromRow)]
 pub struct RateLimit {
     pub used: i32,

@@ -49,6 +49,6 @@ pub async fn status(
 }
 
 pub async fn admit_query(pool: &SqlitePool, token: i64) -> Result<Option<RateLimit>> {
-    Ok(sqlx::query_as("INSERT INTO graphql_rate_limits(token_id,used,reset_at) VALUES(?1,1,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 hour')) ON CONFLICT(token_id) DO UPDATE SET used=CASE WHEN graphql_rate_limits.reset_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') THEN 1 ELSE graphql_rate_limits.used+1 END,reset_at=CASE WHEN graphql_rate_limits.reset_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') THEN strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 hour') ELSE graphql_rate_limits.reset_at END WHERE graphql_rate_limits.reset_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') OR graphql_rate_limits.used<5000 RETURNING used,reset_at")
-        .bind(token).fetch_optional(pool).await?)
+    Ok(sqlx::query_as("INSERT INTO graphql_rate_limits(token_id,used,reset_at) VALUES(?1,1,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 hour')) ON CONFLICT(token_id) DO UPDATE SET used=CASE WHEN graphql_rate_limits.reset_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') THEN 1 ELSE graphql_rate_limits.used+1 END,reset_at=CASE WHEN graphql_rate_limits.reset_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') THEN strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 hour') ELSE graphql_rate_limits.reset_at END WHERE graphql_rate_limits.reset_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') OR graphql_rate_limits.used<?2 RETURNING used,reset_at")
+        .bind(token).bind(crate::backend::db::graphql::QUERY_LIMIT).fetch_optional(pool).await?)
 }
