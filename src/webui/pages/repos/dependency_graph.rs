@@ -14,6 +14,10 @@ pub struct Dependency {
 pub struct Page {
     pub sha: String,
     pub packages: Vec<Dependency>,
+    #[serde(default)]
+    pub previous: Option<String>,
+    #[serde(default)]
+    pub next: Option<String>,
 }
 
 pub fn render(repo: &RepoChrome, page: &Page) -> Element {
@@ -28,6 +32,10 @@ pub fn render(repo: &RepoChrome, page: &Page) -> Element {
                 if page.packages.is_empty() {p {"No dependencies were found at this commit."}}
                 for package in &page.packages {
                     article {class:"panel",style:"overflow-wrap:anywhere;min-width:0",h3 {"{package.name}"} p {code {"{package.version}"} " · {package.ecosystem} · {package.scope}"} p {"{package.manifest}"}}
+                }
+                nav {aria_label:"Dependency pages",
+                    if let Some(previous) = &page.previous {a {href:previous.clone(), "Previous"}}
+                    if let Some(next) = &page.next {a {href:next.clone(), "Next"}}
                 }
             }
         },

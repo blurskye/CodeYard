@@ -407,6 +407,8 @@ fn fixtures() -> Vec<Page> {
         repo: insights_repo.clone(),
         page: super::dependency_graph::Page {
             sha: "a".repeat(40),
+            previous: None,
+            next: None,
             packages: vec![super::dependency_graph::Dependency {
                 name: "<script>".into(),
                 version: "1.0.0".into(),
