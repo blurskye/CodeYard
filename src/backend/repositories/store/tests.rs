@@ -957,8 +957,7 @@ async fn commit_history_filters_by_author_and_committer_time() {
         author: author.map(str::to_owned),
         since,
         until,
-        message: None,
-        author_emails: Vec::new(),
+        ..CommitFilter::default()
     };
     let shas = |commits: &[CommitInfo]| -> Vec<String> {
         commits.iter().map(|commit| commit.sha.clone()).collect()

@@ -136,8 +136,7 @@ fn history_filter(
         author: (!author.is_empty()).then(|| author.clone()),
         since: day_bound(ctx, &since, false)?,
         until: day_bound(ctx, &until, true)?,
-        message: None,
-        author_emails: Vec::new(),
+        ..CommitFilter::default()
     };
     Ok((
         filter,
