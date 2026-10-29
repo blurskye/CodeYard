@@ -24,12 +24,13 @@ pub async fn can_triage(pool: &SqlitePool, repo: i64, actor: i64) -> Result<bool
 pub async fn enabled(pool: &SqlitePool, repo: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT COALESCE((SELECT enabled FROM repository_issue_suggestions WHERE repo_id=?1),false)").bind(repo).fetch_one(pool).await?)
 }
-pub async fn set_enabled(pool: &SqlitePool, repo: i64, actor: i64, enabled: bool) -> Result<()> {
+pub async fn set_enabled(pool: &SqlitePool, repo: i64, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, enabled: bool) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
+    anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
     super::issue_attributes::lock_metadata(&mut tx).await?;
     sqlx::query("INSERT INTO repository_issue_suggestions(repo_id,enabled) VALUES (?1,?2) ON CONFLICT(repo_id) DO UPDATE SET enabled=excluded.enabled").bind(repo).bind(enabled).execute(&mut *tx).await?;
     tx.commit().await?;
@@ -202,6 +203,7 @@ pub async fn propose(
     pool: &SqlitePool,
     repo: i64,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     issue: i64,
     p: &Proposal,
 ) -> Result<Suggestion> {
@@ -210,6 +212,7 @@ pub async fn propose(
     super::discussions::require_contribution_authority(&mut tx, actor, repo).await?;
     super::issue_attributes::lock_metadata(&mut tx).await?;
     super::discussions::lock_issue_contribution(&mut tx, actor, issue).await?;
+    anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
     issue_scope(&mut tx, repo, issue).await?;
     let record: Issue = sqlx::query_as("SELECT * FROM issues WHERE id=?1 AND repo_id=?2")
         .bind(issue)
@@ -289,6 +292,7 @@ async fn effect(
         Action::AddLabel => {
             super::labels::write_item_labels_transaction(
                 tx,
+                actor,
                 repo,
                 LabelTarget::Issue,
                 id,
@@ -299,14 +303,8 @@ async fn effect(
             super::issue_attributes::touch(tx, id).await?;
             Ok((
                 Some(
-                    super::issue_attributes::event(
-                        tx,
-                        (repo, id, actor),
-                        "labeled",
-                        &prepared.name,
-                        "",
-                    )
-                    .await?,
+                    sqlx::query_scalar("SELECT id FROM timeline_events WHERE repo_id=?1 AND subject_kind='issue' AND subject_id=?2 AND actor_id=?3 AND kind='labeled' ORDER BY id DESC LIMIT 1")
+                        .bind(repo).bind(id).bind(actor).fetch_one(&mut **tx).await?,
                 ),
                 None,
                 None,
@@ -316,6 +314,7 @@ async fn effect(
             let assignee = p.target_id.ok_or(Refusal::Invalid)?;
             let changed = super::assignees::assign_in_transaction(
                 tx,
+                actor,
                 repo,
                 AssignedItem::Issue(id),
                 assignee,
@@ -327,14 +326,8 @@ async fn effect(
             super::issue_attributes::touch(tx, id).await?;
             Ok((
                 Some(
-                    super::issue_attributes::event(
-                        tx,
-                        (repo, id, actor),
-                        "assigned",
-                        &prepared.name,
-                        "",
-                    )
-                    .await?,
+                    sqlx::query_scalar("SELECT id FROM timeline_events WHERE repo_id=?1 AND subject_kind='issue' AND subject_id=?2 AND actor_id=?3 AND kind='assigned' ORDER BY id DESC LIMIT 1")
+                        .bind(repo).bind(id).bind(actor).fetch_one(&mut **tx).await?,
                 ),
                 Some(assignee),
                 None,
@@ -367,7 +360,7 @@ async fn effect(
             }
             Ok((
                 Some(
-                    super::issue_attributes::event(tx, (repo, id, actor), "closed", "", "").await?,
+                    sqlx::query_scalar("SELECT id FROM timeline_events WHERE repo_id=?1 AND subject_kind='issue' AND subject_id=?2 AND actor_id=?3 AND kind='closed' ORDER BY id DESC LIMIT 1").bind(repo).bind(id).bind(actor).fetch_one(&mut **tx).await?,
                 ),
                 None,
                 Some(closed),
@@ -379,6 +372,7 @@ pub async fn resolve(
     pool: &SqlitePool,
     repo: i64,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     issue: i64,
     id: i64,
     approve: bool,
@@ -388,6 +382,7 @@ pub async fn resolve(
         super::discussions::lock_triage_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
+    anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
     super::issue_attributes::lock_metadata(&mut tx).await?;
     issue_scope(&mut tx, repo, issue).await?;
     let record: Issue = sqlx::query_as("SELECT * FROM issues WHERE id=?1 AND repo_id=?2")

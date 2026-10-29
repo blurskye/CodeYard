@@ -264,7 +264,7 @@ async fn native_propose(
         rationale: Some(field(form, "rationale")).filter(|s| !s.is_empty()),
         confidence: Some(field(form, "confidence")).filter(|s| !s.is_empty()),
     };
-    db::suggestions::propose(&ctx.state.pool, repo.id, actor, issue, &p)
+    db::suggestions::propose(&ctx.state.pool, repo.id, actor, &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), issue, &p)
         .await
         .map_err(|error| {
             let (status, message) = failure(&error);
@@ -289,6 +289,7 @@ pub(crate) async fn native_change(
             &ctx.state.pool,
             repo.record.id,
             actor.id,
+            &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
             field(&form, "enabled") == "true",
         )
         .await
@@ -321,6 +322,7 @@ pub(crate) async fn native_change(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
                 actor,
+                &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
                 (&repo.record, &owner),
                 (shown.id, id),
                 action == "approve",
@@ -490,6 +492,7 @@ pub async fn agent_propose(
         &state.pool,
         repo.id,
         auth.user.id,
+        &auth.credential(),
         issue.id,
         &Proposal {
             action,
