@@ -1,6 +1,6 @@
 //! Projects v2 adapters share the owner-scoped native project operations.
 mod items;
-use super::{api_url, auth, pagination::Pagination, Error, Result};
+use super::{api_url, auth, pagination::Cursor, Error, Result};
 use crate::backend::{
     app::AppState,
     db::{
@@ -131,26 +131,33 @@ async fn list(
     headers: HeaderMap,
     Path(params): Path<Params>,
     OriginalUri(uri): OriginalUri,
-    Query(page): Query<Pagination>,
+    Query(page): Query<Cursor>,
     Query(query): Query<ListQuery>,
 ) -> Result<Response> {
     let auth = auth::authenticate(&state, &headers, false).await?;
     let (owner, name) = owner(&state, &params, false).await?;
-    let projects = projects::list(&state.pool, auth.as_ref().map(|a| a.user.id), owner)
-        .await
-        .map_err(project_error)?;
-    let (offset, limit) = page.window()?;
-    let mut documents = Vec::new();
-    for project in projects
-        .into_iter()
-        .filter(|p| matches_project(p, query.q.as_deref().unwrap_or("")))
-        .skip(offset)
-        .take(limit + 1)
-    {
-        documents.push(document(&state, &project, &name).await?);
+    let (mut after, mut before, limit) = page.window()?;
+    let query = query.q.as_deref().unwrap_or("");
+    if query.len() > 4096 { return Err(Error::invalid("Project query is too long")); }
+    let batch_size = if query.trim().is_empty() { limit + 1 } else { 101 };
+    let mut selected = Vec::new();
+    'pages: loop {
+        let rows = projects::list_window(&state.pool, auth.as_ref().map(|a| a.user.id), owner, after, before, batch_size as i64).await.map_err(project_error)?;
+        let finished = rows.len() < batch_size;
+        for project in rows {
+            if page.before.is_some() { before = project.id; } else { after = project.id; }
+            if matches_project(&project, query) {
+                selected.push(project);
+                if selected.len() > limit { break 'pages; }
+            }
+        }
+        if finished { break; }
     }
-    let more = documents.len() > limit;
-    page.response(&uri, documents, more)
+    let more = page.trim(&mut selected)?;
+    let (headers, _) = page.links(&uri, selected.first().map(|project| project.id), selected.last().map(|project| project.id), more)?;
+    let mut documents = Vec::new();
+    for project in selected { documents.push(document(&state, &project, &name).await?); }
+    Ok((headers, Json(documents)).into_response())
 }
 
 fn matches_project(project: &Project, query: &str) -> bool {
@@ -175,23 +182,21 @@ async fn fields(
     headers: HeaderMap,
     Path(params): Path<Params>,
     OriginalUri(uri): OriginalUri,
-    Query(page): Query<Pagination>,
+    Query(page): Query<Cursor>,
 ) -> Result<Response> {
     let (project, name, auth) = context(&state, &headers, &params, false, false).await?;
-    let fields = projects::fields(&state.pool, auth.as_ref().map(|a| a.user.id), project.id)
-        .await
-        .map_err(project_error)?;
-    let (offset, limit) = page.window()?;
+    let (after, before, limit) = page.window()?;
+    let mut fields = projects::fields_window(&state.pool, auth.as_ref().map(|a| a.user.id), project.id, after, before, (limit + 1) as i64)
+        .await.map_err(project_error)?;
+    let more = page.trim(&mut fields)?;
+    let (headers, _) = page.links(&uri, fields.first().map(|field| field.id), fields.last().map(|field| field.id), more)?;
     let documents = fields
         .iter()
-        .skip(offset)
-        .take(limit + 1)
         .map(|f| {
             payloads::project_field(f, &project_url(&project, &name)).map_err(Error::unavailable)
         })
         .collect::<Result<Vec<_>>>()?;
-    let more = documents.len() > limit;
-    page.response(&uri, documents, more)
+    Ok((headers, Json(documents)).into_response())
 }
 
 async fn get_field(
