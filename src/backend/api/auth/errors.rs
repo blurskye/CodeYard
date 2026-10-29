@@ -257,7 +257,7 @@ pub(crate) fn password_change_failure(error: PasswordChangeError) -> ApiFailure 
         PasswordChangeError::InvalidCredentials => invalid_credentials(),
         PasswordChangeError::UnchangedPassword => ApiError::failure(
             StatusCode::BAD_REQUEST,
-            "validation_error",
+            "unchanged_password",
             "Choose a password different from the temporary password",
         ),
         PasswordChangeError::AccountUnavailable => database_failure(),

@@ -17,7 +17,7 @@ use crate::backend::db::{
     },
     DbPool,
 };
-use crate::backend::email::links::{self, Purpose};
+use crate::backend::email::links;
 
 pub struct PasswordChange<'a> {
     pub current_password: &'a str,
@@ -78,6 +78,7 @@ pub async fn change_password(
 pub enum PasswordResetError {
     Input(AccountInputError),
     Password(PasswordError),
+    UnchangedPassword,
     /// The link is unknown, expired, already used, or no longer fits the account.
     InvalidLink,
     AccountUnavailable,
@@ -92,17 +93,18 @@ pub async fn reset_password(
 ) -> Result<(), PasswordResetError> {
     validate_new_password(new_password).map_err(PasswordResetError::Input)?;
     // Hashing is costly, so it waits until the link is known to be good.
-    let valid = links::is_valid(pool, Purpose::Reset, token)
-        .await
-        .map_err(|_| PasswordResetError::AccountUnavailable)?;
-    if !valid {
-        return Err(PasswordResetError::InvalidLink);
+    let user = links::password_reset_account(pool, token).await
+        .map_err(|_| PasswordResetError::AccountUnavailable)?
+        .ok_or(PasswordResetError::InvalidLink)?;
+    if user.must_change_password && passwords::verify_password(new_password, user.password_hash.as_deref()).await
+        .map_err(PasswordResetError::Password)?.valid {
+        return Err(PasswordResetError::UnchangedPassword);
     }
     let hash = passwords::hash_password(new_password)
         .await
         .map_err(PasswordResetError::Password)?;
     // Using the link, replacing the hash and ending the sessions commit together.
-    links::use_reset_link(pool, token, &hash)
+    links::use_reset_link(pool, token, &hash, &user)
         .await
         .map_err(|_| PasswordResetError::AccountUnavailable)?
         .map(|_| ())

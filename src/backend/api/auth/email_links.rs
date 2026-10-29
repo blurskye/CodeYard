@@ -179,6 +179,9 @@ pub(crate) async fn reset_code_post(
             StatusCode::BAD_REQUEST,
             Some("Password must be between 8 and 1024 bytes."),
         ),
+        Err(PasswordResetError::UnchangedPassword) => code_page(
+            &ctx, email, StatusCode::BAD_REQUEST, Some("Choose a password different from your temporary password."),
+        ),
         Err(PasswordResetError::InvalidLink) => {
             code_page(&ctx, email, StatusCode::BAD_REQUEST, Some(INVALID_CODE))
         }
@@ -284,6 +287,9 @@ pub(crate) async fn reset_post(
             )
             .await
         }
+        Err(PasswordResetError::UnchangedPassword) => reset_page(
+            &ctx, token, StatusCode::BAD_REQUEST, Some("Choose a password different from your temporary password."),
+        ).await,
         Err(PasswordResetError::InvalidLink) => {
             reset_page(&ctx, token, StatusCode::BAD_REQUEST, Some(INVALID_LINK)).await
         }

@@ -162,6 +162,7 @@ pub(crate) fn public_api_message(error: &ApiError) -> &'static str {
             "two_factor_unavailable" => "Two-factor authentication is unavailable on this node.",
             "invalid_session_cookie" => "Clear malformed or duplicate session cookies before signing in.",
             "password_change_required" => "Change your temporary password before continuing.",
+            "unchanged_password" => "Choose a password different from your temporary password.",
             "database_error" | "session_error" => "The account service is unavailable. The action may be incomplete; check its state before retrying.",
             "setup_required" => "Complete node setup before signing in or creating accounts.",
             "unauthorized" => "Sign in to perform this action.",
