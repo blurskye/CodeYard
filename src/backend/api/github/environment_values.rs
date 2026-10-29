@@ -13,7 +13,6 @@ use axum::{
     routing::{delete, get, patch, post, put, MethodRouter},
     Json, Router,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -118,12 +117,15 @@ async fn target(
     }
     Ok((repo, auth))
 }
-fn document(kind: Kind, row: &EnvironmentValue) -> Value {
-    let mut body = json!({"name":row.name,"created_at":row.created_at,"updated_at":row.updated_at});
+pub(super) fn base_document(kind: Kind, name: &str, value: &str, created_at: &chrono::DateTime<chrono::Utc>, updated_at: &chrono::DateTime<chrono::Utc>) -> Value {
+    let mut body = json!({"name":name,"created_at":created_at,"updated_at":updated_at});
     if kind == Kind::Variable {
-        body["value"] = json!(row.value);
+        body["value"] = json!(value);
     }
     body
+}
+fn document(kind: Kind, row: &EnvironmentValue) -> Value {
+    base_document(kind, &row.name, &row.value, &row.created_at, &row.updated_at)
 }
 async fn list(
     State(state): State<Arc<AppState>>,
@@ -215,9 +217,7 @@ async fn public_key(
     )
     .await
     .map_err(super::action_secrets::error)?;
-    Ok(Json(
-        json!({"key_id":key_id,"key":STANDARD.encode(key.public_key().as_bytes())}),
-    ))
+    Ok(Json(super::action_secrets::public_key_document(&key_id, &key)))
 }
 
 #[derive(Deserialize)]

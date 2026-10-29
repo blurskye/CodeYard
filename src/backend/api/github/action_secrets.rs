@@ -101,6 +101,10 @@ async fn list(
         .into_response())
 }
 
+pub(super) fn public_key_document(key_id: &str, key: &crypto_box::SecretKey) -> Value {
+    json!({"key_id": key_id, "key": STANDARD.encode(key.public_key().as_bytes())})
+}
+
 async fn public_key(
     State(state): State<Arc<AppState>>,
     Extension(kind): Extension<SecretKind>,
@@ -116,9 +120,7 @@ async fn public_key(
         db::secrets::repository_secret_key_for(&state.pool, kind, encryptor, actor, repo)
             .await
             .map_err(error)?;
-    Ok(Json(
-        json!({"key_id": key_id, "key": STANDARD.encode(key.public_key().as_bytes())}),
-    ))
+    Ok(Json(public_key_document(&key_id, &key)))
 }
 
 async fn secret(

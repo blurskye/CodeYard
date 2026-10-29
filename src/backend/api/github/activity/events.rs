@@ -173,13 +173,7 @@ async fn list(
             "\"{:x}\"",
             Sha256::digest(serde_json::to_vec(&values).map_err(Error::unavailable)?)
         );
-        let unchanged = headers
-            .get(header::IF_NONE_MATCH)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|v| {
-                v.split(',')
-                    .any(|v| v.trim() == "*" || v.trim().trim_start_matches("W/") == etag)
-            });
+        let unchanged = crate::backend::api::http::static_files::not_modified(&headers, &etag);
         let mut response = if unchanged {
             StatusCode::NOT_MODIFIED.into_response()
         } else {

@@ -19,12 +19,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
-pub(super) fn path_url(path: &str) -> String {
-    path.split('/')
-        .map(crate::webui::encode_component)
-        .collect::<Vec<_>>()
-        .join("/")
-}
+pub(super) use crate::webui::pages::repos::ref_path::encode_path as path_url;
 
 pub(super) fn store_error(error: RepoError) -> Error {
     if error.is_write_denied() || error.is_protected_branch() {
@@ -115,30 +110,14 @@ pub(super) fn entry(
         path_url(path),
         crate::webui::encode_component(reference)
     );
-    let html = format!(
-        "{}/{}/{}/{}/{}/{}",
-        crate::backend::api::http::config::link_origin(),
-        crate::webui::encode_component(owner),
-        crate::webui::encode_component(repo),
-        if kind == "dir" { "tree" } else { "blob" },
-        crate::webui::encode_component(reference),
-        path_url(path)
-    );
+    let base = format!("{}/{}/{}", crate::backend::api::http::config::link_origin(), crate::webui::encode_component(owner), crate::webui::encode_component(repo));
+    let html = crate::webui::pages::repos::ref_path::file_url(&base, if kind == "dir" { "tree" } else { "blob" }, reference, path);
     let git_url = format!(
         "{}/git/{}/{sha}",
         repo_url(owner, repo),
         if kind == "dir" { "trees" } else { "blobs" }
     );
-    let download = (kind == "file").then(|| {
-        format!(
-            "{}/{}/{}/raw/{}/{}",
-            crate::backend::api::http::config::link_origin(),
-            crate::webui::encode_component(owner),
-            crate::webui::encode_component(repo),
-            crate::webui::encode_component(reference),
-            path_url(path)
-        )
-    });
+    let download = (kind == "file").then(|| crate::webui::pages::repos::ref_path::file_url(&base, "raw", reference, path));
     json!({
         "type": kind, "name": path.rsplit('/').next().unwrap_or(path), "path": path,
         "sha": sha, "size": size, "url": url, "html_url": html, "git_url": git_url,
@@ -206,7 +185,7 @@ async fn readme(
         .blob_bytes(&revision, &path)
         .await
         .map_err(store_error)?;
-    blob_response(&headers, owner, name, reference, &path, blob).await
+    blob_response(&headers, owner, name, &revision, &path, blob).await
 }
 
 async fn read(
@@ -232,7 +211,7 @@ async fn read(
                     match store.blob_bytes(&revision, &resolved).await {
                         Ok(file) if file.mode != SYMLINK_MODE => {
                             return blob_response(
-                                &headers, owner, name, reference, &resolved, file,
+                                &headers, owner, name, &revision, &resolved, file,
                             ).await;
                         }
                         Ok(_) => {}
@@ -242,12 +221,12 @@ async fn read(
                         Err(error) => return Err(store_error(error)),
                     }
                 }
-                let mut value = entry(owner, name, reference, path, &blob.id, blob.size, "symlink");
+                let mut value = entry(owner, name, &revision, path, &blob.id, blob.size, "symlink");
                 value["target"] = json!(target);
                 return Ok(Json(value).into_response());
             }
             Ok(blob) => {
-                return blob_response(&headers, owner, name, reference, path, blob).await;
+                return blob_response(&headers, owner, name, &revision, path, blob).await;
             }
             Err(error) if error.reason == Some(RepoErrorReason::NotFile) => {
                 // A submodule is a commit entry, not a directory to list.
@@ -267,7 +246,7 @@ async fn read(
                         Err(error) if error.kind == ErrorKind::MissingPath => None,
                         Err(error) => return Err(store_error(error)),
                     };
-                    let mut value = entry(owner, name, reference, path, &link.sha, 0, "submodule");
+                    let mut value = entry(owner, name, &revision, path, &link.sha, 0, "submodule");
                     value["submodule_git_url"] = json!(url);
                     value["git_url"] = Value::Null;
                     value["html_url"] = Value::Null;
@@ -290,7 +269,7 @@ async fn read(
                 entry(
                     owner,
                     name,
-                    reference,
+                    &revision,
                     &item.path,
                     &item.sha,
                     item.size.unwrap_or(0),

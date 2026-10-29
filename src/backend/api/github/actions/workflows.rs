@@ -254,13 +254,7 @@ async fn badge(
             _ => ("no status", "#9f9f9f"),
         }
     };
-    let escape = |text: &str| {
-        text.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('"', "&quot;")
-            .replace('\'', "&apos;")
-    };
+    let escape = crate::webui::components::escape_html;
     let label = escape(&workflow.name.chars().take(22).collect::<String>());
     let title = escape(&workflow.name);
     let svg = format!(

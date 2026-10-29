@@ -472,18 +472,8 @@ async fn annotations(
         .into_iter()
         .map(|a| {
             let mut doc = json!(a.0);
-            doc["blob_href"] = json!(format!(
-                "{}/{}/{}/blob/{}/{}",
-                crate::backend::api::http::config::link_origin(),
-                crate::webui::encode_component(&owner),
-                crate::webui::encode_component(&name),
-                suite.head_sha,
-                a.path
-                    .split('/')
-                    .map(crate::webui::encode_component)
-                    .collect::<Vec<_>>()
-                    .join("/")
-            ));
+            let base = format!("{}/{}/{}", crate::backend::api::http::config::link_origin(), crate::webui::encode_component(&owner), crate::webui::encode_component(&name));
+            doc["blob_href"] = json!(crate::webui::pages::repos::ref_path::file_url(&base, "blob", &suite.head_sha, &a.path));
             doc
         })
         .collect();
