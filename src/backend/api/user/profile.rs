@@ -54,7 +54,7 @@ pub(crate) fn profile_model(
         company: settings.company.clone().unwrap_or_default(),
         twitter_username: settings.twitter_username.clone().unwrap_or_default(),
         hireable: settings.hireable.unwrap_or(false),
-        public_email: settings.public_email(user).unwrap_or_default().to_owned(),
+        public_email: settings.public_email().unwrap_or_default().to_owned(),
         primary_email_visibility: settings.primary_visibility.clone(),
         display_name: user.display_name.clone().unwrap_or_default(),
         bio: user.bio.clone().unwrap_or_default(),

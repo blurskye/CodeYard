@@ -56,7 +56,7 @@ async fn documents(
     {
         let visible = address.verified
             && settings
-                .public_email(user)
+                .public_email()
                 .is_some_and(|email| email.eq_ignore_ascii_case(&address.email));
         if !public || visible {
             values.push(json!({"email":address.email,"primary":false,"verified":address.verified,"visibility":if visible {Some("public")} else {None}}));

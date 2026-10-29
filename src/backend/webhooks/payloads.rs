@@ -502,7 +502,7 @@ pub fn public_user(
     value["location"] = json!(user.location);
     value["blog"] = json!(user.website.as_deref().unwrap_or(""));
     value["company"] = json!(profile.company);
-    value["email"] = json!(profile.public_email(user));
+    value["email"] = json!(profile.public_email());
     value["hireable"] = json!(profile.hireable);
     value["twitter_username"] = json!(profile.twitter_username);
     value["public_repos"] = json!(public_repos);

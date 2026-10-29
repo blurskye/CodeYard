@@ -85,7 +85,7 @@ pub(super) async fn resolve(
             let settings = db::users::profiles::get_profile_settings(&request.state.pool, id)
                 .await
                 .map_err(unavailable)?;
-            Ok(json!(settings.public_email(&user).unwrap_or("")))
+            Ok(json!(settings.public_email().unwrap_or("")))
         }
         "repositories" => super::repository_list::list(ctx, request, parent).await,
         "gists" if ty == "User" => super::gists::list(ctx, request, parent).await,
