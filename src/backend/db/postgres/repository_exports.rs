@@ -142,7 +142,7 @@ pub async fn finish(pool: &PgPool, id: i64, state: &str) -> Result<()> {
     let mut tx = pool.begin().await?;
     let changed = sqlx::query("UPDATE repository_exports SET state=$2,updated_at=$3 WHERE id=$1 AND NOT archive_deleted AND state IN ('pending','exporting')").bind(id).bind(state).bind(chrono::Utc::now().timestamp()).execute(&mut *tx).await?.rows_affected();
     if state == "exported" && changed == 1 {
-        sqlx::query("DELETE FROM pending_object_deletions WHERE object_key=(SELECT 'migrations/' || guid FROM repository_exports WHERE id=$1)").bind(id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO pending_object_deletions(object_key,delete_after) SELECT 'migrations/' || guid,clock_timestamp()+INTERVAL '7 days' FROM repository_exports WHERE id=$1 ON CONFLICT(object_key) DO UPDATE SET delete_after=excluded.delete_after").bind(id).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(())
@@ -165,7 +165,7 @@ pub async fn delete_archive(
         row.state == "exported" || row.state == "failed" || stale,
         ExportRefusal::Archive
     );
-    sqlx::query("UPDATE repository_exports SET archive_deleted=TRUE,updated_at=$2 WHERE id=$1")
+    sqlx::query("UPDATE repository_exports SET archive_deleted=TRUE,state=CASE WHEN state IN ('pending','exporting') THEN 'failed' ELSE state END,updated_at=$2 WHERE id=$1")
         .bind(id)
         .bind(chrono::Utc::now().timestamp())
         .execute(&mut *tx)
