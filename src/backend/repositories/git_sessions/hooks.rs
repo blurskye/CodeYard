@@ -133,7 +133,7 @@ fn admit_updates(
     {
         state.previous_refs = crate::backend::git::list_mirror_refs(path)?
             .into_iter()
-            .filter(|(name, _)| !name.starts_with("refs/codeyard/"))
+            .filter(|(name, _)| name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
             .map(|(_, oid)| oid)
             .collect();
     }
@@ -587,7 +587,7 @@ impl Gateway {
             Ok::<_, anyhow::Error>(())
         };
         if !matches!(
-            tokio::time::timeout(std::time::Duration::from_secs(2), activity).await,
+            tokio::time::timeout(crate::backend::git::repository::PUSH_COUNT_TIMEOUT, activity).await,
             Ok(Ok(()))
         ) {
             tracing::warn!(

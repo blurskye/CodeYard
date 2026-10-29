@@ -203,8 +203,11 @@ pub(crate) async fn count_commits(path: &Path) -> Result<u64> {
     Ok(std::str::from_utf8(&output)?.trim().parse()?)
 }
 
+/// Optional profile activity never holds publication for a full object-read timeout.
+pub(crate) const PUSH_COUNT_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// Commits a branch update brought in. A new branch (`old` is None) counts the commits no
-/// other ref already had, so the first push to an empty repository counts all of them.
+/// other branch or tag already had; internal retention and pull refs do not vouch for commits.
 /// `reference` is the branch's full ref name.
 pub(crate) async fn count_pushed_commits(
     path: &Path,
@@ -225,11 +228,12 @@ pub(crate) async fn count_pushed_commits(
             "--not",
             exclude.as_str(),
             // Unlike --all, this does not add HEAD, which may name the new branch itself.
-            "--glob=refs/*",
+            "--glob=refs/heads/*",
+            "--glob=refs/tags/*",
         ]);
     }
     command.current_dir(path);
-    let (status, output) = process::buffered(command, b"", 64, process::RPC_TIMEOUT).await?;
+    let (status, output) = process::buffered(command, b"", 64, PUSH_COUNT_TIMEOUT).await?;
     ensure!(status.success(), "Git pushed commit count failed");
     Ok(std::str::from_utf8(&output)?.trim().parse()?)
 }
@@ -255,7 +259,7 @@ pub(crate) async fn count_pushed_commits_snapshot(
         }
     }
     let (status, output) =
-        process::buffered(command, input.as_bytes(), 64, COMMIT_WALK_TIMEOUT).await?;
+        process::buffered(command, input.as_bytes(), 64, PUSH_COUNT_TIMEOUT).await?;
     ensure!(status.success(), "Git pushed commit count failed");
     Ok(std::str::from_utf8(&output)?.trim().parse()?)
 }
