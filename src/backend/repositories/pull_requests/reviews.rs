@@ -131,6 +131,7 @@ pub async fn create_pull_request_review(
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
+    credential: &db::users::accounts::AccountCredential<'_>,
     repository: (String, String, i32),
     req: CreatePullRequestReviewRequest,
 ) -> Result<db::models::PullRequestReview, OperationError> {
@@ -266,6 +267,7 @@ pub async fn create_pull_request_review(
         pool,
         pull_request.id,
         user.id,
+        credential,
         &review_state,
         req.body.as_deref(),
         Some(commit_sha.as_str()),

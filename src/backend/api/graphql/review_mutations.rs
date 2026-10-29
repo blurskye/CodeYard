@@ -185,6 +185,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     request.state.cluster.as_ref(),
                     &request.state.notification_broadcaster,
                     actor,
+                    &request.auth.credential(),
                     (owner, repo.name.clone(), pull.number),
                     reviews::CreatePullRequestReviewRequest {
                         state: Some(state),

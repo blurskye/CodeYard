@@ -591,17 +591,20 @@ pub async fn add_pull_request_review(
     pool: &PgPool,
     pr_id: i64,
     author_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     state: &str,
     body: Option<&str>,
     commit_sha: Option<&str>,
 ) -> Result<PullRequestReview> {
-    save_pull_request_review(pool, pr_id, author_id, state, body, commit_sha, None).await
+    save_pull_request_review(pool, pr_id, author_id, credential, state, body, commit_sha, None).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn save_pull_request_review(
     pool: &PgPool,
     pr_id: i64,
     author_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     state: &str,
     body: Option<&str>,
     commit_sha: Option<&str>,
@@ -616,6 +619,7 @@ pub async fn save_pull_request_review(
     } else {
         discussions::lock_pull_request_review_authority(&mut tx, author_id, pr_id).await?
     };
+    anyhow::ensure!(super::super::users::transitions::credential_live(&mut tx, author_id, credential, true).await?, crate::backend::db::discussions::DiscussionWriteRefusal::Denied);
     let pinned: bool = if let Some(id) = expected_pending {
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews WHERE id=$1 AND pull_request_id=$2 AND author_id=$3 AND state='pending' AND commit_sha=$4)")
             .bind(id).bind(pr_id).bind(author_id).bind(commit_sha.as_deref()).fetch_one(&mut *tx).await?
