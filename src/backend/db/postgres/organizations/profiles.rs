@@ -130,7 +130,7 @@ pub async fn get_public_organization(
 ) -> Result<Option<crate::backend::db::models::Organization>> {
     // Governance-suspended means no active owner, as in get_organization_metadata.
     Ok(sqlx::query_as(
-        "SELECT o.* FROM organizations o WHERE lower(o.name COLLATE \"C\")=lower($1 COLLATE \"C\") AND EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)",
+        "SELECT o.* FROM organizations o WHERE o.name=$1 AND EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)",
     )
     .bind(name)
     .fetch_optional(pool)

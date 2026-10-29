@@ -97,7 +97,7 @@ pub async fn get_user_by_id(pool: &SqlitePool, id: i64) -> Result<Option<User>> 
 }
 
 pub async fn get_user_by_username(pool: &SqlitePool, username: &str) -> Result<Option<User>> {
-    Ok(sqlx::query_as("SELECT * FROM users WHERE lower(username)=lower(?1)")
+    Ok(sqlx::query_as("SELECT * FROM users WHERE username=?1")
         .bind(username)
         .fetch_optional(pool)
         .await?)

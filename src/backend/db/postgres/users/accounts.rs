@@ -130,7 +130,7 @@ pub async fn get_user_by_id(pool: &PgPool, id: i64) -> Result<Option<User>> {
 }
 
 pub async fn get_user_by_username(pool: &PgPool, username: &str) -> Result<Option<User>> {
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE lower(username COLLATE \"C\") = lower($1 COLLATE \"C\")")
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1")
         .bind(username)
         .fetch_optional(pool)
         .await?;
