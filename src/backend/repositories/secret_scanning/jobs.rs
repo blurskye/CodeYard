@@ -8,7 +8,7 @@ use crate::backend::{
 };
 use anyhow::{ensure, Context, Result};
 use serde_json::{json, Value};
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::{HashMap, HashSet}, sync::Arc, time::Duration};
 
 pub async fn document(
     state: &AppState,
@@ -17,39 +17,37 @@ pub async fn document(
     repo: &str,
     hide_secret: bool,
 ) -> Result<Value> {
-    let secret = if hide_secret {
-        String::new()
-    } else {
-        let encryptor = state
-            .secret_encryptor
-            .as_ref()
-            .context("Secret encryption is unavailable")?;
-        String::from_utf8(encryptor.decrypt(&alert.encrypted_secret, &alert.nonce)?)?
-    };
-    let resolved_by = match alert.resolved_by {
-        Some(id) => db::users::accounts::get_user_by_id(&state.pool, id).await?,
-        None => None,
-    };
-    let bypass = records::alert_bypass(&state.pool, alert.repo_id, &alert.secret_hash).await?;
-    let bypassed_by = match &bypass {
-        Some(bypass) => db::users::accounts::get_user_by_id(&state.pool, bypass.actor_id).await?,
-        None => None,
-    };
-    let mut document = payloads::secret_scanning_alert(
-        alert,
-        &secret,
-        owner,
-        repo,
-        resolved_by.as_ref(),
-        bypass.as_ref(),
-        bypassed_by.as_ref(),
-    );
-    let assignee = match alert.assigned_to {
-        Some(id) => db::users::accounts::get_user_by_id(&state.pool, id).await?,
-        None => None,
-    };
-    document["assigned_to"] = assignee.as_ref().map(payloads::user).unwrap_or(Value::Null);
-    Ok(document)
+    Documents::load(state, std::slice::from_ref(alert)).await?.document(state, alert, owner, repo, hide_secret)
+}
+
+/// Page enrichment has one bounded database read per related record kind.
+pub struct Documents {
+    users: HashMap<i64, db::models::User>,
+    bypasses: HashMap<(i64, String), records::Bypass>,
+}
+impl Documents {
+    pub async fn load(state: &AppState, alerts: &[records::Alert]) -> Result<Self> {
+        ensure!(alerts.len() <= 100, "Too many alert enrichments");
+        let keys = alerts.iter().map(|alert| (alert.repo_id, alert.secret_hash.clone())).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
+        let bypasses = records::alert_bypasses(&state.pool, &keys).await?;
+        let ids = alerts.iter().flat_map(|alert| [alert.resolved_by, alert.assigned_to]).flatten()
+            .chain(bypasses.iter().map(|bypass| bypass.actor_id)).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
+        let users = db::users::accounts::get_users_by_ids(&state.pool, &ids).await?.into_iter().map(|user| (user.id, user)).collect();
+        Ok(Self { users, bypasses: bypasses.into_iter().map(|bypass| ((bypass.repo_id, bypass.secret_hash.clone()), bypass)).collect() })
+    }
+
+    pub fn document(&self, state: &AppState, alert: &records::Alert, owner: &str, repo: &str, hide_secret: bool) -> Result<Value> {
+        let secret = if hide_secret { String::new() } else {
+            let encryptor = state.secret_encryptor.as_ref().context("Secret encryption is unavailable")?;
+            String::from_utf8(encryptor.decrypt(&alert.encrypted_secret, &alert.nonce)?)?
+        };
+        let resolved_by = alert.resolved_by.and_then(|id| self.users.get(&id));
+        let bypass = self.bypasses.get(&(alert.repo_id, alert.secret_hash.clone()));
+        let bypassed_by = bypass.and_then(|bypass| self.users.get(&bypass.actor_id));
+        let mut document = payloads::secret_scanning_alert(alert, &secret, owner, repo, resolved_by, bypass, bypassed_by);
+        document["assigned_to"] = alert.assigned_to.and_then(|id| self.users.get(&id)).map(payloads::user).unwrap_or(Value::Null);
+        Ok(document)
+    }
 }
 
 pub async fn emit_alert(
