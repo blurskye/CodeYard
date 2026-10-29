@@ -454,13 +454,13 @@ pub async fn version_by_id(
     Ok(version)
 }
 
-pub async fn version_count(pool: &PgPool, package: i64) -> Result<i64> {
-    Ok(sqlx::query_scalar(
-        "SELECT COUNT(*) FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL",
-    )
-    .bind(package)
-    .fetch_one(pool)
-    .await?)
+pub async fn version_count(pool: &PgPool, package: i64, token: Option<Credential<'_>>) -> Result<i64> {
+    let mut tx = begin(pool).await?;
+    authorize(&mut tx, package, token, Permission::Read, false).await?;
+    let count = sqlx::query_scalar("SELECT COUNT(*) FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL")
+        .bind(package).fetch_one(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(count)
 }
 
 pub async fn tag_page(
@@ -478,13 +478,27 @@ pub async fn tag_page(
     Ok(tags)
 }
 
-pub async fn tags(pool: &PgPool, version: i64) -> Result<Vec<String>> {
-    Ok(
-        sqlx::query_scalar("SELECT tag FROM package_tags WHERE version_id=$1 ORDER BY tag")
-            .bind(version)
-            .fetch_all(pool)
-            .await?,
-    )
+pub async fn rubygems_file(pool: &PgPool, owner: &Owner, token: Option<Credential<'_>>, filename: &str) -> Result<Blob> {
+    ensure!(filename.len() <= 465, Refusal::Missing);
+    let mut tx = begin(pool).await?;
+    let rows: Vec<(i64, String, i64)> = sqlx::query_as("SELECT p.id,b.digest,b.size FROM packages p JOIN package_versions v ON v.package_id=p.id JOIN package_blobs b ON b.digest=v.digest WHERE p.owner_kind=$1 AND COALESCE(p.owner_user_id,p.owner_org_id)=$2 AND p.package_type='rubygems' AND p.deleted_at IS NULL AND v.deleted_at IS NULL AND b.ready AND NOT b.deleting AND p.name||'-'||v.name=$3 LIMIT 2")
+        .bind(&owner.kind).bind(owner.id).bind(filename).fetch_all(&mut *tx).await?;
+    for (package, _, _) in &rows {
+        authorize(&mut tx, *package, token, Permission::Read, false).await?;
+    }
+    ensure!(rows.len() <= 1, Refusal::Conflict);
+    let (_, digest, size) = rows.into_iter().next().ok_or(Refusal::Missing)?;
+    tx.commit().await?;
+    Ok(Blob { digest, size })
+}
+
+pub async fn tags(pool: &PgPool, package: i64, token: Option<Credential<'_>>, version: i64) -> Result<Vec<String>> {
+    let mut tx = begin(pool).await?;
+    authorize(&mut tx, package, token, Permission::Read, false).await?;
+    let tags = sqlx::query_scalar("SELECT tag FROM package_tags WHERE version_id=$1 AND package_id=$2 ORDER BY tag")
+        .bind(version).bind(package).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(tags)
 }
 
 async fn check_blobs(tx: &mut Tx<'_>, package: i64, blobs: &[Blob], now: i64) -> Result<()> {
@@ -604,6 +618,11 @@ pub async fn publish(pool: &PgPool, token: i64, new: Publish<'_>) -> Result<Vers
     )
     .await?;
     ensure!(package.package_type != "npm" || new.manifest.len() <= packages::MAX_NPM_METADATA_BYTES, Refusal::Conflict);
+    if package.package_type == "rubygems" {
+        let collision: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM packages p JOIN package_versions v ON v.package_id=p.id WHERE p.owner_kind=$1 AND COALESCE(p.owner_user_id,p.owner_org_id)=$2 AND p.package_type='rubygems' AND p.id<>$3 AND p.name||'-'||v.name=$4)")
+            .bind(&package.owner_kind).bind(package.owner_user_id.or(package.owner_org_id)).bind(package.id).bind(format!("{}-{}", package.name, new.name)).fetch_one(&mut *tx).await?;
+        ensure!(!collision, Refusal::Conflict);
+    }
     let now = packages::now();
     check_blobs(&mut tx, package.id, new.blobs, now).await?;
     let existing: Option<Version> =

@@ -154,7 +154,7 @@ native_operation!(crate::backend::db::postgres::packages::version_by_id,
     fn version_by_id(pool: &DbPool, package: i64, token: Option<Credential<'_>>, id: i64) -> Result<Version>);
 native_operation!(crate::backend::db::postgres::packages::version_count,
     crate::backend::db::sqlite::packages::version_count,
-    fn version_count(pool: &DbPool, package: i64) -> Result<i64>);
+    fn version_count(pool: &DbPool, package: i64, token: Option<Credential<'_>>) -> Result<i64>);
 
 native_operation!(crate::backend::db::postgres::packages::issue_registry_token,
     crate::backend::db::sqlite::packages::issue_registry_token,
@@ -195,9 +195,12 @@ native_operation!(crate::backend::db::postgres::packages::versions,
 native_operation!(crate::backend::db::postgres::packages::version,
     crate::backend::db::sqlite::packages::version,
     fn version(pool: &DbPool, package: i64, token: Option<Credential<'_>>, reference: &str) -> Result<Version>);
+native_operation!(crate::backend::db::postgres::packages::rubygems_file,
+    crate::backend::db::sqlite::packages::rubygems_file,
+    fn rubygems_file(pool: &DbPool, owner: &Owner, token: Option<Credential<'_>>, filename: &str) -> Result<Blob>);
 native_operation!(crate::backend::db::postgres::packages::tags,
     crate::backend::db::sqlite::packages::tags,
-    fn tags(pool: &DbPool, version: i64) -> Result<Vec<String>>);
+    fn tags(pool: &DbPool, package: i64, token: Option<Credential<'_>>, version: i64) -> Result<Vec<String>>);
 native_operation!(crate::backend::db::postgres::packages::tag_page,
     crate::backend::db::sqlite::packages::tag_page,
     fn tag_page(pool: &DbPool, package: i64, token: Option<Credential<'_>>, after: &str, limit: i64) -> Result<Vec<String>>);
