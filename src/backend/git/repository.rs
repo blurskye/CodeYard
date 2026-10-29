@@ -1629,6 +1629,7 @@ pub(crate) async fn pull_request_commits(
     repo_path: &Path,
     base: &str,
     head: &str,
+    offset: usize,
     limit: usize,
 ) -> Result<(u64, Vec<CommitInfo>)> {
     let (path, base, head) = (repo_path.to_owned(), base.to_owned(), head.to_owned());
@@ -1643,9 +1644,10 @@ pub(crate) async fn pull_request_commits(
     let (status, output) = process::buffered(command, b"", 32, COMMIT_WALK_TIMEOUT).await?;
     ensure!(status.success(), "Git commit range count failed");
     let total: u64 = std::str::from_utf8(&output)?.trim().parse()?;
-    let limit = limit.min(250);
-    let offset = usize::try_from(total.saturating_sub(limit as u64))?;
-    let mut commits = range_commits(repo_path, &base, &head, offset, limit).await?;
+    let offset = offset.min(250);
+    let limit = (limit.min(250 - offset) as u64).min(total.saturating_sub(offset as u64)) as usize;
+    let newest_offset = usize::try_from(total.saturating_sub(offset as u64).saturating_sub(limit as u64))?;
+    let mut commits = range_commits(repo_path, &base, &head, newest_offset, limit).await?;
     commits.reverse();
     Ok((total, commits))
 }
