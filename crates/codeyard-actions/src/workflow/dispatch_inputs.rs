@@ -32,6 +32,51 @@ pub struct DispatchInput {
     pub options: Vec<String>,
 }
 
+/// Parses typed declarations once for discovery and native execution alike.
+pub fn parse(config: &serde_yaml::Value) -> anyhow::Result<Vec<DispatchInput>> {
+    use super::parser::{keys, mapping, templates, text};
+    use anyhow::{bail, ensure, Context};
+    if config.is_null() { return Ok(Vec::new()); }
+    let config = mapping(config, "workflow_dispatch")?;
+    keys(config, &["inputs"], "workflow_dispatch")?;
+    let Some(inputs) = config.get("inputs") else { return Ok(Vec::new()); };
+    templates(inputs, &[], &[], "workflow_dispatch.inputs")?;
+    let inputs = mapping(inputs, "workflow_dispatch.inputs")?;
+    ensure!(inputs.len() <= MAX_INPUTS, "workflow declares too many inputs");
+    inputs.iter().map(|(name, spec)| {
+        let spec = mapping(spec, "workflow input")?;
+        keys(spec, &["description", "type", "required", "default", "options"], "workflow input")?;
+        let kind = match spec.get("type").map(|value| value.as_str().context("Invalid workflow input type")).transpose()?.unwrap_or("string") {
+            "string" => InputKind::Text,
+            "boolean" => InputKind::Boolean,
+            "number" => InputKind::Number,
+            "choice" => InputKind::Choice,
+            "environment" => InputKind::Environment,
+            _ => bail!("unsupported workflow input type"),
+        };
+        let default = spec.get("default").map(|value| {
+            ensure!(match kind {
+                InputKind::Boolean => value.is_bool(),
+                InputKind::Number => value.is_number(),
+                _ => !value.is_sequence() && !value.is_mapping(),
+            }, "workflow input default has the wrong type");
+            text(value, "workflow input default")
+        }).transpose()?;
+        let options = spec.get("options").map(|value| {
+            value.as_sequence().context("workflow input options must be a list")?.iter()
+                .map(|value| text(value, "workflow input option")).collect::<anyhow::Result<Vec<_>>>()
+        }).transpose()?.unwrap_or_default();
+        let required = spec.get("required").map(|value| value.as_bool().context("workflow input required must be a boolean")).transpose()?.unwrap_or(false);
+        let input = DispatchInput {
+            name: name.as_str().context("invalid workflow input name")?.to_owned(),
+            description: spec.get("description").map(|value| text(value, "workflow input description")).transpose()?.unwrap_or_default(),
+            kind, required, default, options,
+        };
+        check_declaration(&input).map_err(anyhow::Error::msg)?;
+        Ok(input)
+    }).collect()
+}
+
 /// Checks a declaration when its workflow is read, so a bad file is refused before it can
 /// be run.
 pub fn check_declaration(input: &DispatchInput) -> Result<(), &'static str> {

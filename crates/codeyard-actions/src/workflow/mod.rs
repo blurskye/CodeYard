@@ -8,6 +8,8 @@
 //! their names and signatures, add what else you need.
 use crate::expressions::{Contexts, Status};
 
+pub mod dispatch_inputs;
+pub mod events;
 mod parser;
 mod planner;
 #[cfg(test)]
@@ -133,14 +135,7 @@ pub fn parse_step(value: &serde_yaml::Value) -> anyhow::Result<Step> {
 /// Whether the workflow's `on:` lists this event. Branch, tag and path filters are Codeyard's
 /// business before it starts a run, so they are not checked here, as `act` does not either.
 pub fn listens_to(workflow: &Workflow, event: &str) -> bool {
-    match workflow.fields.get("on") {
-        Some(serde_yaml::Value::String(name)) => name == event,
-        Some(serde_yaml::Value::Sequence(events)) => {
-            events.iter().any(|v| v.as_str() == Some(event))
-        }
-        Some(serde_yaml::Value::Mapping(events)) => events.contains_key(event),
-        _ => false,
-    }
+    events::declares_event(workflow.fields.get("on"), event)
 }
 
 /// The job ids in an order where every job comes after the jobs it needs. Cycles and unknown

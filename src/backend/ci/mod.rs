@@ -2,7 +2,7 @@
 pub mod admission;
 mod concurrency;
 mod config;
-pub mod dispatch_inputs;
+pub use codeyard_actions::workflow::dispatch_inputs;
 pub mod environment_values;
 pub(crate) mod events;
 pub mod logs;

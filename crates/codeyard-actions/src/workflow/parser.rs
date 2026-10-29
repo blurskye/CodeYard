@@ -189,7 +189,7 @@ fn expression_context(
     Ok(())
 }
 
-fn templates(value: &Value, contexts: &[&str], functions: &[&str], path: &str) -> Result<()> {
+pub(super) fn templates(value: &Value, contexts: &[&str], functions: &[&str], path: &str) -> Result<()> {
     match value {
         Value::String(s) => {
             for expression in expressions(s).with_context(|| path.to_owned())? {
@@ -297,7 +297,7 @@ fn defaults(value: &Value, job: bool, path: &str) -> Result<()> {
         }
     }
     let mut contexts = MATRIX.to_vec();
-    contexts.push("env");
+    contexts.extend(["env", "runner", "job"]);
     templates(value, if job { &contexts } else { &[] }, &[], path)
 }
 
@@ -464,7 +464,7 @@ fn strategy(value: &Value, path: &str) -> Result<()> {
     Ok(())
 }
 
-fn events(value: &Value) -> Result<()> {
+pub(super) fn events(value: &Value) -> Result<()> {
     const EVENTS: &[&str] = &[
         "branch_protection_rule",
         "check_run",
@@ -549,7 +549,11 @@ fn events(value: &Value) -> Result<()> {
                     continue;
                 }
                 let map = mapping(config, &p)?;
-                if event == "workflow_dispatch" || event == "workflow_call" {
+                if event == "workflow_dispatch" {
+                    super::dispatch_inputs::parse(config)?;
+                    continue;
+                }
+                if event == "workflow_call" {
                     keys(
                         map,
                         if event == "workflow_call" {
@@ -713,7 +717,7 @@ pub(super) fn parse(yaml: &str) -> Result<Workflow> {
         ],
         "workflow",
     )?;
-    events(required(root, "on", "workflow")?)?;
+    super::events::parse(Some(required(root, "on", "workflow")?))?;
     for (k, v) in root {
         match k.as_str() {
             Some("name" | "description") => {

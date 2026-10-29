@@ -172,16 +172,7 @@ impl<'a> Resolver<'a> {
                 if self.called.len() > 20 {
                     return Err(AdmissionError::Invalid("More than twenty called workflows"));
                 }
-                let on = yaml.get("on");
-                let callable = match on {
-                    Some(Value::String(event)) => event == "workflow_call",
-                    Some(Value::Sequence(events)) => events
-                        .iter()
-                        .any(|value| value.as_str() == Some("workflow_call")),
-                    Some(Value::Mapping(events)) => events.contains_key("workflow_call"),
-                    _ => false,
-                };
-                if !callable {
+                if !codeyard_actions::workflow::events::declares_event(yaml.get("on"), "workflow_call") {
                     return Err(AdmissionError::Invalid(
                         "Called workflow does not declare workflow_call",
                     ));

@@ -1,7 +1,9 @@
 use super::config::CiPipelineKind;
-use super::dispatch_inputs::{self, DispatchInput, InputKind, MAX_INPUTS};
+pub use codeyard_actions::workflow::events::{WorkflowEventFilter, WorkflowTriggers};
+#[cfg(test)]
+use codeyard_actions::workflow::{dispatch_inputs::InputKind, events::{MAX_WORKFLOW_FILTER_PATTERNS, MAX_WORKFLOW_PATTERN_BYTES}};
 use crate::backend::repositories::store::{ErrorKind, RepoError, RepoStore, MAX_CI_WORKFLOW_BYTES};
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::{
@@ -30,36 +32,6 @@ struct CachedWorkflows {
 
 static WORKFLOW_CACHE: LazyLock<Mutex<VecDeque<CachedWorkflows>>> =
     LazyLock::new(|| Mutex::new(VecDeque::new()));
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WorkflowEventFilter {
-    #[serde(default)]
-    pub types: Vec<String>,
-    #[serde(default)]
-    pub workflows: Vec<String>,
-    pub branches: Vec<String>,
-    pub branches_ignore: Vec<String>,
-    pub tags: Vec<String>,
-    pub tags_ignore: Vec<String>,
-    pub paths: Vec<String>,
-    pub paths_ignore: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WorkflowTriggers {
-    pub push: Option<WorkflowEventFilter>,
-    pub pull_request: Option<WorkflowEventFilter>,
-    #[serde(default)]
-    pub pull_request_target: Option<WorkflowEventFilter>,
-    pub workflow_dispatch: bool,
-    #[serde(default)]
-    pub events: BTreeMap<String, WorkflowEventFilter>,
-    #[serde(default)]
-    pub schedules: Vec<String>,
-    /// The `inputs` of `on.workflow_dispatch`, in the order the file declares them.
-    #[serde(default)]
-    pub dispatch_inputs: Vec<DispatchInput>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDefinition {
@@ -336,8 +308,6 @@ pub fn workflow_name_from_path(path: &str) -> String {
 }
 
 const MAX_WORKFLOW_NAME_BYTES: usize = 1024;
-const MAX_WORKFLOW_FILTER_PATTERNS: usize = 256;
-const MAX_WORKFLOW_PATTERN_BYTES: usize = 1024;
 
 async fn discovery_slot(
     slots: &Semaphore,
@@ -557,7 +527,8 @@ pub(super) fn workflow_definition_from_yaml(
     yaml: &Value,
 ) -> Result<WorkflowDefinition> {
     let name = workflow_name(yaml, path)?;
-    let triggers = parse_triggers(extract_on_section(yaml))?;
+    let triggers = codeyard_actions::workflow::events::parse(yaml.get("on"))?;
+    for cron in &triggers.schedules { super::schedule::parse(cron)?; }
 
     Ok(WorkflowDefinition {
         path: path.to_string(),
@@ -618,15 +589,11 @@ fn text_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 fn bounded(text: &str) -> String {
-    let mut end = text.len().min(MAX_STEP_NAME_BYTES);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_owned()
+    text[..text.floor_char_boundary(MAX_STEP_NAME_BYTES)].to_owned()
 }
 
 fn workflow_name(yaml: &Value, path: &str) -> Result<String> {
-    let name = extract_string_field(yaml, "name").unwrap_or_else(|| workflow_name_from_path(path));
+    let name = extract_string_field(yaml, "name").unwrap_or_else(|| path.to_owned());
     ensure!(
         name.len() <= MAX_WORKFLOW_NAME_BYTES,
         "workflow name too long"
@@ -639,20 +606,6 @@ fn workflow_name(yaml: &Value, path: &str) -> Result<String> {
     Ok(name)
 }
 
-fn extract_on_section(yaml: &Value) -> Option<&Value> {
-    let Value::Mapping(mapping) = yaml else {
-        return None;
-    };
-
-    for (key, value) in mapping {
-        if yaml_key_to_string(key).as_deref() == Some("on") {
-            return Some(value);
-        }
-    }
-
-    None
-}
-
 fn extract_string_field(yaml: &Value, key_name: &str) -> Option<String> {
     let Value::Mapping(mapping) = yaml else {
         return None;
@@ -663,191 +616,13 @@ fn extract_string_field(yaml: &Value, key_name: &str) -> Option<String> {
             if let Some(text) = value.as_str() {
                 let trimmed = text.trim();
                 if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
+                    return Some(text.to_string());
                 }
             }
         }
     }
 
     None
-}
-
-fn parse_triggers(on_section: Option<&Value>) -> Result<WorkflowTriggers> {
-    let mut triggers = WorkflowTriggers::default();
-    let Some(on_value) = on_section else {
-        return Ok(triggers);
-    };
-
-    match on_value {
-        Value::String(event) => apply_event_trigger(event, &Value::Null, &mut triggers)?,
-        Value::Sequence(events) => {
-            for event in events {
-                if let Some(event_name) = event.as_str() {
-                    apply_event_trigger(event_name, &Value::Null, &mut triggers)?;
-                }
-            }
-        }
-        Value::Mapping(events) => {
-            for (event_key, config) in events {
-                if let Some(event_name) = yaml_key_to_string(event_key) {
-                    apply_event_trigger(&event_name, config, &mut triggers)?;
-                }
-            }
-        }
-        _ => {}
-    }
-
-    Ok(triggers)
-}
-
-fn apply_event_trigger(
-    event_name: &str,
-    config: &Value,
-    triggers: &mut WorkflowTriggers,
-) -> Result<()> {
-    match event_name.to_ascii_lowercase().as_str() {
-        "push" => triggers.push = Some(parse_event_filter(config)?),
-        "pull_request" => triggers.pull_request = Some(parse_event_filter(config)?),
-        "pull_request_target" => triggers.pull_request_target = Some(parse_event_filter(config)?),
-        "schedule" => {
-            let schedules = config
-                .as_sequence()
-                .context("workflow schedules must be a list")?;
-            ensure!(schedules.len() <= 32, "too many workflow schedules");
-            for value in schedules {
-                let cron = field(value, "cron")
-                    .and_then(Value::as_str)
-                    .context("workflow schedule requires cron")?;
-                super::schedule::parse(cron)?;
-                triggers.schedules.push(cron.to_owned());
-            }
-        }
-        "workflow_dispatch" => {
-            triggers.workflow_dispatch = true;
-            triggers.dispatch_inputs = parse_dispatch_inputs(config)?;
-        }
-        event if super::events::is_repository_event(event) => {
-            triggers
-                .events
-                .insert(event.to_owned(), parse_event_filter(config)?);
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn parse_dispatch_inputs(config: &Value) -> Result<Vec<DispatchInput>> {
-    let Some(inputs) = field(config, "inputs") else {
-        return Ok(Vec::new());
-    };
-    let Value::Mapping(mapping) = inputs else {
-        bail!("workflow inputs must be a mapping");
-    };
-    ensure!(
-        mapping.len() <= MAX_INPUTS,
-        "workflow declares too many inputs"
-    );
-    mapping
-        .iter()
-        .map(|(key, spec)| -> Result<DispatchInput> {
-            let kind = match field(spec, "type")
-                .and_then(Value::as_str)
-                .unwrap_or("string")
-            {
-                "string" => InputKind::Text,
-                "boolean" => InputKind::Boolean,
-                "number" => InputKind::Number,
-                "choice" => InputKind::Choice,
-                "environment" => InputKind::Environment,
-                _ => bail!("unsupported workflow input type"),
-            };
-            let options = match field(spec, "options") {
-                None => Vec::new(),
-                Some(Value::Sequence(values)) => {
-                    values.iter().map(scalar_text).collect::<Result<_>>()?
-                }
-                Some(_) => bail!("workflow input options must be a list"),
-            };
-            let input = DispatchInput {
-                name: key
-                    .as_str()
-                    .context("invalid workflow input name")?
-                    .to_owned(),
-                description: field(spec, "description")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                kind,
-                required: field(spec, "required")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                default: field(spec, "default").map(scalar_text).transpose()?,
-                options,
-            };
-            dispatch_inputs::check_declaration(&input).map_err(anyhow::Error::msg)?;
-            Ok(input)
-        })
-        .collect()
-}
-
-/// A YAML scalar as the text GitHub shows for it: booleans as `true` or `false`.
-fn scalar_text(value: &Value) -> Result<String> {
-    match value {
-        Value::String(text) => Ok(text.clone()),
-        Value::Bool(flag) => Ok(flag.to_string()),
-        Value::Number(number) => Ok(number.to_string()),
-        _ => bail!("workflow input values must be scalars"),
-    }
-}
-
-fn parse_event_filter(config: &Value) -> Result<WorkflowEventFilter> {
-    ensure!(
-        config.is_null() || config.is_mapping(),
-        "invalid workflow event filter"
-    );
-    let mut filter = WorkflowEventFilter::default();
-    let Value::Mapping(mapping) = config else {
-        return Ok(filter);
-    };
-
-    for (key, value) in mapping {
-        match yaml_key_to_string(key).as_deref() {
-            Some("types") => filter.types = parse_pattern_list(value)?,
-            Some("workflows") => filter.workflows = parse_pattern_list(value)?,
-            Some("branches") => filter.branches = parse_pattern_list(value)?,
-            Some("branches-ignore") => filter.branches_ignore = parse_pattern_list(value)?,
-            Some("tags") => filter.tags = parse_pattern_list(value)?,
-            Some("tags-ignore") => filter.tags_ignore = parse_pattern_list(value)?,
-            Some("paths") => filter.paths = parse_pattern_list(value)?,
-            Some("paths-ignore") => filter.paths_ignore = parse_pattern_list(value)?,
-            _ => {}
-        }
-    }
-
-    Ok(filter)
-}
-
-fn parse_pattern_list(value: &Value) -> Result<Vec<String>> {
-    let values = match value {
-        Value::String(value) => vec![value.as_str()],
-        Value::Sequence(values) => values
-            .iter()
-            .map(|value| value.as_str().context("invalid workflow pattern"))
-            .collect::<Result<Vec<_>>>()?,
-        _ => anyhow::bail!("invalid workflow patterns"),
-    };
-    ensure!(
-        values.len() <= MAX_WORKFLOW_FILTER_PATTERNS
-            && values
-                .iter()
-                .all(|value| value.len() <= MAX_WORKFLOW_PATTERN_BYTES),
-        "workflow filter too large"
-    );
-    Ok(values
-        .into_iter()
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .collect())
 }
 
 fn yaml_key_to_string(value: &Value) -> Option<String> {
@@ -1413,8 +1188,7 @@ mod tests {
 name: CI
 on:
   push:
-    branches: [main, 'release/**']
-    branches-ignore: ['release/**-draft']
+    branches: [main, 'release/**', '!release/**-draft']
   workflow_dispatch:
   pull_request:
 "#;
