@@ -69,7 +69,7 @@ async fn set(
         let invitation = outcome(
             organizations::set_organization_invitation_by_owner(
                 &state.pool,
-                actor.user.id,
+                (actor.user.id, actor.token.id),
                 org.id,
                 user.id,
                 role,
@@ -89,7 +89,7 @@ async fn set(
         let member = outcome(
             organizations::update_organization_member_role_by_owner(
                 &state.pool,
-                actor.user.id,
+                (actor.user.id, actor.token.id),
                 org.id,
                 user.id,
                 role,
@@ -120,7 +120,7 @@ async fn remove(
         .map_or(-1, |user| user.id);
     let result = organizations::remove_member_or_invitation_by_owner(
         &state.pool,
-        actor.user.id,
+        (actor.user.id, actor.token.id),
         org.id,
         user,
     )

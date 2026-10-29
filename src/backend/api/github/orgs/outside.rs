@@ -99,7 +99,7 @@ async fn convert(
         )
         .await
     } else {
-        organizations::convert_to_outside_collaborator(&state.pool, actor.user.id, org.id, user.id)
+        organizations::convert_to_outside_collaborator(&state.pool, (actor.user.id, actor.token.id), org.id, user.id)
             .await
     }
     .map_err(Error::unavailable)?;
