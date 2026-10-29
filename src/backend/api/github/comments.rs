@@ -125,6 +125,61 @@ pub(super) async fn document(
     Ok(value)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Representation { Raw, Text, Html, Full }
+
+fn representation(headers: &HeaderMap) -> Representation {
+    let mut selected = (0.0_f32, Representation::Raw);
+    for header in headers.get_all(axum::http::header::ACCEPT).iter() {
+        let Ok(header) = header.to_str() else { continue };
+        for range in header.split(',') {
+            let mut parts = range.split(';').map(str::trim);
+            let media = parts.next().unwrap_or("").to_ascii_lowercase();
+            let profile = match media.as_str() {
+                "application/vnd.github.text+json" | "application/vnd.github.v3.text+json" => Representation::Text,
+                "application/vnd.github.html+json" | "application/vnd.github.v3.html+json" => Representation::Html,
+                "application/vnd.github.full+json" | "application/vnd.github.v3.full+json" => Representation::Full,
+                "application/vnd.github.raw+json" | "application/vnd.github.v3.raw+json" | "application/vnd.github+json" | "application/json" | "*/*" => Representation::Raw,
+                _ => continue,
+            };
+            let weight = parts.find_map(|part| part.strip_prefix("q=")).map_or(1.0, |weight| weight.parse::<f32>().unwrap_or(0.0));
+            if weight > selected.0 && weight <= 1.0 { selected = (weight, profile); }
+        }
+    }
+    selected.1
+}
+
+async fn represent(state: &AppState, headers: &HeaderMap, repo: &db::models::Repository, owner: &str, mut values: Vec<Value>) -> Result<Vec<Value>> {
+    let profile = representation(headers);
+    if profile == Representation::Raw { return Ok(values); }
+    let html = matches!(profile, Representation::Html | Representation::Full);
+    let text = matches!(profile, Representation::Text | Representation::Full);
+    let references = if html {
+        let authentication = auth::authenticate(state, headers, false).await?;
+        let texts: Vec<_> = values.iter().filter_map(|value| value["body"].as_str()).collect();
+        super::meta::resolve_references(state, authentication.as_ref(), repo, owner, &repo.name, &texts, false).await?
+    } else { Default::default() };
+    tokio::task::spawn_blocking(move || {
+        let mut size = 0_usize;
+        for value in &mut values {
+            let body = value["body"].as_str().unwrap_or_default();
+            let rendered_html = html.then(|| crate::webui::components::parse_markdown(body, &references));
+            let rendered_text = text.then(|| crate::webui::components::markdown_text(body));
+            size = size.saturating_add(if profile == Representation::Full { body.len() } else { 0 }).saturating_add(rendered_html.as_ref().map_or(0, String::len)).saturating_add(rendered_text.as_ref().map_or(0, String::len));
+            if size > 16 * 1024 * 1024 { return Err(Error::new(StatusCode::PAYLOAD_TOO_LARGE, "Rendered comment page is too large")); }
+            if profile != Representation::Full { value.as_object_mut().ok_or_else(|| Error::unavailable(()))?.remove("body"); }
+            if let Some(html) = rendered_html { value["body_html"] = Value::String(html); }
+            if let Some(text) = rendered_text { value["body_text"] = Value::String(text); }
+        }
+        Ok(values)
+    }).await.map_err(Error::unavailable)?
+}
+
+async fn response_document(state: &AppState, headers: &HeaderMap, repo: &db::models::Repository, owner: &str, comment: &Comment) -> Result<Value> {
+    let value = document(&state.pool, repo, owner, comment).await?;
+    represent(state, headers, repo, owner, vec![value]).await?.pop().ok_or_else(Error::missing)
+}
+
 async fn read(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -138,7 +193,7 @@ async fn read(
     )
     .await?;
     Ok(Json(
-        document(&state.pool, &repo, &p["owner"], &comment).await?,
+        response_document(&state, &headers, &repo, &p["owner"], &comment).await?,
     ))
 }
 
@@ -213,7 +268,7 @@ async fn create(
     .await?;
     Ok((
         StatusCode::CREATED,
-        Json(document(&state.pool, &repo, &p["owner"], &comment).await?),
+        Json(response_document(&state, &headers, &repo, &p["owner"], &comment).await?),
     ))
 }
 
@@ -265,7 +320,7 @@ async fn update(
     }
     let comment = find(&state.pool, repo.id, api_id).await?;
     Ok(Json(
-        document(&state.pool, &repo, &p["owner"], &comment).await?,
+        response_document(&state, &headers, &repo, &p["owner"], &comment).await?,
     ))
 }
 
@@ -358,7 +413,7 @@ async fn list(
     .map_err(Error::unavailable)?;
     let next = rows.len() > limit;
     let mut items = Vec::new();
-    for (id, pull) in rows {
+    for (id, pull) in rows.into_iter().take(limit) {
         let comment = find(
             &state.pool,
             repo.id,
@@ -367,6 +422,7 @@ async fn list(
         .await?;
         items.push(document(&state.pool, &repo, &p["owner"], &comment).await?);
     }
+    let items = represent(&state, &headers, &repo, &p["owner"], items).await?;
     page.response(&uri, items, next)
 }
 
