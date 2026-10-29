@@ -18,11 +18,10 @@ pub async fn list(
         .bind(repo).bind(viewer).bind(pull).fetch_all(pool).await?)
 }
 
-pub async fn members(pool: &PgPool, repo: i64, team: i64) -> Result<Vec<i64>> {
-    let rows = sqlx::query_scalar("SELECT DISTINCT u.id FROM effective_team_memberships m JOIN teams t ON t.id=m.team_id JOIN org_memberships o ON o.org_id=t.org_id AND o.user_id=m.user_id JOIN users u ON u.id=m.user_id JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL WHERE r.id=$1 AND t.id=$2 AND m.role IN ('member','maintainer') AND o.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 3 AND 5) ORDER BY u.id LIMIT 5001")
-        .bind(repo).bind(team).fetch_all(pool).await?;
-    ensure!(rows.len() <= 5000, "Review team exceeds recipient limit");
-    Ok(rows)
+pub async fn members(pool: &PgPool, repo: i64, teams: &[i64], after: i64) -> Result<Vec<crate::backend::db::models::User>> {
+    let access = super::super::repositories::access::USER_REPO_ACCESS_SQL;
+    Ok(sqlx::query_as(&format!("SELECT DISTINCT u.* FROM effective_team_memberships m JOIN teams t ON t.id=m.team_id JOIN org_memberships o ON o.org_id=t.org_id AND o.user_id=m.user_id JOIN users u ON u.id=m.user_id JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL WHERE r.id=$1 AND t.id=ANY($2) AND u.id>$3 AND t.notifications_enabled AND m.role IN ('member','maintainer') AND o.role IN ('owner','admin','member') AND NOT r.is_archived AND NOT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=r.id) AND ({access})>=3 AND EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 3 AND 5) ORDER BY u.id LIMIT 100"))
+        .bind(repo).bind(teams).bind(after).fetch_all(pool).await?)
 }
 
 pub async fn change(

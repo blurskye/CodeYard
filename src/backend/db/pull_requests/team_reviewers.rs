@@ -18,7 +18,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::team_reviewers::l
     fn list(pool: &DbPool, repo: i64, pull: Option<i64>, viewer: Option<i64>) -> Result<Vec<crate::backend::db::repositories::push_teams::TeamAccess>>);
 native_operation!(crate::backend::db::postgres::pull_requests::team_reviewers::members,
     crate::backend::db::sqlite::pull_requests::team_reviewers::members,
-    fn members(pool: &DbPool, repo: i64, team: i64) -> Result<Vec<i64>>);
+    fn members(pool: &DbPool, repo: i64, teams: &[i64], after: i64) -> Result<Vec<crate::backend::db::models::User>>);
 native_operation!(crate::backend::db::postgres::pull_requests::team_reviewers::change,
     crate::backend::db::sqlite::pull_requests::team_reviewers::change,
     fn change(pool: &DbPool, actor: i64, pull: i64, slugs: &[String], action: ReviewTeamAction, expected: Option<&crate::backend::db::models::PullRequest>) -> Result<Vec<Team>>);
