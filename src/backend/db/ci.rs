@@ -230,11 +230,11 @@ native_operation!(crate::backend::db::postgres::ci::finish_ci_run,
     worker: &str,
     status: &str,
     message: Option<&str>,
-) -> Result<Option<(CiRun, Vec<(i64, i64)>)>>);
+) -> Result<Option<(CiRun, Vec<(i64, i64)>, Vec<i64>)>>);
 
 native_operation!(crate::backend::db::postgres::ci::fail_stale_ci_runs,
     crate::backend::db::sqlite::ci::fail_stale_ci_runs,
-    fn fail_stale_ci_runs(pool: &DbPool, stale_seconds: i64) -> Result<(Vec<CiRun>, Vec<(i64, i64)>)>);
+    fn fail_stale_ci_runs(pool: &DbPool, stale_seconds: i64) -> Result<(Vec<CiRun>, Vec<(i64, i64)>, Vec<(i64, i64)>)>);
 
 /// Changed flag, notifications, and a terminal run only when cancellation completed it.
 pub type Cancellation = (bool, Vec<(i64, i64)>, Option<CiRun>);

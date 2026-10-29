@@ -214,10 +214,9 @@ pub async fn save_state(
     Ok(())
 }
 
-pub(crate) async fn close_active(connection: &mut SqliteConnection, run: i64) -> Result<()> {
+pub(crate) async fn close_active(connection: &mut SqliteConnection, run: i64) -> Result<Vec<i64>> {
     sqlx::query("UPDATE actions_steps SET status='completed',completed_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE status='in_progress' AND job_id IN(SELECT id FROM actions_jobs WHERE run_id=$1)").bind(run).execute(&mut *connection).await?;
-    sqlx::query("UPDATE actions_jobs SET status='completed',completed_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE run_id=$1 AND status<>'completed'").bind(run).execute(connection).await?;
-    Ok(())
+    Ok(sqlx::query_scalar("UPDATE actions_jobs SET status='completed',completed_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE run_id=$1 AND status<>'completed' RETURNING id").bind(run).fetch_all(connection).await?)
 }
 
 pub async fn get(pool: &SqlitePool, repo: i64, id: i64, queued: bool) -> Result<Option<Job>> {

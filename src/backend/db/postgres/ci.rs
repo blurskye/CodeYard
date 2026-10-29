@@ -746,7 +746,7 @@ async fn finish_in_tx(
     run: &CiRun,
     status: &str,
     message: Option<&str>,
-) -> Result<Option<(CiRun, Vec<(i64, i64)>)>> {
+) -> Result<Option<(CiRun, Vec<(i64, i64)>, Vec<i64>)>> {
     ensure!(
         matches!(status, "success" | "failed" | "cancelled"),
         "invalid CI terminal status"
@@ -763,7 +763,7 @@ async fn finish_in_tx(
     let Some(finished) = finished else {
         return Ok(None);
     };
-    super::action_jobs::close_active(tx, run.id).await?;
+    let closed_jobs = super::action_jobs::close_active(tx, run.id).await?;
     super::runners::retire(tx, run.worker.as_deref()).await?;
     if is_deployment(run) {
         sqlx::query("UPDATE ci_deployments SET status = $2, completed_at = NOW(), updated_at = NOW() WHERE run_id = $1 AND status IN ('pending','in_progress','approved')")
@@ -813,7 +813,7 @@ async fn finish_in_tx(
             threaded.push((user, id));
         }
     }
-    Ok(Some((finished, threaded)))
+    Ok(Some((finished, threaded, closed_jobs)))
 }
 
 /// Marks a running run finished, if this worker still owns it. The repository and
@@ -825,7 +825,7 @@ pub async fn finish_ci_run(
     worker: &str,
     status: &str,
     message: Option<&str>,
-) -> Result<Option<(CiRun, Vec<(i64, i64)>)>> {
+) -> Result<Option<(CiRun, Vec<(i64, i64)>, Vec<i64>)>> {
     let mut tx = pool.begin().await?;
     let repo_id: Option<i64> = sqlx::query_scalar(
         "SELECT repo_id FROM ci_runs WHERE id = $1 AND worker = $2 AND status = 'running'",
@@ -863,7 +863,7 @@ pub async fn finish_ci_run(
 pub async fn fail_stale_ci_runs(
     pool: &PgPool,
     stale_seconds: i64,
-) -> Result<(Vec<CiRun>, Vec<(i64, i64)>)> {
+) -> Result<(Vec<CiRun>, Vec<(i64, i64)>, Vec<(i64, i64)>)> {
     let candidates: Vec<(i64, i64)> = sqlx::query_as(
         "SELECT id, repo_id FROM ci_runs WHERE status = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - make_interval(secs => $1::double precision))
          ORDER BY id LIMIT 128",
@@ -873,6 +873,7 @@ pub async fn fail_stale_ci_runs(
     .await?;
     let mut finished_runs = Vec::new();
     let mut notifications = Vec::new();
+    let mut closed_jobs = Vec::new();
     for (id, repo_id) in candidates {
         let mut tx = pool.begin().await?;
         lock_run_repository(&mut tx, repo_id).await?;
@@ -886,16 +887,17 @@ pub async fn fail_stale_ci_runs(
         .await?;
         if let Some(run) = run {
             let message = Some("The CI worker stopped before the run finished");
-            if let Some((finished, created)) =
+            if let Some((finished, created, jobs)) =
                 finish_in_tx(&mut tx, &run, "failed", message).await?
             {
                 finished_runs.push(finished);
                 notifications.extend(created);
+                closed_jobs.extend(jobs.into_iter().map(|job| (run.id, job)));
             }
         }
         tx.commit().await?;
     }
-    Ok((finished_runs, notifications))
+    Ok((finished_runs, notifications, closed_jobs))
 }
 
 /// Stops the CI runs in `run_ids` after the people who started them lost access,
@@ -1081,7 +1083,7 @@ async fn request_cancellation(
     let mut completed = None;
     match run.status.as_str() {
         "queued" => {
-            if let Some((finished, created)) = finish_in_tx(
+            if let Some((finished, created, _)) = finish_in_tx(
                 &mut tx, &run, "cancelled", Some("Cancelled before it started"),
             ).await? {
                 notifications = created;

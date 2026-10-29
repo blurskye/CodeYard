@@ -739,7 +739,7 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
         .unwrap()
         .expect("claim");
     db.stop_heartbeat(run.id).await;
-    let (finished, _) = db::ci::finish_ci_run(db.pool(), run.id, WORKER, "success", None)
+    let (finished, _, _) = db::ci::finish_ci_run(db.pool(), run.id, WORKER, "success", None)
         .await
         .unwrap()
         .expect("the worker owns the run");
@@ -779,7 +779,7 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
         .unwrap()
         .expect("claim");
     db.stop_heartbeat(run.id).await;
-    let (failed, created) = db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap();
+    let (failed, created, _) = db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap();
     assert_eq!(failed.len(), 1);
     assert_eq!(created.len(), 1);
     assert_eq!(created[0].0, w.owner);

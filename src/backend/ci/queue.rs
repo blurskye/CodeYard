@@ -271,8 +271,11 @@ impl RunQueue {
         else {
             return Ok(());
         };
-        let (finished, created) = db::ci::fail_stale_ci_runs(pool, stale_seconds).await?;
+        let (finished, created, jobs) = db::ci::fail_stale_ci_runs(pool, stale_seconds).await?;
         notifications.send_created(&created).await;
+        if let Some(ci) = self.events() {
+            for (run, job) in jobs { ci.emit_workflow_job(run, job, "completed").await; }
+        }
         for run in &finished {
             self.emit_workflow_run(run, "completed").await;
         }
@@ -805,8 +808,11 @@ impl RunQueue {
                 ..
             } => {
                 let finished = db::ci::finish_ci_run(pool, id, worker, status, message).await?;
-                if let Some((run, created)) = &finished {
+                if let Some((run, created, jobs)) = &finished {
                     notifications.send_created(created).await;
+                    if let Some(ci) = self.events() {
+                        for job in jobs { ci.emit_workflow_job(run.id, *job, "completed").await; }
+                    }
                     self.emit_workflow_run(run, "completed").await;
                 }
                 Ok(finished.is_some())
