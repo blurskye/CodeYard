@@ -88,26 +88,17 @@ pub async fn author_association(
     repository: &Repository,
     user_id: i64,
 ) -> Result<&'static str> {
-    if repository.is_personal_owner(user_id) {
-        return Ok("OWNER");
-    }
-    let member = match repository.owner_org_id {
-        Some(org) => matches!(
-            db::organizations::membership::get_organization_role(pool, user_id, org).await?,
-            db::organizations::OrganizationOutcome::Applied(_)
-        ),
-        None => false,
-    };
-    let writer = db::repositories::access::get_user_repo_access(pool, user_id, repository.id)
-        .await?
-        .can_write();
-    Ok(if member {
-        "MEMBER"
-    } else if writer {
-        "COLLABORATOR"
-    } else {
-        "NONE"
+    let associations = author_associations(pool, repository, &[user_id]).await?;
+    Ok(match associations.get(&user_id).map(String::as_str) {
+        Some("OWNER") => "OWNER",
+        Some("MEMBER") => "MEMBER",
+        Some("COLLABORATOR") => "COLLABORATOR",
+        _ => "NONE",
     })
+}
+
+pub async fn author_associations(pool: &db::DbPool, repository: &Repository, users: &[i64]) -> Result<std::collections::HashMap<i64, String>> {
+    Ok(db::repositories::access::author_associations(pool, repository.id, users).await?.into_iter().collect())
 }
 
 pub async fn can_admin(pool: &db::DbPool, user: &User, repository: &Repository) -> Result<bool> {

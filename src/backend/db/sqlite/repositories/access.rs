@@ -3,6 +3,13 @@ use crate::backend::db::repositories::access::CollaboratorChange;
 use anyhow::Result;
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 
+pub async fn author_associations(pool: &SqlitePool, repo_id: i64, users: &[i64]) -> Result<Vec<(i64, String)>> {
+    anyhow::ensure!(users.len() <= 500, "Author association batch exceeds its limit");
+    if users.is_empty() { return Ok(Vec::new()); }
+    Ok(sqlx::query_as(&format!("SELECT u.id,CASE WHEN r.owner_kind='user' AND r.owner_user_id=u.id THEN 'OWNER' WHEN NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM org_memberships m JOIN organizations o ON o.id=m.org_id WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member')) THEN 'MEMBER' WHEN ({USER_REPO_ACCESS_SQL}) >= 3 THEN 'COLLABORATOR' ELSE 'NONE' END FROM repositories r CROSS JOIN users u WHERE r.id=?1 AND u.id IN (SELECT value FROM json_each(?2))"))
+        .bind(repo_id).bind(serde_json::to_string(users)?).fetch_all(pool).await?)
+}
+
 pub async fn get_user_repo_access(
     pool: &SqlitePool,
     user_id: i64,
