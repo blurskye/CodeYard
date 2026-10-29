@@ -334,6 +334,12 @@ async fn current_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
     process::blocking_until(std::time::Instant::now() + process::RPC_TIMEOUT, move || {
         let mut refs = super::repository::list_mirror_refs(&path)?;
         refs.retain(|name, _| !name.starts_with("refs/codeyard/"));
+        let repo = git2::Repository::open_bare(&path)?;
+        match repo.refname_to_id("HEAD") {
+            Ok(head) => { refs.insert("HEAD".into(), head.to_string()); }
+            Err(error) if matches!(error.code(), git2::ErrorCode::NotFound | git2::ErrorCode::UnbornBranch) => {}
+            Err(error) => return Err(error.into()),
+        }
         Ok(refs)
     })
     .await
@@ -378,10 +384,32 @@ where
 }
 
 pub(crate) async fn get_contributors(repo_path: &Path) -> Result<Vec<ContributorInfo>> {
-    cached_by_refs(&CONTRIBUTOR_CACHES, repo_path, String::new(), None, |_| async {
+    cached_by_refs(&CONTRIBUTOR_CACHES, repo_path, String::new(), None, |refs| async move {
+        let path = repo_path.to_owned();
+        let (tips, mailmap) = process::blocking_until(std::time::Instant::now() + process::RPC_TIMEOUT, move || {
+            let repo = git2::Repository::open_bare(path)?;
+            let mut tips = std::collections::BTreeSet::new();
+            let deadline = std::time::Instant::now() + process::RPC_TIMEOUT;
+            for oid in refs.values() {
+                ensure!(std::time::Instant::now() < deadline, "Git contributor snapshot timed out");
+                let (id, kind) = super::repository::peel_revision(&repo, oid)?;
+                if kind == git2::ObjectType::Commit { tips.insert(id.to_string()); }
+            }
+            let mailmap = if let Some(head) = refs.get("HEAD") {
+                let commit = super::repository::peel_to_commit_checked(&repo, head)?;
+                match super::repository::tree_entry(&repo, &commit, ".mailmap") {
+                    Ok(entry) if entry.kind() == Some(git2::ObjectType::Blob) => entry.id().to_string(),
+                    Ok(_) => String::new(),
+                    Err(error) if error.downcast_ref::<git2::Error>().is_some_and(super::repository::is_missing_path) => String::new(),
+                    Err(error) => return Err(error),
+                }
+            } else { String::new() };
+            Ok((tips, mailmap))
+        }).await?;
+        if tips.is_empty() { return Ok(Vec::new()); }
         let mut command = process::git_command()?;
-        command
-            .args(["shortlog", "-sne", "--exclude=refs/codeyard/*", "--all"])
+        command.args(["-c", "mailmap.file=/dev/null", "-c", &format!("mailmap.blob={mailmap}")])
+            .args(["shortlog", "-sne"]).args(tips).arg("--")
             .current_dir(repo_path);
         let (status, output) = process::buffered(
             command,
