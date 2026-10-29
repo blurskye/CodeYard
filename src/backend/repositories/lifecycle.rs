@@ -1037,6 +1037,18 @@ pub async fn fork_into(
         )
         .await;
     }
+    // Even a redacted source-scoped event reveals confidential remediation activity. A
+    // source subscription cannot establish readability of a private destination.
+    if fork.is_private { return Ok(fork); }
+    let public = match db::repositories::records::get_repository_by_id(pool, fork.id).await {
+        Ok(Some(current)) => !current.is_private,
+        Ok(None) => false,
+        Err(error) => {
+            tracing::warn!(repo_id = fork.id, %error, "fork webhook visibility unavailable");
+            false
+        }
+    };
+    if !public { return Ok(fork); }
     let (fork_for_hook, source_for_hook) = (fork.clone(), source.clone());
     webhooks::emit(
         pool,

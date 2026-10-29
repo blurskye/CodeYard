@@ -1,4 +1,5 @@
 use crate::backend::db::models::{Repository, SharedRepository};
+use crate::backend::db::repositories::discovery::public_fork_count_sql;
 use crate::backend::db::repositories::records::{
     MergeMethodUpdate, RepositoryFilter, RepositorySort,
 };
@@ -143,21 +144,21 @@ pub async fn list_public_repositories(
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
     // The order is part of the query, so the limit keeps the top rows of that order.
     // The stars index lets SQLite find that top row without sorting every public repository.
-    let sql = match sort {
+    let sql: std::borrow::Cow<'_, str> = match sort {
         RepositorySort::Recent => {
-            "SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY created_at DESC, id DESC LIMIT ?1"
+            "SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY created_at DESC, id DESC LIMIT ?1".into()
         }
         RepositorySort::Stars => {
-            "SELECT * FROM repositories INDEXED BY idx_repositories_public_stars WHERE is_private = false AND NOT is_gist ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT ?1"
+            "SELECT * FROM repositories INDEXED BY idx_repositories_public_stars WHERE is_private = false AND NOT is_gist ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT ?1".into()
         }
         RepositorySort::Forks => {
-            "SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY forks_count DESC, created_at DESC, id DESC LIMIT ?1"
+            format!("SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY {} DESC, created_at DESC, id DESC LIMIT ?1", public_fork_count_sql("repositories")).into()
         }
         RepositorySort::Updated => {
-            "SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY updated_at DESC, id DESC LIMIT ?1"
+            "SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY updated_at DESC, id DESC LIMIT ?1".into()
         }
     };
-    let repos = sqlx::query_as::<_, Repository>(sql)
+    let repos = sqlx::query_as::<_, Repository>(&sql)
         .bind(limit)
         .fetch_all(pool)
         .await?;
@@ -251,14 +252,14 @@ pub async fn search_public_repositories(
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
     anyhow::ensure!(offset >= 0, "Result offset must be nonnegative");
     let pattern = super::super::search::contains(text);
-    let (index, order) = match sort {
-        RepositorySort::Recent => ("", "created_at DESC, id DESC"),
+    let (index, order): (&str, std::borrow::Cow<'_, str>) = match sort {
+        RepositorySort::Recent => ("", "created_at DESC, id DESC".into()),
         RepositorySort::Stars => (
             "INDEXED BY idx_repositories_public_stars",
-            "stars_count DESC, created_at DESC, id DESC",
+            "stars_count DESC, created_at DESC, id DESC".into(),
         ),
-        RepositorySort::Forks => ("", "forks_count DESC, created_at DESC, id DESC"),
-        RepositorySort::Updated => ("", "updated_at DESC, id DESC"),
+        RepositorySort::Forks => ("", format!("{} DESC, created_at DESC, id DESC", public_fork_count_sql("repositories")).into()),
+        RepositorySort::Updated => ("", "updated_at DESC, id DESC".into()),
     };
     let sql = format!(
         r#"SELECT * FROM repositories {index} WHERE is_private = false AND NOT is_gist

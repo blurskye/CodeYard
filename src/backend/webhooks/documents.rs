@@ -30,7 +30,7 @@ async fn fill(
         .filter(|value| value.is_object())
     {
         // A source subscription does not grant access to its private remediation forks.
-        let forks = db::repositories::discovery::visible_fork_counts(pool, None, None, &[repo.id]).await?
+        let forks = db::repositories::discovery::public_fork_counts(pool, &[repo.id]).await?
             .remove(&repo.id).unwrap_or_default();
         payloads::set_fork_counts(repository, forks);
         repository["topics"] = json!(topics(pool, repo.id).await?);

@@ -10,7 +10,7 @@ pub(super) fn object(repo: &db::models::Repository) -> Value {
         "name":repo.name,"description":repo.description,"isPrivate":repo.is_private,"isFork":repo.is_fork,
         "isArchived":repo.is_archived,"visibility":if repo.is_private {"PRIVATE"} else {"PUBLIC"},
         "createdAt":repo.created_at,"updatedAt":repo.updated_at,
-        "stargazerCount":repo.stars_count,"forkCount":repo.forks_count,
+        "stargazerCount":repo.stars_count,
         "homepageUrl":repo.website,"isInOrganization":repo.owner_kind=="org","hasIssuesEnabled":true,
         "hasProjectsEnabled":true,"autoMergeAllowed":true,"deleteBranchOnMerge":false,
         "mergeCommitAllowed":repo.allow_merge_commit,"squashMergeAllowed":repo.allow_squash_merge,
@@ -98,6 +98,8 @@ pub(super) async fn resolve(
     let repo = by_id(id, request).await?;
     let pool = &request.state.pool;
     match field {
+        "forkCount" => Ok(json!(db::repositories::discovery::public_fork_counts(pool, &[id])
+            .await.map_err(unavailable)?.remove(&id).unwrap_or_default())),
         "hasWikiEnabled" => Ok(json!(db::repositories::records::repository_wiki(
             pool, repo.id
         )

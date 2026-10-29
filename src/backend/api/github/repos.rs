@@ -69,7 +69,7 @@ pub(super) async fn search_document(
 
 async fn public_fork_count(state: &AppState, repo: i64) -> Result<i32> {
     // The source token does not necessarily select any of its private forks.
-    Ok(db::repositories::discovery::visible_fork_counts(&state.pool, None, None, &[repo])
+    Ok(db::repositories::discovery::public_fork_counts(&state.pool, &[repo])
         .await.map_err(Error::unavailable)?.remove(&repo).unwrap_or_default())
 }
 
