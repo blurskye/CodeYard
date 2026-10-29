@@ -75,34 +75,38 @@ pub(super) async fn document(
     repo: &Repository,
     viewer: Option<&auth::Authentication>,
 ) -> Result<Value> {
-    let owner = records::repository_owner_name(&state.pool, repo.id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    let mut value = payloads::repository(repo, &owner);
-    let facts = db::repository_stats::repository_document_facts(&state.pool, repo.id)
-        .await
-        .map_err(Error::unavailable)?;
-    value["language"] = json!(facts.language);
-    value["open_issues_count"] = json!(facts.open_items);
-    value["open_issues"] = json!(facts.open_items);
-    value["pushed_at"] = json!(db::repositories::github::repository_pushed_at(
-        &state.pool,
-        repo.id
-    )
-    .await
-    .map_err(Error::unavailable)?);
-    value["topics"] = json!(topics::repository_topics(&state.pool, &[repo.id])
-        .await
-        .map_err(Error::unavailable)?
-        .remove(&repo.id)
-        .unwrap_or_default());
-    value["has_wiki"] = json!(records::repository_wiki(&state.pool, repo.id)
-        .await
-        .map_err(Error::unavailable)?);
-    value["has_discussions"] = json!(db::repository_discussions::enabled(&state.pool, repo.id)
-        .await
-        .map_err(Error::unavailable)?);
+    documents(state, std::slice::from_ref(repo), viewer).await?.pop().ok_or_else(Error::missing)
+}
+
+pub(super) async fn documents(state: &AppState, repos: &[Repository], viewer: Option<&auth::Authentication>) -> Result<Vec<Value>> {
+    let ids: Vec<_> = repos.iter().map(|repo| repo.id).collect();
+    let owners = records::repository_owner_names(&state.pool, &ids).await.map_err(Error::unavailable)?;
+    let topics = topics::repository_topics(&state.pool, &ids).await.map_err(Error::unavailable)?;
+    let mut metadata = std::collections::HashMap::new();
+    for ids in ids.chunks(100) {
+        metadata.extend(db::repository_stats::repository_document_metadata(&state.pool, ids).await.map_err(Error::unavailable)?.into_iter().map(|row| (row.repo_id, row)));
+    }
+    let mut values = Vec::with_capacity(repos.len());
+    for repo in repos {
+        let (Some(owner), Some(facts)) = (owners.get(&repo.id), metadata.get(&repo.id)) else { continue; };
+        values.push(document_with(state, repo, viewer, owner, facts, topics.get(&repo.id).map(Vec::as_slice).unwrap_or_default()).await?);
+    }
+    if let Some(viewer) = viewer {
+        let readable = auth::readable_repositories(state, Some(viewer), &ids, "metadata").await?;
+        values.retain(|value| value["id"].as_i64().is_some_and(|id| readable.contains(&id)));
+    }
+    Ok(values)
+}
+
+async fn document_with(state: &AppState, repo: &Repository, viewer: Option<&auth::Authentication>, owner: &str, facts: &db::repository_stats::RepositoryDocumentMetadata, topics: &[String]) -> Result<Value> {
+    let mut value = payloads::repository(repo, owner);
+    value["language"] = json!(facts.facts.language);
+    value["open_issues_count"] = json!(facts.facts.open_items);
+    value["open_issues"] = json!(facts.facts.open_items);
+    value["pushed_at"] = json!(facts.last_pushed_at);
+    value["topics"] = json!(topics);
+    value["has_wiki"] = json!(facts.wiki);
+    value["has_discussions"] = json!(facts.discussions);
     if repo.is_fork {
         let mut parent = repo.forked_from_id;
         let mut seen = std::collections::HashSet::from([repo.id]);
@@ -680,31 +684,31 @@ async fn list(
         per_page: if public { Some(100) } else { query.per_page },
     };
     let (offset, limit) = page.window()?;
-    let repos = github::list_repositories(
-        &state.pool,
-        RepositoryListQuery {
-            viewer,
-            list,
-            since: query.since.unwrap_or(0),
-            visibility,
-            kind,
-            sort,
-            descending,
-            limit: (limit + 1) as i64,
-            offset: offset as i64,
-        },
-    )
-    .await
-    .map_err(Error::unavailable)?;
-    let next = repos.len() > limit;
-    let ids: Vec<i64> = repos.iter().take(limit).map(|repo| repo.id).collect();
-    let readable = auth::readable_repositories(&state, auth.as_ref(), &ids, "metadata").await?;
-    let mut values = Vec::new();
-    for repo in repos.iter().take(limit) {
-        if !readable.contains(&repo.id) {
-            continue;
+    let mut repos = Vec::with_capacity(limit + 1);
+    let (mut scanned, mut accepted) = (0, 0);
+    'pages: loop {
+        let rows = github::list_repositories(&state.pool, RepositoryListQuery {
+            viewer, list, since: query.since.unwrap_or(0), visibility, kind, sort, descending,
+            limit: 100, offset: scanned,
+        }).await.map_err(Error::unavailable)?;
+        scanned += rows.len() as i64;
+        let done = rows.len() < 100;
+        let ids: Vec<_> = rows.iter().map(|repo| repo.id).collect();
+        let readable = auth::readable_repositories(&state, auth.as_ref(), &ids, "metadata").await?;
+        for repo in rows {
+            if !readable.contains(&repo.id) { continue; }
+            if accepted < offset { accepted += 1; continue; }
+            repos.push(repo);
+            if repos.len() > limit { break 'pages; }
         }
-        values.push(document(&state, repo, auth.as_ref()).await?);
+        if done { break; }
+    }
+    let next = repos.len() > limit;
+    let mut values = documents(&state, &repos[..repos.len().min(limit)], auth.as_ref()).await?;
+    if auth.is_none() {
+        let ids: Vec<_> = values.iter().filter_map(|value| value["id"].as_i64()).collect();
+        let readable = auth::readable_repositories(&state, None, &ids, "metadata").await?;
+        values.retain(|value| value["id"].as_i64().is_some_and(|id| readable.contains(&id)));
     }
     if public {
         let mut headers = HeaderMap::new();

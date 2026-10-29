@@ -160,7 +160,9 @@ pub(super) async fn readable_repositories(
             .map_err(Error::unavailable)?
         {
             if !repo.is_private {
-                readable.insert(repo.id);
+                if !db::fine_grained_tokens::classic_refused_repository(&state.pool, auth.token.id, repo.id).await.map_err(Error::unavailable)? {
+                    readable.insert(repo.id);
+                }
                 continue;
             }
             match auth.repository_scope(&state.pool, repo.id, scope, false).await {

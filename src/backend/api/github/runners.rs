@@ -260,11 +260,11 @@ async fn selected_group(state: &AppState, actor: i64, scope: Scope, p: &Params) 
         .ok_or_else(Error::missing)
 }
 async fn selected_runner(state: &AppState, actor: i64, scope: Scope, p: &Params) -> Result<Runner> {
-    native::list_runners(&state.pool, actor, scope)
+    native::list_runners_page(&state.pool, actor, scope, &native::RunnerFilter { id: Some(id(p, "runner_id")?), limit: 1, ..Default::default() })
         .await
         .map_err(error)?
-        .into_iter()
-        .find(|g| g.id == id(p, "runner_id").unwrap_or(0))
+        .1.into_iter()
+        .next()
         .ok_or_else(Error::missing)
 }
 #[derive(Deserialize)]
@@ -407,17 +407,15 @@ async fn repositories(
     }
     let total = group.repositories.len();
     let (offset, limit) = page.window()?;
-    let mut repos = Vec::new();
-    for id in group.repositories.into_iter().skip(offset).take(limit) {
-        let repo = db::repositories::records::get_repository_by_id(&s.pool, id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        if repo.owner_org_id != Some(org(scope)?) || repo.owner_kind != "org" {
-            return Err(Error::missing());
-        }
-        repos.push(super::repos::document(&s, &repo, None).await?);
-    }
+    let ids: Vec<_> = group.repositories.into_iter().skip(offset).take(limit).collect();
+    let rows = db::repositories::records::get_repositories_by_ids(&s.pool, &ids).await.map_err(Error::unavailable)?;
+    let organization = org(scope)?;
+    if rows.iter().any(|repo| repo.owner_org_id != Some(organization) || repo.owner_kind != "org") { return Err(Error::missing()); }
+    let credential = auth::authenticate(&s, &headers, true).await?.ok_or_else(auth::required)?;
+    let repos = super::repos::documents(&s, &rows, Some(&credential)).await?;
+    // No document loaded after the first group snapshot escapes a later loss of group authority.
+    let current = selected_group(&s, actor, scope, &p).await?;
+    if current.visibility != "selected" || ids.iter().any(|id| !current.repositories.contains(id)) { return Err(Error::missing()); }
     Ok((
         page.headers(&uri, offset.saturating_add(limit) < total)?,
         Json(json!({"total_count":total,"repositories":repos})),
@@ -546,25 +544,12 @@ async fn list(
     } else {
         None
     };
-    let rows: Vec<_> = native::list_runners(&s.pool, actor, scope)
-        .await
-        .map_err(error)?
-        .into_iter()
-        .filter(|r| {
-            (group.is_none() || r.group_id == group)
-                && name
-                    .as_ref()
-                    .is_none_or(|name| r.name.eq_ignore_ascii_case(name))
-        })
-        .collect();
-    let total = rows.len();
     let (offset, limit) = page.window()?;
-    let rows = rows
-        .iter()
-        .skip(offset)
-        .take(limit)
-        .map(document)
-        .collect::<Result<Vec<_>>>()?;
+    let (total, rows) = native::list_runners_page(&s.pool, actor, scope, &native::RunnerFilter {
+        name: name.as_deref(), group, offset: offset as i64, limit: limit as i64, ..Default::default()
+    }).await.map_err(error)?;
+    let total = total as usize;
+    let rows = rows.iter().map(document).collect::<Result<Vec<_>>>()?;
     Ok((
         page.headers(&uri, offset.saturating_add(limit) < total)?,
         Json(json!({"total_count":total,"runners":rows})),
