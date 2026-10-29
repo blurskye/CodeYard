@@ -66,7 +66,7 @@ pub(crate) async fn profile_response(
     // The Stars tab shows the repository count and its own list. Only the Repositories tab reads the
     // repositories and the activity feed.
     let stars_tab = ctx.query.get("tab").map(String::as_str) == Some("stars");
-    let viewer = ctx.user.as_ref().map(|viewer| viewer.id);
+    let viewer = ctx.session_id.as_deref();
     let repositories_page = ctx
         .query
         .get("repo_page")

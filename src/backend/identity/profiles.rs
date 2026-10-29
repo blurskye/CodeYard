@@ -101,7 +101,7 @@ pub enum ProfileReadError {
 pub async fn repositories_on_profile(
     pool: &DbPool,
     username: &str,
-    viewer: Option<i64>,
+    owner_session: Option<&str>,
     text: &str,
     page: usize,
 ) -> Result<(User, Vec<Repository>, usize), ProfileReadError> {
@@ -109,10 +109,9 @@ pub async fn repositories_on_profile(
         .await
         .map_err(|_| ProfileReadError::UserUnavailable)?
         .ok_or(ProfileReadError::Missing)?;
-    let own = viewer == Some(user.id);
     let offset = i64::try_from(page.saturating_sub(1).saturating_mul(30)).unwrap_or(i64::MAX);
     let (repositories, count) =
-        repositories::records::list_user_repository_page(pool, user.id, own, text, 30, offset)
+        repositories::records::list_user_repository_page(pool, user.id, owner_session, text, 30, offset)
             .await
             .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
     Ok((
@@ -127,14 +126,13 @@ pub async fn repositories_on_profile(
 pub async fn repository_count_on_profile(
     pool: &DbPool,
     username: &str,
-    viewer: Option<i64>,
+    owner_session: Option<&str>,
 ) -> Result<(User, usize), ProfileReadError> {
     let user = accounts::get_user_by_username(pool, username)
         .await
         .map_err(|_| ProfileReadError::UserUnavailable)?
         .ok_or(ProfileReadError::Missing)?;
-    let own = viewer == Some(user.id);
-    let count = repositories::count_user_repositories(pool, user.id, own)
+    let count = repositories::count_user_repositories(pool, user.id, owner_session)
         .await
         .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
     Ok((user, usize::try_from(count).unwrap_or(usize::MAX)))
