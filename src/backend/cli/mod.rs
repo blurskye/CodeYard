@@ -191,6 +191,7 @@ pub fn run() -> Result<()> {
     drop(early_cli);
     set_private_umask();
     load_dotenv()?;
+    crate::backend::identity::setup::configured_admin_secret()?;
     crate::backend::git::objects::flush_writes_to_disk();
     let runtime = tokio::runtime::Runtime::new()?;
     let result = runtime.block_on(run_application(arguments));
