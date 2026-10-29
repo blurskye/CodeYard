@@ -155,8 +155,9 @@ pub async fn list(pool: &PgPool, viewer: Option<i64>, owner: Owner) -> Result<Ve
 pub async fn get(pool: &PgPool, viewer: Option<i64>, owner: Owner, number: i64) -> Result<Project> {
     let mut tx = pool.begin().await?;
     let (kind, id) = owner.parts();
-    let project: Project = sqlx::query_as("SELECT * FROM projects WHERE owner_kind=$1 AND owner_id=$2 AND number=$3 AND deleted_at IS NULL").bind(kind).bind(id).bind(number).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
-    readable(&mut tx, viewer, project.id).await?;
+    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    let project: Project = sqlx::query_as(&format!("SELECT p.* FROM projects p WHERE p.owner_kind=$1 AND p.owner_id=$2 AND p.number=$3 AND {} FOR SHARE", crate::backend::db::projects::readable_condition("$4")))
+        .bind(kind).bind(id).bind(number).bind(viewer).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
     tx.commit().await?;
     Ok(project)
 }
