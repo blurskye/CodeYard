@@ -20,7 +20,7 @@ pub async fn private_fork(
     let advisory = advisories::get(&state.pool, Some(actor), repo.id, ghsa)
         .await?
         .ok_or(Refusal::Missing)?;
-    anyhow::ensure!(advisory.state == "draft", Refusal::Conflict);
+    anyhow::ensure!(matches!(advisory.state.as_str(), "draft" | "triage"), Refusal::Conflict);
     if let Some(id) = advisory.private_fork_id {
         return db::repositories::records::get_repository_by_id(&state.pool, id)
             .await?

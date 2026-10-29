@@ -65,7 +65,7 @@ pub async fn create(
 ) -> Result<Advisory> {
     anyhow::ensure!(value.get("state").is_none(), Refusal::Invalid);
     if let Some(fork) = value.get("start_private_fork") {
-        anyhow::ensure!(!report && fork.is_boolean(), Refusal::Invalid);
+        anyhow::ensure!(fork.is_boolean(), Refusal::Invalid);
     }
     let data = Data::parse(value, None, report)?;
     let mut tx = pool.begin().await?;
@@ -197,15 +197,12 @@ pub async fn attach_fork(
     let mut tx = pool.begin().await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
     anyhow::ensure!(
-        row.state == "draft" && row.private_fork_id.is_none(),
+        matches!(row.state.as_str(), "draft" | "triage") && row.private_fork_id.is_none(),
         Refusal::Conflict
     );
-    let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND is_private AND owner_kind='user' AND owner_user_id=$2 AND forked_from_id=$3)").bind(fork).bind(actor).bind(repo).fetch_one(&mut *tx).await?;
-    anyhow::ensure!(valid, Refusal::Denied);
-    sqlx::query("UPDATE repositories SET visibility_locked=true WHERE id=$1")
-        .bind(fork)
-        .execute(&mut *tx)
-        .await?;
+    let changed = sqlx::query("UPDATE repositories SET visibility_locked=true WHERE id=$1 AND is_private AND owner_kind='user' AND owner_user_id=$2 AND forked_from_id=$3")
+        .bind(fork).bind(actor).bind(repo).execute(&mut *tx).await?.rows_affected();
+    anyhow::ensure!(changed == 1, Refusal::Denied);
     sqlx::query("UPDATE repository_advisories SET private_fork_id=$3,updated_at=$4 WHERE repo_id=$1 AND ghsa_id=$2").bind(repo).bind(ghsa).bind(fork).bind(Utc::now()).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
