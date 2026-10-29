@@ -561,6 +561,7 @@ pub async fn process_next(pool: &DbPool) -> Result<bool> {
                 &change.alert,
                 change.action,
                 Some((&upload.ref_name, &upload.commit_sha)),
+                change.instance.as_ref(),
             )
             .await {
                 tracing::warn!(%error, alert_id=change.alert.id, "code scanning notification failed after commit");
@@ -576,14 +577,20 @@ async fn notify(
     alert: &db::code_scanning::Alert,
     action: &'static str,
     revision: Option<(&str, &str)>,
+    instance: Option<&db::code_scanning::Instance>,
 ) -> Result<()> {
     use crate::backend::webhooks::{self, payloads};
     let Some(repo) = db::repositories::records::get_repository_by_id(pool, alert.repo_id).await?
     else {
         return Ok(());
     };
-    let Some(instance) = db::code_scanning::instance(pool, alert.id, None).await? else {
-        return Ok(());
+    let instance = match instance {
+        Some(instance) => instance.clone(),
+        None if revision.is_some() => return Ok(()),
+        None => match db::code_scanning::instance(pool, alert.id, None).await? {
+            Some(instance) => instance,
+            None => return Ok(()),
+        },
     };
     let alert = alert.clone();
     let snapshot = repo.clone();
@@ -607,9 +614,10 @@ pub async fn dismiss(
     repo: i64,
     number: i64,
     input: &db::code_scanning::Dismissal<'_>,
+    credential: &db::users::accounts::AccountCredential<'_>,
 ) -> Result<db::code_scanning::Alert> {
     input.validate()?;
-    let alert = db::code_scanning::dismiss(pool, actor, repo, number, input).await?;
+    let alert = db::code_scanning::dismiss(pool, actor, credential, repo, number, input).await?;
     if let Err(error) = notify(
         pool,
         actor,
@@ -619,6 +627,7 @@ pub async fn dismiss(
         } else {
             "reopened_by_user"
         },
+        None,
         None,
     )
     .await {

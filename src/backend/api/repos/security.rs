@@ -312,12 +312,14 @@ async fn dismiss(
             "Choose a dismissal reason and a comment of at most 280 characters.",
         );
     }
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else { return ctx.error(StatusCode::FORBIDDEN, "Sign in again to change this alert."); };
     match code_scanning::dismiss(
         &ctx.state.pool,
         ctx.user.as_ref().expect("authorized user").id,
         loaded.repository.id,
         number,
         &input,
+        &db::users::accounts::AccountCredential::Session(&session),
     )
     .await
     {
