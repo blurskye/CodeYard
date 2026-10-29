@@ -13,6 +13,7 @@ use async_graphql::{
     Name, Positioned, Request, ServerResult, Value, Variables,
 };
 use std::{
+    cell::Cell,
     collections::HashMap,
     sync::{Arc, Mutex},
 };
@@ -31,6 +32,8 @@ struct Query {
     fragments: HashMap<Name, Positioned<FragmentDefinition>>,
     /// A request or schema without introspection gets no orphan types either.
     introspection_disabled: bool,
+    projected_nodes: Cell<usize>,
+    projected_bytes: Cell<usize>,
 }
 
 #[derive(Default)]
@@ -126,7 +129,7 @@ impl Extension for OrphanQuery {
             if let Some(Value::List(mut values)) = result {
                 for name in crate::schema::ORPHAN_UNIONS {
                     values.push(
-                        projector.project(Subject::Type((*name).into()), &field.selection_set.node),
+                        projector.project(Subject::Type((*name).into()), &field.selection_set.node)?,
                     );
                 }
                 return Ok(Some(Value::List(values)));
@@ -137,7 +140,7 @@ impl Extension for OrphanQuery {
         {
             if crate::schema::ORPHAN_UNIONS.contains(&name.as_str()) {
                 return Ok(Some(
-                    projector.project(Subject::Type(name), &field.selection_set.node),
+                    projector.project(Subject::Type(name), &field.selection_set.node)?,
                 ));
             }
         }
@@ -208,10 +211,24 @@ impl<'a> Projector<'a> {
         })
     }
 
-    fn project(&self, subject: Subject<'a>, selection: &SelectionSet) -> Value {
+    fn charge(&self, nodes: usize, bytes: usize) -> ServerResult<()> {
+        let nodes = self.query.projected_nodes.get().checked_add(nodes);
+        let bytes = self.query.projected_bytes.get().checked_add(bytes);
+        match (nodes, bytes) {
+            (Some(nodes), Some(bytes)) if nodes <= 100_000 && bytes <= 64 * 1024 * 1024 => {
+                self.query.projected_nodes.set(nodes);
+                self.query.projected_bytes.set(bytes);
+                Ok(())
+            }
+            _ => Err(async_graphql::ServerError::new("Introspection resource limit exceeded", None)),
+        }
+    }
+
+    fn project(&self, subject: Subject<'a>, selection: &SelectionSet) -> ServerResult<Value> {
+        self.charge(1, std::mem::size_of::<Value>())?;
         let mut object = async_graphql::indexmap::IndexMap::new();
-        self.select(&subject, selection, &mut object);
-        Value::Object(object)
+        self.select(&subject, selection, &mut object)?;
+        Ok(Value::Object(object))
     }
 
     fn select(
@@ -219,7 +236,7 @@ impl<'a> Projector<'a> {
         subject: &Subject<'a>,
         selection: &SelectionSet,
         object: &mut async_graphql::indexmap::IndexMap<Name, Value>,
-    ) {
+    ) -> ServerResult<()> {
         for item in &selection.items {
             if !self.included(&item.node) {
                 continue;
@@ -231,15 +248,22 @@ impl<'a> Projector<'a> {
                     } else {
                         self.field(subject, &field.node)
                     };
+                    self.charge(1, field.node.response_key().node.as_str().len().saturating_add(64))?;
                     let value = match value {
-                        Datum::Leaf(value) => value,
-                        Datum::One(value) => self.project(value, &field.node.selection_set.node),
-                        Datum::Many(values) => Value::List(
-                            values
-                                .into_iter()
+                        Datum::Leaf(value) => {
+                            if let Value::String(text) = &value {
+                                self.charge(0, text.len())?;
+                            }
+                            value
+                        }
+                        Datum::One(value) => self.project(value, &field.node.selection_set.node)?,
+                        Datum::Many(values) => {
+                            // Admit the whole list before allocating any projected entries.
+                            self.charge(values.len(), values.len().saturating_mul(std::mem::size_of::<Value>()))?;
+                            Value::List(values.into_iter()
                                 .map(|value| self.project(value, &field.node.selection_set.node))
-                                .collect(),
-                        ),
+                                .collect::<ServerResult<Vec<_>>>()?)
+                        }
                     };
                     // Repeated selections merge just as normal GraphQL selections do.
                     let key = field.node.response_key().node.clone();
@@ -256,7 +280,7 @@ impl<'a> Projector<'a> {
                         .as_ref()
                         .is_none_or(|ty| ty.node.on.node == subject.typename())
                     {
-                        self.select(subject, &fragment.node.selection_set.node, object);
+                        self.select(subject, &fragment.node.selection_set.node, object)?;
                     }
                 }
                 Selection::FragmentSpread(spread) => {
@@ -264,12 +288,13 @@ impl<'a> Projector<'a> {
                         self.query.fragments.get(&spread.node.fragment_name.node)
                     {
                         if fragment.node.type_condition.node.on.node == subject.typename() {
-                            self.select(subject, &fragment.node.selection_set.node, object);
+                            self.select(subject, &fragment.node.selection_set.node, object)?;
                         }
                     }
                 }
             }
         }
+        Ok(())
     }
 
     fn field(&self, subject: &Subject<'a>, field: &Field) -> Datum<'a> {
