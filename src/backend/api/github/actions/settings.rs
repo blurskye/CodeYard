@@ -220,12 +220,12 @@ async fn organization_repositories(
     Ok((page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?, Json(json!({"total_count":total,"repositories":values}))).into_response())
 }
 
-fn document(policy: &Policy, params: &Params) -> Result<Value> {
+fn document(policy: &Policy, params: &Params, organization: Option<&str>) -> Result<Value> {
     let mut value: Value = serde_json::from_str(&policy.data).map_err(Error::unavailable)?;
-    let (source_type, source, url) = if let Some(org) = params.get("org") {
+    let (source_type, source, url) = if let Some(org) = organization.or_else(|| params.get("org").map(String::as_str)) {
         (
             "Organization",
-            org.clone(),
+            org.to_owned(),
             api_url(&format!(
                 "/orgs/{}/actions/policies/{}",
                 crate::webui::encode_component(org),
@@ -254,11 +254,15 @@ fn document(policy: &Policy, params: &Params) -> Result<Value> {
     Ok(value)
 }
 
+#[derive(serde::Deserialize)]
+struct PolicyQuery { has_parents: Option<bool> }
+
 async fn policies(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(params): Path<Params>,
     Query(page): Query<Pagination>,
+    Query(query): Query<PolicyQuery>,
     OriginalUri(uri): OriginalUri,
     request: Request,
 ) -> Result<Response> {
@@ -272,8 +276,8 @@ async fn policies(
         .transpose()?;
     if !write && id.is_none() {
         let (offset, limit) = page.window()?;
-        let (total, rows) = db::action_settings::policies_page(&state.pool, actor, auth.token.id, &scope, offset as i64, limit as i64).await.map_err(failure)?;
-        let values = rows.iter().map(|row| document(row, &params)).collect::<Result<Vec<_>>>()?;
+        let (total, rows) = db::action_settings::policies_page(&state.pool, actor, auth.token.id, &scope, query.has_parents.unwrap_or(true), offset as i64, limit as i64).await.map_err(failure)?;
+        let values = rows.iter().map(|row| document(&row.policy, &params, row.organization.as_deref())).collect::<Result<Vec<_>>>()?;
         return Ok((page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?, Json(json!({"total_count":total,"policies":values}))).into_response());
     }
     let body = if write && method != axum::http::Method::DELETE {
@@ -288,7 +292,7 @@ async fn policies(
     if method == axum::http::Method::DELETE {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let value = document(rows.first().ok_or_else(Error::missing)?, &params)?;
+    let value = document(rows.first().ok_or_else(Error::missing)?, &params, None)?;
     Ok((if id.is_none() { StatusCode::CREATED } else { StatusCode::OK }, Json(value)).into_response())
 }
 
