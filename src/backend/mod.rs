@@ -24,6 +24,7 @@ pub(crate) mod locks;
 pub mod node;
 pub mod notifications;
 pub mod organizations;
+pub(crate) mod npm;
 pub mod packages;
 pub mod projects;
 pub mod repositories;

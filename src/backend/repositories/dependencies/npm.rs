@@ -1,4 +1,5 @@
 //! Bounded npm lockfiles and conservative registry patch updates, without running npm.
+use crate::backend::npm::package_name;
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use semver::{Version, VersionReq};
@@ -44,22 +45,6 @@ pub struct Archive {
     pub integrity: String,
 }
 
-pub fn package_name(name: &str) -> bool {
-    if name.is_empty() || name.len() > 214 {
-        return false;
-    }
-    let parts: Vec<_> = name.strip_prefix('@').unwrap_or(name).split('/').collect();
-    if parts.len() != if name.starts_with('@') { 2 } else { 1 } {
-        return false;
-    }
-    parts.iter().all(|part| {
-        !part.is_empty()
-            && !part.starts_with(['.', '_'])
-            && part
-                .bytes()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"._~-".contains(&c))
-    })
-}
 pub fn registry_url(raw: &str) -> bool {
     if raw.len() > 4096 {
         return false;
