@@ -1138,7 +1138,7 @@ impl RepoStore {
         offset: usize,
         limit: usize,
     ) -> Result<CommitComparison, RepoError> {
-        if offset > MAX_COMMIT_OFFSET || limit > 250 {
+        if limit > 250 {
             return Err(RepoError::response_too_large());
         }
         match (&self.0, &source.0) {
