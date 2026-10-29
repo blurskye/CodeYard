@@ -85,6 +85,8 @@ pub struct CodeHit {
     pub owner: String,
     pub repo: String,
     pub branch: String,
+    #[serde(default)]
+    pub sha: String,
     pub path: String,
     pub line_number: u32,
     pub line: String,
@@ -908,7 +910,7 @@ fn search_results(model: &SearchModel) -> Element {
                 for hit in &model.code {
                     article { class: "border-b border-border px-4 py-3",
                         p { class: "text-sm",
-                            NavLink { href: format!("{}?view=code&line={}#L{}", crate::webui::pages::repos::ref_path::branch_url(&repository_url(&hit.owner, &hit.repo), "blob", &hit.branch, &hit.path), hit.line_number, hit.line_number), class: "font-semibold text-primary hover:underline", "{hit.owner}/{hit.repo}@{hit.branch}: {hit.path}" }
+                            NavLink { href: format!("{}?view=code&line={}#L{}", crate::webui::pages::repos::ref_path::file_url(&repository_url(&hit.owner, &hit.repo), "blob", &hit.sha, &hit.path), hit.line_number, hit.line_number), class: "font-semibold text-primary hover:underline", "{hit.owner}/{hit.repo}@{hit.branch}: {hit.path}" }
                         }
                         pre { class: "mt-2 overflow-x-auto rounded-md bg-muted px-3 py-2 text-xs", code { "{hit.line_number}  ", {highlighted_text(&hit.line, &model.highlight)} } }
                     }
@@ -1040,7 +1042,7 @@ fn starred_repository(repo: &RepositoryCard, csrf_token: &str, return_to: &str) 
         article { class: "flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-5",
             div { class: "min-w-0 flex-1", {repository_summary(repo)} }
             form { method: "post", action, class: "stars-unstar-form",
-                input { r#type: "hidden", name: "csrf_token", value: csrf_token.to_owned() }
+                {crate::webui::pages::fields::csrf(csrf_token)}
                 input { r#type: "hidden", name: "return_to", value: return_to.to_owned() }
                 input { r#type: "hidden", name: "repository_id", value: repo.id.to_string() }
                 button { r#type: "submit", class: "btn btn-sm stars-unstar", "aria-label": "Unstar {repo.owner}/{repo.name}", "Unstar" }
@@ -1106,13 +1108,7 @@ pub fn new_repository(
 
 // Browser feedback never replaces server validation or authorization.
 pub fn valid_repository_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 100
-        && !matches!(name, "." | "..")
-        && !name.ends_with(".git")
-        && name
-            .chars()
-            .all(|ch| ch.is_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    crate::repository_names::valid(name)
 }
 
 /// The options of a template select: an empty choice for none, then each listed name.
@@ -1181,7 +1177,7 @@ fn NewRepositoryView(
             // Browser constraint checks would show only a native bubble that is not part of
             // the page. The server validates the same rules and marks the field itself.
             form { method: "post", action, novalidate: true, onsubmit: move |_| submitting.set(true), class: "space-y-6",
-                input { r#type: "hidden", name: "csrf_token", value: csrf_token }
+                {crate::webui::pages::fields::csrf(&csrf_token)}
                 div { class: "space-y-6 rounded-md border border-border bg-card p-6",
                     div {
                         label { r#for: "repo-owner", class: "mb-2 block text-sm font-medium", "Owner" }

@@ -1,4 +1,5 @@
 //! File and stdout commands following actions/runner's `Runner.Worker/FileCommandManager.cs` and `ActionCommandManager.cs`.
+use crate::command_codec::{unescape_data as unescape, unescape_property};
 use crate::progress::{Event, Update};
 use anyhow::{bail, Result};
 use base64::Engine;
@@ -230,13 +231,6 @@ pub(super) struct Commands {
     pub state: BTreeMap<String, String>,
 }
 
-fn unescape(value: &str) -> String {
-    value
-        .replace("%0D", "\r")
-        .replace("%0A", "\n")
-        .replace("%25", "%")
-}
-
 impl Commands {
     pub fn new(workspace: std::path::PathBuf, matchers: super::matchers::Matchers) -> Self {
         Self {
@@ -307,7 +301,7 @@ impl Commands {
                 let value = if legacy {
                     decode(value)
                 } else {
-                    unescape(&value.replace("%3A", ":").replace("%2C", ","))
+                    unescape_property(value)
                 };
                 Some((key.to_ascii_lowercase(), value))
             })

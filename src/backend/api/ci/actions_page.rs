@@ -130,10 +130,11 @@ async fn planned_jobs(
     definitions
         .into_iter()
         .filter(|definition| paths.split(',').any(|path| path.trim() == definition.path))
-        .flat_map(|definition| definition.jobs)
-        .map(|job| view_actions::PlannedJob {
-            name: job.name,
-            steps: job.steps,
+        .flat_map(|definition| {
+            let workflow = definition.path;
+            definition.jobs.into_iter().map(move |job| view_actions::PlannedJob {
+                workflow: workflow.clone(), name: job.name, steps: job.steps,
+            })
         })
         .collect()
 }

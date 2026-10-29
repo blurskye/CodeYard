@@ -87,6 +87,8 @@ pub struct SelectedRun {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlannedJob {
+    #[serde(default)]
+    pub workflow: String,
     pub name: String,
     pub steps: Vec<String>,
 }

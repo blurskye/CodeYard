@@ -420,6 +420,7 @@ fn page_references() -> References {
         owner: "alice".into(),
         repo: "demo".into(),
         last_number: 5,
+        targets: None,
         users: vec!["bob".into()],
         autolinks: Default::default(),
         repositories: vec![references::Repository {

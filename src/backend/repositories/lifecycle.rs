@@ -693,14 +693,7 @@ pub async fn visibility_locked(
 }
 
 pub fn validate_name(name: &str) -> Result<(), StorageError> {
-    if name.is_empty()
-        || name.len() > 100
-        || matches!(name, "." | "..")
-        || name.ends_with(".git")
-        || !name
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
-    {
+    if !crate::repository_names::valid(name) {
         return Err(StorageError { kind: LifecycleFailure::Invalid, message: "Repository name must be 1-100 bytes and contain only letters, numbers, hyphens, underscores and dots; not . or .. and not ending in .git" });
     }
     Ok(())

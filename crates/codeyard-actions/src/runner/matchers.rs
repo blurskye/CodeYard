@@ -1,5 +1,6 @@
 //! Problem matchers keep multiline state for one job, as actions/runner's IssueMatcher does.
 use super::commands::Masker;
+pub(super) use crate::command_codec::{escape, escape_data};
 use anyhow::{ensure, Context, Result};
 use fancy_regex::{Regex, RegexBuilder};
 use serde::Deserialize;
@@ -245,17 +246,6 @@ impl Matchers {
         }
         Ok(None)
     }
-}
-
-pub(super) fn escape_data(value: &str) -> String {
-    value
-        .replace('%', "%25")
-        .replace('\r', "%0D")
-        .replace('\n', "%0A")
-}
-
-pub(super) fn escape(value: &str) -> String {
-    escape_data(value).replace(':', "%3A").replace(',', "%2C")
 }
 
 impl Issue {

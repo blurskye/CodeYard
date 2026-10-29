@@ -230,7 +230,7 @@ pub fn notifications_page(model: NotificationsPage) -> Element {
                     }
                     if model.view != "done" && !model.notifications.is_empty() {
                         form { method: "post", action: "/notifications/done-all", class: "notification-bulk-form",
-                            input { r#type: "hidden", name: "csrf_token", value: model.csrf_token.clone() }
+                            {crate::webui::pages::fields::csrf(&model.csrf_token)}
                             {list_fields(&model, false)}
                             button { r#type: "submit", class: "btn btn-sm", "Mark all as done" }
                         }
@@ -261,8 +261,16 @@ pub fn notifications_page(model: NotificationsPage) -> Element {
                         div { class: "notification-main",
                             h2 { class: "notification-title",
                                 if let Some(link) = notification.link.as_ref().filter(|link| safe_notification_link(link)) {
-                                    // The link covers the whole row (see .notification-link::after).
-                                    NavLink { href: link.clone(), class: "notification-link", "{headline(notification)}" }
+                                    if is_unread(notification) {
+                                        form { method: "post", action: format!("/notifications/{}/read", notification.id),
+                                            {crate::webui::pages::fields::csrf(&model.csrf_token)}
+                                            input { r#type: "hidden", name: "open", value: "yes" }
+                                            {list_fields(&model, true)}
+                                            button { r#type: "submit", class: "notification-link", "{headline(notification)}" }
+                                        }
+                                    } else {
+                                        NavLink { href: link.clone(), class: "notification-link", "{headline(notification)}" }
+                                    }
                                 } else { "{headline(notification)}" }
                             }
                             if let Some(preview) = notification.body.as_deref().filter(|preview| !preview.is_empty()) {
@@ -287,13 +295,13 @@ pub fn notifications_page(model: NotificationsPage) -> Element {
                         div { class: "notification-actions",
                             if is_unread(notification) {
                                 form { method: "post", action: format!("/notifications/{}/read", notification.id), class: "notification-read-form",
-                                    input { r#type: "hidden", name: "csrf_token", value: model.csrf_token.clone() }
+                                    {crate::webui::pages::fields::csrf(&model.csrf_token)}
                                     {list_fields(&model, true)}
                                     button { r#type: "submit", class: "btn btn-sm", "Mark read" }
                                 }
                             }
                             form { method: "post", action: format!("/notifications/{}/save", notification.id), class: "notification-action-form",
-                                input { r#type: "hidden", name: "csrf_token", value: model.csrf_token.clone() }
+                                {crate::webui::pages::fields::csrf(&model.csrf_token)}
                                 input { r#type: "hidden", name: "saved", value: if notification.saved { "0" } else { "1" } }
                                 {list_fields(&model, true)}
                                 button { r#type: "submit", class: "notification-action icon-tooltip", "aria-label": if notification.saved { "Unsave" } else { "Save" }, "aria-pressed": if notification.saved { "true" } else { "false" },
@@ -301,7 +309,7 @@ pub fn notifications_page(model: NotificationsPage) -> Element {
                                 }
                             }
                             form { method: "post", action: format!("/notifications/{}/done", notification.id), class: "notification-action-form",
-                                input { r#type: "hidden", name: "csrf_token", value: model.csrf_token.clone() }
+                                {crate::webui::pages::fields::csrf(&model.csrf_token)}
                                 input { r#type: "hidden", name: "done", value: if notification.done { "0" } else { "1" } }
                                 {list_fields(&model, true)}
                                 button { r#type: "submit", class: "notification-action icon-tooltip", "aria-label": if notification.done { "Undo" } else { "Done" },

@@ -530,20 +530,10 @@ async fn save_mark(
         .header("Accept", "application/json")
         .credentials(web_sys::RequestCredentials::SameOrigin)
         .body(serializer.finish());
-    let saved = match request {
-        Ok(request) => {
-            let request = request.send();
-            let timeout = gloo_timers::future::TimeoutFuture::new(15_000);
-            futures_util::pin_mut!(request, timeout);
-            match futures_util::future::select(request, timeout).await {
-                futures_util::future::Either::Left((response, _)) => response.is_ok_and(|response| response.status() == 204 && !response.redirected()),
-                futures_util::future::Either::Right(_) => {
-                    if let Some(controller) = controller { controller.abort(); }
-                    false
-                }
-            }
-        },
-        Err(_) => false,
+    let saved = match (request, controller.as_ref()) {
+        (Ok(request), Some(controller)) => crate::webui::navigation::load::with_abort_timeout(request.send(), controller, 15_000).await
+            .is_ok_and(|response| response.is_ok_and(|response| response.status() == 204 && !response.redirected())),
+        _ => false,
     };
     if !saved {
         uncertain.set(true);

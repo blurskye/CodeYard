@@ -156,6 +156,7 @@ fn code_hit_links_encode_each_path_segment() {
                 owner: "alice".into(),
                 repo: "demo".into(),
                 branch: "main".into(),
+                sha: "0123456789abcdef0123456789abcdef01234567".into(),
                 path: "src/a#b?c%d.rs".into(),
                 line_number: 3,
                 line: "needle".into(),
@@ -165,7 +166,7 @@ fn code_hit_links_encode_each_path_segment() {
     });
     assert!(
         html.contains(
-            "/alice/demo/blob/refs/heads/main/src/a%23b%3Fc%25d.rs?view=code&#38;line=3#L3"
+            "/alice/demo/blob/0123456789abcdef0123456789abcdef01234567/src/a%23b%3Fc%25d.rs?view=code&#38;line=3#L3"
         ),
         "{html}"
     );
@@ -238,6 +239,7 @@ fn code_matches_are_marked_and_the_line_stays_escaped() {
                 owner: "alice".into(),
                 repo: "demo".into(),
                 branch: "main".into(),
+                sha: "0123456789abcdef0123456789abcdef01234567".into(),
                 path: "old.rs".into(),
                 line_number: 1,
                 line: "fn old() { <b>OLD</b> }".into(),

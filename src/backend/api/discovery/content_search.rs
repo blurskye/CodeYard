@@ -113,8 +113,9 @@ async fn page_hits(
         return Ok(Vec::new());
     }
     if query.code {
+        let commit = store.commit(&format!("refs/heads/{}", repo.default_branch)).await?;
         let matches = store
-            .search_code(&repo.default_branch, query.needle, offset, limit)
+            .search_code(&commit.sha, query.needle, offset, limit)
             .await?;
         return Ok(matches
             .into_iter()
@@ -123,6 +124,7 @@ async fn page_hits(
                     owner: owner.to_owned(),
                     repo: repo.name.clone(),
                     branch: repo.default_branch.clone(),
+                    sha: commit.sha.clone(),
                     path: hit.path,
                     line_number: hit.line_number,
                     line: hit.line,
