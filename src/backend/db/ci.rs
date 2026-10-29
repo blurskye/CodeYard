@@ -83,6 +83,7 @@ pub struct NewCiAttempt {
     pub source: i64,
     pub source_uuid: Uuid,
     pub credential: Option<i64>,
+    pub authority: Option<super::users::accounts::AccountActor>,
     /// Native forms retain their explicit duplicate/reuse behavior; REST attempts require idle roots.
     pub allow_active: bool,
     pub selection: CiReplaySelection,

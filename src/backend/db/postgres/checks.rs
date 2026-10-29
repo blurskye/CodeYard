@@ -1,6 +1,8 @@
 use crate::backend::db::checks::{
     Annotation, Credential, Filter, Preference, Refusal, Run, RunData, RunPatch, Suite,
 };
+mod native;
+pub use native::{page_snapshot, request_action};
 use anyhow::{ensure, Result};
 use sqlx::{types::Json, PgPool, Postgres, Transaction};
 

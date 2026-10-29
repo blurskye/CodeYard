@@ -41,6 +41,19 @@ pub struct Run {
     pub updated_at: DateTime<Utc>,
 }
 
+pub const ANNOTATIONS_PER_PAGE: usize = 8;
+pub struct PageSnapshot {
+    pub run: Run,
+    pub suite: Suite,
+    pub annotations: Vec<Json<Annotation>>,
+    pub total: i64,
+}
+
+native_operation!(crate::backend::db::postgres::checks::page_snapshot, crate::backend::db::sqlite::checks::page_snapshot,
+    fn page_snapshot(pool: &DbPool, viewer: Option<i64>, session: Option<&str>, repo: i64, id: i64, offset: i64) -> Result<PageSnapshot>);
+native_operation!(crate::backend::db::postgres::checks::request_action, crate::backend::db::sqlite::checks::request_action,
+    fn request_action(pool: &DbPool, credential: Credential<'_>, repo: i64, id: i64, updated_at: DateTime<Utc>, identifier: &str) -> Result<()>);
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct RunData {
     pub details_url: Option<String>,
