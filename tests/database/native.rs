@@ -303,7 +303,7 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
         tasks.spawn(async move {
             admission::admit_password_attempt(&pool, None, "user:42")
                 .await
-                .unwrap()
+                .unwrap().is_some()
         });
     }
     let mut admitted = 0;
@@ -313,13 +313,13 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
     assert_eq!(admitted, 10);
     assert!(!admission::admit_password_attempt(&other, None, "user:42")
         .await
-        .unwrap());
+        .unwrap().is_some());
     // A refusal by the account still spent the client's budget: 29 attempts remain.
     let client = Some("ip:198.51.100.1");
     assert!(
         !admission::admit_password_attempt(&fixture.pool, client, "user:42")
             .await
-            .unwrap()
+            .unwrap().is_some()
     );
     for index in 0..29 {
         assert!(admission::admit_password_attempt(
@@ -328,12 +328,12 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
             &format!("unknown:{index}")
         )
         .await
-        .unwrap());
+        .unwrap().is_some());
     }
     assert!(
         !admission::admit_password_attempt(&other, client, "unknown:denied")
             .await
-            .unwrap()
+            .unwrap().is_some()
     );
     let allocated: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM auth_login_limits WHERE account_key='unknown:denied'",
@@ -349,14 +349,13 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
     assert!(
         admission::admit_password_attempt(&other, Some("ip:198.51.100.2"), "unknown:denied")
             .await
-            .unwrap()
+            .unwrap().is_some()
     );
     // A right password gives its attempt back, from the client and the account alike.
     let third = Some("ip:198.51.100.3");
-    assert!(admission::admit_password_attempt(&other, third, "user:7")
-        .await
-        .unwrap());
-    admission::forgive_password_attempt(&fixture.pool, third, "user:7")
+    let receipt = admission::admit_password_attempt(&other, third, "user:7")
+        .await.unwrap().unwrap();
+    admission::forgive_password_attempt(&fixture.pool, &receipt)
         .await
         .unwrap();
     let spent: i64 = sqlx::query_scalar(
