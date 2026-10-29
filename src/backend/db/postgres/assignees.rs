@@ -231,6 +231,13 @@ pub async fn list_assignable_usernames(pool: &PgPool, repo_id: i64) -> Result<Ve
     .await?)
 }
 
+pub async fn list_assignable_users(pool: &PgPool, repo_id: i64, limit: i64, offset: i64) -> Result<Vec<crate::backend::db::models::User>> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT u.* FROM repositories r JOIN users u ON {CANDIDATES} WHERE r.id=$1 AND ({})>=1 ORDER BY u.username,u.id LIMIT $2 OFFSET $3",
+        super::repositories::access::USER_REPO_ACCESS_SQL
+    )).bind(repo_id).bind(limit.clamp(1, 101)).bind(offset.max(0)).fetch_all(pool).await?)
+}
+
 /// The users among `user_ids` who may be assigned in the repository.
 pub async fn assignable_user_ids(
     pool: &PgPool,
