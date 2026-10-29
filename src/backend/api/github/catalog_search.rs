@@ -35,7 +35,8 @@ async fn catalog(
         _ => return Err(Error::missing()),
     };
     let search =
-        Search::parse(kind, q.get("q").map_or("", String::as_str)).map_err(Error::invalid)?;
+        Search::parse(kind, q.get("q").map_or("", String::as_str)).map_err(Error::invalid)?
+            .with_classic_policy(authentication.as_ref().map(|auth| auth.token.id));
     if search.needs_viewer() && viewer.is_none() {
         return Err(auth::required());
     }
@@ -194,7 +195,7 @@ async fn catalog(
                 }
             }
             Kind::Topics => {
-                let Some(topic) = db::catalog_search::topic(&state.pool, viewer, &hit.key)
+                let Some(topic) = db::catalog_search::topic(&state.pool, viewer, &hit.key, authentication.as_ref().map(|auth| auth.token.id))
                     .await
                     .map_err(Error::unavailable)?
                 else {

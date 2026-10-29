@@ -115,7 +115,8 @@ async fn run(
         scopes,
         pulls,
     })
-    .map_err(Error::invalid)?;
+    .map_err(Error::invalid)?
+    .with_classic_policy(Some(auth.token.id));
     let (offset, limit) = page.window()?;
     let result = db::discussion_search::search(
         &state.pool,
