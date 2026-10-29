@@ -67,7 +67,7 @@ async fn apply_repository(
             connection,
             actor,
             repo,
-            &scanning_settings(&settings, previous.unwrap_or_default())?,
+            &scanning_settings(&apply(None, &config.settings)?, previous.unwrap_or_default())?,
         )
         .await?;
         // Private vulnerability reporting lives in its own table and is offered on public
