@@ -5,21 +5,7 @@ use crate::backend::db::DbPool;
 use anyhow::Result;
 
 /// A live browser session or write token, checked with the repository mutation.
-pub enum Credential {
-    Session(String),
-    Token(i64),
-}
-
-impl From<&str> for Credential {
-    fn from(session: &str) -> Self {
-        Self::Session(session.to_owned())
-    }
-}
-impl From<&String> for Credential {
-    fn from(session: &String) -> Self {
-        Self::Session(session.clone())
-    }
-}
+pub use crate::backend::db::users::accounts::OwnedAccountCredential as Credential;
 
 /// A deploy key to store. The fingerprint and key type come from the validated public key.
 #[derive(Debug, Clone)]

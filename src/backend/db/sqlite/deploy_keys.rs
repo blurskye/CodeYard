@@ -47,10 +47,7 @@ async fn require_admin(
         super::repositories::access::user_repo_access_in_transaction(tx, actor, repo).await?;
     let site_admin: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND NOT r.is_gist AND r.owner_kind='user' AND u.is_admin AND NOT u.is_banned AND NOT u.must_change_password)")
         .bind(actor).bind(repo).fetch_one(&mut **tx).await?;
-    let live = match credential {
-        crate::backend::db::deploy_keys::Credential::Session(session) => super::users::transitions::live_session(tx, actor, &session).await?,
-        crate::backend::db::deploy_keys::Credential::Token(id) => sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=?1 AND user_id=?2 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))").bind(id).bind(actor).fetch_one(&mut **tx).await?,
-    };
+    let live = super::users::transitions::live_credential(tx, actor, &credential.as_credential()).await?;
     anyhow::ensure!(
         (access.can_admin() || site_admin) && live,
         crate::backend::repositories::deploy_keys::DeployKeyError::Denied

@@ -57,10 +57,7 @@ async fn require_admin(
         && access.is_some_and(|access| {
             access.access.can_admin() || (!access.organization && access.is_admin)
         });
-    let live = match credential {
-        crate::backend::db::deploy_keys::Credential::Session(session) => super::users::transitions::live_session(tx, actor, &session).await?,
-        crate::backend::db::deploy_keys::Credential::Token(id) => sqlx::query_scalar::<_, i64>("SELECT id FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR expires_at>NOW()) FOR SHARE").bind(id).bind(actor).fetch_optional(&mut **tx).await?.is_some(),
-    };
+    let live = super::users::transitions::live_credential(tx, actor, &credential.as_credential()).await?;
     anyhow::ensure!(
         allowed && live,
         crate::backend::repositories::deploy_keys::DeployKeyError::Denied

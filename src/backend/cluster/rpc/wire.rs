@@ -302,6 +302,7 @@ pub enum Operation {
         new_owner: String,
     },
     ConfigureDependencySecurity {
+        credential: crate::backend::db::users::accounts::OwnedAccountCredential,
         feature: crate::backend::db::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,

@@ -485,7 +485,7 @@ pub(crate) fn project(
     Ok(snapshot)
 }
 native_operation!(crate::backend::db::postgres::repositories::dependencies::state,crate::backend::db::sqlite::repositories::dependencies::state,fn state(pool:&DbPool,repo:i64)->Result<Option<State>>);
-native_operation!(crate::backend::db::postgres::repositories::dependencies::configure,crate::backend::db::sqlite::repositories::dependencies::configure,fn configure(pool:&DbPool,actor:i64,repo:i64,feature:Feature,enabled:bool,private_consent:bool)->Result<()>);
+native_operation!(crate::backend::db::postgres::repositories::dependencies::configure,crate::backend::db::sqlite::repositories::dependencies::configure,fn configure(pool:&DbPool,actor:i64,credential:&crate::backend::db::users::accounts::OwnedAccountCredential,repo:i64,feature:Feature,enabled:bool,private_consent:bool)->Result<()>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::enqueue,crate::backend::db::sqlite::repositories::dependencies::enqueue,fn enqueue(pool:&DbPool,repo:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::claim,crate::backend::db::sqlite::repositories::dependencies::claim,fn claim(pool:&DbPool,nonce:&str)->Result<Option<Job>>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::check_job,crate::backend::db::sqlite::repositories::dependencies::check_job,fn check_job(pool:&DbPool,job:&Job,feature:Feature)->Result<()>);

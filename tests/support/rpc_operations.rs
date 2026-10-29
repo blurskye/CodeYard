@@ -85,6 +85,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::ConfigureDependencySecurity {
+                credential: codeyard::backend::db::users::accounts::OwnedAccountCredential::Token(1),
                 feature: codeyard::backend::db::repositories::dependencies::Feature::Alerts,
                 enabled: true,
                 private_consent: false,

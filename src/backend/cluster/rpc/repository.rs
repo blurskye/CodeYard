@@ -934,6 +934,7 @@ impl RpcHandler {
                 &new_owner
             )),
             Operation::ConfigureDependencySecurity {
+                credential,
                 feature,
                 enabled,
                 private_consent,
@@ -941,6 +942,7 @@ impl RpcHandler {
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                 actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                credential,
                 feature,
                 enabled,
                 private_consent

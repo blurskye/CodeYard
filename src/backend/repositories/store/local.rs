@@ -2826,6 +2826,7 @@ impl LocalStore {
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
+        credential: db::users::accounts::OwnedAccountCredential,
         feature: db::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,
@@ -2846,6 +2847,7 @@ impl LocalStore {
             db::repositories::dependencies::configure(
                 &pool,
                 actor,
+                &credential,
                 repo_id,
                 feature,
                 enabled,

@@ -1571,6 +1571,7 @@ impl RepoStore {
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
+        credential: db::users::accounts::OwnedAccountCredential,
         feature: db::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,
@@ -1582,6 +1583,7 @@ impl RepoStore {
                         pool,
                         repo_id,
                         actor,
+                        credential,
                         feature,
                         enabled,
                         private_consent,
@@ -1593,6 +1595,7 @@ impl RepoStore {
                     .call_as(
                         actor,
                         Operation::ConfigureDependencySecurity {
+                            credential,
                             feature,
                             enabled,
                             private_consent,

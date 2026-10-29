@@ -61,6 +61,7 @@ async fn change(
         &state.pool,
         state.cluster.as_ref(),
         actor.user.id,
+        crate::backend::db::users::accounts::OwnedAccountCredential::Token(actor.token.id),
         repo.id,
         feature,
         enabled,
