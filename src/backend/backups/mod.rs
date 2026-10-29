@@ -427,6 +427,14 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
 /// state directory, then repairs and rebuilds what the database and Git disagree on.
 /// Returns the open database, migrated to this version.
 pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<db::DbPool> {
+    // Never silently retain an unrelated release signer from an earlier installation.
+    let saved_signer = dir.join("release.key");
+    let current_signer = places.state_dir.join("release.key");
+    if saved_signer.exists() && current_signer.exists() {
+        let saved = crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(saved_signer)?)?;
+        let current = crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(current_signer)?)?;
+        ensure!(saved.public_hex() == current.public_hex(), "restore would replace a different release signing identity");
+    }
     ensure!(
         repositories_in(places.repos_path)?.is_empty()
             && repositories_in(&places.repos_path.join(mirror::DELETED_DIR))?.is_empty(),
