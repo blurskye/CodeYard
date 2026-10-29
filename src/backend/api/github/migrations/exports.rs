@@ -8,7 +8,6 @@ use crate::backend::{
     storage::Download,
 };
 use axum::{
-    body::Body,
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -389,6 +388,7 @@ pub(in crate::backend::api::github) async fn archive(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(guid): Path<String>,
+    method: axum::http::Method,
 ) -> Result<Response> {
     let actor = auth::authenticate(&state, &headers, true)
         .await?
@@ -403,11 +403,14 @@ pub(in crate::backend::api::github) async fn archive(
     if let Some(org) = row.owner_org_id {
         auth::refuse_classic(&state, actor.token.id, org).await?;
     }
+    let filename = format!("migration-{}.tar.gz", row.id);
+    if method == axum::http::Method::HEAD {
+        return Ok(([(header::CONTENT_TYPE, "application/gzip".to_owned()), (header::CONTENT_DISPOSITION, crate::backend::storage::attachment_disposition(&filename)), (header::CACHE_CONTROL, "private, no-store".to_owned())], axum::body::Body::empty()).into_response());
+    }
     let permit = state
         .storage
         .try_acquire_download()
         .ok_or_else(|| Error::unavailable(()))?;
-    let filename = format!("migration-{}.tar.gz", row.id);
     let mut response = match state
         .storage
         .download(&row.object_key(), &filename, None)
@@ -434,7 +437,7 @@ pub(in crate::backend::api::github) async fn archive(
                         format!("attachment; filename=\"{filename}\""),
                     ),
                 ],
-                Body::from_stream(stream),
+                crate::backend::api::http::middleware::download_body(stream),
             )
                 .into_response()
         }

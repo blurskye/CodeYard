@@ -31,6 +31,12 @@ pub struct Upload {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(sqlx::FromRow)]
+pub struct UploadStatus {
+    pub processing_status: String,
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Copy)]
 pub enum AlertScope {
     Repository(i64),
@@ -258,8 +264,8 @@ native_operation!(super::postgres::code_scanning::new_findings, super::sqlite::c
     fn new_findings(pool: &DbPool, analysis: i64, baseline: Option<i64>) -> Result<Vec<NewFinding>>);
 native_operation!(super::postgres::code_scanning::enqueue, super::sqlite::code_scanning::enqueue,
     fn enqueue(pool: &DbPool, input: &NewUpload<'_>) -> Result<Upload>);
-native_operation!(super::postgres::code_scanning::upload, super::sqlite::code_scanning::upload,
-    fn upload(pool: &DbPool, repo: i64, id: &str) -> Result<Option<Upload>>);
+native_operation!(super::postgres::code_scanning::upload_status, super::sqlite::code_scanning::upload_status,
+    fn upload_status(pool: &DbPool, repo: i64, id: &str) -> Result<Option<UploadStatus>>);
 native_operation!(super::postgres::code_scanning::pending, super::sqlite::code_scanning::pending,
     fn pending(pool: &DbPool) -> Result<Option<Upload>>);
 native_operation!(super::postgres::code_scanning::finish, super::sqlite::code_scanning::finish,

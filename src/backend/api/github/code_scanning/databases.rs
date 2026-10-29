@@ -8,7 +8,7 @@ use crate::backend::{
     webhooks::payloads,
 };
 use axum::{
-    body::{to_bytes, Body},
+    body::to_bytes,
     extract::{Path, Query, Request, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -85,6 +85,7 @@ pub(super) async fn get(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, name, language)): Path<(String, String, String)>,
+    method: axum::http::Method,
 ) -> Result<Response> {
     let repo = readable(&state, &headers, &owner, &name).await?;
     let row = codeql::get(&state.pool, repo, &language)
@@ -101,6 +102,9 @@ pub(super) async fn get(
         })
     {
         return Ok(axum::Json(document(&state, &row, &owner, &name).await?).into_response());
+    }
+    if method == axum::http::Method::HEAD {
+        return Ok(([(header::CONTENT_TYPE, "application/zip".to_owned()), (header::CONTENT_LENGTH, row.size.to_string()), (header::CONTENT_DISPOSITION, attachment_disposition(&row.name)), (header::CACHE_CONTROL, "private, no-store".to_owned())], axum::body::Body::empty()).into_response());
     }
     let permit = state
         .storage
@@ -132,7 +136,7 @@ pub(super) async fn get(
                         attachment_disposition(&row.name),
                     ),
                 ],
-                Body::from_stream(stream),
+                crate::backend::api::http::middleware::download_body(stream),
             )
                 .into_response()
         }

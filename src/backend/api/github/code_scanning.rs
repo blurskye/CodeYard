@@ -210,7 +210,7 @@ async fn upload_status(
     Path((owner, name, id)): Path<(String, String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
-    let upload = records::upload(&state.pool, repo.id, &id)
+    let upload = records::upload_status(&state.pool, repo.id, &id)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -452,6 +452,14 @@ async fn delete_analysis(
         json!({"next_analysis_url":url,"confirm_delete_url":url.map(|url|format!("{url}?confirm_delete=true"))}),
     ))
 }
+async fn alert_repository(state: &AppState, headers: &HeaderMap, owner: &str, name: &str) -> Result<db::models::Repository> {
+    let (repo, _) = repository(state, headers, owner, name, false).await?;
+    if repo.is_private {
+        scope(state, headers, owner, name, false, false).await?;
+    }
+    Ok(repo)
+}
+
 async fn find_alert(state: &AppState, repo: i64, number: i64) -> Result<records::Alert> {
     records::alert(&state.pool, repo, number)
         .await
@@ -487,7 +495,7 @@ async fn alerts(
     Query(query): Query<Filters>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
+    let repo = alert_repository(&state, &headers, &owner, &name).await?;
     let (offset, limit) = query.pagination().window()?;
     let reference = query.ref_name.as_deref().map(normalize_ref);
     let mut filters = query.alert_filters()?;
@@ -573,7 +581,7 @@ async fn alert(
     headers: HeaderMap,
     Path((owner, name, number)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
-    let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
+    let repo = alert_repository(&state, &headers, &owner, &name).await?;
     let row = find_alert(&state, repo.id, number).await?;
     Ok(Json(
         alert_document(&state, &row, &owner, &name, None).await?,
@@ -614,7 +622,7 @@ async fn instances(
     Query(query): Query<Filters>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
+    let repo = alert_repository(&state, &headers, &owner, &name).await?;
     let row = find_alert(&state, repo.id, number).await?;
     let (offset, limit) = query.pagination().window()?;
     let reference = query.ref_name.as_deref().map(normalize_ref);
@@ -632,12 +640,7 @@ async fn instances(
         .iter()
         .take(limit)
         .map(|instance| {
-            let mut value = payloads::code_scanning_instance(instance, &owner, &name, number)
-                .map_err(Error::unavailable)?;
-            if row.state == "dismissed" {
-                value["state"] = json!("dismissed");
-            }
-            Ok(value)
+            payloads::code_scanning_instance(instance, &owner, &name, number).map_err(Error::unavailable)
         })
         .collect::<Result<Vec<_>>>()?;
     query.pagination().response(&uri, values, next)

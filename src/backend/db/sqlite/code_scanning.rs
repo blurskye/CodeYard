@@ -23,9 +23,9 @@ pub async fn enqueue(pool: &SqlitePool, input: &NewUpload<'_>) -> Result<Upload>
     Ok(upload)
 }
 
-pub async fn upload(pool: &SqlitePool, repo: i64, id: &str) -> Result<Option<Upload>> {
+pub async fn upload_status(pool: &SqlitePool, repo: i64, id: &str) -> Result<Option<crate::backend::db::code_scanning::UploadStatus>> {
     Ok(
-        sqlx::query_as("SELECT * FROM code_scanning_uploads WHERE repo_id=$1 AND id=$2")
+        sqlx::query_as("SELECT processing_status,error FROM code_scanning_uploads WHERE repo_id=$1 AND id=$2")
             .bind(repo)
             .bind(id)
             .fetch_optional(pool)
