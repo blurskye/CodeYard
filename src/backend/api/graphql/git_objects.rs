@@ -64,12 +64,16 @@ pub(super) async fn load(
                     "Tree exceeds the repository store read limit",
                 ));
             }
+            request.charge(tree.tree.iter().fold(0usize, |bytes, entry|
+                bytes.saturating_add(entry.path.len().saturating_mul(6)).saturating_add(256)))?;
             Ok(
                 json!({"__typename":"Tree","_repo":repo.id,"id":node_id::git("T",oid),"oid":oid,"entries":tree.tree.iter().map(|e|json!({"_repo":repo.id,"name":e.path,"nameRaw":STANDARD.encode(&e.path),"path":e.path,"pathRaw":STANDARD.encode(&e.path),"submodule":null,"mode":i32::from_str_radix(&e.mode,8).unwrap_or(0),"oid":e.sha,"size":e.size.unwrap_or(0),"type":e.kind})).collect::<Vec<_>>()}),
             )
         }
         "tag" => {
             let tag = store.git_tag(oid).await.map_err(unavailable)?;
+            request.charge(tag.message.len().saturating_add(tag.tag.len()).saturating_add(tag.object.len())
+                .saturating_add(tag.tagger.as_ref().map_or(0, |tagger| tagger.name.len().saturating_add(tagger.email.len()))))?;
             Ok(
                 json!({"__typename":"Tag","_repo":repo.id,"_target":tag.object,"id":node_id::git("TAG",oid),"oid":oid,"name":tag.tag,"message":tag.message,"tagger":tag.tagger.as_ref().map(|t|json!({"name":t.name,"email":t.email,"date":t.date,"user":null}))}),
             )
@@ -91,6 +95,15 @@ pub(super) async fn reference(
     let Some(oid) = refs.get(name) else {
         return Ok(Value::Null);
     };
+    reference_at(repo, name, oid, request).await
+}
+
+pub(super) async fn reference_at(
+    repo: &db::models::Repository,
+    name: &str,
+    oid: &str,
+    request: &RequestContext,
+) -> Result<Value> {
     let (prefix, short) = if let Some(name) = name.strip_prefix("refs/heads/") {
         ("refs/heads/", name)
     } else if let Some(name) = name.strip_prefix("refs/tags/") {
@@ -250,6 +263,7 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
     // REST's content-addressed IDs have no repository component. Find a readable copy;
     // never probe inaccessible stores, and never treat storage failure as absence.
     let mut offset = 0;
+    let mut storage_error = None;
     loop {
         let rows = db::repositories::discovery::search_repositories(
             &request.state.pool,
@@ -262,7 +276,7 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
         .await
         .map_err(unavailable)?;
         if rows.is_empty() {
-            return Err(missing());
+            return Err(storage_error.unwrap_or_else(missing));
         }
         offset += rows.len() as i64;
         for repo in rows {
@@ -293,7 +307,7 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
                 }
                 Ok(_) => {}
                 Err(error) if error.kind == ErrorKind::NotFound => {}
-                Err(error) => return Err(unavailable(error)),
+                Err(error) => storage_error = Some(unavailable(error)),
             }
         }
     }
@@ -383,11 +397,8 @@ pub(super) async fn resolve(
                     "Codeyard does not support this ref ordering yet",
                 ));
             }
-            let mut names = store
-                .refs()
-                .await
-                .map_err(unavailable)?
-                .into_keys()
+            let refs = store.refs().await.map_err(unavailable)?;
+            let mut names = refs.keys().cloned()
                 .filter(|name| name.starts_with(&prefix) && name[prefix.len()..].contains(query))
                 .collect::<Vec<_>>();
             names.sort();
@@ -407,7 +418,7 @@ pub(super) async fn resolve(
                 .skip(page.offset as usize)
                 .take(page.limit as usize)
             {
-                nodes.push(reference(repo, &name, request).await?);
+                nodes.push(reference_at(repo, &name, &refs[&name], request).await?);
             }
             Ok(page.finish(nodes))
         }

@@ -267,6 +267,7 @@ pub(super) async fn content_items(
     ctx: &Arguments,
     request: &RequestContext,
 ) -> Result<Value> {
+    authorize_account(request)?;
     let pool = &request.state.pool;
     let viewer = Some(request.auth.user.id);
     let content = if ty == "Issue" {
@@ -405,6 +406,13 @@ pub(super) async fn resolve(
     parent: &Value,
 ) -> Result<Value> {
     authorize_account(request)?;
+    if let Some(id) = parent["_project"].as_i64() {
+        let project = store::by_id(&request.state.pool, Some(request.auth.user.id), id)
+            .await.map_err(operation)?;
+        if project.owner_kind == "org" {
+            request.authorize_organization(project.owner_id).await?;
+        }
+    }
     if let Some(value) = parent.get(field) {
         return Ok(value.clone());
     }

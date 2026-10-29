@@ -373,7 +373,7 @@ impl Object {
         }) {
             let scope = match ty {
                 "Repository" => match field {
-                    "issue" | "issues" | "labels" | "milestone" | "milestones"
+                    "issue" | "issues" | "issueTypes" | "labels" | "milestone" | "milestones"
                     | "assignableUsers" | "mentionableUsers" => "issues",
                     "pullRequest" | "pullRequests" => "pull-requests",
                     "discussion"
@@ -413,6 +413,12 @@ impl Object {
                 _ => self.0["_scope"].as_str().unwrap_or("contents"),
             };
             request.authorize(repo, scope, false).await?;
+        }
+        if ty == "Organization" && matches!(field, "team" | "rulesets" | "projects" | "projectsV2" | "projectV2" | "viewerCanCreateProjects") {
+            request.authorize_organization(self.0["databaseId"].as_i64().ok_or_else(missing)?).await?;
+        }
+        if self.0["_ownerKind"] == "org" {
+            request.authorize_organization(self.0["_owner"].as_i64().ok_or_else(missing)?).await?;
         }
         if request.bounded()
             && ((ty == "Query" && matches!(field, "user" | "organization" | "repositoryOwner"))
@@ -473,6 +479,9 @@ impl Object {
                 .await
             }
             ("TreeEntry", "object") => {
+                if self.0["mode"].as_i64() == Some(0o160000) {
+                    return Ok(Value::Null);
+                }
                 super::git_objects::load(
                     &repository::by_id(self.0["_repo"].as_i64().ok_or_else(missing)?, request)
                         .await?,
@@ -598,7 +607,9 @@ macro_rules! fields {
             Box::pin(async move {
                 let arguments = Arguments::new([$( (field_name(stringify!($arg)), InputType::to_value(&$arg)), )*]).with_selection(ctx);
                 let field = field_name(stringify!($method));
-                let value = self.resolve($ty, &field, &arguments, ctx.data::<RequestContext>()?).await?;
+                let request = ctx.data::<RequestContext>()?;
+                let value = self.resolve($ty, &field, &arguments, request).await?;
+                request.charge_value(&value)?;
                 Decode::decode(value)
             })
         }
@@ -630,7 +641,10 @@ impl gql::QueryResolver for Object {
             let request = ctx.data::<RequestContext>()?;
             let mut nodes = Vec::with_capacity(ids.len());
             for (index, id) in ids.iter().enumerate() {
-                match node(id.as_str(), request).await.and_then(gql::Node::decode) {
+                match node(id.as_str(), request).await.and_then(|value| {
+                    request.charge_value(&value)?;
+                    gql::Node::decode(value)
+                }) {
                     Ok(node) => nodes.push(Some(node)),
                     Err(error) => {
                         let mut error = ctx.set_error_path(error.into_server_error(ctx.item.pos));

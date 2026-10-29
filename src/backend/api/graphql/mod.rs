@@ -52,9 +52,8 @@ struct RequestContext {
     auth: auth::Authentication,
     /// Scopes granted to an OAuth token; other credentials have none.
     oauth_scopes: Option<String>,
-    /// A fine-grained token's repository permissions. Like a job token, it reaches
-    /// repositories through `authorize` only, and no account or organization fields.
-    personal: Option<Value>,
+    /// Admission distinguishes personal tokens from integrations, which GraphQL does not accept.
+    personal: Option<crate::backend::identity::fine_grained::Grant>,
     nodes: AtomicUsize,
     /// Bytes of text the request has loaded or returned, bounded by `MAX_RESPONSE_BYTES`.
     bytes: AtomicUsize,
@@ -79,29 +78,77 @@ impl RequestContext {
         Ok(())
     }
 
+    fn charge_value(&self, value: &Value) -> Result<()> {
+        match value {
+            Value::String(text) => self.charge(text.len()),
+            Value::Array(values) => {
+                self.charge(values.len().saturating_mul(std::mem::size_of::<Value>()))?;
+                for value in values {
+                    self.charge_value(value)?;
+                }
+                Ok(())
+            }
+            Value::Object(values) => {
+                for (key, value) in values {
+                    self.charge(key.len().saturating_add(64))?;
+                    self.charge_value(value)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
     async fn authorize(&self, repo: i64, scope: &str, write: bool) -> Result<()> {
-        self.auth
-            .repository_scope(&self.state.pool, repo, scope, write)
-            .await
-            .map_err(|error| match error {
-                auth::ScopeError::Missing => missing(),
-                auth::ScopeError::Denied => token_denied(),
-                auth::ScopeError::Unavailable => unavailable(()),
-            })?;
-        // Every repository read and write needs the repo grant, as the REST repository routes do.
+        let pool = &self.state.pool;
+        let live = db::users::tokens::token_user(pool, self.auth.token.id, write)
+            .await.map_err(unavailable)?;
+        if live.is_none_or(|user| user.id != self.auth.user.id) {
+            return Err(token_denied());
+        }
+        // Integration credentials were excluded at admission. Do not rediscover Apps for
+        // every scalar; personal bounds and job permissions still have to be live.
+        if self.personal.is_some() {
+            let grant = crate::backend::identity::fine_grained::grant(pool, self.auth.token.id)
+                .await.map_err(unavailable)?.ok_or_else(token_denied)?;
+            let permissions = grant.repository(pool, repo).await.map_err(unavailable)?
+                .ok_or_else(missing)?;
+            if !crate::backend::identity::github_apps::allows(&permissions, &scope.replace('-', "_"), write) {
+                return Err(token_denied());
+            }
+        } else if self.auth.is_job() {
+            self.auth.repository_scope(pool, repo, scope, write).await
+                .map_err(|error| auth::scope_error(error).graphql())?;
+        } else if db::fine_grained_tokens::classic_refused_repository(pool, self.auth.token.id, repo)
+            .await.map_err(unavailable)? {
+            return Err(token_denied());
+        }
+        // Check the live ACL even for cached scalars: ordinary PAT scope is not a read permit.
+        if db::repositories::access::readable_repository_ids(pool, Some(self.auth.user.id), &[repo])
+            .await.map_err(unavailable)?.is_empty() {
+            return Err(missing());
+        }
+        if !write && self.oauth_scopes.as_ref().is_some_and(|scopes|
+            !crate::backend::identity::oauth_apps::has_scope(scopes, "repo")) {
+            if db::repositories::access::readable_repository_ids(pool, None, &[repo])
+                .await.map_err(unavailable)?.is_empty() {
+                return Err(token_denied());
+            }
+            return Ok(());
+        }
         self.require_oauth_scope("repo")
     }
 
     /// Each resolver checks the grant it needs, as the REST routes check theirs.
     fn require_oauth_scope(&self, scope: &str) -> Result<()> {
-        if let Some(permissions) = &self.personal {
+        if let Some(grant) = &self.personal {
             // Repository reads and writes were checked by `authorize`, and cross-repository
             // lists stop at `bounded`.
             return match scope {
                 "repo" => Ok(()),
                 "workflow"
                     if crate::backend::identity::github_apps::allows(
-                        permissions,
+                        &Value::Object(grant.group(crate::backend::identity::fine_grained::Group::Repository)),
                         "workflows",
                         true,
                     ) =>
@@ -117,6 +164,37 @@ impl RequestContext {
             }
             _ => Ok(()),
         }
+    }
+
+    /// Identity may expose unpublished repository data only with an explicit live grant,
+    /// never through the anonymous-equivalent public fallback.
+    async fn private_viewer(&self, repo: i64, scope: &str) -> Result<Option<i64>> {
+        self.authorize(repo, scope, false).await?;
+        if self.oauth_scopes.as_ref().is_some_and(|scopes|
+            !crate::backend::identity::oauth_apps::has_scope(scopes, "repo")) {
+            return Ok(None);
+        }
+        if self.personal.is_some() {
+            let grant = crate::backend::identity::fine_grained::grant(&self.state.pool, self.auth.token.id)
+                .await.map_err(unavailable)?.ok_or_else(token_denied)?;
+            let row = db::repositories::records::get_repository_by_id(&self.state.pool, repo)
+                .await.map_err(unavailable)?.ok_or_else(missing)?;
+            if !grant.reaches(&self.state.pool, &row).await.map_err(unavailable)? {
+                return Ok(None);
+            }
+        }
+        Ok(Some(self.auth.user.id))
+    }
+
+    async fn authorize_organization(&self, org: i64) -> Result<()> {
+        self.require_oauth_scope("read:org")?;
+        if db::users::tokens::token_user(&self.state.pool, self.auth.token.id, false)
+            .await.map_err(unavailable)?.is_none_or(|user| user.id != self.auth.user.id)
+            || db::fine_grained_tokens::classic_refused(&self.state.pool, self.auth.token.id, org)
+                .await.map_err(unavailable)? {
+            return Err(token_denied());
+        }
+        Ok(())
     }
 
     fn is_oauth(&self) -> bool {
@@ -140,8 +218,12 @@ fn missing() -> Error {
     })
 }
 
+pub(super) fn error(message: impl Into<String>, kind: &str) -> Error {
+    Error::new(message).extend_with(|_, e| e.set("type", kind))
+}
+
 fn unavailable<E>(_: E) -> Error {
-    Error::new("Service unavailable")
+    error("Service unavailable", "INTERNAL")
 }
 
 fn url(path: &str) -> String {
@@ -237,7 +319,10 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
             let comment = db::pull_requests::reviews::get_visible_pull_request_comment(
                 pool,
                 id,
-                request.auth.user.id,
+                request.private_viewer(
+                    db::graphql::node_repository(pool, "PRRC", id).await.map_err(unavailable)?.ok_or_else(missing)?,
+                    "pull-requests",
+                ).await?.unwrap_or(-1),
             )
             .await
             .map_err(unavailable)?
@@ -319,7 +404,7 @@ async fn execute(
         }
     };
     let personal = match crate::backend::identity::github_apps::authority(&state.pool, authentication.token.id).await {
-        Ok(Some(bounds)) if bounds.personal().is_some() => Some(bounds.permissions),
+        Ok(Some(bounds)) if bounds.personal().is_some() => bounds.personal().cloned(),
         Ok(Some(_)) => return (StatusCode::FORBIDDEN, Json(json!({"message":"Integration credentials require repository-scoped REST or Git access"}))).into_response(),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
         Ok(None) => None,

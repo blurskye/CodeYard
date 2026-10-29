@@ -168,6 +168,7 @@ pub(super) async fn mutation(
             };
             let target = repository::by_id(destination, request).await?;
             request.authorize(target.id, "contents", true).await?;
+            request.require_oauth_scope("workflow")?;
             let name = input["name"]
                 .as_str()
                 .map(str::to_owned)

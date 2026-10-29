@@ -17,6 +17,15 @@ pub(super) fn object(repo: &db::models::Repository) -> Value {
         "rebaseMergeAllowed":repo.allow_rebase_merge})
 }
 
+pub(super) async fn optional_authority(id: i64, scope: &str, request: &RequestContext) -> Result<bool> {
+    match request.authorize(id, scope, false).await {
+        Ok(()) => Ok(true),
+        Err(error) if matches!(error.extensions.as_ref().and_then(|e| e.get("type")),
+            Some(async_graphql::Value::String(kind)) if kind == "NOT_FOUND" || kind == "FORBIDDEN") => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 pub(super) async fn by_id(id: i64, request: &RequestContext) -> Result<db::models::Repository> {
     let repo = db::repositories::records::get_repository_by_id(&request.state.pool, id)
         .await
@@ -149,7 +158,9 @@ pub(super) async fn resolve(
                 {
                     return Ok(Value::Null);
                 }
-                request.authorize(id, "metadata", false).await?;
+                if !optional_authority(id, "metadata", request).await? {
+                    return Ok(Value::Null);
+                }
                 Ok(object(&parent))
             }
             None => Ok(Value::Null),

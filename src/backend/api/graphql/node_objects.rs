@@ -19,7 +19,8 @@ pub(super) async fn review(
     .ok_or_else(missing)?;
     let repo = repository::by_id(pull.repo_id, request).await?;
     request.authorize(repo.id, "pull-requests", false).await?;
-    if row.state == "pending" && row.author_id != request.auth.user.id {
+    if row.state == "pending"
+        && request.private_viewer(repo.id, "pull-requests").await? != Some(row.author_id) {
         return Err(missing());
     }
     Ok(
@@ -51,7 +52,8 @@ pub(super) async fn review_comment(
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-        if review.state == "pending" && review.author_id != request.auth.user.id {
+        if review.state == "pending"
+            && request.private_viewer(repo.id, "pull-requests").await? != Some(review.author_id) {
             return Err(missing());
         }
     }
@@ -69,9 +71,7 @@ pub(super) async fn release(row: &db::models::Release, request: &RequestContext)
     let repo = repository::by_id(row.repo_id, request).await?;
     request.authorize(repo.id, "contents", false).await?;
     if row.is_draft
-        && !access::can_write(&request.state.pool, &request.auth.user, &repo)
-            .await
-            .map_err(unavailable)?
+        && !super::release::drafts_visible(&repo, request).await?
     {
         return Err(missing());
     }
@@ -162,7 +162,9 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
         }
         "PRRC" => {
             review_comment(
-                &db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id)
+                &db::pull_requests::reviews::get_visible_pull_request_comment(
+                    pool, id, request.private_viewer(repo.id, "pull-requests").await?.unwrap_or(-1),
+                )
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?,

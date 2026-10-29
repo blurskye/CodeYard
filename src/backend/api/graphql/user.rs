@@ -6,14 +6,14 @@ use serde_json::json;
 pub(super) fn object(user: &db::models::User, viewer: i64) -> Value {
     json!({"__typename":"User","id":node_id::encode("U",user.id),"databaseId":user.id,
         "login":user.username,"name":user.display_name,
-        "url":url(&format!("/{}",user.username)),"avatarUrl":url(&format!("/avatars/{}",user.username)),"createdAt":user.created_at,
-        "bio":user.bio,"company":null,"location":user.location,"websiteUrl":user.website,
-        "isViewer":viewer==user.id,"viewerCanFollow":viewer!=user.id})
+        "url":url(&crate::webui::profile_path(&user.username)),"avatarUrl":url(&format!("/avatars/{}",user.username)),"createdAt":user.created_at,
+        "bio":user.bio,"location":user.location,"websiteUrl":user.website,
+        "isViewer":viewer==user.id})
 }
 
 pub(super) fn organization(org: &db::models::Organization) -> Value {
     json!({"__typename":"Organization","id":node_id::encode("O",org.id),"databaseId":org.id,
-        "login":org.name,"name":org.display_name,"email":null,"url":url(&format!("/{}",org.name)),
+        "login":org.name,"name":org.display_name,"email":null,"url":url(&crate::webui::profile_path(&org.name)),
         "avatarUrl":url(&format!("/avatars/{}",org.name)),"createdAt":org.created_at,
         "description":org.description,"websiteUrl":null})
 }
@@ -28,7 +28,7 @@ pub(super) async fn by_id(id: i64, request: &RequestContext) -> Result<Value> {
 }
 
 fn actor_value(mut value: Value) -> Value {
-    if value["login"] == db::ci_tokens::BOT {
+    if value["login"].as_str().is_some_and(|login| login.ends_with("[bot]")) {
         value["__typename"] = json!("Bot");
     }
     value
@@ -87,18 +87,16 @@ pub(super) async fn resolve(
                 .map_err(unavailable)?;
             Ok(json!(settings.public_email(&user).unwrap_or("")))
         }
+        "company" if ty == "User" => Ok(json!(db::users::profiles::get_profile_settings(&request.state.pool, id)
+            .await.map_err(unavailable)?.company)),
         "repositories" => super::repository_list::list(ctx, request, parent).await,
         "gists" if ty == "User" => super::gists::list(ctx, request, parent).await,
-        "viewerIsFollowing" => Ok(serde_json::json!(
-            crate::backend::identity::following::status(
-                &request.state.pool,
-                id,
-                Some(request.auth.user.id)
-            )
-            .await
-            .map_err(unavailable)?
-            .following
-        )),
+        "viewerCanFollow" => Ok(json!(id != request.auth.user.id
+            && !db::users::blocks::is_blocked(&request.state.pool, request.auth.user.id, id).await.map_err(unavailable)?
+            && !db::users::blocks::is_blocked(&request.state.pool, id, request.auth.user.id).await.map_err(unavailable)?)),
+        "viewerIsFollowing" => Ok(json!(id != request.auth.user.id &&
+            db::following::is_user_following(&request.state.pool, request.auth.user.id, id)
+                .await.map_err(unavailable)?)),
         _ => Err(async_graphql::Error::new(format!(
             "Codeyard does not support {ty}.{field} yet"
         ))),
@@ -142,6 +140,7 @@ pub(super) async fn query(field: &str, ctx: &Arguments, request: &RequestContext
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
+        request.authorize_organization(org.id).await?;
         Ok(organization(&org))
     } else {
         request.require_oauth_scope("read:org")?;
@@ -149,6 +148,7 @@ pub(super) async fn query(field: &str, ctx: &Arguments, request: &RequestContext
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
+        request.authorize_organization(org.id).await?;
         Ok(organization(&org))
     }
 }

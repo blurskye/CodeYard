@@ -7,7 +7,12 @@ use super::{
 use crate::backend::repositories::store::{repo_store, CommitInfo};
 use serde_json::json;
 
-pub(super) fn commit(repo: i64, row: &CommitInfo, scope: &str) -> Result<Value> {
+pub(super) fn commit(repo: i64, row: &CommitInfo, scope: &str, request: &RequestContext) -> Result<Value> {
+    // The presentation keeps message, headline and body as separate strings.
+    request.charge(row.message.len().saturating_mul(3)
+        .saturating_add(row.author_name.len()).saturating_add(row.author_email.len())
+        .saturating_add(row.committer_name.len()).saturating_add(row.committer_email.len())
+        .saturating_add(row.parents.len().saturating_mul(64)))?;
     let date = |time| chrono::DateTime::from_timestamp(time, 0).ok_or_else(|| unavailable(()));
     let authored = date(row.timestamp)?;
     let committed = date(row.committer_timestamp)?;
@@ -31,7 +36,7 @@ pub(super) async fn load(
         .commit(oid)
         .await
         .map_err(unavailable)?;
-    commit(repo.id, &row, scope)
+    commit(repo.id, &row, scope, request)
 }
 
 pub(super) async fn resolve(

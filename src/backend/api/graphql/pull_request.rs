@@ -57,7 +57,7 @@ pub(super) async fn resolve(
                 .map_err(unavailable)?;
             Ok(match field {
                 "additions"=>json!(diff.additions),"deletions"=>json!(diff.deletions),"changedFiles"=>json!(diff.changed_files),
-                _=>connection::slice(args,diff.files.into_iter().map(|f|json!({"path":f.filename,"additions":f.additions,"deletions":f.deletions,"changeType":match f.status.as_str() {"added"=>"ADDED","removed"|"deleted"=>"DELETED","renamed"=>"RENAMED","copied"=>"COPIED",_=>"MODIFIED"}})).collect())?,
+                _=>connection::slice(args,diff.files.into_iter().map(|f|json!({"path":f.filename,"additions":f.additions,"deletions":f.deletions,"changeType":match f.status.as_str() {"added"=>"ADDED","removed"|"deleted"=>"DELETED","renamed"=>"RENAMED","copied"=>"COPIED","type_changed"=>"CHANGED",_=>"MODIFIED"}})).collect())?,
             })
         }
         "commits" => {
@@ -90,7 +90,7 @@ pub(super) async fn resolve(
             let nodes = window
                 .iter()
                 .map(|c| {
-                    git::commit(repo.id, c, "pull-requests").map(|commit| json!({"commit":commit}))
+                    git::commit(repo.id, c, "pull-requests", request).map(|commit| json!({"commit":commit}))
                 })
                 .collect::<Result<Vec<_>>>()?;
             Ok(page.finish(nodes))
@@ -109,7 +109,7 @@ pub(super) async fn resolve(
                 .collect();
             let query = db::pull_requests::reviews::ReviewQuery {
                 pull_id: pull.id,
-                viewer: Some(request.auth.user.id),
+                viewer: request.private_viewer(repo.id, "pull-requests").await?,
                 author: args
                     .args
                     .get("author")
@@ -225,12 +225,14 @@ pub(super) async fn resolve(
         "baseRefOid" => Ok(json!(pull.base_sha)),
         "headRefOid" => Ok(json!(pull.head_sha)),
         "fullDatabaseId" => Ok(json!(pull.id.to_string())),
-        "isCrossRepository" => Ok(json!(pull.head_repo_id.is_some_and(|id| id != repo.id))),
+        "isCrossRepository" => Ok(json!(pull.head_repo_id != Some(repo.id))),
         "headRepository" | "headRepositoryOwner" => {
             let Some(head_id) = pull.head_repo_id else {
                 return Ok(Value::Null);
             };
-            request.authorize(head_id, "metadata", false).await?;
+            if !super::repository::optional_authority(head_id, "metadata", request).await? {
+                return Ok(Value::Null);
+            }
             let Some(head) =
                 db::repositories::records::get_repository_by_id(&request.state.pool, head_id)
                     .await

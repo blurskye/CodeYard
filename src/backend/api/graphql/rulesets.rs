@@ -53,6 +53,7 @@ pub(super) async fn list(
 ) -> Result<Value> {
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
     let owner = if ty == "Organization" {
+        request.authorize_organization(id).await?;
         Owner::Organization(id)
     } else {
         Owner::Repository(id)

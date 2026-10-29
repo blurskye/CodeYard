@@ -171,6 +171,7 @@ pub(super) async fn comment(
         .map_err(unavailable)?
         .ok_or_else(missing)?;
     repository::by_id(issue.repo_id, request).await?;
+    request.charge(comment.body.len().saturating_mul(4))?;
     Ok(
         json!({"__typename":"IssueComment","id":node_id::encode("IC",crate::backend::webhooks::payloads::conversation_comment_id(comment.id,false)),"databaseId":comment.id,
         "_repo":issue.repo_id,"_number":issue.number,"_pull":false,"_author":comment.author_id,
@@ -191,6 +192,7 @@ pub(super) async fn pull_comment(
     .map_err(unavailable)?
     .ok_or_else(missing)?;
     repository::by_id(pull.repo_id, request).await?;
+    request.charge(comment.body.len().saturating_mul(4))?;
     Ok(
         json!({"__typename":"IssueComment","id":node_id::encode("IC",crate::backend::webhooks::payloads::conversation_comment_id(comment.id,true)),"databaseId":comment.id,
         "_repo":pull.repo_id,"_number":pull.number,"_pull":true,"_author":comment.author_id,
@@ -294,15 +296,21 @@ pub(super) async fn list(
             .await
             .map_err(unavailable)?
             .iter()
-            .map(|entry| object(&entry.issue))
-            .collect()
+            .map(|entry| {
+                request.charge(entry.issue.title.len().saturating_add(entry.issue.body.len()).saturating_mul(4))?;
+                Ok(object(&entry.issue))
+            })
+            .collect::<Result<Vec<_>>>()?
     } else {
         db::pull_requests::records::list_repo_pull_requests(pool, repo, &filter, page.limit)
             .await
             .map_err(unavailable)?
             .iter()
-            .map(|entry| pull_object(&entry.pull_request))
-            .collect()
+            .map(|entry| {
+                request.charge(entry.pull_request.title.len().saturating_add(entry.pull_request.body.len()).saturating_mul(4))?;
+                Ok(pull_object(&entry.pull_request))
+            })
+            .collect::<Result<Vec<_>>>()?
     };
     Ok(page.finish(nodes))
 }

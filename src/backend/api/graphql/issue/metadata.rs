@@ -282,21 +282,20 @@ async fn results(
             request
                 .authorize(repo, if pull { "pull-requests" } else { "issues" }, false)
                 .await?;
-            nodes.push(if pull {
-                pull_object(
-                    &db::pull_requests::records::get_pull_request_by_id(pool, id)
-                        .await
-                        .map_err(unavailable)?
-                        .ok_or_else(missing)?,
-                )
+            let value = if pull {
+                let Some(row) = db::pull_requests::records::get_pull_request_by_id(pool, id)
+                    .await.map_err(unavailable)? else { continue };
+                request.authorize(row.repo_id, "pull-requests", false).await?;
+                request.charge(row.title.len().saturating_add(row.body.len()).saturating_mul(4))?;
+                pull_object(&row)
             } else {
-                object(
-                    &db::issues::get_issue_by_id(pool, id)
-                        .await
-                        .map_err(unavailable)?
-                        .ok_or_else(missing)?,
-                )
-            });
+                let Some(row) = db::issues::get_issue_by_id(pool, id)
+                    .await.map_err(unavailable)? else { continue };
+                request.authorize(row.repo_id, "issues", false).await?;
+                request.charge(row.title.len().saturating_add(row.body.len()).saturating_mul(4))?;
+                object(&row)
+            };
+            nodes.push(value);
         }
     }
     let mut value = page.finish(nodes);
