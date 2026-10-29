@@ -248,6 +248,10 @@ async fn insert_kind(
     .await?;
     if let Some(repository) = &repository {
         super::super::code_security::apply_default(&mut tx, repository).await?;
+        if source.is_some() {
+            sqlx::query("INSERT INTO repo_actions_settings(repo_id,enabled) VALUES($1,false)")
+                .bind(repository.id).execute(&mut *tx).await?;
+        }
     }
     if let (Some(org), Some(repository)) = (org, repository.as_ref()) {
         super::super::organizations::properties::apply_on(

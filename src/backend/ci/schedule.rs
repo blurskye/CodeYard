@@ -94,7 +94,7 @@ impl CiRuns {
         }
         let store = repo_store(&repo, self.cluster.as_ref());
         let reference = format!("refs/heads/{}", repo.default_branch);
-        let commit = match store.commit(&reference).await {
+        let commit = match store.commit_from_primary(&reference).await {
             Ok(commit) => commit,
             Err(error)
                 if error.kind == crate::backend::repositories::store::ErrorKind::NotFound =>
@@ -103,10 +103,21 @@ impl CiRuns {
             }
             Err(error) => return Err(error.into()),
         };
-        let Some(actor) =
-            db::ci::schedule_actor(&self.pool, repo.id, &reference, &commit.sha).await?
-        else {
-            return Ok(());
+        let publication = store.branch_publication(repo.id, &reference).await?;
+        let (actor, access_cap) = match publication {
+            Some(record) if record.publication.new == commit.sha => match record.publication.actor {
+                crate::backend::git::PublicationActor::User(actor) => (actor, db::models::AccessLevel::Owner),
+                crate::backend::git::PublicationActor::DeployKey(key) => {
+                    let (actor, cap) = crate::backend::repositories::deploy_keys::authorize(&self.pool, key, &repo, true)
+                        .await.map_err(|_| AdmissionError::Denied("CI repository access denied"))?;
+                    (actor.id, cap)
+                }
+            },
+            Some(_) => return Ok(()),
+            None => match db::ci::schedule_actor(&self.pool, repo.id, &reference, &commit.sha).await? {
+                Some(actor) => (actor, db::models::AccessLevel::Owner),
+                None => return Ok(()),
+            },
         };
         if !self.actor_may_discover_workflows(repo.id, actor).await? {
             return Ok(());
@@ -144,7 +155,7 @@ impl CiRuns {
                             triggered_by_id: actor,
                             manual: false,
                         },
-                        db::models::AccessLevel::Owner,
+                        access_cap,
                         payload,
                     )
                     .await
