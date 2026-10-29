@@ -69,8 +69,8 @@ pub async fn unassign(
     Ok(removed)
 }
 
-/// Records and announces assignments that are already saved, such as the assignees a new issue
-/// starts with.
+/// Records and announces saved assignments when the writer has not already recorded history.
+/// Creation transactions that retain their own history use `notify_saved` instead.
 pub async fn announce(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
@@ -91,6 +91,17 @@ pub async fn announce(
         )
         .await;
     }
+    notify_saved(pool, broadcaster, target, users).await;
+}
+
+/// Notify assignments whose timeline history was already captured by their committing transaction.
+pub async fn notify_saved(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    target: &Target<'_>,
+    users: &[&db::models::User],
+) {
+    if users.is_empty() { return; }
     let pull_request = matches!(target.item, AssignedItem::PullRequest(_));
     let link = format!(
         "/{}/{}/{}/{}",
