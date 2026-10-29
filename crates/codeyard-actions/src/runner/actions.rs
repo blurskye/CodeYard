@@ -1,6 +1,7 @@
 //! Action loading and handlers following actions/runner's `Runner.Worker/ActionManager.cs` and `Handlers/`.
 use super::*;
 use serde::Deserialize;
+use anyhow::ensure;
 use std::sync::OnceLock;
 
 #[derive(Clone, Default, Deserialize)]
@@ -56,38 +57,32 @@ pub(super) struct Post {
     contexts: Contexts,
 }
 
-struct CacheLock(std::fs::File);
-
-impl Drop for CacheLock {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsRawFd;
-            unsafe {
-                libc::flock(self.0.as_raw_fd(), libc::LOCK_UN);
-            }
+async fn cache_lock(path: PathBuf) -> Result<std::fs::File> {
+    let file = tokio::task::spawn_blocking(move || std::fs::OpenOptions::new()
+        .create(true).truncate(false).write(true).open(path)).await??;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) => tokio::time::sleep(Duration::from_millis(50)).await,
+            Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
         }
     }
 }
 
-async fn cache_lock(path: PathBuf) -> Result<CacheLock> {
-    tokio::task::spawn_blocking(move || {
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(path)?;
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsRawFd;
-            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-        }
-        Ok(CacheLock(file))
-    })
-    .await?
-    .map_err(Into::into)
+pub(crate) struct ActionReference<'a> {
+    components: Vec<&'a str>,
+    version: &'a str,
+}
+impl<'a> ActionReference<'a> {
+    pub(crate) fn parse(reference: &'a str) -> Result<Self> {
+        let (repository_path, version) = reference.split_once('@').context("Expected owner/repo[/path]@ref")?;
+        let components: Vec<_> = repository_path.split('/').collect();
+        ensure!(components.len() >= 2 && components.iter().all(|part| {
+            !part.is_empty() && *part != "." && *part != ".."
+                && part.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+        }) && !version.is_empty() && !version.starts_with('-') && !version.contains(['\0', '\n', '\r']), "Invalid action reference '{reference}'");
+        Ok(Self { components, version })
+    }
 }
 
 async fn git(directory: &Path, args: &[&str]) -> Result<()> {
@@ -124,25 +119,7 @@ impl Job {
             }
             return Ok(directory);
         }
-        let (repository_path, version) = reference
-            .rsplit_once('@')
-            .context("Expected owner/repo[/path]@ref")?;
-        let components: Vec<_> = repository_path.split('/').collect();
-        if components.len() < 2
-            || components.iter().any(|part| {
-                part.is_empty()
-                    || *part == "."
-                    || *part == ".."
-                    || !part
-                        .chars()
-                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
-            })
-            || version.is_empty()
-            || version.starts_with('-')
-            || version.contains(['\0', '\n', '\r'])
-        {
-            bail!("Invalid action reference '{reference}'");
-        }
+        let ActionReference { components, version } = ActionReference::parse(reference)?;
         // A digest keeps the cache name within filename limits however long the ref is.
         let encoded = format!(
             "{:x}",
@@ -158,14 +135,13 @@ impl Job {
             .parent()
             .context("Invalid action cache directory")?;
         std::fs::create_dir_all(parent)?;
-        static FETCHED: OnceLock<tokio::sync::Mutex<std::collections::BTreeSet<PathBuf>>> =
-            OnceLock::new();
-        let mut fetched = FETCHED
-            .get_or_init(|| tokio::sync::Mutex::new(Default::default()))
-            .lock()
-            .await;
-        let _lock = cache_lock(directory.with_extension("lock")).await?;
-        if !directory.join(".git").exists() {
+        type Selection = Arc<tokio::sync::Mutex<Option<String>>>;
+        static FETCHED: OnceLock<tokio::sync::Mutex<BTreeMap<PathBuf, Selection>>> = OnceLock::new();
+        let selection = FETCHED.get_or_init(|| tokio::sync::Mutex::new(Default::default()))
+            .lock().await.entry(directory.clone()).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None))).clone();
+        let mut selected = selection.lock().await;
+        let lock = cache_lock(directory.with_extension("lock")).await?;
+        if selected.is_none() && !directory.join(".git").exists() {
             if self.options.action_offline_mode {
                 bail!("Action '{reference}' is not available in the offline cache");
             }
@@ -186,32 +162,27 @@ impl Job {
             )
             .await?;
             std::fs::rename(staging.path(), &directory)?;
-            fetched.insert(directory.clone());
-        } else if !self.options.action_offline_mode && !fetched.contains(&directory) {
+        } else if selected.is_none() && !self.options.action_offline_mode {
             git(&directory, &["fetch", "--depth=1", "origin", version]).await?;
-            fetched.insert(directory.clone());
         }
-        let commit = git_value(&directory, &["rev-parse", "FETCH_HEAD"]).await;
-        if commit.is_empty() {
-            bail!("Cached action '{reference}' has no fetched revision");
+        if selected.is_none() {
+            let commit = git_value(&directory, &["rev-parse", "FETCH_HEAD"]).await;
+            ensure!(!commit.is_empty(), "Cached action '{reference}' has no fetched revision");
+            *selected = Some(commit);
         }
-        let checkout = tempfile::Builder::new()
-            .prefix("action-")
-            .tempdir_in(self.temp.path())?
-            .keep();
-        git(
-            &checkout,
-            &[
-                "clone",
-                "--quiet",
-                "--shared",
-                "--no-checkout",
-                &directory.display().to_string(),
-                ".",
-            ],
-        )
-        .await?;
-        git(&checkout, &["checkout", "--quiet", "--detach", &commit]).await?;
+        let commit = selected.as_ref().expect("selected revision").clone();
+        drop(selected);
+        drop(lock);
+        let checkout_key = format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(format!("{}\0{commit}", directory.display())));
+        let checkout = self.temp.path().join(format!("action-{checkout_key}"));
+        if let Ok(info) = std::fs::symlink_metadata(&checkout) {
+            ensure!(info.is_dir(), "Action checkout is not a directory");
+        } else {
+            let staging = crate::fs::private_tempdir("action-", Some(self.temp.path()))?;
+            git(staging.path(), &["clone", "--quiet", "--shared", "--no-checkout", &directory.display().to_string(), "."]).await?;
+            git(staging.path(), &["checkout", "--quiet", "--detach", &commit]).await?;
+            std::fs::rename(staging.path(), &checkout)?;
+        }
         let action = components[2..]
             .iter()
             .fold(checkout.clone(), |path, component| path.join(component));

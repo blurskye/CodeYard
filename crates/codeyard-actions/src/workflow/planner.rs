@@ -575,6 +575,10 @@ pub(super) fn expand(
     let combinations =
         matrix(strategy.and_then(|s| s.get("matrix"))).with_context(|| path.clone())?;
     let total = combinations.len();
+    let steps = if job.contains_key("uses") { Vec::new() } else {
+        job.get("steps").and_then(Yaml::as_sequence).context("steps: Expected a sequence")?
+            .iter().map(parse_step).collect::<Result<Vec<_>>>()?
+    };
     let mut result = Vec::new();
     for (index, combination) in combinations.into_iter().enumerate() {
         let mut contexts = contexts.clone();
@@ -661,16 +665,6 @@ pub(super) fn expand(
             })
             .transpose()?
             .unwrap_or_default();
-        let steps = if job.contains_key("uses") {
-            Vec::new()
-        } else {
-            job.get("steps")
-                .and_then(Yaml::as_sequence)
-                .context("steps: Expected a sequence")?
-                .iter()
-                .map(parse_step)
-                .collect::<Result<_>>()?
-        };
         result.push(PlannedJob {
             job_id: job_id.into(),
             name,
@@ -696,7 +690,7 @@ pub(super) fn expand(
             default_working_directory: job_directory.or(directory),
             container,
             services,
-            steps,
+            steps: steps.clone(),
             outputs: string_map(job.get("outputs"), "outputs")?,
             call: job.contains_key("uses").then(|| job.clone()),
             concurrency,

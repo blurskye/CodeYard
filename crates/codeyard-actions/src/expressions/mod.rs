@@ -93,6 +93,11 @@ pub enum Error {
     Evaluation(String),
 }
 
+/// Check the original expression with the same parser and limits used at execution.
+pub fn validate(expression: &str, contexts: &Contexts) -> Result<(), Error> {
+    parser::parse(expression, contexts).map(|_| ())
+}
+
 /// Evaluates one expression, without the `${{ }}` around it.
 pub fn evaluate(expression: &str, contexts: &Contexts, status: Status) -> Result<Value, Error> {
     let tree = parser::parse(expression, contexts)?;

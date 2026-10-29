@@ -68,26 +68,7 @@ fn expressions(template: &str) -> Result<Vec<&str>> {
     let mut rest = template;
     while let Some(start) = rest.find("${{") {
         rest = &rest[start + 3..];
-        let bytes = rest.as_bytes();
-        let mut i = 0;
-        let mut quoted = false;
-        while i < bytes.len() {
-            if bytes[i] == b'\'' {
-                if quoted && bytes.get(i + 1) == Some(&b'\'') {
-                    i += 2;
-                    continue;
-                }
-                quoted = !quoted;
-            }
-            if !quoted && bytes[i..].starts_with(b"}}") {
-                break;
-            }
-            i += 1;
-        }
-        ensure!(
-            i < bytes.len(),
-            "The expression is not closed. An expression starts with '${{{{' and ends with '}}}}'"
-        );
+        let i = crate::expressions::expression_end(rest)?;
         result.push(&rest[..i]);
         rest = &rest[i + 2..];
     }
@@ -173,18 +154,14 @@ fn expression_context(
             i += 1;
         }
     }
-    // Short-circuit evaluation validates the grammar without reading contexts or files.
+    // Validate the original grammar without spending limits on a synthetic wrapper.
     let contexts = crate::expressions::Contexts {
         values: contexts
             .iter()
             .map(|name| ((*name).to_owned(), crate::expressions::Value::Null))
             .collect(),
     };
-    crate::expressions::evaluate(
-        &format!("false && ({expression})"),
-        &contexts,
-        crate::expressions::Status::default(),
-    )
+    crate::expressions::validate(expression, &contexts)
     .with_context(|| path.to_owned())?;
     Ok(())
 }
@@ -998,17 +975,7 @@ pub(super) fn parse_step(value: &Value) -> Result<Step> {
             && !reference.starts_with(".\\")
             && !reference.starts_with("docker://")
         {
-            let segments: Vec<_> = reference.split('@').collect();
-            ensure!(
-                segments.len() == 2
-                    && !segments[1].is_empty()
-                    && segments[0]
-                        .split(['/', '\\'])
-                        .filter(|part| !part.is_empty())
-                        .count()
-                        >= 2,
-                "step.uses: Expected format {{org}}/{{repo}}[/path]@ref. Actual '{reference}'"
-            );
+            crate::runner::ActionReference::parse(&reference).context("step.uses")?;
         }
     }
     let action = if run {

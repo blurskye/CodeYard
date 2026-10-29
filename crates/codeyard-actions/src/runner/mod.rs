@@ -1,5 +1,6 @@
 //! Job and step execution following actions/runner's `Runner.Worker/JobRunner.cs` and `StepsRunner.cs`.
 mod actions;
+pub(crate) use actions::ActionReference;
 mod commands;
 mod containers;
 mod environment_values;
@@ -251,37 +252,30 @@ fn ref_name(reference: &str) -> &str {
 
 /// Dispatch inputs arrive as text. The `inputs` context uses the declared types, as on GitHub,
 /// so `if: inputs.publish` sees a boolean. `github.event.inputs` keeps the text.
-fn typed_dispatch_inputs(
-    raw: &serde_yaml::Value,
-    mut inputs: serde_json::Value,
-) -> serde_json::Value {
-    let declared = raw
-        .get("on")
-        .and_then(|on| on.get("workflow_dispatch"))
-        .and_then(|dispatch| dispatch.get("inputs"))
-        .and_then(serde_yaml::Value::as_mapping);
-    if let (Some(declared), Some(values)) = (declared, inputs.as_object_mut()) {
-        for (name, value) in values.iter_mut() {
-            let kind = declared
-                .get(name.as_str())
-                .and_then(|spec| spec.get("type"))
-                .and_then(serde_yaml::Value::as_str);
-            let typed = match (kind, value.as_str()) {
-                (Some("boolean"), Some("true")) => Some(serde_json::Value::Bool(true)),
-                (Some("boolean"), Some("false")) => Some(serde_json::Value::Bool(false)),
-                (Some("number"), Some(number)) => number
-                    .parse::<f64>()
-                    .ok()
-                    .and_then(serde_json::Number::from_f64)
-                    .map(serde_json::Value::Number),
-                _ => None,
-            };
-            if let Some(typed) = typed {
-                *value = typed;
-            }
-        }
+struct DispatchInputs { typed: serde_json::Value, event: serde_json::Value }
+fn typed_dispatch_inputs(raw: &serde_yaml::Value, inputs: serde_json::Value) -> Result<DispatchInputs> {
+    use crate::workflow::dispatch_inputs::{self, InputKind};
+    let declared = dispatch_inputs::parse(raw.get("on").and_then(|on| on.get("workflow_dispatch")).unwrap_or(&serde_yaml::Value::Null))?;
+    let submitted = inputs.as_object().context("Dispatch inputs must be an object")?.iter().map(|(key, value)| {
+        let text = match value {
+            serde_json::Value::String(value) => value.clone(),
+            serde_json::Value::Bool(_) | serde_json::Value::Number(_) => value.to_string(),
+            _ => bail!("Dispatch input must be a scalar"),
+        };
+        Ok((key.clone(), text))
+    }).collect::<Result<BTreeMap<_, _>>>()?;
+    let values = dispatch_inputs::validate_inputs(&declared, &submitted).map_err(anyhow::Error::msg)?;
+    let mut inputs = serde_json::Map::new();
+    for input in declared {
+        let value = &values[&input.name];
+        let value = match input.kind {
+            InputKind::Boolean => serde_json::Value::Bool(value == "true"),
+            InputKind::Number => serde_json::json!(value.parse::<f64>()?),
+            _ => serde_json::Value::String(value.clone()),
+        };
+        inputs.insert(input.name, value);
     }
-    inputs
+    Ok(DispatchInputs { typed: serde_json::Value::Object(inputs), event: serde_json::to_value(values)? })
 }
 
 /// Bounds an action's preparation (fetching, runtime probing, image builds) by the step deadline.
@@ -503,11 +497,17 @@ async fn run_workflow(
         .directory
         .canonicalize()
         .context("Unable to open checkout directory")?;
-    let event: serde_json::Value = if let Some(path) = &options.eventpath {
+    let mut event: serde_json::Value = if let Some(path) = &options.eventpath {
         serde_json::from_slice(&std::fs::read(path)?)?
     } else {
         serde_json::json!({})
     };
+    let submitted_inputs = event.get("inputs").cloned().unwrap_or_else(|| serde_json::json!({}));
+    let inputs = if options.event == "workflow_dispatch" {
+        let inputs = typed_dispatch_inputs(&raw, submitted_inputs)?;
+        event.as_object_mut().context("Dispatch event must be an object")?.insert("inputs".into(), inputs.event);
+        inputs.typed
+    } else { submitted_inputs };
     let mut env = environment_file(options.env_file.as_deref())?;
     for pair in &options.env {
         let (key, value) = pair.split_once('=').context("--env requires KEY=VALUE")?;
@@ -575,13 +575,6 @@ async fn run_workflow(
     contexts.values.insert("secrets".into(), object(&secrets));
     let variables = environment_file(options.var_file.as_deref())?;
     contexts.values.insert("vars".into(), object(&variables));
-    let inputs = typed_dispatch_inputs(
-        &raw,
-        event
-            .get("inputs")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({})),
-    );
     contexts
         .values
         .insert("inputs".into(), Value::from_json(&inputs));
@@ -1221,6 +1214,8 @@ struct Job {
     cache: PathBuf,
     podman: Podman,
     explicit_container: bool,
+    default_shell: Option<String>,
+    default_working_directory: Option<String>,
     sequence: usize,
     anonymous_action: usize,
     command_stopped: Option<String>,
@@ -1281,6 +1276,8 @@ async fn run_job(
             cache,
             podman,
             explicit_container: false,
+            default_shell: None,
+            default_working_directory: None,
             sequence: 0,
             anonymous_action: 0,
             command_stopped: None,
@@ -1295,11 +1292,13 @@ async fn run_job(
             _ = tokio::time::sleep_until(deadline.into()) => {interrupted=Some(Conclusion::TimedOut);Err(anyhow::anyhow!("The job has timed out."))},
             _ = cancellation.wait_for(|cancelled| *cancelled) => {interrupted=Some(Conclusion::Cancelled);Err(anyhow::anyhow!("The job was cancelled."))},
         };
-        job.status.failed |= result.is_err();
         job.status.cancelled = *job.cancel.borrow();
+        job.status.failed |= result.is_err() && !job.status.cancelled;
+        job.sync_status();
         if result.is_err(){job.log.interrupt_step(interrupted.unwrap_or(Conclusion::Failure));}
         let mut result = result;
         while let Some(post) = job.posts.pop() {
+            job.sync_status();
             job.public_step+=1;
             let number=job.public_step;
             let started=Instant::now();
@@ -1355,6 +1354,12 @@ async fn run_job(
 }
 
 impl Job {
+    fn sync_status(&mut self) {
+        if let Some(Value::Object(job)) = self.contexts.values.get_mut("job") {
+            job.insert("status".into(), Value::String(if self.status.cancelled { "cancelled" } else if self.status.failed { "failure" } else { "success" }.into()));
+        }
+    }
+
     fn restore_event(&self) -> Result<PathBuf> {
         let path = self.temp.path().join("event.json");
         let payload = self.contexts.values.get("github").and_then(|github| match github {
@@ -1447,6 +1452,8 @@ impl Job {
             )
             .await?;
         self.contexts.values.insert("job".into(), Value::from_json(&serde_json::json!({"status":"success","services":services,"container":{"id":self.podman.job,"network":self.podman.network}})));
+        self.default_shell = self.plan.default_shell.as_ref().map(|value| text(value, &self.contexts, self.status)).transpose()?;
+        self.default_working_directory = self.plan.default_working_directory.as_ref().map(|value| text(value, &self.contexts, self.status)).transpose()?;
         self.log.finish_step(1, Conclusion::Success, setup);
         let steps = self.plan.steps.clone();
         let mut outputs = BTreeMap::new();
@@ -1633,6 +1640,9 @@ impl Job {
                 } else {
                     self.deadline
                 };
+                let continued = if let Some(template) = &step.continue_on_error {
+                    boolean(template, &self.contexts, self.status)?
+                } else { false };
                 let result = self
                     .action(&step.action, env, deadline, depth, &mut outputs)
                     .await;
@@ -1649,11 +1659,6 @@ impl Job {
                     "success"
                 } else {
                     "failure"
-                };
-                let continued = if let Some(template) = &step.continue_on_error {
-                    boolean(template, &self.contexts, self.status)?
-                } else {
-                    false
                 };
                 conclusion = if outcome == "failure" && continued {
                     "success"
@@ -1680,19 +1685,7 @@ impl Job {
                 }
             }
             parent_outputs.extend(outputs);
-            if let Some(Value::Object(job)) = self.contexts.values.get_mut("job") {
-                job.insert(
-                    "status".into(),
-                    Value::String(
-                        if self.status.failed {
-                            "failure"
-                        } else {
-                            "success"
-                        }
-                        .into(),
-                    ),
-                );
-            }
+            self.sync_status();
             Ok(())
         })
     }
@@ -1713,17 +1706,14 @@ impl Job {
                     working_directory,
                 } => {
                     let script = text(script, &self.contexts, self.status)?;
-                    let shell = shell
-                        .as_ref()
-                        .or(self.plan.default_shell.as_ref())
-                        .map(|value| text(value, &self.contexts, self.status))
-                        .transpose()?;
-                    let directory = working_directory
-                        .as_ref()
-                        .or(self.plan.default_working_directory.as_ref())
-                        .map(|value| text(value, &self.contexts, self.status))
-                        .transpose()?
-                        .unwrap_or_default();
+                    let shell = match shell {
+                        Some(value) => Some(text(value, &self.contexts, self.status)?),
+                        None => self.default_shell.clone(),
+                    };
+                    let directory = match working_directory {
+                        Some(value) => text(value, &self.contexts, self.status)?,
+                        None => self.default_working_directory.clone().unwrap_or_default(),
+                    };
                     let directory = self.options.directory.join(directory);
                     self.script(
                         &script,
@@ -2266,14 +2256,14 @@ mod tests {
     #[test]
     fn dispatch_inputs_take_their_declared_types() {
         let raw: serde_yaml::Value = serde_yaml::from_str(
-            "on:\n  workflow_dispatch:\n    inputs:\n      publish: {type: boolean}\n      count: {type: number}\n      name: {type: string}\n",
+            "on:\n  workflow_dispatch:\n    inputs:\n      publish: {type: boolean}\n      count: {type: number}\n      name: {type: string, default: 'true'}\n",
         )
         .unwrap();
         assert_eq!(
             typed_dispatch_inputs(
                 &raw,
-                serde_json::json!({"publish": "false", "count": "2.5", "name": "true"})
-            ),
+                serde_json::json!({"publish": "false", "count": "2.5"})
+            ).unwrap().typed,
             serde_json::json!({"publish": false, "count": 2.5, "name": "true"})
         );
     }

@@ -210,11 +210,8 @@ pub(super) fn outputs(
         .and_then(|call| call.get("outputs"))
         .and_then(Yaml::as_mapping);
     for (key, spec) in outputs.into_iter().flatten() {
-        let value = spec
-            .get("value")
-            .and_then(Yaml::as_str)
-            .context("Missing workflow output value")?;
-        let value = text(value, contexts, Status::default())?;
+        let value = crate::workflow::scalar_text(spec.get("value").context("Missing workflow output value")?, "workflow output")?;
+        let value = text(&value, contexts, Status::default())?;
         if !masker.contains(&value) {
             result.insert(key.as_str().context("Invalid output name")?.into(), value);
         }
