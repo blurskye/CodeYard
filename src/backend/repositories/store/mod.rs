@@ -1565,11 +1565,12 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         feature: db::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,
     ) -> Result<(), RepoError> {
+        let actor = actor.into();
         match &self.0 {
             Backend::Local(local) => {
                 local
@@ -1586,8 +1587,9 @@ impl RepoStore {
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor,
+                        actor.user_id(),
                         Operation::ConfigureDependencySecurity {
+                            authority: Some(actor),
                             feature,
                             enabled,
                             private_consent,

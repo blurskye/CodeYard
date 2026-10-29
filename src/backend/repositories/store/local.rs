@@ -2901,7 +2901,7 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: db::users::accounts::AccountActor,
         feature: db::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,
@@ -2912,7 +2912,7 @@ impl LocalStore {
             live_write(
                 &pool,
                 repo_id,
-                actor,
+                actor.user_id(),
                 None,
                 &History::SingleCommit,
                 store.path(),

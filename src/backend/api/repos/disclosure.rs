@@ -68,7 +68,10 @@ async fn toggle(
     };
     match records::set_enabled(
         &ctx.state.pool,
-        ctx.user.as_ref().unwrap().id,
+        crate::backend::db::users::accounts::AccountActor::Session {
+            user_id: ctx.user.as_ref().unwrap().id,
+            session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+        },
         loaded.repository.id,
         enabled,
     )

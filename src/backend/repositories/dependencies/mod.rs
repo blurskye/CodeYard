@@ -82,13 +82,14 @@ pub async fn status(
 pub async fn set_enabled(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repo: i64,
     feature: Feature,
     enabled: bool,
     private_consent: bool,
 ) -> Result<(), DependencyError> {
-    let repository = access::check_admin(pool, repo, actor)
+    let authority = actor.into();
+    let repository = access::check_admin(pool, repo, authority.user_id())
         .await
         .map_err(DependencyError::Access)?;
     if repository.is_archived {
@@ -98,7 +99,7 @@ pub async fn set_enabled(
         )));
     }
     repo_store(&repository, cluster)
-        .configure_dependency_security_as(pool, repo, actor, feature, enabled, private_consent)
+        .configure_dependency_security_as(pool, repo, authority, feature, enabled, private_consent)
         .await
         .map_err(DependencyError::Store)
 }
@@ -158,6 +159,7 @@ pub(crate) fn check_publication(
 pub(crate) fn store_error(error: anyhow::Error) -> super::store::RepoError {
     use super::store::{ErrorKind, RepoError};
     use crate::backend::db::repositories::dependencies::Refusal;
+    if error.is::<db::users::accounts::AccountRestricted>() { return RepoError::write_denied(); }
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => RepoError::write_denied(),
         Some(Refusal::Missing) => RepoError::new(ErrorKind::NotFound, "Dependency alert not found"),
