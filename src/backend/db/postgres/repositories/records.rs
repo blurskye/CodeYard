@@ -5,6 +5,11 @@ use crate::backend::db::repositories::records::{
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
 
+pub async fn network_fork_count(pool: &PgPool, repo: i64) -> Result<i64> {
+    Ok(sqlx::query_scalar(crate::backend::db::repositories::records::NETWORK_FORK_COUNT)
+        .bind(repo).fetch_one(pool).await?)
+}
+
 pub async fn create_repository(
     pool: &PgPool,
     owner_id: i64,

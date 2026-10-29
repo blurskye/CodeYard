@@ -3,6 +3,12 @@ use crate::backend::db::models::{Repository, SharedRepository};
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
+pub(crate) const NETWORK_FORK_COUNT: &str = "WITH RECURSIVE ancestors(id,parent) AS (SELECT id,forked_from_id FROM repositories WHERE id=$1 UNION ALL SELECT r.id,r.forked_from_id FROM repositories r JOIN ancestors a ON r.id=a.parent), network(id) AS (SELECT id FROM ancestors WHERE parent IS NULL UNION ALL SELECT r.id FROM repositories r JOIN network n ON r.forked_from_id=n.id) SELECT CASE WHEN COUNT(*)>0 THEN COUNT(*)-1 ELSE 0 END FROM network";
+
+native_operation!(crate::backend::db::postgres::repositories::records::network_fork_count,
+    crate::backend::db::sqlite::repositories::records::network_fork_count,
+    fn network_fork_count(pool: &DbPool, repo: i64) -> Result<i64>);
+
 native_operation!(crate::backend::db::postgres::repositories::records::create_repository,
     crate::backend::db::sqlite::repositories::records::create_repository,
     fn create_repository(
