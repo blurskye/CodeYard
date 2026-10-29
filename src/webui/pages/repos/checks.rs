@@ -20,6 +20,13 @@ pub struct Check {
     pub page: usize,
     pub has_more: bool,
     pub can_rerequest: bool,
+    pub actions: Vec<Action>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Action {
+    pub label: String,
+    pub description: String,
+    pub identifier: String,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Annotation {
@@ -46,6 +53,16 @@ pub fn render(repo: &RepoChrome, check: &Check) -> Element {
                             {csrf(&repo.csrf_token)}
                             input { r#type:"hidden",name:"repository_id",value:repo.id.to_string() }
                             button { r#type:"submit", class:"btn btn-secondary", "Re-run suite" }
+                        }
+                    }
+                    if check.can_rerequest {
+                        for action in &check.actions {
+                            form { method:"post", action:format!("{base}/requested-action"),
+                                {csrf(&repo.csrf_token)}
+                                input { r#type:"hidden", name:"repository_id", value:repo.id.to_string() }
+                                input { r#type:"hidden", name:"identifier", value:action.identifier.clone() }
+                                button { r#type:"submit", class:"btn btn-secondary", title:action.description.clone(), "{action.label}" }
+                            }
                         }
                     }
                     if let Some(url) = &check.details_url { if !url.is_empty() { a { href:url.clone(),rel:"noopener noreferrer", "View details" } } }

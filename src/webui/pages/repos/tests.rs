@@ -397,6 +397,7 @@ fn fixtures() -> Vec<Page> {
             page: 2,
             has_more: true,
             can_rerequest: true,
+            actions: Vec::new(),
         }),
     });
     pages.extend(insight_pages().into_iter().map(|page| Page::Insights {
