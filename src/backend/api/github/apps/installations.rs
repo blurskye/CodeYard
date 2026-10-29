@@ -632,7 +632,7 @@ async fn change_repository(
     if let Some(app) = user_app(state, &auth).await? {
         owned(state, app, id).await?;
     }
-    match db::github_apps::change_repository(&state.pool, auth.user.id, id, repo, add)
+    match db::github_apps::change_repository(&state.pool, (auth.user.id, auth.token.id), id, repo, add)
         .await
         .map_err(Error::unavailable)?
     {

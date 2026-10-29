@@ -238,17 +238,24 @@ async fn change_in_connection(
 }
 pub async fn change_repository(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     id: i64,
     repo: i64,
     add: bool,
 ) -> Result<RepositoryChange> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     let installation: Option<(bool, Option<i64>)> = sqlx::query_as("SELECT i.all_repos,i.org_id FROM github_app_installations i JOIN users u ON u.id=$1 JOIN repositories r ON r.id=$3 WHERE i.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.user_id=u.id OR EXISTS(SELECT 1 FROM org_memberships WHERE org_id=i.org_id AND user_id=u.id AND role='owner'))").bind(actor).bind(id).bind(repo).fetch_optional(&mut *tx).await?;
     let Some((all_repos, org)) = installation else {
         return Ok(RepositoryChange::Missing);
     };
+    if let Some(token) = credential.token_id {
+        if !super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "administration").await? {
+            return Ok(RepositoryChange::Missing);
+        }
+    }
     if all_repos {
         return Ok(RepositoryChange::AllRepositories);
     }

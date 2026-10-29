@@ -115,7 +115,7 @@ pub enum RepositoryChange {
     LastRepository,
 }
 native_operation!(crate::backend::db::postgres::github_apps::change_repository, crate::backend::db::sqlite::github_apps::change_repository,
-    fn change_repository(pool: &DbPool, actor: i64, id: i64, repo: i64, add: bool) -> Result<RepositoryChange>);
+    fn change_repository(pool: &DbPool, actor: impl Into<super::users::tokens::Actor>, id: i64, repo: i64, add: bool) -> Result<RepositoryChange>);
 native_operation!(crate::backend::db::postgres::github_apps::issue, crate::backend::db::sqlite::github_apps::issue,
     #[expect(clippy::too_many_arguments, reason = "Credential issuance persists its explicit installation and permission bounds.")]
     fn issue(pool: &DbPool, app: i64, installation: i64, actor: Option<i64>, source: Option<&str>, hash: &str, permissions: &str, repos: &str, write: bool) -> Result<Option<PersonalAccessToken>>);
