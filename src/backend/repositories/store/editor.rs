@@ -9,9 +9,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
     future::Future,
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin,
     process::ExitStatus,
+    sync::{Arc, LazyLock, Mutex},
     time::Duration,
 };
 
@@ -168,6 +169,29 @@ fn conflict() -> RepoError {
 }
 fn unavailable() -> RepoError {
     RepoError::new(ErrorKind::Unavailable, "Repository storage is unavailable.")
+}
+
+// Preparation crosses RPC requests. Keep isolated objects under a bounded, expiring server
+// lease rather than publishing them in the real object database or accepting a client path.
+pub(super) struct StagedFile {
+    temporary: tempfile::TempDir,
+    destination: PathBuf,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+impl StagedFile {
+    pub(super) fn path(&self) -> &Path { self.temporary.path() }
+}
+static STAGED: LazyLock<Mutex<std::collections::HashMap<String, Arc<StagedFile>>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+static STAGING_SLOTS: LazyLock<Arc<tokio::sync::Semaphore>> =
+    LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(64)));
+
+pub(super) fn claim_staged(path: &Path, prepared: &PreparedFile) -> Result<Option<Arc<StagedFile>>, RepoError> {
+    let Some(key) = &prepared.staging else { return Ok(None); };
+    let mut staged = STAGED.lock().map_err(|_| unavailable())?;
+    let entry = staged.get(key).ok_or_else(|| invalid("The prepared file expired; reopen the editor."))?;
+    if entry.destination != path { return Err(invalid("Invalid prepared file publication.")); }
+    Ok(staged.remove(key))
 }
 
 /// A bare repository on disk that editor commands run against.
@@ -337,6 +361,9 @@ impl Repo<'_> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PreparedFile {
+    /// Opaque owning-store lease; never a filesystem path.
+    #[serde(default)]
+    pub staging: Option<String>,
     #[serde(default)]
     pub authority: Option<crate::backend::db::users::accounts::AccountActor>,
     pub branch: String,
@@ -378,7 +405,6 @@ async fn prepare_commit(
     author: &str,
     email: &str,
 ) -> Result<PreparedFile, RepoError> {
-    let storage = Repo(path);
     if changes.is_empty() {
         return Err(invalid("A commit needs at least one file."));
     }
@@ -393,7 +419,7 @@ async fn prepare_commit(
     }
     let reference =
         crate::backend::git::branch_ref(branch).ok_or_else(|| invalid("Invalid branch name."))?;
-    let current = storage.direct_ref(&reference).await?;
+    let current = Repo(path).direct_ref(&reference).await?;
     let expected = if expected_revision == "unborn" {
         None
     } else {
@@ -406,6 +432,17 @@ async fn prepare_commit(
         }
         return Err(conflict());
     }
+    let permit = STAGING_SLOTS.clone().try_acquire_owned().map_err(|_| unavailable())?;
+    let temporary = tempfile::tempdir().map_err(|_| unavailable())?;
+    crate::backend::git::repository::initialize_repository(temporary.path(), None, branch)
+        .await.map_err(RepoError::from)?;
+    let objects = std::fs::canonicalize(path.join("objects")).map_err(|_| unavailable())?;
+    let objects = objects.to_str().filter(|path| !path.contains(['\r', '\n']))
+        .ok_or_else(unavailable)?;
+    tokio::fs::write(temporary.path().join("objects/info/alternates"), format!("{objects}\n"))
+        .await.map_err(|_| unavailable())?;
+    let staged = Arc::new(StagedFile { temporary, destination: path.to_owned(), _permit: permit });
+    let storage = Repo(staged.path());
     let tree = match &current {
         Some(parent) => Some(oid(&storage
             .checked(
@@ -437,7 +474,15 @@ async fn prepare_commit(
     if metadata.parents != current.iter().cloned().collect::<Vec<_>>() {
         return Err(unavailable());
     }
+    let key = uuid::Uuid::new_v4().to_string();
+    STAGED.lock().map_err(|_| unavailable())?.insert(key.clone(), staged);
+    let expires = key.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(15 * 60)).await;
+        if let Ok(mut staged) = STAGED.lock() { staged.remove(&expires); }
+    });
     Ok(PreparedFile {
+        staging: Some(key),
         authority: None,
         branch: branch.to_owned(),
         reference,
@@ -520,7 +565,13 @@ pub(super) async fn prepare_upload(
 
 /// Moves the branch to the prepared commit; `Conflict` if it moved meanwhile.
 pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<CommitInfo, RepoError> {
+    let staged = claim_staged(path, prepared)?;
+    publish_staged(path, prepared, staged.as_deref()).await
+}
+
+pub(super) async fn publish_staged(path: &Path, prepared: &PreparedFile, staged: Option<&StagedFile>) -> Result<CommitInfo, RepoError> {
     let repo = Repo(path);
+    let objects = Repo(staged.map_or(path, StagedFile::path));
     if crate::backend::git::branch_ref(&prepared.branch).as_deref()
         != Some(prepared.reference.as_str())
         || !crate::backend::git::is_full_commit_id(&prepared.commit.sha)
@@ -541,7 +592,7 @@ pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<Comm
             return Err(invalid("The branch name conflicts with an existing branch namespace."));
         }
     }
-    let bytes = repo
+    let bytes = objects
         .checked(&["cat-file", "commit", &prepared.commit.sha], b"", None)
         .await?;
     let commit = decode_commit(&bytes, &prepared.commit.sha)?;
@@ -559,7 +610,16 @@ pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<Comm
         prepared.commit.sha,
         prepared.expected.as_deref().unwrap_or(ZERO)
     );
-    let result = repo.command(&["update-ref", "--stdin"], transaction.as_bytes(), None).await;
+    let result = if staged.is_some() {
+        let destination = std::path::absolute(path).map_err(|_| unavailable())?;
+        let destination = destination.to_str().ok_or_else(unavailable)?;
+        let lease = format!("--force-with-lease={}:{}", prepared.reference, prepared.expected.as_deref().unwrap_or_default());
+        let refspec = format!("{}:{}", prepared.commit.sha, prepared.reference);
+        // receive-pack quarantines incoming objects until the destination CAS accepts them.
+        objects.command(&["push", "--porcelain", "--no-verify", &lease, "--", destination, &refspec], b"", None).await
+    } else {
+        repo.command(&["update-ref", "--stdin"], transaction.as_bytes(), None).await
+    };
     if result.as_ref().is_ok_and(|(status, _)| status.success()) {
         return Ok(prepared.commit.clone());
     }
@@ -766,6 +826,7 @@ mod tests {
         .await
         .expect("shared directories should not be rebuilt for every file")
         .unwrap();
+        publish(root.path(), &prepared).await.unwrap();
         let tree = repo
             .find_commit(git2::Oid::from_str(&prepared.commit.sha).unwrap())
             .unwrap()
@@ -950,6 +1011,7 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
+        publish(root.path(), &prepared).await.unwrap();
         let tree = repo
             .find_commit(git2::Oid::from_str(&prepared.commit.sha).unwrap())
             .unwrap()

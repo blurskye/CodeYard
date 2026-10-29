@@ -63,13 +63,21 @@ impl LocalStore {
                 "Import requires an empty repository",
             ));
         }
+        // All object inspection happens in isolated storage. Refusal must not retain the
+        // incoming pack in a repository whose maintenance deliberately never prunes objects.
+        let quarantine = tempfile::tempdir()
+            .map_err(|_| unavailable("Import storage unavailable"))?;
+        git::repository::initialize_repository(quarantine.path(), None, "main")
+            .await.map_err(RepoError::from)?;
+        let staged = LocalStore::new(quarantine.path().to_str()
+            .ok_or_else(|| unavailable("Import storage unavailable"))?, None);
         let temp = tempfile::NamedTempFile::new()
             .map_err(|_| unavailable("Import storage unavailable"))?;
         if !import.refs.is_empty() {
             tokio::fs::write(temp.path(), pack)
                 .await
                 .map_err(|_| unavailable("Import storage unavailable"))?;
-            self.index_pack(temp.path(), true).await?;
+            staged.index_pack(temp.path(), true).await?;
         }
         for (name, sha) in &import.refs {
             let branch = name.strip_prefix("refs/heads/");
@@ -85,14 +93,14 @@ impl LocalStore {
                 actor,
                 write.as_ref(),
                 &History::Stored {
-                    repository: self.path(),
+                    repository: staged.path(),
                 },
                 self.path(),
                 self.node_id,
             )
             .await?;
             // A tag may not name a missing or malformed object either.
-            self.git_object_kind(sha).await?;
+            staged.git_object_kind(sha).await?;
         }
         // The imported names must fit the same count and byte limits as any other branch or tag.
         let held = self.blocking(git::branches_and_tags_in_use).await?;
@@ -109,7 +117,7 @@ impl LocalStore {
             .filter(|(name, _)| name.starts_with("refs/tags/"))
             .map(|(name, sha)| (name.clone(), sha.clone()))
             .collect();
-        self.blocking(move |path| git::check_tag_budget(path, None, &tags))
+        staged.blocking(move |path| git::check_tag_budget(path, None, &tags))
             .await?;
         // A reserved immutable tag keeps its published object, even in a repository recreated at
         // the same owner and name.
@@ -150,7 +158,7 @@ impl LocalStore {
             .collect::<Vec<_>>();
         let writes = writes.iter().collect::<Vec<_>>();
         let _change = self
-            .begin_branch_change(pool, repo_id, actor, &writes, publication, None)
+            .begin_branch_change(pool, repo_id, actor, &writes, publication, Some(staged.path()))
             .await?;
         // Recheck import cancellation and credential authority after metadata preparation.
         self.import_authority(pool, repo_id, actor, &import).await?;
@@ -162,11 +170,18 @@ impl LocalStore {
                 .values()
                 .map(|sha| (ZERO_SHA.to_owned(), sha.clone()))
                 .collect();
-            self.check_workflow_grant(pool, Some(*token), updates, None)
+            staged.check_workflow_grant(pool, Some(*token), updates, None)
                 .await?;
         }
         let mut refs = self.mirror_refs().await?;
         refs.extend(import.refs.clone());
+        if refs.len() > git::MAX_MIRROR_REFS
+            || refs.keys().any(|name| name.len() > 4096)
+            || refs.keys().try_fold(0usize, |bytes, name| bytes.checked_add(git::repository::ref_listing_bytes(name)))
+                .is_none_or(|bytes| bytes > git::MAX_MIRROR_REF_BYTES)
+        {
+            return Err(RepoError::response_too_large());
+        }
         let branch = import.default_branch.as_deref()
             .filter(|branch| import.refs.contains_key(&format!("refs/heads/{branch}")))
             .or_else(|| crate::backend::repositories::reads::preferred_branch(
@@ -179,8 +194,31 @@ impl LocalStore {
             db::repositories::records::update_repo_default_branch(pool, repo_id, branch)
                 .await.map_err(|_| RepoError::authority_unavailable())?;
         }
-        self.import_authority(pool, repo_id, actor, &import).await?;
-        self.set_refs(&refs).await?;
+        // Put refspecs in the isolated repository's config rather than argv: a valid mirror
+        // can exceed the host argument-size limit. No tracking refs exist, so the lease
+        // requires every imported destination ref to remain absent.
+        if !import.refs.is_empty() {
+            use tokio::io::AsyncWriteExt;
+            let quote = |value: &str| value.replace('\\', "\\\\").replace('"', "\\\"");
+            let destination = std::path::absolute(self.path()).map_err(|_| unavailable("Invalid import destination"))?;
+            let destination = destination.to_str().ok_or_else(|| unavailable("Invalid import destination"))?;
+            let mut config = format!("\n[remote \"codeyard-import\"]\n\turl = \"{}\"\n", quote(destination));
+            for (name, sha) in &import.refs {
+                config.push_str(&format!("\tpush = \"{}\"\n", quote(&format!("{sha}:{name}"))));
+            }
+            let mut file = tokio::fs::OpenOptions::new().append(true).open(staged.path().join("config"))
+                .await.map_err(|_| unavailable("Import storage unavailable"))?;
+            file.write_all(config.as_bytes()).await.map_err(|_| unavailable("Import storage unavailable"))?;
+            self.import_authority(pool, repo_id, actor, &import).await?;
+            // receive-pack owns quarantine migration and the atomic destination CAS.
+            let (status, _) = staged.git(&["push", "--atomic", "--porcelain", "--no-verify", "--force-with-lease", "codeyard-import"]).await?;
+            if !status.success() {
+                let current = self.mirror_refs().await?;
+                if !import.refs.iter().all(|(name, sha)| current.get(name) == Some(sha)) {
+                    return Err(unavailable("Import publication failed"));
+                }
+            }
+        }
         for tip in import.refs.values().collect::<std::collections::HashSet<_>>() {
             if let Ok(commit) = self.commit(tip).await {
                 if let Err(error) = db::secret_scanning::enqueue(pool, repo_id, &commit.sha, actor).await {

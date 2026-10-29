@@ -328,13 +328,18 @@ impl RepoStore {
         repo_id: i64,
         actor: i64,
         import: crate::backend::repositories::imports::GitImport,
-        pack: &[u8],
+        pack: Vec<u8>,
     ) -> Result<(), RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.import_git(pool, repo_id, actor, import, pack).await,
+            Backend::Local(local) => {
+                let (local, pool) = (local.clone(), pool.clone());
+                tokio::spawn(async move {
+                    local.import_git(&pool, repo_id, actor, import, &pack).await
+                }).await.map_err(|_| RepoError::applied_followup_failed())?
+            }
             Backend::Remote(remote) => {
                 remote
-                    .call_as(actor, Operation::ImportGit { import }, pack)
+                    .call_as(actor, Operation::ImportGit { import }, &pack)
                     .await
             }
         }

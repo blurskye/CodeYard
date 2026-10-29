@@ -1831,6 +1831,9 @@ impl LocalStore {
         prepared: &editor::PreparedFile,
         dependency_publication: Option<&db::repositories::dependencies::Publication>,
     ) -> Result<CommitInfo, RepoError> {
+        let staged = editor::claim_staged(self.path(), prepared)?;
+        let prepared_path = staged.as_ref().map_or(self.path(), |staged| staged.path());
+        let quarantine = staged.as_ref().map(|staged| staged.path().join("objects"));
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -1848,7 +1851,7 @@ impl LocalStore {
         // the source history that it brings into the destination.
         let history = if prepared.new_branch {
             History::Stored {
-                repository: self.path(),
+                repository: prepared_path,
             }
         } else {
             History::SingleCommit
@@ -1910,13 +1913,13 @@ impl LocalStore {
                 &repository,
                 actor,
                 self.path(),
-                None,
+                quarantine.as_deref(),
                 std::slice::from_ref(&prepared.commit.sha),
             )
             .await
             .map_err(RepoError::from)?;
         let _change = self
-            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
+            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, Some(prepared_path))
             .await?;
         if let Some(authority) = &prepared.authority {
             if authority.user_id() != actor { return Err(RepoError::write_denied()); }
@@ -1924,12 +1927,12 @@ impl LocalStore {
                 self.check_workflow_grant(pool, Some(*token_id), vec![(
                     prepared.expected.clone().unwrap_or_else(|| editor::ZERO.to_owned()),
                     prepared.commit.sha.clone(),
-                )], None).await?;
+                )], quarantine.clone()).await?;
             }
             access::check_publication_actor(pool, authority, &repository).await?;
         }
         let commit = publication
-            .scope(editor::publish(self.path(), prepared))
+            .scope(editor::publish_staged(self.path(), prepared, staged.as_deref()))
             .await?;
         let bypass_followup = record_secret_bypasses(pool, repo_id, actor, bypasses).await;
         let followup = self
