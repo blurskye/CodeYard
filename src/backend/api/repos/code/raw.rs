@@ -3,7 +3,7 @@ use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::{load, load_refs_from_repo, resolve};
 use crate::backend::app::AppState;
-use crate::backend::repositories::store::{repo_store, BlobBytes, BlobRange, RepoError};
+use crate::backend::repositories::store::{repo_store, BlobBytes, RepoError};
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -55,47 +55,7 @@ pub fn raw_content_type(path: &str, is_binary: bool) -> &'static str {
     }
 }
 
-pub(crate) fn requested_range(headers: &HeaderMap) -> Result<(BlobRange, bool), ()> {
-    let mut values = headers.get_all(header::RANGE).iter();
-    let Some(value) = values.next() else {
-        return Ok((BlobRange::Full, false));
-    };
-    if values.next().is_some() {
-        return Err(());
-    }
-    let value = value.to_str().map_err(|_| ())?;
-    let value = value.strip_prefix("bytes=").ok_or(())?;
-    if value.contains(',') {
-        return Err(());
-    }
-    let (start, end) = value.split_once('-').ok_or(())?;
-    let range = match (start.is_empty(), end.is_empty()) {
-        (false, false) => {
-            let start = start.parse::<u64>().map_err(|_| ())?;
-            let end = end.parse::<u64>().map_err(|_| ())?;
-            if end < start {
-                return Err(());
-            }
-            BlobRange::Bytes {
-                start,
-                end: Some(end),
-            }
-        }
-        (false, true) => BlobRange::Bytes {
-            start: start.parse::<u64>().map_err(|_| ())?,
-            end: None,
-        },
-        (true, false) => {
-            let length = end.parse::<u64>().map_err(|_| ())?;
-            if length == 0 {
-                return Err(());
-            }
-            BlobRange::Suffix { length }
-        }
-        (true, true) => return Err(()),
-    };
-    Ok((range, true))
-}
+pub(crate) use crate::backend::api::http::range::requested as requested_range;
 
 fn raw_store_error(error: RepoError) -> (StatusCode, Json<ApiError>) {
     if error.is_response_too_large() {

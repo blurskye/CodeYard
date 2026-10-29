@@ -1,6 +1,7 @@
 //! Where uploaded files live: a directory under the state directory, or an
 //! S3-compatible bucket when the S3_* environment variables are set.
 pub mod local;
+pub mod range;
 pub mod s3;
 
 use anyhow::Result;

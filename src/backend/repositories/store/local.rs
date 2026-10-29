@@ -55,27 +55,7 @@ fn unavailable(message: &'static str) -> RepoError {
 }
 
 fn normalize_blob_range(range: BlobRange, size: u64) -> Result<(u64, usize), RepoError> {
-    let (offset, length) = match range {
-        BlobRange::Full => (0, size),
-        BlobRange::Window { offset, length } => {
-            let offset = offset.min(size);
-            (offset, length.min(size - offset))
-        }
-        BlobRange::Bytes { start, end } => {
-            if start >= size || end.is_some_and(|end| end < start) {
-                return Err(RepoError::range_not_satisfiable());
-            }
-            let end = end.unwrap_or(size - 1).min(size - 1);
-            (start, end - start + 1)
-        }
-        BlobRange::Suffix { length } => {
-            if length == 0 || size == 0 {
-                return Err(RepoError::range_not_satisfiable());
-            }
-            let length = length.min(size);
-            (size - length, length)
-        }
-    };
+    let (offset, length) = range.normalize(size).map_err(|_| RepoError::range_not_satisfiable())?;
     let length = usize::try_from(length).map_err(|_| RepoError::response_too_large())?;
     if length > MAX_BLOB_RESPONSE_BYTES {
         return Err(RepoError::response_too_large());

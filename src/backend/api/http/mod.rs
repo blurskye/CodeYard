@@ -8,6 +8,7 @@ pub(crate) mod error;
 pub(crate) mod interaction_proofs;
 pub(crate) mod middleware;
 pub(crate) mod origin;
+pub(crate) mod range;
 pub(crate) mod render;
 pub(crate) mod session;
 pub(crate) mod static_files;

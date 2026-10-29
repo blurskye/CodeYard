@@ -608,44 +608,11 @@ async fn manifest_blobs(
 }
 
 pub(super) fn byte_range(headers: &HeaderMap, size: u64) -> Result<Option<(u64, u64)>> {
-    let Some(value) = headers.get(header::RANGE) else {
-        return Ok(None);
-    };
-    let invalid = || {
-        Error(
-            StatusCode::RANGE_NOT_SATISFIABLE,
-            "RANGE_INVALID",
-            "Invalid blob range",
-        )
-    };
-    let value = value
-        .to_str()
-        .map_err(|_| invalid())?
-        .strip_prefix("bytes=")
-        .ok_or_else(invalid)?;
-    if size == 0 || headers.get_all(header::RANGE).iter().count() != 1 {
-        return Err(invalid());
-    }
-    let (start, end) = value.split_once('-').ok_or_else(invalid)?;
-    let (start, end) = if start.is_empty() {
-        let suffix: u64 = end.parse().map_err(|_| invalid())?;
-        if suffix == 0 {
-            return Err(invalid());
-        }
-        (size.saturating_sub(suffix), size - 1)
-    } else {
-        let start: u64 = start.parse().map_err(|_| invalid())?;
-        let end = if end.is_empty() {
-            size - 1
-        } else {
-            end.parse::<u64>().map_err(|_| invalid())?.min(size - 1)
-        };
-        (start, end)
-    };
-    if start >= size || end < start {
-        return Err(invalid());
-    }
-    Ok(Some((start, end)))
+    let invalid = || Error(StatusCode::RANGE_NOT_SATISFIABLE, "RANGE_INVALID", "Invalid blob range");
+    let (range, partial) = crate::backend::api::http::range::requested(headers).map_err(|_| invalid())?;
+    if !partial { return Ok(None); }
+    let (start, length) = range.normalize(size).map_err(|_| invalid())?;
+    Ok(Some((start, start + length - 1)))
 }
 
 pub(super) async fn download(

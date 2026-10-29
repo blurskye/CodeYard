@@ -519,47 +519,13 @@ pub(super) async fn download(
     let parts: Vec<BlobPart> =
         serde_json::from_str(object.manifest.as_deref().ok_or_else(missing)?)
             .map_err(|_| invalid())?;
-    let range = headers
-        .get(header::RANGE)
-        .or_else(|| headers.get("x-ms-range"))
-        .map(|v| v.to_str().map_err(|_| invalid()))
-        .transpose()?;
-    let (start, end) = match range {
-        None => (0, object.size),
-        Some(value) => {
-            let (start, end) = value
-                .strip_prefix("bytes=")
-                .and_then(|v| v.split_once('-'))
-                .ok_or_else(invalid)?;
-            let (start, end) = if start.is_empty() {
-                let suffix: i64 = end.parse().map_err(|_| invalid())?;
-                if suffix <= 0 {
-                    return Err(invalid());
-                }
-                ((object.size - suffix).max(0), object.size)
-            } else {
-                let start: i64 = start.parse().map_err(|_| invalid())?;
-                let end = if end.is_empty() {
-                    object.size
-                } else {
-                    end.parse::<i64>()
-                        .map_err(|_| invalid())?
-                        .checked_add(1)
-                        .ok_or_else(invalid)?
-                        .min(object.size)
-                };
-                (start, end)
-            };
-            if start < 0 || start >= end || start >= object.size {
-                return Err(Error(
-                    StatusCode::RANGE_NOT_SATISFIABLE,
-                    "out_of_range",
-                    "Invalid byte range",
-                ));
-            }
-            (start, end)
-        }
-    };
+    let invalid_range = || Error(StatusCode::RANGE_NOT_SATISFIABLE, "out_of_range", "Invalid byte range");
+    let name = if headers.contains_key(header::RANGE) { "range" } else { "x-ms-range" };
+    let (range, partial) = crate::backend::api::http::range::requested_header(headers, name)
+        .map_err(|_| invalid_range())?;
+    let size = u64::try_from(object.size).map_err(|_| invalid_range())?;
+    let (start, length) = range.normalize(size).map_err(|_| invalid_range())?;
+    let (start, end) = (start as i64, (start + length) as i64);
     let store = state.storage.clone();
     let stream = futures_util::stream::try_unfold(
         (parts, start, end, 0usize, 0i64, None::<Box<dyn tokio::io::AsyncRead + Unpin + Send>>, store, permit),
@@ -594,7 +560,7 @@ pub(super) async fn download(
         },
     );
     let mut response = Response::builder()
-        .status(if range.is_some() {
+        .status(if partial {
             StatusCode::PARTIAL_CONTENT
         } else {
             StatusCode::OK
@@ -616,7 +582,7 @@ pub(super) async fn download(
             header::CONTENT_DISPOSITION,
             crate::backend::storage::attachment_disposition(&format!("{}.zip", object.name)),
         );
-    if range.is_some() {
+    if partial {
         response = response.header(
             header::CONTENT_RANGE,
             format!("bytes {start}-{}/{}", end - 1, object.size),

@@ -65,17 +65,7 @@ pub struct BlobBytes {
     pub mode: u32,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BlobRange {
-    #[default]
-    Full,
-    /// A preview window. An offset beyond EOF produces an empty window at EOF.
-    Window { offset: u64, length: u64 },
-    /// An HTTP byte range with an inclusive optional end.
-    Bytes { start: u64, end: Option<u64> },
-    /// The final `length` bytes.
-    Suffix { length: u64 },
-}
+pub use crate::backend::storage::range::ByteRange as BlobRange;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct BlobMetadata {
