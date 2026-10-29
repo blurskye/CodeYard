@@ -226,6 +226,9 @@ async fn remove_expired_web_rows(pool: &DbPool, storage: &crate::backend::storag
     if let Err(error) = crate::backend::db::dependency_graph::prune_expired_reports(pool).await {
         warn!(%error, "could not prune expired SBOM reports");
     }
+    if let Err(error) = crate::backend::db::secret_scanning::prune_expired_bypasses(pool).await {
+        warn!(%error, "could not prune expired unused secret scanning bypasses");
+    }
     match storage.remove_stale_staging().await {
         Ok(0) => {}
         Ok(removed) => info!(removed, "removed stale upload staging files"),

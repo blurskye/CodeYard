@@ -156,6 +156,9 @@ pub struct Bypass {
     pub used_at: Option<DateTime<Utc>>,
 }
 
+native_operation!(super::postgres::secret_scanning::prune_expired_bypasses, super::sqlite::secret_scanning::prune_expired_bypasses,
+    fn prune_expired_bypasses(pool: &DbPool) -> Result<u64>);
+
 native_operation!(super::postgres::secret_scanning::protection, super::sqlite::secret_scanning::protection,
     fn protection(pool: &DbPool, actor: i64, repo: i64, hash: &str, kind: &str) -> Result<Option<Bypass>>);
 native_operation!(super::postgres::secret_scanning::bypass, super::sqlite::secret_scanning::bypass,

@@ -3165,6 +3165,7 @@ CREATE TABLE secret_scanning_bypasses (
     used_at TIMESTAMPTZ
 );
 CREATE INDEX secret_scanning_bypasses_value ON secret_scanning_bypasses(repo_id, actor_id, secret_hash);
+CREATE INDEX secret_scanning_bypasses_unused_expiry ON secret_scanning_bypasses(expires_at, id) WHERE used_at IS NULL;
 
 CREATE TABLE secret_scanning_patterns (
     id BIGSERIAL PRIMARY KEY,
