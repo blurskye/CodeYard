@@ -1,7 +1,7 @@
 use crate::backend::{
     db::vulnerabilities::*,
     dependency_graph::Snapshot,
-    vulnerabilities::{self, Advisory},
+    vulnerabilities::Advisory,
 };
 use anyhow::{ensure, Result};
 use sqlx::PgPool;
@@ -19,24 +19,7 @@ pub async fn save_settings(
     session: &str,
     settings: &Settings,
 ) -> Result<()> {
-    let url = url::Url::parse(&settings.base_url)?;
-    ensure!(
-        matches!(url.scheme(), "http" | "https")
-            && url.host_str().is_some()
-            && url.username().is_empty()
-            && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none(),
-        Refusal::Invalid
-    );
-    let ecosystems: Vec<String> = serde_json::from_str(&settings.ecosystems)?;
-    ensure!(
-        ecosystems.len() <= 10
-            && ecosystems
-                .iter()
-                .all(|e| vulnerabilities::ECOSYSTEMS.contains(&e.as_str())),
-        Refusal::Invalid
-    );
+    settings.validate()?;
     let mut tx = pool.begin().await?;
     ensure!(
         super::users::transitions::active_admin(&mut tx, actor).await?
