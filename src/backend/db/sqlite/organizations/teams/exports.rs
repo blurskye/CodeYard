@@ -16,8 +16,7 @@ pub async fn list_direct_organization_team_members(
     if !team_visible(&mut tx, actor, role, &team).await? {
         return Ok(Denied);
     }
-    let sql = TEAM_MEMBERS_PAGE.replace("effective_team_memberships", "team_memberships");
-    let members = sqlx::query_as(&sql)
+    let members = sqlx::query_as("SELECT tm.* FROM team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=?1 WHERE tm.team_id=?2 AND tm.id>?3 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') ORDER BY tm.id LIMIT ?4")
         .bind(org)
         .bind(team.id)
         .bind(page.after)
