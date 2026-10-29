@@ -65,11 +65,10 @@ pub(super) async fn documents_across(
     for (_, indexes) in groups {
         let (repo, owner, _) = items[indexes[0]];
         let group: Vec<AssignedItem> = indexes.iter().map(|&index| items[index].2).collect();
-        for (index, value) in indexes
-            .into_iter()
-            .zip(documents(pool, reader, repo, owner, &group).await?)
-        {
-            values[index] = value;
+        for (indexes, group) in indexes.chunks(100).zip(group.chunks(100)) {
+            for (&index, value) in indexes.iter().zip(documents_page(pool, reader, repo, owner, group).await?) {
+                values[index] = value;
+            }
         }
     }
     Ok(values)
@@ -86,7 +85,7 @@ pub(super) async fn documents(
 ) -> Result<Vec<Value>> {
     let mut values = Vec::with_capacity(items.len());
     for page in items.chunks(100) {
-        values.extend(documents_page(pool, reader, repo, owner, page).await?);
+        values.extend(documents_page(pool, reader, repo, owner, page).await?.into_iter().filter(|value| !value.is_null()));
     }
     Ok(values)
 }
@@ -137,9 +136,6 @@ async fn documents_page(
         AssignedItem::Issue(id) => issues.contains_key(&id),
         AssignedItem::PullRequest(id) => pulls.contains_key(&id),
     };
-    if !items.iter().all(found) {
-        return Err(Error::missing());
-    }
     let milestones: HashMap<i64, db::models::MilestoneSummary> =
         db::milestones::get_milestones_by_ids(
             pool,
@@ -272,6 +268,7 @@ async fn documents_page(
     };
     let mut values = Vec::with_capacity(items.len());
     for item in items {
+        if !found(item) { values.push(Value::Null); continue; }
         let (pull, id) = match *item {
             AssignedItem::Issue(id) => (false, id),
             AssignedItem::PullRequest(id) => (true, id),
@@ -359,6 +356,16 @@ async fn documents_page(
             None => Value::Null,
         };
         values.push(value);
+    }
+    // Nothing read after an earlier ACL snapshot may escape through a now-private repository.
+    if let Reader::Request(state, credential) = reader {
+        for (pull, ids, scope) in [(false, &issue_ids, "issues"), (true, &pull_ids, "pull-requests")] {
+            if !ids.is_empty() && !auth::readable_repositories(state, credential, &[repo.id], scope).await?.contains(&repo.id) {
+                for (value, item) in values.iter_mut().zip(items) {
+                    if matches!(item, AssignedItem::PullRequest(_)) == pull { *value = Value::Null; }
+                }
+            }
+        }
     }
     Ok(values)
 }

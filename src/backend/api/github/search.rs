@@ -92,7 +92,8 @@ async fn search_issues(
     let owners = db::repositories::records::repository_owner_names(&state.pool, &repo_ids)
         .await
         .map_err(Error::unavailable)?;
-    let mut items = Vec::<Value>::new();
+    let mut selected = Vec::new();
+    let mut scores = Vec::new();
     let mut incomplete = false;
     for (id, repo_id, pull_request, score) in results.items {
         if !readable.contains(&repo_id) {
@@ -109,7 +110,12 @@ async fn search_issues(
         } else {
             AssignedItem::Issue(id)
         };
-        let mut value = issues::document(&state.pool, repo, owner, item).await?;
+        selected.push((repo, owner.as_str(), item));
+        scores.push(score);
+    }
+    let mut items = Vec::<Value>::new();
+    for (mut value, score) in issues::documents_across(&state.pool, issues::Reader::Request(&state, auth.as_ref()), &selected).await?.into_iter().zip(scores) {
+        if value.is_null() { incomplete = true; continue; }
         value["score"] = json!(score);
         items.push(value);
     }
