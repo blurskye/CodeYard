@@ -10,6 +10,7 @@ pub mod query;
 pub const MAX_DEFINITIONS: usize = 100;
 pub const MAX_ALLOWED_VALUES: usize = 200;
 pub const MAX_VALUE_BYTES: usize = 1024;
+pub const MAX_FORM_VALUE_BYTES: usize = MAX_ALLOWED_VALUES * MAX_VALUE_BYTES + 2 * (MAX_ALLOWED_VALUES - 1);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {

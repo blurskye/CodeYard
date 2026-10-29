@@ -100,7 +100,7 @@ impl WorkflowMatchBudget {
         }
     }
 
-    fn charge(
+    pub(crate) fn charge(
         &mut self,
         pattern_bytes: usize,
         value_bytes: usize,
