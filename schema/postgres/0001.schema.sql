@@ -1495,6 +1495,12 @@ CREATE TABLE user_blocks (
 );
 CREATE INDEX idx_user_blocks_target ON user_blocks(blocked_id,user_id);
 
+-- Successful signed-byte verifications survive enrollment/key deletion. No signed content is stored.
+CREATE TABLE signature_verifications (
+    input_hash TEXT PRIMARY KEY CHECK (length(input_hash) = 64),
+    verified_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
 CREATE TABLE gpg_keys (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

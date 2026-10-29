@@ -166,6 +166,12 @@ CREATE TABLE ssh_keys (
     CONSTRAINT ssh_keys_fingerprint_unique UNIQUE (fingerprint)
 );
 
+-- Successful signed-byte verifications survive enrollment/key deletion. No signed content is stored.
+CREATE TABLE signature_verifications (
+    input_hash TEXT PRIMARY KEY NOT NULL CHECK (length(input_hash) = 64),
+    verified_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+);
+
 CREATE TABLE gpg_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

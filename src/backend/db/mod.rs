@@ -98,6 +98,7 @@ pub mod rulesets;
 pub mod runners;
 pub mod secret_scanning;
 pub mod secrets;
+pub mod signature_verifications;
 pub mod source_imports;
 pub mod suggestions;
 pub mod timeline;

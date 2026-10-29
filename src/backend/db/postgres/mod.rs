@@ -76,6 +76,7 @@ pub(crate) mod repository_stats;
 pub(crate) mod runners;
 pub(crate) mod secret_scanning;
 pub(crate) mod secrets;
+pub(crate) mod signature_verifications;
 pub(crate) mod source_imports;
 pub(crate) mod suggestions;
 pub(crate) mod timeline;
