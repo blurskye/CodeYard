@@ -14,6 +14,13 @@ pub async fn authenticate(pool: &PgPool, hash: &str) -> Result<Option<RuntimeRun
         .bind(hash).fetch_optional(pool).await?)
 }
 
+/// Site policy changes fence cache writes before either side retains repository rows.
+pub(crate) async fn lock_site_cache_policy(connection: &mut sqlx::PgConnection, exclusive: bool) -> Result<()> {
+    sqlx::query(if exclusive { "SELECT pg_advisory_xact_lock(723947125)" } else { "SELECT pg_advisory_xact_lock_shared(723947125)" })
+        .execute(connection).await?;
+    Ok(())
+}
+
 pub async fn create_object(pool: &PgPool, new: NewObject<'_>) -> Result<Option<ActionObject>> {
     // Fork writes belong only to their derived pull-request merge-ref scope.
     if new.kind == "cache" && new.run.is_fork && !(new.run.branch.starts_with("refs/pull/") && new.run.branch.ends_with("/merge")) {
@@ -21,6 +28,7 @@ pub async fn create_object(pool: &PgPool, new: NewObject<'_>) -> Result<Option<A
     }
     let now = chrono::Utc::now().timestamp();
     let mut tx = pool.begin().await?;
+    if new.kind == "cache" { lock_site_cache_policy(&mut tx, false).await?; }
     sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR UPDATE")
         .bind(new.run.repo_id)
         .execute(&mut *tx)
@@ -102,6 +110,7 @@ pub async fn stage_block(
     limit: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
+    lock_site_cache_policy(&mut tx, false).await?;
     let repo: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM actions_objects WHERE id=$1")
         .bind(object_id)
         .fetch_optional(&mut *tx)
@@ -120,6 +129,7 @@ pub async fn stage_block(
     let Some(object) = object.filter(|o| o.manifest.is_none() && !o.finalized) else {
         return Ok(false);
     };
+    let limit = if object.kind == "cache" { limit.min(cache_policy(&mut tx, repo).await?.0) } else { limit };
     let total: i64 = sqlx::query_scalar(
         "SELECT CAST(COALESCE(SUM(size),0) AS BIGINT) FROM actions_blob_parts WHERE object_id=$1 AND block_id<>$2",
     )
@@ -264,6 +274,7 @@ pub async fn finalize_object(
     cache_limit: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
+    lock_site_cache_policy(&mut tx, false).await?;
     // Serialize the repository's finalizations so concurrent uploads cannot exceed its cache quota.
     let repo: Option<i64> =
         sqlx::query_scalar("SELECT repo_id FROM actions_objects WHERE id=$1 AND run_id=$2")

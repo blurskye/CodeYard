@@ -23,6 +23,11 @@ pub struct ActionsSettings {
 }
 
 impl ActionsSettings {
+    pub(crate) fn tightens_cache_limits(&self, previous: &Self) -> bool {
+        self.cache_size_gib.unwrap_or(10) < previous.cache_size_gib.unwrap_or(10)
+            || self.cache_retention_days.unwrap_or(7) < previous.cache_retention_days.unwrap_or(7)
+    }
+
     pub fn engine_enabled(&self, engine: &str) -> bool {
         match engine {
             "codeyard-actions" => self.codeyard_actions_enabled,

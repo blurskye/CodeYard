@@ -80,6 +80,7 @@ pub async fn save_actions_settings(
     {
         return Ok(false);
     }
+    let previous = get_actions_settings(&mut *tx).await?;
     sqlx::query(
         r#"
         INSERT INTO actions_settings (id, enabled, run_timeout_minutes, job_cpus, job_memory_gib, runner_image, results_url, cache_size_gib, cache_retention_days, artifact_retention_days, default_workflow_permissions, default_engine, codeyard_actions_enabled, act_enabled)
@@ -116,13 +117,12 @@ pub async fn save_actions_settings(
     .bind(settings.act_enabled)
     .execute(&mut *tx)
     .await?;
-    // The site cache limits apply to every repository's stored caches.
-    let cached: Vec<i64> =
-        sqlx::query_scalar("SELECT DISTINCT repo_id FROM actions_objects WHERE kind='cache'")
-            .fetch_all(&mut *tx)
-            .await?;
-    for repo in cached {
-        super::action_objects::apply_cache_policy(&mut tx, repo).await?;
+    if settings.tightens_cache_limits(&previous) {
+        let cached: Vec<i64> = sqlx::query_scalar("SELECT DISTINCT repo_id FROM actions_objects WHERE kind='cache'")
+            .fetch_all(&mut *tx).await?;
+        for repo in cached {
+            super::action_objects::apply_cache_policy(&mut tx, repo).await?;
+        }
     }
     sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'node.actions_settings','actions_settings',1,?2)")
         .bind(actor)

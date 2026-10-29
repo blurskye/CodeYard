@@ -75,12 +75,14 @@ pub async fn save_actions_settings(
 ) -> Result<bool> {
     settings.validate_engines()?;
     let mut tx = pool.begin().await?;
+    super::action_objects::lock_site_cache_policy(&mut tx, true).await?;
     super::users::transitions::lock_membership_shared(&mut tx).await?;
     if !super::users::transitions::active_admin(&mut tx, actor).await?
         || !super::users::transitions::live_session(&mut tx, actor, session).await?
     {
         return Ok(false);
     }
+    let previous = get_actions_settings(&mut *tx).await?;
     sqlx::query(
         r#"
         INSERT INTO actions_settings (id, enabled, run_timeout_minutes, job_cpus, job_memory_gib, runner_image, results_url, cache_size_gib, cache_retention_days, artifact_retention_days, default_workflow_permissions, default_engine, codeyard_actions_enabled, act_enabled)
@@ -117,13 +119,13 @@ pub async fn save_actions_settings(
     .bind(settings.act_enabled)
     .execute(&mut *tx)
     .await?;
-    // The site cache limits apply to every repository's stored caches.
-    let cached: Vec<i64> =
-        sqlx::query_scalar("SELECT DISTINCT repo_id FROM actions_objects WHERE kind='cache'")
-            .fetch_all(&mut *tx)
-            .await?;
-    for repo in cached {
-        super::action_objects::apply_cache_policy(&mut tx, repo).await?;
+    if settings.tightens_cache_limits(&previous) {
+        // Cache creation/finalization cannot change this set while the policy fence is held.
+        let cached: Vec<i64> = sqlx::query_scalar("SELECT r.id FROM repositories r WHERE EXISTS(SELECT 1 FROM actions_objects o WHERE o.repo_id=r.id AND o.kind='cache') ORDER BY r.id FOR UPDATE OF r")
+            .fetch_all(&mut *tx).await?;
+        for repo in cached {
+            super::action_objects::apply_cache_policy(&mut tx, repo).await?;
+        }
     }
     sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES($1,'node.actions_settings','actions_settings',1,$2)")
         .bind(actor)

@@ -99,6 +99,7 @@ pub async fn stage_block(
     let Some(object) = object.filter(|o| o.manifest.is_none() && !o.finalized) else {
         return Ok(false);
     };
+    let limit = if object.kind == "cache" { limit.min(cache_policy(&mut tx, object.repo_id).await?.0) } else { limit };
     let total: i64 = sqlx::query_scalar(
         "SELECT COALESCE(SUM(size),0) FROM actions_blob_parts WHERE object_id=$1 AND block_id<>$2",
     )
