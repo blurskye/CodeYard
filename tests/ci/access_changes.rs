@@ -387,7 +387,7 @@ async fn postgres_repository_lock_holder_takes_run_while_cancellation_waits() {
         .await
         .expect("the run lock must not deadlock with the cancellation");
     gate.commit().await.unwrap();
-    let (cancelled, _) = tokio::time::timeout(Duration::from_secs(30), cancelling)
+    let (cancelled, _, _) = tokio::time::timeout(Duration::from_secs(30), cancelling)
         .await
         .expect("the cancellation must complete")
         .unwrap()

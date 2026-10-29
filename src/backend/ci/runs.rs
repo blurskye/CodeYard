@@ -510,7 +510,7 @@ impl CiRuns {
             environment: request.environment.as_deref(),
             manual: request.manual,
         };
-        let run = match attempt {
+        let (run, inserted) = match attempt {
             Some(attempt) => {
                 db::ci::enqueue_ci_run_attempt(
                     &self.pool,
@@ -533,12 +533,13 @@ impl CiRuns {
                 .await?
             }
         };
+        self.queued.notify_one();
+        if !inserted { return Ok(run); }
         if let Err(error) =
             crate::backend::webhooks::deployment_protection::requested(&self.pool, &run).await
         {
             tracing::warn!(run_id=run.id,%error,"Could not queue deployment protection requests");
         }
-        self.queued.notify_one();
         Box::pin(self.emit_workflow_run(&run, "requested")).await;
         Ok(run)
     }
@@ -554,7 +555,7 @@ impl CiRuns {
         actor_id: i64,
         token_id: Option<i64>,
     ) -> Result<bool, AdmissionError> {
-        let (changed, notifications) = match token_id {
+        let (changed, notifications, completed) = match token_id {
             Some(token) => {
                 db::ci::request_ci_cancellation_with_token(&self.pool, run_id, actor_id, token)
                     .await?
@@ -562,12 +563,8 @@ impl CiRuns {
             None => db::ci::request_ci_cancellation(&self.pool, run_id, actor_id).await?,
         };
         self.notifications.send_created(&notifications).await;
-        if changed {
-            if let Some(run) = db::ci::get_ci_run_by_run_id(&self.pool, run_id).await? {
-                if run.completed_at.is_some() {
-                    self.emit_workflow_run(&run, "completed").await;
-                }
-            }
+        if let Some(run) = completed {
+            self.emit_workflow_run(&run, "completed").await;
         }
         Ok(changed)
     }

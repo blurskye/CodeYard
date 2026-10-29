@@ -160,12 +160,15 @@ native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run,
     crate::backend::db::sqlite::ci::enqueue_ci_run,
     fn enqueue_ci_run(pool: &DbPool, input: NewCiRun<'_>, trusted_ids: &[i64]) -> Result<CiRun>);
 
+/// Run and whether this transaction inserted its admission (rather than reusing it).
+pub type Enqueued = (CiRun, bool);
+
 native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run_attempt,
     crate::backend::db::sqlite::ci::enqueue_ci_run_attempt,
-    fn enqueue_ci_run_attempt(pool:&DbPool,input:NewCiRun<'_>,trusted_ids:&[i64],attempt:NewCiAttempt,scheduling:&super::runners::Scheduling,event_payload:Option<&serde_json::Value>)->Result<CiRun>);
+    fn enqueue_ci_run_attempt(pool:&DbPool,input:NewCiRun<'_>,trusted_ids:&[i64],attempt:NewCiAttempt,scheduling:&super::runners::Scheduling,event_payload:Option<&serde_json::Value>)->Result<Enqueued>);
 native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run_for_runners,
     crate::backend::db::sqlite::ci::enqueue_ci_run_for_runners,
-    fn enqueue_ci_run_for_runners(pool: &DbPool, input: NewCiRun<'_>, trusted_ids: &[i64], scheduling: &super::runners::Scheduling, event_payload: Option<&serde_json::Value>) -> Result<CiRun>);
+    fn enqueue_ci_run_for_runners(pool: &DbPool, input: NewCiRun<'_>, trusted_ids: &[i64], scheduling: &super::runners::Scheduling, event_payload: Option<&serde_json::Value>) -> Result<Enqueued>);
 
 native_operation!(crate::backend::db::postgres::ci::claim_ci_run,
     crate::backend::db::sqlite::ci::claim_ci_run,
@@ -226,13 +229,16 @@ native_operation!(crate::backend::db::postgres::ci::fail_stale_ci_runs,
     crate::backend::db::sqlite::ci::fail_stale_ci_runs,
     fn fail_stale_ci_runs(pool: &DbPool, stale_seconds: i64) -> Result<(Vec<CiRun>, Vec<(i64, i64)>)>);
 
+/// Changed flag, notifications, and a terminal run only when cancellation completed it.
+pub type Cancellation = (bool, Vec<(i64, i64)>, Option<CiRun>);
+
 native_operation!(crate::backend::db::postgres::ci::request_ci_cancellation,
     crate::backend::db::sqlite::ci::request_ci_cancellation,
-    fn request_ci_cancellation(pool: &DbPool, run_id: Uuid, actor_id: i64) -> Result<(bool, Vec<(i64, i64)>)>);
+    fn request_ci_cancellation(pool: &DbPool, run_id: Uuid, actor_id: i64) -> Result<Cancellation>);
 
 native_operation!(crate::backend::db::postgres::ci::request_ci_cancellation_with_token,
     crate::backend::db::sqlite::ci::request_ci_cancellation_with_token,
-    fn request_ci_cancellation_with_token(pool: &DbPool, run_id: Uuid, actor_id: i64, token_id: i64) -> Result<(bool, Vec<(i64,i64)>)>);
+    fn request_ci_cancellation_with_token(pool: &DbPool, run_id: Uuid, actor_id: i64, token_id: i64) -> Result<Cancellation>);
 native_operation!(crate::backend::db::postgres::ci::delete_ci_run_data,
     crate::backend::db::sqlite::ci::delete_ci_run_data,
     fn delete_ci_run_data(pool: &DbPool, actor: i64, repo: i64, id: i64, kind: CiRunDeletion) -> Result<bool>);

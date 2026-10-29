@@ -151,7 +151,7 @@ pub async fn enqueue_ci_run(
         &crate::backend::db::runners::Scheduling::default(),
         None,
     )
-    .await
+    .await.map(|(run, _)| run)
 }
 pub async fn enqueue_ci_run_for_runners(
     pool: &PgPool,
@@ -159,7 +159,7 @@ pub async fn enqueue_ci_run_for_runners(
     trusted_ids: &[i64],
     scheduling: &crate::backend::db::runners::Scheduling,
     event_payload: Option<&serde_json::Value>,
-) -> Result<CiRun> {
+) -> Result<crate::backend::db::ci::Enqueued> {
     enqueue_ci_run_inner(pool, input, trusted_ids, None, scheduling, event_payload).await
 }
 pub async fn enqueue_ci_run_attempt(
@@ -169,7 +169,7 @@ pub async fn enqueue_ci_run_attempt(
     attempt: crate::backend::db::ci::NewCiAttempt,
     scheduling: &crate::backend::db::runners::Scheduling,
     event_payload: Option<&serde_json::Value>,
-) -> Result<CiRun> {
+) -> Result<crate::backend::db::ci::Enqueued> {
     enqueue_ci_run_inner(
         pool,
         input,
@@ -187,7 +187,7 @@ async fn enqueue_ci_run_inner(
     requested_attempt: Option<crate::backend::db::ci::NewCiAttempt>,
     scheduling: &crate::backend::db::runners::Scheduling,
     event_payload: Option<&serde_json::Value>,
-) -> Result<CiRun> {
+) -> Result<crate::backend::db::ci::Enqueued> {
     let mut tx = pool.begin().await?;
     let cd = matches!(input.pipeline, "cd" | "full") || input.environment.is_some();
     let awaiting_approval: bool = !input.manual && input.event == "pull_request" && sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pull_requests WHERE id=$1 AND repo_id=$2 AND head_sha=$3 AND head_repo_id IS DISTINCT FROM repo_id AND workflows_approved_sha IS DISTINCT FROM head_sha AND state='open' AND NOT is_draft)")
@@ -223,7 +223,7 @@ async fn enqueue_ci_run_inner(
                 .bind(payload["workflow_run"]["id"].to_string())
                 .bind(payload["workflow_run"]["run_attempt"].to_string())
                 .bind(payload["action"].as_str()).fetch_optional(&mut *tx).await? {
-                return Ok(run);
+                return Ok((run, false));
             }
         }
     }
@@ -243,7 +243,7 @@ async fn enqueue_ci_run_inner(
                 .bind(run_id)
                 .fetch_optional(&mut *tx)
                 .await?;
-            return run.ok_or_else(|| {
+            return run.map(|run| (run, false)).ok_or_else(|| {
                 CiAdmissionRefusal::Conflict("Scheduled run was already queued").into()
             });
         }
@@ -373,11 +373,11 @@ async fn enqueue_ci_run_inner(
                     .bind(latest.id).bind(input.triggered_by_id).fetch_one(&mut *tx).await?;
                 schedule_concurrency(&mut tx, &released, scheduling).await?;
                 tx.commit().await?;
-                return Ok(released);
+                return Ok((released, false));
             }
             if same_event && (!input.manual || matches!(latest.status.as_str(), "queued" | "running")) {
                 ensure!(requested_attempt.as_ref().is_none_or(|request|request.allow_active),CiAdmissionRefusal::Conflict("Cannot re-run an active workflow run"));
-                return Ok(latest);
+                return Ok((latest, false));
             }
             // The attempt keeps this revision's runs unique. A re-run continues the workflow run,
             // while another event at the same revision starts a workflow run of its own.
@@ -450,7 +450,7 @@ async fn enqueue_ci_run_inner(
         schedule_concurrency(&mut tx, &run, scheduling).await?;
     }
     tx.commit().await?;
-    Ok(run)
+    Ok((run, true))
 }
 
 async fn schedule_concurrency(
@@ -1020,7 +1020,7 @@ pub async fn request_ci_cancellation(
     pool: &PgPool,
     run_id: Uuid,
     actor_id: i64,
-) -> Result<(bool, Vec<(i64, i64)>)> {
+) -> Result<crate::backend::db::ci::Cancellation> {
     request_cancellation(pool, run_id, actor_id, None).await
 }
 
@@ -1029,7 +1029,7 @@ pub async fn request_ci_cancellation_with_token(
     run_id: Uuid,
     actor_id: i64,
     token_id: i64,
-) -> Result<(bool, Vec<(i64, i64)>)> {
+) -> Result<crate::backend::db::ci::Cancellation> {
     request_cancellation(pool, run_id, actor_id, Some(token_id)).await
 }
 
@@ -1038,7 +1038,7 @@ async fn request_cancellation(
     run_id: Uuid,
     actor_id: i64,
     token_id: Option<i64>,
-) -> Result<(bool, Vec<(i64, i64)>)> {
+) -> Result<crate::backend::db::ci::Cancellation> {
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_membership_shared(&mut tx).await?;
     let user = sqlx::query_as::<_, super::models::User>("SELECT * FROM users WHERE id = $1")
@@ -1088,17 +1088,14 @@ async fn request_cancellation(
         CiAdmissionRefusal::Denied("CI cancellation permission denied")
     );
     let mut notifications = Vec::new();
+    let mut completed = None;
     match run.status.as_str() {
         "queued" => {
-            if let Some((_, created)) = finish_in_tx(
-                &mut tx,
-                &run,
-                "cancelled",
-                Some("Cancelled before it started"),
-            )
-            .await?
-            {
+            if let Some((finished, created)) = finish_in_tx(
+                &mut tx, &run, "cancelled", Some("Cancelled before it started"),
+            ).await? {
                 notifications = created;
+                completed = Some(finished);
             }
         }
         "running" => {
@@ -1109,10 +1106,10 @@ async fn request_cancellation(
             .execute(&mut *tx)
             .await?;
         }
-        _ => return Ok((false, notifications)),
+        _ => return Ok((false, notifications, None)),
     }
     tx.commit().await?;
-    Ok((true, notifications))
+    Ok((true, notifications, completed))
 }
 
 pub async fn delete_ci_run_data(
