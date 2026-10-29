@@ -42,6 +42,8 @@ pub enum Page {
         rows: Vec<DependencyRow>,
         page: i64,
         has_more: bool,
+        reference: String,
+        revision: Option<String>,
     },
     Forks {
         rows: Vec<Fork>,
@@ -175,7 +177,9 @@ pub fn render(repo: &RepoChrome, page: Page) -> Element {
             rows,
             page,
             has_more,
-        } => dependencies(repo, &path, &rows, page, has_more),
+            reference,
+            revision,
+        } => dependencies(repo, &path, &rows, page, has_more, &reference, revision.as_deref()),
     };
     chrome(
         repo,
@@ -201,10 +205,14 @@ fn dependencies(
     rows: &[DependencyRow],
     page: i64,
     has_more: bool,
+    reference: &str,
+    revision: Option<&str>,
 ) -> Element {
+    let page_url = |page| format!("{path}?page={page}&ref={}&sha={}", encode_component(reference), encode_component(revision.unwrap_or_default()));
     rsx! {
-        {heading("Dependency graph", "Dependencies submitted for the default branch. This list is not a vulnerability scan.", None)}
-        p { a { href: format!("/api/v3/repos/{}/{}/dependency-graph/sbom", encode_component(&repo.owner), encode_component(&repo.name)), "Export SPDX SBOM" } }
+        {heading("Dependency graph", "Latest stored dependency submissions at one revision. Storage need not be online; this is not a live inventory or vulnerability scan.", None)}
+        if let Some(revision) = revision { p { "Stored revision: " code { "{revision}" } " · {reference}" } }
+        p { a { href: format!("/api/v3/repos/{}/{}/dependency-graph/sbom", encode_component(&repo.owner), encode_component(&repo.name)), "Export current branch SPDX SBOM (requires storage)" } }
         if rows.is_empty() {
             {empty("No dependencies have been submitted for this page.")}
         } else {
@@ -219,8 +227,8 @@ fn dependencies(
             }
         }
         nav { class: "repo-pagination", aria_label: "Dependency pages",
-            if page > 1 { NavLink { href: format!("{path}?page={}", page - 1), "Previous" } }
-            if has_more { NavLink { href: format!("{path}?page={}", page + 1), "Next" } }
+            if page > 1 && revision.is_some() { NavLink { href: page_url(page - 1), "Previous" } }
+            if has_more && revision.is_some() { NavLink { href: page_url(page + 1), "Next" } }
         }
     }
 }

@@ -144,19 +144,23 @@ async fn dependencies(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let loaded = match chrome::load(&ctx, &owner, &name).await {
+    let loaded = match chrome::load_database(&ctx, &owner, &name).await {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
-    let reference = format!("refs/heads/{}", loaded.default_branch);
-    let snapshots = match db::dependency_graph::snapshots(
-        &ctx.state.pool,
-        loaded.repository.id,
-        Some(&reference),
-        None,
-    )
-    .await
-    {
+    let reference = ctx.query.get("ref").cloned().unwrap_or_else(|| format!("refs/heads/{}", loaded.default_branch));
+    if !reference.starts_with("refs/heads/") || !crate::backend::git::ref_names::is_canonical_ref(&reference) {
+        return ctx.error(axum::http::StatusCode::BAD_REQUEST, "Invalid dependency reference.");
+    }
+    let revision = ctx.query.get("sha").cloned();
+    if revision.as_deref().is_some_and(|sha| !crate::backend::git::ref_names::is_full_commit_id(sha)) {
+        return ctx.error(axum::http::StatusCode::BAD_REQUEST, "Invalid dependency revision.");
+    }
+    let snapshots = match if let Some(sha) = revision.as_deref() {
+        db::dependency_graph::snapshots(&ctx.state.pool, loaded.repository.id, Some(&reference), Some(&sha.to_ascii_lowercase())).await
+    } else {
+        db::dependency_graph::latest_snapshots(&ctx.state.pool, loaded.repository.id, &reference).await
+    } {
         Ok(snapshots) => snapshots,
         Err(_) => return chrome::unavailable(&ctx),
     };
@@ -166,6 +170,7 @@ async fn dependencies(
         .and_then(|p| p.parse::<i64>().ok())
         .unwrap_or(1)
         .clamp(1, 10_000);
+    let revision = revision.or_else(|| snapshots.first().map(|snapshot| snapshot.sha.clone()));
     let packages = crate::backend::dependency_graph::packages(&snapshots);
     let offset = (page as usize - 1) * 30;
     let has_more = offset + 30 < packages.len();
@@ -189,6 +194,8 @@ async fn dependencies(
             rows,
             page,
             has_more,
+            reference,
+            revision,
         },
     ).await
 }
