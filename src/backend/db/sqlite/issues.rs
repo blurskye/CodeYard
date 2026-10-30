@@ -385,12 +385,13 @@ pub(crate) async fn update_issue_in_transaction(
 
 pub async fn add_issue_comment(
     pool: &SqlitePool,
+    repo_id: i64,
     issue_id: i64,
     author_id: i64,
     body: &str,
 ) -> Result<IssueComment> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::discussions::lock_issue_contribution(&mut tx, author_id, issue_id).await?;
+    super::discussions::lock_issue_contribution(&mut tx, author_id, repo_id, issue_id).await?;
     let revision: String = sqlx::query_scalar("SELECT updated_at FROM issues WHERE id=?1")
         .bind(issue_id)
         .fetch_one(&mut *tx)

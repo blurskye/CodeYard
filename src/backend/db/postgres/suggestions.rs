@@ -207,7 +207,7 @@ pub async fn propose(
     let mut tx = pool.begin().await?;
     super::discussions::require_contribution_authority(&mut tx, actor, repo).await?;
     super::issue_attributes::lock_metadata(&mut tx).await?;
-    super::discussions::lock_issue_contribution(&mut tx, actor, issue).await?;
+    super::discussions::lock_issue_contribution(&mut tx, actor, repo, issue).await?;
     issue_scope(&mut tx, repo, issue).await?;
     let record: Issue =
         sqlx::query_as("SELECT * FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE")

@@ -825,6 +825,7 @@ async fn issue_pr_numbers_rollback_and_exact_future_microsecond_revision_cas() {
         .is_none());
     db::issues::add_issue_comment(
         &fixture.pool,
+        issue.repo_id,
         issue.id,
         user.id,
         "comment bumps revision monotonically",
@@ -1536,7 +1537,7 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
         let issue = db::issues::create_issue(pool, repo.id, owner.id, "Issue", "")
             .await
             .unwrap();
-        let comment = db::issues::add_issue_comment(pool, issue.id, owner.id, "first")
+        let comment = db::issues::add_issue_comment(pool, issue.repo_id, issue.id, owner.id, "first")
             .await
             .unwrap();
         let pr = new_pr(pool, repo.id, owner.id, &format!("comments{round}")).await;
@@ -2437,7 +2438,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
     .await
     .unwrap()
     .unwrap();
-    db::issues::add_issue_comment(pool, issue.id, reader.id, "comment")
+    db::issues::add_issue_comment(pool, issue.repo_id, issue.id, reader.id, "comment")
         .await
         .unwrap();
     db::pull_requests::reviews::add_pull_request_review(
@@ -2913,7 +2914,7 @@ async fn check_list_display_projections(pool: &db::DbPool) {
         .await
         .unwrap()
         .is_empty());
-    let issue_comment = issues::add_issue_comment(pool, newer.id, owner.id, "Discussion")
+    let issue_comment = issues::add_issue_comment(pool, newer.repo_id, newer.id, owner.id, "Discussion")
         .await
         .unwrap();
     let comments = issues::list_issue_comments(pool, newer.id, 100, 0)
@@ -2922,10 +2923,10 @@ async fn check_list_display_projections(pool: &db::DbPool) {
     assert_eq!(comments.len(), 1);
     assert_eq!(comments[0].comment.id, issue_comment.id);
     assert_eq!(comments[0].author.username, owner.username);
-    let second_issue_comment = issues::add_issue_comment(pool, newer.id, owner.id, "Second")
+    let second_issue_comment = issues::add_issue_comment(pool, newer.repo_id, newer.id, owner.id, "Second")
         .await
         .unwrap();
-    let third_issue_comment = issues::add_issue_comment(pool, newer.id, owner.id, "Third")
+    let third_issue_comment = issues::add_issue_comment(pool, newer.repo_id, newer.id, owner.id, "Third")
         .await
         .unwrap();
     let issue_comment_ids = |entries: &[issues::IssueCommentEntry]| {

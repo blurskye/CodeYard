@@ -205,6 +205,7 @@ async fn edit_and_delete_rules(pg: bool) {
         .unwrap();
     assert!(db::issues::add_issue_comment(
         database.pool(),
+        repository_id.parse().unwrap(),
         stored.issue_id,
         stored.author_id,
         "After lock"

@@ -388,12 +388,13 @@ pub(crate) async fn update_issue_in_transaction(
 
 pub async fn add_issue_comment(
     pool: &PgPool,
+    repo_id: i64,
     issue_id: i64,
     author_id: i64,
     body: &str,
 ) -> Result<IssueComment> {
     let mut tx = pool.begin().await?;
-    super::discussions::lock_issue_contribution(&mut tx, author_id, issue_id).await?;
+    super::discussions::lock_issue_contribution(&mut tx, author_id, repo_id, issue_id).await?;
     let comment = sqlx::query_as::<_, IssueComment>(
         r#"
         INSERT INTO issue_comments (issue_id, author_id, body)

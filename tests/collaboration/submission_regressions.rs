@@ -505,11 +505,14 @@ async fn later_page_edit_and_deleted_notifications(pg: bool) {
         .await
         .unwrap()
         .unwrap();
+    let repository = db::repositories::records::get_repository(database.pool(), "alice", "proj")
+        .await.unwrap().unwrap();
     let mut last = None;
     for _ in 0..31 {
         last = Some(
             db::issues::add_issue_comment(
                 database.pool(),
+                repository.id,
                 issue["id"].as_i64().unwrap(),
                 author.id,
                 "Existing comment",

@@ -126,6 +126,7 @@ native_operation!(crate::backend::db::postgres::issues::add_issue_comment,
     crate::backend::db::sqlite::issues::add_issue_comment,
     fn add_issue_comment(
     pool: &DbPool,
+    repo_id: i64,
     issue_id: i64,
     author_id: i64,
     body: &str,
