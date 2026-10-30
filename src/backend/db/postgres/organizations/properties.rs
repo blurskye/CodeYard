@@ -205,10 +205,13 @@ pub(crate) async fn values_on(
     repo: i64,
     definitions: &[Definition],
 ) -> Result<Vec<ValueInput>> {
+    if definitions.is_empty() { return Ok(Vec::new()); }
+    let ids: Vec<i64> = definitions.iter().map(|definition| definition.id).collect();
     let rows: std::collections::HashMap<i64, String> = sqlx::query_as::<_, (i64, String)>(
-        "SELECT definition_id,value FROM repository_property_values WHERE repo_id=$1",
+        "SELECT definition_id,value FROM repository_property_values WHERE repo_id=$1 AND definition_id=ANY($2)",
     )
     .bind(repo)
+    .bind(&ids)
     .fetch_all(c)
     .await?
     .into_iter()

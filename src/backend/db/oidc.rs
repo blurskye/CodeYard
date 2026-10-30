@@ -4,6 +4,9 @@ use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
+pub(crate) const INCLUSION_PROPERTY_SQL: &str = "SELECT id FROM organization_repository_properties WHERE org_id=$1 AND property_name=$2 AND ($3 OR value_type IN ('string','single_select','multi_select','true_false'))";
+pub(crate) const INCLUDED_DEFINITIONS_SQL: &str = "SELECT p.* FROM organization_repository_properties p JOIN actions_oidc_properties o ON o.definition_id=p.id WHERE p.org_id=$1 ORDER BY lower(p.property_name),p.id";
+
 #[derive(Clone, Copy)]
 pub enum Scope {
     Repository(i64),
