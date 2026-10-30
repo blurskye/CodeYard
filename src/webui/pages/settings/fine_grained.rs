@@ -32,7 +32,7 @@ pub enum View {
         token: Detail,
         value: Option<String>,
     },
-    /// A committed regeneration must reveal its value even if optional metadata fails.
+    /// Committed creation or regeneration reveals its value even if optional metadata fails.
     Revealed {
         id: i64,
         value: String,
@@ -178,7 +178,7 @@ pub fn render(model: Model) -> Element {
         View::Revealed { id, value } => rsx! {
             section { class: "identity-settings-section", aria_labelledby: "fine-grained-revealed-title",
                 header { class: "identity-section-header",
-                    h2 { id: "fine-grained-revealed-title", "Token regenerated" }
+                    h2 { id: "fine-grained-revealed-title", "Copy your token" }
                     NavLink { href: format!("{BASE}/{id}"), "Return to token details" }
                 }
                 {reveal(value)}
