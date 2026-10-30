@@ -934,6 +934,10 @@ fn act_command(
         "GITHUB_REPOSITORY={}/{}",
         claim.owner, claim.repository_name
     ));
+    command.arg("--env").arg(format!("GITHUB_REPOSITORY_ID={}", run.repo_id));
+    if claim.owner_id > 0 {
+        command.arg("--env").arg(format!("GITHUB_REPOSITORY_OWNER_ID={}", claim.owner_id));
+    }
     let actor = claim
         .original_actor
         .as_ref()
@@ -2233,6 +2237,7 @@ mod tests {
             storage_node_id: None,
             repository: uuid::Uuid::new_v4(),
             repository_name: "project".into(),
+            owner_id: 1,
             owner: "worker_owner".into(),
             actor: "worker_owner".into(),
             original_actor: None,
@@ -2389,6 +2394,7 @@ mod tests {
             storage_node_id: None,
             repository: uuid::Uuid::new_v4(),
             repository_name: "project".into(),
+            owner_id: 1,
             owner: "worker_owner".into(),
             actor: "worker_owner".into(),
             original_actor: None,
@@ -2673,6 +2679,7 @@ mod tests {
             storage_node_id: None,
             repository: uuid::Uuid::new_v4(),
             repository_name: "project".into(),
+            owner_id: 1,
             owner: "worker_owner".into(),
             actor: "worker_owner".into(),
             original_actor: None,
@@ -2718,6 +2725,10 @@ mod tests {
             "ACTIONS_CACHE_SERVICE_V2=True",
         ] {
             assert!(args.windows(2).any(|pair| pair == ["--env", value]));
+        }
+        let repository_id = format!("GITHUB_REPOSITORY_ID={}", claim.run.repo_id);
+        for value in [repository_id.as_str(), "GITHUB_REPOSITORY_OWNER_ID=1"] {
+            assert!(args.windows(2).any(|pair| pair == ["--env", value]), "{value}");
         }
         let env = command
             .as_std()
@@ -3121,6 +3132,7 @@ jobs:
             storage_node_id: None,
             repository: uuid::Uuid::new_v4(),
             repository_name: "test".into(),
+            owner_id: 1,
             owner: "test".into(),
             actor: "test".into(),
             original_actor: None,
@@ -3206,6 +3218,7 @@ jobs:
             storage_node_id: None,
             repository: uuid::Uuid::nil(),
             repository_name: "repo".to_owned(),
+            owner_id: 1,
             owner: "alice".to_owned(),
             actor: String::new(),
             original_actor: None,
@@ -3265,6 +3278,7 @@ jobs:
             storage_node_id: None,
             repository: uuid::Uuid::nil(),
             repository_name: "repo".to_owned(),
+            owner_id: 1,
             owner: "alice".to_owned(),
             actor: String::new(),
             original_actor: None,

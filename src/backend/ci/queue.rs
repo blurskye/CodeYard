@@ -67,6 +67,9 @@ pub struct ClaimedRun {
     pub repository: Uuid,
     pub repository_name: String,
     pub owner: String,
+    /// The owner's id, which `github.repository_owner_id` shows; 0 from a core that sent none.
+    #[serde(default)]
+    pub owner_id: i64,
     /// Login of the user who started the run; empty when no account did.
     pub actor: String,
     #[serde(default)]
@@ -608,6 +611,7 @@ impl RunQueue {
                         run: run.clone(),
                         storage_node_id: storage_id,
                         repository: uuid,
+                        owner_id: repository.owner_id(),
                         repository_name: repository.name,
                         owner,
                         actor,
