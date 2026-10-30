@@ -19,6 +19,9 @@ use axum::{
 };
 use std::{collections::HashMap, sync::Arc};
 
+/// The last page a list or location view serves, so a link never points past it.
+const MAX_PAGE: i64 = 10000;
+
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/:owner/:repo/security/secret-scanning", get(list))
@@ -107,7 +110,7 @@ async fn list(
         .get("page")
         .and_then(|page| page.parse::<i64>().ok())
         .unwrap_or(1)
-        .clamp(1, 10000);
+        .clamp(1, MAX_PAGE);
     let filter = records::Filter {
         state: Some(state.clone()),
         secret_type: (!secret_type.is_empty()).then_some(secret_type.clone()),
@@ -134,7 +137,7 @@ async fn list(
         }
         Err(error) => return failure(&ctx, &loaded, error),
     };
-    let next = (rows.len() > 30).then(|| {
+    let next = (rows.len() > 30 && page < MAX_PAGE).then(|| {
         format!(
             "{}/security/secret-scanning?state={state}&secret_type={}&page={}",
             loaded.chrome.base(),
@@ -188,7 +191,7 @@ async fn alert(
         .get("page")
         .and_then(|page| page.parse::<i64>().ok())
         .unwrap_or(1)
-        .clamp(1, 10000);
+        .clamp(1, MAX_PAGE);
     let mut locations = match records::locations(
         &ctx.state.pool,
         actor,
@@ -202,7 +205,7 @@ async fn alert(
         Ok(locations) => locations,
         Err(error) => return failure(&ctx, &loaded, error),
     };
-    let next = (locations.len() > 30).then(|| {
+    let next = (locations.len() > 30 && page < MAX_PAGE).then(|| {
         format!(
             "{}/security/secret-scanning/{number}?page={}",
             loaded.chrome.base(),
