@@ -156,7 +156,7 @@ async fn download(
             let (repo, authentication) = repository(&state, &headers, owner, name, false).await?;
             (
                 repo,
-                authentication.as_ref().ok_or_else(auth::required)?.database_actor(&headers)?,
+                authentication.as_ref().ok_or_else(auth::required)?.database_actor(),
             )
         };
     if query.after.is_some() && params.contains_key("job_id") {

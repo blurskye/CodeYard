@@ -1,30 +1,40 @@
 //! Original credentials retained through database admission. Authority remains feature-owned.
+use crate::backend::db::users::accounts::{AccountCredential, OwnedAccountCredential};
 
 /// Bare IDs are trusted in-process calls. HTTP adapters must retain their original credential.
 #[derive(Clone)]
 pub struct Actor {
     pub(crate) user_id: i64,
-    pub(crate) credential: Option<Credential>,
-}
-#[derive(Clone)]
-pub(crate) enum Credential {
-    Session(String),
-    Token { id: i64, hash: String },
+    pub(crate) credential: Option<OwnedAccountCredential>,
 }
 impl From<i64> for Actor {
     fn from(user_id: i64) -> Self { Self { user_id, credential: None } }
 }
 impl From<(i64, String)> for Actor {
     fn from((user_id, session): (i64, String)) -> Self {
-        Self { user_id, credential: Some(Credential::Session(session)) }
+        Self { user_id, credential: Some(OwnedAccountCredential::Session(session)) }
+    }
+}
+impl From<(i64, &AccountCredential<'_>)> for Actor {
+    fn from((user_id, credential): (i64, &AccountCredential<'_>)) -> Self {
+        let credential = match credential {
+            AccountCredential::Session(session) => OwnedAccountCredential::Session((*session).to_owned()),
+            AccountCredential::Token(id, hash) => OwnedAccountCredential::Token(*id, (*hash).to_owned()),
+        };
+        Self { user_id, credential: Some(credential) }
+    }
+}
+impl From<(i64, &OwnedAccountCredential)> for Actor {
+    fn from((user_id, credential): (i64, &OwnedAccountCredential)) -> Self {
+        Self { user_id, credential: Some(credential.clone()) }
     }
 }
 impl Actor {
-    pub fn token(user_id: i64, id: i64, hash: String) -> Self {
-        Self { user_id, credential: Some(Credential::Token { id, hash }) }
-    }
     pub(crate) fn token_id(&self) -> Option<i64> {
-        match &self.credential { Some(Credential::Token { id, .. }) => Some(*id), _ => None }
+        match &self.credential { Some(OwnedAccountCredential::Token(id, _)) => Some(*id), _ => None }
+    }
+    pub(crate) fn credential(&self) -> Option<AccountCredential<'_>> {
+        self.credential.as_ref().map(OwnedAccountCredential::as_credential)
     }
 }
 

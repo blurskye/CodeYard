@@ -130,6 +130,9 @@ pub(crate) async fn credential_live(
     Ok(match credential {
         AccountCredential::Session(session) => live_session(tx, actor, session).await?,
         AccountCredential::Token(id, hash) => {
+            // Installation revocation takes this row before deleting its personal tokens.
+            let _: Option<i64> = sqlx::query_scalar("SELECT i.id FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id WHERE t.token_id=$1 FOR SHARE OF i")
+                .bind(id).fetch_optional(&mut **tx).await?;
             let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar("SELECT expires_at FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND (NOT $4 OR scope='write') AND token_hash=$3 FOR SHARE")
                 .bind(id).bind(actor).bind(hash).bind(write).fetch_optional(&mut **tx).await?;
             match expiry {

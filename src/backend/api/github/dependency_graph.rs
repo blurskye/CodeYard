@@ -60,7 +60,7 @@ async fn submit(
         .await
         .map_err(store_error)?
         .sha;
-    let submission = db::dependency_graph::submit(&state.pool, actor.database_actor(&headers)?, repo.id, &snapshot)
+    let submission = db::dependency_graph::submit(&state.pool, actor.database_actor(), repo.id, &snapshot)
         .await
         .map_err(error)?;
     db::vulnerabilities::enqueue(&state.pool, repo.id)

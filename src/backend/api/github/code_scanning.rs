@@ -191,7 +191,7 @@ async fn upload(
     let upload = records::enqueue(
         &state.pool,
         &records::NewUpload {
-            actor: auth.database_actor(&headers)?,
+            actor: auth.database_actor(),
             repo: repo.id,
             ref_name: &input.ref_name,
             commit_sha: &commit.sha,
@@ -440,7 +440,7 @@ async fn delete_analysis(
     let (repo, auth) = scope(&state, &headers, &owner, &name, true, true).await?;
     let next = records::delete_analysis(
         &state.pool,
-        auth.database_actor(&headers)?,
+        auth.database_actor(),
         repo.id,
         id,
         query.confirm_delete.as_deref() == Some("true"),
@@ -600,7 +600,7 @@ async fn update_alert(
     input
         .validate()
         .map_err(|e| Error::invalid(e.to_string()))?;
-    let row = code_scanning::dismiss(&state.pool, auth.database_actor(&headers)?, repo.id, number, &input)
+    let row = code_scanning::dismiss(&state.pool, auth.database_actor(), repo.id, number, &input)
         .await
         .map_err(failure)?;
     Ok(Json(

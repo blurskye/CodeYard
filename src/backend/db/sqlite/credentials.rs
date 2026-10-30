@@ -1,13 +1,25 @@
-use crate::backend::db::credentials::{Actor, Credential};
+use crate::backend::db::credentials::Actor;
 use anyhow::Result;
 use sqlx::{Sqlite, Transaction};
 
 pub(crate) async fn live(tx: &mut Transaction<'_, Sqlite>, actor: &Actor, write: bool) -> Result<bool> {
-    match &actor.credential {
+    match actor.credential() {
         None => Ok(true),
-        Some(Credential::Session(session)) => super::users::transitions::live_session(tx, actor.user_id, session).await,
-        Some(Credential::Token { id, hash }) => Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=?1 AND user_id=?2 AND token_hash=?3 AND (NOT ?4 OR scope='write') AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))")
-            .bind(id).bind(actor.user_id).bind(hash).bind(write).fetch_one(&mut **tx).await?),
+        Some(credential) => super::users::transitions::credential_live(tx, actor.user_id, &credential, write).await,
+    }
+}
+
+/// A live, unrestricted account and, unless this is a trusted in-process call, its live credential.
+pub(crate) async fn require_account(tx: &mut Transaction<'_, Sqlite>, actor: &Actor) -> Result<()> {
+    match actor.credential() {
+        Some(credential) => super::users::transitions::require_account(tx, actor.user_id, &credential).await,
+        None => {
+            anyhow::ensure!(
+                super::users::transitions::active_account(tx, actor.user_id).await?,
+                crate::backend::db::users::accounts::AccountRestricted
+            );
+            Ok(())
+        }
     }
 }
 

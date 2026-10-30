@@ -62,9 +62,9 @@ impl Authentication {
         db::users::accounts::AccountCredential::Token(self.token.id, &self.token.token_hash)
     }
 
-    pub fn database_actor(&self, headers: &HeaderMap) -> Result<db::credentials::Actor> {
-        Ok(db::credentials::Actor::token(self.user.id, self.token.id,
-            token_hash(credential(headers).ok_or_else(required)?)))
+    /// The authenticated token, so database admission re-checks it is still live.
+    pub fn database_actor(&self) -> db::credentials::Actor {
+        (self.user.id, &self.credential()).into()
     }
 
     pub fn is_job(&self) -> bool {

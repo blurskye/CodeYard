@@ -474,10 +474,7 @@ async fn execute(
                 .into_response()
         }
     };
-    let actor = match authentication.database_actor(&headers) {
-        Ok(actor) => actor,
-        Err(error) => return error.into_response(),
-    };
+    let actor = authentication.database_actor();
     let request = body.data(RequestContext {
         state,
         auth: authentication,

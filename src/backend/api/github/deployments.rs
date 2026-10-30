@@ -158,7 +158,7 @@ async fn create(
     let payload = input.payload.unwrap_or_else(|| json!({}));
     let environment = input.environment.as_deref().unwrap_or("production");
     let new = NewDeployment {
-        actor: auth.database_actor(&headers)?,
+        actor: auth.database_actor(),
         repo: repo.id,
         sha: &sha,
         reference: &input.reference,
@@ -245,7 +245,7 @@ async fn deployment(
     if write {
         deployments::delete(
             &state.pool,
-            auth.ok_or_else(auth::required)?.database_actor(&headers)?,
+            auth.ok_or_else(auth::required)?.database_actor(),
             repo.id,
             id,
         )
@@ -304,7 +304,7 @@ async fn statuses(
         return page.response(&uri, values, has_next);
     }
     let authentication = auth.ok_or_else(auth::required)?;
-    let credential = authentication.database_actor(&headers)?;
+    let credential = authentication.database_actor();
     let actor = authentication.user;
     let Json(input) = Json::<NewStatus>::from_request(request, &state)
         .await

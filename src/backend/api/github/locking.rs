@@ -35,7 +35,7 @@ async fn change(
     reason: Option<&str>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.database_actor(&headers)?;
+    let actor = auth.ok_or_else(auth::required)?.database_actor();
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
     db::discussions::set_lock(&state.pool, actor, repo.id, item, locked, reason)
         .await

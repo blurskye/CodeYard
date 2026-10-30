@@ -1,21 +1,25 @@
-use crate::backend::db::credentials::{Actor, Credential};
+use crate::backend::db::credentials::Actor;
 use anyhow::Result;
 use sqlx::{Postgres, Transaction};
 
 /// The caller retains account/repository authority before retaining its credential.
 pub(crate) async fn live(tx: &mut Transaction<'_, Postgres>, actor: &Actor, write: bool) -> Result<bool> {
-    match &actor.credential {
+    match actor.credential() {
         None => Ok(true),
-        Some(Credential::Session(session)) => super::users::transitions::live_session(tx, actor.user_id, session).await,
-        Some(Credential::Token { id, hash }) => {
-            // Installation revocation takes this row before deleting its personal tokens.
-            let _: Option<i64> = sqlx::query_scalar("SELECT i.id FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id WHERE t.token_id=$1 FOR SHARE OF i")
-                .bind(id).fetch_optional(&mut **tx).await?;
-            let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar("SELECT expires_at FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND token_hash=$3 AND (NOT $4 OR scope='write') FOR SHARE")
-                .bind(id).bind(actor.user_id).bind(hash).bind(write).fetch_optional(&mut **tx).await?;
-            let Some(expiry) = expiry else { return Ok(false); };
-            Ok(sqlx::query_scalar("SELECT $1::timestamptz IS NULL OR $1>clock_timestamp()")
-                .bind(expiry).fetch_one(&mut **tx).await?)
+        Some(credential) => super::users::transitions::credential_live(tx, actor.user_id, &credential, write).await,
+    }
+}
+
+/// A live, unrestricted account and, unless this is a trusted in-process call, its live credential.
+pub(crate) async fn require_account(tx: &mut Transaction<'_, Postgres>, actor: &Actor) -> Result<()> {
+    match actor.credential() {
+        Some(credential) => super::users::transitions::require_account(tx, actor.user_id, &credential).await,
+        None => {
+            anyhow::ensure!(
+                super::users::transitions::active_account(tx, actor.user_id).await?,
+                crate::backend::db::users::accounts::AccountRestricted
+            );
+            Ok(())
         }
     }
 }

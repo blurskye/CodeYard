@@ -221,7 +221,7 @@ pub(in crate::backend::api::github) async fn upload(
     .map_err(Error::unavailable)?
     .map_err(|_| Error::validation("CodeqlDatabase", "file", "invalid"))?;
     auth.require_live(&state.pool).await?;
-    let actor = auth.database_actor(&headers)?;
+    let actor = auth.database_actor();
     let size = bytes.len() as i64;
     // Every upload counts, including one that replaces an earlier database.
     db::files::charge_upload(&state.pool, auth.user.id, UPLOAD_QUOTA, size)
@@ -279,7 +279,7 @@ pub(super) async fn delete(
     Path((owner, name, language)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = scope(&state, &headers, &owner, &name, true, false).await?;
-    codeql::delete(&state.pool, auth.database_actor(&headers)?, repo.id, &language)
+    codeql::delete(&state.pool, auth.database_actor(), repo.id, &language)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)

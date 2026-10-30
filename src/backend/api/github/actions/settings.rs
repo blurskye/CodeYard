@@ -76,7 +76,7 @@ async fn settings(
 ) -> Result<Response> {
     let write = !auth::read_method(request.method());
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
-    let actor = auth.database_actor(&headers)?;
+    let actor = auth.database_actor();
     let setting = match uri.path().rsplit('/').next() {
         Some("selected-actions") => Setting::Allowed,
         Some("artifact-and-log-retention") => Setting::Retention,
@@ -149,7 +149,7 @@ async fn organization_switch(
 ) -> Result<Response> {
     let write = !auth::read_method(request.method());
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
-    let actor = auth.database_actor(&headers)?;
+    let actor = auth.database_actor();
     let setting = switch(&uri);
     if write {
         let body = input(request).await?;
@@ -201,7 +201,7 @@ async fn organization_repositories(
     let method = request.method().clone();
     let write = !auth::read_method(&method);
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
-    let actor = auth.database_actor(&headers)?;
+    let actor = auth.database_actor();
     let setting = switch(&uri);
     let stored = db::action_settings::settings(&state.pool, actor.clone(), &scope, setting, None)
         .await
@@ -330,7 +330,7 @@ async fn policies(
     let method = request.method().clone();
     let write = !auth::read_method(&method);
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
-    let actor = auth.database_actor(&headers)?;
+    let actor = auth.database_actor();
     let id = params
         .get("policy_id")
         .map(|_| super::id(&params, "policy_id"))
