@@ -219,6 +219,7 @@ pub async fn repository_access(
     pool: &SqlitePool,
     actor: i64,
     org: i64,
+    window: (i64, i64),
 ) -> Result<(String, Vec<Repository>), SecretsError> {
     let mut tx = authorized(pool, actor, org).await?;
     let level =
@@ -227,8 +228,8 @@ pub async fn repository_access(
             .fetch_optional(&mut *tx)
             .await?
             .unwrap_or_else(|| "public".to_owned());
-    let repositories = sqlx::query_as("SELECT r.* FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL AND (NOT r.is_private OR EXISTS(SELECT 1 FROM org_dependabot_access_repositories a WHERE a.org_id=$1 AND a.repo_id=r.id)) ORDER BY r.id")
-        .bind(org).fetch_all(&mut *tx).await?;
+    let repositories = sqlx::query_as("SELECT r.* FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL AND (NOT r.is_private OR EXISTS(SELECT 1 FROM org_dependabot_access_repositories a WHERE a.org_id=$1 AND a.repo_id=r.id)) ORDER BY r.id LIMIT $2 OFFSET $3")
+        .bind(org).bind(window.1).bind(window.0).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok((level, repositories))
 }

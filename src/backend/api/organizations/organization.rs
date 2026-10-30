@@ -603,9 +603,20 @@ pub(super) async fn respond_with_hook_draft(
             model.more_repositories = more_repositories;
         }
         if model.tab == "dependabot" {
-            let (default_level, repositories) =
-                match crate::backend::db::dependabot::repository_access(&ctx.state.pool, actor, org)
-                    .await
+            let page = ctx
+                .query
+                .get("page")
+                .and_then(|p| p.parse::<i64>().ok())
+                .unwrap_or(1)
+                .clamp(1, 10_000);
+            let (default_level, mut repositories) =
+                match crate::backend::db::dependabot::repository_access(
+                    &ctx.state.pool,
+                    actor,
+                    org,
+                    ((page - 1) * 30, 31),
+                )
+                .await
                 {
                     Ok(access) => access,
                     Err(
@@ -614,22 +625,14 @@ pub(super) async fn respond_with_hook_draft(
                     ) => return not_found(ctx),
                     Err(_) => return unavailable(ctx),
                 };
-            let page = ctx
-                .query
-                .get("page")
-                .and_then(|p| p.parse::<i64>().ok())
-                .unwrap_or(1)
-                .clamp(1, 10_000);
-            let offset = (page as usize - 1) * 30;
-            let has_more = offset + 30 < repositories.len();
+            let has_more = repositories.len() > 30;
+            repositories.truncate(30);
             model.dependabot = Some(Box::new(view::dependabot::RepositoryAccess {
                 default_level,
                 page,
                 has_more,
                 repositories: repositories
                     .into_iter()
-                    .skip(offset)
-                    .take(30)
                     .map(|repo| view::dependabot::Repository {
                         id: repo.id,
                         name: repo.name,
