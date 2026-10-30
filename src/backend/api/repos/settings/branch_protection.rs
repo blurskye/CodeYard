@@ -35,9 +35,6 @@ pub struct BranchProtectionRuleResponse {
     pub force_push_allowances: Vec<String>,
 }
 
-/// More approvals than this cannot be met by a small team and would block every merge.
-const MAX_REQUIRED_APPROVALS: i32 = 10;
-
 fn yes() -> bool {
     true
 }
@@ -129,6 +126,9 @@ pub(in crate::backend::api::repos) async fn rule_responses(
             .filter(|id| !teams.contains_key(&(rule.repo_id, **id)))
             .copied()
             .collect();
+        if ids.is_empty() {
+            continue;
+        }
         for team in db::repositories::push_teams::by_ids(pool, rule.repo_id, &ids)
             .await
             .map_err(|_| storage_unavailable())?
@@ -238,12 +238,13 @@ pub(in crate::backend::api::repos) async fn save_rule(
     db::repositories::protection::validate_branch_pattern(pattern)
         .map_err(|error| protection_write_error(error.into()))?;
 
-    if !(0..=MAX_REQUIRED_APPROVALS).contains(&req.required_approving_reviews) {
+    let max_approvals = db::repositories::protection::MAX_REQUIRED_APPROVALS;
+    if !(0..=max_approvals).contains(&req.required_approving_reviews) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
-                "required_approving_reviews must be between 0 and 10",
+                &format!("required_approving_reviews must be between 0 and {max_approvals}"),
             )),
         ));
     }

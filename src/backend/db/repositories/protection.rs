@@ -44,6 +44,9 @@ native_operation!(crate::backend::db::postgres::repositories::protection::read_p
 /// Room for the longest server-owned context, `gitserv/workflow/` and a workflow path.
 const MAX_CHECK_BYTES: usize = 512;
 
+/// The most approvals a rule can require, as the GitHub representation allows.
+pub const MAX_REQUIRED_APPROVALS: i32 = 6;
+
 pub fn validate_required_checks(checks: &[String]) -> Result<(), ProtectionWriteRefusal> {
     if checks.len() > 100 || checks.iter().any(|check| check.len() > MAX_CHECK_BYTES) {
         return Err(ProtectionWriteRefusal::InvalidChecks);
@@ -239,7 +242,7 @@ pub(crate) fn apply_protection_update(
             }
             if let Some(value) = input.required_approving_review_count {
                 anyhow::ensure!(
-                    (0..=6).contains(&value),
+                    (0..=MAX_REQUIRED_APPROVALS).contains(&value),
                     ProtectionWriteRefusal::InvalidChecks
                 );
                 rule.required_approving_reviews = value;
