@@ -38,9 +38,7 @@ pub(super) enum Command {
     Delete,
 }
 
-pub(super) fn field<'a>(form: &'a Fields, key: &str) -> &'a str {
-    form.get(key).map(String::as_str).unwrap_or("")
-}
+pub(super) use crate::backend::api::user::responses::field;
 pub(super) fn optional<'a>(form: &'a Fields, key: &str) -> Option<&'a str> {
     let value = field(form, key);
     (!value.is_empty()).then_some(value)

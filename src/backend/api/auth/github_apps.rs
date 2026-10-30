@@ -1,7 +1,10 @@
 //! Native registration and account-owner consent for GitHub Apps.
 mod manifests;
 use crate::backend::{
-    api::http::{context::PageContext, middleware, session},
+    api::{
+        http::{context::PageContext, middleware, session},
+        user::responses::field,
+    },
     app::AppState,
     db::{self, github_apps::App},
     identity::{github_apps as apps, oauth_apps as oauth, tokens::token_hash},
@@ -22,9 +25,6 @@ use manifests::{manifest_approve, manifest_preview, manifest_start};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 type Fields = HashMap<String, String>;
-fn field<'a>(form: &'a Fields, key: &str) -> &'a str {
-    form.get(key).map(String::as_str).unwrap_or("")
-}
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/settings/apps", get(list))
