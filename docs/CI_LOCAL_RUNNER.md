@@ -82,6 +82,11 @@ or inaccessible repositories and revisions: enable fallback only when that namin
 is intended. Forge credentials are never sent to the fallback host. Private forge actions
 require a credential with Git read authority for their repository.
 
+Docker action metadata supports `pre-entrypoint`/`post-entrypoint`, their conditions,
+and `GITHUB_STATE` across phases. All phases reuse the selected image; metadata arguments
+and entrypoint take precedence over invocation-level overrides. Post handlers are registered
+before pre execution, including failed or interrupted pre handlers.
+
 ## Workflow run history
 
 The GitHub REST API exposes repository/workflow run lists, run documents, and individual

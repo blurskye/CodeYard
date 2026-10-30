@@ -15,6 +15,7 @@ pub(super) struct Podman {
     prefix: String,
     containers: Vec<String>,
     images: Vec<String>,
+    action_images: BTreeMap<(std::path::PathBuf, String), String>,
     pub(super) network: Option<String>,
     deny_docker: bool,
     pub job: Option<String>,
@@ -31,6 +32,7 @@ impl Podman {
             prefix,
             containers: Vec::new(),
             images: Vec::new(),
+            action_images: BTreeMap::new(),
             network: None,
             job: None,
             path: None,
@@ -266,8 +268,11 @@ impl Podman {
         let built = directory.join(image).is_file() || image == "Dockerfile"
             || image.ends_with("/Dockerfile")
             || image.ends_with(".dockerfile");
-        let image = if built {
-            let tag = format!("{}-action-image-{}", self.prefix, self.containers.len());
+        let key = (directory.to_owned(), image.to_owned());
+        let image = if let Some(image) = self.action_images.get(&key) {
+            image.clone()
+        } else if built {
+            let tag = format!("{}-action-image-{}", self.prefix, self.images.len());
             self.images.push(tag.clone());
             let mut args: Vec<String> = vec!["build".into()];
             for label in self.ownership_labels() {
@@ -282,25 +287,28 @@ impl Podman {
             ]);
             let output = super::process::output(self.command().args(&args), deadline.saturating_duration_since(std::time::Instant::now())).await?;
             anyhow::ensure!(output.status.success(), "Docker action image build failed: {}", String::from_utf8_lossy(&output.stderr));
+            self.action_images.insert(key, tag.clone());
             tag
         } else {
-            image.strip_prefix("docker://").unwrap_or(image).into()
+            let image = image.strip_prefix("docker://").unwrap_or(image);
+            if self.pull { self.output(&["pull".into(), "--".into(), image.into()]).await?; }
+            let inspect = ["image".into(), "inspect".into(), "--format".into(), "{{.Id}}".into(), "--".into(), image.into()];
+            let resolved = match self.output(&inspect).await {
+                Ok(image) => image,
+                Err(_) => {
+                    self.output(&["pull".into(), "--".into(), image.into()]).await?;
+                    self.output(&inspect).await?
+                }
+            };
+            self.action_images.insert(key, resolved.clone());
+            resolved
         };
         let id = format!("{}-action-{}", self.prefix, self.containers.len());
         self.containers.push(id.clone());
         let mut command = self.command();
         command.args(["run", "--name", &id]);
         command.args(&self.options);
-        command.args([
-            "--pull",
-            if built {
-                "never"
-            } else if self.pull {
-                "always"
-            } else {
-                "missing"
-            },
-        ]);
+        command.args(["--pull", "never"]);
         if let Some(network) = &self.network {
             command.args(["--network", network]);
         }
@@ -326,7 +334,7 @@ impl Podman {
         if let Some(entrypoint) = entrypoint {
             command.args(["--entrypoint", entrypoint]);
         }
-        command.arg(image).args(args);
+        command.arg("--").arg(image).args(args);
         Ok((command, id))
     }
 
