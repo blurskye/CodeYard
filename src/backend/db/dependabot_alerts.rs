@@ -359,7 +359,7 @@ pub(crate) fn matches(
                 .push((advisory, osv, vulnerability));
         }
     }
-    let mut matches = std::collections::BTreeMap::new();
+    let mut matches: std::collections::BTreeMap<_, (Package, Value, Value)> = std::collections::BTreeMap::new();
     for mut package in dependency_graph::packages(snapshots) {
         package.ecosystem = ecosystem(&package.ecosystem).into();
         let key = (
@@ -399,7 +399,17 @@ pub(crate) fn matches(
                 package.ecosystem.clone(),
                 package.name.clone(),
             );
-            matches.entry(key).or_insert_with(|| {
+            matches.entry(key).and_modify(|matched| {
+                // Exact OSV versions can overlap intervals with a known fix. Prefer that
+                // matching interval regardless of catalogue entry order, without borrowing
+                // a fix from another installed version of the same dependency.
+                if matched.0.version == package.version
+                    && matched.2["first_patched_version"].as_str().is_none_or(str::is_empty)
+                    && vulnerability["first_patched_version"].as_str().is_some_and(|version| !version.is_empty())
+                {
+                    matched.2 = (*vulnerability).clone();
+                }
+            }).or_insert_with(|| {
                 (
                     package.clone(),
                     (*advisory).clone(),
