@@ -5,6 +5,15 @@ use crate::backend::db::models::{Issue, IssueComment};
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
+/// Reopening normalizes its reason in storage; a closed issue cannot be `reopened`.
+pub(crate) fn valid_state_reason(state: &str, reason: Option<&str>) -> bool {
+    match reason {
+        None | Some("completed" | "not_planned" | "duplicate") => true,
+        Some("reopened") => state == "open",
+        _ => false,
+    }
+}
+
 /// What a new issue starts with besides its text: a parent issue, labels, assignees, a milestone
 /// and a type. The parent and labels and assignees need triage access, and the milestone and type
 /// need write access, as when they are set later. The creating transaction checks all of it, so

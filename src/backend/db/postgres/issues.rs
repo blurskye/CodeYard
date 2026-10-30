@@ -332,13 +332,6 @@ pub async fn update_issue_with_reason(
     edit: crate::backend::db::discussions::DiscussionEdit<'_>,
     state_reason: Option<&str>,
 ) -> Result<Option<Issue>> {
-    anyhow::ensure!(
-        state_reason.is_none_or(|reason| matches!(
-            reason,
-            "completed" | "not_planned" | "reopened" | "duplicate"
-        )),
-        "Invalid state reason"
-    );
     if !edit.has_exact_revision() {
         return Ok(None);
     }
@@ -375,6 +368,7 @@ pub(crate) async fn update_issue_in_transaction(
     edit: crate::backend::db::discussions::DiscussionEdit<'_>,
     state_reason: Option<&str>,
 ) -> Result<Option<Issue>> {
+    anyhow::ensure!(crate::backend::db::issues::valid_state_reason(edit.state.unwrap_or(edit.expected_state), state_reason), "Invalid state reason");
     let issue = sqlx::query_as::<_, Issue>(
         r#"UPDATE issues SET
             title = COALESCE($2, title), body = COALESCE($3, body),
