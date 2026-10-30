@@ -1650,7 +1650,7 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         name: &str,
         changes: &db::repositories::records::RepositoryChanges<&str>,
     ) -> Result<db::models::Repository, RepoError> {
@@ -1658,6 +1658,7 @@ impl RepoStore {
             return Err(invalid_ref("branch"));
         }
         let changes = changes.owned();
+        let actor = actor.into();
         match &self.0 {
             Backend::Local(local) => {
                 local
@@ -1667,9 +1668,9 @@ impl RepoStore {
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor,
+                        actor.user_id(),
                         Operation::PatchRepository {
-                            default_branch: name.into(),
+                            default_branch: rpc::wire::PublicationText::retain(name, actor),
                             changes,
                         },
                         b"",
@@ -1684,9 +1685,10 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         name: &str,
     ) -> Result<(), RepoError> {
+        let actor = actor.into();
         if git::branch_ref(name).is_none() {
             return Err(invalid_ref("branch"));
         }
@@ -1695,8 +1697,8 @@ impl RepoStore {
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor,
-                        Operation::SetDefaultBranch { name: name.into() },
+                        actor.user_id(),
+                        Operation::SetDefaultBranch { name: rpc::wire::PublicationText::retain(name, actor) },
                         b"",
                     )
                     .await

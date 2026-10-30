@@ -173,8 +173,9 @@ pub struct RenameRepoRequest {
 
 #[derive(Deserialize)]
 pub struct UpdateRepoRequest {
-    pub description: Option<String>,
-    pub is_private: bool,
+    #[serde(default, deserialize_with = "db::repositories::records::nullable_change")]
+    pub description: Option<Option<String>>,
+    pub is_private: Option<bool>,
     pub allow_merge_commit: Option<bool>,
     pub allow_squash_merge: Option<bool>,
     pub allow_rebase_merge: Option<bool>,
@@ -195,7 +196,10 @@ pub async fn rename_repo(
     // DB alias; stable operation-owned storage is never moved or compensated.
     let updated = db::repositories::records::rename_repository(
         &state.pool,
-        user.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: user.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         repository.id,
         &req.new_name,
     )
@@ -288,9 +292,10 @@ pub async fn update_repo(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
-    lifecycle::validate_description(req.description.as_deref().unwrap_or(""))
-        .map_err(lifecycle_error)?;
-    if !req.is_private
+    if let Some(Some(description)) = &req.description {
+        lifecycle::validate_description(description).map_err(lifecycle_error)?;
+    }
+    if req.is_private == Some(false)
         && lifecycle::visibility_locked(&state.pool, &repository)
             .await
             .map_err(|error| {
@@ -310,29 +315,24 @@ pub async fn update_repo(
     }
     // The merge methods, description and visibility save in one transaction, so a refusal or a
     // failed write leaves all of them unchanged.
-    db::repositories::records::update_repository(
+    let updated = db::repositories::records::patch_repository(
         &state.pool,
-        user.id,
-        repository.id,
-        req.description.as_deref(),
-        req.is_private,
-        db::repositories::records::MergeMethodUpdate {
-            merge: req.allow_merge_commit,
-            squash: req.allow_squash_merge,
-            rebase: req.allow_rebase_merge,
+        db::users::accounts::AccountActor::Session {
+            user_id: user.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         },
-    )
-    .await
-    .map_err(repository_settings_error)?;
-    let updated = db::repositories::records::get_repository_by_id(&state.pool, repository.id)
-        .await
-        .map_err(repository_settings_error)?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
+        repository.id,
+        &db::repositories::records::RepositoryChanges {
+            description: req.description.as_ref().map(|value| value.as_deref()),
+            is_private: req.is_private,
+            merge_methods: db::repositories::records::MergeMethodUpdate {
+                merge: req.allow_merge_commit,
+                squash: req.allow_squash_merge,
+                rebase: req.allow_rebase_merge,
+            },
+            ..Default::default()
+        },
+    ).await.map_err(repository_settings_error)?;
 
     Ok(Json(repository_response(&state, &headers, &updated).await?))
 }
@@ -1592,7 +1592,7 @@ async fn mutate(
             crate::backend::repositories::refs::set_default_branch(
                 pool,
                 cluster,
-                actor.id,
+                authority(),
                 repository,
                 &field(form, "branch"),
             )
@@ -1664,7 +1664,7 @@ async fn mutate(
             }
             db::repositories::records::update_repository(
                 pool,
-                actor.id,
+                authority(),
                 repository.id,
                 Some(&field(form, "description")),
                 db::repositories::records::VisibilityUpdate {
@@ -1688,7 +1688,7 @@ async fn mutate(
         "merge-methods" => {
             db::repositories::records::set_merge_methods(
                 pool,
-                actor.id,
+                authority(),
                 repository.id,
                 db::repositories::records::MergeMethodUpdate {
                     merge: Some(checkbox(form, "allow_merge_commit")),
@@ -1899,7 +1899,7 @@ async fn mutate(
                 .map_err(access_error)?;
             let updated = db::repositories::records::rename_repository(
                 pool,
-                actor.id,
+                authority(),
                 repository.id,
                 &field(form, "name"),
             )
@@ -1927,7 +1927,7 @@ async fn mutate(
             // Archiving an archived repository, or the reverse, changes nothing and is not an error.
             db::repositories::records::set_repository_archived(
                 pool,
-                actor.id,
+                authority(),
                 repository.id,
                 action == "archive",
             )
@@ -1947,7 +1947,7 @@ async fn mutate(
         "template" => {
             db::repositories::records::patch_repository(
                 pool,
-                actor.id,
+                authority(),
                 repository.id,
                 &db::repositories::records::RepositoryChanges {
                     is_template: Some(checkbox(form, "is_template")),

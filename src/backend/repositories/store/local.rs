@@ -2894,7 +2894,7 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: db::users::accounts::AccountActor,
         name: &str,
     ) -> Result<(), RepoError> {
         self.patch_repository(pool, repo_id, actor, name, Default::default())
@@ -3154,7 +3154,7 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: db::users::accounts::AccountActor,
         name: &str,
         changes: db::repositories::records::RepositoryChanges<String>,
     ) -> Result<db::models::Repository, RepoError> {
@@ -3173,10 +3173,11 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         name: &str,
         changes: &db::repositories::records::RepositoryChanges<String>,
     ) -> Result<db::models::Repository, RepoError> {
+        let actor = authority.user_id();
         let _lock = git::locks::lock(self.path()).await;
         let previous =
             access::check_admin(pool, repo_id, actor)
@@ -3233,10 +3234,11 @@ impl LocalStore {
             String::new()
         };
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
+        access::credential_user(pool, &authority, true).await.map_err(RepoError::from)?;
         self.set_head_target(&reference).await?;
         let updated = db::repositories::records::patch_repository_and_default(
             pool,
-            actor,
+            authority,
             repo_id,
             &changes.borrowed(),
             name,
@@ -3250,6 +3252,7 @@ impl LocalStore {
                 // back when the database already names the requested default.
                 use db::repositories::records::RepositorySettingsRefusal;
                 let must_restore = if error.downcast_ref::<RepositorySettingsRefusal>().is_some()
+                    || error.is::<db::users::accounts::AccountRestricted>()
                     || previous.default_branch == name
                 {
                     true
@@ -3279,6 +3282,9 @@ impl LocalStore {
                     if restored.is_err() {
                         return Err(unavailable("Repository update failed and HEAD could not be restored; reconciliation is required"));
                     }
+                }
+                if error.is::<db::users::accounts::AccountRestricted>() {
+                    return Err(RepoError::write_denied());
                 }
                 return Err(match error.downcast_ref::<RepositorySettingsRefusal>() {
                     Some(

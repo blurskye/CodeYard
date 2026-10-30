@@ -198,7 +198,7 @@ pub async fn update_reference(
 pub async fn set_default_branch(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repository: &db::models::Repository,
     branch: &str,
 ) -> Result<(), RefError> {
