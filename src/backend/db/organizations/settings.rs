@@ -110,14 +110,14 @@ impl Changes {
                 "Invalid organization profile",
             )
         })?;
-        let billing_email = text(input, "billing_email", 254)?;
-        let email = text(input, "email", 254)?;
+        let billing_email = text(input, "billing_email", 255)?;
+        let email = text(input, "email", 255)?;
         for (field, value) in [("billing_email", &billing_email), ("email", &email)] {
             if value
                 .as_ref()
                 .and_then(|value| value.as_ref())
                 .is_some_and(|value| {
-                    value.contains(['\r', '\n', '\t']) || value.parse::<lettre::Address>().is_err()
+                    crate::backend::identity::credentials::validate_email(value).is_err()
                 })
             {
                 return Err(invalid(field, "Enter a valid email address"));

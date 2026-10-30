@@ -165,7 +165,7 @@ async fn map(
     if input
         .email
         .as_ref()
-        .is_some_and(|value| value.len() > 254 || value.parse::<lettre::Address>().is_err())
+        .is_some_and(|value| crate::backend::identity::credentials::validate_email(value).is_err())
     {
         return Err(Error::validation("PorterAuthor", "email", "invalid"));
     }

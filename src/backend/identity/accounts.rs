@@ -119,7 +119,7 @@ pub enum EmailChangeError {
 }
 
 /// Changes the account's address after the current password is checked. The new address
-/// is trimmed and must look like `name@host`; a wrong password counts against the account's
+/// is trimmed and must be a valid address; a wrong password counts against the account's
 /// login budget.
 pub async fn change_email(
     pool: &DbPool,
@@ -131,10 +131,7 @@ pub async fn change_email(
         .await
         .map_err(EmailChangeError::Authority)?;
     let email = email.trim();
-    let well_formed = email.split_once('@').is_some_and(|(name, host)| {
-        !name.is_empty() && host.contains('.') && !email.contains(char::is_whitespace)
-    });
-    if !well_formed || validate_email(email).is_err() {
+    if validate_email(email).is_err() {
         return Err(EmailChangeError::InvalidEmail);
     }
     passwords::verify_current_password(pool, &user, current_password)

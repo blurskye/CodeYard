@@ -121,7 +121,7 @@ fn uid_email(uid: &str) -> Option<String> {
         uid
     };
     let address = address.trim().to_ascii_lowercase();
-    (address.len() <= 255 && address.parse::<lettre::Address>().is_ok()).then_some(address)
+    super::credentials::validate_email(&address).is_ok().then_some(address)
 }
 
 pub(super) fn certifies_email(raw: &str, email: &str, at: i64) -> bool {
