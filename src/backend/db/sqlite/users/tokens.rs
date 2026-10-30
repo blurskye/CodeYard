@@ -56,7 +56,8 @@ pub(crate) async fn repository_write_on(
         }
         let exists: bool = sqlx::query_scalar("SELECT $1=$2 OR EXISTS(SELECT 1 FROM oauth_applications WHERE client_id=$1)")
             .bind(client).bind(oauth_apps::CLI_CLIENT).fetch_one(&mut **tx).await?;
-        return Ok(exists && oauth_apps::allows(&scopes, "/repos/owner/repo", true));
+        return Ok(exists && oauth_apps::allows(&scopes, "/repos/owner/repo", true)
+            && (permission != "workflows" || oauth_apps::has_scope(&scopes, "workflow")));
     }
     let refused: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN organization_token_policies p ON p.org_id=r.owner_org_id WHERE r.id=$1 AND NOT p.classic_allowed)")
         .bind(repo).fetch_one(&mut **tx).await?;
@@ -87,6 +88,22 @@ pub(crate) async fn team_write_on(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, 
     }
     let policy: Option<bool> = sqlx::query_scalar("SELECT classic_allowed FROM organization_token_policies WHERE org_id=?1").bind(org).fetch_optional(&mut **tx).await?;
     Ok(policy.unwrap_or(true))
+}
+
+pub async fn publication_grant(
+    pool: &SqlitePool,
+    token: i64,
+    actor: i64,
+    repo: i64,
+    workflows: bool,
+) -> Result<Option<sqlx::Transaction<'_, sqlx::Sqlite>>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !repository_write_on(&mut tx, token, actor, repo, "contents").await?
+        || (workflows && !repository_write_on(&mut tx, token, actor, repo, "workflows").await?)
+    {
+        return Ok(None);
+    }
+    Ok(Some(tx))
 }
 
 pub async fn repository_write(pool: &SqlitePool, token: i64, actor: i64, repo: i64, permission: &str) -> Result<bool> {

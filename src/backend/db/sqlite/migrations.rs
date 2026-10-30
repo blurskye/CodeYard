@@ -3,11 +3,10 @@ use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use sqlx::{pool::PoolConnection, Connection, Sqlite, SqliteConnection, SqlitePool};
 
-const MIGRATIONS: &[(i64, &str, &str)] = &[(
-    1,
-    "schema",
-    include_str!("../../../../schema/sqlite/0001.schema.sql"),
-)];
+const MIGRATIONS: &[(i64, &str, &str)] = &[
+    (1, "schema", include_str!("../../../../schema/sqlite/0001.schema.sql")),
+    (2, "relationship_times", include_str!("../../../../schema/sqlite/0002.relationship_times.sql")),
+];
 
 // Cancellation must not return a connection with foreign keys disabled to the pool.
 struct ForeignKeysOff<'a>(&'a mut PoolConnection<Sqlite>);

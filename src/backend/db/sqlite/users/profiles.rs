@@ -74,7 +74,7 @@ pub async fn save_profile(
         .bind(user)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE user_profile_settings SET company=COALESCE(?2,company),twitter_username=COALESCE(?3,twitter_username),hireable=COALESCE(?4,hireable),public_email=COALESCE(?5,public_email),primary_visibility=COALESCE(?6,primary_visibility) WHERE user_id=?1")
+    sqlx::query("UPDATE user_profile_settings SET company=COALESCE(?2,company),twitter_username=COALESCE(?3,twitter_username),hireable=COALESCE(?4,hireable),public_email=COALESCE(?5,public_email),primary_visibility=COALESCE(?6,CASE WHEN ?5='' THEN 'private' ELSE primary_visibility END) WHERE user_id=?1")
         .bind(user).bind(input.company).bind(input.twitter_username).bind(input.hireable).bind(input.email).bind(input.primary_visibility).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(result)

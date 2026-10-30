@@ -592,33 +592,28 @@ impl LocalStore {
 
     /// Recheck the initiating contents credential at publication. Without workflows permission,
     /// updates must also leave workflow files as they are or as an existing branch has them.
-    async fn check_publication_grant(
+    async fn check_publication_grant<'a>(
         &self,
-        pool: &db::DbPool,
+        pool: &'a db::DbPool,
         repo: i64,
         actor: i64,
         token: Option<i64>,
         updates: Vec<(String, String)>,
         quarantine: Option<PathBuf>,
-    ) -> Result<(), RepoError> {
+    ) -> Result<Option<db::users::tokens::PublicationGrant<'a>>, RepoError> {
         let Some(token) = token else {
-            return Ok(());
+            return Ok(None);
         };
-        if !db::users::tokens::repository_write(pool, token, actor, repo, "contents").await
-            .map_err(|_| RepoError::authority_unavailable())? {
-            return Err(RepoError::write_denied());
-        }
-        if crate::backend::identity::oauth_apps::allows_workflows(pool, token)
+        // Inspect immutable trees before taking credential locks. A revocation during this
+        // potentially slow work must be visible to the final authorization transaction.
+        let workflows = self.blocking(move |path| {
+            git::oauth::check_workflows(path, quarantine.as_deref(), &updates)
+        }).await.is_err();
+        db::users::tokens::publication_grant(pool, token, actor, repo, workflows)
             .await
             .map_err(|_| RepoError::authority_unavailable())?
-        {
-            return Ok(());
-        }
-        self.blocking(move |path| {
-            git::oauth::check_workflows(path, quarantine.as_deref(), &updates)
-        })
-        .await
-        .map_err(|_| RepoError::workflow_denied())
+            .map(Some)
+            .ok_or_else(RepoError::write_denied)
     }
 
     pub(super) async fn git_tree(
@@ -2194,7 +2189,7 @@ impl LocalStore {
         )
         .await?;
         live_read(pool, source.0, actor, source.1.path(), source.1.node_id).await?;
-        self.check_publication_grant(
+        let grant = self.check_publication_grant(
             pool,
             repo_id,
             actor,
@@ -2212,6 +2207,7 @@ impl LocalStore {
             ))
             .await
             .map_err(RepoError::from)?;
+        drop(grant);
         let followup = self
             .after_ref_change(
                 pool,
@@ -2415,8 +2411,6 @@ impl LocalStore {
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
-        self.check_publication_grant(pool, repo_id, actor, token, vec![(base.to_owned(), result.to_owned())], None)
-            .await?;
         if let Some(authority) = authority {
             db::users::tokens::token_user(pool, authority.token_id, true)
                 .await
@@ -2449,6 +2443,8 @@ impl LocalStore {
                 return Err(RepoError::write_denied());
             }
         }
+        let grant = self.check_publication_grant(pool, repo_id, actor, token, vec![(base.to_owned(), result.to_owned())], None)
+            .await?;
         publication
             .scope(git::publish_merge(
                 self.path(),
@@ -2459,6 +2455,7 @@ impl LocalStore {
             ))
             .await
             .map_err(RepoError::from)?;
+        drop(grant);
         let followup = self
             .after_ref_change(
                 pool,

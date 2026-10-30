@@ -26,6 +26,28 @@ native_operation!(crate::backend::db::postgres::users::tokens::repository_write,
     crate::backend::db::sqlite::users::tokens::repository_write,
     /// Narrows native write authority at a Git publication boundary.
     fn repository_write(pool: &DbPool, token: i64, actor: i64, repo: i64, permission: &str) -> Result<bool>);
+/// Read-only authorization transaction retained across the atomic Git ref update.
+/// Dropping it releases the locks; it must be released before database follow-up writes.
+pub enum PublicationGrant<'a> {
+    Postgres(sqlx::Transaction<'a, sqlx::Postgres>),
+    Sqlite(sqlx::Transaction<'a, sqlx::Sqlite>),
+}
+
+pub async fn publication_grant(
+    pool: &DbPool,
+    token: i64,
+    actor: i64,
+    repo: i64,
+    workflows: bool,
+) -> Result<Option<PublicationGrant<'_>>> {
+    match pool {
+        DbPool::Postgres(pool) => crate::backend::db::postgres::users::tokens::publication_grant(pool, token, actor, repo, workflows)
+            .await.map(|grant| grant.map(PublicationGrant::Postgres)),
+        DbPool::Sqlite(pool) => crate::backend::db::sqlite::users::tokens::publication_grant(pool, token, actor, repo, workflows)
+            .await.map(|grant| grant.map(PublicationGrant::Sqlite)),
+    }
+}
+
 native_operation!(crate::backend::db::postgres::users::tokens::touch_token,
     crate::backend::db::sqlite::users::tokens::touch_token,
     /// Records when and from which client address a token was last used.

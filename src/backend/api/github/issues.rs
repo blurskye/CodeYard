@@ -951,7 +951,8 @@ async fn create(
     Json(input): Json<Value>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let auth = auth.ok_or_else(auth::required)?;
+    let actor = auth.user;
     let title = title(input.get("title"))?.ok_or_else(|| Error::invalid("Title is required"))?;
     let parent_issue_id = input
         .get("parent_issue_id")
@@ -975,6 +976,7 @@ async fn create(
             body,
             repository_id: Some(repo.id),
             parent_issue_id,
+            token: Some(auth.token.id),
         },
     )
     .await

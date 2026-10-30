@@ -63,52 +63,52 @@ pub(super) async fn resolve(
             if field != "parent" {
                 connection::validate(ctx)?;
             }
-            let mut links = Vec::new();
-            loop {
-                let rows = db::relationships::list(
-                    pool,
-                    Some(request.auth.user.id),
-                    id,
-                    kind,
-                    links.len() as i64,
-                    100,
-                )
-                .await
-                .map_err(unavailable)?;
-                let done = rows.len() < 100;
-                links.extend(rows);
-                if done {
-                    break;
+            let (mut order, mut descending) = (db::relationships::Order::Position, false);
+            if let Some(value) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
+                let value = value.object()?;
+                order = match value.try_get("field")?.enum_name()? {
+                    "CREATED_AT" => db::relationships::Order::CreatedAt,
+                    "DEPENDENCY_ADDED_AT" => db::relationships::Order::DependencyAddedAt,
+                    _ => return Err(Error::new("Unsupported relationship order")),
+                };
+                descending = value.try_get("direction")?.enum_name()? == "DESC";
+            }
+            let credential = request.auth.read_filter(pool, "issues", true).await
+                .map_err(|error| error.graphql())?;
+            let mut window = db::relationships::Window {
+                viewer: request.auth.user.id, root: id, kind, credential: &credential,
+                order, descending, offset: 0, limit: 0, count: field != "parent",
+            };
+            let page = if field == "parent" { None } else {
+                let total = db::relationships::window(pool, &window).await.map_err(unavailable)?
+                    .total.unwrap_or(0);
+                Some(Page::new(ctx, total)?)
+            };
+            (window.offset, window.limit) = page.as_ref().map_or((0, 1), |page| (page.offset, page.limit));
+            window.count = false;
+            let rows = if window.limit == 0 { Vec::new() } else {
+                db::relationships::window(pool, &window).await.map_err(unavailable)?.issues
+            };
+            request.charge(rows.len().saturating_mul(32))?;
+            let mut grouped = std::collections::BTreeMap::<i64, Vec<i64>>::new();
+            for &(id, repo) in &rows { grouped.entry(repo).or_default().push(id); }
+            let mut loaded = std::collections::HashMap::new();
+            for (repo, ids) in grouped {
+                for issue in db::issues::get_issues_by_ids(pool, repo, &ids).await.map_err(unavailable)? {
+                    request.charge(issue.title.len().saturating_add(issue.body.len()).saturating_mul(4))?;
+                    loaded.insert(issue.id, issue);
                 }
             }
-            let mut visible = std::collections::HashMap::new();
-            for link in &links {
-                request.charge(link.title.len())?;
-                if !visible.contains_key(&link.repo_id) {
-                    visible.insert(link.repo_id, repository::optional_authority(link.repo_id, "issues", request).await?);
+            let mut nodes = Vec::with_capacity(rows.len());
+            for (id, _) in rows {
+                let Some(issue) = loaded.remove(&id) else { nodes.push(Value::Null); continue; };
+                if !repository::optional_authority(issue.repo_id, "issues", request).await? {
+                    nodes.push(Value::Null);
+                    continue;
                 }
-            }
-            links.retain(|link| visible[&link.repo_id]);
-            if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
-                let order = order.object()?;
-                if order.try_get("field")?.enum_name()? == "CREATED_AT" {
-                    links.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
-                }
-                if order.try_get("direction")?.enum_name()? == "DESC" { links.reverse(); }
-            }
-            let page = if field == "parent" { None } else { Some(Page::new(ctx, links.len() as i64)?) };
-            let (offset, limit) = page.as_ref().map_or((0, 1), |page| (page.offset as usize, page.limit as usize));
-            let mut nodes = Vec::new();
-            for link in links.into_iter().skip(offset).take(limit) {
-                let issue = db::issues::get_issue_by_id(pool, link.id)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?;
-                repository::by_id(issue.repo_id, request).await?;
-                request.authorize(issue.repo_id, "issues", false).await?;
-                request.charge(issue.title.len().saturating_add(issue.body.len()).saturating_mul(4))?;
                 nodes.push(object(&issue));
             }
+            request.authorize(repo.id, "issues", false).await?;
             match page {
                 None => Ok(nodes.into_iter().next().unwrap_or(Value::Null)),
                 Some(page) => Ok(page.finish(nodes)),

@@ -152,18 +152,21 @@ impl LocalStore {
         self.import_authority(pool, repo_id, actor, &import).await?;
         // An import publishes its commits like a push, so a token without the workflow
         // permission cannot add workflow files this way either.
-        if let ImportCredential::Token(token) = &import.credential {
+        let grant = if let ImportCredential::Token(token) = &import.credential {
             let updates = import
                 .refs
                 .values()
                 .map(|sha| (ZERO_SHA.to_owned(), sha.clone()))
                 .collect();
             self.check_publication_grant(pool, repo_id, actor, Some(*token), updates, None)
-                .await?;
-        }
+                .await?
+        } else {
+            None
+        };
         let mut refs = self.mirror_refs().await?;
         refs.extend(import.refs.clone());
         self.set_refs(&refs).await?;
+        drop(grant);
         if let Some(branch) = &import.default_branch {
             if git::branch_ref(branch).is_some_and(|reference| import.refs.contains_key(&reference))
             {

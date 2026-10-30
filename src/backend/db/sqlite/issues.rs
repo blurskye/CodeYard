@@ -38,6 +38,12 @@ pub async fn create_issue_with_metadata(
             DiscussionWriteRefusal::Denied
         );
     }
+    if let Some(token) = metadata.token {
+        anyhow::ensure!(
+            super::users::tokens::repository_write_on(&mut tx, token, author_id, repo_id, "issues").await?,
+            DiscussionWriteRefusal::Denied
+        );
+    }
     let issue = insert_in_transaction(&mut tx, repo_id, author_id, title, body).await?;
     if !metadata.labels.is_empty() {
         super::labels::write_item_labels_transaction(
@@ -93,7 +99,7 @@ pub async fn create_issue_with_metadata(
                     replace: false,
                 },
                 true,
-                None,
+                metadata.token,
             )
             .await?
         }

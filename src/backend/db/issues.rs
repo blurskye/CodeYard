@@ -15,6 +15,8 @@ native_operation!(crate::backend::db::postgres::issues::issue_repositories,
 /// the issue is saved with everything it asks for or not at all.
 #[derive(Clone, Copy, Default)]
 pub struct IssueMetadata<'a> {
+    /// Initiating API credential, retained until the insert and metadata commit.
+    pub token: Option<i64>,
     pub parent: Option<i64>,
     pub labels: &'a [i64],
     pub assignees: &'a [i64],

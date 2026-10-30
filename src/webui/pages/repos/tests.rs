@@ -105,6 +105,39 @@ fn fixtures() -> Vec<Page> {
         code_url: "/alice/project/blob/abc/src/lib.rs#L1".into(),
     };
     let mut pages = vec![
+        Page::Discussions {
+            repo: repo.clone(),
+            page: super::discussions::Page::Index {
+                discussions: vec![super::discussions::Discussion {
+                    number: 1,
+                    title: "<script>alert(1)</script>".into(),
+                    body: "Discussion body".into(),
+                    author: "alice".into(),
+                }],
+                page: 1,
+                more: true,
+            },
+        },
+        Page::Discussions {
+            repo: repo.clone(),
+            page: super::discussions::Page::Detail {
+                discussion: super::discussions::Discussion {
+                    number: 1,
+                    title: "Discussion".into(),
+                    body: "<script>alert(1)</script>".into(),
+                    author: "alice".into(),
+                },
+                comments: vec![super::discussions::Comment {
+                    id: 1,
+                    body: "<script>alert(1)</script>".into(),
+                    author: "alice".into(),
+                    reply_to: None,
+                }],
+                thread: None,
+                page: 1,
+                more: false,
+            },
+        },
         Page::Tree {
             repo: repo.clone(),
             page: TreePage {
@@ -742,6 +775,7 @@ fn typed_dispatch_matches_pure_views_and_escapes_all_variants() {
     crate::webui::tests::in_scope(|| {
         for page in fixtures() {
             let expected = match &page {
+                Page::Discussions { repo, page } => super::discussions::render(repo, page),
                 Page::Tree { repo, page } => tree(repo, page),
                 Page::BranchMerge { repo, form } => super::merge::merge(repo, form),
                 Page::Blob { repo, page } => blob(repo, page),

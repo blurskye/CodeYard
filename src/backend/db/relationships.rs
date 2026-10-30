@@ -118,6 +118,55 @@ pub struct RelationCounts {
     pub total_blocked_by: i64,
     pub total_blocking: i64,
 }
+#[derive(Clone, Copy)]
+pub enum Order {
+    Position,
+    CreatedAt,
+    DependencyAddedAt,
+}
+
+pub struct Window<'a> {
+    pub viewer: i64,
+    pub root: i64,
+    pub kind: Kind,
+    pub credential: &'a super::repositories::access::ReadFilter,
+    pub order: Order,
+    pub descending: bool,
+    pub offset: i64,
+    pub limit: i64,
+    pub count: bool,
+}
+
+pub struct RelationPage {
+    pub total: Option<i64>,
+    /// Lightweight issue identities, not titles or bodies.
+    pub issues: Vec<(i64, i64)>,
+}
+
+pub(crate) fn window_sql(window: &Window<'_>, readable: &str, count: bool) -> String {
+    let (target, source) = window.kind.selection();
+    let select = if count { "COUNT(*)" } else { "i.id,i.repo_id" };
+    let credential = window.credential.condition();
+    let direction = if window.descending { "DESC" } else { "ASC" };
+    let order = match window.order {
+        Order::Position => "e.position",
+        Order::CreatedAt => "i.created_at",
+        Order::DependencyAddedAt => "e.created_at",
+    };
+    let tail = if count { String::new() } else {
+        format!(" ORDER BY {order} {direction},e.source_id {direction},e.target_id {direction} LIMIT $4 OFFSET $5")
+    };
+    format!("SELECT {select} FROM issue_relations e JOIN issues i ON i.id={target} \
+        JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1 \
+        WHERE {source}=$2 AND e.kind=$3 AND ({readable}) AND ({credential}) \
+        AND (COALESCE(u.username,'')<>$6 OR i.repo_id=(SELECT repo_id FROM issues WHERE id=$2)) \
+        AND CAST($4 AS BIGINT)>=0 AND CAST($5 AS BIGINT)>=0{tail}")
+}
+
+native_operation!(crate::backend::db::postgres::relationships::window,
+    crate::backend::db::sqlite::relationships::window,
+    fn window(pool: &DbPool, window: &Window<'_>) -> Result<RelationPage>);
+
 native_operation!(crate::backend::db::postgres::relationships::list,crate::backend::db::sqlite::relationships::list,
     fn list(pool:&DbPool,viewer:Option<i64>,root:i64,kind:Kind,offset:i64,limit:i64)->Result<Vec<Link>>);
 pub async fn change(pool: &DbPool, actor: i64, repo: i64, root: i64, mutation: Mutation) -> Result<()> {

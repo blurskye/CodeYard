@@ -4,6 +4,31 @@ use crate::backend::db::{
 };
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
+pub async fn window(
+    pool: &PgPool,
+    window: &crate::backend::db::relationships::Window<'_>,
+) -> Result<crate::backend::db::relationships::RelationPage> {
+    use crate::backend::db::relationships::{window_sql, RelationPage};
+    anyhow::ensure!(window.offset >= 0 && (0..=100).contains(&window.limit), Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+    let readable = super::repositories::access::readable_condition();
+    let total = if window.count {
+        Some(sqlx::query_scalar(&window_sql(window, &readable, true))
+            .bind(window.viewer).bind(window.root).bind(window.kind.storage())
+            .bind(window.limit).bind(window.offset).bind(crate::backend::db::ci_tokens::BOT)
+            .fetch_one(&mut *tx).await?)
+    } else { None };
+    let issues = if window.limit == 0 { Vec::new() } else {
+        sqlx::query_as(&window_sql(window, &readable, false))
+            .bind(window.viewer).bind(window.root).bind(window.kind.storage())
+            .bind(window.limit).bind(window.offset).bind(crate::backend::db::ci_tokens::BOT)
+            .fetch_all(&mut *tx).await?
+    };
+    tx.commit().await?;
+    Ok(RelationPage { total, issues })
+}
+
 pub async fn list(
     pool: &PgPool,
     viewer: Option<i64>,
@@ -127,11 +152,12 @@ pub(crate) async fn change_in_transaction<'a>(
         Refusal::Missing
     );
     let ids: Vec<i64> = sqlx::query_scalar(
-        "SELECT id FROM issues WHERE (id=$1 AND repo_id=$3) OR id=$2 ORDER BY id FOR UPDATE",
+        "SELECT id FROM issues WHERE (id=$1 AND repo_id=$3) OR (id=$2 AND repo_id=$4) ORDER BY id FOR UPDATE",
     )
     .bind(root)
     .bind(other)
     .bind(repo)
+    .bind(target_repo)
     .fetch_all(&mut *tx)
     .await?;
     anyhow::ensure!(ids.len() == 2, Refusal::Missing);

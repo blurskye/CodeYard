@@ -94,6 +94,7 @@ fn query<'a>(
     };
     Ok(RepositoryListQuery {
         viewer: Some(request.auth.user.id),
+        credential: None,
         list,
         since: 0,
         visibility: match privacy {

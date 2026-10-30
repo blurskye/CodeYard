@@ -684,25 +684,14 @@ async fn list(
         per_page: if public { Some(100) } else { query.per_page },
     };
     let (offset, limit) = page.window()?;
-    let mut repos = Vec::with_capacity(limit + 1);
-    let (mut scanned, mut accepted) = (0, 0);
-    'pages: loop {
-        let rows = github::list_repositories(&state.pool, RepositoryListQuery {
-            viewer, list, since: query.since.unwrap_or(0), visibility, kind, sort, descending,
-            limit: 100, offset: scanned,
-        }).await.map_err(Error::unavailable)?;
-        scanned += rows.len() as i64;
-        let done = rows.len() < 100;
-        let ids: Vec<_> = rows.iter().map(|repo| repo.id).collect();
-        let readable = auth::readable_repositories(&state, auth.as_ref(), &ids, "metadata").await?;
-        for repo in rows {
-            if !readable.contains(&repo.id) { continue; }
-            if accepted < offset { accepted += 1; continue; }
-            repos.push(repo);
-            if repos.len() > limit { break 'pages; }
-        }
-        if done { break; }
-    }
+    let credential = match auth.as_ref() {
+        Some(auth) => Some(auth.read_filter(&state.pool, "metadata", false).await?),
+        None => None,
+    };
+    let repos = github::list_repositories(&state.pool, RepositoryListQuery {
+        viewer, credential: credential.as_ref(), list, since: query.since.unwrap_or(0),
+        visibility, kind, sort, descending, limit: (limit + 1) as i64, offset: offset as i64,
+    }).await.map_err(Error::unavailable)?;
     let next = repos.len() > limit;
     let mut values = documents(&state, &repos[..repos.len().min(limit)], auth.as_ref()).await?;
     if auth.is_none() {

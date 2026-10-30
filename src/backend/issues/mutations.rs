@@ -13,6 +13,8 @@ pub struct CreateIssueRequest {
     pub repository_id: Option<i64>,
     #[serde(default)]
     pub parent_issue_id: Option<i64>,
+    #[serde(skip)]
+    pub token: Option<i64>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -62,12 +64,19 @@ pub async fn create_issue(
     }
 
     let body = req.body.as_deref().unwrap_or("");
-    let issue = if let Some(parent) = req.parent_issue_id {
-        db::relationships::create_child(pool, user.id, repository.id, parent, &req.title, body)
-            .await
-    } else {
-        db::issues::create_issue(pool, repository.id, user.id, &req.title, body).await
-    }
+    let issue = db::issues::create_issue_with_metadata(
+        pool,
+        repository.id,
+        user.id,
+        &req.title,
+        body,
+        db::issues::IssueMetadata {
+            token: req.token,
+            parent: req.parent_issue_id,
+            ..Default::default()
+        },
+    )
+    .await
     .map_err(super::write_error)?;
 
     let link = format!("/{owner}/{repo}/issues/{}", issue.number);

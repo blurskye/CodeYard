@@ -35,6 +35,7 @@ pub enum RepositoryList {
 #[derive(Clone, Copy)]
 pub struct RepositoryListQuery<'a> {
     pub viewer: Option<i64>,
+    pub credential: Option<&'a super::access::ReadFilter>,
     pub list: RepositoryList,
     pub since: i64,
     pub visibility: &'a str,
@@ -46,6 +47,7 @@ pub struct RepositoryListQuery<'a> {
 }
 
 pub(crate) fn list_sql(query: &RepositoryListQuery<'_>, access: &str, readable: &str) -> String {
+    let credential = query.credential.map_or_else(|| "TRUE".to_owned(), |filter| filter.condition());
     let scope = match query.list {
         RepositoryList::Public => "NOT r.is_private AND r.id > $3 AND CAST($2 AS BIGINT) IS NULL".to_owned(),
         // GitHub's user profile endpoint only lists public repositories, even for the owner.
@@ -78,7 +80,7 @@ pub(crate) fn list_sql(query: &RepositoryListQuery<'_>, access: &str, readable: 
         "SELECT r.* FROM repositories r LEFT JOIN users u ON u.id=$1 \
         LEFT JOIN users owners ON r.owner_kind='user' AND owners.id=r.owner_user_id \
         LEFT JOIN organizations ON r.owner_kind='org' AND organizations.id=r.owner_org_id \
-        WHERE {readable} AND ({scope}) AND CAST($3 AS BIGINT) >= 0 \
+        WHERE {readable} AND ({credential}) AND ({scope}) AND CAST($3 AS BIGINT) >= 0 \
         AND ($4='all' OR ($4='public' AND NOT r.is_private) OR ($4='private' AND r.is_private)) \
         AND ({owner_type} $5='all' OR ($5='forks' AND r.is_fork) OR ($5='sources' AND NOT r.is_fork) \
             OR ($5='member' AND NOT (r.owner_kind='user' AND r.owner_user_id=u.id)) \

@@ -4,6 +4,30 @@ use crate::backend::db::{
 };
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
+pub async fn window(
+    pool: &SqlitePool,
+    window: &crate::backend::db::relationships::Window<'_>,
+) -> Result<crate::backend::db::relationships::RelationPage> {
+    use crate::backend::db::relationships::{window_sql, RelationPage};
+    anyhow::ensure!(window.offset >= 0 && (0..=100).contains(&window.limit), Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    let readable = super::repositories::access::readable_condition();
+    let total = if window.count {
+        Some(sqlx::query_scalar(&window_sql(window, &readable, true).replace('$', "?"))
+            .bind(window.viewer).bind(window.root).bind(window.kind.storage())
+            .bind(window.limit).bind(window.offset).bind(crate::backend::db::ci_tokens::BOT)
+            .fetch_one(&mut *tx).await?)
+    } else { None };
+    let issues = if window.limit == 0 { Vec::new() } else {
+        sqlx::query_as(&window_sql(window, &readable, false).replace('$', "?"))
+            .bind(window.viewer).bind(window.root).bind(window.kind.storage())
+            .bind(window.limit).bind(window.offset).bind(crate::backend::db::ci_tokens::BOT)
+            .fetch_all(&mut *tx).await?
+    };
+    tx.commit().await?;
+    Ok(RelationPage { total, issues })
+}
+
 pub async fn list(
     pool: &SqlitePool,
     viewer: Option<i64>,
