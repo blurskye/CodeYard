@@ -353,8 +353,15 @@ async fn atomic_creation_safe_metadata_namespace_and_validation(database: &Datab
             .unwrap(),
         Conflict
     ));
-    // Exact current username case policy is preserved, not silently lowercased.
-    database.org(owner, "Creation_owner").await;
+    // Names collide regardless of ASCII case, as GitHub logins do, but keep the case given.
+    let case_collision = NewOrganization::new("Creation_owner", profile()).unwrap();
+    assert!(matches!(
+        create_organization(&database.pool, owner, &case_collision)
+            .await
+            .unwrap(),
+        Conflict
+    ));
+    assert_eq!(database.org(owner, "Creation_Mixed").await.name, "Creation_Mixed");
     database.execute("UPDATE organizations SET billing_email='private@example.test',is_verified=TRUE WHERE id=$1", &[organization.id]).await;
     let safe = applied(
         update_organization_profile(&database.pool, owner, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, owner).await), organization.id, &profile())
