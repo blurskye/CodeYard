@@ -123,13 +123,25 @@ pub async fn bounds(pool: &PgPool, token: i64) -> Result<Option<Bounds>> {
         .await?)
 }
 
-pub async fn repositories(pool: &PgPool, token: i64) -> Result<Vec<(i64, String)>> {
-    Ok(sqlx::query_as(
-        "SELECT r.id,r.name FROM fine_grained_token_repositories f JOIN repositories r ON r.id=f.repo_id WHERE f.token_id=$1 ORDER BY r.name,r.id LIMIT 100",
-    )
-    .bind(token)
-    .fetch_all(pool)
-    .await?)
+pub async fn repositories(pool: &PgPool, token: i64, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>) -> Result<Vec<(i64, String)>> {
+    let (session, credential) = credential.selection_parts();
+    let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "$5");
+    let readable = super::repositories::access::readable_condition();
+    Ok(sqlx::query_as(&format!("SELECT r.id,r.name FROM fine_grained_token_repositories selected
+        JOIN fine_grained_tokens g ON g.token_id=selected.token_id JOIN personal_access_tokens p ON p.id=g.token_id
+        JOIN repositories r ON r.id=selected.repo_id JOIN users u ON u.id=$2
+        WHERE selected.token_id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND NOT r.is_gist
+        AND (p.user_id=u.id OR (g.owner_org_id IS NOT NULL AND EXISTS(
+            SELECT 1 FROM org_memberships m WHERE m.org_id=g.owner_org_id AND m.user_id=u.id AND m.role='owner')))
+        AND ((g.owner_org_id IS NULL AND r.owner_kind='user' AND r.owner_user_id=p.user_id)
+             OR (g.owner_org_id IS NOT NULL AND r.owner_kind='org' AND r.owner_org_id=g.owner_org_id))
+        AND (($3::text IS NULL AND $4::bigint IS NULL)
+             OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=$3 AND s.user_id=u.id AND s.expires_at>clock_timestamp())
+             OR EXISTS(SELECT 1 FROM personal_access_tokens t WHERE t.id=$4 AND t.user_id=u.id AND t.scope IN ('read','write')
+                 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND {issuer}))
+        AND {readable} ORDER BY r.name,r.id LIMIT 100"))
+        .bind(token).bind(actor).bind(session).bind(credential).bind(crate::backend::identity::oauth_apps::CLI_CLIENT)
+        .fetch_all(pool).await?)
 }
 
 pub async fn selected(pool: &PgPool, token: i64, repo: i64) -> Result<bool> {

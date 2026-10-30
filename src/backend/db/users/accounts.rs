@@ -3,12 +3,23 @@ use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, AdminU
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
-/// A settings mutation retains the live credential while it changes account data.
+/// A settings operation retains its originating credential alongside account data.
 pub enum AccountCredential<'a> {
     /// Trusted server-side work and fixtures; never derive this from request input.
     Trusted,
     Session(&'a str),
     Token(i64),
+}
+
+impl<'a> AccountCredential<'a> {
+    /// SQL selection parameters: only trusted server-side work has neither credential.
+    pub(crate) fn selection_parts(&self) -> (Option<&'a str>, Option<i64>) {
+        match self {
+            Self::Trusted => (None, None),
+            Self::Session(session) => (Some(*session), None),
+            Self::Token(id) => (None, Some(*id)),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
