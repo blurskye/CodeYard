@@ -41,6 +41,16 @@ async fn ci_actor_has_permission(
     if repo.is_archived {
         return Ok(false);
     }
+    // A repository being migrated runs no workflows, as on PostgreSQL.
+    let migrating: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=?1)",
+    )
+    .bind(repo_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if migrating {
+        return Ok(false);
+    }
     let enabled: bool = sqlx::query_scalar("SELECT COALESCE((SELECT enabled FROM actions_settings WHERE id=1),TRUE) AND COALESCE((SELECT enabled FROM repo_actions_settings WHERE repo_id=?1),TRUE)")
         .bind(repo_id).fetch_one(&mut **tx).await?;
     if !enabled {
