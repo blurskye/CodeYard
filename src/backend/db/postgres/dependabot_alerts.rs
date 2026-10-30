@@ -1,10 +1,7 @@
-use crate::backend::{
-    db::{
-        advisories::{Advisory, Refusal},
-        dependabot_alerts::{self, Alert, Update},
-        credentials::Actor,
-    },
-    dependency_graph::Snapshot,
+use crate::backend::db::{
+    advisories::{Advisory, Refusal},
+    credentials::Actor,
+    dependabot_alerts::{self, Alert, Update},
 };
 use anyhow::{ensure, Result};
 use chrono::Utc;
@@ -146,12 +143,7 @@ pub(crate) async fn refresh(tx: &mut Transaction<'_, Postgres>, repo: i64, pinne
     }
     // No inventory is not evidence of a fix. All contributing detectors share one revision.
     let Some(sha) = sha else { return Ok(()) };
-    let bodies: Vec<String> = sqlx::query_scalar("SELECT body FROM (SELECT body,ROW_NUMBER() OVER(PARTITION BY detector,correlator ORDER BY scanned DESC,id DESC) AS position FROM dependency_snapshots WHERE repo_id=$1 AND reference=$2 AND sha=$3) ranked WHERE position=1 ORDER BY body")
-        .bind(repo).bind(reference).bind(sha).fetch_all(&mut **tx).await?;
-    let snapshots: Vec<Snapshot> = bodies
-        .into_iter()
-        .map(|s| serde_json::from_str(&s))
-        .collect::<std::result::Result<_, _>>()?;
+    let snapshots = super::dependency_graph::snapshots_in(tx, repo, Some(&reference), Some(&sha)).await?;
     for snapshot in &snapshots {
         snapshot.validate()?;
     }

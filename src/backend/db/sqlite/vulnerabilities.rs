@@ -150,6 +150,7 @@ pub async fn save_snapshot(
         .bind(repo).bind(snapshot.sha.to_ascii_lowercase()).bind(&snapshot.reference).bind(&snapshot.job.correlator)
         .bind(&snapshot.detector.name).bind(snapshot.scanned).bind(serde_json::to_string(snapshot)?).execute(&mut *tx).await?;
     super::dependency_graph::drop_replaced_snapshots(&mut tx, repo, snapshot).await?;
+    let _ = super::dependency_graph::bounded_snapshot_ids(&mut tx, repo, Some(&snapshot.reference), Some(&snapshot.sha.to_ascii_lowercase())).await?;
     super::dependabot_alerts::refresh(&mut tx, repo, Some(&snapshot.sha)).await?;
     sqlx::query("UPDATE vulnerability_jobs SET lease_until=NULL,next_scan=$3 WHERE repo_id=$1 AND generation=$2")
         .bind(repo).bind(generation).bind(chrono::Utc::now()+chrono::Duration::minutes(5)).execute(&mut *tx).await?;

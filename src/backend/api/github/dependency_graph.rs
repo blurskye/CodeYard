@@ -31,6 +31,7 @@ fn error(error: db::dependency_graph::GraphError) -> Error {
             "Must have write access to this repository",
         ),
         GraphError::Invalid => Error::validation("Snapshot", "snapshot", "invalid"),
+        GraphError::Limit => Error::new(StatusCode::UNPROCESSABLE_ENTITY, GraphError::Limit.to_string()),
         _ => Error::unavailable(error),
     }
 }

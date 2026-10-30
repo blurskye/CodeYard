@@ -11,12 +11,32 @@ pub(crate) const SBOM_REPORTS_PER_REPOSITORY: i64 = 100;
 /// Callers bind the repository as $1; all detectors contributing alerts must use this SHA.
 pub(crate) const DEFAULT_SNAPSHOT_SHA_SQL: &str = "(SELECT d.sha FROM dependency_snapshots d JOIN repositories r ON r.id=d.repo_id WHERE d.repo_id=$1 AND d.reference='refs/heads/'||r.default_branch ORDER BY d.id DESC LIMIT 1)";
 
+pub(crate) const MAX_SNAPSHOT_SOURCES: usize = 100;
+pub(crate) const MAX_SNAPSHOT_BYTES: i64 = 4 * 1024 * 1024;
+
+pub(crate) fn snapshot_candidates_sql(pg: bool, reference: bool, sha: bool) -> String {
+    let reference = if reference { "reference=$2" } else { "CAST($2 AS TEXT) IS NULL" };
+    let sha = if sha { "sha=$3" } else { "CAST($3 AS TEXT) IS NULL" };
+    let bytes = if pg { "octet_length(s.body)" } else { "length(CAST(s.body AS BLOB))" };
+    let limit = MAX_SNAPSHOT_SOURCES + 1;
+    format!("WITH ranked AS (SELECT id,ROW_NUMBER() OVER(PARTITION BY detector,correlator ORDER BY scanned DESC,id DESC) AS position FROM dependency_snapshots WHERE repo_id=$1 AND {reference} AND {sha}), candidates AS (SELECT id FROM ranked WHERE position=1 ORDER BY id LIMIT {limit}) SELECT s.id,CAST({bytes} AS BIGINT) FROM candidates c JOIN dependency_snapshots s ON s.id=c.id ORDER BY s.id")
+}
+
+pub(crate) fn snapshot_ids(rows: Vec<(i64, i64)>) -> Result<Vec<i64>, GraphError> {
+    if rows.len() > MAX_SNAPSHOT_SOURCES || rows.iter().map(|(_, bytes)| bytes).sum::<i64>() > MAX_SNAPSHOT_BYTES {
+        return Err(GraphError::Limit);
+    }
+    Ok(rows.into_iter().map(|(id, _)| id).collect())
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum GraphError {
     #[error("Dependency graph access denied")]
     Denied,
     #[error("Invalid dependency snapshot")]
     Invalid,
+    #[error("Dependency snapshot catalogue exceeds its limits")]
+    Limit,
     #[error("Dependency graph database unavailable")]
     Database(#[from] sqlx::Error),
     #[error("Dependency graph authority unavailable")]

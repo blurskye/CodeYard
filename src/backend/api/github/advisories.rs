@@ -27,6 +27,9 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 pub(super) fn failure(error: anyhow::Error) -> Error {
+    if matches!(error.downcast_ref::<db::dependency_graph::GraphError>(), Some(db::dependency_graph::GraphError::Limit)) {
+        return Error::new(StatusCode::UNPROCESSABLE_ENTITY, db::dependency_graph::GraphError::Limit.to_string());
+    }
     match error.downcast_ref::<advisories::Refusal>() {
         Some(advisories::Refusal::Denied) => {
             return Error::new(StatusCode::FORBIDDEN, "Advisory administration denied")

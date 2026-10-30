@@ -1,6 +1,6 @@
 use crate::backend::{
     db::dependency_graph::{
-        GraphError, Submission, SBOM_REPORTS_PER_REPOSITORY, SBOM_REPORT_LIFETIME_SECONDS,
+        self, GraphError, Submission, SBOM_REPORTS_PER_REPOSITORY, SBOM_REPORT_LIFETIME_SECONDS,
     },
     dependency_graph::Snapshot,
 };
@@ -48,10 +48,30 @@ pub async fn submit(
         .bind(&snapshot.job.correlator).bind(&snapshot.detector.name).bind(snapshot.scanned)
         .bind(serde_json::to_string(snapshot)?).fetch_one(&mut *tx).await?;
     drop_replaced_snapshots(&mut tx, repo, snapshot).await?;
+    let _ = bounded_snapshot_ids(&mut tx, repo, Some(&snapshot.reference), Some(&snapshot.sha.to_ascii_lowercase())).await?;
     submission.updated = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM dependency_snapshots WHERE repo_id=$1 AND reference=$2 AND correlator=$3 AND detector=$4 AND scanned>$5)")
         .bind(repo).bind(&snapshot.reference).bind(&snapshot.job.correlator).bind(&snapshot.detector.name).bind(snapshot.scanned).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(submission)
+}
+
+/// The caller retains its read snapshot or BEGIN IMMEDIATE reservation through payload loading.
+pub(super) async fn bounded_snapshot_ids(
+    connection: &mut sqlx::SqliteConnection, repo: i64, reference: Option<&str>, sha: Option<&str>,
+) -> Result<Vec<i64>, GraphError> {
+    let rows: Vec<(i64, i64)> = sqlx::query_as(&dependency_graph::snapshot_candidates_sql(false, reference.is_some(), sha.is_some()))
+        .bind(repo).bind(reference).bind(sha).fetch_all(connection).await?;
+    dependency_graph::snapshot_ids(rows)
+}
+
+pub(super) async fn snapshots_in(
+    connection: &mut sqlx::SqliteConnection, repo: i64, reference: Option<&str>, sha: Option<&str>,
+) -> Result<Vec<Snapshot>, GraphError> {
+    let ids = bounded_snapshot_ids(connection, repo, reference, sha).await?;
+    if ids.is_empty() { return Ok(Vec::new()); }
+    let rows: Vec<String> = sqlx::query_scalar("SELECT body FROM dependency_snapshots WHERE id IN (SELECT value FROM json_each($1)) ORDER BY body")
+        .bind(serde_json::to_string(&ids)?).fetch_all(connection).await?;
+    rows.into_iter().map(|body| serde_json::from_str(&body).map_err(GraphError::Stored)).collect()
 }
 
 pub async fn snapshots(
@@ -60,11 +80,10 @@ pub async fn snapshots(
     reference: Option<&str>,
     sha: Option<&str>,
 ) -> Result<Vec<Snapshot>, GraphError> {
-    let rows: Vec<String> = sqlx::query_scalar("SELECT body FROM (SELECT body,ROW_NUMBER() OVER(PARTITION BY detector,correlator ORDER BY scanned DESC,id DESC) AS position FROM dependency_snapshots WHERE repo_id=$1 AND ($2 IS NULL OR reference=$2) AND ($3 IS NULL OR sha=$3)) ranked WHERE position=1 ORDER BY body")
-        .bind(repo).bind(reference).bind(sha).fetch_all(pool).await?;
-    rows.into_iter()
-        .map(|body| serde_json::from_str(&body).map_err(GraphError::Stored))
-        .collect()
+    let mut tx = pool.begin().await?;
+    let rows = snapshots_in(&mut tx, repo, reference, sha).await?;
+    tx.commit().await?;
+    Ok(rows)
 }
 
 pub async fn save_report(
