@@ -205,14 +205,22 @@ pub async fn delete_milestone(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(MilestoneWriteRefusal::NotFound)?;
-    sqlx::query("UPDATE issues SET milestone_id = NULL WHERE milestone_id = ?1")
+    for table in ["issues", "pull_requests"] {
+        let items: Vec<i64> =
+            sqlx::query_scalar(&format!("SELECT id FROM {table} WHERE milestone_id = ?1"))
+                .bind(id)
+                .fetch_all(&mut *tx)
+                .await?;
+        for item in items {
+            super::labels::touch_subject(&mut tx, table, item).await?;
+        }
+        sqlx::query(&format!(
+            "UPDATE {table} SET milestone_id = NULL WHERE milestone_id = ?1"
+        ))
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE pull_requests SET milestone_id = NULL WHERE milestone_id = ?1")
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
+    }
     sqlx::query("DELETE FROM milestones WHERE id = ?1")
         .bind(id)
         .execute(&mut *tx)
@@ -357,7 +365,7 @@ pub async fn milestone_choice_by_title(
     title: &str,
 ) -> Result<Option<Milestone>> {
     Ok(sqlx::query_as(&format!(
-        "SELECT {} FROM milestones WHERE repo_id=?1 AND title=?2 ORDER BY number LIMIT 1",
+        "SELECT {} FROM milestones WHERE repo_id=?1 AND lower(title)=lower(?2) ORDER BY number LIMIT 1",
         MILESTONE_COLUMNS.replace("description", "NULL AS description")
     ))
     .bind(repo_id)
@@ -464,6 +472,14 @@ pub(crate) async fn set_item_milestone_in_transaction(
             .ok_or(MilestoneWriteRefusal::NotFound)?,
         ),
     };
+    let current: Option<i64> =
+        sqlx::query_scalar(&format!("SELECT milestone_id FROM {table} WHERE id = ?1"))
+            .bind(item_id)
+            .fetch_one(&mut **tx)
+            .await?;
+    if current == milestone_id {
+        return Ok(());
+    }
     sqlx::query(&format!(
         "UPDATE {table} SET milestone_id = ?2 WHERE id = ?1"
     ))
@@ -471,5 +487,6 @@ pub(crate) async fn set_item_milestone_in_transaction(
     .bind(milestone_id)
     .execute(&mut **tx)
     .await?;
+    super::labels::touch_subject(tx, table, item_id).await?;
     Ok(())
 }
