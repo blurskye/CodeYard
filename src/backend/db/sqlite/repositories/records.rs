@@ -657,32 +657,34 @@ async fn check_namespace(
 }
 pub async fn transfer_repository(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
 ) -> Result<Repository> {
-    transfer_repository_inner(pool, actor_id, repo_id, target, None).await
+    transfer_repository_inner(pool, actor_id.into(), repo_id, target, None).await
 }
 pub async fn transfer_repository_checked(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
     expected_owner: &str,
     expected_name: &str,
 ) -> Result<Repository> {
-    transfer_repository_inner(pool, actor_id, repo_id, target, Some((expected_owner, expected_name))).await
+    transfer_repository_inner(pool, actor_id.into(), repo_id, target, Some((expected_owner, expected_name))).await
 }
 async fn transfer_repository_inner(
     pool: &SqlitePool,
-    actor_id: i64,
+    authority: crate::backend::db::users::accounts::AccountActor,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
     expected: Option<(&str, &str)>,
 ) -> Result<Repository> {
     use crate::backend::db::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
+    let actor_id = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
             .await?,

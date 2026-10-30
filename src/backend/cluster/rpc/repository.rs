@@ -937,12 +937,12 @@ impl RpcHandler {
                     pool, repo_id.ok_or_else(|| invalid("repository unavailable"))?, authority, &name
                 ))
             },
-            Operation::TransferRepository { new_owner } => json!(store.transfer_repository_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                &new_owner
-            )),
+            Operation::TransferRepository { new_owner } => {
+                let (authority, new_owner) = new_owner.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.transfer_repository_as(
+                    pool, repo_id.ok_or_else(|| invalid("repository unavailable"))?, authority, &new_owner
+                ))
+            },
             Operation::ConfigureDependencySecurity {
                 authority,
                 feature,

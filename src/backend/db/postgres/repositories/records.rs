@@ -687,32 +687,34 @@ async fn check_namespace(
 }
 pub async fn transfer_repository(
     pool: &PgPool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
 ) -> Result<Repository> {
+    let authority = actor_id.into();
     crate::backend::db::postgres::retry_on_deadlock(|| {
-        transfer_repository_once(pool, actor_id, repo_id, target, None)
+        transfer_repository_once(pool, &authority, repo_id, target, None)
     })
     .await
 }
 
 pub async fn transfer_repository_checked(
     pool: &PgPool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
     expected_owner: &str,
     expected_name: &str,
 ) -> Result<Repository> {
+    let authority = actor_id.into();
     crate::backend::db::postgres::retry_on_deadlock(|| {
-        transfer_repository_once(pool, actor_id, repo_id, target, Some((expected_owner, expected_name)))
+        transfer_repository_once(pool, &authority, repo_id, target, Some((expected_owner, expected_name)))
     })
     .await
 }
 async fn transfer_repository_once(
     pool: &PgPool,
-    actor_id: i64,
+    authority: &crate::backend::db::users::accounts::AccountActor,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
     expected: Option<(&str, &str)>,
@@ -721,6 +723,8 @@ async fn transfer_repository_once(
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
     let mut tx = pool.begin().await?;
     super::super::users::transitions::lock_membership_shared(&mut tx).await?;
+    require_settings_actor(&mut tx, authority).await?;
+    let actor_id = authority.user_id();
     let original: (String, Option<i64>, Option<i64>) = sqlx::query_as(
         "SELECT owner_kind,owner_user_id,owner_org_id FROM repositories WHERE id=$1",
     )

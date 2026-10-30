@@ -371,7 +371,7 @@ pub enum Operation {
         name: PublicationText,
     },
     TransferRepository {
-        new_owner: String,
+        new_owner: PublicationText,
     },
     ConfigureDependencySecurity {
         #[serde(default)]

@@ -513,7 +513,7 @@ async fn transfer(
     let repo = lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
-        actor.id,
+        db::users::accounts::AccountActor::Token { user_id: actor.id, token_id: auth.token.id },
         repo.id,
         &input.new_owner,
     )

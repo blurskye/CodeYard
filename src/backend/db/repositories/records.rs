@@ -373,7 +373,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::transfer_
     crate::backend::db::sqlite::repositories::records::transfer_repository,
     fn transfer_repository(
     pool: &DbPool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
 ) -> Result<Repository>);
@@ -382,7 +382,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::transfer_
 // name stable while the ownership transaction commits.
 native_operation!(crate::backend::db::postgres::repositories::records::transfer_repository_checked,
     crate::backend::db::sqlite::repositories::records::transfer_repository_checked,
-    fn transfer_repository_checked(pool:&DbPool,actor_id:i64,repo_id:i64,target:crate::backend::db::repositories::creation::RepositoryTarget,expected_owner:&str,expected_name:&str)->Result<Repository>);
+    fn transfer_repository_checked(pool:&DbPool,actor_id:impl Into<crate::backend::db::users::accounts::AccountActor>,repo_id:i64,target:crate::backend::db::repositories::creation::RepositoryTarget,expected_owner:&str,expected_name:&str)->Result<Repository>);
 
 /// Canonical namespaces for already-selected repositories. This display read does
 /// not grant access; callers retain their visibility filtering before page limits.
