@@ -434,7 +434,8 @@ pub async fn upsert_commit_status(
 pub async fn commit_status_page(
     pool: &SqlitePool, viewer: Option<i64>, repo: i64, sha: &str, offset: i64, limit: i64, history: bool,
 ) -> Result<Option<crate::backend::db::repositories::protection::CommitStatusPage>> {
-    anyhow::ensure!((1..=100).contains(&limit) && offset >= 0, "Invalid status page");
+    // A zero limit reads only the counts, which the GraphQL rollup needs.
+    anyhow::ensure!((0..=100).contains(&limit) && offset >= 0, "Invalid status page");
     let mut tx = pool.begin().await?;
     let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({})>=1))", super::access::USER_REPO_ACCESS_SQL))
         .bind(repo).bind(viewer).fetch_one(&mut *tx).await?;
