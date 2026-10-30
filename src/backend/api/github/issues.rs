@@ -88,6 +88,24 @@ pub(super) async fn documents(
     for page in items.chunks(100) {
         values.extend(documents_page(pool, reader, repo, owner, page).await?);
     }
+    // The pages were read by separate queries after the request's access check. Checking the
+    // reader's access again afterwards means nothing returned was read after it was lost.
+    if let Reader::Request(_, credential) = reader {
+        let current = db::repositories::records::get_repository_by_id(pool, repo.id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+        if !crate::backend::repositories::access::can_read(
+            pool,
+            credential.map(|auth| &auth.user),
+            &current,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        {
+            return Err(Error::missing());
+        }
+    }
     Ok(values)
 }
 

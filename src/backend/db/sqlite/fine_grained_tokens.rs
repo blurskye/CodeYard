@@ -1,5 +1,5 @@
 use crate::backend::db::{
-    fine_grained_tokens::{Bounds, NewToken, Policy, Token},
+    fine_grained_tokens::{Bounds, NewToken, Policy, Token, TokenFilter},
     models::OrgRole,
     organizations::OrganizationOutcome,
     sqlite::time,
@@ -142,9 +142,14 @@ pub async fn set_policy(pool: &SqlitePool, actor: i64, org: i64, policy: &Policy
     Ok(true)
 }
 
-pub async fn organization_tokens(pool: &SqlitePool, org: i64, status: &str) -> Result<Vec<Token>> {
-    Ok(sqlx::query_as(&format!("{TOKEN} WHERE f.owner_org_id=$1 AND f.status=$2 AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=$1 AND m.user_id=t.user_id) ORDER BY f.token_id DESC LIMIT 1000"))
-        .bind(org).bind(status).fetch_all(pool).await?)
+pub async fn organization_tokens(pool: &SqlitePool, org: i64, filter: &TokenFilter<'_>, offset: i64, limit: i64) -> Result<Vec<Token>> {
+    let order = if filter.ascending { "ASC" } else { "DESC" };
+    // Catalog permission names are letters and underscores, so the JSON path is plain.
+    let (permission, level) = filter.permission.map_or((None, None), |(key, level)| (Some(format!("$.\"{key}\"")), level));
+    Ok(sqlx::query_as(&format!("{TOKEN} JOIN users u ON u.id=t.user_id WHERE f.owner_org_id=$1 AND f.status=$2 AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=$1 AND m.user_id=t.user_id) AND (json_array_length($3)=0 OR u.username IN (SELECT value FROM json_each($3))) AND (json_array_length($4)=0 OR f.token_id IN (SELECT value FROM json_each($4))) AND ($5 IS NULL OR f.repository_access='all' OR (f.repository_access='selected' AND EXISTS(SELECT 1 FROM fine_grained_token_repositories s WHERE s.token_id=f.token_id AND s.repo_id=$5))) AND ($6 IS NULL OR (json_extract(f.permissions,$6) IS NOT NULL AND ($7 IS NULL OR json_extract(f.permissions,$6)=$7))) AND ($8 IS NULL OR julianday(t.last_used_at)<julianday($8)) AND ($9 IS NULL OR julianday(t.last_used_at)>julianday($9)) ORDER BY f.token_id {order} LIMIT $10 OFFSET $11"))
+        .bind(org).bind(filter.status).bind(serde_json::to_string(filter.owners)?).bind(serde_json::to_string(filter.token_ids)?).bind(filter.repository).bind(permission).bind(level)
+        .bind(filter.last_used_before).bind(filter.last_used_after).bind(limit).bind(offset)
+        .fetch_all(pool).await?)
 }
 
 pub async fn review(
@@ -165,6 +170,17 @@ pub async fn review(
         changed += sqlx::query(&format!("UPDATE fine_grained_tokens SET status=$4,reason=$5,reviewed_by=$3,reviewed_at={NOW} WHERE token_id=$1 AND owner_org_id=$2 AND status=$6"))
             .bind(token).bind(org).bind(reviewer).bind(status).bind(reason).bind(from).execute(&mut *tx).await?.rows_affected();
     }
+    tx.commit().await?;
+    Ok(changed)
+}
+
+pub async fn review_all(pool: &SqlitePool, org: i64, reviewer: i64, from: &str, status: &str, reason: Option<&str>) -> Result<u64> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !active_owner(&mut tx, reviewer, org).await? {
+        return Ok(0);
+    }
+    let changed = sqlx::query(&format!("UPDATE fine_grained_tokens SET status=$3,reason=$4,reviewed_by=$2,reviewed_at={NOW} WHERE owner_org_id=$1 AND status=$5 AND EXISTS(SELECT 1 FROM personal_access_tokens t JOIN org_memberships m ON m.user_id=t.user_id WHERE t.id=fine_grained_tokens.token_id AND m.org_id=$1)"))
+        .bind(org).bind(reviewer).bind(status).bind(reason).bind(from).execute(&mut *tx).await?.rows_affected();
     tx.commit().await?;
     Ok(changed)
 }
