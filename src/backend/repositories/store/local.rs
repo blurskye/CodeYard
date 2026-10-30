@@ -1419,6 +1419,14 @@ impl LocalStore {
         // receive-pack can migrate objects and publish the exact CAS ref.
         live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
         live_read(pool, repo_id, actor, self.path(), self.node_id).await?;
+        // An export locks the repository under this same lock before it copies the Git data, so
+        // a head published into a locked repository would be missing from the archive.
+        if db::repository_exports::locked(pool, repo_id)
+            .await
+            .map_err(|_| RepoError::authority_unavailable())?
+        {
+            return Err(RepoError::write_denied());
+        }
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::repository::publish_pull_head(self.path(), number, head, expected_head, &prepared)
             .await
