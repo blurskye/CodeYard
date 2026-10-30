@@ -15,7 +15,7 @@ use axum::{
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
     match error.downcast_ref::<store::Refusal>() {
@@ -196,26 +196,31 @@ pub(crate) async fn load(
             .any(|p| p.id == issue.id),
         ..Default::default()
     };
-    for branch in store::linked_branches(pool, issue.id)
-        .await
-        .map_err(|_| unavailable(ctx))?
-    {
-        let Some(target) = readable_target(ctx, branch.repo_id).await? else {
+    let linked = store::linked_branches(pool, issue.id).await.map_err(|_| unavailable(ctx))?;
+    let mut wanted: HashMap<i64, HashSet<String>> = HashMap::new();
+    for branch in &linked {
+        wanted.entry(branch.repo_id).or_default().insert(format!("refs/heads/{}", branch.name));
+    }
+    let mut targets = HashMap::from([(repo.record.id, Some((repo.record.clone(), repo.view.owner.clone())))]);
+    let mut references = HashMap::new();
+    let mut branches = Vec::new();
+    let mut closing_pulls = Vec::new();
+    let mut duplicate_link = None;
+    for branch in linked {
+        let Some((target, owner)) = cached_target(ctx, branch.repo_id, &mut targets).await? else {
             continue;
         };
-        let refs =
-            crate::backend::repositories::store::repo_store(&target, ctx.state.cluster.as_ref())
-                .refs()
-                .await
-                .map_err(|_| unavailable(ctx))?;
-        if !refs.contains_key(&format!("refs/heads/{}", branch.name)) {
+        if !references.contains_key(&target.id) {
+            let refs = crate::backend::repositories::store::repo_store(target, ctx.state.cluster.as_ref())
+                .refs().await.map_err(|_| unavailable(ctx))?;
+            let wanted = wanted.remove(&target.id).unwrap_or_default();
+            let available: HashSet<_> = refs.into_keys().filter(|reference| wanted.contains(reference)).collect();
+            references.insert(target.id, available);
+        }
+        if !references[&target.id].contains(&format!("refs/heads/{}", branch.name)) {
             continue;
         }
-        let owner = db::repositories::records::repository_owner_name(pool, target.id)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .ok_or_else(|| unavailable(ctx))?;
-        controls.branches.push((
+        branches.push((target.id, (
             branch.name.clone(),
             crate::webui::pages::repos::ref_path::file_url(
                 &format!("/{owner}/{}", target.name),
@@ -223,7 +228,7 @@ pub(crate) async fn load(
                 &branch.name,
                 "",
             ),
-        ));
+        )));
     }
     for pull in crate::backend::issues::closing::references(
         pool,
@@ -236,34 +241,55 @@ pub(crate) async fn load(
     .await
     .map_err(|_| unavailable(ctx))?
     {
-        let Some(target) = readable_target(ctx, pull.repo_id).await? else {
+        let Some((target, owner)) = cached_target(ctx, pull.repo_id, &mut targets).await? else {
             continue;
         };
-        let owner = db::repositories::records::repository_owner_name(pool, target.id)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .ok_or_else(|| unavailable(ctx))?;
-        controls.closing_pulls.push((
+        closing_pulls.push((target.id, (
             format!("{} #{}", pull.title, pull.number),
             format!("/{owner}/{}/pulls/{}", target.name, pull.number),
-        ));
+        )));
     }
     if let Some(duplicate) = store::duplicate(pool, issue.id)
         .await
         .map_err(|_| unavailable(ctx))?
     {
-        if let Some(target) = readable_target(ctx, duplicate.repo_id).await? {
-            let owner = db::repositories::records::repository_owner_name(pool, target.id)
-                .await
-                .map_err(|_| unavailable(ctx))?
-                .ok_or_else(|| unavailable(ctx))?;
-            controls.duplicate = Some((
+        if let Some((target, owner)) = cached_target(ctx, duplicate.repo_id, &mut targets).await? {
+            duplicate_link = Some((target.id, (
                 format!("#{}", duplicate.number),
                 format!("/{owner}/{}/issues/{}", target.name, duplicate.number),
-            ));
+            )));
         }
     }
+    // Cached policy is not a publication permit. Recheck each distinct target after
+    // all Git and cross-repository enrichment, including initially public targets.
+    let mut visible = HashSet::new();
+    for (id, target) in &targets {
+        if let Some((target, _)) = target {
+            match crate::backend::api::repos::access::check_repo_read_access(pool, target, &ctx.headers).await {
+                Ok(_) => { visible.insert(*id); }
+                Err((status, _)) if status.is_server_error() => return Err(unavailable(ctx)),
+                Err(_) => {}
+            }
+        }
+    }
+    controls.branches = branches.into_iter().filter_map(|(id, link)| visible.contains(&id).then_some(link)).collect();
+    controls.closing_pulls = closing_pulls.into_iter().filter_map(|(id, link)| visible.contains(&id).then_some(link)).collect();
+    controls.duplicate = duplicate_link.and_then(|(id, link)| visible.contains(&id).then_some(link));
     Ok(Box::new(controls))
+}
+
+type TargetCache = HashMap<i64, Option<(db::models::Repository, String)>>;
+
+async fn cached_target<'a>(ctx: &PageContext, id: i64, targets: &'a mut TargetCache) -> ResultPage<Option<&'a (db::models::Repository, String)>> {
+    if !targets.contains_key(&id) {
+        let target = if let Some(target) = readable_target(ctx, id).await? {
+            let owner = db::repositories::records::repository_owner_name(&ctx.state.pool, id)
+                .await.map_err(|_| unavailable(ctx))?.ok_or_else(|| unavailable(ctx))?;
+            Some((target, owner))
+        } else { None };
+        targets.insert(id, target);
+    }
+    Ok(targets.get(&id).and_then(Option::as_ref))
 }
 
 async fn readable_target(ctx: &PageContext, id: i64) -> ResultPage<Option<db::models::Repository>> {
