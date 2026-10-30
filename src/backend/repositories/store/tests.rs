@@ -525,6 +525,13 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
         .build()
         .unwrap();
     runtime.block_on(async {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("checkout");
+        let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = slots.clone().acquire_owned().await.unwrap();
+        // The lock resolves its path on a blocking thread, so take it before the blocker fills
+        // the only one.
+        let lock = crate::backend::git::locks::lock(&destination).await;
         let (release, wait) = std::sync::mpsc::channel();
         let (started, ready) = tokio::sync::oneshot::channel();
         let blocker = tokio::task::spawn_blocking(move || {
@@ -532,11 +539,6 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
             wait.recv().unwrap();
         });
         ready.await.unwrap();
-        let root = tempfile::tempdir().unwrap();
-        let destination = root.path().join("checkout");
-        let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
-        let permit = slots.clone().acquire_owned().await.unwrap();
-        let lock = crate::backend::git::locks::lock(&destination).await;
         let pack = tempfile::NamedTempFile::new().unwrap();
         let (entered, queued) = tokio::sync::oneshot::channel();
         let path = destination.clone();
@@ -549,12 +551,27 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
         task.abort();
         let _ = task.await;
         assert_eq!(slots.available_permits(), 0);
-        assert!(tokio::time::timeout(
-            std::time::Duration::from_millis(20),
-            crate::backend::git::locks::lock(&destination)
-        )
-        .await
-        .is_err());
+        // Try the lock from another runtime, whose blocking threads are free.
+        let held = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap()
+                        .block_on(async {
+                            tokio::time::timeout(
+                                std::time::Duration::from_secs(1),
+                                crate::backend::git::locks::lock(&destination),
+                            )
+                            .await
+                        })
+                        .is_err()
+                })
+                .join()
+                .unwrap()
+        });
+        assert!(held);
         release.send(()).unwrap();
         blocker.await.unwrap();
         let _permit = tokio::time::timeout(std::time::Duration::from_secs(5), slots.acquire())
