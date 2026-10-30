@@ -624,8 +624,15 @@ async fn run_workflow(
         let _ = cancel_tx.send(true);
     });
     let files = reusable::files(&raw, &options.directory)?;
+    let workspace = if options.concurrent_jobs > 1 {
+        let source = options.directory.clone();
+        Some(Arc::new(tokio::task::spawn_blocking(move || crate::fs::snapshot_tree(&source, crate::fs::SnapshotLinks::Preserve)).await??))
+    } else { None };
+    let permits = Arc::new(tokio::sync::Semaphore::new(options.concurrent_jobs.max(1) as usize));
     let execution = WorkflowRun {
         options,
+        permits,
+        workspace,
         tokens: Arc::new(tokens),
         files: Arc::new(files),
         masker,
@@ -648,6 +655,8 @@ async fn run_workflow(
 #[derive(Clone)]
 struct WorkflowRun {
     options: Arc<Options>,
+    permits: Arc<tokio::sync::Semaphore>,
+    workspace: Option<Arc<tempfile::TempDir>>,
     tokens: Arc<JobTokens>,
     files: Arc<BTreeMap<String, serde_yaml::Value>>,
     masker: Masker,
@@ -657,6 +666,42 @@ struct WorkflowRun {
 }
 
 impl WorkflowRun {
+    async fn run_leaf(
+        &self, job: PlannedJob, index: usize, options: Arc<Options>, mut contexts: Contexts,
+        env: BTreeMap<String, String>, log: Log, mut cancel: watch::Receiver<bool>,
+    ) -> JobResult {
+        let result = async {
+            let _permit = tokio::select! {
+                biased;
+                _ = cancel.wait_for(|cancelled| *cancelled) => return Err(anyhow::Error::from(Cancelled)),
+                permit = self.permits.clone().acquire_owned() => permit.context("Job concurrency permits closed")?,
+            };
+            let workspace = if let Some(source) = &self.workspace {
+                let source = source.clone();
+                Some(tokio::task::spawn_blocking(move || crate::fs::snapshot_tree(source.path(), crate::fs::SnapshotLinks::Preserve)).await??)
+            } else { None };
+            let options = if let Some(workspace) = &workspace {
+                let mut options = (*options).clone();
+                options.directory = workspace.path().to_owned();
+                if let Some(Value::Object(github)) = contexts.values.get_mut("github") {
+                    github.insert("workspace".into(), Value::String(options.directory.display().to_string()));
+                }
+                Arc::new(options)
+            } else { options };
+            Ok::<_, anyhow::Error>(run_job(job, index, options, contexts, env, log.clone(), cancel.clone()).await)
+        }.await;
+        match result {
+            Ok(result) => result,
+            Err(error) => {
+                let cancelled = error.is::<Cancelled>();
+                log.emit(Update::Started);
+                log.line(&format!("Job preparation failed: {error:#}"));
+                log.emit(Update::Finished { conclusion: if cancelled { Conclusion::Cancelled } else { Conclusion::Failure }, duration_ms: 0 });
+                JobResult { result: if cancelled { "cancelled" } else { "failure" }.into(), outputs: BTreeMap::new() }
+            }
+        }
+    }
+
     fn execute(
         &self,
         raw: serde_yaml::Value,
@@ -1046,7 +1091,7 @@ impl WorkflowRun {
                                 });
                                 result
                             } else {
-                                run_job(job, index, options, contexts, env, log, cancel).await
+                                execution.run_leaf(job, index, options, contexts, env, log, cancel).await
                             };
                             (index, result)
                         });

@@ -359,7 +359,7 @@ impl JobVm {
             .context("Opening workspace to copy into VM")?;
         ensure!(local.is_dir(), "Workspace is not a directory");
         let guest = guest_path(guest_directory)?;
-        let snapshot = tokio::task::spawn_blocking(move || crate::fs::transfer_snapshot(&local)).await??;
+        let snapshot = tokio::task::spawn_blocking(move || crate::fs::snapshot_tree(&local, crate::fs::SnapshotLinks::Reject)).await??;
         let mut command = self.transport("scp", "-P");
         checked(
             command
