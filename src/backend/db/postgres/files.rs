@@ -127,16 +127,20 @@ pub async fn charge_upload(
     Ok(())
 }
 
+fn file_authority_error(error: anyhow::Error) -> sqlx::Error {
+    error.downcast::<sqlx::Error>().unwrap_or_else(|_| sqlx::Error::Protocol("File authority unavailable".into()))
+}
+
 async fn require_file_actor(tx: &mut Transaction<'_, Postgres>, actor: &FileAuthority) -> Result<bool, sqlx::Error> {
     let Some(user) = actor.user_id else { return Ok(false); };
     if let Some(session) = &actor.session {
         match super::users::transitions::require_account(tx, user, &crate::backend::db::users::accounts::AccountCredential::Session(session)).await {
             Ok(()) => return Ok(true),
             Err(error) if error.is::<crate::backend::db::users::accounts::AccountRestricted>() => return Ok(false),
-            Err(error) => return Err(error.downcast::<sqlx::Error>().unwrap_or_else(|_| sqlx::Error::Protocol("File authority unavailable".into()))),
+            Err(error) => return Err(file_authority_error(error)),
         }
     }
-    super::users::transitions::lock_membership_shared(tx).await.map_err(|error| error.downcast::<sqlx::Error>().unwrap_or_else(|_| sqlx::Error::Protocol("File authority unavailable".into())))?;
+    super::users::transitions::lock_membership_shared(tx).await.map_err(file_authority_error)?;
     Ok(sqlx::query_scalar::<_, bool>("SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR UPDATE").bind(user).fetch_optional(&mut **tx).await?.unwrap_or(false))
 }
 
@@ -304,15 +308,17 @@ pub async fn delete_file(
     let actor = actor.into();
     let user_id = actor.user_id;
     let mut tx = pool.begin().await?;
-    let allowed = require_file_actor(&mut tx, &actor).await?;
-    if sqlx::query_scalar::<_, i64>(
+    // Organization assignment and account transitions take membership, organizations,
+    // accounts, then files. File deletion must not invert that order.
+    super::users::transitions::lock_membership_shared(&mut tx).await.map_err(file_authority_error)?;
+    let organizations: Vec<i64> = sqlx::query_scalar(
         "SELECT id FROM organizations WHERE avatar_file_id=$1 ORDER BY id FOR UPDATE",
     )
     .bind(file_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .is_some()
-    {
+    .fetch_all(&mut *tx)
+    .await?;
+    let allowed = require_file_actor(&mut tx, &actor).await?;
+    if !organizations.is_empty() {
         return Ok(DeleteFileOutcome::ReferencedOrganizationAvatar);
     }
     let Some(file) =
