@@ -3,18 +3,26 @@ mod pulls;
 pub use list::{alert_page, analyses, analysis, analysis_sarif};
 pub use pulls::{baseline_analysis, new_findings, pull_analyses, pull_processing};
 
-use crate::backend::db::code_scanning::*;
+use crate::backend::db::{code_scanning::*, users::tokens::Actor};
 use anyhow::{ensure, Result};
 use sqlx::{PgConnection, PgPool};
+
+pub(super) async fn credential(connection: &mut PgConnection, actor: Actor, repo: i64) -> Result<()> {
+    if let Some(token) = actor.token_id {
+        ensure!(super::users::tokens::permits_write(connection, actor.user_id, token, Some(repo), None, "security_events").await?, Refusal::Denied);
+    }
+    Ok(())
+}
 
 pub async fn enqueue(pool: &PgPool, input: &NewUpload<'_>) -> Result<Upload> {
     let mut tx = pool.begin().await?;
     ensure!(
-        super::discussions::lock_write_authority(&mut tx, input.actor, input.repo).await?,
+        super::discussions::lock_write_authority(&mut tx, input.actor.user_id, input.repo).await?,
         Refusal::Denied
     );
+    credential(&mut tx, input.actor, input.repo).await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
-        .bind(input.actor ^ 0x4355_0000_0000_0000_i64)
+        .bind(input.actor.user_id ^ 0x4355_0000_0000_0000_i64)
         .execute(&mut *tx)
         .await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
@@ -22,11 +30,11 @@ pub async fn enqueue(pool: &PgPool, input: &NewUpload<'_>) -> Result<Upload> {
         .execute(&mut *tx)
         .await?;
     let recent: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM code_scanning_uploads WHERE actor_id=$1 AND created_at>=$2 AND (repo_id=$3 OR NOT EXISTS(SELECT 1 FROM users WHERE id=$1 AND username=$4))")
-        .bind(input.actor).bind(chrono::Utc::now()-chrono::Duration::hours(1)).bind(input.repo).bind(crate::backend::db::ci_tokens::BOT).fetch_one(&mut *tx).await?;
+        .bind(input.actor.user_id).bind(chrono::Utc::now()-chrono::Duration::hours(1)).bind(input.repo).bind(crate::backend::db::ci_tokens::BOT).fetch_one(&mut *tx).await?;
     ensure!(recent < 1000, Refusal::RateLimited);
     let id = uuid::Uuid::new_v4().to_string();
     let upload = sqlx::query_as("INSERT INTO code_scanning_uploads(id,repo_id,actor_id,ref_name,commit_sha,sarif,checkout_uri,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *")
-        .bind(id).bind(input.repo).bind(input.actor).bind(input.ref_name).bind(input.commit_sha).bind(input.sarif).bind(input.checkout_uri).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
+        .bind(id).bind(input.repo).bind(input.actor.user_id).bind(input.ref_name).bind(input.commit_sha).bind(input.sarif).bind(input.checkout_uri).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(upload)
 }
@@ -205,17 +213,19 @@ pub async fn instances_filtered(pool: &PgPool, alert: i64, reference: Option<&st
 
 pub async fn dismiss(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<Actor>,
     repo: i64,
     number: i64,
     input: &Dismissal<'_>,
 ) -> Result<Alert> {
     input.validate()?;
+    let actor: Actor = actor.into();
     let mut tx = pool.begin().await?;
     ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_write_authority(&mut tx, actor.user_id, repo).await?,
         Refusal::Denied
     );
+    credential(&mut tx, actor, repo).await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
         .bind(repo ^ 0x4353_0000_0000_0000_i64)
         .execute(&mut *tx)
@@ -223,23 +233,25 @@ pub async fn dismiss(
     let dismissed = input.state == "dismissed";
     let now = chrono::Utc::now();
     let alert = sqlx::query_as("UPDATE code_scanning_alerts SET state=CASE WHEN $3 THEN 'dismissed' WHEN EXISTS(SELECT 1 FROM code_scanning_instances i WHERE i.alert_id=code_scanning_alerts.id AND i.state='open') THEN 'open' ELSE 'fixed' END,fixed_at=CASE WHEN $3 THEN fixed_at WHEN EXISTS(SELECT 1 FROM code_scanning_instances i WHERE i.alert_id=code_scanning_alerts.id AND i.state='open') THEN NULL ELSE COALESCE(fixed_at,$8) END,dismissed_by=$4,dismissed_at=$5,dismissed_reason=$6,dismissed_comment=$7,updated_at=$8 WHERE repo_id=$1 AND number=$2 RETURNING *")
-        .bind(repo).bind(number).bind(dismissed).bind(dismissed.then_some(actor)).bind(dismissed.then_some(now)).bind(if dismissed {input.reason} else {None}).bind(if dismissed {input.comment} else {None}).bind(now).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
+        .bind(repo).bind(number).bind(dismissed).bind(dismissed.then_some(actor.user_id)).bind(dismissed.then_some(now)).bind(if dismissed {input.reason} else {None}).bind(if dismissed {input.comment} else {None}).bind(now).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
     tx.commit().await?;
     Ok(alert)
 }
 
 pub async fn delete_analysis(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<Actor>,
     repo: i64,
     id: i64,
     confirm: bool,
 ) -> Result<Option<i64>> {
+    let actor: Actor = actor.into();
     let mut tx = pool.begin().await?;
     ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo).await?,
         Refusal::Denied
     );
+    credential(&mut tx, actor, repo).await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
         .bind(repo ^ 0x4353_0000_0000_0000_i64)
         .execute(&mut *tx)
