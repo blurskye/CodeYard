@@ -2419,6 +2419,11 @@ mod tests {
     }
 
     async fn planned(steps: Vec<Step>) -> JobResult {
+        let (_tx, cancel) = watch::channel(false);
+        planned_job(steps, 1.0, cancel).await
+    }
+
+    async fn planned_job(steps: Vec<Step>, timeout_minutes: f64, cancel: watch::Receiver<bool>) -> JobResult {
         let workspace = tempfile::tempdir().unwrap();
         let mut options =
             Options::try_parse_from(["codeyard-actions", "push", "-W", "unused"]).unwrap();
@@ -2432,7 +2437,7 @@ mod tests {
             matrix: Value::Null,
             fail_fast: true,
             max_parallel: None,
-            timeout_minutes: Some(1.0),
+            timeout_minutes: Some(timeout_minutes),
             continue_on_error: false,
             env: Vec::new(),
             default_shell: None,
@@ -2453,7 +2458,6 @@ mod tests {
                 .values
                 .insert(name.into(), Value::Object(BTreeMap::new()));
         }
-        let (_tx, cancel) = watch::channel(false);
         run_job(
             plan,
             0,
@@ -2596,6 +2600,55 @@ mod tests {
             BTreeMap::from([("value".to_owned(), String::new())]),
         );
         assert_eq!(outputs["value"], "release");
+    }
+
+    fn conditional(id: &str, condition: &str, script: &str) -> Step {
+        Step {
+            condition: Some(condition.into()),
+            ..step(id, script)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_timed_out_job_still_runs_always_and_cancelled_steps() {
+        let started = Instant::now();
+        // A timed-out job keeps no outputs, so the cleanup step reports through a file.
+        let marker = tempfile::tempdir().unwrap();
+        let cleaned = marker.path().join("cleaned");
+        let script = "test '${{ steps.slow.outcome }}' = cancelled\ntest '${{ steps.later.outcome }}' = skipped\ntest '${{ steps.failed.outcome }}' = skipped\ntest '${{ job.status }}' = cancelled\ntest '${{ cancelled() }}' = true\n".to_owned()
+            + &format!("echo cleaned > '{}'\n", cleaned.display());
+        let (_tx, cancel) = watch::channel(false);
+        let result = planned_job(
+            vec![
+                step("slow", "sleep 30"),
+                step("later", "echo never"),
+                conditional("failed", "failure()", "echo never"),
+                conditional("two", "always()", &script),
+            ],
+            0.01,
+            cancel,
+        )
+        .await;
+        assert_eq!(result.result, "failure");
+        assert_eq!(std::fs::read_to_string(&cleaned).unwrap(), "cleaned\n");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[tokio::test]
+    async fn an_expression_error_fails_only_its_step() {
+        let mut broken = step("broken", "echo never");
+        broken.env = crate::workflow::EnvironmentTemplate::Entries(BTreeMap::from([(
+            "VALUE".into(),
+            "${{ fromJSON('{') }}".into(),
+        )]));
+        let result = planned(vec![
+            conditional("condition", "fromJSON('{')", "echo never"),
+            broken,
+            conditional("two", "always()", "test '${{ steps.condition.outcome }}' = failure\ntest '${{ steps.broken.outcome }}' = failure\ntest '${{ failure() }}' = true\necho 'value=reported' >> \"$GITHUB_OUTPUT\""),
+        ])
+        .await;
+        assert_eq!(result.result, "failure");
+        assert_eq!(result.outputs["value"], "reported");
     }
 
     #[tokio::test]

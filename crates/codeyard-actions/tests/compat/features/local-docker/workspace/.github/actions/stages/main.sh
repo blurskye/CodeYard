@@ -1,3 +1,4 @@
 #!/bin/sh
 set -eu
-echo "compat:main-$1-$2-$STATE_stage-$INPUT_ARGS"
+echo "stage=main-$1" >> "$GITHUB_STATE"
+echo "compat:main-$1-$2-$INPUT_ARGS"

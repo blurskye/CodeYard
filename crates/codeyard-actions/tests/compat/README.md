@@ -37,10 +37,12 @@ The small examples exercise the behavior described in GitHub's documentation:
 - [Composite actions](https://docs.github.com/en/actions/creating-actions/creating-a-composite-action):
   `composite`, `nested-composite`.
 - [JavaScript actions](https://docs.github.com/en/actions/creating-actions/creating-a-javascript-action):
-  `local-node` checks pre/main/post, inputs, outputs and state.
+  `local-node` checks main and post, inputs, outputs and state, and that a local action's
+  `pre` is skipped with GitHub's warning.
 - [Docker actions](https://docs.github.com/en/actions/creating-actions/creating-a-docker-container-action)
   and [service containers](https://docs.github.com/en/actions/using-containerized-services/about-service-containers):
-  `local-docker` (also pre/post entrypoints and the `args` input), `job-container`,
+  `local-docker` (also post entrypoints, a skipped local `pre` and the `args` input),
+  `job-container`,
   `services`.
 
 Timeout workflows use a real one-minute timeout, rather than a fractional timeout

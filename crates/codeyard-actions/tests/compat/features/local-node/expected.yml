@@ -4,9 +4,12 @@
     "test": "success"
   },
   "contains": [
-    "compat:node-pre",
+    "`pre` execution is not supported for local action from './.github/actions/node'",
     "compat:node-main",
     "compat:node-post",
     "compat:ok"
+  ],
+  "absent": [
+    "compat:node-pre"
   ]
 }

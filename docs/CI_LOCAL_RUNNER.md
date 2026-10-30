@@ -112,7 +112,8 @@ and entrypoint take precedence over invocation-level overrides. Post handlers ar
 before pre execution, including failed or interrupted pre handlers. Remote actions and Node
 runtimes are prepared during job setup, and remote pre hooks run before ordinary steps,
 including hooks nested in remote composites. Their main handlers reuse prepared state and
-runtimes without rerunning pre. Local actions retain just-in-time preparation after checkout.
+runtimes without rerunning pre. As on GitHub, a local action's pre hook never runs, because the
+action exists only after checkout; the log shows GitHub's warning instead.
 Lifecycle context/state copying has a 64 MiB per-job retention/work budget.
 
 The native dependency-ready scheduler runs independent jobs concurrently when

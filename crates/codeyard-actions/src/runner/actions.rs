@@ -203,7 +203,7 @@ impl Job {
         Box::pin(async move {
             ensure!(depth <= 20, "Composite actions nested more than 20 levels");
             let StepAction::Uses { reference, with } = &step.action else { return Ok(()); };
-            // Local actions may only appear after checkout; retain their just-in-time lifecycle.
+            // Local actions exist only after checkout, so they are read when their step runs.
             if reference.starts_with("./") || reference.starts_with("docker://") { return Ok(()); }
             self.retain_action_bytes(256)?;
             if depth == 0 { self.checkpoint_scope(); }
@@ -541,7 +541,11 @@ impl Job {
                             None => None,
                         },
                     };
-                    if !already {
+                    // GitHub never runs a local action's pre: the action exists only once a step
+                    // has checked it out.
+                    if !already && metadata.runs.pre.is_some() && reference.starts_with("./") {
+                        self.log.line(&format!("Warning: `pre` execution is not supported for local action from '{reference}'"));
+                    } else if !already {
                         if let Some(pre) = &metadata.runs.pre {
                             let condition = metadata.runs.pre_if.clone().unwrap_or_else(|| "always()".into());
                             if self.evaluate(deadline, move |contexts, status| Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await? {
@@ -620,7 +624,9 @@ impl Job {
                         }).transpose()?,
                     };
                     let mut ok = true;
-                    if !already {
+                    if !already && metadata.runs.pre_entrypoint.is_some() && reference.starts_with("./") {
+                        self.log.line(&format!("Warning: `pre` execution is not supported for local action from '{reference}'"));
+                    } else if !already {
                         if let Some(pre) = &metadata.runs.pre_entrypoint {
                             let condition = metadata.runs.pre_if.clone().unwrap_or_else(|| "always()".into());
                             if self.evaluate(deadline, move |contexts, status| Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await? {

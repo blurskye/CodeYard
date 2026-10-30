@@ -945,15 +945,19 @@ jobs:
     assert!(log(&output).contains("context-ids-ok"), "{}", log(&output));
 }
 
-#[test]
-fn offline_remote_action_from_cache() {
-    let workspace = tempfile::tempdir().unwrap();
+/// Puts a fetched action ref "v1" into the runner's cache, which names each ref by the SHA-256
+/// digest of its source URL and the ref.
+fn cache_action(workspace: &Path, repository: &str, source: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(format!("{source}\0v1"));
     let cached = workspace
-        .path()
-        // The cache names a ref by its SHA-256 digest: this one is "v1".
-        .join("cache/codeyard-actions/actions/example/action/3bfc269594ef649228e9a74bab00f042efc91d5acc6fbee31a382e80d42388fe");
-    std::fs::create_dir_all(cached.join("nested")).unwrap();
-    std::fs::write(cached.join("nested/action.yml"), "runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: echo offline-action-ok\n").unwrap();
+        .join("cache/codeyard-actions/actions")
+        .join(repository)
+        .join(format!("{digest:x}"));
+    for (name, contents) in files {
+        let file = cached.join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, contents).unwrap();
+    }
     for args in [
         vec!["init", "--quiet"],
         vec!["add", "."],
@@ -972,6 +976,18 @@ fn offline_remote_action_from_cache() {
             .unwrap();
         assert!(output.status.success(), "{}", log(&output));
     }
+    cached
+}
+
+#[test]
+fn offline_remote_action_from_cache() {
+    let workspace = tempfile::tempdir().unwrap();
+    let cached = cache_action(
+        workspace.path(),
+        "example/action",
+        "https://github.com/",
+        &[("nested/action.yml", "runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: echo offline-action-ok\n")],
+    );
     std::fs::write(workspace.path().join("workflow.yml"), "on: push\njobs:\n  test:\n    runs-on: self-hosted\n    steps:\n      - uses: example/action/nested@v1\n").unwrap();
     let output = command(workspace.path())
         .arg("--action-offline-mode")
@@ -986,6 +1002,171 @@ fn offline_remote_action_from_cache() {
         .unwrap();
     assert!(!output.status.success());
     assert!(log(&output).contains("offline cache"));
+}
+
+#[test]
+fn remote_actions_come_from_the_configured_server() {
+    let workspace = tempfile::tempdir().unwrap();
+    for (source, marker) in [
+        ("https://github.com/", "from-github"),
+        ("https://ghe.example.com/", "from-enterprise"),
+    ] {
+        let action = format!("runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: echo action-{marker}\n");
+        cache_action(workspace.path(), "example/action", source, &[("action.yml", action.as_str())]);
+    }
+    std::fs::write(workspace.path().join("workflow.yml"), "on: push\njobs:\n  test:\n    runs-on: self-hosted\n    steps:\n      - uses: example/action@v1\n").unwrap();
+    let output = command(workspace.path())
+        .arg("--action-offline-mode")
+        .output()
+        .unwrap();
+    success(&output);
+    assert!(log(&output).contains("action-from-github"), "{}", log(&output));
+    let output = command(workspace.path())
+        .args(["--action-offline-mode", "--env", "GITHUB_SERVER_URL=https://GHE.example.com"])
+        .output()
+        .unwrap();
+    success(&output);
+    assert!(log(&output).contains("action-from-enterprise"), "{}", log(&output));
+    assert!(!log(&output).contains("action-from-github"));
+    for server in [
+        "ghe.example.com",
+        "ftp://ghe.example.com",
+        "https://user@ghe.example.com",
+        "https://ghe.example.com/?evil",
+    ] {
+        let output = command(workspace.path())
+            .args(["--action-offline-mode", "--env"])
+            .arg(format!("GITHUB_SERVER_URL={server}"))
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "accepted {server:?}");
+        assert!(log(&output).contains("Invalid action forge URL"), "{}", log(&output));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_remote_action_pre_runs_at_job_start_and_a_local_pre_never_runs() {
+    use std::os::unix::fs::PermissionsExt;
+    let workspace = tempfile::tempdir().unwrap();
+    // A stand-in for Node.js that runs each action script with sh.
+    let bin = workspace.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(
+        bin.join("node24"),
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo v24.0.0; exit 0; fi\nexec sh -e \"$@\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(bin.join("node24"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    cache_action(
+        workspace.path(),
+        "example/stages",
+        "https://github.com/",
+        &[
+            ("action.yml", "inputs:\n  value:\n    default: unset\nruns:\n  using: node24\n  pre: pre.js\n  main: main.js\n  post: post.js\n"),
+            // The first step has not run yet when pre runs.
+            ("pre.js", "test ! -e first-step-ran\necho \"remote-pre-$INPUT_VALUE\"\necho stage=pre >> \"$GITHUB_STATE\"\n"),
+            ("main.js", "test -e first-step-ran\ntest \"$STATE_stage\" = pre\necho remote-main-ok\n"),
+            ("post.js", "echo \"remote-post-$STATE_stage\"\n"),
+        ],
+    );
+    std::fs::create_dir_all(workspace.path().join("local")).unwrap();
+    for (name, contents) in [
+        ("action.yml", "runs:\n  using: node24\n  pre: pre.js\n  main: main.js\n"),
+        ("pre.js", "echo local-pre-ran\n"),
+        ("main.js", "echo local-main-ok\n"),
+    ] {
+        std::fs::write(workspace.path().join("local").join(name), contents).unwrap();
+    }
+    std::fs::write(
+        workspace.path().join("workflow.yml"),
+        r#"
+on: push
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - run: touch first-step-ran
+      - name: Remote
+        uses: example/stages@v1
+        with:
+          value: ${{ github.event_name }}
+      - uses: ./local
+"#,
+    )
+    .unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+    let output = command(workspace.path())
+        .arg("--action-offline-mode")
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    success(&output);
+    let text = log(&output);
+    for expected in [
+        "remote-pre-push",
+        "remote-main-ok",
+        "remote-post-pre",
+        "local-main-ok",
+        "`pre` execution is not supported for local action from './local'",
+    ] {
+        assert!(text.contains(expected), "missing {expected}: {text}");
+    }
+    assert!(!text.contains("local-pre-ran"), "{text}");
+    assert!(text.find("remote-pre-push") < text.find("remote-main-ok"), "{text}");
+}
+
+// The worker gives each run a delegated cgroup; this test makes one below its own.
+#[cfg(target_os = "linux")]
+#[test]
+fn background_processes_outlive_their_step_but_not_the_job() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(
+        workspace.path().join("workflow.yml"),
+        r#"
+on: push
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - run: |
+          (while true; do date +%s%N > heartbeat; sleep 0.1; done) > /dev/null 2>&1 &
+          # This one keeps the step's output open, so the step waits for it only briefly.
+          sleep 30 &
+          echo started
+      - run: |
+          first=$(cat heartbeat)
+          sleep 0.5
+          test "$(cat heartbeat)" != "$first"
+          echo background-alive
+"#,
+    )
+    .unwrap();
+    let root = codeyard_actions::process::Cgroup::temporary(
+        &codeyard_actions::process::Cgroup::current_root().unwrap(),
+        "runner-test-",
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let output = command(workspace.path())
+        .arg("--process-root")
+        .arg(root.path())
+        .output()
+        .unwrap();
+    let elapsed = started.elapsed();
+    let path = root.path().to_owned();
+    drop(root);
+    // The runner removes the job's own cgroup when the job ends, so this one is empty again.
+    let removed = std::fs::remove_dir(&path);
+    success(&output);
+    removed.unwrap();
+    assert!(log(&output).contains("background-alive"), "{}", log(&output));
+    assert!(elapsed >= std::time::Duration::from_secs(3), "{elapsed:?}");
+    assert!(elapsed < std::time::Duration::from_secs(20), "{elapsed:?}");
+    let heartbeat = workspace.path().join("heartbeat");
+    let first = std::fs::read_to_string(&heartbeat).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert_eq!(std::fs::read_to_string(&heartbeat).unwrap(), first);
 }
 
 #[test]
@@ -1403,7 +1584,7 @@ jobs:
 
 #[test]
 #[ignore = "needs node"]
-fn node_pre_main_post_and_state() {
+fn node_main_and_post_share_state_and_a_local_pre_is_skipped() {
     let output = run(r#"
 on: push
 jobs:
@@ -1415,12 +1596,16 @@ jobs:
       - run: test '${{ steps.node.outputs.result }}' = node-ok
 "#, &[
         ("action/action.yml", "inputs:\n  value:\n    default: default-input\nruns:\n  using: node20\n  pre: pre.js\n  main: main.js\n  post: post.js\n"),
-        ("action/pre.js", "require('fs').appendFileSync(process.env.GITHUB_STATE, 'from_pre=yes\\n'); console.log('pre-ok');"),
-        ("action/main.js", "if(process.env.STATE_from_pre !== 'yes' || process.env.INPUT_VALUE !== 'default-input') process.exit(1); require('fs').appendFileSync(process.env.GITHUB_OUTPUT, 'result=node-ok\\n'); require('fs').appendFileSync(process.env.GITHUB_STATE, 'from_main=yes\\n');"),
+        ("action/pre.js", "console.log('pre-ran');"),
+        ("action/main.js", "if(process.env.INPUT_VALUE !== 'default-input') process.exit(1); require('fs').appendFileSync(process.env.GITHUB_OUTPUT, 'result=node-ok\\n'); require('fs').appendFileSync(process.env.GITHUB_STATE, 'from_main=yes\\n');"),
         ("action/post.js", "if(process.env.STATE_from_main !== 'yes') process.exit(1); console.log('post-ok');"),
     ], &[]);
     success(&output);
-    assert!(log(&output).contains("pre-ok"));
+    // GitHub never runs a local action's pre.
+    assert!(!log(&output).contains("pre-ran"));
+    assert!(
+        log(&output).contains("`pre` execution is not supported for local action from './action'")
+    );
     assert!(log(&output).contains("post-ok"));
 }
 
