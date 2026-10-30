@@ -111,7 +111,7 @@ pub async fn repositories_on_profile(
         .ok_or(ProfileReadError::Missing)?;
     let offset = i64::try_from(page.saturating_sub(1).saturating_mul(30)).unwrap_or(i64::MAX);
     let (repositories, count) =
-        repositories::records::list_user_repository_page(pool, user.id, owner_session, text, 30, offset)
+        repositories::records::list_user_repository_page(pool, user.id, owner_session, text, true, 30, offset)
             .await
             .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
     Ok((

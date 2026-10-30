@@ -118,12 +118,12 @@ async fn repository_filters_share_native_search_semantics_and_escape_literals() 
         }
         for q in queries {
             let (owned, count) =
-                records::list_user_repository_page(f.pool(), owner, None, q, 30, 0)
+                records::list_user_repository_page(f.pool(), owner, None, q, true, 30, 0)
                     .await
                     .unwrap();
             assert_eq!(count, 1, "owned {pg} {q}");
             assert_eq!(owned[0].id, r.id);
-            let (shared, count) = records::list_shared_repository_page(f.pool(), reader, q, 30, 0)
+            let (shared, count) = records::list_shared_repository_page(f.pool(), reader, q, true, 30, 0)
                 .await
                 .unwrap();
             assert_eq!(count, 1, "shared {pg} {q}");
@@ -142,14 +142,14 @@ async fn repository_filters_share_native_search_semantics_and_escape_literals() 
         }
         for q in ["missing", "100.*", "100%Xliteral"] {
             assert_eq!(
-                records::list_user_repository_page(f.pool(), owner, None, q, 30, 0)
+                records::list_user_repository_page(f.pool(), owner, None, q, true, 30, 0)
                     .await
                     .unwrap()
                     .1,
                 0
             );
             assert_eq!(
-                records::list_shared_repository_page(f.pool(), reader, q, 30, 0)
+                records::list_shared_repository_page(f.pool(), reader, q, true, 30, 0)
                     .await
                     .unwrap()
                     .1,

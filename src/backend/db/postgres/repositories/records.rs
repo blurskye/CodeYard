@@ -168,6 +168,26 @@ pub async fn list_public_repositories(
     Ok(repos)
 }
 
+pub async fn list_trending_repositories(
+    pool: &PgPool,
+    viewer: i64,
+    text: &str,
+    limit: i64,
+) -> Result<Vec<Repository>> {
+    anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
+    Ok(sqlx::query_as::<_, Repository>(
+        "SELECT * FROM repositories \
+         WHERE is_private = false AND NOT is_gist AND NOT (owner_kind='user' AND owner_user_id=$1) \
+         AND (name ILIKE $2 ESCAPE '\\' OR COALESCE(description,'') ILIKE $2 ESCAPE '\\') \
+         ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT $3",
+    )
+    .bind(viewer)
+    .bind(crate::backend::db::discussions::contains_pattern(text.trim()))
+    .bind(limit.min(100))
+    .fetch_all(pool)
+    .await?)
+}
+
 fn shared_repository_condition() -> String {
     format!("NOT r.is_gist AND NOT (r.owner_kind='user' AND r.owner_user_id=u.id) AND ({})>=1 AND (EXISTS(SELECT 1 FROM org_memberships m JOIN organization_settings s ON s.org_id=m.org_id AND s.default_repository_permission IN (1,3,5) WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member')) OR EXISTS(SELECT 1 FROM org_memberships m JOIN organization_role_assignments assigned ON assigned.org_id=m.org_id JOIN organization_roles role ON role.id=assigned.role_id AND role.base_level BETWEEN 1 AND 5 WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member') AND ((assigned.user_id=u.id AND assigned.team_id IS NULL) OR (assigned.user_id IS NULL AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') WHERE t.id=assigned.team_id AND t.org_id=assigned.org_id AND t.privacy IN ('visible','secret'))))) OR EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id AND a.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') JOIN team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 1 AND 5 WHERE t.org_id=m.org_id AND t.privacy IN ('visible','secret'))))))", super::access::USER_REPO_ACCESS_SQL)
 }
@@ -190,10 +210,11 @@ pub async fn list_user_repository_page(
     user: i64,
     owner_session: Option<&str>,
     text: &str,
+    include_archived: bool,
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<Repository>, i64)> {
-    let condition = format!("{} AND (name ILIKE $3 ESCAPE '\\' OR COALESCE(description,'') ILIKE $3 ESCAPE '\\')", personal_repository_condition());
+    let condition = format!("{} AND (name ILIKE $3 ESCAPE '\\' OR COALESCE(description,'') ILIKE $3 ESCAPE '\\'){}", personal_repository_condition(), if include_archived { "" } else { " AND NOT is_archived" });
     let needle = crate::backend::db::discussions::contains_pattern(text.trim());
     let count = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM repositories WHERE {condition}"
@@ -220,12 +241,14 @@ pub async fn list_shared_repository_page(
     pool: &PgPool,
     user: i64,
     text: &str,
+    include_archived: bool,
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<SharedRepository>, i64)> {
     let condition = format!(
-        "{} AND (r.name ILIKE $2 ESCAPE '\\' OR COALESCE(r.description,'') ILIKE $2 ESCAPE '\\')",
-        shared_repository_condition()
+        "{} AND (r.name ILIKE $2 ESCAPE '\\' OR COALESCE(r.description,'') ILIKE $2 ESCAPE '\\'){}",
+        shared_repository_condition(),
+        if include_archived { "" } else { " AND NOT r.is_archived" }
     );
     let needle = crate::backend::db::discussions::contains_pattern(text.trim());
     let count = sqlx::query_scalar(&format!(

@@ -116,6 +116,12 @@ native_operation!(crate::backend::db::postgres::repositories::discovery::search_
     limit: i64,
 ) -> Result<Vec<Repository>>);
 
+// The ids of the repositories `search_repositories` finds, most recently updated first, read in
+// one statement. A walk over them cannot skip or repeat a repository that changes while it runs.
+native_operation!(crate::backend::db::postgres::repositories::discovery::search_repository_ids,
+    crate::backend::db::sqlite::repositories::discovery::search_repository_ids,
+    fn search_repository_ids(pool: &DbPool, viewer: Option<i64>, query: &str, limit: i64) -> Result<Vec<i64>>);
+
 native_operation!(crate::backend::db::postgres::repositories::discovery::count_repositories,
     crate::backend::db::sqlite::repositories::discovery::count_repositories,
     fn count_repositories(pool: &DbPool, viewer: Option<i64>, query: &str, cap: i64) -> Result<i64>);

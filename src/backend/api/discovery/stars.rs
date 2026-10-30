@@ -48,7 +48,7 @@ pub(crate) async fn starred_page(
     let has_older = repos.len() > STARS_PAGE_SIZE;
     repos.truncate(STARS_PAGE_SIZE);
     Ok(StarredPage {
-        repositories: repository_cards(state, repos).await?,
+        repositories: repository_cards(state, viewer, repos).await?,
         has_older,
     })
 }

@@ -84,7 +84,8 @@ pub struct CommitHit {
 pub struct CodeHit {
     pub owner: String,
     pub repo: String,
-    pub branch: String,
+    /// The commit the file was searched at, so the link shows the content that matched.
+    pub commit: String,
     pub path: String,
     pub line_number: u32,
     pub line: String,
@@ -186,6 +187,9 @@ pub struct SearchModel {
     /// Set when the budget stopped the walk over repositories before its end.
     #[serde(default)]
     pub scan: Option<SearchScan>,
+    /// Set when later results lie past the furthest page the search reads.
+    #[serde(default)]
+    pub window_limited: bool,
     /// Repositories a code or commit search reached but could not read.
     #[serde(default)]
     pub unsearched: usize,
@@ -505,10 +509,10 @@ pub fn home(model: HomeModel) -> Element {
     }
     // Trending follows the filter too, and its heading says what it is narrowed to.
     let trending_scope = if model.find.is_empty() {
-        "Most starred of the 100 newest public repositories.".to_owned()
+        "Most starred public repositories of other owners.".to_owned()
     } else {
         format!(
-            "Most starred of the 100 newest public repositories matching “{}”.",
+            "Most starred public repositories of other owners matching “{}”.",
             model.find
         )
     };
@@ -809,6 +813,9 @@ fn search_notices(model: &SearchModel) -> Element {
         if model.unsearched > 0 {
             p { role: "status", class: "mb-3 text-sm text-muted-foreground", {count_label(model.unsearched, "repository", "repositories")}, " could not be searched." }
         }
+        if model.window_limited {
+            p { role: "status", class: "mb-3 text-sm text-muted-foreground", "Older results are past the furthest page search reads, narrow the search to see them." }
+        }
         for name in &model.truncated {
             p { role: "status", class: "mb-3 text-sm text-muted-foreground", "More matches in {name}, narrow with repo:{name} to see them." }
         }
@@ -913,7 +920,7 @@ fn search_results(model: &SearchModel) -> Element {
                 for hit in &model.code {
                     article { class: "border-b border-border px-4 py-3",
                         p { class: "text-sm",
-                            NavLink { href: format!("{}?view=code&line={}#L{}", crate::webui::pages::repos::ref_path::file_url(&repository_url(&hit.owner, &hit.repo), "blob", &hit.branch, &hit.path), hit.line_number, hit.line_number), class: "font-semibold text-primary hover:underline", "{hit.owner}/{hit.repo}: {hit.path}" }
+                            NavLink { href: format!("{}?view=code&line={}#L{}", crate::webui::pages::repos::ref_path::file_url(&repository_url(&hit.owner, &hit.repo), "blob", &hit.commit, &hit.path), hit.line_number, hit.line_number), class: "font-semibold text-primary hover:underline", "{hit.owner}/{hit.repo}: {hit.path}" }
                         }
                         pre { class: "mt-2 overflow-x-auto rounded-md bg-muted px-3 py-2 text-xs", code { "{hit.line_number}  ", {highlighted_text(&hit.line, &model.highlight)} } }
                     }
