@@ -90,12 +90,12 @@ impl LocalStore {
             // A tag may not name a missing or malformed object either.
             self.git_object_kind(sha).await?;
         }
-        // The imported names must fit the same count and byte limits as any other branch or tag.
+        // Imported public refs share the count and byte limits of ordinary publication.
         let held = self.blocking(git::published_refs_in_use).await?;
         let created: Vec<&str> = import
             .refs
             .keys()
-            .filter(|name| name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
+            .filter(|name| git::is_public_ref(name))
             .map(String::as_str)
             .collect();
         ensure_ref_room(held, &created)?;

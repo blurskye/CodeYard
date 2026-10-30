@@ -270,7 +270,9 @@ pub(crate) async fn walk_commits(
     if !hidden.is_empty() || hide_published {
         command.arg("--not").args(hidden);
         if hide_published {
-            command.args(["--branches", "--tags"]);
+            for namespace in crate::backend::git::ref_names::PUBLIC_REF_NAMESPACES {
+                command.arg(format!("--glob={namespace}*"));
+            }
         }
     }
     command.arg("--");

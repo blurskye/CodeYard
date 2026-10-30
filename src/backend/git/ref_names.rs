@@ -3,11 +3,18 @@
 /// libgit2's 1024-byte reference buffer also reserves a terminating NUL.
 pub(crate) const MAX_REF_BYTES: usize = 1023;
 
+pub(crate) const PUBLIC_REF_NAMESPACES: [&str; 3] = ["refs/heads/", "refs/tags/", "refs/notes/"];
+
+/// Namespace selection only; callers admitting a new name must also validate it.
+pub(crate) fn is_public_ref(reference: &str) -> bool {
+    PUBLIC_REF_NAMESPACES.iter().any(|prefix| reference.starts_with(*prefix))
+}
+
 /// Returns whether `reference` is an exact, non-normalized branch, tag or notes ref.
 /// Git's normalization can collapse empty path components, so callers reject
 /// malformed names rather than retargeting them to another ref.
 pub(crate) fn is_canonical_ref(reference: &str) -> bool {
-    (reference.starts_with("refs/heads/") || reference.starts_with("refs/tags/") || reference.starts_with("refs/notes/"))
+    is_public_ref(reference)
         && reference.len() <= MAX_REF_BYTES
         && !reference.bytes().any(|byte| {
             byte <= b' '

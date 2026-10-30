@@ -46,14 +46,12 @@ async fn quarantine_directory(repository: &Path, claimed: &str) -> Option<PathBu
         .then_some(directory)
 }
 
-/// The branches and tags a push creates. Each one counts against the repository's ref limit.
+/// Each created public ref counts against the same repository quota and reservations.
 fn created_refs(updates: &[RefUpdate]) -> Vec<&str> {
     updates
         .iter()
         .filter(|update| {
-            update.old == ZERO_SHA
-                && (update.reference.starts_with("refs/heads/")
-                    || update.reference.starts_with("refs/tags/"))
+            update.old == ZERO_SHA && crate::backend::git::is_public_ref(&update.reference)
         })
         .map(|update| update.reference.as_str())
         .collect()

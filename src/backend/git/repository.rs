@@ -1303,7 +1303,8 @@ pub(crate) struct RefsInUse {
 
 /// Counts every public branch, tag and notes ref for admission.
 pub(crate) fn published_refs_in_use(repo_path: &Path) -> Result<RefsInUse> {
-    refs_in_use(repo_path, &["refs/heads/*", "refs/tags/*", "refs/notes/*"])
+    let patterns = super::ref_names::PUBLIC_REF_NAMESPACES.map(|namespace| format!("{namespace}*"));
+    refs_in_use(repo_path, &patterns.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
 /// Counts every pull request head for the admission check. Replicas copy them too.

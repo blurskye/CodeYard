@@ -48,7 +48,7 @@ async fn new_commits(
         return Ok(Vec::new());
     }
     // Pull heads and retention refs have not passed push protection. Only published
-    // branches and tags can establish the boundary of previously accepted history.
+    // branches, tags and notes can establish the boundary of previously accepted history.
     walk_commits(&path, quarantine.as_deref(), &tips, &[], true, 10_000,
         deadline.saturating_duration_since(Instant::now())).await
 }
