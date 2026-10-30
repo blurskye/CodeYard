@@ -863,7 +863,7 @@ pub(crate) async fn native_set_viewed(
         return Err(ctx.error(StatusCode::BAD_REQUEST, "Invalid diff path."));
     }
     let diff = repo_store(&repo.record, ctx.state.cluster.as_ref())
-        .diff_file(&pull.base_sha, &pull.head_sha, &path)
+        .diff_file(pull.diff_base(), &pull.head_sha, &path)
         .await
         .map_err(|error| crate::backend::api::repos::chrome::store_error(&ctx, None, error))?;
     let blob_sha = diff
