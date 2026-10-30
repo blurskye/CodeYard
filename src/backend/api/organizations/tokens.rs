@@ -69,7 +69,7 @@ async fn grants(
     let mut grants = Vec::new();
     for token in rows {
         let repositories = if token.repository_access == "selected" {
-            db::fine_grained_tokens::repositories(pool, token.token_id)
+            db::fine_grained_tokens::repositories(pool, token.token_id, ctx.user.as_ref().map_or(0, |user| user.id), &db::users::accounts::AccountCredential::Session(ctx.session_id.as_deref().unwrap_or("")))
                 .await?
                 .into_iter()
                 .map(|(_, name)| name)
