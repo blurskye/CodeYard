@@ -491,7 +491,7 @@ pub(super) async fn mutation(
             repository::by_id(target.repo_id, request).await?;
             request.authorize(target.repo_id, "issues", false).await?;
             payload["issue"] = object(
-                &db::issues::management::close_duplicate(pool, actor, repo.id, issue.id, duplicate)
+                &db::issues::management::close_duplicate(pool, db::users::accounts::AccountActor::Token { user_id: actor, token_id: request.auth.token.id }, repo.id, issue.id, duplicate)
                     .await
                     .map_err(management::error)?,
             );

@@ -126,7 +126,7 @@ pub(super) async fn mutation(
     id: i64,
 ) -> Result<Value> {
     let pool = &request.state.pool;
-    let actor = request.auth.user.id;
+    let actor = db::users::accounts::AccountActor::Token { user_id: request.auth.user.id, token_id: request.auth.token.id };
     let mut payload = json!({"clientMutationId":input["clientMutationId"]});
     match field {
         "pinIssue" | "unpinIssue" => {

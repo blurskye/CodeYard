@@ -35,13 +35,14 @@ pub fn default_name(issue: &db::models::Issue) -> String {
 
 pub async fn create(
     state: &AppState,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     issue: &db::models::Issue,
     target: &db::models::Repository,
     name: &str,
     oid: &str,
 ) -> Result<db::issues::management::LinkedBranch, OperationError> {
-    access::check_write(&state.pool, issue.repo_id, actor)
+    let authority = actor.into();
+    access::check_write(&state.pool, issue.repo_id, authority.user_id())
         .await
         .map_err(|_| OperationError::Denied {
             code: "forbidden",
@@ -58,7 +59,7 @@ pub async fn create(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        actor,
+        authority.clone(),
         &owner,
         target.id,
         name,
@@ -92,7 +93,7 @@ pub async fn create(
     }
     db::issues::management::link_branch(
         &state.pool,
-        actor,
+        authority,
         issue.repo_id,
         issue.id,
         target.id,
