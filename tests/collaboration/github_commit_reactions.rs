@@ -295,7 +295,7 @@ async fn reactions(pg: bool) {
     let issue = db::issues::create_issue(f.pool(), repo.id, alice, "Independent reaction", "")
         .await
         .unwrap();
-    let issue_comment = db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, alice, "Comment")
+    let issue_comment = db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, alice, "Comment", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap();
     db::reactions::create_reaction(

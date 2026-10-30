@@ -163,7 +163,7 @@ async fn contract(pg: bool) {
             .await
             .unwrap();
     }
-    db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, bob, "Before block")
+    db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, bob, "Before block", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap();
     db::notifications::create_notification(
@@ -306,7 +306,7 @@ async fn contract(pg: bool) {
             .is::<db::discussions::DiscussionWriteRefusal>()
     );
     assert!(
-        db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, bob, "Refused")
+        db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, bob, "Refused", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
             .await
             .is_err()
     );
@@ -525,7 +525,7 @@ async fn contract(pg: bool) {
             .unwrap(),
         AccessLevel::None
     );
-    db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, bob, "After unblock")
+    db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, bob, "After unblock", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap();
     let reply = session

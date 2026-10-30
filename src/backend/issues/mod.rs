@@ -241,6 +241,12 @@ pub(super) async fn require_write(
 
 pub(super) fn write_error(error: anyhow::Error) -> OperationError {
     use db::discussions::DiscussionWriteRefusal;
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return OperationError::Unauthenticated {
+            code: "unauthorized",
+            message: "Please sign in again".into(),
+        };
+    }
     if let Some(refusal) = error.downcast_ref::<db::relationships::Refusal>() {
         return match refusal {
             db::relationships::Refusal::Denied => OperationError::Denied {

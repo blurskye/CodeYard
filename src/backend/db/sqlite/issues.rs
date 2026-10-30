@@ -406,9 +406,14 @@ pub async fn add_issue_comment(
     issue_id: i64,
     author_id: i64,
     body: &str,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<IssueComment> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::discussions::lock_issue_contribution(&mut tx, author_id, repo_id, issue_id).await?;
+    anyhow::ensure!(
+        super::users::transitions::retain_write_credential(&mut tx, author_id, credential).await?,
+        crate::backend::db::users::accounts::AccountRestricted
+    );
     let revision: String = sqlx::query_scalar("SELECT updated_at FROM issues WHERE id=?1")
         .bind(issue_id)
         .fetch_one(&mut *tx)
@@ -587,9 +592,14 @@ pub async fn edit_issue_comment(
     comment_id: i64,
     body: &str,
     expected_body: &str,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? { return Ok(None); }
+    anyhow::ensure!(
+        super::users::transitions::retain_write_credential(&mut tx, actor_id, credential).await?,
+        crate::backend::db::users::accounts::AccountRestricted
+    );
     let writer = super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
     let author: Option<i64> = sqlx::query_scalar(
         "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
@@ -618,16 +628,22 @@ pub async fn edit_issue_comment(
 }
 
 /// Deletes a comment with the notifications that link to it. The author may delete their own
-/// comment; a repository writer may delete anyone's. Returns false when the delete is refused.
+/// comment; a repository writer may delete anyone's. Returns the deleted comment, or None when
+/// the delete is refused.
 pub async fn delete_issue_comment(
     pool: &SqlitePool,
     actor_id: i64,
     repo_id: i64,
     issue_id: i64,
     comment_id: i64,
-) -> Result<bool> {
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? { return Ok(false); }
+    if !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? { return Ok(None); }
+    anyhow::ensure!(
+        super::users::transitions::retain_write_credential(&mut tx, actor_id, credential).await?,
+        crate::backend::db::users::accounts::AccountRestricted
+    );
     let writer = super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
     let author: Option<i64> = sqlx::query_scalar(
         "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
@@ -640,10 +656,10 @@ pub async fn delete_issue_comment(
     .fetch_optional(&mut *tx)
     .await?;
     let Some(author) = author else {
-        return Ok(false);
+        return Ok(None);
     };
     if author != actor_id && !writer {
-        return Ok(false);
+        return Ok(None);
     }
     sqlx::query(
         "DELETE FROM notifications WHERE repo_id = ?1 AND kind IN ('issue_comment', 'mention')
@@ -657,12 +673,12 @@ pub async fn delete_issue_comment(
         .bind(comment_id)
         .execute(&mut *tx)
         .await?;
-    let removed = sqlx::query("DELETE FROM issue_comments WHERE id = ?1")
+    let removed = sqlx::query_as::<_, IssueComment>("DELETE FROM issue_comments WHERE id = ?1 RETURNING *")
         .bind(comment_id)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(removed.rows_affected() == 1)
+    Ok(removed)
 }
 
 pub async fn list_repository_comments(

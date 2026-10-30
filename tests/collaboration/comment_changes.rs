@@ -208,7 +208,8 @@ async fn edit_and_delete_rules(pg: bool) {
         repository_id.parse().unwrap(),
         stored.issue_id,
         stored.author_id,
-        "After lock"
+        "After lock",
+        &codeyard::backend::db::users::accounts::AccountCredential::Trusted
     )
     .await
     .is_ok());
@@ -353,9 +354,10 @@ async fn late_notifications_and_long_discussions(pg: bool) {
         .await
         .unwrap();
     assert!(
-        db::issues::delete_issue_comment(pool, alice_id, repo.id, issue_id, comment_id)
+        db::issues::delete_issue_comment(pool, alice_id, repo.id, issue_id, comment_id, &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
             .await
             .unwrap()
+            .is_some()
     );
     for kind in ["issue_comment", "mention"] {
         assert!(

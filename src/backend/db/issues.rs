@@ -130,6 +130,7 @@ native_operation!(crate::backend::db::postgres::issues::add_issue_comment,
     issue_id: i64,
     author_id: i64,
     body: &str,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<IssueComment>);
 
 native_operation!(crate::backend::db::postgres::issues::list_issue_comments,
@@ -157,7 +158,8 @@ native_operation!(crate::backend::db::postgres::issues::get_issue_comment,
     crate::backend::db::sqlite::issues::get_issue_comment,
     fn get_issue_comment(pool: &DbPool, comment_id: i64) -> Result<Option<IssueComment>>);
 
-// The author or a current repository writer may edit. None when the change is refused.
+// The author or a current repository writer may edit, with a live credential. None when the
+// change is refused.
 native_operation!(crate::backend::db::postgres::issues::edit_issue_comment,
     crate::backend::db::sqlite::issues::edit_issue_comment,
     fn edit_issue_comment(
@@ -168,9 +170,11 @@ native_operation!(crate::backend::db::postgres::issues::edit_issue_comment,
     comment_id: i64,
     body: &str,
     expected_body: &str,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<Option<IssueComment>>);
 
-// Deletes a comment on the issue: its author or a current repository writer. False when refused.
+// Deletes a comment on the issue: its author or a current repository writer. Returns the deleted
+// comment, or None when refused.
 native_operation!(crate::backend::db::postgres::issues::delete_issue_comment,
     crate::backend::db::sqlite::issues::delete_issue_comment,
     fn delete_issue_comment(
@@ -179,7 +183,8 @@ native_operation!(crate::backend::db::postgres::issues::delete_issue_comment,
     repo_id: i64,
     issue_id: i64,
     comment_id: i64,
-) -> Result<bool>);
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<Option<IssueComment>>);
 
 native_operation!(crate::backend::db::postgres::issues::issue_comment_position,
     crate::backend::db::sqlite::issues::issue_comment_position,

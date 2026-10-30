@@ -466,6 +466,7 @@ pub(super) async fn mutation(
                 pool,
                 broadcaster,
                 actor,
+                &db::users::accounts::AccountCredential::Token(request.auth.token.id),
                 owner,
                 repo.name.clone(),
                 issue.number,
