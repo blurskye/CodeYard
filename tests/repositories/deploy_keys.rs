@@ -116,7 +116,7 @@ async fn stale_admin_native_mutations(pg: bool) {
             .is_err()
     );
     assert_eq!(
-        db::deploy_keys::list_deploy_keys(database.pool(), repo)
+        db::deploy_keys::list_deploy_keys(database.pool(), repo, 0, 100)
             .await
             .unwrap()
             .len(),
@@ -142,7 +142,7 @@ async fn keys_api_and_forms(pg: bool) {
         .api("POST", path, json!({"title":"ci\0key", "key": ED25519}))
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(db::deploy_keys::list_deploy_keys(database.pool(), repo)
+    assert!(db::deploy_keys::list_deploy_keys(database.pool(), repo, 0, 100)
         .await
         .unwrap()
         .is_empty());
@@ -280,7 +280,7 @@ async fn keys_api_and_forms(pg: bool) {
         )
         .await;
     assert!(reply.status.is_redirection(), "{}", reply.text());
-    let rows = db::deploy_keys::list_deploy_keys(database.pool(), repo)
+    let rows = db::deploy_keys::list_deploy_keys(database.pool(), repo, 0, 100)
         .await
         .unwrap();
     assert!(rows.is_empty(), "the form deleted the key");

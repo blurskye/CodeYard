@@ -40,6 +40,8 @@ pub struct HookRow {
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct HookDraft {
     pub id: Option<i64>,
+    #[serde(default)]
+    pub expected_updated: String,
     pub payload_url: String,
     pub content_type: String,
     /// The checked events, as stored. `*` checks everything.
@@ -135,6 +137,9 @@ impl WebhookPanel {
 
 #[component]
 pub fn WebhookSection(panel: WebhookPanel) -> Element {
+    let mut panel = panel;
+    let detail = panel.detail.take();
+    let draft = panel.editing.take();
     rsx! {
         section { class: "repo-settings-section panel webhook-section", aria_labelledby: "webhooks-title",
             header { class: "repo-section-heading",
@@ -146,10 +151,10 @@ pub fn WebhookSection(panel: WebhookPanel) -> Element {
             div { class: "webhook-body",
                 if let Some(notice) = &panel.notice { div { class: "repo-alert repo-alert-success", role: "status", "{notice}" } }
                 if let Some(error) = &panel.error { div { class: "repo-alert repo-alert-error", role: "alert", strong { "Webhook was not saved" } p { "{error}" } } }
-                if let Some(detail) = &panel.detail {
-                    HookDetailView { panel: panel.clone(), detail: detail.clone() }
-                } else if let Some(draft) = &panel.editing {
-                    HookEditor { panel: panel.clone(), draft: draft.clone() }
+                if let Some(detail) = detail {
+                    HookDetailView { panel: panel.clone(), detail }
+                } else if let Some(draft) = draft {
+                    HookEditor { panel: panel.clone(), draft }
                 } else {
                     HookList { panel: panel.clone() }
                 }
@@ -181,14 +186,14 @@ fn HookList(panel: WebhookPanel) -> Element {
                     div { class: "webhook-row-actions",
                         a { class: "btn btn-secondary btn-sm", href: format!("{}&hook={}&edit=1", panel.base, hook.id), title: "Edit this webhook", "Edit" }
                         form { method: "post", action: panel.action("webhook-ping"), class: "webhook-inline-form",
-                            input { r#type: "hidden", name: "csrf_token", value: panel.csrf_token.clone() }
+                            {crate::webui::pages::fields::csrf(&panel.csrf_token)}
                             if let Some(id) = panel.repository_id { input { r#type: "hidden", name: "repository_id", value: id.to_string() } }
                             input { r#type: "hidden", name: "hook_id", value: hook.id.to_string() }
                             button { class: "btn btn-secondary btn-sm", r#type: "submit", title: "Send a ping to this URL", "Ping" }
                         }
                         a { class: "btn btn-danger btn-sm", href: format!("#webhook-delete-{}", hook.id), "Delete" span { class: "site-sr-only", " webhook {hook.url}" } }
                         {confirm_dialog(Some(&format!("webhook-delete-{}", hook.id)), &format!("Delete webhook {}", hook.url), &panel.base, &panel.action("webhook-delete"), rsx! {
-                                input { r#type: "hidden", name: "csrf_token", value: panel.csrf_token.clone() }
+                                {crate::webui::pages::fields::csrf(&panel.csrf_token)}
                                 if let Some(id) = panel.repository_id { input { r#type: "hidden", name: "repository_id", value: id.to_string() } }
                                 input { r#type: "hidden", name: "hook_id", value: hook.id.to_string() }
                                 strong { "Delete this webhook?" }
@@ -215,9 +220,10 @@ fn HookEditor(panel: WebhookPanel, draft: HookDraft) -> Element {
     };
     rsx! {
         form { class: "repo-form-body webhook-form", method: "post", action: panel.action("webhook-save"),
-            input { r#type: "hidden", name: "csrf_token", value: panel.csrf_token.clone() }
+            {crate::webui::pages::fields::csrf(&panel.csrf_token)}
             if let Some(id) = panel.repository_id { input { r#type: "hidden", name: "repository_id", value: id.to_string() } }
             if let Some(id) = draft.id { input { r#type: "hidden", name: "hook_id", value: id.to_string() } }
+            input { r#type: "hidden", name: "expected_updated", value: draft.expected_updated.clone() }
             h4 { "{title}" }
             label { class: "repo-field",
                 span { "Payload URL" }
@@ -291,6 +297,8 @@ fn HookEditor(panel: WebhookPanel, draft: HookDraft) -> Element {
 
 #[component]
 fn HookDetailView(panel: WebhookPanel, detail: HookDetail) -> Element {
+    let mut detail = detail;
+    let open = detail.open.take();
     rsx! {
         div { class: "webhook-toolbar",
             a { class: "btn btn-secondary btn-sm", href: panel.base.clone(), "Back to webhooks" }
@@ -315,8 +323,8 @@ fn HookDetailView(panel: WebhookPanel, detail: HookDetail) -> Element {
                 }
             }
         }
-        if let Some(open) = &detail.open {
-            DeliveryView { panel: panel.clone(), hook_id: detail.id, open: open.clone() }
+        if let Some(open) = open {
+            DeliveryView { panel: panel.clone(), hook_id: detail.id, open }
         }
     }
 }
@@ -328,7 +336,7 @@ fn DeliveryView(panel: WebhookPanel, hook_id: i64, open: DeliveryDetail) -> Elem
             header { class: "webhook-delivery-head",
                 h4 { "Delivery {open.guid}" }
                 form { method: "post", action: panel.action("webhook-redeliver"), class: "webhook-inline-form",
-                    input { r#type: "hidden", name: "csrf_token", value: panel.csrf_token.clone() }
+                    {crate::webui::pages::fields::csrf(&panel.csrf_token)}
                     if let Some(id) = panel.repository_id { input { r#type: "hidden", name: "repository_id", value: id.to_string() } }
                     input { r#type: "hidden", name: "hook_id", value: hook_id.to_string() }
                     input { r#type: "hidden", name: "delivery_id", value: open.id.to_string() }

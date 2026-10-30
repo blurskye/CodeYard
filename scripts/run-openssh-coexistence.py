@@ -61,7 +61,7 @@ def digest(path):
         return result.hexdigest()
 
 
-def root_path(path, directory=False, executable=False, private=False):
+def root_path(path, directory=False, executable=False, private=False, single_link=True):
     path = Path(path)
     require(path.is_absolute() and str(path) == os.path.normpath(str(path))
             and re.fullmatch(r'/[A-Za-z0-9_./-]+', str(path)), 'noncanonical path refused')
@@ -74,7 +74,7 @@ def root_path(path, directory=False, executable=False, private=False):
             if executable:
                 require(info.st_mode & 0o001, 'fixture executable ancestor must be world-traversable')
         else:
-            require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1, 'regular single-link input required')
+            require(stat.S_ISREG(info.st_mode) and (not single_link or info.st_nlink == 1), 'regular single-link input required')
     info = path.lstat()
     if executable:
         require(info.st_mode & 0o001 and not info.st_mode & 0o6000, 'non-setid executable required')
@@ -92,7 +92,7 @@ def tool_path(path, setuid=False):
             require(info.st_uid == 0 and (stat.S_ISLNK(info.st_mode) or not info.st_mode & 0o022),
                     'unsafe system tool link/parent')
         if not current.is_symlink():
-            info = root_path(current.resolve(strict=True))
+            info = root_path(current.resolve(strict=True), single_link=False)
             require(info.st_mode & 0o001 and not info.st_mode & 0o2000
                     and bool(info.st_mode & stat.S_ISUID) == setuid, 'unsafe system tool mode')
             return

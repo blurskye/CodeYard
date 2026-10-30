@@ -336,8 +336,7 @@ pub(crate) async fn not_found(
             Some(query) => format!("{trimmed}?{query}"),
             None => trimmed.to_owned(),
         };
-        // Doubled slashes would make a protocol-relative address.
-        if !trimmed.is_empty() && !target.starts_with("//") {
+        if crate::webui::navigation::safe_page_target(&target) {
             return Redirect::permanent(&target).into_response();
         }
     }

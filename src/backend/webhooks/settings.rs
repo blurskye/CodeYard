@@ -157,6 +157,14 @@ pub async fn save(
     id: Option<i64>,
     form: &HookForm,
 ) -> Result<i64, HookError> {
+    save_with_revision(pool, encryptor, owner, actor, credential, id, form, None).await
+}
+
+pub async fn save_with_revision(
+    pool: &DbPool, encryptor: Option<&SecretEncryptor>, owner: HookOwner, actor: &User,
+    credential: &db::users::accounts::AccountCredential<'_>,
+    id: Option<i64>, form: &HookForm, expected_updated: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<i64, HookError> {
     authorize(pool, actor, owner).await?;
     let mut fields = validated(form)?;
     fields.password = form
@@ -192,6 +200,7 @@ pub async fn save(
                 ));
             }
             let mut patch = hooks::WebhookPatch::from(&fields);
+            patch.expected_updated = expected_updated;
             patch.clear_secret = form.clear_secret;
             patch.clear_password = form.clear_password;
             let updated = hooks::patch_webhook(pool, owner, actor.id, credential, id, &patch, secret.as_ref())
@@ -199,7 +208,7 @@ pub async fn save(
                 .map_err(unavailable)?
                 .ok_or(HookError::Denied)?;
             if !updated {
-                return Err(HookError::NotFound);
+                return Err(if expected_updated.is_some() { HookError::Invalid("The webhook changed. Reload before saving; your submitted settings are preserved.") } else { HookError::NotFound });
             }
             Ok(id)
         }
@@ -227,6 +236,7 @@ pub async fn update(
             .as_deref()
             .map(|password| sealed(encryptor, password))
             .transpose()?,
+        expected_updated: None,
         clear_password: false,
         payload_url: patch.payload_url.as_deref().map(validate_url).transpose()?,
         content_type: patch

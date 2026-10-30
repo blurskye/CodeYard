@@ -207,7 +207,7 @@ async fn dispatch(
     state: Arc<AppState>,
     headers: HeaderMap,
     uri: Uri,
-    form: HashMap<String, String>,
+    mut form: HashMap<String, String>,
     scope: Option<(String, String)>,
 ) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
@@ -227,11 +227,24 @@ async fn dispatch(
         value.len()
             > if key == "inputs" {
                 MAX_INPUT_LINES_BYTES
+            } else if key.starts_with("input:") {
+                // Browsers send a textarea's line breaks as CRLF.
+                2 * MAX_VALUE_BYTES
             } else {
                 MAX_VALUE_BYTES
             }
     }) {
         return ctx.error(StatusCode::BAD_REQUEST, "Dispatch form value is too long.");
+    }
+    // Workflow files give their defaults LF line breaks, as YAML does, so an unchanged
+    // multiline default reaches the run with its own bytes.
+    for (key, value) in &mut form {
+        if key.starts_with("input:") {
+            *value = value.replace("\r\n", "\n");
+            if value.len() > MAX_VALUE_BYTES {
+                return ctx.error(StatusCode::BAD_REQUEST, "Dispatch form value is too long.");
+            }
+        }
     }
     let draft = draft(&form, scope.as_ref());
     let base_path = scope

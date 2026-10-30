@@ -88,10 +88,14 @@ async fn attributes(pg: bool) {
     let path = format!("{base}/issues/{}", issue.number);
     let page = format!("/collective/proj/issues/{}", issue.number);
     let action = format!("{page}/attributes");
+    let repository_id = repo.id.to_string();
+    let item_id = issue.id.to_string();
+    let owner_key = format!("org:{}", org.id);
     let created = browser
         .form_reply(
             &action,
             &[
+                ("repository_id", &repository_id), ("item_id", &item_id), ("owner_key", &owner_key),
                 ("action", "configure"),
                 ("kind", "type"),
                 ("name", "Bug"),
@@ -163,6 +167,7 @@ async fn attributes(pg: bool) {
     assert_eq!(mentioned[0]["id"], issue.id);
     for data_type in ["text", "number", "date", "single_select", "multi_select"] {
         let mut form = vec![
+            ("repository_id", repository_id.as_str()), ("item_id", item_id.as_str()), ("owner_key", owner_key.as_str()),
             ("action", "configure"),
             ("kind", "field"),
             ("name", data_type),
@@ -184,6 +189,7 @@ async fn attributes(pg: bool) {
         .form_reply(
             &action,
             &[
+                ("repository_id", &repository_id), ("item_id", &item_id), ("owner_key", &owner_key),
                 ("action", "configure"),
                 ("kind", "field"),
                 ("name", "Internal"),
@@ -248,6 +254,7 @@ async fn attributes(pg: bool) {
         .form_reply(
             &action,
             &[
+                ("repository_id", &repository_id), ("item_id", &item_id), ("owner_key", &owner_key),
                 ("action", "configure"),
                 ("kind", "type"),
                 ("name", "Unauthorized"),
@@ -309,6 +316,8 @@ async fn attributes(pg: bool) {
             &[
                 ("action", "configure"),
                 ("kind", "field"),
+                ("repository_id", &repository_id), ("item_id", &item_id), ("owner_key", &owner_key),
+                ("expected_revision", &db::issue_attributes::revision(&single).unwrap()),
                 ("attribute_id", &single.id.to_string()),
                 ("name", "single_select"),
                 ("data_type", "single_select"),
@@ -401,12 +410,15 @@ async fn attributes(pg: bool) {
         200,
     )
     .await;
+    let bug_current = db::issue_attributes::catalog(f.pool(), repo.id, Some(alice), "type").await.unwrap().into_iter().find(|attribute| attribute.id == bug).unwrap();
     let disabled = browser
         .form_reply(
             &action,
             &[
                 ("action", "configure"),
                 ("kind", "type"),
+                ("repository_id", &repository_id), ("item_id", &item_id), ("owner_key", &owner_key),
+                ("expected_revision", &db::issue_attributes::revision(&bug_current).unwrap()),
                 ("attribute_id", &bug.to_string()),
                 ("name", "Bug"),
                 ("color", "red"),
@@ -459,6 +471,7 @@ async fn attributes(pg: bool) {
         .form_reply(
             &action,
             &[
+                ("repository_id", &repository_id), ("item_id", &item_id), ("owner_key", &owner_key),
                 ("action", "delete_definition"),
                 ("attribute_id", &field("Internal").id.to_string()),
                 ("confirm", "true"),

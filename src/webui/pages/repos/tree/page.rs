@@ -429,14 +429,15 @@ fn setup_commands(url: &str, branch: &str) -> Element {
     let url = shell_argument(url);
     let branch = shell_argument(branch);
     let new_repository = format!(
-        "git init\ngit add .\ngit commit -m \"first commit\"\ngit branch -M {branch}\ngit remote add origin {url}\ngit push -u origin {branch}"
+        "git init &&\ngit add . &&\ngit commit -m \"first commit\" &&\ngit branch -M {branch} &&\ngit remote add origin {url} &&\ngit push -u origin {branch}"
     );
     let existing_repository =
-        format!("git remote add origin {url}\ngit branch -M {branch}\ngit push -u origin {branch}");
+        format!("git remote add origin {url} &&\ngit branch -M {branch} &&\ngit push -u origin {branch}");
     rsx! {
         h4 { "Create a new repository on the command line" }
         pre { class: "repo-quick-setup-code", "{new_repository}" }
         h4 { "Push an existing repository from the command line" }
+        p { "If origin already exists, inspect it with git remote -v and explicitly change it with git remote set-url origin before pushing. Stop if any setup command fails." }
         pre { class: "repo-quick-setup-code", "{existing_repository}" }
     }
 }

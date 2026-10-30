@@ -85,8 +85,6 @@ fn input(form: &Fields) -> Result<Value, RegistryError> {
                     })
                     .collect::<Result<_, _>>()?;
                 body[name] = json!(ids);
-            } else if !value.trim().is_empty() {
-                return Err(RegistryError::Invalid("selected_repository_ids"));
             }
         } else {
             body[name] = if value.is_empty() {

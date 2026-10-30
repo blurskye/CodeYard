@@ -195,6 +195,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         None => false,
     };
     let mut page = view::Page {
+        view_state: view::ViewState { location: ctx.location.clone(), direction: "asc".into(), ..Default::default() },
         owner: name,
         base,
         csrf_token: ctx.csrf_token.clone(),
@@ -261,6 +262,11 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
             projects::Refusal::Invalid
         );
         config.sort_by = vec![(id, direction.into())];
+    }
+    page.view_state.visible_fields = config.visible_fields.clone();
+    if let Some((field, direction)) = config.sort_by.first() {
+        page.view_state.sort = field.to_string();
+        page.view_state.direction = direction.clone();
     }
     page.views = views
         .iter()
@@ -613,14 +619,19 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 let Some(value) = form.get(&format!("value_{}", f.id)) else {
                     continue;
                 };
+                let original: String = form.get(&format!("was_{}", f.id))
+                    .and_then(|value| serde_json::from_str(value).ok()).ok_or(projects::Refusal::Invalid)?;
+                let value = if f.data_type == "text" {
+                    crate::backend::repositories::files::native_text(value.clone(), &original)
+                } else { value.clone() };
                 // An unchanged field keeps whatever another editor saved meanwhile.
-                if form.get(&format!("was_{}", f.id)) == Some(value) {
+                if value == original {
                     continue;
                 }
                 let value = if value.is_empty() {
                     Value::Null
                 } else if f.data_type == "number" {
-                    serde_json::from_str(value).map_err(|_| projects::Refusal::Invalid)?
+                    serde_json::from_str(&value).map_err(|_| projects::Refusal::Invalid)?
                 } else {
                     json!(value)
                 };

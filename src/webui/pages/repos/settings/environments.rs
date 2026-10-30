@@ -17,6 +17,7 @@ pub fn section(repo: &RepoChrome, settings: &Settings) -> Element {
         .map(|value| value.name.clone())
         .unwrap_or_default();
     let mut options = vec![SelectOption::new("", "Repository")];
+    if !selected.is_empty() && !settings.environments.contains(&selected) { options.push(SelectOption::new(selected.clone(), format!("Environment: {selected}"))); }
     options.extend(
         settings
             .environments
@@ -32,6 +33,8 @@ pub fn section(repo: &RepoChrome, settings: &Settings) -> Element {
                     DraftSelect { name: "environment", initial_value: selected, options }
                 }
                 button { class: "btn", r#type: "submit", "Show values" }
+                crate::webui::navigation::NavLink { href: format!("{}/settings?tab=secrets", repo.base()), "First environments" }
+                if settings.environments.len() == 100 { crate::webui::navigation::NavLink { href: format!("{}/settings?tab=secrets&environments_page={}", repo.base(), settings.environments_page + 1), "Next environments" } }
             }
         }
         if let Some(environment) = &settings.environment {

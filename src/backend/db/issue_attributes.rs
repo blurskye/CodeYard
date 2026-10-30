@@ -96,6 +96,15 @@ impl FieldChanges {
         }
     }
 }
+pub fn owner_key(user: Option<i64>, org: Option<i64>) -> String {
+    org.map_or_else(|| format!("user:{}", user.unwrap_or(0)), |id| format!("org:{id}"))
+}
+
+pub fn revision(attribute: &Attribute) -> Result<String> {
+    use sha2::Digest;
+    Ok(format!("{:x}", sha2::Sha256::digest(serde_json::to_vec(attribute)?)))
+}
+
 pub struct Definition {
     pub id: Option<i64>,
     pub kind: String,
@@ -271,6 +280,8 @@ native_operation!(crate::backend::db::postgres::issue_attributes::owner_can_conf
     fn owner_can_configure(pool:&DbPool,repo:i64,actor:i64)->Result<bool>);
 native_operation!(crate::backend::db::postgres::issue_attributes::configure,crate::backend::db::sqlite::issue_attributes::configure,
     fn configure(pool:&DbPool,repo:i64,actor:i64,definition:&Definition)->Result<i64>);
+native_operation!(crate::backend::db::postgres::issue_attributes::configure_checked,crate::backend::db::sqlite::issue_attributes::configure_checked,
+    fn configure_checked(pool:&DbPool,repo:i64,actor:i64,definition:&Definition,guard:(Option<&str>,Option<&str>))->Result<i64>);
 native_operation!(crate::backend::db::postgres::issue_attributes::delete_definition,crate::backend::db::sqlite::issue_attributes::delete_definition,
     fn delete_definition(pool:&DbPool,repo:i64,actor:i64,id:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::issue_attributes::set_values,crate::backend::db::sqlite::issue_attributes::set_values,

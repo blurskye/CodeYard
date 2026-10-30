@@ -13,6 +13,7 @@
 #                which the server reads only to find the module script (it is never
 #                served as a page), and assets/*.js|*.wasm. A stale CSS file stops the
 #                build; the server embeds that file, so refresh and commit it first.
+# check          Check committed CSS without building the browser bundle.
 # css            Print the CSS Tailwind generates from the views to stdout (progress
 #                goes to stderr), changing nothing. Redirect it into
 #                src/webui/assets/tailwind.css to refresh the committed copy.
@@ -23,8 +24,8 @@ cd "$ROOT"
 
 MODE=${1:-release}
 case $MODE in
-    release | debug | css) ;;
-    *) echo "usage: $0 [release|debug|css]" >&2; exit 2 ;;
+    release | debug | css | check) ;;
+    *) echo "usage: $0 [release|debug|css|check]" >&2; exit 2 ;;
 esac
 
 DX=${DX:-$(command -v dx || true)}
@@ -38,7 +39,22 @@ tailwind_help=$("$TAILWIND" --help 2>&1 || true)
 [[ $tailwind_help == *v4.1.18* ]] || { echo "Tailwind 4.1.18 is required" >&2; exit 1; }
 
 css_tmp=$(mktemp)
-trap 'rm -f "$css_tmp"' EXIT
+staging=
+dx_pid=
+cleanup() {
+    local status=$?
+    trap - EXIT
+    if [[ -n $dx_pid ]]; then
+        kill -TERM "$dx_pid" 2>/dev/null || true
+        wait "$dx_pid" 2>/dev/null || true
+    fi
+    [[ -z $staging ]] || rm -rf -- "$staging"
+    rm -f "$css_tmp"
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 "$TAILWIND" -i src/webui/input.css -o "$css_tmp" --minify >&2
 
 if [[ $MODE == css ]]; then
@@ -46,6 +62,11 @@ if [[ $MODE == css ]]; then
     exit 0
 fi
 
+if [[ $(sha256sum <"$css_tmp") != "$(sha256sum <"$CSS")" ]]; then
+    echo "$CSS is stale; refresh it with: bash scripts/build-webui.sh css > $CSS" >&2
+    exit 1
+fi
+[[ $MODE != check ]] || exit 0
 [[ -x $DX ]] || { echo "Dioxus CLI not found: set DX (version 0.7.10 is required)" >&2; exit 1; }
 [[ $OUT == /* && $OUT != / ]] || { echo "WEBUI_DIST must be an absolute directory, not /" >&2; exit 1; }
 PUBLIC=$(realpath -m -- "$TARGET_DIR/dx/codeyard/$MODE/web/public")
@@ -70,18 +91,19 @@ require_bundle() {
         exit 1
     }
 }
+# Acquire in path order, including when debug/release share a publication path.
+lock_fds=()
+while IFS= read -r directory; do
+    mkdir -p "$(dirname "$directory")"
+    exec {lock_fd}>"$directory.lock"
+    flock "$lock_fd"
+    lock_fds+=("$lock_fd")
+done < <(printf '%s\n' "$PUBLIC" "$OUT" | LC_ALL=C sort -u)
 require_bundle "$PUBLIC"
 require_bundle "$OUT"
 dx_version=$("$DX" --version)
 [[ $dx_version == *0.7.10* ]] || { echo "Dioxus CLI 0.7.10 is required, found: $dx_version" >&2; exit 1; }
 
-echo "== CSS"
-if [[ $(sha256sum <"$css_tmp") == "$(sha256sum <"$CSS")" ]]; then
-    echo "$CSS is up to date"
-else
-    echo "$CSS is stale; refresh it with: bash scripts/build-webui.sh css > $CSS" >&2
-    exit 1
-fi
 
 echo "== browser dependency graph"
 # The browser build must not pull in the server crates (database, git, SSH, S3).
@@ -89,33 +111,27 @@ cargo tree --locked -p codeyard --target wasm32-unknown-unknown --no-default-fea
     --features web --edges normal --prefix none --format '{p}' | python3 scripts/check-web-dependencies.py
 
 echo "== dx build ($MODE)"
-# dx keeps hashed files of earlier builds in its output; start from nothing.
-rm -rf "$PUBLIC"
-args=(build --platform web --package codeyard --bin codeyard --no-default-features --features web
+staging=$(mktemp -d "$(dirname "$PUBLIC")/.webui.XXXXXX")
+args=(build --out-dir "$staging/bundle" --platform web --package codeyard --bin codeyard --no-default-features --features web
     --cargo-args=--locked --force-sequential)
 if [[ $MODE == release ]]; then
     args+=(--release --debug-symbols false)
 fi
-if ! "$DX" "${args[@]}" || [[ ! -f $PUBLIC/index.html ]]; then
-    # Remove the partial output, so that a retry is not refused as unowned data.
-    rm -rf "$PUBLIC"
-    echo "dx did not produce $PUBLIC/index.html" >&2
-    exit 1
-fi
-touch "$PUBLIC/.codeyard-webui-bundle"
+"$DX" "${args[@]}" &
+dx_pid=$!
+wait "$dx_pid"
+dx_pid=
+[[ -f $staging/bundle/index.html ]] || { echo "dx did not produce index.html" >&2; exit 1; }
 
-echo "== publish to $OUT"
-if [[ $OUT != "$PUBLIC" ]]; then
-    require_bundle "$OUT"
-    # Copy beside OUT and swap it in, so a failed copy leaves the previous bundle in place. The
-    # copies go into fresh directories, so no existing directory beside OUT is touched.
-    mkdir -p "$(dirname "$OUT")"
-    staging=$(mktemp -d "$OUT.staging.XXXXXX")
-    cp -R "$PUBLIC" "$staging/bundle"
-    if [[ -e $OUT ]]; then
-        mv "$OUT" "$staging/previous"
-    fi
-    mv "$staging/bundle" "$OUT"
-    rm -rf "$staging"
-fi
+# Retain immutable hashed assets: a serving process may still have cached the old loader.
+# Publish assets first and replace only the index atomically, never move into a directory.
+while IFS= read -r directory; do
+    require_bundle "$directory"
+    mkdir -p "$directory"
+    touch "$directory/.codeyard-webui-bundle"
+    cp -R "$staging/bundle/." "$directory/" --no-clobber
+    index=$(mktemp "$directory/.index.XXXXXX")
+    cp "$staging/bundle/index.html" "$index"
+    mv -T -- "$index" "$directory/index.html"
+done < <(printf '%s\n' "$PUBLIC" "$OUT" | LC_ALL=C sort -u)
 find "$OUT" -type f -printf '%10s  %P\n' | sort -k2

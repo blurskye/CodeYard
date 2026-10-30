@@ -103,9 +103,10 @@ pub fn highlight_lines(code: &str, language: &str) -> Vec<String> {
 fn highlight_each_line(code: &str, language: &str) -> Vec<String> {
     const MAX_BYTES: usize = 64 * 1024;
     const MAX_TOKENS: usize = 4096;
+    const MAX_LINE_BYTES: usize = 4096;
     const MAX_HTML_BYTES: usize = 256 * 1024;
     let plain = || LinesWithEndings::from(code).map(escape_code).collect();
-    if code.len() > MAX_BYTES {
+    if code.len() > MAX_BYTES || code.lines().any(|line| line.len() > MAX_LINE_BYTES) {
         return plain();
     }
     static SYNTAX: OnceLock<SyntaxSet> = OnceLock::new();

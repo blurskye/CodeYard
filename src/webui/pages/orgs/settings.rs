@@ -29,17 +29,6 @@ fn value(page: &Page, action: &str, key: &str, current: &str) -> String {
         current.into()
     }
 }
-fn checked(page: &Page, action: &str, key: &str, current: bool) -> bool {
-    if page
-        .draft
-        .get("action")
-        .is_some_and(|value| value == action)
-    {
-        page.draft.get(key).is_some_and(|value| value == "true")
-    } else {
-        current
-    }
-}
 fn contact(page: &Page, key: &str, label: &str, current: &str) -> Element {
     let id = format!("organization-setting-{key}");
     rsx! {label {r#for:id.clone(),"{label}"}
@@ -49,7 +38,7 @@ fn contact(page: &Page, key: &str, label: &str, current: &str) -> Element {
     }
 }
 fn checkbox(page: &Page, action: &str, key: &str, label: &str, current: bool) -> Element {
-    rsx! {label {class:"org-confirm",DraftCheckbox {name:key.to_owned(),submission_value:"true",initial_checked:checked(page,action,key,current)} span {"{label}"}}}
+    rsx! {label {class:"org-confirm",DraftCheckbox {name:key.to_owned(),submission_value:"true",initial_checked:fields::draft_checked(page,action,key,current)} span {"{label}"}}}
 }
 pub(super) fn panel(page: &Page) -> Element {
     if !page.is_owner {

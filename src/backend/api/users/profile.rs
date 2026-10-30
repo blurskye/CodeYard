@@ -187,7 +187,7 @@ pub(crate) async fn profile_response(
     let repositories_older = (!stars_tab
         && repositories_page.saturating_mul(30) < repository_count)
         .then(|| repository_href(repositories_page.saturating_add(1)));
-    let profile = match load_profile(&ctx.state.pool, &target).await {
+    let mut profile = match load_profile(&ctx.state.pool, &target).await {
         Ok(profile) => profile,
         Err(_) => {
             return ctx.error(
@@ -196,6 +196,7 @@ pub(crate) async fn profile_response(
             )
         }
     };
+    profile.repository_query = repository_query.to_owned();
     let title = format!("{}'s profile", target.username);
     ctx.page_model_status(
         status,

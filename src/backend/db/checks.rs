@@ -339,6 +339,8 @@ native_operation!(crate::backend::db::postgres::checks::annotations, crate::back
     fn annotations(pool: &DbPool, run: i64, offset: i64, limit: i64) -> Result<Vec<Json<Annotation>>>);
 native_operation!(crate::backend::db::postgres::checks::annotation_count, crate::backend::db::sqlite::checks::annotation_count,
     fn annotation_count(pool: &DbPool, run: i64) -> Result<i64>);
+native_operation!(crate::backend::db::postgres::checks::requested_action, crate::backend::db::sqlite::checks::requested_action,
+    fn requested_action(pool: &DbPool, credential: Credential<'_>, repo: i64, run: i64, identifier: &str) -> Result<Run>);
 native_operation!(crate::backend::db::postgres::checks::rerequest, crate::backend::db::sqlite::checks::rerequest,
     fn rerequest(pool: &DbPool, credential: Credential<'_>, repo: i64, suite: i64, run: Option<i64>) -> Result<()>);
 native_operation!(crate::backend::db::postgres::checks::preferences, crate::backend::db::sqlite::checks::preferences,

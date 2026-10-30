@@ -206,7 +206,7 @@ pub fn render(page: Page) -> Element {
                 if detail.versions.is_empty() { p { class: "p-4", "No versions published." } }
                 for version in &detail.versions {
                     article { class: "package-row p-4",
-                        div { h3 { class: "font-semibold", NavLink { href: version.href.clone(), "{version.name}" } }
+                        div { h3 { class: "font-semibold", if version.deleted { "{version.name}" } else { NavLink { href: version.href.clone(), "{version.name}" } } }
                             p { class: "text-sm text-muted", "{version.created}" }
                             for tag in &version.tags { span { class: "badge", "{tag}" } }
                             if version.deleted { span { class: "badge", "Deleted" } }

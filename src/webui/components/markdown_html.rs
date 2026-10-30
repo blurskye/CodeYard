@@ -141,8 +141,7 @@ fn open_tag(html: &str, start: usize) -> Option<(Piece<'_>, usize)> {
 }
 
 /// The attribute whose name starts at `from`: its lowercased name and raw value (empty when it
-/// has none), and where it ends. A quoted value may not contain `<`, which keeps every tag
-/// inside the text up to the next `<`.
+/// has none), and where it ends. Quoted values consume through their matching quote.
 fn attribute(html: &str, from: usize) -> Option<((String, &str), usize)> {
     let bytes = html.as_bytes();
     let name_end = from
@@ -162,7 +161,7 @@ fn attribute(html: &str, from: usize) -> Option<((String, &str), usize)> {
                 + 1
                 + bytes[value + 1..]
                     .iter()
-                    .position(|&b| b == quote || b == b'<')?;
+                    .position(|&b| b == quote)?;
             if bytes[close] != quote {
                 return None;
             }
@@ -360,7 +359,13 @@ fn attribute_value(
     raw: &str,
     ids: &mut HashSet<String>,
 ) -> Option<String> {
-    let (text, unknown) = decode_references(raw);
+    let (mut text, unknown) = decode_references(raw);
+    if matches!(name, "href" | "src") {
+        text = text.trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}')).to_owned();
+    }
+    if matches!(name, "dir" | "align") {
+        text.make_ascii_lowercase();
+    }
     match name {
         // A URL with a reference this renderer does not know is dropped, not guessed at.
         "href" => link_href(&text).filter(|_| !unknown),
@@ -375,8 +380,9 @@ fn attribute_value(
         "id" => take_id(&text, ids),
         "title" | "alt" => Some(text),
         "lang" => (!text.is_empty()
-            && text.len() <= 16
-            && text.bytes().all(|b| b.is_ascii_alphabetic() || b == b'-'))
+            && text.len() <= 63
+            && text.split('-').enumerate().all(|(index, subtag)| !subtag.is_empty() && subtag.len() <= 8
+                && subtag.bytes().all(|b| if index == 0 { b.is_ascii_alphabetic() } else { b.is_ascii_alphanumeric() })))
         .then_some(text),
         "dir" => matches!(text.as_str(), "ltr" | "rtl" | "auto").then_some(text),
         "align" => {
@@ -388,6 +394,7 @@ fn attribute_value(
             values.contains(&text.as_str()).then_some(text)
         }
         "width" | "height" => length(&text).then_some(text),
+        "rowspan" if text == "0" => Some(text),
         "colspan" | "rowspan" => span(&text).then_some(text),
         "start" => ordinal(&text).then_some(text),
         // A boolean attribute: its presence is its value.
@@ -464,20 +471,23 @@ pub(super) fn srcset_candidates(mut text: &str) -> Option<Vec<(&str, &str)>> {
 fn descriptor(word: &str) -> bool {
     let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
     if let Some(width) = word.strip_suffix('w') {
-        return digits(width);
+        return digits(width) && width.parse::<u32>().is_ok_and(|n| n > 0);
     }
-    word.strip_suffix('x')
-        .is_some_and(|density| match density.split_once('.') {
-            Some((whole, fraction)) => digits(whole) && digits(fraction),
-            None => digits(density),
-        })
+    word.strip_suffix('x').is_some_and(|density| {
+        !density.starts_with(['-', '+'])
+            && density.bytes().all(|b| b.is_ascii_digit() || b".eE+-".contains(&b))
+            && density.parse::<f64>().is_ok_and(|value| value.is_finite() && value >= 0.0)
+    })
 }
 
 /// The `id` of an element: its slug under the `user-content-` prefix. An `id` that already has
 /// the prefix keeps one copy of it, so a link to `#user-content-top` still reaches it. An empty
 /// slug, or one an earlier element or heading already has, is dropped.
 fn take_id(text: &str, ids: &mut HashSet<String>) -> Option<String> {
-    let slug = fragment_slug(text.strip_prefix("user-content-").unwrap_or(text));
+    let slug = match text.strip_prefix("user-content-") {
+        Some(prefixed) => prefixed.to_owned(),
+        None => fragment_slug(text),
+    };
     if slug.is_empty() || !ids.insert(slug.clone()) {
         return None;
     }
@@ -505,10 +515,7 @@ fn ordinal(text: &str) -> bool {
 
 /// A media query of letters, digits and the marks queries use.
 fn media_query(lower: &str) -> bool {
-    (1..=80).contains(&lower.len())
-        && lower
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b" ():,.-".contains(&b))
+    (1..=1024).contains(&lower.len()) && !lower.chars().any(char::is_control)
 }
 
 /// An image type such as `image/webp`.
@@ -533,7 +540,7 @@ pub(super) fn decode_references(text: &str) -> (String, bool) {
         rest = &rest[at..];
         match reference(&rest[1..]) {
             Some((Some(character), used)) => {
-                out.push(character);
+                out.push_str(&character);
                 rest = &rest[1 + used..];
             }
             Some((None, used)) => {
@@ -554,7 +561,7 @@ pub(super) fn decode_references(text: &str) -> (String, bool) {
 /// The reference that starts `after`, which follows its `&`: the character it stands for
 /// (`None` when unknown) and its length, `;` included. `None` when no complete reference starts
 /// there.
-fn reference(after: &str) -> Option<(Option<char>, usize)> {
+fn reference(after: &str) -> Option<(Option<String>, usize)> {
     if let Some(number) = after.strip_prefix('#') {
         let (radix, digits) = match number.strip_prefix(['x', 'X']) {
             Some(hex) => (16, hex),
@@ -571,7 +578,7 @@ fn reference(after: &str) -> Option<(Option<char>, usize)> {
             .ok()
             .and_then(char::from_u32)
             .filter(|character| *character != '\0');
-        return Some((character, after.len() - digits.len() + len + 1));
+        return Some((character.map(|c| c.to_string()), after.len() - digits.len() + len + 1));
     }
     let len = after.bytes().take_while(u8::is_ascii_alphanumeric).count();
     if len == 0 || after.as_bytes().get(len) != Some(&b';') {
@@ -581,26 +588,16 @@ fn reference(after: &str) -> Option<(Option<char>, usize)> {
 }
 
 /// The character of each named reference this renderer decodes. Any other name is unknown.
-fn named(name: &str) -> Option<char> {
-    Some(match name {
-        "amp" => '&',
-        "lt" => '<',
-        "gt" => '>',
-        "quot" => '"',
-        "apos" => '\'',
-        "colon" => ':',
-        "Tab" => '\t',
-        "NewLine" => '\n',
-        "nbsp" => '\u{a0}',
-        "copy" => '\u{a9}',
-        "reg" => '\u{ae}',
-        "hellip" => '\u{2026}',
-        "mdash" => '\u{2014}',
-        "ndash" => '\u{2013}',
-        "middot" => '\u{b7}',
-        "trade" => '\u{2122}',
-        _ => return None,
-    })
+fn named(name: &str) -> Option<String> {
+    // The CommonMark parser owns the complete HTML5 entity table, including names
+    // expanding to two code points. Parse only this bounded, delimiter-free reference.
+    if name.len() > 31 { return None; }
+    let source = format!("&{name};");
+    let decoded = pulldown_cmark::Parser::new(&source).filter_map(|event| match event {
+        pulldown_cmark::Event::Text(text) => Some(text.into_string()),
+        _ => None,
+    }).collect::<String>();
+    (decoded != source).then_some(decoded)
 }
 
 #[cfg(test)]
@@ -646,10 +643,9 @@ mod tests {
             all("<foo x=\"&amp;\"> <b"),
             vec![Piece::Literal("<foo x=\"&amp;\"> "), Piece::Literal("<b"),]
         );
-        // A quoted value may not hold `<`, so this is not one tag.
         assert_eq!(
             all("<a title=\"x<y\">"),
-            vec![Piece::Literal("<a title=\"x"), Piece::Literal("<y\">")]
+            vec![Piece::Open { name: "a", attrs: vec![("title".to_owned(), "x<y")], raw: "<a title=\"x<y\">" }]
         );
         assert_eq!(
             all("<img src=x/onerror=alert(1)>"),

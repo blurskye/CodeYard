@@ -277,12 +277,15 @@ async fn list_filters(
     milestones: Vec<db::models::Milestone>,
     selected_labels: Vec<String>,
 ) -> ResultPage<view::ListFilters> {
-    let labels = db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .into_iter()
-        .map(label)
-        .collect();
+    let mut labels: Vec<_> = db::labels::list_repo_labels_page(&ctx.state.pool, repo.record.id, "", "name", 100, 0)
+        .await.map_err(|_| unavailable(ctx))?.into_iter().map(label).collect();
+    for name in &selected_labels {
+        if !labels.iter().any(|label| label.name.eq_ignore_ascii_case(name)) {
+            if let Some(found) = db::labels::get_repo_label_by_name(&ctx.state.pool, repo.record.id, name).await.map_err(|_| unavailable(ctx))? {
+                labels.push(label(found));
+            }
+        }
+    }
     Ok(view::ListFilters {
         labels,
         selected_labels,
@@ -787,6 +790,7 @@ fn form_fields(form: &[FormElement], answers: &[Vec<String>]) -> Vec<view::FormF
                     .iter()
                     .map(|option| option.label.clone())
                     .collect(),
+                required_options: element.options.iter().filter(|option| option.required).map(|option| option.label.clone()).collect(),
                 multiple: element.multiple,
                 required: element.required || element.options.iter().any(|option| option.required),
                 values,
@@ -885,6 +889,7 @@ pub(crate) async fn native_new_page(
                     repository: repo.view,
                     templates,
                     blank_allowed: found.blank_allowed,
+                    draft,
                 }),
             ));
         }
@@ -993,7 +998,7 @@ pub(crate) async fn native_create(
         }) {
             if !template.form.is_empty() {
                 let answers: Vec<Vec<String>> = (0..template.form.len())
-                    .map(|index| repeated(&pairs, &format!("form_{index}")))
+                    .map(|index| repeated(&pairs, &format!("form_{index}")).into_iter().map(|value| value.replace("\r\n", "\n")).collect())
                     .collect();
                 missing_answer = first_missing_answer(&template.form, &answers).map(str::to_owned);
                 draft.body = compose_form_body(&template.form, &answers);

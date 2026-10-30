@@ -364,14 +364,16 @@ pub(in crate::webui::pages::repos) fn picker_heading(
 /// field that names the option. A chosen option is pressed and shows a check mark.
 pub(in crate::webui::pages::repos) fn picker_option(
     action: String,
-    csrf_token: &str,
+    (repo, item_id): (&Repository, Option<i64>),
     hidden: Option<(&str, String)>,
     pressed: bool,
     content: Element,
 ) -> Element {
     rsx! {
         form { method: "post", action, class: "collaboration-picker-form",
-            {csrf(csrf_token)}
+            {csrf(&repo.csrf)}
+            input { r#type: "hidden", name: "repository_id", value: "{repo.chrome.id}" }
+            if let Some(id) = item_id { input { r#type: "hidden", name: "item_id", value: "{id}" } }
             if let Some((name, value)) = hidden {
                 input { r#type: "hidden", name, value }
             }
@@ -441,9 +443,9 @@ fn assignees_panel(
     item: &Item,
     kind: Kind,
     assignable: &[String],
+    can_triage: bool,
 ) -> Element {
-    let menu = repo
-        .can_write
+    let menu = can_triage
         .then(|| assignee_options(repo, url, item, kind, assignable));
     rsx! {
         section { class: "collaboration-sidebar-section",
@@ -479,6 +481,8 @@ fn assignee_options(
             if self_assign {
                 form { method: "post", action: format!("{url}/assignees"), class: "collaboration-picker-form",
                     {csrf(&repo.csrf)}
+                    input { r#type: "hidden", name: "repository_id", value: "{repo.chrome.id}" }
+                    input { r#type: "hidden", name: "item_id", value: "{item.id}" }
                     input { r#type: "hidden", name: "username", value: viewer.to_owned() }
                     button { r#type: "submit", class: "collaboration-picker-self", "Assign yourself" }
                 }
@@ -489,7 +493,7 @@ fn assignee_options(
                     PickerRow { key: "{name}", text: name.clone(),
                         {picker_option(
                             format!("{url}/assignees/{}/remove", encode_component(name)),
-                            &repo.csrf,
+                            (repo, Some(item.id)),
                             None,
                             true,
                             rsx! { Avatar { name: name.clone(), size: 20 } "{name}" },
@@ -500,7 +504,7 @@ fn assignee_options(
                     PickerRow { key: "{name}", text: name.clone(),
                         {picker_option(
                             format!("{url}/assignees"),
-                            &repo.csrf,
+                            (repo, Some(item.id)),
                             Some(("username", name.clone())),
                             false,
                             rsx! { Avatar { name: name.clone(), size: 20 } "{name}" },
@@ -520,9 +524,9 @@ fn labels_panel(
     item: &Item,
     kind: Kind,
     available_labels: &[Label],
+    can_triage: bool,
 ) -> Element {
-    let menu = repo
-        .can_admin
+    let menu = can_triage
         .then(|| label_options(repo, url, item, kind, available_labels));
     rsx! {
         section { class: "collaboration-sidebar-section",
@@ -543,6 +547,11 @@ fn label_options(
 ) -> Element {
     rsx! {
         PickerPopover { title: format!("Apply labels to this {}", kind.singular()),
+            form { method: "get", action: url.to_owned(),
+                label { "Search the repository label catalogue" DraftInput { name: "label_search", initial_value: String::new() } }
+                button { r#type: "submit", "Search labels" }
+            }
+            p { class: "collaboration-muted", "Showing up to 100 matches and currently applied labels." }
             if available_labels.is_empty() { p { class: "collaboration-muted", "No labels yet." } }
             ul { class: "collaboration-picker-list",
                 for label in available_labels {
@@ -550,7 +559,7 @@ fn label_options(
                         if item.labels.iter().any(|applied| applied.id == label.id) {
                             {picker_option(
                                 format!("{url}/labels/{}/remove", label.id),
-                                &repo.csrf,
+                                (repo, Some(item.id)),
                                 None,
                                 true,
                                 label_option_text(label),
@@ -558,7 +567,7 @@ fn label_options(
                         } else {
                             {picker_option(
                                 format!("{url}/labels"),
-                                &repo.csrf,
+                                (repo, Some(item.id)),
                                 Some(("label", label.id.to_string())),
                                 false,
                                 label_option_text(label),
@@ -567,15 +576,15 @@ fn label_options(
                     }
                 }
             }
-            NavLink { class: "collaboration-manage-labels", href: format!("{}/labels", repo.url()), "Edit labels" }
+            if repo.can_admin { NavLink { class: "collaboration-manage-labels", href: format!("{}/labels", repo.url()), "Edit labels" } }
         }
     }
 }
 
 /// The milestone: its title, and for a writer a picker over the repository's milestones. "No
 /// milestone" clears it.
-fn milestone_panel(repo: &Repository, url: &str, item: &Item, milestones: &[Milestone]) -> Element {
-    let menu = (repo.can_write && !milestones.is_empty())
+fn milestone_panel(repo: &Repository, url: &str, item: &Item, milestones: &[Milestone], can_triage: bool) -> Element {
+    let menu = (can_triage && !milestones.is_empty())
         .then(|| milestone_options(repo, url, item, milestones));
     rsx! {
         section { class: "collaboration-sidebar-section",
@@ -601,7 +610,7 @@ fn milestone_options(
                 PickerRow { text: "No milestone".to_owned(),
                     {picker_option(
                         format!("{url}/milestone"),
-                        &repo.csrf,
+                        (repo, Some(item.id)),
                         Some(("milestone_number", String::new())),
                         current.is_none(),
                         rsx! { "No milestone" },
@@ -611,7 +620,7 @@ fn milestone_options(
                     PickerRow { key: "{milestone.number}", text: milestone.title.clone(),
                         {picker_option(
                             format!("{url}/milestone"),
-                            &repo.csrf,
+                            (repo, Some(item.id)),
                             Some(("milestone_number", milestone.number.to_string())),
                             current == Some(milestone.number),
                             rsx! { "{milestone.title}" },
@@ -700,12 +709,12 @@ fn event_row(event: &Event, kind: Kind) -> Element {
         "assigned" => (
             glyph(Glyph::Person),
             "Assigned",
-            rsx! { "assigned " NavLink { href: format!("/{}", encode_component(detail)), "{detail}" } },
+            rsx! { "assigned " NavLink { href: crate::webui::profile_path(detail), "{detail}" } },
         ),
         "unassigned" => (
             glyph(Glyph::Person),
             "Unassigned",
-            rsx! { "unassigned " NavLink { href: format!("/{}", encode_component(detail)), "{detail}" } },
+            rsx! { "unassigned " NavLink { href: crate::webui::profile_path(detail), "{detail}" } },
         ),
         "milestoned" => (
             glyph(Glyph::Milestone),
@@ -776,7 +785,7 @@ fn comment_controls(
     url: &str,
     comment: &Comment,
     references: &References,
-    page: usize,
+    (page, review_comments): (usize, usize),
 ) -> Element {
     let id = comment.id;
     let action = format!("{url}/comments/{id}");
@@ -791,7 +800,7 @@ fn comment_controls(
             if comment.can_edit {
                 details { class: "collaboration-comment-edit", open,
                     summary { class: "btn btn-secondary btn-sm", title: "Edit this comment", "Edit" }
-                    super::editor::CommentEditForm { key: "{action}", action: format!("{action}/edit?page={page}"), csrf_token: repo.csrf.clone(), id, body, original_body: comment.edit.as_ref().map_or_else(|| comment.body.clone(), |edit| edit.original_body.clone()), preview, references: references.clone() }
+                    super::editor::CommentEditForm { key: "{action}", action: format!("{action}/edit?page={page}&review_comments={review_comments}"), csrf_token: repo.csrf.clone(), id, body, original_body: comment.edit.as_ref().map_or_else(|| comment.body.clone(), |edit| edit.original_body.clone()), preview, references: references.clone() }
                 }
             }
             if comment.can_delete {
@@ -844,7 +853,7 @@ pub(in crate::webui::pages::repos) fn comment_entry(
                 }
             }
             {reaction_bar(repo, &react_action(url, page, review_comments), Some(("comment", comment.id)), &comment.reactions)}
-            if comment.can_edit || comment.can_delete { {comment_controls(repo, url, comment, references, page)} }
+            if comment.can_edit || comment.can_delete { {comment_controls(repo, url, comment, references, (page, review_comments))} }
             if repo.can_write && !repo.chrome.is_archived && comment.location.is_none() {
                 form { method: "post", action: format!("{url}/comments/{}/pin",comment.id), class: "collaboration-actions",
                     {csrf(&repo.csrf)}
@@ -882,11 +891,11 @@ fn merge_box(
             let destination = events
                 .iter()
                 .find(|event| event.kind == "merged")
-                .map_or(compare.base.as_str(), |event| event.detail.as_str());
+                .map(|event| format!(" into {}", event.detail)).unwrap_or_default();
             if let Some(sha) = compare.merged_commit.as_deref() {
                 let commit_url = format!("{}/commit/{}", repo.url(), encode_component(sha));
                 let short = short_sha(sha);
-                return rsx! { p { class: "collaboration-state-banner", "This pull request was merged into {destination} as " NavLink { class: "collaboration-merge-sha", href: commit_url, "{short}" } "." } };
+                return rsx! { p { class: "collaboration-state-banner", "This pull request was merged{destination} as " NavLink { class: "collaboration-merge-sha", href: commit_url, "{short}" } "." } };
             }
             return rsx! { p { class: "collaboration-state-banner", "This pull request was merged." } };
         }
@@ -1041,7 +1050,8 @@ pub fn detail(
     // The close or reopen form stays after the discussion. Its button sits in the composer footer
     // and submits that form through the form attribute, so the two forms never nest.
     let state_form = "item-state-form";
-    let state_change = repo.can_write
+    let may_edit = repo.signed_in && (repo.can_write || repo.viewer == item.author);
+    let state_change = may_edit
         && !repo.chrome.is_archived
         && (item.state == "open" || item.state == "closed");
     let state_label = if item.state == "open" {
@@ -1050,7 +1060,7 @@ pub fn detail(
         format!("Reopen {}", kind.singular())
     };
     // An open pull request keeps Close in its merge box, so the composer offers only Reopen there.
-    let composer_state = if kind == Kind::Pull && item.state == "open" && item.comparison.is_some()
+    let composer_state = if kind == Kind::Pull && repo.can_write && item.state == "open" && item.comparison.is_some()
     {
         None
     } else {
@@ -1096,7 +1106,7 @@ pub fn detail(
                     if kind == Kind::Issue && repo.signed_in && !repo.chrome.is_archived {
                         NavLink { class: "btn btn-primary collaboration-heading-action", href: format!("{}/new", repo.family_url(kind)), "New issue" }
                     }
-                    if repo.can_write {
+                    if may_edit && !repo.chrome.is_archived {
                         details { open: draft.title.is_some() || draft.body.is_some(), class: "collaboration-edit", title: "Edit title and description",
                             summary { class: "btn btn-secondary btn-sm", "Edit" }
                             // A keyed loop item, so the form starts over when the page moves to another item.
@@ -1261,9 +1271,9 @@ pub fn detail(
                     }
                     aside { class: "collaboration-sidebar", aria_label: if kind == Kind::Issue { "Issue details" } else { "Pull request details" },
                         {crate::webui::pages::projects::sidebar(repo, item, kind)}
-                        {assignees_panel(repo, &url, item, kind, assignable)}
-                        {labels_panel(repo, &url, item, kind, available_labels)}
-                        {milestone_panel(repo, &url, item, milestones)}
+                        {assignees_panel(repo, &url, item, kind, assignable, comments.can_triage || repo.can_write)}
+                        {labels_panel(repo, &url, item, kind, available_labels, comments.can_triage || repo.can_write)}
+                        {milestone_panel(repo, &url, item, milestones, comments.can_triage || repo.can_write)}
                         if let Some(controls) = &comments.issue_management { {super::management::panel(repo, &url, item, controls)} }
                         if let Some(compare) = &item.comparison {
                             section { class: "collaboration-sidebar-section",
@@ -1282,8 +1292,8 @@ pub fn detail(
                         }
                         {participants_panel(item, comments)}
                         if kind==Kind::Issue {{super::relationships::panel(repo,&url,comments)}}
-                        if let Some(attributes)=&comments.attributes {{super::attributes::panel(repo,&url,attributes)}}
-                        if comments.suggestions.is_some() || draft.suggestion.is_some() {{super::suggestions::panel(repo,&url,comments.suggestions.as_deref(),draft.suggestion.as_deref())}}
+                        if let Some(attributes)=&comments.attributes {{super::attributes::panel(repo,&url,attributes,item.id)}}
+                        if comments.suggestions.is_some() || draft.suggestion.is_some() {{super::suggestions::panel(repo,&url,item.id,comments.suggestions.as_deref(),draft.suggestion.as_deref())}}
                         if repo.can_write && !repo.chrome.is_archived {
                             section { class: "collaboration-sidebar-section",
                                 h3 { "Conversation" }

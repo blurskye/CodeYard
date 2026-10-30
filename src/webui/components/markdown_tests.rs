@@ -420,6 +420,7 @@ fn page_references() -> References {
         owner: "alice".into(),
         repo: "demo".into(),
         last_number: 5,
+        targets: None,
         users: vec!["bob".into()],
         autolinks: Default::default(),
         repositories: vec![references::Repository {
@@ -1211,6 +1212,19 @@ fn every_document_heading_with_an_id_has_one_empty_permalink_to_it() {
 }
 
 #[test]
+fn prefixed_raw_heading_ids_are_escaped_at_both_attribute_sinks() {
+    let source = "<h1 id=\"user-content-&quot;&gt;&lt;img src=https://attacker.test/pixel&gt;\">Title</h1>";
+    let id = "user-content-&quot;&gt;&lt;img src=https://attacker.test/pixel&gt;";
+    let html = parse_document(source);
+    assert!(html.contains(&format!("id=\"{id}\"")), "{html}");
+    assert!(html.contains(&format!("href=\"#{id}\"")), "{html}");
+    assert!(!html.contains("<img"), "{html}");
+    let comment = parse_markdown(source);
+    assert!(comment.contains(&format!("id=\"{id}\"")), "{comment}");
+    assert!(!comment.contains("<img"), "{comment}");
+}
+
+#[test]
 fn comments_get_no_permalinks_but_keep_their_ids() {
     // Comments and descriptions share a page, so their ids repeat; a permalink would
     // jump to the first one.
@@ -1791,7 +1805,7 @@ fn keyboard_subscript_and_entities_in_raw_html() {
     );
     assert_eq!(
         parse_markdown("<div>a &amp; &eacute; b</div>"),
-        "<div>a &amp; &amp;eacute; b</div>"
+        "<div>a &amp; é b</div>"
     );
 }
 

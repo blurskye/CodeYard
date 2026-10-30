@@ -5,6 +5,7 @@
 //! - [`workflow`]: workflow files, the order of their jobs, and turning a job into the runs
 //!   its matrix makes.
 //! - [`runner`]: running those jobs and their steps, on the host or in Podman containers.
+pub mod command_codec;
 pub mod expressions;
 pub mod progress;
 pub mod runner;

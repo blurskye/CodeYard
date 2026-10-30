@@ -36,7 +36,7 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                 for person in &page.outside_collaborators {
                     li { class: "org-row", key: "{person.user_id}",
                         div { class: "org-row-main",
-                            h3 { NavLink { class: "org-row-link", href: format!("/{}", crate::webui::encode_component(&person.username)), "{person.username}" } }
+                            h3 { NavLink { class: "org-row-link", href: crate::webui::profile_path(&person.username), "{person.username}" } }
                             p { "Outside collaborator" }
                         }
                         if page.selected.as_ref().is_some_and(|org| !org.suspended) {

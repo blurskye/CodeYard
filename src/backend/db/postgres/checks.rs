@@ -384,6 +384,16 @@ pub async fn annotation_count(pool: &PgPool, run: i64) -> Result<i64> {
             .await?,
     )
 }
+pub async fn requested_action(pool: &PgPool, credential: Credential<'_>, repo: i64, run: i64, identifier: &str) -> Result<Run> {
+    let mut tx = pool.begin().await?;
+    authority(&mut tx, credential, repo, false).await?;
+    let run: Run = sqlx::query_as("SELECT r.* FROM check_runs r JOIN check_suites s ON s.id=r.suite_id WHERE r.id=$1 AND r.repo_id=$2 AND s.ci_run_id IS NULL FOR UPDATE OF s,r")
+        .bind(run).bind(repo).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
+    ensure!(run.data.actions.iter().any(|action| action.identifier == identifier), Refusal::Invalid);
+    tx.commit().await?;
+    Ok(run)
+}
+
 pub async fn rerequest(
     pool: &PgPool,
     credential: Credential<'_>,

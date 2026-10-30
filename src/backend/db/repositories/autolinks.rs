@@ -44,7 +44,8 @@ impl NewAutolink {
                 "The key prefix must contain 1 to 20 non-whitespace characters",
             ));
         }
-        if url.len() > 4096 || !url.contains("<num>") || url.chars().any(char::is_control) {
+        if url.len() > 4096 || !url.contains("<num>") || url.chars().any(char::is_control)
+            || !crate::webui::components::references::valid_autolink_template(url) {
             return Err(Refusal::Invalid(
                 "The URL template must contain <num> and be at most 4096 bytes",
             ));

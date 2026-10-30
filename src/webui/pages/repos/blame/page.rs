@@ -110,7 +110,7 @@ pub fn blame(repo: &RepoChrome, page: &BlamePage) -> Element {
                                 if let Some(hunk) = row.hunk {
                                     td { class: "repo-blame-hunk", rowspan: "{hunk.line_count}",
                                         div { class: "repo-blame-commit",
-                                            Avatar { name: hunk.author.clone(), size: 20 }
+                                            Avatar { name: hunk.author.clone(), size: 20, account: false }
                                             div { class: "repo-blame-who",
                                                 span { class: "repo-blame-author", "{hunk.author}" }
                                                 span { class: "repo-blame-meta",

@@ -50,7 +50,7 @@ fn owner_view(owner: &Owner) -> view::Owner {
     let name = crate::webui::encode_component(&owner.name);
     view::Owner {
         name: owner.name.clone(),
-        profile: format!("/{name}"),
+        profile: crate::webui::profile_path(&owner.name),
         packages: format!(
             "/{}/{name}/packages",
             if owner.kind == "org" { "orgs" } else { "users" }

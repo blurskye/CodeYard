@@ -492,25 +492,20 @@ pub(super) async fn settings_model(
         }
     }
     if tab == "secrets" {
-        settings.environments =
-            db::environment_values::environments(&ctx.state.pool, viewer.id, loaded.repository.id)
-                .await
-                .map_err(|_| unavailable(ctx))?;
+        settings.environments_page = match ctx.query.get("environments_page") {
+            Some(value) => value.parse::<i64>().ok().filter(|value| (0..=100_000).contains(value)).ok_or_else(|| ctx.repo_error(&loaded.chrome, StatusCode::BAD_REQUEST, "Invalid environment page."))?,
+            None => 0,
+        };
+        settings.environments = db::environments::list(&ctx.state.pool, loaded.repository.id, settings.environments_page * 100, 100).await.map_err(|_| unavailable(ctx))?.into_iter().map(|environment| environment.name).collect();
         if let Some(name) = ctx.query.get("environment").filter(|name| !name.is_empty()) {
-            let key = db::environment_values::environment_key(name).map_err(|_| {
+            db::environment_values::environment_key(name).map_err(|_| {
                 ctx.repo_error(
                     &loaded.chrome,
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "Invalid environment name.",
                 )
             })?;
-            let name = settings
-                .environments
-                .iter()
-                .find(|name| {
-                    db::environment_values::environment_key(name).ok().as_ref() == Some(&key)
-                })
-                .cloned()
+            let name = db::environments::get(&ctx.state.pool, loaded.repository.id, name).await.map_err(|_| unavailable(ctx))?.map(|environment| environment.name)
                 .ok_or_else(|| {
                     ctx.repo_error(
                         &loaded.chrome,
@@ -656,15 +651,9 @@ pub(super) async fn settings_model(
         }
     }
     if tab == "releases" {
-        settings.immutable_releases = Some(
-            crate::backend::repositories::releases::immutable::enabled(
-                &ctx.state.pool,
-                ctx.user.as_ref(),
-                &loaded.repository,
-            )
-            .await
-            .map_err(|_| unavailable(ctx))?,
-        );
+        let (opted_in, enforced) = db::repositories::immutable_releases::policy(&ctx.state.pool, loaded.repository.id).await.map_err(|_| unavailable(ctx))?;
+        settings.immutable_releases = Some(opted_in);
+        settings.immutable_enforced = enforced;
     }
     if tab == "autolinks" {
         settings.autolinks = db::repositories::autolinks::list(
@@ -799,6 +788,7 @@ async fn branch_rules(
             restrict_pushes: rule.restrict_pushes,
             push_allowances: rule.push_allowances,
             push_team_allowances: rule.push_team_allowances,
+            push_app_allowances: rule.push_apps.into_iter().map(|id| format!("GitHub App #{id} (REST-managed)")).collect(),
             force_push_allowances: rule.force_push_allowances,
         });
     }
@@ -859,6 +849,7 @@ fn submitted_rule(
         push_team_allowances: names(&field(form, "push_team_allowances"), |c: char| {
             c == ',' || c.is_whitespace()
         }),
+        push_app_allowances: Vec::new(),
         force_push_allowances: force_push_names(form, pairs),
     }
 }
@@ -1187,12 +1178,12 @@ const fn form_action(name: &'static str, page: &'static str, flags: u8) -> FormA
 // `write-file` has no GIT flag: with storage down it still opens its editor.
 #[rustfmt::skip]
 const FORM_ACTIONS: &[FormAction] = &[
-    form_action("star", "", 0),
+    form_action("star", "", BOUND),
     form_action("unstar", "", BOUND),
-    form_action("watch", "", 0),
-    form_action("unwatch", "", 0),
-    form_action("watch-level", "", 0),
-    form_action("fork", "", GIT),
+    form_action("watch", "", BOUND),
+    form_action("unwatch", "", BOUND),
+    form_action("watch-level", "", BOUND),
+    form_action("fork", "", GIT | BOUND),
     form_action("create-branch", "/branches", GIT | BOUND | WRITE),
     form_action("delete-branch", "/branches", GIT | BOUND | WRITE | CONFIRM),
     form_action("create-tag", "/tags", GIT | BOUND | WRITE),
@@ -2081,16 +2072,11 @@ async fn mutate(
         "edit-label" => {
             let id = label_id(form)?;
             let (name, color, description) = label_fields(form)?;
-            db::labels::update_label(
-                pool,
-                actor.id,
-                repository.id,
-                id,
-                Some(&name),
-                Some(&color),
-                (serde_json::to_string(&description).unwrap_or_default()
-                    != field(form, "original_description"))
-                .then_some(description.as_str()),
+            db::labels::update_label_checked(
+                pool, actor.id, repository.id, id,
+                (Some(&name), Some(&color),
+                    (serde_json::to_string(&description).unwrap_or_default() != field(form, "original_description")).then_some(description.as_str())),
+                Some(&field(form, "original")),
             )
             .await
             .map_err(label_write_error)?;

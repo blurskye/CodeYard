@@ -11,6 +11,7 @@ pub struct Entry {
     pub bundle_href: String,
     pub predicate: String,
     pub subjects: Vec<String>,
+    pub omitted_subjects: usize,
     pub delete_action: Option<String>,
     pub inventory_base: Option<String>,
 }
@@ -55,10 +56,11 @@ pub fn render(page: Page) -> Element {
                             NavLink { href: format!("{base}/{digest}"), "View inventory" }
                         }
                     } } }
+                    if entry.omitted_subjects > 0 { p { "{entry.omitted_subjects} more subjects in the downloadable bundle." } }
                     a { href: entry.bundle_href.clone(), class: "btn", "Download Sigstore bundle" }
                     if let Some(action) = &entry.delete_action {
                         form { method: "post", action: action.clone(),
-                            input { r#type: "hidden", name: "csrf_token", value: page.csrf_token.clone() }
+                            {crate::webui::pages::fields::csrf(&page.csrf_token)}
                             input { r#type: "hidden", name: "attestation_id", value: "{entry.id}" }
                             button { r#type: "submit", class: "btn btn-destructive", "Delete attestation" }
                         }

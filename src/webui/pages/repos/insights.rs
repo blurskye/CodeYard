@@ -204,7 +204,7 @@ fn dependencies(
 ) -> Element {
     rsx! {
         {heading("Dependency graph", "Dependencies submitted for the default branch. This list is not a vulnerability scan.", None)}
-        p { a { href: format!("/api/v3/repos/{}/{}/dependency-graph/sbom", encode_component(&repo.owner), encode_component(&repo.name)), "Export SPDX SBOM" } }
+        p { a { href: format!("{}/dependency-graph/sbom", repo.base()), "Export SPDX SBOM" } }
         if rows.is_empty() {
             {empty("No dependencies have been submitted for this page.")}
         } else {

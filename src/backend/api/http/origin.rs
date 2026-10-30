@@ -51,19 +51,7 @@ fn same_origin_with_public_url(headers: &HeaderMap, public_url: Option<&str>) ->
 /// the query and fragment are data and pass through unchanged. The bound leaves room for a
 /// 200-character search, which percent-encoding can grow to 2,400 bytes, plus its cursor.
 pub fn safe_redirect_path(path: &str) -> bool {
-    if path.len() > 8192
-        || !path.starts_with('/')
-        || path.starts_with("//")
-        || path.chars().any(|c| c.is_control() || c == '\\')
-    {
-        return false;
-    }
-    let route = path.split(['?', '#']).next().unwrap_or_default();
-    let lower = route.to_ascii_lowercase();
-    !lower.starts_with("/%2f")
-        && !["%5c", "%0d", "%0a", "%00"]
-            .iter()
-            .any(|bad| lower.contains(bad))
+    crate::webui::navigation::safe_page_target(path)
 }
 
 #[cfg(test)]

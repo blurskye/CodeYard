@@ -169,15 +169,7 @@ pub enum RepositorySettingsRefusal {
 pub(crate) fn validate_repository_alias(name: &str) -> Result<()> {
     // Match the existing accepted byte bound, retaining Unicode alphanumerics.
     anyhow::ensure!(
-        !name.is_empty()
-            && name.len() <= 100
-            && name != "."
-            && name != ".."
-            // Git URLs strip one trailing `.git`, so such a name would resolve to another repository.
-            && !name.ends_with(".git")
-            && name
-                .chars()
-                .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.')),
+        crate::repository_names::valid(name),
         RepositorySettingsRefusal::InvalidName
     );
     Ok(())

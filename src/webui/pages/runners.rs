@@ -38,7 +38,7 @@ pub struct Runner {
     pub ephemeral: bool,
 }
 fn controls(page: &Page, action: &str) -> Element {
-    rsx! {input {r#type:"hidden",name:"csrf_token",value:page.csrf_token.clone()} input {r#type:"hidden",name:"action",value:action.to_owned()} }
+    rsx! {{crate::webui::pages::fields::csrf(&page.csrf_token)} input {r#type:"hidden",name:"action",value:action.to_owned()} }
 }
 fn submitted(page: &Page, action: &str, id: i64) -> bool {
     page.draft.get("action").is_some_and(|v| v == action)
@@ -161,7 +161,7 @@ pub fn render(page: Page) -> Element {
                 label {class:"repo-field",span {"Custom labels"} DraftInput {name:"labels",initial_value:value(&page,"jit",0,"labels","linux"),required:true}}
                 label {class:"repo-field",span {"Work folder"} DraftInput {name:"work_folder",initial_value:value(&page,"jit",0,"work_folder","_work"),required:true,maxlength:Some(255)}}
                 button {r#type:"submit",class:"btn btn-primary","Download JIT configuration"}
-                p {"Supply encoded_jit_config through CODEYARD_RUNNER_JIT_CONFIG, then run codeyard cluster join. The configuration selects the reserved runner name and work folder. A just-in-time runner is revoked after its first run."}
+                p {"Supply encoded_jit_config through CODEYARD_RUNNER_JIT_CONFIG, then run codeyard --state-dir /path/to/runner-state cluster join followed by codeyard --state-dir /path/to/runner-state serve --roles runner. Keep the same state directory for both commands. The configuration selects the reserved runner name and work folder. A just-in-time runner is revoked after its first run."}
             }
         }
     }}

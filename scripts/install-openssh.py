@@ -146,7 +146,7 @@ def accounts(o):
         raise Refusal("Git and service accounts need distinct non-root UIDs.")
     if any(admin.pw_uid in (service.pw_uid, git.pw_uid) for admin in admins):
         raise Refusal("Administrative accounts must not alias the Git/service UIDs.")
-    if Path(git.pw_shell).name in ("false", "nologin"):
+    if Path(git.pw_shell).name in ("false", "nologin", "git-shell", "rbash", "rksh", "rzsh", "rsh", "scponly", "rssh"):
         raise Refusal("Git account needs a working login shell for forced commands; change it explicitly.")
     tool_path(Path(git.pw_shell))
     return service, git
@@ -385,7 +385,7 @@ def active_service(o, h):
     active = []
     for unit in ("ssh.service", "sshd.service"):
         output = run([h.systemctl, "show", unit,
-                      "--property=LoadState,ActiveState,CanReload,ExecStart,Id,NeedDaemonReload,MainPID"], missing_unit=True)
+                      "--property=LoadState,ActiveState,CanReload,ExecStart,Id,NeedDaemonReload,MainPID,InvocationID,ExecMainStartTimestamp"], missing_unit=True)
         values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
         if values.get("ActiveState") != "active":
             continue
@@ -401,7 +401,17 @@ def active_service(o, h):
         pid = values.get("MainPID", "")
         if not re.fullmatch(r"[1-9][0-9]*", pid):
             raise Refusal("Active SSH service has no live MainPID.")
+        execution_pid = re.search(r" ; pid=([0-9]+) ;", command[0])
+        execution_start = re.search(r" ; start_time=([^;]+) ;", command[0])
+        if (not execution_pid or execution_pid[1] != pid or not execution_start
+                or execution_start[1].strip() != values.get("ExecMainStartTimestamp")):
+            raise Refusal("SSH unit arguments are not bound to its running MainPID; restart sshd explicitly or integrate manually.")
         process = h.proc / pid
+        invocation = [item.removeprefix(b"INVOCATION_ID=").decode("ascii")
+                      for item in (process / "environ").read_bytes().split(b"\0")
+                      if item.startswith(b"INVOCATION_ID=")]
+        if invocation != [values.get("InvocationID")] or not values.get("InvocationID"):
+            raise Refusal("Cannot verify the running SSH service invocation; manual integration required.")
         if os.readlink(process / "exe") != str(o.sshd):
             raise Refusal("Active SSH executable differs from the installed binary; reload manually first.")
         words = shlex.split(command[2].strip())
@@ -491,6 +501,14 @@ def directory_state(path):
             info.st_gid, info.st_dev, info.st_ino)
 
 
+def sync_directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def atomic_file(path, content, mode, expected, gid=None):
     if gid is None:
         gid = ROOT_GID
@@ -510,6 +528,7 @@ def atomic_file(path, content, mode, expected, gid=None):
             os.link(name, path)  # Atomic no-clobber creation, unlike replace().
         else:
             os.replace(name, path)
+        sync_directory(path.parent)
     finally:
         Path(name).unlink(missing_ok=True)
 
@@ -533,6 +552,8 @@ class Changes:
         self.dirs[-1] = (path, directory_state(path))
         os.chmod(path, mode)
         self.dirs[-1] = (path, directory_state(path))
+        sync_directory(path)
+        sync_directory(path.parent)
 
     def file(self, path, content, mode, gid=None, *, expected=UNSET):
         if gid is None:
@@ -555,6 +576,7 @@ class Changes:
                     raise Refusal(f"Concurrent change: leaving {path} untouched")
                 if before is None:
                     path.unlink()
+                    sync_directory(path.parent)
                 else:
                     atomic_file(path, before[0], before[1], after, before[3])
             except (OSError, Refusal) as error:
@@ -564,6 +586,7 @@ class Changes:
                 if directory_state(path) != expected:
                     raise Refusal(f"Concurrent directory change: leaving {path} untouched")
                 path.rmdir()  # Never remove contents, sockets or unrelated files.
+                sync_directory(path.parent)
             except OSError as error:
                 errors.append(f"Left directory {path}: {error}")
             except Refusal as error:

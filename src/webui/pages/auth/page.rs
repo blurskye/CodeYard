@@ -125,9 +125,7 @@ pub fn auth_page(
                     p { "This is a private node. An administrator must approve your signup request." }
                 }
             }
-            if let Some(message) = message {
-                p { role: "status", class: if is_error { "identity-auth-notice identity-auth-notice-error" } else { "identity-auth-notice" }, "{message}" }
-            }
+            {link_notice(message, is_error)}
             form { method: "post", action: action.to_owned(), class: "identity-auth-form",
                 {csrf(token)}
                 input { r#type: "hidden", name: "redirect", value: redirect.to_owned() }
@@ -379,9 +377,7 @@ pub fn two_factor_page(
                 h1 { id: "identity-auth-title", "Two-factor authentication" }
                 p { "Enter the six-digit code from your authenticator app, or one of your recovery codes." }
             }
-            if let Some(message) = message {
-                p { role: if is_error { "alert" } else { "status" }, class: if is_error { "identity-auth-notice identity-auth-notice-error" } else { "identity-auth-notice" }, "{message}" }
-            }
+            {link_notice(message, is_error)}
             form { method: "post", action: action.to_owned(), class: "identity-form",
                 {csrf(token)}
                 input { r#type: "hidden", name: "pending", value: pending.to_owned() }

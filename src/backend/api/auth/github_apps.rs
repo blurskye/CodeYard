@@ -34,6 +34,7 @@ pub fn router() -> Router<Arc<AppState>> {
             axum::routing::post(uninstall),
         )
         .route("/settings/apps/new", get(new).post(register))
+        .route("/settings/apps/:id/delete", axum::routing::post(delete_registration))
         .route("/apps/:slug", get(install_get))
         .route(
             "/apps/:slug/installations/new",
@@ -50,6 +51,7 @@ fn model(mode: &str) -> Model {
         permissions: String::new(),
         redirect: String::new(),
         applications: vec![],
+        registered: vec![],
         credentials: None,
     }
 }
@@ -81,11 +83,27 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
     }
     let mut model = model("list");
     match db::github_apps::apps(&ctx.state.pool, ctx.user.as_ref().unwrap().id).await {
-        Ok(apps) => model.applications = apps.into_iter().map(|app| (app.name, app.slug)).collect(),
+        Ok(apps) => model.registered = apps.into_iter().map(|app| (app.id, app.name, app.slug)).collect(),
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Apps unavailable"),
     }
     page(&ctx, model)
 }
+async fn delete_registration(
+    State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri,
+    Path(id): Path<i64>, Form(form): Form<Fields>,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await { Ok(ctx) => ctx, Err(response) => return response };
+    if let Some(response) = login(&ctx) { return response; }
+    if let Err(response) = ctx.check_csrf(&form) { return response; }
+    if field(&form, "confirm") != "yes" { return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Confirm app deletion."); }
+    let Some(session) = session::extract_session_id(&ctx.headers) else { return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again"); };
+    match db::github_apps::delete_registration(&ctx.state.pool, ctx.user.as_ref().unwrap().id, &session, id).await {
+        Ok(true) => Redirect::to("/settings/apps").into_response(),
+        Ok(false) => ctx.error(StatusCode::FORBIDDEN, "Only the app owner may delete this app"),
+        Err(_) => ctx.error(StatusCode::SERVICE_UNAVAILABLE, "App deletion unavailable"),
+    }
+}
+
 async fn managed_installations(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

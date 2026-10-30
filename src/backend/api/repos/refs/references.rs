@@ -31,10 +31,10 @@ pub(crate) async fn resolve_references(
 ) -> Result<References, Response> {
     let found = references::candidates(texts, document, (owner, name));
     let pool = &ctx.state.pool;
-    // The page's own counter is always read: a preview typed after the page loaded links `#N`
-    // from it, even when the text the page started with has no number.
+    // Retain counters for legacy model compatibility; native links use explicit resolutions.
     let mut counted = vec![repository.id];
     let mut others = Vec::new();
+    let mut readable = vec![(owner.to_owned(), name.to_owned(), repository.clone())];
     for (other_owner, other_name) in found.repositories {
         // A missing repository and one the viewer cannot read are treated alike: both are left
         // out, so their references render as plain text.
@@ -50,6 +50,7 @@ pub(crate) async fn resolve_references(
             .map_err(|_| unavailable(ctx))?
         {
             counted.push(record.id);
+            readable.push((other_owner.clone(), other_name.clone(), record.clone()));
             others.push((record.id, other_owner, other_name));
         }
     }
@@ -66,6 +67,7 @@ pub(crate) async fn resolve_references(
         owner: owner.to_owned(),
         repo: name.to_owned(),
         last_number: last_number(repository.id),
+        targets: Some(Vec::new()),
         users: Vec::new(),
         autolinks: db::repositories::autolinks::for_rendering(pool, repository.id)
             .await
@@ -93,6 +95,36 @@ pub(crate) async fn resolve_references(
         resolved.users = users.into_iter().map(|user| user.username).collect();
         resolved.users.sort();
     }
+    // Resolution is bounded by both candidate count and wall time. Unresolved prose stays intact.
+    resolved.targets = Some(tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let mut targets = Vec::new();
+        for (owner, name, token) in found.targets {
+            let Some((_, _, record)) = readable.iter().find(|(o, n, _)| o == &owner && n == &name) else { continue; };
+            let base = crate::webui::repository_path(&owner, &name);
+            let href = if let Some(number) = token.strip_prefix('#') {
+                let Ok(number) = number.parse::<i32>() else { continue; };
+                let issue = db::issues::get_issue(pool, record.id, number).await.ok().flatten().is_some();
+                let pull = if issue { false } else { db::pull_requests::records::get_pull_request(pool, record.id, number).await.ok().flatten().is_some() };
+                let moved = if issue || pull { false } else {
+                    match db::issues::management::redirect(pool, record.id, number).await.ok().flatten() {
+                        Some(issue) => match db::repositories::records::get_repository_by_id(pool, issue.repo_id).await.ok().flatten() {
+                            Some(repository) => can_read(pool, ctx.user.as_ref(), &repository).await.unwrap_or(false),
+                            None => false,
+                        },
+                        None => false,
+                    }
+                };
+                if !issue && !pull && !moved { continue; }
+                format!("{base}/issues/{number}")
+            } else {
+                let store = crate::backend::repositories::store::repo_store(record, ctx.state.cluster.as_ref());
+                let Ok(commit) = store.commit(&token).await else { continue; };
+                format!("{base}/commit/{}", commit.sha)
+            };
+            targets.push(references::Target { owner, repo: name, token, href });
+        }
+        targets
+    }).await.unwrap_or_default());
     Ok(resolved)
 }
 

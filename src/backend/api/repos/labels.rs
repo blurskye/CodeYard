@@ -58,6 +58,7 @@ pub(crate) fn label_write_error(error: anyhow::Error) -> (StatusCode, Json<ApiEr
             "invalid_labels",
             "Invalid label scope or batch",
         ),
+        Some(db::labels::LabelWriteRefusal::Conflict) => (StatusCode::CONFLICT, "label_changed", "The label changed. Your draft is preserved; reload before saving."),
         Some(db::labels::LabelWriteRefusal::DuplicateName) => (
             StatusCode::CONFLICT,
             "duplicate_label",

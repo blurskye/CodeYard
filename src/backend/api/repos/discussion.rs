@@ -937,6 +937,10 @@ pub(crate) async fn discussion(
         None
     };
     Ok(view::CommentPage {
+        can_triage: match &ctx.user {
+            Some(user) => crate::backend::repositories::access::can_triage(&ctx.state.pool, user, &repo.record).await.map_err(|_| unavailable(ctx))?,
+            None => false,
+        },
         issue_management,
         suggestions,
         attributes,
@@ -952,6 +956,14 @@ pub(crate) async fn discussion(
         events_next,
     })
 }
+pub(crate) fn require_item_binding(ctx: &PageContext, form: &HashMap<String, String>, repository_id: i64, item_id: i64) -> ResultPage<()> {
+    if form.get("repository_id").and_then(|id| id.parse().ok()) != Some(repository_id)
+        || form.get("item_id").and_then(|id| id.parse().ok()) != Some(item_id) {
+        return Err(ctx.error(StatusCode::CONFLICT, "The repository or entry changed. Reload before changing metadata."));
+    }
+    Ok(())
+}
+
 pub(crate) async fn render_detail(
     ctx: &PageContext,
     repo: &RepositoryData,
@@ -1054,8 +1066,8 @@ pub(crate) async fn render_detail(
     .await;
     // The label picker lists every label of the repository. A label the item has is removed by
     // clicking it, and any other label is added the same way.
-    let labels = if repo.view.can_admin {
-        db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
+    let mut labels: Vec<_> = if comments.can_triage {
+        db::labels::list_repo_labels_page(&ctx.state.pool, repo.record.id, ctx.query.get("label_search").map_or("", String::as_str), "name", 100, 0)
             .await
             .map_err(|_| unavailable(ctx))?
             .into_iter()
@@ -1064,8 +1076,11 @@ pub(crate) async fn render_detail(
     } else {
         Vec::new()
     };
-    // Choices are offered to a writer only. Each form checks the write right again when it is sent.
-    let (assignable, milestones): (Vec<String>, Vec<view::Milestone>) = if repo.view.can_write {
+    for applied in &value.labels {
+        if !labels.iter().any(|label| label.id == applied.id) { labels.push(applied.clone()); }
+    }
+    // Choices are offered only when the viewer may triage.
+    let (assignable, milestones): (Vec<String>, Vec<view::Milestone>) = if comments.can_triage {
         let assignable = if (value.assignees.len() as i64) < db::assignees::MAX_ASSIGNEES {
             db::assignees::list_assignable_usernames(&ctx.state.pool, repo.record.id)
                 .await

@@ -52,6 +52,7 @@ pub struct WebhookFields {
 
 #[derive(Debug, Clone, Default)]
 pub struct WebhookPatch {
+    pub expected_updated: Option<chrono::DateTime<chrono::Utc>>,
     pub username: Option<String>,
     pub password: Option<SealedSecret>,
     pub clear_password: bool,
@@ -68,6 +69,7 @@ pub struct WebhookPatch {
 impl From<&WebhookFields> for WebhookPatch {
     fn from(fields: &WebhookFields) -> Self {
         Self {
+            expected_updated: None,
             username: fields.username.clone(),
             password: fields.password.clone(),
             clear_password: false,

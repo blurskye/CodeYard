@@ -23,7 +23,7 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                 for user in &page.blocked_users {
                     li { class: "org-row", key: "{user.user_id}",
                         div { class: "org-row-main",
-                            h3 { NavLink { class: "org-row-link", href: format!("/{}",crate::webui::encode_component(&user.username)), "{user.username}" } }
+                            h3 { NavLink { class: "org-row-link", href: crate::webui::profile_path(&user.username), "{user.username}" } }
                             p { "Blocked from this organization" }
                         }
                         if !suspended {

@@ -28,6 +28,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/:owner/:repo/runs/:id", get(page))
         .route("/:owner/:repo/runs/:id/rerequest", post(rerequest))
+        .route("/:owner/:repo/runs/:id/action", post(rerequest))
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
 }
 
@@ -93,6 +94,8 @@ async fn page(
         summary: data.summary,
         text: data.text,
         details_url: data.details_url,
+        images: data.images.into_iter().map(|image| (image.alt, image.image_url, image.caption)).collect(),
+        actions: data.actions.into_iter().map(|action| (action.label, action.description, action.identifier)).collect(),
         total,
         page,
         has_more: annotations.len() > 30,
@@ -158,7 +161,10 @@ async fn rerequest(
         Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Check not found."),
         Err(_) => return chrome::unavailable(&ctx),
     };
-    match github::checks::request_again(
+    let result = if uri.path().ends_with("/action") {
+        github::checks::request_action(&ctx.state, &loaded.repository, &owner, actor, Credential::Session(&session), id, form.get("identifier").cloned().unwrap_or_default()).await
+    } else {
+        github::checks::request_again(
         &ctx.state,
         &loaded.repository,
         &owner,
@@ -166,9 +172,9 @@ async fn rerequest(
         Credential::Session(&session),
         run.suite_id,
         None,
-    )
-    .await
-    {
+    ).await
+    };
+    match result {
         Ok(()) => ctx.redirect(&format!("{}/runs/{id}", loaded.chrome.base())),
         Err(error) => chrome::api_failure(&ctx, error.into_response().status()),
     }

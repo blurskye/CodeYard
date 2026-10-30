@@ -53,6 +53,7 @@ fn draft(data: &Data) -> Draft {
         vector: data.cvss_vector_string.clone().unwrap_or_default(),
         cve: data.cve_id.clone().unwrap_or_default(),
         ecosystem: "npm".into(),
+        vulnerabilities_json: serde_json::to_string_pretty(&data.vulnerabilities).unwrap_or_else(|_| "[]".into()),
         ..Default::default()
     }
 }
@@ -252,12 +253,16 @@ async fn submit(
         package: forms::field(&form, "package"),
         ecosystem: forms::field(&form, "ecosystem"),
         range: forms::field(&form, "range"),
+        vulnerabilities_json: forms::field(&form, "vulnerabilities_json"),
     };
     let effect=async {
         let optional=|s:&String|if s.is_empty(){None}else{Some(s.clone())};
         let mut value=json!({"summary":draft.summary,"description":draft.description,"severity":optional(&draft.severity),"cvss_vector_string":optional(&draft.vector),"cve_id":optional(&draft.cve)});
         if op=="create"||(op=="save"&&form.contains_key("package")) {
             value["vulnerabilities"]=if draft.package.is_empty(){json!([])}else{json!([{"package":{"ecosystem":draft.ecosystem,"name":draft.package},"vulnerable_version_range":draft.range}])};
+        }
+        if op == "save" && form.contains_key("vulnerabilities_json") {
+            value["vulnerabilities"] = serde_json::from_str::<serde_json::Value>(&draft.vulnerabilities_json).map_err(|_| advisories::Refusal::Invalid)?;
         }
         match op.as_str() {
             "create"=>{

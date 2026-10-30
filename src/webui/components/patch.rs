@@ -13,14 +13,10 @@ pub(crate) struct PatchRow<'a> {
 }
 
 /// The lines git writes before a file's first hunk. Binary notices are not among them.
-const GIT_HEADER_PREFIXES: [&str; 13] = [
+const GIT_HEADER_PREFIXES: [&str; 9] = [
     "index ",
     "--- ",
     "+++ ",
-    "old mode ",
-    "new mode ",
-    "new file mode ",
-    "deleted file mode ",
     "similarity index ",
     "dissimilarity index ",
     "rename from ",
@@ -106,6 +102,32 @@ pub(crate) fn patch_gutter_digits(rows: &[PatchRow<'_>]) -> Option<String> {
     (digits > 4).then(|| digits.to_string())
 }
 
+fn git_path_label(raw: &str) -> String {
+    let Some(quoted) = raw.strip_prefix('"').and_then(|value| value.strip_suffix('"')) else { return raw.to_owned(); };
+    let mut bytes = quoted.bytes().peekable();
+    let mut decoded = Vec::with_capacity(quoted.len());
+    while let Some(byte) = bytes.next() {
+        if byte != b'\\' { decoded.push(byte); continue; }
+        let Some(escaped) = bytes.next() else { return raw.to_owned(); };
+        let byte = match escaped {
+            b'a' => 7, b'b' => 8, b't' => b'\t', b'n' => b'\n', b'v' => 11, b'f' => 12, b'r' => b'\r',
+            b'\\' | b'"' => escaped,
+            b'0'..=b'7' => {
+                let mut value = u16::from(escaped - b'0');
+                for _ in 0..2 {
+                    let Some(digit) = bytes.peek().copied().filter(|digit| matches!(*digit, b'0'..=b'7')) else { break; };
+                    bytes.next(); value = value * 8 + u16::from(digit - b'0');
+                }
+                let Ok(value) = u8::try_from(value) else { return raw.to_owned(); };
+                value
+            }
+            _ => return raw.to_owned(),
+        };
+        decoded.push(byte);
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
 /// The badges of a changed file's header: what its status and git header say beyond the line
 /// counts. A plain content change has none.
 pub fn patch_badges(status: &str, patch: &str) -> Vec<String> {
@@ -115,7 +137,7 @@ pub fn patch_badges(status: &str, patch: &str) -> Vec<String> {
         "added" => badges.push("New file".to_owned()),
         "removed" => badges.push("Deleted".to_owned()),
         "renamed" => badges.push(match header_value("rename from ") {
-            Some(from) => format!("Renamed from {from}"),
+            Some(from) => format!("Renamed from {}", git_path_label(from)),
             None => "Renamed".to_owned(),
         }),
         "type_changed" => badges.push("Type changed".to_owned()),

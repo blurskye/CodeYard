@@ -42,7 +42,7 @@ fn submitted(
         .ok()
         .filter(|count| (1..=200).contains(count))
         .ok_or(InvalidInput("Invalid file count. Reload the editor."))?;
-    let description = field(form, "description").to_owned();
+    let description = native_text(field(form, "description").to_owned(), "");
     anyhow::ensure!(
         description.chars().count() <= 65535,
         InvalidInput("Description must be at most 65,535 characters.")
@@ -74,6 +74,7 @@ fn submitted(
             || crate::git_ids::is_full_commit_id(expected),
         InvalidInput("Reload the gist before editing; its revision is missing.")
     );
+    let too_large = bytes > 2 * EDITOR_BYTES || files.iter().filter_map(|file| file.content.as_ref()).map(|content| content.replace("\r\n", "\n").len()).sum::<usize>() > EDITOR_BYTES;
     Ok(view::Editor {
         id,
         description,
@@ -82,7 +83,7 @@ fn submitted(
         files,
         csrf_token: ctx.csrf_token.clone(),
         // The draft goes back to the editor with this message.
-        message: (bytes > EDITOR_BYTES).then(|| {
+        message: too_large.then(|| {
             "This editor accepts at most 1 MiB of text. Use Git for larger files.".to_owned()
         }),
     })
@@ -175,6 +176,10 @@ pub(super) async fn create(
             return render_editor(&ctx, StatusCode::UNPROCESSABLE_ENTITY, editor);
         }
     }
+    if files.values().map(String::len).sum::<usize>() > EDITOR_BYTES {
+        editor.message = Some("This editor accepts at most 1 MiB of text. Use Git for larger files.".into());
+        return render_editor(&ctx, StatusCode::UNPROCESSABLE_ENTITY, editor);
+    }
     match domain::create(
         ctx.state.clone(),
         ctx.user.as_ref().expect("protected account").id,
@@ -258,6 +263,10 @@ pub(super) async fn edit(
             None => Vec::new(),
         };
         *content = native_text(std::mem::take(content), &String::from_utf8_lossy(&original));
+    }
+    if input.files.values().filter_map(|change| change.as_ref().and_then(|change| change.content.as_ref())).map(String::len).sum::<usize>() > EDITOR_BYTES {
+        editor.message = Some("This editor accepts at most 1 MiB of text. Use Git for larger files.".into());
+        return render_editor(&ctx, StatusCode::UNPROCESSABLE_ENTITY, editor);
     }
     match domain::update(
         ctx.state.clone(),

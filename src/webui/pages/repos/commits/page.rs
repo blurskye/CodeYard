@@ -41,13 +41,13 @@ pub(in crate::webui::pages::repos) fn latest_commit_bar(
         "{base}/commit/{}",
         crate::webui::encode_component(&commit.sha)
     );
-    let people = commit_people(commit);
+    let (people, omitted_people) = commit_people(commit);
     let body = commit_body(&commit.message);
     rsx! {
         div { class: "repo-latest-commit bg-muted/40 border-b border-border flex items-center justify-between gap-4 text-sm",
             div { class: "repo-commit-summary min-w-0",
                 span { class: "repo-avatar-stack",
-                    for name in people.iter() { Avatar { name: name.clone(), size: 20 } }
+                    for name in people.iter() { Avatar { name: name.clone(), size: 20, account: false } }
                 }
                 span { class: "repo-commit-author",
                     for (index, name) in people.iter().enumerate() {
@@ -55,6 +55,7 @@ pub(in crate::webui::pages::repos) fn latest_commit_bar(
                         strong { "{name}" }
                     }
                 }
+                if omitted_people > 0 { span { "+{omitted_people} co-authors" } }
                 NavLink { class: "repo-commit-message".to_owned(), href: url.clone(),
                     span { title: commit.message.clone(), "{commit.message.lines().next().unwrap_or(\"\")}" }
                 }
@@ -92,17 +93,20 @@ pub(in crate::webui::pages::repos) fn history_url(
 }
 
 /// The commit's author, then the people its `Co-authored-by:` trailers name, in message order.
-fn commit_people(commit: &Commit) -> Vec<String> {
+fn commit_people(commit: &Commit) -> (Vec<String>, usize) {
     let mut people = vec![commit.author.clone()];
-    people.extend(commit.message.lines().filter_map(|line| {
+    let mut omitted = 0;
+    for name in commit.message.lines().filter_map(|line| {
         let (key, value) = line.split_once(':')?;
         if !key.trim().eq_ignore_ascii_case("co-authored-by") {
             return None;
         }
         let name = value.split('<').next()?.trim();
-        (!name.is_empty()).then(|| name.to_owned())
-    }));
-    people
+        (!name.is_empty()).then_some(name)
+    }) {
+        if people.len() < 4 { people.push(name.to_owned()); } else { omitted += 1; }
+    }
+    (people, omitted)
 }
 
 /// The message below its subject line, without the blank lines around it.
@@ -130,7 +134,7 @@ pub(in crate::webui::pages::repos) fn commit_row(base: &str, commit: &Commit) ->
             div { class: "repo-commit-node", {icon("commits")} }
             div { class: "repo-commit-row-content",
                 NavLink { class: "repo-history-message".to_owned(), href: href.clone(), "{commit.message.lines().next().unwrap_or(\"\")}" }
-                p { class: "repo-history-author", Avatar { name: commit.author.clone(), size: 20 } strong { "{commit.author}" } " committed " {commit_date(&commit.committer_date)} }
+                p { class: "repo-history-author", Avatar { name: commit.author.clone(), size: 20, account: false } strong { "{commit.author}" } " committed " {commit_date(&commit.committer_date)} }
             }
             div { class: "repo-commit-row-actions",
                 NavLink { class: "repo-short-sha".to_owned(), href, "{short_sha(&commit.sha)}" }
@@ -319,7 +323,7 @@ fn history_filters(
                         NavLink { class: option_class(filter.author.is_empty()), aria_current: current(filter.author.is_empty()), href: link(HistoryFilter { author: String::new(), ..filter.clone() }), "All users" }
                         for name in people {
                             NavLink { class: option_class(filter.author == name), aria_current: current(filter.author == name), href: link(HistoryFilter { author: name.to_owned(), ..filter.clone() }),
-                                Avatar { name: name.to_owned(), size: 16 }
+                                Avatar { name: name.to_owned(), size: 16, account: false }
                                 span { "{name}" }
                             }
                         }
@@ -388,7 +392,7 @@ pub fn commit_detail(
                     }
                     if !branches.is_empty() || !tags.is_empty() {
                         div { class: "repo-commit-refs", "aria-label": "Branches and tags at this commit",
-                            for name in branches.iter() { NavLink { class: "repo-ref-pill".to_owned(), href: file_url(&base, "tree", name, ""), {icon("branches")} "{name}" } }
+                            for name in branches.iter() { NavLink { class: "repo-ref-pill".to_owned(), href: crate::webui::pages::repos::ref_path::branch_url(&base, "tree", name, ""), {icon("branches")} "{name}" } }
                             for name in tags.iter() { NavLink { class: "repo-ref-pill".to_owned(), href: file_url(&base, "tree", &format!("refs/tags/{name}"), ""), {icon("tags")} "{name}" } }
                         }
                     }

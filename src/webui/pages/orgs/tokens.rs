@@ -32,15 +32,7 @@ pub struct TokenGrant {
 }
 
 fn checkbox(page: &Page, key: &str, label: &str, current: bool) -> Element {
-    let checked = if page
-        .draft
-        .get("action")
-        .is_some_and(|value| value == "token-policy")
-    {
-        page.draft.get(key).is_some_and(|value| value == "true")
-    } else {
-        current
-    };
+    let checked = super::fields::draft_checked(page, "token-policy", key, current);
     rsx! { label { class: "org-confirm", DraftCheckbox { name: key.to_owned(), submission_value: "true", initial_checked: checked } span { "{label}" } } }
 }
 

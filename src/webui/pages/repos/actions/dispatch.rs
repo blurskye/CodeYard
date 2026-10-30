@@ -135,7 +135,7 @@ pub(super) fn input_field(
                 label { "{label_text}"
                     if show_required_label { small { " (required)" } }
                     if !description.is_empty() { small { " {description}" } }
-                    input { name: name.clone(), "value": current, maxlength: "2048", required: required }
+                    DraftTextarea { name: name.clone(), initial_value: current, maxlength: Some(2048), required: required, rows: 3 }
                 }
             }
         }
@@ -164,15 +164,26 @@ pub(super) fn dispatch_menu(menu: DispatchMenu<'_>) -> Element {
         .iter()
         .filter(|workflow| workflow.dispatchable)
         .collect();
-    // A form that lists one workflow marks its required inputs in HTML.
-    let html_required = dispatchable.len() == 1;
     rsx! {
         details { class: "native-menu actions-dispatch", open: menu.open,
             summary { class: "actions-button", "Run workflow" span { " ▾" } }
             if dispatchable.is_empty() {
-                div { class: "actions-dispatch-menu", p { class: "actions-dispatch-note", "No workflows can be run manually from this branch or tag." } }
+                div { class: "actions-dispatch-menu",
+                    p { class: "actions-dispatch-note", "No workflows can be run manually from this branch or tag. Choose another ref to reload workflow choices." }
+                    form { method: "get", action: menu.base_path,
+                        label { "Branch or tag" input { name: "ref", "value": menu.branch.to_owned(), required: true } }
+                        button { r#type: "submit", "Load workflows" }
+                    }
+                    for (name, value) in menu.inputs {
+                        label { "Retained input: {name}" DraftTextarea { name: "retained", initial_value: value.clone(), readonly: true } }
+                    }
+                }
             } else {
-                form { method: "post", action: format!("{}/dispatch", menu.base_path), class: "actions-dispatch-menu",
+                div { class: "actions-dispatch-menu",
+                for workflow in &dispatchable {
+                details { open: workflow.path == menu.workflow || dispatchable.len() == 1,
+                summary { "{workflow.name}" }
+                form { method: "post", action: format!("{}/dispatch", menu.base_path),
                     {csrf(menu.csrf_token)}
                     if let Some(id) = menu.repository_id {
                         input { r#type: "hidden", name: "repository_id", value: id.to_string() }
@@ -182,18 +193,20 @@ pub(super) fn dispatch_menu(menu: DispatchMenu<'_>) -> Element {
                     }
                     p { class: "actions-dispatch-note", "Choose a workflow and the branch or tag to run it from." }
                     label { "Branch or tag" input { class: "actions-branch-input", name: "branch", "value": menu.branch.to_owned(), required: true, maxlength: "255" } }
-                    label { "Workflow" DraftSelect { name: "workflow_path", required: true, initial_value: menu.workflow.to_owned(),
-                        options: dispatchable.iter().map(|workflow| SelectOption::new(workflow.path.clone(), workflow.name.to_string())).collect::<Vec<_>>() } }
+                    input { r#type: "hidden", name: "workflow_path", value: workflow.path.clone() }
                     label { "Environment (deployment workflows)" input { name: "environment", "value": menu.environment.to_owned(), maxlength: "100" } }
-                    for workflow in dispatchable.iter().filter(|workflow| !workflow.inputs.is_empty()) {
+                    if !workflow.inputs.is_empty() {
                         fieldset { class: "actions-dispatch-inputs",
                             legend { "{workflow.name} inputs" }
                             for input in &workflow.inputs {
-                                {input_field(&workflow.path, input, menu.inputs, html_required)}
+                                {input_field(&workflow.path, input, menu.inputs, true)}
                             }
                         }
                     }
                     button { class: "actions-button actions-dispatch-submit", r#type: "submit", {icon("play")} "Run workflow" }
+                }
+                }
+                }
                 }
             }
         }

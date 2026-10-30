@@ -148,6 +148,10 @@ pub(crate) async fn lock_metadata(tx: &mut Transaction<'_, Sqlite>) -> Result<()
     Ok(())
 }
 pub async fn configure(pool: &SqlitePool, repo: i64, actor: i64, d: &Definition) -> Result<i64> {
+    configure_checked(pool, repo, actor, d, (None, None)).await
+}
+
+pub async fn configure_checked(pool: &SqlitePool, repo: i64, actor: i64, d: &Definition, (expected, owner): (Option<&str>, Option<&str>)) -> Result<i64> {
     d.validate()?;
     let mut tx = begin_write(pool, repo, actor, None, true).await?;
     let (user, org): (Option<i64>, Option<i64>) =
@@ -155,6 +159,11 @@ pub async fn configure(pool: &SqlitePool, repo: i64, actor: i64, d: &Definition)
             .bind(repo)
             .fetch_one(&mut *tx)
             .await?;
+    if let Some(owner) = owner { anyhow::ensure!(owner == crate::backend::db::issue_attributes::owner_key(user, org), Refusal::Invalid); }
+    if let (Some(id), Some(expected)) = (d.id, expected) {
+        let old = catalog_owner(&mut tx, user, org, Some(actor), &d.kind).await?.into_iter().find(|a| a.id == id).ok_or(Refusal::Missing)?;
+        anyhow::ensure!(expected == crate::backend::db::issue_attributes::revision(&old)?, Refusal::Invalid);
+    }
     configure_owner(tx, actor, (user, org), d)
         .await
         .map(|attribute| attribute.id)

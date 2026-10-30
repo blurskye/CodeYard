@@ -19,6 +19,8 @@ pub enum MilestoneWriteRefusal {
     Denied,
     #[error("Milestone not found")]
     NotFound,
+    #[error("Milestone changed since the form was loaded")]
+    Conflict,
     #[error("A milestone with this title already exists")]
     DuplicateTitle,
 }
@@ -43,6 +45,10 @@ pub(crate) fn due_on(day: Option<&str>) -> Result<Option<chrono::DateTime<chrono
 native_operation!(crate::backend::db::postgres::milestones::save_milestone,
     crate::backend::db::sqlite::milestones::save_milestone,
     fn save_milestone(pool: &DbPool, actor_id: i64, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>) -> Result<Milestone>);
+
+native_operation!(crate::backend::db::postgres::milestones::save_milestone_checked,
+    crate::backend::db::sqlite::milestones::save_milestone_checked,
+    fn save_milestone_checked(pool: &DbPool, actor_id: i64, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>, expected: Option<&str>) -> Result<Milestone>);
 
 native_operation!(crate::backend::db::postgres::milestones::create_milestone,
     crate::backend::db::sqlite::milestones::create_milestone,

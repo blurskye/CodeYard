@@ -345,12 +345,6 @@ pub(crate) async fn native_edit(
     let draft = submitted_detail(&form, "edit");
     let title = field(&form, "title");
     let body = field(&form, "body");
-    if !repo.view.can_write {
-        return Err(ctx.error(
-            StatusCode::FORBIDDEN,
-            "Write access is required to edit this entry.",
-        ));
-    }
     if let Err(message) = expected(&form, &value) {
         return render_detail(
             &ctx,

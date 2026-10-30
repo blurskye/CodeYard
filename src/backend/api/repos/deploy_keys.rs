@@ -174,6 +174,8 @@ pub(super) async fn settings_section(
         &loaded.repository,
         place,
         ctx.query.get("notice").map(String::as_str),
+        ctx.query.get("keys_after").map(|value| value.parse::<i64>()).transpose()
+            .ok().flatten().filter(|value| *value >= 0).unwrap_or(0),
     )
     .await
     .map(Box::new)

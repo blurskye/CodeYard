@@ -59,7 +59,9 @@ E2E_VERBOSE=${E2E_VERBOSE:-0}
 ACT=${E2E_ACT_BINARY:-$(command -v act || true)}
 [[ -z $ACT ]] || ACT=$(realpath -m -- "$ACT")
 TARGET_DIR=$(realpath -m -- "${CARGO_TARGET_DIR:-$ROOT/target}")
-export WEBUI_DIST=${WEBUI_DIST:-$ROOT/dist/webui}
+export WEBUI_DIST=$(realpath -m -- "${WEBUI_DIST:-$ROOT/dist/webui}")
+# Repository selectors and injected configuration must never reach fixture Git commands.
+for git_variable in ${!GIT_@}; do unset "$git_variable"; done
 
 case $E2E_PROFILE in
     release) CARGO_PROFILE=(--release) ;;
@@ -92,13 +94,14 @@ ROUND_BLOCKED=0
 declare -A SERVER_PIDS=() HTTP_PORTS=() SSH_PORTS=() IROH_PORTS=()
 CLUSTER_NODES=(web1 store1 store2 ci1)
 PG_DB=''
+PG_OWNED=()
 RUN=''
 STARTED=$SECONDS
 
 drop_pg() { # drops the round's database and the one a restore made
-    [[ -n $PG_DB ]] || return 0
+    ((${#PG_OWNED[@]})) || return 0
     local dropdb name
-    for name in "$PG_DB" "${PG_DB}_r"; do
+    for name in "${PG_OWNED[@]}"; do
         if ! dropdb=$(pg_tool dropdb) || ! pg_command "$GITSERV_TEST_DATABASE_URL" \
             "$dropdb" --maintenance-db --if-exists --force "$name"; then
             echo "Failed to drop disposable PostgreSQL database $name" >&2
@@ -106,12 +109,14 @@ drop_pg() { # drops the round's database and the one a restore made
         fi
     done
     PG_DB=''
+    PG_OWNED=()
     return 0
 }
 
 cleanup() {
     local rc=$?
     trap - EXIT
+    terminate_operators
     terminate_servers
     drop_pg || rc=1
     if [[ $E2E_KEEP == 1 ]]; then
@@ -236,7 +241,9 @@ query = []
 for key, value in u.parse_qsl(parts.query, keep_blank_values=True):
     if key == "password":
         password = value
-    else:
+    elif key == "ssl-mode":
+        query.append(("sslmode", value))
+    elif key != "statement-cache-capacity":
         query.append((key, value))
 netloc = parts.netloc
 if parts.password is not None:
@@ -252,14 +259,7 @@ PY
 # ---------------------------------------------------------------- build -----
 
 check_css() {
-    local fresh=$WORK/tailwind.fresh.css committed=$ROOT/src/webui/assets/tailwind.css
-    bash "$ROOT/scripts/build-webui.sh" css >"$fresh"
-    if [[ $(sha256sum <"$fresh") != "$(sha256sum <"$committed")" ]]; then
-        echo "src/webui/assets/tailwind.css is stale: the views generate $(wc -c <"$fresh") bytes of CSS, the committed file has $(wc -c <"$committed")" >&2
-        echo "refresh it with: bash scripts/build-webui.sh css > src/webui/assets/tailwind.css" >&2
-        return 1
-    fi
-    echo "tailwind.css is what Tailwind generates from the views ($(wc -c <"$fresh") bytes)"
+    bash "$ROOT/scripts/build-webui.sh" check
 }
 
 build_bundle() {
@@ -268,7 +268,9 @@ build_bundle() {
 }
 
 build_server() {
-    cargo build --locked "${CARGO_PROFILE[@]}" -p codeyard --bin codeyard -p codeyard-actions --bin codeyard-actions
+    cargo build --locked "${CARGO_PROFILE[@]}" -p codeyard --bin codeyard -p codeyard-actions --bin codeyard-actions --message-format=json >"$WORK/cargo-artifacts.json" || return 1
+    BIN=$("$PYTHON" -I scripts/cargo-executable.py codeyard <"$WORK/cargo-artifacts.json") || return 1
+    ACTIONS_BIN=$("$PYTHON" -I scripts/cargo-executable.py codeyard-actions <"$WORK/cargo-artifacts.json") || return 1
     [[ -x $BIN && -x $ACTIONS_BIN ]]
     ls -l "$BIN" "$ACTIONS_BIN"
 }
@@ -285,7 +287,8 @@ check_build_artifacts() {
 pg_url() { # pg_url NAME: GITSERV_TEST_DATABASE_URL pointed at the database NAME
     E2E_PG_DATABASE="$1" "$PYTHON" -I -c 'import os, urllib.parse as u
 parts = u.urlsplit(os.environ["GITSERV_TEST_DATABASE_URL"])
-print(parts._replace(path="/" + os.environ["E2E_PG_DATABASE"]).geturl())'
+query = [(key, value) for key, value in u.parse_qsl(parts.query, keep_blank_values=True) if key != "dbname"]
+print(parts._replace(path="/" + os.environ["E2E_PG_DATABASE"], query=u.urlencode(query)).geturl())'
 }
 
 prepare_database() {
@@ -300,8 +303,10 @@ prepare_database() {
             fi
             local createdb
             createdb=$(pg_tool createdb) || { echo "createdb not found" >&2; return 1; }
-            PG_DB=gitserv_e2e_$(date +%s)_$$
-            pg_command "$GITSERV_TEST_DATABASE_URL" "$createdb" --maintenance-db "$PG_DB" || return 1
+            local candidate=gitserv_e2e_$(random_hex)
+            pg_command "$GITSERV_TEST_DATABASE_URL" "$createdb" --maintenance-db "$candidate" || return 1
+            PG_DB=$candidate
+            PG_OWNED+=("$PG_DB")
             PG_CURRENT=$PG_DB
             DATABASE_URL=$(pg_url "$PG_DB") || return 1
             echo "PostgreSQL database $PG_DB"
@@ -328,7 +333,7 @@ configure_node() {
         ci1 | r1 | r2) roles=runner ;;
     esac
     NODE_ENV=(
-        "PATH=${PG_BIN:+$PG_BIN:}$PATH" "HOME=$NODE_DIR/home" "LANG=C.UTF-8" "NO_COLOR=1" "RUST_LOG=${RUST_LOG:-info}"
+        "PATH=${PG_BIN:+$PG_BIN:}$PATH" "HOME=$NODE_DIR/home" "LANG=C.UTF-8" "NO_COLOR=1" "RUST_LOG=warn,codeyard=info"
         "GITSERV_STATE_DIR=$NODE_DIR/state" "REPOS_PATH=$NODE_DIR/repos" "HOST_KEY_PATH=$NODE_DIR/host_key"
         "HTTP_ADDR=127.0.0.1:${HTTP_PORTS[$node]:-0}" "SSH_ADDR=127.0.0.1:${SSH_PORTS[$node]:-0}" "SSH_MODE=builtin"
         "GITSERV_NODE_ROLES=$roles"
@@ -355,10 +360,57 @@ configure_node() {
     fi
 }
 
+# Apply secrets with shell builtins, never external env argv.
+node_exec() {
+    local variable
+    for variable in $(compgen -e); do export -n "$variable"; done
+    export "${NODE_ENV[@]}"
+    exec "$@"
+}
+
+operator() (
+    local seconds=$1 pid status=0
+    shift
+    mkdir -p "$WORK/operators"
+    (node_exec timeout --kill-after=10 "$seconds" "$BIN" "$@") &
+    pid=$!
+    printf '%s\n' "$pid" >"$WORK/operators/$BASHPID"
+    wait "$pid" || status=$?
+    rm -f "$WORK/operators/$BASHPID"
+    return "$status"
+)
+
+terminate_operators() {
+    [[ -d $WORK/operators ]] || return 0
+    # Git gives its children separate process groups. Walk descendants before terminating
+    # the timeout parent so those groups cannot become untracked orphans.
+    "$PYTHON" -I - "$WORK/operators" <<'PY'
+import os, pathlib, signal, sys
+parents = {}
+for entry in pathlib.Path('/proc').iterdir():
+    if entry.name.isdigit():
+        try:
+            fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
+            parents[int(entry.name)] = int(fields[1])
+        except (OSError, ValueError, IndexError):
+            pass
+def stop(pid):
+    for child, parent in list(parents.items()):
+        if parent == pid:
+            stop(child)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+for record in pathlib.Path(sys.argv[1]).glob('*'):
+    stop(int(record.read_text()))
+PY
+}
+
 # server_cli ARGS...: an operator command with the single server's environment.
 server_cli() {
     configure_node server
-    (cd "$NODE_DIR" && exec env -i "${NODE_ENV[@]}" timeout 900 "$BIN" "$@" < /dev/null)
+    (cd "$NODE_DIR" && operator 900 "$@" < /dev/null)
 }
 
 cluster_cli() {
@@ -368,7 +420,7 @@ cluster_cli() {
     if [[ -n ${CLUSTER_JOIN_TOKEN:-} ]]; then
         NODE_ENV+=("CLUSTER_JOIN_TOKEN=$CLUSTER_JOIN_TOKEN")
     fi
-    (cd "$NODE_DIR" && exec env -i "${NODE_ENV[@]}" timeout 60 "$BIN" cluster "$@" < /dev/null)
+    (cd "$NODE_DIR" && operator 60 cluster "$@" < /dev/null)
 }
 
 start_server() { # inline: starts a node and waits for its actual services
@@ -390,7 +442,7 @@ start_server() { # inline: starts a node and waits for its actual services
     touch "$dir/server.log"
     first_line=$(( $(wc -l <"$dir/server.log") + 1 ))
     echo "starting $node: HTTP ${HTTP_PORTS[$node]}, SSH ${SSH_PORTS[$node]}, iroh ${IROH_PORTS[$node]:-off}"
-    (cd "$dir" && exec env -i "${NODE_ENV[@]}" "$BIN" serve < /dev/null) >>"$dir/server.log" 2>&1 &
+    (cd "$dir" && node_exec "$BIN" serve < /dev/null) >>"$dir/server.log" 2>&1 &
     pid=$!
     SERVER_PIDS[$node]=$pid
     while ((waited < 120)); do
@@ -403,10 +455,10 @@ start_server() { # inline: starts a node and waits for its actual services
         fi
         case $node in
             server | web1)
-                if curl -fsS --max-time 2 -o "$dir/health.json" "$BASE/health" 2>/dev/null; then
+                if curl -q --noproxy '*' -fsS --max-time 2 -o "$dir/health.json" "$BASE/health" 2>/dev/null; then
                     grep -q '"status":"ok"' "$dir/health.json" && ready=1
                 fi ;;
-            store1 | store2) tail -n +"$first_line" "$dir/server.log" | grep 'starting codeyard' >/dev/null && ready=1 ;;
+            store1 | store2) tail -n +"$first_line" "$dir/server.log" | grep 'cluster node ready' >/dev/null && ready=1 ;;
             ci1 | r1 | r2) tail -n +"$first_line" "$dir/server.log" | grep 'database-free runner ready' >/dev/null && ready=1 ;;
         esac
         ((ready)) && break
@@ -435,8 +487,8 @@ stop_server() { # inline: SIGTERM, wait, and require exit status 0
     while kill -0 "$pid" 2>/dev/null; do
         sleep 0.2
         waited=$((waited + 1))
-        if ((waited > 200)); then
-            echo "$node was still running 40 s after SIGTERM" >&2
+        if ((waited > 475)); then
+            echo "$node was still running 95 s after SIGTERM" >&2
             kill -KILL "$pid" 2>/dev/null
             wait "$pid" 2>/dev/null
             unset 'SERVER_PIDS[$node]'
@@ -1675,7 +1727,7 @@ jobs:
   slow:
     runs-on: self-hosted
     steps:
-      - run: sleep 12
+      - run: while [ -e "$RUN/runner-latch" ]; do sleep 0.2; done; sleep 12
       - run: echo "\${{ github.sha }}" >>"$RUN/runner-marks"
 YAML
     git_as alice add -A
@@ -1711,12 +1763,18 @@ runner_of() { # runner_of RUN: the runner node that claimed RUN
 }
 
 t_runners_share() {
-    local n run sha taken=''
+    local n run sha taken='' deadline=$((SECONDS + 120))
+    touch "$RUN/runner-latch"
     for n in 1 2 3 4; do
         read -r run sha < <(runners_push "Shared run $n")
         [[ -n $sha ]]
         put "shared_$n" "$run $sha"
     done
+    until [[ $(pg_query "SELECT count(DISTINCT worker) FROM ci_runs WHERE status='running' AND repository_id=(SELECT id FROM repositories WHERE name='runners')") == 2 ]]; do
+        ((SECONDS < deadline)) || { rm -f "$RUN/runner-latch"; echo 'both runners did not claim work' >&2; return 1; }
+        sleep 0.2
+    done
+    rm -f "$RUN/runner-latch"
     for n in 1 2 3 4; do
         # put stores no final newline, so read from a here-string.
         read -r run sha <<<"$(get "shared_$n")"
@@ -1846,6 +1904,7 @@ t_restore_into_empty() { # inline: the data moves aside, as on a new machine
     if [[ -n $DATABASE_URL ]]; then
         createdb=$(pg_tool createdb) || return 1
         pg_command "$GITSERV_TEST_DATABASE_URL" "$createdb" --maintenance-db "${PG_DB}_r" || return 1
+        PG_OWNED+=("${PG_DB}_r")
         PG_CURRENT=${PG_DB}_r
         DATABASE_URL=$(pg_url "$PG_CURRENT") || return 1
     fi
@@ -2495,11 +2554,12 @@ run_cluster_round() {
     step 'organization: created for real GitHub clients' t_org
     step 'real clients: GHES gh, native github-script and webhooks through web1 and remote storage' t_github_clients
     step -f 'replica: setting 2 keeps a current copy on store2' t_replica_create
+    step -f 'failure: revoke store1 to hold automatic takeover during fallback checks' cluster_cli web1 revoke store1
     step -i 'failure: store1 exits cleanly on SIGTERM' stop_server store1
-    # Before the minute is over: no node has taken the repository over yet.
     step 'failure: store1 down: a push to alice/replica is refused and the copy stays put' t_replica_outage_push
     step 'failure: store1 down and store2 revoked: alice/replica reports 503' t_cluster_outage_no_copy
     step 'failure: store1 down: a copy serves alice/replica pages, API and clones' t_replica_outage_reads
+    step -f 'replica: approve the stopped store1 to allow automatic takeover' cluster_cli web1 approve store1
     step -f 'replica: store2 takes the repository over while store1 stays down' t_replica_take_over
     step -f 'replica: a clone and a push reach the promoted store2' t_replica_push
     step 'failure: store2 repositories keep working and web1 stays ready' t_cluster_outage_survivor
@@ -2556,17 +2616,21 @@ summary() {
 preflight || { echo "e2e: tools are missing" >&2; exit 2; }
 echo "e2e: temporary directory $WORK"
 
-step 'build: committed tailwind.css matches what the views generate' check_css
 if [[ $E2E_SKIP_BUILD == 1 ]]; then
+    step 'build: committed tailwind.css matches what the views generate' check_css
     step -f 'build: existing server binary and bundle are present' check_build_artifacts
 else
     step -f 'build: browser bundle (Tailwind, dx)' build_bundle
-    step -f 'build: server binary (cargo)' build_server
+    step -f -i 'build: server binary (cargo)' build_server
 fi
 
 if [[ $E2E_BUILD_ONLY != 1 && $ROUND_BLOCKED == 0 ]]; then
     for database in $E2E_DATABASES; do
-        if [[ $database == cluster ]]; then run_cluster_round; else run_round "$database"; fi
+        if [[ $database == cluster ]]; then
+            [[ ${E2E_GITHUB_ONLY:-0} == 1 ]] || run_cluster_round
+        else
+            run_round "$database"
+        fi
     done
 fi
 

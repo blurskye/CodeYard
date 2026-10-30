@@ -13,6 +13,10 @@ pub mod media;
 pub mod git_paths;
 pub mod git_limits;
 pub mod git_ids;
+// Only this dependency-free codec is shared with wasm, never the runner implementation.
+#[path = "../crates/codeyard-actions/src/command_codec.rs"]
+pub mod command_codec;
+pub mod repository_names;
 
 #[cfg(all(target_arch = "wasm32", not(feature = "web")))]
 compile_error!("Build the browser with --no-default-features --features web.");

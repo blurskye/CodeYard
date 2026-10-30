@@ -44,6 +44,13 @@ pub struct Reservation {
     pub tag_oid: String,
     pub release_id: Option<i64>,
 }
+pub async fn policy(pool: &DbPool, repo: i64) -> Result<(bool, bool)> {
+    match pool {
+        DbPool::Sqlite(p) => db::sqlite::repositories::immutable_releases::policy(p, repo).await,
+        DbPool::Postgres(p) => db::postgres::repositories::immutable_releases::policy(p, repo).await,
+    }
+}
+
 pub async fn enabled(pool: &DbPool, repo: i64) -> Result<bool> {
     match pool {
         DbPool::Sqlite(p) => db::sqlite::repositories::immutable_releases::enabled(p, repo).await,

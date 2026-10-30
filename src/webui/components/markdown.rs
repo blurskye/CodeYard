@@ -164,42 +164,41 @@ pub(super) fn link_href(url: &str) -> Option<String> {
 }
 
 pub(super) fn fragment_slug(text: &str) -> String {
-    text.chars()
-        .filter_map(|c| match c {
-            ' ' => Some("-".to_owned()),
-            c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c.to_lowercase().collect()),
-            _ => None,
-        })
-        .collect()
+    let mut slug = String::new();
+    for c in text.chars() {
+        if c == ' ' {
+            slug.push('-');
+        } else if c.is_alphanumeric() || matches!(c, '-' | '_') || unicode_normalization::char::is_combining_mark(c) {
+            slug.extend(c.to_lowercase());
+        }
+    }
+    slug
 }
 
-/// The next `http://` or `https://` URL in `text` at or after `from`, as a byte range. It
-/// starts a word, ends at whitespace or `<`, and gives back trailing punctuation and
-/// unmatched `)`. Each search resumes where the last one ended, so the scan is linear.
+/// One linear scan for web and email autolinks outside existing links and code.
 fn next_bare_url(text: &str, from: usize) -> Option<std::ops::Range<usize>> {
+    let local = |c: char| c.is_ascii_alphanumeric() || ".!#$%&'*+/=?^_`{|}~-".contains(c);
     let mut at = from;
-    while let Some(found) = text[at..].find("http") {
-        let start = at + found;
-        at = start + 4;
+    while at < text.len() {
+        let start = at;
         let rest = &text[start..];
-        let scheme = if rest.starts_with("https://") {
-            8
-        } else if rest.starts_with("http://") {
-            7
-        } else {
-            continue;
-        };
-        if text[..start]
-            .chars()
-            .next_back()
-            .is_some_and(char::is_alphanumeric)
-        {
+        let character = rest.chars().next()?;
+        if !local(character) { at += character.len_utf8(); continue; }
+        let scheme = if rest.starts_with("https://") { 8 } else if rest.starts_with("http://") { 7 }
+            else if rest.starts_with("www.") { 4 } else { 0 };
+        if scheme == 0 {
+            let local_end = rest.find(|c: char| !local(c)).unwrap_or(rest.len());
+            at = start + local_end;
+            if local_end == 0 || !text[at..].starts_with('@') { continue; }
+            let domain_start = at + 1;
+            at = domain_start + text[domain_start..].find(|c: char| !c.is_ascii_alphanumeric() && !matches!(c, '-' | '.')).unwrap_or(text.len() - domain_start);
+            let domain = text[domain_start..at].trim_end_matches('.');
+            if domain.contains('.') && domain.split('.').all(|label| !label.is_empty() && !label.starts_with('-') && !label.ends_with('-')) {
+                return Some(start..domain_start + domain.len());
+            }
             continue;
         }
-        let mut end = start
-            + rest
-                .find(|c: char| c.is_whitespace() || c == '<')
-                .unwrap_or(rest.len());
+        let mut end = start + rest.find(|c: char| c.is_whitespace() || c == '<').unwrap_or(rest.len());
         at = end;
         let url = &text[start..end];
         let open = url.matches('(').count();
@@ -212,11 +211,15 @@ fn next_bare_url(text: &str, from: usize) -> Option<std::ops::Range<usize>> {
             }
             end -= c.len_utf8();
         }
-        if end - start > scheme {
-            return Some(start..end);
-        }
+        if end - start > scheme { return Some(start..end); }
     }
     None
+}
+
+fn autolink_href(text: &str) -> String {
+    if text.starts_with("www.") { format!("https://{text}") }
+    else if text.starts_with("http://") || text.starts_with("https://") { text.to_owned() }
+    else { format!("mailto:{text}") }
 }
 
 /// GitHub's most used emoji shortcodes, sorted by name for binary search.
@@ -513,6 +516,7 @@ struct Emitter<'r> {
     document: bool,
     nesting: usize,
     heading: Option<Heading>,
+    heading_attributes: Option<Vec<(&'static str, String)>>,
     /// The visible text of the open heading, which its id is made from.
     heading_text: String,
     heading_ids: HashSet<String>,
@@ -547,6 +551,7 @@ impl<'r> Emitter<'r> {
             document,
             nesting: 0,
             heading: None,
+            heading_attributes: None,
             heading_text: String::new(),
             heading_ids: HashSet::new(),
             next_repeat: HashMap::new(),
@@ -570,6 +575,9 @@ impl<'r> Emitter<'r> {
         // budget must not end the walk early.
         if self.found.is_some() {
             return Some(());
+        }
+        if !self.document && html.len() > (128 * 1024_usize).saturating_sub(self.out.len()) {
+            return None;
         }
         append_html(&mut self.out, html)
     }
@@ -598,7 +606,11 @@ impl<'r> Emitter<'r> {
     fn html(&mut self, source: &str) -> Option<()> {
         for piece in pieces(source) {
             match piece {
-                Piece::Text(text) => self.write(&escape_html(&decode_references(text).0))?,
+                Piece::Text(text) => {
+                    let text = decode_references(text).0;
+                    self.visible(&text);
+                    self.write(&escape_html(&text))?;
+                },
                 Piece::Literal(text) => self.literal(text)?,
                 Piece::Comment => {}
                 Piece::Open { name, attrs, raw } => self.open_user(name, &attrs, raw)?,
@@ -631,6 +643,20 @@ impl<'r> Emitter<'r> {
     /// An allowed element opens, unless it is out of place, a link inside a link, or nested
     /// too deep. Otherwise its source is shown as text.
     fn open_user(&mut self, name: &'static str, attrs: &[(String, &str)], raw: &str) -> Option<()> {
+        let (siblings, containers): (&[&str], &[&str]) = match name {
+            "li" => (&["li"], &["ul", "ol"]),
+            "dt" | "dd" => (&["dt", "dd"], &["dl"]),
+            "td" | "th" => (&["td", "th"], &["tr"]),
+            "tr" => (&["tr"], &["table", "thead", "tbody", "tfoot"]),
+            "thead" | "tbody" | "tfoot" => (&["thead", "tbody", "tfoot"], &["table"]),
+            _ => (&[], &[]),
+        };
+        let implied = self.open.iter().rev()
+            .take_while(|open| matches!(open, Open::User(_)) && !containers.contains(&open.name()))
+            .find(|open| siblings.contains(&open.name())).map(Open::name);
+        if let Some(previous) = implied {
+            self.close_user(previous, "")?;
+        }
         let parent = self.open.last().map(Open::name);
         // The stack size is checked before the link scan, which walks the whole stack.
         if self.open.len() >= MAX_OPEN_ELEMENTS
@@ -647,13 +673,33 @@ impl<'r> Emitter<'r> {
             &mut self.heading_ids
         };
         let values = attributes(name, attrs, ids);
+        let level = match name {
+            "h1" => Some(HeadingLevel::H1), "h2" => Some(HeadingLevel::H2),
+            "h3" => Some(HeadingLevel::H3), "h4" => Some(HeadingLevel::H4),
+            "h5" => Some(HeadingLevel::H5), "h6" => Some(HeadingLevel::H6),
+            _ => None,
+        };
+        if let Some(level) = level {
+            if self.heading.is_some() { return self.literal(raw); }
+            self.heading_text.clear();
+            self.heading = Some(Heading { level, start: self.out.len() });
+            self.heading_attributes = Some(values);
+            self.open.push(Open::User(name));
+            return Some(());
+        }
         let html = match name {
             "a" => {
                 let title = value(&values, "title").unwrap_or("");
                 let id = value(&values, "id").unwrap_or("");
                 match value(&values, "href") {
-                    Some(href) => anchor(href, title, id),
-                    None => format!("<a{}{}>", title_attribute(title), id_attribute(id)),
+                    Some(href) => {
+                        let mut html = anchor(href, title, id);
+                        html.pop();
+                        html.push_str(&pairs(&values, &["href", "title", "id"]));
+                        html.push('>');
+                        html
+                    }
+                    None => format!("<a{}>", pairs(&values, &["href"])),
                 }
             }
             "img" => {
@@ -667,6 +713,10 @@ impl<'r> Emitter<'r> {
                 image_tag(src, alt, &pairs(&values, &["src", "alt"]))
             }
             "source" => {
+                if attrs.iter().any(|(name, _)| name == "media") && value(&values, "media").is_none() {
+                    release_id(&values, &mut self.heading_ids);
+                    return Some(());
+                }
                 let Some(srcset) = value(&values, "srcset") else {
                     // A source without a usable address is dropped, and the image shows.
                     release_id(&values, &mut self.heading_ids);
@@ -700,7 +750,7 @@ impl<'r> Emitter<'r> {
         };
         for _ in 0..=depth {
             if let Some(Open::User(closed)) = self.open.pop() {
-                self.write(&format!("</{closed}>"))?;
+                self.end_user_tag(closed)?;
             }
         }
         Some(())
@@ -732,9 +782,17 @@ impl<'r> Emitter<'r> {
     fn close_user_elements(&mut self) -> Option<()> {
         while let Some(Open::User(name)) = self.open.last().copied() {
             self.open.pop();
-            self.write(&format!("</{name}>"))?;
+            self.end_user_tag(name)?;
         }
         Some(())
+    }
+
+    fn end_user_tag(&mut self, name: &str) -> Option<()> {
+        if self.heading_attributes.is_some() && matches!(name, "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+            self.heading_end()
+        } else {
+            self.write(&format!("</{name}>"))
+        }
     }
 
     fn nest(&mut self) -> Option<()> {
@@ -996,9 +1054,10 @@ impl<'r> Emitter<'r> {
         loop {
             let colon = text[search..].find(':').map(|at| search + at);
             if let Some(range) = url.clone().filter(|r| colon.is_none_or(|c| r.start <= c)) {
-                if safe_url(&text[range.clone()], false) {
+                let href = autolink_href(&text[range.clone()]);
+                if safe_url(&href, false) {
                     self.plain(text, done..range.start, opaque)?;
-                    self.write(&anchor(&text[range.clone()], "", ""))?;
+                    self.write(&anchor(&href, "", ""))?;
                     self.write(&escape_html(&text[range.clone()]))?;
                     self.write("</a>")?;
                     done = range.end;
@@ -1169,24 +1228,26 @@ impl<'r> Emitter<'r> {
         if self.found.is_some() {
             return Some(());
         }
-        let id = heading_id(&text, &mut self.heading_ids, &mut self.next_repeat);
-        self.write_heading(heading.level, id.as_deref(), &inner)
+        let attributes = self.heading_attributes.take().unwrap_or_default();
+        let id = value(&attributes, "id").map(str::to_owned)
+            .or_else(|| heading_id(&text, &mut self.heading_ids, &mut self.next_repeat));
+        self.write_heading(heading.level, id.as_deref(), &inner, &pairs(&attributes, &["id"]))
     }
 
-    fn write_heading(&mut self, level: HeadingLevel, id: Option<&str>, inner: &str) -> Option<()> {
+    fn write_heading(&mut self, level: HeadingLevel, id: Option<&str>, inner: &str, attributes: &str) -> Option<()> {
         let (tag, class) = heading_tag(level);
         // A whole document's ids are unique on the page, so its headings get a permalink.
         // Comments share a page and repeat ids, so they get none. The link is empty: CSS draws
         // its glyph, so copied text is unchanged.
         let permalink = match id {
             Some(id) if self.document => format!(
-                "<a class=\"heading-permalink\" href=\"#{id}\" aria-label=\"Permalink to this section\"></a>"
+                "<a class=\"heading-permalink\" href=\"#{}\" aria-label=\"Permalink to this section\"></a>", escape_html(id)
             ),
             _ => String::new(),
         };
-        let id = id.map(|id| format!(" id=\"{id}\"")).unwrap_or_default();
+        let id = id.map(id_attribute).unwrap_or_default();
         self.write(&format!(
-            "<{tag}{id} class=\"{class}\">{permalink}{inner}</{tag}>"
+            "<{tag}{id}{attributes} class=\"{class}\">{permalink}{inner}</{tag}>"
         ))
     }
 }
@@ -1221,8 +1282,9 @@ fn heading_tag(level: HeadingLevel) -> (&'static str, &'static str) {
 /// The opening tag of a link that opens in a new tab; `LinkBase::rewrite` relies on `href`
 /// being first and `NEW_TAB` following it.
 fn anchor(href: &str, title: &str, id: &str) -> String {
+    let new_tab = if href.starts_with('#') { "" } else { NEW_TAB };
     format!(
-        "<a href=\"{}\"{NEW_TAB} class=\"text-primary hover:underline\"{}{}>",
+        "<a href=\"{}\"{new_tab} class=\"text-primary hover:underline\"{}{}>",
         escape_html(href),
         title_attribute(title),
         id_attribute(id)
@@ -1348,6 +1410,11 @@ fn render_markdown(
         return Some(String::new());
     }
     let mut emitter = Emitter::new(document, references, task_form);
+    if document && text.contains("[^") {
+        for event in Parser::new_ext(text, markdown_options(document)) {
+            if let Event::FootnoteReference(label) = event { emitter.footnote_number(&label); }
+        }
+    }
     let events = Parser::new_ext(text, markdown_options(document)).into_offset_iter();
     let mut events = TextRuns::new(text, events);
     while let Some(event) = events.next() {
@@ -1517,10 +1584,8 @@ impl LinkBase {
         if path.is_empty() {
             // Parsing keeps a discussion's `#comment-N` as the page anchor. A repository file
             // has no such anchor, so there the same link names the heading with that id.
-            return suffix
-                .strip_prefix('#')
-                .filter(|_| !image)
-                .map(|fragment| format!("#{}", heading_target(fragment)));
+            return suffix.split_once('#').filter(|_| !image)
+                .map(|(query, fragment)| format!("{query}#{}", heading_target(fragment)));
         }
         // Without a base a relative address has nothing to resolve against.
         if self.blob.is_empty() {
@@ -1555,16 +1620,15 @@ impl LinkBase {
         };
         let joined = parts.join("/");
         // Headings in a Markdown file carry the `user-content-` prefix, so its fragments do too.
-        let markdown_file = crate::webui::pages::repos::ref_path::is_markdown_path(path);
+        let markdown_file = crate::webui::pages::repos::ref_path::is_markdown_path(&crate::webui::decode_component(path))
+            || path.ends_with('/') || parts.is_empty();
         let suffix = match suffix.split_once('#') {
             // The code view keeps the file's line anchors as they are.
             Some((query, fragment))
                 if markdown_file
                     && !fragment.is_empty()
-                    && !query
-                        .trim_start_matches('?')
-                        .split('&')
-                        .any(|pair| pair == "view=code") =>
+                    && url::form_urlencoded::parse(query.trim_start_matches('?').as_bytes())
+                        .filter(|(key, _)| key == "view").last().is_none_or(|(_, value)| value != "code") =>
             {
                 format!("{query}#{}", heading_target(fragment))
             }
@@ -1708,7 +1772,8 @@ pub struct OutlineEntry {
 pub fn outline_of_html(html: &str) -> Vec<OutlineEntry> {
     let mut entries = Vec::new();
     let mut rest = html;
-    while let Some(start) = rest.find("<h") {
+    while entries.len() < 100 {
+        let Some(start) = rest.find("<h") else { break; };
         let after = &rest[start + 2..];
         let Some(level) = after
             .chars()
@@ -1746,22 +1811,18 @@ pub fn outline_of_html(html: &str) -> Vec<OutlineEntry> {
 /// The text of a heading's HTML: its tags removed and its escaped characters restored.
 fn heading_text(html: &str) -> String {
     let mut text = String::new();
-    let mut in_tag = false;
-    for character in html.chars() {
-        match character {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => text.push(character),
+    for piece in pieces(html) {
+        match piece {
+            Piece::Text(part) | Piece::Literal(part) => text.push_str(&decode_references(part).0),
+            Piece::Open { name: "img", attrs, .. } => {
+                if let Some((_, alt)) = attrs.iter().find(|(name, _)| name == "alt") {
+                    text.push_str(&decode_references(alt).0);
+                }
+            }
             _ => {}
         }
     }
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&amp;", "&")
-        .trim()
-        .to_owned()
+    text.trim().to_owned()
 }
 
 #[cfg(test)]

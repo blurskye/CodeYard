@@ -92,7 +92,7 @@ fn model(loaded: &Loaded, values: &HashMap<String, String>, submitted: bool) -> 
         .map(|(name, sha)| {
             SelectOption::new(
                 format!("{sha} {name}"),
-                format!("{name} ({})", sha.get(..7).unwrap_or(sha)),
+                format!("{name} ({})", crate::webui::components::short_sha(sha)),
             )
         })
         .collect();

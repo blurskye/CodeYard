@@ -558,18 +558,18 @@ pub(crate) async fn native_request_reviewer(
     let repo = repository(&ctx, &owner, &name).await?;
     let user = ctx.require_user()?.id;
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
+    require_reviewer_repository(&ctx, &form, repo.record.id)?;
     let username = field(&form, "username");
     let request = RequestReviewerRequest {
         username: username.clone(),
     };
-    match review_rules::request_reviewer(
+    match review_rules::request_reviewer_bound(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         user,
-        owner,
-        name,
-        number,
+        (owner, name, number),
         request,
+        Some(repo.record.id),
     )
     .await
     .map_err(operation_error)
@@ -609,13 +609,13 @@ pub(crate) async fn native_remove_requested_reviewer(
     let repo = repository(&ctx, &owner, &name).await?;
     let user = ctx.require_user()?.id;
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
-    match review_rules::remove_requested_reviewer(
+    require_reviewer_repository(&ctx, &form, repo.record.id)?;
+    match review_rules::remove_requested_reviewer_bound(
         &ctx.state.pool,
         user,
-        owner,
-        name,
-        number,
+        (owner, name, number),
         reviewer,
+        Some(repo.record.id),
     )
     .await
     .map_err(operation_error)
@@ -638,6 +638,19 @@ pub(crate) async fn native_remove_requested_reviewer(
     }
 }
 
+fn require_reviewer_repository(ctx: &PageContext, form: &HashMap<String, String>, id: i64) -> ResultPage<()> {
+    if field(form, "repository_id").parse::<i64>().ok() != Some(id) {
+        return Err(ctx.error(StatusCode::CONFLICT, "The repository changed. Reload before changing reviewers."));
+    }
+    Ok(())
+}
+
+fn submitted_path(ctx: &PageContext, form: &HashMap<String, String>) -> ResultPage<String> {
+    form.get("path_json").map(|value| serde_json::from_str::<String>(value)
+        .map_err(|_| ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid file path.")))
+        .unwrap_or_else(|| Ok(field(form, "path")))
+}
+
 /// A comment on the Conversation tab, or on a line or thread of the diff. The diff sends the
 /// head it showed as `commit_sha`, which must still be the pull request head.
 pub(crate) async fn native_pull_comment(
@@ -653,7 +666,7 @@ pub(crate) async fn native_pull_comment(
     let value = item(&ctx, &repo, Kind::Pull, number).await?;
     let line = LineComment {
         repository_id: field(&form, "repository_id").parse().ok(),
-        path: field(&form, "path"),
+        path: submitted_path(&ctx, &form)?,
         side: field(&form, "side"),
         line: field(&form, "line"),
         start_line: field(&form, "start_line"),
@@ -860,7 +873,7 @@ pub(crate) async fn native_set_viewed(
         ));
     }
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
-    let path = field(&form, "path");
+    let path = submitted_path(&ctx, &form)?;
     if path.len() > db::pull_requests::reviews::MAX_COMMENT_PATH_BYTES || path.contains('\0') {
         return Err(ctx.error(StatusCode::BAD_REQUEST, "Invalid diff path."));
     }

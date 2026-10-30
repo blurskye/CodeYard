@@ -542,13 +542,15 @@ pub async fn dismiss_pull_request_review(
 }
 
 pub async fn request_reviewer(
-    pool: &db::DbPool,
-    broadcaster: &NotificationBroadcaster,
-    actor_id: i64,
-    owner: String,
-    repo: String,
-    number: i32,
-    req: RequestReviewerRequest,
+    pool: &db::DbPool, broadcaster: &NotificationBroadcaster, actor_id: i64,
+    owner: String, repo: String, number: i32, req: RequestReviewerRequest,
+) -> Result<RequestReviewerResult, OperationError> {
+    request_reviewer_bound(pool, broadcaster, actor_id, (owner, repo, number), req, None).await
+}
+
+pub async fn request_reviewer_bound(
+    pool: &db::DbPool, broadcaster: &NotificationBroadcaster, actor_id: i64,
+    (owner, repo, number): (String, String, i32), req: RequestReviewerRequest, expected_repository: Option<i64>,
 ) -> Result<RequestReviewerResult, OperationError> {
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -558,6 +560,7 @@ pub async fn request_reviewer(
             message: "Repository not found".to_owned(),
         })?;
 
+    check_repository_binding(expected_repository, repository.id)?;
     let requester = super::actor(pool, actor_id).await?;
     super::require_write(pool, &requester, &repository).await?;
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -713,13 +716,22 @@ pub(super) async fn notify_review_request(
     }
 }
 
+fn check_repository_binding(expected: Option<i64>, actual: i64) -> Result<(), OperationError> {
+    if expected.is_some_and(|id| id != actual) {
+        return Err(OperationError::Conflict { code: "repository_changed", message: "The repository changed. Reload before changing reviewers.".to_owned() });
+    }
+    Ok(())
+}
+
 pub async fn remove_requested_reviewer(
-    pool: &db::DbPool,
-    actor_id: i64,
-    owner: String,
-    repo: String,
-    number: i32,
-    username: String,
+    pool: &db::DbPool, actor_id: i64, owner: String, repo: String, number: i32, username: String,
+) -> Result<(), OperationError> {
+    remove_requested_reviewer_bound(pool, actor_id, (owner, repo, number), username, None).await
+}
+
+pub async fn remove_requested_reviewer_bound(
+    pool: &db::DbPool, actor_id: i64, (owner, repo, number): (String, String, i32),
+    username: String, expected_repository: Option<i64>,
 ) -> Result<(), OperationError> {
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -729,6 +741,7 @@ pub async fn remove_requested_reviewer(
             message: "Repository not found".to_owned(),
         })?;
 
+    check_repository_binding(expected_repository, repository.id)?;
     let actor = super::actor(pool, actor_id).await?;
     super::require_write(pool, &actor, &repository).await?;
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)

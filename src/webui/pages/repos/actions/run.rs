@@ -87,6 +87,8 @@ pub struct SelectedRun {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlannedJob {
+    #[serde(default)]
+    pub workflow: String,
     pub name: String,
     pub steps: Vec<String>,
 }
@@ -271,7 +273,10 @@ fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> El
                                 strong { "{issue.severity}" if !issue.title.is_empty() { ": {issue.title}" } }
                                 if !issue.file.is_empty() { p { "{issue.file}" if !issue.line.is_empty() { ":{issue.line}" } if !issue.column.is_empty() { ":{issue.column}" } } }
                                 p { "{issue.message}" }
-                                a { class: "actions-history-link", href: format!("#log-{id}"), "View log line" }
+                                NavLink { class: "actions-history-link", href: {
+                                    let job = jobs.iter().find(|job| job.steps.iter().any(|step| step.lines.iter().any(|line| line.id == *id))).map_or("", |job| job.key.as_str());
+                                    format!("{}#log-{id}", model.url(&[("view", "logs"), ("workflow_job", job), ("log_q", "")]))
+                                }, "View log line" }
                             }
                         }
                     }
