@@ -23,6 +23,7 @@ use std::{collections::HashMap, sync::Arc};
 fn view(a: Attribute, value: Option<Value>) -> IssueAttribute {
     IssueAttribute {
         id: a.id,
+        updated: a.updated_at.to_rfc3339(),
         kind: a.kind,
         name: a.name,
         description: a.description,
@@ -91,6 +92,7 @@ pub(crate) async fn load(
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Missing) => ctx.error(StatusCode::NOT_FOUND, "Issue attribute not found."),
+        Some(Refusal::Conflict) => ctx.error(StatusCode::CONFLICT, &error.to_string()),
         Some(Refusal::Denied) => {
             ctx.error(StatusCode::FORBIDDEN, "Issue attribute mutation denied.")
         }
@@ -108,6 +110,13 @@ fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
         None => unavailable(ctx),
     }
 }
+fn parse_number(text: &str) -> Option<Value> {
+    let text = text.trim();
+    if let Ok(value) = text.parse::<i64>() { return Some(value.into()); }
+    if let Ok(value) = text.parse::<u64>() { return Some(value.into()); }
+    serde_json::Number::from_f64(text.parse::<f64>().ok()?).map(Value::Number)
+}
+
 pub(crate) async fn native_change(
     State(state): State<Arc<AppState>>,
     Path((owner, name, number)): Path<(String, String, i32)>,
@@ -119,6 +128,10 @@ pub(crate) async fn native_change(
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
     let actor = ctx.require_user()?.id;
+    let authority = || db::users::accounts::AccountActor::Session {
+        user_id: actor,
+        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    };
     let issue = db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
         .await
         .map_err(|_| unavailable(&ctx))?
@@ -132,6 +145,10 @@ pub(crate) async fn native_change(
         "configure" => {
             let kind = field(&form, "kind");
             let attribute_id = form.get("attribute_id").map(|_| id()).transpose()?;
+            let expected_updated = if attribute_id.is_some() {
+                Some(field(&form, "expected_updated").parse::<chrono::DateTime<chrono::Utc>>()
+                    .map_err(|_| ctx.error(StatusCode::CONFLICT, "Reload this definition before saving it again."))?)
+            } else { None };
             let catalog =
                 db::issue_attributes::catalog(&ctx.state.pool, repo.record.id, Some(actor), &kind)
                     .await
@@ -187,6 +204,7 @@ pub(crate) async fn native_change(
             }
             let definition = Definition {
                 id: attribute_id,
+                expected_updated,
                 kind: kind.clone(),
                 name: field(&form, "name"),
                 description: Some(field(&form, "description")).filter(|s| !s.is_empty()),
@@ -204,7 +222,7 @@ pub(crate) async fn native_change(
                 color: Some(field(&form, "color")).filter(|s| !s.is_empty()),
                 options,
             };
-            db::issue_attributes::configure(&ctx.state.pool, repo.record.id, actor, &definition)
+            db::issue_attributes::configure(&ctx.state.pool, repo.record.id, authority(), &definition)
                 .await
                 .map_err(|e| failure(&ctx, e))?;
         }
@@ -215,7 +233,7 @@ pub(crate) async fn native_change(
                     "Confirm deletion of this attribute and its assignments.",
                 ));
             }
-            db::issue_attributes::delete_definition(&ctx.state.pool, repo.record.id, actor, id()?)
+            db::issue_attributes::delete_definition(&ctx.state.pool, repo.record.id, authority(), id()?)
                 .await
                 .map_err(|e| failure(&ctx, e))?;
         }
@@ -228,7 +246,7 @@ pub(crate) async fn native_change(
                     ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid issue type.")
                 })?)
             };
-            db::issue_attributes::set_type(&ctx.state.pool, repo.record.id, actor, issue.id, kind)
+            db::issue_attributes::set_type(&ctx.state.pool, repo.record.id, authority(), issue.id, kind)
                 .await
                 .map_err(|e| failure(&ctx, e))?;
         }
@@ -236,7 +254,7 @@ pub(crate) async fn native_change(
             db::issue_attributes::delete_value(
                 &ctx.state.pool,
                 repo.record.id,
-                actor,
+                authority(),
                 issue.id,
                 id()?,
             )
@@ -257,38 +275,29 @@ pub(crate) async fn native_change(
                 .iter()
                 .find(|a| a.id == id)
                 .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue field not found."))?;
+            let invalid_option = || ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid issue field option.");
             let value = if attribute.data_type.as_deref() == Some("multi_select") {
-                Value::Array(
-                    attribute
-                        .options
-                        .iter()
-                        .filter(|o| form.contains_key(&format!("option_{}", o.id)))
-                        .map(|o| Value::String(o.name.clone()))
-                        .collect(),
-                )
+                let mut ids = Vec::new();
+                for key in form.keys() {
+                    if let Some(selected) = key.strip_prefix("option_") {
+                        ids.push(selected.parse::<i64>().ok().filter(|id| *id > 0).ok_or_else(invalid_option)?);
+                    }
+                }
+                ids.sort_unstable();
+                Value::Array(ids.into_iter().map(Value::from).collect())
             } else if attribute.data_type.as_deref() == Some("single_select") {
-                let chosen = field(&form, "value").parse::<i64>().ok();
-                let option = attribute
-                    .options
-                    .iter()
-                    .find(|o| Some(o.id) == chosen)
-                    .ok_or_else(|| {
-                        ctx.error(
-                            StatusCode::UNPROCESSABLE_ENTITY,
-                            "Invalid issue field option.",
-                        )
-                    })?;
-                Value::String(option.name.clone())
+                field(&form, "value").parse::<i64>().ok().filter(|id| *id > 0)
+                    .map(Value::from).ok_or_else(invalid_option)?
             } else if attribute.data_type.as_deref() == Some("number") {
-                serde_json::from_str(&field(&form, "value"))
-                    .map_err(|_| ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid number."))?
+                parse_number(&field(&form, "value"))
+                    .ok_or_else(|| ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid number."))?
             } else {
                 Value::String(field(&form, "value"))
             };
             db::issue_attributes::set_values(
                 &ctx.state.pool,
                 repo.record.id,
-                actor,
+                authority(),
                 issue.id,
                 &[ValueInput {
                     field_id: id,

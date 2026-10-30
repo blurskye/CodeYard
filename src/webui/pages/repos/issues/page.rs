@@ -424,6 +424,8 @@ pub struct IssueSelectOption {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IssueAttribute {
     pub id: i64,
+    #[serde(default)]
+    pub updated: String,
     pub kind: String,
     pub name: String,
     pub description: Option<String>,

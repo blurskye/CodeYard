@@ -23,6 +23,7 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
     let opaque = "\n</textarea><script>alert(1)</script>";
     let kind = IssueAttribute {
         id: 1,
+        updated: String::new(),
         kind: "type".into(),
         name: "Bug".into(),
         description: Some(opaque.into()),
@@ -35,6 +36,7 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
     };
     let number = IssueAttribute {
         id: 2,
+        updated: String::new(),
         kind: "field".into(),
         name: "Estimate".into(),
         description: None,
