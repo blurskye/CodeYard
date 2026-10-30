@@ -104,11 +104,14 @@ async fn authors(
             .map(|contributor| contributor.email.to_ascii_lowercase())
             .collect();
         for author in &mut authors {
-            let email = author
-                .email
-                .clone()
-                .unwrap_or_else(|| format!("{}@users.noreply", author.username));
-            if author.association == "NONE" && emails.contains(&email.to_ascii_lowercase()) {
+            // Commits made for the account carry its no-reply address or its own email.
+            let noreply = format!("{}@users.noreply", author.username).to_ascii_lowercase();
+            let committed = emails.contains(&noreply)
+                || author
+                    .email
+                    .as_ref()
+                    .is_some_and(|email| emails.contains(&email.to_ascii_lowercase()));
+            if author.association == "NONE" && committed {
                 author.association = "CONTRIBUTOR".into();
             }
         }
@@ -285,20 +288,28 @@ async fn notify(
             Some(author.id)
         }
         .await;
+        let title = format!(
+            "{} commented on commit {}",
+            user.username,
+            &comment.sha[..7]
+        );
+        let notice = NotificationRequest {
+            user_id: user.id, actor_id: Some(user.id), repo_id: Some(repo.id), kind: "commit_comment", title: &title, body: Some(&comment.body), link: Some(&link),
+            metadata: json!({"repo_owner":owner,"repo_name":repo.name,"commit_sha":comment.sha,"commit_comment_id":comment.id,"subject":comment.sha}),
+        };
         if let Some(recipient) = recipient {
-            let title = format!(
-                "{} commented on commit {}",
-                user.username,
-                &comment.sha[..7]
-            );
             let sent = create_and_broadcast_notification(pool, broadcaster, NotificationRequest {
-                user_id: recipient, actor_id: Some(user.id), repo_id: Some(repo.id), kind: "commit_comment", title: &title, body: Some(&comment.body), link: Some(&link),
-                metadata: json!({"repo_owner":owner,"repo_name":repo.name,"commit_sha":comment.sha,"commit_comment_id":comment.id,"subject":comment.sha}),
+                user_id: recipient, ..notice.clone()
             }).await;
             if sent.is_ok() {
                 notified.push(recipient);
             }
         }
+        // Explicit thread subscribers hear about every new comment on the commit.
+        let subscribers = crate::backend::notifications::create::notify_subscribers(
+            pool, broadcaster, notice, &notified,
+        ).await;
+        notified.extend(subscribers);
     }
     notify_mentions(
         pool,
