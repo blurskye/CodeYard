@@ -3,7 +3,7 @@ use crate::backend::db::{
     organizations::{administers, OrganizationOutcome},
     runners::{
         normalize_labels, Candidate, Eligibility, Group, GroupInput, Labels, Refusal,
-        Registration, RegistrationBinding, Runner, RunnerFilter, Scope, Selection,
+        GroupQuery, Listing, Registration, RegistrationBinding, Runner, RunnerQuery, Scope, Selection,
     },
 };
 use anyhow::Result;
@@ -60,9 +60,15 @@ async fn stop_runners(
     let ids:Vec<i64>=sqlx::query_scalar("SELECT c.id FROM ci_runs c WHERE c.status='running' AND EXISTS(SELECT 1 FROM action_runners a JOIN nodes n ON n.id=a.node_id WHERE c.worker LIKE n.public_key || '/%' AND (a.id=?1 OR a.group_id=?2))").bind(runner).bind(group).fetch_all(&mut **tx).await?;
     super::ci::stop_ci_runs(tx, &ids).await
 }
-pub async fn list_groups(
-    pool: &Pool, actor: i64, org: i64, query: &crate::backend::db::runners::GroupQuery<'_>,
-) -> Result<(i64, Vec<Group>)> {
+pub async fn authorize_scope(pool: &Pool, actor: i64, scope: Scope) -> Result<()> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    authorize(&mut tx, actor, scope).await?;
+    tx.commit().await?;
+    Ok(())
+}
+const GROUP_FILTER: &str = "g.org_id=?1 AND (?2 IS NULL OR g.id=?2) AND (?3 IS NULL OR EXISTS(SELECT 1 FROM repositories r WHERE r.id=?3 AND r.owner_kind='org' AND r.owner_org_id=g.org_id AND r.owner_user_id IS NULL AND (r.is_private OR g.allows_public_repositories) AND (g.visibility='all' OR (g.visibility='private' AND r.is_private) OR (g.visibility='selected' AND EXISTS(SELECT 1 FROM action_runner_group_repositories s WHERE s.group_id=g.id AND s.repo_id=r.id)))))";
+pub async fn list_groups(pool: &Pool, actor: i64, org: i64, query: &GroupQuery) -> Result<Listing<Group>> {
+    query.page.validate()?;
     let initialized: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM action_runner_groups WHERE org_id=?1 AND is_default)")
         .bind(org).fetch_one(pool).await?;
     if !initialized {
@@ -74,16 +80,10 @@ pub async fn list_groups(
     let mut tx = pool.begin().await?;
     let role = super::organizations::authority::read_authority(&mut tx, actor, org).await?;
     anyhow::ensure!(matches!(role, OrganizationOutcome::Applied(role) if administers(role)), Refusal::Denied);
-    if let Some(name) = query.repository {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE owner_kind='org' AND owner_org_id=?1 AND owner_user_id IS NULL AND lower(name)=lower(?2))")
-            .bind(org).bind(name).fetch_one(&mut *tx).await?;
-        anyhow::ensure!(exists, Refusal::Missing);
-    }
-    let predicate = "g.org_id=?1 AND (?2 IS NULL OR g.id=?2) AND (?3 IS NULL OR EXISTS(SELECT 1 FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=g.org_id AND r.owner_user_id IS NULL AND lower(r.name)=lower(?3) AND (r.is_private OR g.allows_public_repositories) AND (g.visibility='all' OR (g.visibility='private' AND r.is_private) OR (g.visibility='selected' AND EXISTS(SELECT 1 FROM action_runner_group_repositories s WHERE s.group_id=g.id AND s.repo_id=r.id)))))";
-    let total = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM action_runner_groups g WHERE {predicate}"))
+    let total = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM action_runner_groups g WHERE {GROUP_FILTER}"))
         .bind(org).bind(query.id).bind(query.repository).fetch_one(&mut *tx).await?;
-    let mut rows: Vec<Group> = sqlx::query_as(&format!("SELECT g.* FROM action_runner_groups g WHERE {predicate} ORDER BY g.id LIMIT ?4 OFFSET ?5"))
-        .bind(org).bind(query.id).bind(query.repository).bind(query.limit.unwrap_or(i64::MAX)).bind(query.offset).fetch_all(&mut *tx).await?;
+    let mut rows: Vec<Group> = sqlx::query_as(&format!("SELECT g.* FROM action_runner_groups g WHERE {GROUP_FILTER} ORDER BY g.id LIMIT ?4 OFFSET ?5"))
+        .bind(org).bind(query.id).bind(query.repository).bind(query.page.limit).bind(query.page.offset).fetch_all(&mut *tx).await?;
     let ids: Vec<_> = rows.iter().map(|g| g.id).collect();
     let selections: Vec<(i64,i64)> = sqlx::query_as("SELECT s.group_id,s.repo_id FROM action_runner_group_repositories s JOIN repositories r ON r.id=s.repo_id JOIN action_runner_groups g ON g.id=s.group_id WHERE s.group_id IN (SELECT value FROM json_each(?1)) AND r.owner_kind='org' AND r.owner_org_id=g.org_id AND r.owner_user_id IS NULL ORDER BY s.group_id,s.repo_id")
         .bind(serde_json::to_string(&ids)?).fetch_all(&mut *tx).await?;
@@ -91,7 +91,7 @@ pub async fn list_groups(
     for (group, repo) in selections { grants.entry(group).or_default().push(repo); }
     for row in &mut rows { row.repositories = grants.remove(&row.id).unwrap_or_default(); }
     tx.commit().await?;
-    Ok((total, rows))
+    Ok(Listing { total, rows })
 }
 async fn repositories_in(
     c: &mut Connection,
@@ -242,7 +242,7 @@ pub async fn save_group(
             .execute(&mut *tx)
             .await?;
     }
-    if existing.is_some() && input.changes_access() {
+    if existing.as_ref().is_some_and(|existing| input.changes_access(existing)) {
         stop_runners(&mut tx, None, Some(id)).await?;
     }
     if let Some(ids) = &input.runners {
@@ -319,37 +319,28 @@ pub async fn group_runners(
     Ok(())
 }
 const RUNNERS:&str="SELECT a.*,false AS online,n.status AS node_status,n.last_seen AS node_last_seen,strftime('%Y-%m-%dT%H:%M:%f000Z','now') AS observed_at,EXISTS(SELECT 1 FROM ci_runs c WHERE c.status='running' AND c.worker LIKE n.public_key || '/%') AS busy,n.version FROM action_runners a LEFT JOIN nodes n ON n.id=a.node_id";
-const RUNNER_FILTER:&str="a.org_id IS NOT DISTINCT FROM ?1 AND a.repo_id IS NOT DISTINCT FROM ?2 AND (?3 IS NULL OR a.id=?3) AND (?4 IS NULL OR LOWER(a.name)=LOWER(?4)) AND (?5 IS NULL OR a.group_id=?5)";
-async fn runner_rows(c: &mut Connection, scope: Scope, filter: &RunnerFilter<'_>) -> Result<Vec<Runner>> {
+const RUNNER_FILTER: &str = "a.org_id IS NOT DISTINCT FROM ?1 AND a.repo_id IS NOT DISTINCT FROM ?2 AND (?3 IS NULL OR a.id=?3) AND (?4 IS NULL OR a.group_id=?4) AND (?5 IS NULL OR LOWER(a.name)=LOWER(?5))";
+async fn runner_rows(c: &mut Connection, scope: Scope, query: &RunnerQuery) -> Result<Vec<Runner>> {
     let (org, repo) = scope.ids();
     Ok(sqlx::query_as::<_, crate::backend::db::runners::RunnerProjection>(&format!("{RUNNERS} WHERE {RUNNER_FILTER} ORDER BY a.id LIMIT ?6 OFFSET ?7"))
-        .bind(org).bind(repo).bind(filter.id).bind(filter.name).bind(filter.group).bind(filter.limit).bind(filter.offset)
+        .bind(org).bind(repo).bind(query.id).bind(query.group).bind(&query.name)
+        .bind(query.page.limit).bind(query.page.offset)
         .fetch_all(c).await?.into_iter().map(|row| row.into_runner()).collect())
 }
-pub async fn list_runners_page(pool: &Pool, actor: i64, scope: Scope, filter: &RunnerFilter<'_>) -> Result<(i64, Vec<Runner>)> {
-    anyhow::ensure!((0..=100).contains(&filter.limit) && (0..=1_000_000).contains(&filter.offset), Refusal::Invalid("page"));
+pub async fn list_runners(pool: &Pool, actor: i64, scope: Scope, query: &RunnerQuery) -> Result<Listing<Runner>> {
+    query.page.validate()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, scope).await?;
     let (org, repo) = scope.ids();
     let total = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM action_runners a WHERE {RUNNER_FILTER}"))
-        .bind(org).bind(repo).bind(filter.id).bind(filter.name).bind(filter.group).fetch_one(&mut *tx).await?;
-    let rows = if filter.limit == 0 { Vec::new() } else { runner_rows(&mut tx, scope, filter).await? };
+        .bind(org).bind(repo).bind(query.id).bind(query.group).bind(&query.name).fetch_one(&mut *tx).await?;
+    let rows = runner_rows(&mut tx, scope, query).await?;
     tx.commit().await?;
-    Ok((total, rows))
-}
-pub async fn list_runners(pool: &Pool, actor: i64, scope: Scope) -> Result<Vec<Runner>> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, scope).await?;
-    let rows = runner_rows(&mut tx, scope, &RunnerFilter { limit: i64::MAX, ..Default::default() }).await?;
-    tx.commit().await?;
-    Ok(rows)
+    Ok(Listing { total, rows })
 }
 async fn runner(c: &mut Connection, scope: Scope, id: i64) -> Result<Runner> {
-    runner_rows(c, scope, &RunnerFilter { id: Some(id), limit: 1, ..Default::default() })
-        .await?
-        .into_iter()
-        .next()
-        .ok_or_else(|| Refusal::Missing.into())
+    let query = RunnerQuery { id: Some(id), ..Default::default() };
+    runner_rows(c, scope, &query).await?.into_iter().next().ok_or_else(|| Refusal::Missing.into())
 }
 async fn delete_in(tx: &mut Transaction<'_, Sqlite>, scope: Scope, id: i64) -> Result<()> {
     let row = runner(tx, scope, id).await?;
@@ -438,6 +429,9 @@ pub async fn registration(
 ) -> Result<Option<Runner>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, scope).await?;
+    if let Some(session) = input.session {
+        anyhow::ensure!(super::users::transitions::live_session(&mut tx, actor, session).await?, Refusal::Denied);
+    }
     let labels = normalize_labels(input.labels)?;
     let (org, repo) = scope.ids();
     let group_id = if let Some(org) = org {

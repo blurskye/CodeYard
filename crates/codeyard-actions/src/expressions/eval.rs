@@ -1,5 +1,5 @@
 //! Ported from actions/runner's `src/Sdk/Expressions/EvaluationResult.cs` and `Sdk/{Operators,Functions}`.
-use std::{cmp::Ordering, collections::BTreeMap, rc::Rc};
+use std::{cell::RefCell, cmp::Ordering, collections::BTreeMap, rc::Rc};
 
 use super::parser::{Kind, Node, Op};
 use super::{fold, json_text, lookup, parse_number, Contexts, Error, Status, Value};
@@ -7,9 +7,9 @@ use super::{fold, json_text, lookup, parse_number, Contexts, Error, Status, Valu
 type Item = Rc<Data>;
 
 /// Largest text an expression may build. Join and format stop before exceeding it.
-const MAX_TEXT_BYTES: usize = 1_048_576;
+pub(super) const MAX_TEXT_BYTES: usize = 1_048_576;
 
-fn memory_limit() -> Error {
+pub(super) fn memory_limit() -> Error {
     Error::Evaluation(
         "The maximum allowed memory size was exceeded while evaluating the expression".into(),
     )
@@ -101,7 +101,7 @@ fn equal(a: &Item, b: &Item) -> bool {
 
 fn compare(a: &Item, b: &Item) -> Option<Ordering> {
     match (a.as_ref(), b.as_ref()) {
-        (Data::Scalar(Value::Null), Data::Scalar(Value::Null)) => None,
+        (Data::Scalar(Value::Null), Data::Scalar(Value::Null)) => Some(Ordering::Equal),
         (Data::Scalar(Value::String(a)), Data::Scalar(Value::String(b))) => {
             Some(fold(a).encode_utf16().cmp(fold(b).encode_utf16()))
         }
@@ -112,27 +112,26 @@ fn compare(a: &Item, b: &Item) -> Option<Ordering> {
 
 pub(super) fn evaluate(tree: &Node, contexts: &Contexts, status: Status) -> Result<Value, Error> {
     let evaluator = Evaluator {
-        contexts: contexts
-            .values
-            .iter()
-            .map(|(k, v)| (k.clone(), Data::from_value(v)))
-            .collect(),
+        contexts: &contexts.values,
+        cache: RefCell::new(BTreeMap::new()),
         status,
     };
     Ok(evaluator.eval(tree)?.value())
 }
 
-struct Evaluator {
-    contexts: BTreeMap<String, Item>,
+struct Evaluator<'a> {
+    contexts: &'a BTreeMap<String, Value>,
+    cache: RefCell<BTreeMap<String, Item>>,
     status: Status,
 }
 
-impl Evaluator {
+impl Evaluator<'_> {
     fn eval(&self, node: &Node) -> Result<Item, Error> {
         match &node.kind {
             Kind::Literal(v) => Ok(Data::from_value(v)),
             Kind::Wildcard => Ok(text("*".into())),
-            Kind::Context(name) => Ok(lookup(&self.contexts, name).cloned().unwrap_or_else(null)),
+            Kind::Context(name) => Ok(self.cache.borrow_mut().entry(name.clone())
+                .or_insert_with(|| lookup(self.contexts, name).map(Data::from_value).unwrap_or_else(null)).clone()),
             Kind::Not(child) => Ok(boolean(!self.eval(child)?.truthy())),
             Kind::Binary(op, a, b) => {
                 let a = self.eval(a)?;
@@ -142,8 +141,8 @@ impl Evaluator {
                     Op::Ne => !equal(&a, &b),
                     Op::Lt => compare(&a, &b) == Some(Ordering::Less),
                     Op::Gt => compare(&a, &b) == Some(Ordering::Greater),
-                    Op::Le => equal(&a, &b) || compare(&a, &b) == Some(Ordering::Less),
-                    Op::Ge => equal(&a, &b) || compare(&a, &b) == Some(Ordering::Greater),
+                    Op::Le => matches!(compare(&a, &b), Some(Ordering::Less | Ordering::Equal)),
+                    Op::Ge => matches!(compare(&a, &b), Some(Ordering::Greater | Ordering::Equal)),
                     _ => unreachable!("logical operators have their own nodes"),
                 }))
             }
@@ -236,7 +235,7 @@ impl Evaluator {
                     }))
                 }
             }
-            "tojson" => Ok(text(json_text(&self.eval(&args[0])?.value(), true, 0))),
+            "tojson" => Ok(text(json_text(&self.eval(&args[0])?.value())?)),
             "fromjson" => {
                 let input = self.eval(&args[0])?.text();
                 let value = serde_json::from_str(&input).map_err(|error| {
@@ -245,14 +244,14 @@ impl Evaluator {
                 Ok(Data::from_value(&Value::from_json(&value)))
             }
             "hashfiles" => {
-                let github = lookup(&self.contexts, "github");
+                let github = lookup(self.contexts, "github");
                 let workspace = github
-                    .and_then(|github| match github.as_ref() {
-                        Data::Object(values) => lookup(values, "workspace"),
+                    .and_then(|github| match github {
+                        Value::Object(values) => lookup(values, "workspace"),
                         _ => None,
                     })
                     .ok_or_else(|| Error::Evaluation("hashFiles requires github.workspace".into()))?
-                    .text();
+                    .to_text();
                 let patterns = args
                     .iter()
                     .map(|arg| self.eval(arg).map(|v| v.text()))

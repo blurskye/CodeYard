@@ -18,7 +18,6 @@ pub(crate) use transport::DIAL_TIMEOUT;
 pub use worker::{worker_context, CorePeer};
 
 pub use identity::{load_existing, load_or_create, parse_public_key, NodeKey};
-pub(crate) use identity::durable_directory;
 pub use pairing::{
     apply_declared_nodes, approve, create_invite, hash_secret, join, normalize_name,
     parse_declared_nodes, parse_duration, revoke, DeclaredNode, DeclaredSummary, InviteOptions,
@@ -541,7 +540,7 @@ pub async fn client_context(
         return Ok(None);
     };
     require_postgres(pool)?;
-    durable_directory(state_dir)?;
+    crate::backend::fs::durable_dir(state_dir)?;
     let identity_lock = crate::backend::locks::exclusive_file(&state_dir.join("serve.lock"))?;
     let key = load_existing(state_dir)?
         .ok_or_else(|| anyhow!("this node has not joined the cluster; start serve first"))?;

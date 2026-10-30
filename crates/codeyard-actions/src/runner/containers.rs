@@ -15,8 +15,11 @@ pub(super) struct Podman {
     prefix: String,
     containers: Vec<String>,
     images: Vec<String>,
-    network: Option<String>,
+    action_images: BTreeMap<(std::path::PathBuf, String), String>,
+    pub(super) network: Option<String>,
+    deny_docker: bool,
     pub job: Option<String>,
+    pub path: Option<String>,
 }
 
 impl Podman {
@@ -25,11 +28,14 @@ impl Podman {
             url: std::env::var("DOCKER_HOST").ok(),
             options: words(&options.container_options)?,
             pull: options.pull,
+            deny_docker: options.deny_docker,
             prefix,
             containers: Vec::new(),
             images: Vec::new(),
+            action_images: BTreeMap::new(),
             network: None,
             job: None,
+            path: None,
         })
     }
 
@@ -73,6 +79,7 @@ impl Podman {
         if job.is_none() && services.is_empty() {
             return Ok(serde_json::json!({}));
         }
+        anyhow::ensure!(!self.deny_docker, "Container actions require CI_EXECUTION_MODE=podman");
         let network = format!("{}-network", self.prefix);
         self.network = Some(network.clone());
         let mut args: Vec<String> = vec!["network".into(), "create".into()];
@@ -82,11 +89,15 @@ impl Podman {
         args.push(network);
         self.output(&args).await?;
         let mut contexts = serde_json::Map::new();
+        let mut started = Vec::new();
         for (name, service) in services {
             let id = self
                 .create(name, service, workspace, temp, cache, false)
                 .await?;
             self.output(&["start".into(), id.clone()]).await?;
+            started.push((name, id));
+        }
+        for (name, id) in started {
             let mut healthy = false;
             for attempt in 0..30 {
                 let health = self
@@ -129,6 +140,9 @@ impl Podman {
                 .create("job", container, workspace, temp, cache, true)
                 .await?;
             self.output(&["start".into(), id.clone()]).await?;
+            let environment = self.output(&["inspect".into(), "--format".into(), "{{json .Config.Env}}".into(), id.clone()]).await?;
+            self.path = serde_json::from_str::<Vec<String>>(&environment)?.into_iter()
+                .find_map(|entry| entry.strip_prefix("PATH=").map(str::to_owned));
             self.job = Some(id);
         }
         Ok(serde_json::Value::Object(contexts))
@@ -143,10 +157,12 @@ impl Podman {
         cache: &Path,
         job: bool,
     ) -> Result<String> {
-        let id = format!("{}-{name}", self.prefix);
+        let id = if job { format!("{}-job", self.prefix) } else { format!("{}-service-{name}", self.prefix) };
         self.containers.push(id.clone());
         let mut args = vec!["create".into(), "--name".into(), id.clone()];
         args.extend(self.options.clone());
+        let auth_directory = container.credentials.as_ref()
+            .map(|_| crate::fs::private_tempdir("codeyard-registry-", None)).transpose()?;
         if let Some((username, password)) = &container.credentials {
             let first = container.image.split('/').next().unwrap_or("docker.io");
             let registry = if container.image.contains('/')
@@ -158,7 +174,7 @@ impl Podman {
             };
             let auth =
                 base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
-            let path = temp.join(format!("registry-{name}.json"));
+            let path = auth_directory.as_ref().expect("registry directory exists").path().join("auth.json");
             std::fs::write(
                 &path,
                 serde_json::to_vec(&serde_json::json!({"auths": {registry: {"auth": auth}}}))?,
@@ -180,8 +196,8 @@ impl Podman {
                 name.into(),
             ]);
         }
-        for (key, value) in &container.env {
-            args.extend(["--env".into(), format!("{key}={value}")]);
+        for key in container.env.keys() {
+            args.extend(["--env".into(), key.clone()]);
         }
         for port in &container.ports {
             args.extend(["--publish".into(), port.clone()]);
@@ -207,7 +223,13 @@ impl Podman {
         if job {
             args.extend(["-f".into(), "/dev/null".into()]);
         }
-        self.output(&args).await?;
+        let mut command = self.command();
+        command.args(&args).envs(&container.env);
+        let output = super::process::output(&mut command, Duration::from_secs(120)).await?;
+        if !output.status.success() {
+            bail!("Podman: {}", String::from_utf8_lossy(&output.stderr).trim());
+        }
+        drop(auth_directory);
         Ok(id)
     }
 
@@ -221,7 +243,7 @@ impl Podman {
         let mut command = self.command();
         command.args(["exec", "--workdir"]).arg(directory);
         for (key, value) in env {
-            command.arg("--env").arg(format!("{key}={value}"));
+            command.arg("--env").arg(key).env(key, value);
         }
         if let Some(job) = &self.job {
             command.arg(job);
@@ -240,12 +262,17 @@ impl Podman {
         env: &BTreeMap<String, String>,
         entrypoint: Option<&str>,
         args: &[String],
-    ) -> Result<Command> {
-        let built = image == "Dockerfile"
+        deadline: std::time::Instant,
+    ) -> Result<(Command, String)> {
+        anyhow::ensure!(!self.deny_docker, "Docker actions require CI_EXECUTION_MODE=podman");
+        let built = directory.join(image).is_file() || image == "Dockerfile"
             || image.ends_with("/Dockerfile")
             || image.ends_with(".dockerfile");
-        let image = if built {
-            let tag = format!("{}-action-image-{}", self.prefix, self.containers.len());
+        let key = (directory.to_owned(), image.to_owned());
+        let image = if let Some(image) = self.action_images.get(&key) {
+            image.clone()
+        } else if built {
+            let tag = format!("{}-action-image-{}", self.prefix, self.images.len());
             self.images.push(tag.clone());
             let mut args: Vec<String> = vec!["build".into()];
             for label in self.ownership_labels() {
@@ -258,26 +285,30 @@ impl Podman {
                 directory.join(image).display().to_string(),
                 directory.display().to_string(),
             ]);
-            self.output(&args).await?;
+            let output = super::process::output(self.command().args(&args), deadline.saturating_duration_since(std::time::Instant::now())).await?;
+            anyhow::ensure!(output.status.success(), "Docker action image build failed: {}", String::from_utf8_lossy(&output.stderr));
+            self.action_images.insert(key, tag.clone());
             tag
         } else {
-            image.strip_prefix("docker://").unwrap_or(image).into()
+            let image = image.strip_prefix("docker://").unwrap_or(image);
+            if self.pull { self.output(&["pull".into(), "--".into(), image.into()]).await?; }
+            let inspect = ["image".into(), "inspect".into(), "--format".into(), "{{.Id}}".into(), "--".into(), image.into()];
+            let resolved = match self.output(&inspect).await {
+                Ok(image) => image,
+                Err(_) => {
+                    self.output(&["pull".into(), "--".into(), image.into()]).await?;
+                    self.output(&inspect).await?
+                }
+            };
+            self.action_images.insert(key, resolved.clone());
+            resolved
         };
         let id = format!("{}-action-{}", self.prefix, self.containers.len());
         self.containers.push(id.clone());
         let mut command = self.command();
         command.args(["run", "--name", &id]);
         command.args(&self.options);
-        command.args([
-            "--pull",
-            if built {
-                "never"
-            } else if self.pull {
-                "always"
-            } else {
-                "missing"
-            },
-        ]);
+        command.args(["--pull", "never"]);
         if let Some(network) = &self.network {
             command.args(["--network", network]);
         }
@@ -292,76 +323,111 @@ impl Podman {
                     .arg(format!("{}:{}:rw", path.display(), path.display()));
             }
         }
-        command.arg("--workdir").arg(workspace);
-        for (key, value) in env {
-            command.arg("--env").arg(format!("{key}={value}"));
+        if workspace != Path::new("/github/workspace") {
+            command.arg("--volume").arg(format!("{}:/github/workspace:rw", workspace.display()));
         }
+        command.arg("--workdir").arg("/github/workspace");
+        for (key, value) in env {
+            command.arg("--env").arg(key).env(key, value);
+        }
+        command.arg("--env").arg("GITHUB_WORKSPACE").env("GITHUB_WORKSPACE", "/github/workspace");
         if let Some(entrypoint) = entrypoint {
             command.args(["--entrypoint", entrypoint]);
         }
-        command.arg(image).args(args);
-        Ok(command)
+        command.arg("--").arg(image).args(args);
+        Ok((command, id))
+    }
+
+    pub async fn cleanup_active_actions(&mut self) -> bool {
+        let prefix = format!("{}-action-", self.prefix);
+        let actions: Vec<_> = self.containers.iter().filter(|id| id.starts_with(&prefix)).cloned().collect();
+        for action in actions {
+            if !self.cleanup_action(&action).await { return false; }
+        }
+        true
+    }
+
+    pub async fn cleanup_action(&mut self, id: &str) -> bool {
+        let mut pending = Cleanup { url: self.url.clone(), containers: vec![id.into()], network: None, images: vec![] };
+        if !pending.run().await { return false; }
+        self.containers.retain(|container| container != id);
+        true
     }
 
     pub async fn cleanup(&mut self) -> bool {
-        let mut succeeded = true;
-        for id in std::mem::take(&mut self.containers).into_iter().rev() {
-            succeeded &= self
-                .output(&["rm".into(), "--force".into(), "--volumes".into(), id])
-                .await
-                .is_ok();
-        }
-        if let Some(network) = self.network.take() {
-            succeeded &= self
-                .output(&["network".into(), "rm".into(), network])
-                .await
-                .is_ok();
-        }
-        for image in std::mem::take(&mut self.images) {
-            succeeded &= self
-                .output(&["rmi".into(), "--force".into(), image])
-                .await
-                .is_ok();
-        }
+        // Keep the live owner unchanged while awaiting: dropping this future must not forget
+        // identifiers. Removal is idempotent, including after a lost client reply.
+        let mut pending = Cleanup {
+            url: self.url.clone(), containers: self.containers.clone(),
+            network: self.network.clone(), images: self.images.clone(),
+        };
+        let succeeded = pending.run().await;
+        self.containers = pending.containers;
+        self.network = pending.network;
+        self.images = pending.images;
         succeeded
+    }
+}
+
+struct Cleanup {
+    url: Option<String>,
+    containers: Vec<String>,
+    network: Option<String>,
+    images: Vec<String>,
+}
+impl Cleanup {
+    fn empty(&self) -> bool {
+        self.containers.is_empty() && self.network.is_none() && self.images.is_empty()
+    }
+
+    async fn remove(&self, args: &[&str]) -> bool {
+        let mut command = Command::new("podman");
+        if let Some(url) = &self.url { command.args(["--url", url]); }
+        command.args(args);
+        super::process::output(&mut command, Duration::from_secs(5)).await
+            .is_ok_and(|output| output.status.success())
+    }
+
+    async fn run(&mut self) -> bool {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            for attempt in 0..3 {
+                for id in self.containers.clone().into_iter().rev() {
+                    if self.remove(&["rm", "--ignore", "--force", "--volumes", &id]).await {
+                        self.containers.retain(|container| container != &id);
+                    }
+                }
+                // Networks and images cannot be retired until all their consumers are gone.
+                if self.containers.is_empty() {
+                    if let Some(network) = self.network.clone() {
+                        if self.remove(&["network", "rm", "--ignore", &network]).await { self.network = None; }
+                    }
+                    for image in self.images.clone() {
+                        if self.remove(&["rmi", "--ignore", "--force", &image]).await {
+                            self.images.retain(|candidate| candidate != &image);
+                        }
+                    }
+                }
+                if self.empty() { return true; }
+                if attempt < 2 { tokio::time::sleep(Duration::from_secs(1)).await; }
+            }
+            false
+        }).await.unwrap_or(false)
     }
 }
 
 impl Drop for Podman {
     fn drop(&mut self) {
-        // Cancellation may drop setup or an action before the normal job cleanup.
-        for id in self.containers.drain(..) {
-            let mut command = std::process::Command::new("podman");
-            if let Some(url) = &self.url {
-                command.args(["--url", url]);
+        let mut pending = Cleanup {
+            url: self.url.clone(), containers: std::mem::take(&mut self.containers),
+            network: self.network.take(), images: std::mem::take(&mut self.images),
+        };
+        if pending.empty() { return; }
+        // A dropped job may be running inside Tokio. A separate, joined runtime lets the same
+        // ordered cleanup finish even during standalone runtime shutdown; no children detach.
+        let _ = std::thread::spawn(move || {
+            if let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                if !runtime.block_on(pending.run()) { eprintln!("Container cleanup failed"); }
             }
-            let _ = command
-                .args(["rm", "--force", "--volumes", &id])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-        }
-        if let Some(network) = self.network.take() {
-            let mut command = std::process::Command::new("podman");
-            if let Some(url) = &self.url {
-                command.args(["--url", url]);
-            }
-            let _ = command
-                .args(["network", "rm", &network])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-        }
-        for image in self.images.drain(..) {
-            let mut command = std::process::Command::new("podman");
-            if let Some(url) = &self.url {
-                command.args(["--url", url]);
-            }
-            let _ = command
-                .args(["rmi", "--force", &image])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-        }
+        }).join();
     }
 }

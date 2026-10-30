@@ -1,7 +1,7 @@
 //! `codeyard serve`: starts the HTTP server, the selected SSH transport and the
 //! CI service, then waits for a shutdown signal.
 use super::{config::ServeConfig, NodeRole};
-use crate::backend::{api, cluster, db::DbPool, ssh};
+use crate::backend::{api, cluster, db::DbPool, ssh, fs::lock_state_dir};
 use crate::backend::{
     app::AppState,
     ci::CiConfig,
@@ -43,35 +43,8 @@ async fn drain_worker<T>(task: Option<tokio::task::JoinHandle<T>>, deadline: tok
     }
 }
 
-/// Holds the state directory so a second server cannot recover this server's active merges.
-fn lock_state_dir(state_dir: &Path) -> Result<std::fs::File> {
-    use std::os::fd::AsRawFd;
-    cluster::durable_directory(state_dir)?;
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(state_dir.join("serve.lock"))?;
-    // SAFETY: `file` owns the descriptor and flock keeps no pointers.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        let error = std::io::Error::last_os_error();
-        anyhow::ensure!(
-            error.kind() != std::io::ErrorKind::WouldBlock,
-            "another codeyard server is using the state directory {}",
-            state_dir.display()
-        );
-        return Err(error.into());
-    }
-    Ok(file)
-}
-
 fn prepare_repository_root(path: &Path) -> Result<PathBuf> {
-    std::fs::create_dir_all(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
-    }
+    crate::backend::fs::private_dir(path)?;
     Ok(path.canonicalize()?)
 }
 
@@ -271,6 +244,7 @@ fn select_transport(config: &ServeConfig) -> Result<ssh::mode::Selection> {
 
 /// A worker-only process has no application state, database or inbound listeners.
 pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
+    let _state_dir_lock = lock_state_dir(state_dir)?;
     let settings = cluster::Settings::from_lookup(&|key| {
         // Empty counts as unset, as in `Settings::from_lookup`, so the fallback below applies.
         std::env::var(key)
@@ -310,7 +284,10 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
         return Err(error);
     }
     info!("database-free runner ready; no web, SSH or cluster listener");
-    let result = signal.await;
+    let result = tokio::select! {
+        result = &mut signal => result,
+        () = workers.stopped() => Ok(()),
+    };
     info!("shutting down");
     let stopped = workers.shutdown().await;
     context.iroh.close().await;

@@ -5,18 +5,23 @@ use sqlx::SqlitePool;
 pub async fn issue_token(
     pool: &SqlitePool,
     run_id: i64,
+    worker: &str,
     hash: &str,
     backend_id: &str,
 ) -> Result<()> {
-    let changed = sqlx::query("INSERT INTO actions_runtime_tokens(run_id,token_hash,backend_id) SELECT id,?2,?3 FROM ci_runs WHERE id=?1 AND status='running' AND NOT cancel_requested ON CONFLICT(run_id) DO UPDATE SET token_hash=excluded.token_hash,backend_id=excluded.backend_id")
-        .bind(run_id).bind(hash).bind(backend_id).execute(pool).await?;
-    anyhow::ensure!(changed.rows_affected() == 1, "run is not active");
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let live: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ci_runs WHERE id=?1 AND worker=?2 AND status='running' AND NOT cancel_requested)")
+        .bind(run_id).bind(worker).fetch_one(&mut *tx).await?;
+    anyhow::ensure!(live, "run is not active");
+    sqlx::query("INSERT INTO actions_runtime_tokens(run_id,token_hash,backend_id) VALUES(?1,?2,?3) ON CONFLICT(run_id) DO UPDATE SET token_hash=excluded.token_hash,backend_id=excluded.backend_id")
+        .bind(run_id).bind(hash).bind(backend_id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
 // Default and base branches use the scope that a push of that branch stores (ci::push::branch_name).
 pub async fn authenticate(pool: &SqlitePool, hash: &str) -> Result<Option<RuntimeRun>> {
-    Ok(sqlx::query_as("SELECT r.id,r.repo_id,t.backend_id,CASE WHEN r.event='pull_request' THEN 'refs/pull/' || COALESCE(CAST(pr.number AS TEXT),CAST(r.id AS TEXT)) || '/merge' ELSE r.branch END AS branch,CASE WHEN r.event='pull_request' THEN (SELECT CASE WHEN substr(b.name,1,5)='refs/' THEN 'refs/heads/' || b.name ELSE b.name END FROM (SELECT COALESCE(json_extract(r.pull_request_event,'$.base_ref'),pr.base_branch) AS name) b) END AS base_branch,CASE WHEN substr(p.default_branch,1,5)='refs/' THEN 'refs/heads/' || p.default_branch ELSE p.default_branch END AS default_branch,r.is_fork FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id JOIN repositories p ON p.id=r.repo_id LEFT JOIN pull_requests pr ON pr.id=r.pull_request_id WHERE t.token_hash=$1 AND (r.status='running' OR r.completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-5 minutes'))")
+    Ok(sqlx::query_as("SELECT r.id,r.repo_id,t.backend_id,CASE WHEN r.event='pull_request' THEN 'refs/pull/' || COALESCE(CAST(pr.number AS TEXT),CAST(r.id AS TEXT)) || '/merge' ELSE r.branch END AS branch,CASE WHEN r.event='pull_request' THEN (SELECT CASE WHEN substr(b.name,1,5)='refs/' THEN 'refs/heads/' || b.name ELSE b.name END FROM (SELECT COALESCE(json_extract(r.pull_request_event,'$.base_ref'),pr.base_branch) AS name) b) END AS base_branch,CASE WHEN substr(p.default_branch,1,5)='refs/' THEN 'refs/heads/' || p.default_branch ELSE p.default_branch END AS default_branch,r.is_fork FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id JOIN repositories p ON p.id=r.repo_id LEFT JOIN pull_requests pr ON pr.id=r.pull_request_id WHERE t.token_hash=$1 AND NOT r.cancel_requested AND (r.status='running' OR r.completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-5 minutes'))")
         .bind(hash).fetch_optional(pool).await?)
 }
 
@@ -86,13 +91,20 @@ pub async fn blob_grant(
         .bind(object_id).bind(hash).bind(write).bind(chrono::Utc::now().timestamp()).fetch_optional(pool).await?)
 }
 
+async fn lock_blob_grant(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, object: i64, hash: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_blob_grants g JOIN ci_runs r ON r.id=g.run_id WHERE g.object_id=$1 AND g.token_hash=$2 AND g.write AND g.expires_at>$3 AND NOT r.cancel_requested AND (r.status='running' OR r.completed_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-5 minutes')))")
+        .bind(object).bind(hash).bind(chrono::Utc::now().timestamp()).fetch_one(&mut **tx).await?)
+}
+
 pub async fn stage_block(
     pool: &SqlitePool,
     object_id: i64,
+    grant_hash: &str,
     part: &BlobPart,
     limit: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !lock_blob_grant(&mut tx, object_id, grant_hash).await? { return Ok(false); }
     let object: Option<ActionObject> = sqlx::query_as("SELECT * FROM actions_objects WHERE id=$1")
         .bind(object_id)
         .fetch_optional(&mut *tx)
@@ -153,31 +165,28 @@ pub async fn stage_block(
     Ok(true)
 }
 
-pub async fn ready_block(pool: &SqlitePool, object_id: i64, key: &str) -> Result<bool> {
-    Ok(
-        sqlx::query(
-            "UPDATE actions_blob_parts SET ready=TRUE WHERE object_id=$1 AND object_key=$2",
-        )
-        .bind(object_id)
-        .bind(key)
-        .execute(pool)
-        .await?
-        .rows_affected()
-            == 1,
-    )
+pub async fn ready_block(pool: &SqlitePool, object_id: i64, grant_hash: &str, key: &str) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !lock_blob_grant(&mut tx, object_id, grant_hash).await? { return Ok(false); }
+    let changed = sqlx::query("UPDATE actions_blob_parts SET ready=TRUE WHERE object_id=$1 AND object_key=$2")
+        .bind(object_id).bind(key).execute(&mut *tx).await?.rows_affected() == 1;
+    tx.commit().await?;
+    Ok(changed)
 }
 
 /// Clear the block list of an upload that is not finalized, so a whole-blob PUT can stage it again.
-pub async fn reopen_blob(pool: &SqlitePool, object_id: i64) -> Result<()> {
+pub async fn reopen_blob(pool: &SqlitePool, object_id: i64, grant_hash: &str) -> Result<()> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    anyhow::ensure!(lock_blob_grant(&mut tx, object_id, grant_hash).await?, "Blob capability refused");
     sqlx::query("UPDATE actions_objects SET manifest=NULL WHERE id=$1 AND NOT finalized")
-        .bind(object_id)
-        .execute(pool)
-        .await?;
+        .bind(object_id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
-pub async fn seal_blob(pool: &SqlitePool, object_id: i64, blocks: &[String]) -> Result<bool> {
+pub async fn seal_blob(pool: &SqlitePool, object_id: i64, grant_hash: &str, blocks: &[String]) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !lock_blob_grant(&mut tx, object_id, grant_hash).await? { return Ok(false); }
     let object: Option<ActionObject> = sqlx::query_as("SELECT * FROM actions_objects WHERE id=$1")
         .bind(object_id)
         .fetch_optional(&mut *tx)
@@ -310,9 +319,9 @@ pub(crate) async fn enforce_cache_limit(
     repo: i64,
     cache_limit: i64,
 ) -> Result<()> {
-    let mut total: i64 = sqlx::query_scalar("SELECT CAST(COALESCE(SUM(size),0) AS BIGINT) FROM actions_objects WHERE repo_id=$1 AND kind='cache' AND finalized")
+    let (mut total, mut count): (i64, i64) = sqlx::query_as("SELECT CAST(COALESCE(SUM(size),0) AS BIGINT),COUNT(*) FROM actions_objects WHERE repo_id=$1 AND kind='cache' AND finalized")
         .bind(repo).fetch_one(&mut *connection).await?;
-    while total > cache_limit {
+    while total > cache_limit || count > crate::backend::db::action_objects::MAX_CACHE_ENTRIES as i64 {
         let entry: Option<(i64, i64)> = sqlx::query_as("SELECT id,size FROM actions_objects WHERE repo_id=$1 AND kind='cache' AND finalized ORDER BY accessed_at,id LIMIT 1")
             .bind(repo).fetch_optional(&mut *connection).await?;
         let Some((id, size)) = entry else { break; };
@@ -321,6 +330,7 @@ pub(crate) async fn enforce_cache_limit(
             .execute(&mut *connection)
             .await?;
         total -= size;
+        count -= 1;
     }
     Ok(())
 }
@@ -343,9 +353,20 @@ pub async fn find_cache(
     Ok(found)
 }
 
-pub async fn list_artifacts(pool: &SqlitePool, run_id: i64) -> Result<Vec<ActionObject>> {
-    Ok(sqlx::query_as("SELECT * FROM actions_objects WHERE run_id=$1 AND kind='artifact' AND finalized AND expires_at>$2 ORDER BY id")
-        .bind(run_id).bind(chrono::Utc::now().timestamp()).fetch_all(pool).await?)
+pub async fn list_artifacts(pool: &SqlitePool, run_id: i64, name: Option<&str>, id: Option<i64>) -> Result<Vec<crate::backend::db::action_objects::ArtifactSummary>> {
+    Ok(sqlx::query_as("SELECT o.id,o.name,o.size,o.created_at FROM actions_objects o JOIN ci_runs a ON a.id=o.run_id JOIN ci_runs r ON r.id=$1 AND r.repo_id=o.repo_id AND COALESCE(a.workflow_run_id,a.id)=COALESCE(r.workflow_run_id,r.id) WHERE o.kind='artifact' AND o.finalized AND o.expires_at>$2 AND ($3 IS NULL OR o.name=$3) AND ($4 IS NULL OR o.id=$4) ORDER BY o.id")
+        .bind(run_id).bind(chrono::Utc::now().timestamp()).bind(name).bind(id).fetch_all(pool).await?)
+}
+
+pub async fn artifact_for_run(pool: &SqlitePool, run_id: i64, name: &str) -> Result<Option<ActionObject>> {
+    Ok(sqlx::query_as("SELECT o.* FROM actions_objects o JOIN ci_runs a ON a.id=o.run_id JOIN ci_runs r ON r.id=$1 AND r.repo_id=o.repo_id AND COALESCE(a.workflow_run_id,a.id)=COALESCE(r.workflow_run_id,r.id) WHERE o.kind='artifact' AND o.finalized AND o.expires_at>$2 AND o.name=$3 ORDER BY o.id DESC LIMIT 1")
+        .bind(run_id).bind(chrono::Utc::now().timestamp()).bind(name).fetch_optional(pool).await?)
+}
+
+pub async fn artifact_for_reader(pool: &SqlitePool, actor: i64, session: &str, repo: i64, run: i64, id: i64) -> Result<Option<ActionObject>> {
+    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    Ok(sqlx::query_as(&format!("SELECT o.* FROM actions_objects o JOIN repositories r ON r.id=o.repo_id JOIN ci_runs c ON c.id=o.run_id AND c.repo_id=r.id JOIN users u ON u.id=?1 JOIN sessions s ON s.user_id=u.id AND s.id=?2 WHERE r.id=?3 AND c.id=?4 AND o.id=?5 AND o.kind='artifact' AND o.finalized AND o.expires_at>?6 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>0)"))
+        .bind(actor).bind(session).bind(repo).bind(run).bind(id).bind(chrono::Utc::now().timestamp()).fetch_optional(pool).await?)
 }
 
 pub async fn artifact_by_id(pool: &SqlitePool, id: i64) -> Result<Option<ActionObject>> {
@@ -358,6 +379,7 @@ pub async fn delete_artifact(
     id: i64,
     run_id: i64,
     actor: Option<i64>,
+    credential: Option<&crate::backend::db::ci::CiCredential>,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if let Some(actor) = actor {
@@ -368,6 +390,9 @@ pub async fn delete_artifact(
         let Some(repo) = repo else { return Ok(false) };
         if !super::discussions::lock_write_authority(&mut tx, actor, repo).await? {
             return Ok(false);
+        }
+        if let Some(proof) = credential {
+            if !super::credentials::ci(&mut tx, actor, repo, proof).await? { return Ok(false); }
         }
     }
     let changed =

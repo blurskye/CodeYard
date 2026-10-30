@@ -1956,6 +1956,14 @@ CREATE TABLE actions_steps (
     PRIMARY KEY(job_id,number)
 );
 
+CREATE TABLE actions_step_summaries (
+    job_id BIGINT NOT NULL REFERENCES actions_jobs(id) ON DELETE CASCADE,
+    number INTEGER NOT NULL CHECK (number > 0 AND number <= 10000),
+    markdown TEXT NOT NULL,
+    bytes INTEGER NOT NULL CHECK (bytes >= 0 AND bytes <= 65536),
+    PRIMARY KEY (job_id, number)
+);
+
 CREATE TABLE actions_job_states (
     run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
     generation TEXT NOT NULL,

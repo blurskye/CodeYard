@@ -648,11 +648,10 @@ impl Gateway {
                 Ok(workflows) => workflows,
                 Err(_) => { failed = true; continue; }
             };
-            let message = ci::commit_message_for_ref(
-                &repo_store(&repo, self.ci.cluster.as_ref()),
-                &commit_sha,
-            )
-            .await;
+            let message = match ci::commit_message_for_ref(&repo_store(&repo, self.ci.cluster.as_ref()), &commit_sha).await {
+                Ok(message) => message,
+                Err(_) => { failed = true; continue; }
+            };
             let ref_update = ci::RefUpdate {
                 reference: update.reference.clone(),
                 old: (update.old != ZERO_SHA).then(|| update.old.clone()),
@@ -663,7 +662,7 @@ impl Gateway {
                 &repo_store(&repo, self.ci.cluster.as_ref()),
                 &ref_update,
                 workflows,
-                message.as_deref(),
+                Some(&message),
                 &mut match_budget,
             )
             .await;
@@ -737,6 +736,7 @@ impl Gateway {
                         },
                         access,
                         event.clone(),
+                        None,
                     )
                     .await;
                 if matches!(result, Err(ci::admission::AdmissionError::WorkflowDisabled)) {

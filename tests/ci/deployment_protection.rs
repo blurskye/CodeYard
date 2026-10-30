@@ -128,7 +128,7 @@ async fn enqueue(f: &Database, repo: i64, actor: i64, attempt: Option<&CiRun>) -
             None,
         )
         .await
-        .unwrap()
+        .unwrap().0
     } else {
         db::ci::enqueue_ci_run(f.pool(), input, &[actor])
             .await

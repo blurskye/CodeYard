@@ -1438,6 +1438,7 @@ dependencies = [
 name = "codeyard-actions"
 version = "0.1.5"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "base64 0.22.1",
  "clap",
@@ -1452,6 +1453,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "url",
 ]
 
 [[package]]

@@ -140,8 +140,8 @@ async fn contract(pg: bool) {
     assert_eq!(claims["sha"], sha);
     assert_eq!(claims["workflow"], "Identity");
     assert_eq!(claims["workflow_sha"], sha);
-    assert_eq!(claims["job_workflow_sha"], sha);
-    assert_eq!(claims["job_workflow_ref"], claims["workflow_ref"]);
+    assert!(claims.get("job_workflow_sha").is_none());
+    assert!(claims.get("job_workflow_ref").is_none());
     assert_eq!(claims["ref_type"], "branch");
     assert_eq!(
         claims["run_id"],
@@ -253,7 +253,7 @@ async fn contract(pg: bool) {
             "/alice/project/_forms/oidc-settings",
             &[
                 ("repository_id", &repo.id.to_string()),
-                ("include_claim_keys", "repo, context, job_workflow_ref"),
+                ("include_claim_keys", "repo, context, workflow_ref"),
             ],
         )
         .await;
@@ -262,7 +262,7 @@ async fn contract(pg: bool) {
         &get(&router, endpoint, Some(&jobs["writer"]), 200).await,
         &jwks,
     );
-    assert_eq!(customized["sub"], format!("repo:alice/project:ref:refs/heads/main:job_workflow_ref:alice/project/{path}@refs/heads/main"));
+    assert_eq!(customized["sub"], format!("repo:alice/project:ref:refs/heads/main:workflow_ref:alice/project/{path}@refs/heads/main"));
     super::checked(
         &router,
         "actions/set-custom-oidc-sub-claim-for-repo",

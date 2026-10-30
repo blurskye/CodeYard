@@ -668,45 +668,13 @@ async fn manifest_blobs(
     Ok(blobs)
 }
 
-pub(super) fn byte_range(headers: &HeaderMap, size: u64) -> Result<Option<(u64, u64)>> {
-    let Some(value) = headers.get(header::RANGE) else {
-        return Ok(None);
-    };
-    let invalid = || {
-        Error(
-            StatusCode::RANGE_NOT_SATISFIABLE,
-            "RANGE_INVALID",
-            "Invalid blob range",
-        )
-    };
-    let value = value
-        .to_str()
-        .map_err(|_| invalid())?
-        .strip_prefix("bytes=")
-        .ok_or_else(invalid)?;
-    if size == 0 || headers.get_all(header::RANGE).iter().count() != 1 {
-        return Err(invalid());
-    }
-    let (start, end) = value.split_once('-').ok_or_else(invalid)?;
-    let (start, end) = if start.is_empty() {
-        let suffix: u64 = end.parse().map_err(|_| invalid())?;
-        if suffix == 0 {
-            return Err(invalid());
-        }
-        (size.saturating_sub(suffix), size - 1)
-    } else {
-        let start: u64 = start.parse().map_err(|_| invalid())?;
-        let end = if end.is_empty() {
-            size - 1
-        } else {
-            end.parse::<u64>().map_err(|_| invalid())?.min(size - 1)
-        };
-        (start, end)
-    };
-    if start >= size || end < start {
-        return Err(invalid());
-    }
-    Ok(Some((start, end)))
+/// `validator` is the response's strong ETag, if it has one, for `If-Range`.
+pub(super) fn byte_range(headers: &HeaderMap, size: u64, validator: Option<&str>) -> Result<Option<(u64, u64)>> {
+    let invalid = || Error(StatusCode::RANGE_NOT_SATISFIABLE, "RANGE_INVALID", "Invalid blob range");
+    let (range, partial) = crate::backend::api::http::range::requested(headers, validator).map_err(|_| invalid())?;
+    if !partial { return Ok(None); }
+    let (start, length) = range.normalize(size).map_err(|_| invalid())?;
+    Ok(Some((start, start + length - 1)))
 }
 
 pub(super) async fn download(
@@ -730,7 +698,7 @@ pub(super) async fn download(
     if *method == Method::HEAD {
         return Ok(response);
     }
-    let range = byte_range(headers, blob.size as u64)?;
+    let range = byte_range(headers, blob.size as u64, None)?;
     let (start, length) = range.map_or((0, blob.size as u64), |(start, end)| {
         (start, end - start + 1)
     });
@@ -802,7 +770,7 @@ mod tests {
         ] {
             let mut headers = HeaderMap::new();
             headers.insert(header::RANGE, value.parse().unwrap());
-            assert_eq!(byte_range(&headers, 10).unwrap(), Some(expected));
+            assert_eq!(byte_range(&headers, 10, None).unwrap(), Some(expected));
         }
         for value in [
             "bytes=10-",
@@ -814,7 +782,7 @@ mod tests {
         ] {
             let mut headers = HeaderMap::new();
             headers.insert(header::RANGE, value.parse().unwrap());
-            assert!(byte_range(&headers, 10).is_err());
+            assert!(byte_range(&headers, 10, None).is_err());
         }
     }
 }

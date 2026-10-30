@@ -690,7 +690,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
             .unwrap()
             .is_none()
     );
-    let (finished, notifications) =
+    let (finished, notifications, _) =
         db::ci::finish_ci_run(&pool, run.id, "node-a/1", "success", None)
             .await
             .unwrap()

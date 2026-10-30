@@ -10,7 +10,9 @@ pub(super) fn parse(expression: &str) -> Result<Cron> {
     ensure!(expression.len() <= 256, "cron expression is too long");
     let fields: Vec<_> = expression.split_whitespace().collect();
     ensure!(fields.len() == 5, "cron requires five fields");
+    let mut normalized = Vec::new();
     for (index, field) in fields.iter().enumerate() {
+        ensure!(field.split(',').all(|term| !term.is_empty()), "empty cron term");
         let mut field = field.to_ascii_uppercase();
         let names: &[&str] = match index {
             3 => &[
@@ -19,8 +21,8 @@ pub(super) fn parse(expression: &str) -> Result<Cron> {
             4 => &["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"],
             _ => &[],
         };
-        for name in names {
-            field = field.replace(name, "1");
+        for (number, name) in names.iter().enumerate() {
+            field = field.replace(name, &(number + usize::from(index == 3)).to_string());
         }
         ensure!(
             field
@@ -28,8 +30,9 @@ pub(super) fn parse(expression: &str) -> Result<Cron> {
                 .all(|ch| ch.is_ascii_digit() || "*,-/".contains(ch)),
             "unsupported cron syntax"
         );
+        normalized.push(field);
     }
-    let cron: Cron = expression.parse()?;
+    let cron: Cron = normalized.join(" ").parse()?;
     let minutes: Cron = format!("{} * * * *", fields[0]).parse()?;
     let start = Utc
         .with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
@@ -48,10 +51,21 @@ pub(super) fn parse(expression: &str) -> Result<Cron> {
         }
     }
     if let (Some(first), Some(last)) = (first, previous) {
-        ensure!(
-            60 + first - last >= 5,
-            "cron interval is less than five minutes"
-        );
+        if 60 + first - last < 5 {
+            let hours: Cron = format!("0 {} * * *", fields[1]).parse()?;
+            let selected: Vec<_> = (0..24).map(|hour| hours.is_time_matching(&(start + chrono::Duration::hours(hour))))
+                .collect::<std::result::Result<_, _>>()?;
+            ensure!(!selected.windows(2).any(|pair| pair[0] && pair[1]), "cron interval is less than five minutes");
+            if selected[23] && selected[0] {
+                let days: Cron = format!("0 0 {} {} {}", normalized[2], normalized[3], normalized[4]).parse()?;
+                let mut previous_day = false;
+                for day in 0..=146097 {
+                    let matches = days.is_time_matching(&(start + chrono::Duration::days(day)))?;
+                    ensure!(!(matches && previous_day), "cron interval is less than five minutes");
+                    previous_day = matches;
+                }
+            }
+        }
     }
     Ok(cron)
 }
@@ -69,12 +83,15 @@ impl CiRuns {
             if ids.is_empty() {
                 break;
             }
-            for id in ids {
-                after = id;
-                if let Err(error) = self.queue_repository_schedules(id, now).await {
-                    tracing::warn!(repo_id=id, %error, "scheduled workflows were not queued");
+            after = *ids.last().expect("nonempty repository page");
+            use futures_util::StreamExt;
+            let mut pending = futures_util::stream::iter(ids.into_iter().map(|id| async move {
+                let result = tokio::time::timeout(std::time::Duration::from_secs(10), self.queue_repository_schedules(id, now)).await;
+                if !matches!(result, Ok(Ok(()))) {
+                    tracing::warn!(repo_id=id, "scheduled workflow discovery timed out or was refused");
                 }
-            }
+            })).buffer_unordered(32);
+            while pending.next().await.is_some() {}
         }
         Ok(())
     }
@@ -94,7 +111,7 @@ impl CiRuns {
         }
         let store = repo_store(&repo, self.cluster.as_ref());
         let reference = format!("refs/heads/{}", repo.default_branch);
-        let commit = match store.commit(&reference).await {
+        let commit = match store.commit_from_primary(&reference).await {
             Ok(commit) => commit,
             Err(error)
                 if error.kind == crate::backend::repositories::store::ErrorKind::NotFound =>
@@ -103,14 +120,20 @@ impl CiRuns {
             }
             Err(error) => return Err(error.into()),
         };
+        // Schedules run only for a branch tip whose publication is recorded.
         let Some(proof) = store.branch_publication(repo.id, &reference).await? else {
             return Ok(());
         };
         if proof.publication.new != commit.sha {
             return Ok(());
         }
-        let Some(actor) = proof.publication.actor.user_id() else {
-            return Ok(());
+        let (actor, access_cap) = match proof.publication.actor {
+            crate::backend::git::PublicationActor::User(actor) => (actor, db::models::AccessLevel::Owner),
+            crate::backend::git::PublicationActor::DeployKey(key) => {
+                let (actor, cap) = crate::backend::repositories::deploy_keys::authorize(&self.pool, key, &repo, true)
+                    .await.map_err(|_| AdmissionError::Denied("CI repository access denied"))?;
+                (actor.id, cap)
+            }
         };
         if !self.actor_may_discover_workflows(repo.id, actor).await? {
             return Ok(());
@@ -148,8 +171,9 @@ impl CiRuns {
                             triggered_by_id: actor,
                             manual: false,
                         },
-                        db::models::AccessLevel::Owner,
+                        access_cap,
                         payload,
+                        None,
                     )
                     .await
                 {

@@ -43,7 +43,7 @@ pub(crate) async fn reachable(
         .current_dir(path);
     process::limit_memory(&mut command);
     let mut child = command.spawn().context("start retained-object reachability walk")?;
-    let mut group = process::ProcessGroup(child.id());
+    let mut group = process::ProcessGroup::new(child.id(), std::time::Duration::ZERO);
     let mut lines = BufReader::new(child.stdout.take().context("git reachability stdout")?).lines();
     let stderr = child.stderr.take().context("git reachability stderr")?;
     drop(child.stdin.take());
@@ -64,7 +64,7 @@ pub(crate) async fn reachable(
     let status = child.wait().await?;
     let errors = process::read_bounded(stderr, 16 * 1024).await?;
     if complete { ensure!(status.success(), "Git reachability failed: {}", String::from_utf8_lossy(&errors)); }
-    group.0 = None;
+    group.disarm();
     Ok(found)
 }
 

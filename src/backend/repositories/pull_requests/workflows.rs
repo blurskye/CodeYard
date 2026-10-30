@@ -211,7 +211,7 @@ async fn queue_pull_request_workflow_event(
     let message = if target {
         None
     } else {
-        commit_message_for_ref(&store, &pull.head_sha).await
+        Some(commit_message_for_ref(&store, &pull.head_sha).await.map_err(|_| AdmissionError::Unavailable)?)
     };
     if message.as_deref().is_some_and(should_skip_run_from_message) {
         return Ok(());
@@ -309,6 +309,7 @@ async fn queue_pull_request_workflow_event(
                 },
                 access,
                 payload.clone(),
+                None,
             )
             .await
         {

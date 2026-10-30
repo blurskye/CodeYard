@@ -1,6 +1,7 @@
 //! Environment values are delivered only to jobs targeting that environment.
 pub use super::organization_values::Kind;
 use super::DbPool;
+use codeyard_actions::values::MAX_SCOPE_VALUES;
 use crate::backend::crypto::{SecretEncryptor, SecretError};
 use chrono::{DateTime, Utc};
 
@@ -115,7 +116,7 @@ pub async fn for_run(
         .into_iter()
         .map(|row| (row.name, row.value))
         .collect();
-    if variables.len() > 100 {
+    if variables.len() > MAX_SCOPE_VALUES {
         return Err(ValueError::Limit);
     }
     super::variables::validate_all(&variables).map_err(|_| ValueError::Size)?;

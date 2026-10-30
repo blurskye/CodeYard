@@ -3,25 +3,44 @@ use crate::command_codec::{unescape_data as unescape, unescape_property};
 use crate::progress::{Event, Update};
 use anyhow::{bail, Result};
 use base64::Engine;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 
 #[derive(Clone, Default)]
-pub(super) struct Masker {
-    masks: Arc<Mutex<Vec<String>>>,
+pub struct Masker {
+    masks: Arc<Mutex<MaskSet>>,
     /// Bytes of the masks that steps asked for. The job's own secrets do not count.
     requested: Arc<AtomicUsize>,
     /// Set when a requested mask did not fit, after which no output is shown.
     hidden: Arc<AtomicBool>,
 }
 
+#[derive(Clone, Default)]
+struct MaskSet {
+    values: BTreeSet<String>,
+    bytes: usize,
+    matcher: Option<aho_corasick::AhoCorasick>,
+    build_bytes: usize,
+}
+
 /// The masks a workflow's steps add are held in memory, so they may total this much.
 const MAX_MASK_BYTES: usize = 1 << 20;
+const MAX_MASKS: usize = 16_384;
+const MAX_EXPANDED_MASK_BYTES: usize = 16 << 20;
 
 impl Masker {
+    /// New jobs inherit credentials, but not each other's subsequent stdout commands.
+    pub(super) fn fork(&self) -> Self {
+        Self {
+            masks: Arc::new(Mutex::new(self.masks.lock().unwrap_or_else(|error| error.into_inner()).clone())),
+            requested: Arc::new(AtomicUsize::new(0)),
+            hidden: Arc::new(AtomicBool::new(self.hidden.load(Ordering::Relaxed))),
+        }
+    }
+
     /// Adds a mask a step asked for, unless the steps' masks would pass their budget.
     pub fn add_requested(&self, value: &str) -> bool {
         let total = self
@@ -32,7 +51,10 @@ impl Masker {
             return false;
         }
         self.add(value);
-        true
+        for word in value.split_whitespace() {
+            self.add(word);
+        }
+        !self.hidden.load(Ordering::Relaxed)
     }
 
     /// Hides all later output. A value whose mask was refused could otherwise be printed.
@@ -42,7 +64,7 @@ impl Masker {
 
     pub fn add(&self, value: &str) {
         let mut masks = self.masks.lock().unwrap_or_else(|error| error.into_inner());
-        for part in std::iter::once(value).chain(value.lines()) {
+        for part in std::iter::once(value).chain(value.lines()).chain(value.lines().map(|line| line.trim_end_matches('\r'))) {
             if part.trim().is_empty() {
                 continue;
             }
@@ -67,24 +89,57 @@ impl Masker {
                 uri,
                 base64::engine::general_purpose::STANDARD.encode(part),
             ] {
-                if !masks.contains(&encoded) {
-                    masks.push(encoded);
+                if !masks.values.contains(&encoded) {
+                    if masks.values.len() >= MAX_MASKS
+                        || masks.bytes.saturating_add(encoded.len()) > MAX_EXPANDED_MASK_BYTES
+                    {
+                        self.hide_all();
+                        return;
+                    }
+                    masks.bytes += encoded.len();
+                    masks.values.insert(encoded);
+                    masks.matcher = None;
                 }
             }
         }
-        masks.sort_by_key(|value| std::cmp::Reverse(value.len()));
     }
 
     pub fn mask(&self, value: &str) -> String {
         if self.hidden.load(Ordering::Relaxed) {
             return "***".into();
         }
-        let mut value = value.to_owned();
-        let masks = self.masks.lock().unwrap_or_else(|error| error.into_inner());
-        for mask in masks.iter() {
-            value = value.replace(mask, "***");
+        let mut masks = self.masks.lock().unwrap_or_else(|error| error.into_inner());
+        if masks.values.is_empty() { return value.to_owned(); }
+        if masks.matcher.is_none() {
+            masks.build_bytes = masks.build_bytes.saturating_add(masks.bytes);
+            if masks.build_bytes > 64 * 1024 * 1024 { self.hide_all(); return "***".into(); }
+            let matcher = aho_corasick::AhoCorasick::builder()
+                .kind(Some(aho_corasick::AhoCorasickKind::ContiguousNFA)).build(masks.values.iter().map(String::as_bytes));
+            let Ok(matcher) = matcher else { self.hide_all(); return "***".into(); };
+            masks.matcher = Some(matcher);
         }
-        value
+        // Redact the union of original-text matches, without sequential replacement.
+        let mut boundaries = vec![0i32; value.len() + 1];
+        for (index, found) in masks.matcher.as_ref().expect("compiled masks").find_overlapping_iter(value).enumerate() {
+            if index >= 100_000 { return "***".into(); }
+            boundaries[found.start()] += 1;
+            boundaries[found.end()] -= 1;
+        }
+        let mut result = String::new();
+        let mut active = 0;
+        let mut copied = 0;
+        for (index, delta) in boundaries.into_iter().enumerate() {
+            let previous = active;
+            active += delta;
+            if previous == 0 && active > 0 {
+                result.push_str(&value[copied..index]);
+                result.push_str("***");
+            } else if previous > 0 && active == 0 {
+                copied = index;
+            }
+        }
+        result.push_str(&value[copied..]);
+        result
     }
 
     pub fn contains(&self, value: &str) -> bool {
@@ -95,6 +150,7 @@ impl Masker {
 #[derive(Clone)]
 pub(super) struct Progress {
     pub nonce: Arc<str>,
+    pub output: Option<super::output::Output>,
     pub job: String,
     pub variant: u32,
     pub step: Arc<AtomicU32>,
@@ -109,21 +165,21 @@ impl Progress {
                 .as_millis(),
         )
         .expect("system clock is out of range");
+        let essential = !matches!(update, Update::Log { .. } | Update::Summary { .. });
         let event = Event {
             job: self.job.clone(),
             variant: self.variant,
             at_ms,
             update,
         };
-        println!(
-            "::codeyard-progress::{}:{}",
-            self.nonce,
-            serde_json::to_string(&event).expect("runner progress is serializable")
-        );
+        if let Some(output) = &self.output {
+            output.line(format!("::codeyard-progress::{}:{}", self.nonce,
+                serde_json::to_string(&event).expect("runner progress is serializable")), essential);
+        }
     }
 }
 /// The longest prefix of `text` within `max` bytes, cut on a character boundary.
-fn bounded(text: &str, max: usize) -> String {
+pub(super) fn bounded(text: &str, max: usize) -> String {
     let mut end = text.len().min(max);
     while !text.is_char_boundary(end) {
         end -= 1;
@@ -136,6 +192,7 @@ pub(super) struct Log {
     pub prefix: String,
     pub masker: Masker,
     pub progress: Option<Progress>,
+    pub output: Option<super::output::Output>,
 }
 
 impl Log {
@@ -154,7 +211,7 @@ impl Log {
                 Some((number, std::time::Instant::now()));
             progress.emit(Update::StepStarted {
                 number,
-                name: self.masker.mask(name),
+                name: bounded(&self.masker.mask(name), 1024),
             });
         }
     }
@@ -198,8 +255,9 @@ impl Log {
                 let number = progress.step.load(Ordering::Relaxed);
                 let step = (number > 0).then_some(number);
                 let mut rest = line;
+                let chunk = if line.starts_with("Step started: ") || line.starts_with("Step completed: ") { 2048 } else { 512 };
                 loop {
-                    let mut end = rest.len().min(512);
+                    let mut end = rest.len().min(chunk);
                     while !rest.is_char_boundary(end) {
                         end -= 1;
                     }
@@ -212,8 +270,8 @@ impl Log {
                         break;
                     }
                 }
-            } else {
-                println!("[{prefix}] {line}");
+            } else if let Some(output) = &self.output {
+                output.line(format!("[{prefix}] {line}"), false);
             }
         }
     }
@@ -221,7 +279,12 @@ impl Log {
 
 #[derive(Default)]
 pub(super) struct Commands {
-    stopped: Option<String>,
+    pub stopped: Option<String>,
+    pub debug: bool,
+    stderr: bool,
+    retained_bytes: usize,
+    retained_commands: usize,
+    storage_full: bool,
     workspace: std::path::PathBuf,
     pub matchers: super::matchers::Matchers,
     pub failed: bool,
@@ -246,7 +309,7 @@ impl Commands {
         } else {
             log.line(line);
         }
-        match self.matchers.matches(&log.masker.mask(line)) {
+        match self.matchers.matches(line, self.stderr) {
             Ok(Some(issue)) => {
                 if let Some(command) = issue.command(&self.workspace, &log.masker) {
                     log.line(&command);
@@ -258,7 +321,13 @@ impl Commands {
         }
     }
 
+    #[cfg(test)]
     pub fn line(&mut self, log: &Log, line: &str, allow_unsafe: bool) {
+        self.stream_line(log, line, allow_unsafe, false);
+    }
+
+    pub fn stream_line(&mut self, log: &Log, line: &str, allow_unsafe: bool, stderr: bool) {
+        self.stderr = stderr;
         self.command_line(log, line, allow_unsafe, false);
     }
 
@@ -308,6 +377,19 @@ impl Commands {
             .collect();
         let data = decode(data);
         let name = name.to_ascii_lowercase();
+        if matches!(name.as_str(), "set-output" | "save-state" | "set-env" | "add-path") {
+            let bytes = data.len().saturating_add(properties.get("name").map_or(0, String::len));
+            if self.storage_full || self.retained_commands >= 4096
+                || bytes > (1usize << 20).saturating_sub(self.retained_bytes)
+            {
+                self.failed = true;
+                self.storage_full = true;
+                log.line("Error: Workflow commands exceed the runner storage limit");
+                return;
+            }
+            self.retained_bytes += bytes;
+            self.retained_commands += 1;
+        }
         match name.as_str() {
             "add-mask" => {
                 if !log.masker.add_requested(&data) {
@@ -364,7 +446,7 @@ impl Commands {
             "set-output" => {
                 log.line("Warning: The `set-output` command is deprecated. Please upgrade to using Environment Files.");
                 if let Some(key) = properties.get("name") {
-                    self.outputs.insert(key.clone(), data);
+                    update_outputs(&mut self.outputs, [(key.clone(), data)]);
                 }
             }
             "add-matcher" | "remove-matcher" => {
@@ -392,7 +474,8 @@ impl Commands {
                     .and_then(|line| line.parse::<u32>().ok())
                     .filter(|line| *line >= start_line)
                     .unwrap_or(start_line);
-                // The core reads each progress line at most 16 KiB, and JSON escaping can grow a field six-fold.
+                let start_column = (start_line == end_line).then(|| properties.get("col").and_then(|column| column.parse::<u32>().ok()).filter(|column| *column > 0)).flatten();
+                let end_column = start_column.map(|start| properties.get("endcolumn").and_then(|column| column.parse::<u32>().ok()).filter(|column| *column >= start).unwrap_or(start));
                 log.emit(Update::Annotation {
                     annotation: crate::progress::Annotation {
                         path: bounded(
@@ -402,6 +485,8 @@ impl Commands {
                         ),
                         start_line,
                         end_line,
+                        start_column,
+                        end_column,
                         annotation_level: match name.as_str() {
                             "error" => "failure",
                             "warning" => "warning",
@@ -435,7 +520,8 @@ impl Commands {
                     ));
                 }
             }
-            "debug" => log.line(&format!("debug: {data}")),
+            "debug" if self.debug => log.line(&format!("debug: {data}")),
+            "debug" => {},
             "group" => log.line(&format!(
                 "::group::{}",
                 super::matchers::escape_data(&log.masker.mask(&data))
@@ -452,8 +538,19 @@ impl Commands {
     }
 }
 
+pub(super) fn update_outputs(target: &mut BTreeMap<String, String>, values: impl IntoIterator<Item = (String, String)>) {
+    for (key, value) in values {
+        target.retain(|name, _| !name.eq_ignore_ascii_case(&key));
+        target.insert(key, value);
+    }
+}
+
 pub(super) fn pairs(text: &str) -> Result<BTreeMap<String, String>> {
-    let mut result = BTreeMap::new();
+    Ok(entries(text)?.into_iter().collect())
+}
+
+pub(super) fn entries(text: &str) -> Result<Vec<(String, String)>> {
+    let mut result = Vec::new();
     let mut lines = text.split_inclusive('\n');
     while let Some(raw) = lines.next() {
         let line = raw.strip_suffix('\n').unwrap_or(raw).trim_end_matches('\r');
@@ -466,7 +563,7 @@ pub(super) fn pairs(text: &str) -> Result<BTreeMap<String, String>> {
             if index == 0 {
                 bail!("Invalid format. Name must not be empty");
             }
-            result.insert(line[..index].into(), line[index + 1..].into());
+            result.push((line[..index].into(), line[index + 1..].into()));
         } else if let Some(index) = heredoc {
             let key = &line[..index];
             let delimiter = &line[index + 2..];
@@ -492,7 +589,7 @@ pub(super) fn pairs(text: &str) -> Result<BTreeMap<String, String>> {
                     value.pop();
                 }
             }
-            result.insert(key.into(), value);
+            result.push((key.into(), value));
         } else {
             bail!("Invalid environment file format");
         }
@@ -509,7 +606,8 @@ pub(super) fn words(text: &str) -> Result<Vec<String>> {
     let mut started = false;
     for ch in text.chars() {
         if escaped {
-            word.push(ch);
+            if quote == Some('"') && !matches!(ch, '$' | '`' | '"' | '\\' | '\n') { word.push('\\'); }
+            if ch != '\n' { word.push(ch); }
             escaped = false;
         } else if ch == '\\' && quote != Some('\'') {
             escaped = true;
@@ -568,6 +666,15 @@ mod tests {
     #[test]
     fn masks_and_commands() {
         let masker = Masker::default();
+        masker.add("sensitive-token\r");
+        assert_eq!(masker.mask("sensitive-token"), "***");
+        assert!(masker.add_requested("alpha-token beta-token"));
+        assert_eq!(masker.mask("alpha-token"), "***");
+        masker.add("abc123");
+        masker.add("123456");
+        assert_eq!(masker.mask("abc123456"), "***");
+        for _ in 0..30 { masker.add("*"); }
+        assert_eq!(masker.mask("***"), "***");
         masker.add("long secret\nshort");
         assert_eq!(masker.mask("long secret and short"), "*** and ***");
         let log = Log {

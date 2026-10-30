@@ -52,6 +52,7 @@ pub struct CiRun {
     pub head_sha: Option<String>,
     pub workflow_path: String,
     pub workflow_sha: Option<String>,
+    #[sqlx(default)]
     pub workflow_blobs: serde_json::Value,
     #[serde(skip, default = "empty_runner_labels")]
     pub runner_labels: String,

@@ -566,7 +566,9 @@ async fn rerequest(
         &state,
         &repo,
         &owner,
-        auth.database_actor(),
+        auth.workflow_actor(&state, repo.id).await?,
+        Credential::Token(auth.token.id),
+        auth.ci_credential(&headers, "actions")?,
         suite,
         run.as_ref(),
     )
@@ -577,23 +579,19 @@ pub(in crate::backend::api) async fn request_again(
     state: &AppState,
     repo: &Repository,
     owner: &str,
-    authority: db::credentials::Actor,
+    actor: i64,
+    credential: Credential<'_>,
+    ci_credential: db::ci::CiCredential,
     suite: i64,
     run: Option<&Run>,
 ) -> Result<()> {
-    use db::users::accounts::AccountCredential;
-    let actor = authority.user_id;
-    let credential = match authority.credential() {
-        Some(AccountCredential::Token(token_id, _)) => Credential::Token(token_id),
-        Some(AccountCredential::Session(session)) => Credential::Session(session),
-        None => return Err(super::auth::required()),
-    };
     let stored = checks::suite(&state.pool, repo.id, suite)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     if let Some(ci_run) = stored.ci_run_id {
         // An Actions suite shows its workflow run, so rerequesting it queues another attempt of that run.
+        let credential = Some(ci_credential);
         // Each attempt has its own suite and CI run; reruns go through the shared workflow run.
         let workflow_run = db::ci::get_ci_run_by_id(&state.pool, repo.id, ci_run)
             .await
@@ -602,7 +600,7 @@ pub(in crate::backend::api) async fn request_again(
             .ok_or_else(Error::missing)?;
         state
             .ci_runs
-            .rerun_workflow_run_as(repo.id, workflow_run, authority.clone(), false)
+            .rerun_workflow_run(repo.id, workflow_run, actor, false, credential)
             .await
             .map_err(super::actions::admission_error)?;
         return Ok(());

@@ -37,7 +37,8 @@ async fn perform(
 ) -> Result<Response> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
     let authentication = authentication.ok_or_else(auth::required)?;
-    let actor = authentication.database_actor();
+    let actor = authentication.workflow_actor(&state, repo.id).await?;
+    let credential = Some(authentication.ci_credential(&headers, "actions")?);
     let args: Parameters = if body.is_empty() {
         Parameters::default()
     } else {
@@ -49,7 +50,7 @@ async fn perform(
         Selection::All => {
             state
                 .ci_runs
-                .rerun_workflow_run(repo.id, id, actor, args.enable_debug_logging)
+                .rerun_workflow_run(repo.id, id, actor, args.enable_debug_logging, credential)
                 .await
         }
         Selection::Failed => {
@@ -60,13 +61,14 @@ async fn perform(
                     id,
                     actor,
                     args.enable_debug_logging,
+                    credential,
                 )
                 .await
         }
         Selection::Job => {
             state
                 .ci_runs
-                .rerun_workflow_job(repo.id, id, actor, args.enable_debug_logging)
+                .rerun_workflow_job(repo.id, id, actor, args.enable_debug_logging, credential)
                 .await
         }
     }

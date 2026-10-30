@@ -1,11 +1,14 @@
 //! Job and step execution following actions/runner's `Runner.Worker/JobRunner.cs` and `StepsRunner.cs`.
 mod actions;
+mod jobs;
+pub(crate) use actions::ActionReference;
 mod commands;
 mod containers;
 mod environment_values;
 mod matchers;
+mod output;
 mod process;
-pub(crate) use process::read_lines;
+pub(crate) use process::{read_lines, output as capture_output};
 mod reusable;
 
 use crate::expressions::{self, Contexts, Status, Value};
@@ -15,7 +18,8 @@ use crate::progress::{
 use crate::workflow::{self, Container, PlannedJob, Step, StepAction};
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use commands::{Commands, Log, Masker, Progress};
+use commands::{Commands, Log, Progress};
+pub use commands::Masker;
 use containers::Podman;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -40,6 +44,8 @@ pub struct Options {
     pub directory: PathBuf,
     #[arg(long = "env")]
     pub env: Vec<String>,
+    #[arg(long)]
+    pub env_file: Option<PathBuf>,
     #[arg(long, default_value = "codeyard")]
     pub actor: String,
     #[arg(long)]
@@ -48,7 +54,7 @@ pub struct Options {
     pub platforms: Vec<String>,
     #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
     pub pull: bool,
-    #[arg(long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..))]
+    #[arg(long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..=256))]
     pub concurrent_jobs: u32,
     #[arg(long, default_value = "", allow_hyphen_values = true)]
     pub container_options: String,
@@ -79,6 +85,23 @@ pub struct Options {
     pub no_cache_server: bool,
     #[arg(long)]
     pub action_offline_mode: bool,
+    /// Explicitly allow GitHub when the configured forge cannot supply a repository action.
+    #[arg(long)]
+    pub github_action_fallback: bool,
+    /// Worker-owned delegated cgroup for native job/step process trees.
+    #[arg(long, hide = true)]
+    pub process_root: Option<PathBuf>,
+    #[arg(long, hide = true)]
+    pub deny_docker: bool,
+    #[arg(skip)]
+    containment_lost: Arc<std::sync::atomic::AtomicBool>,
+}
+
+fn validate_replay_matrix(expected: &BTreeMap<u32, serde_json::Value>, plans: &[PlannedJob]) -> Result<()> {
+    anyhow::ensure!(expected.len() == plans.len() && plans.iter().enumerate().all(|(index, plan)| {
+        expected.get(&(index as u32)).is_some_and(|matrix| Value::from_json(matrix) == plan.matrix)
+    }), "Matrix context has changed; re-run the whole workflow");
+    Ok(())
 }
 
 fn object(values: &BTreeMap<String, String>) -> Value {
@@ -95,17 +118,19 @@ fn text(template: &str, contexts: &Contexts, status: Status) -> Result<String> {
 }
 
 fn boolean(template: &str, contexts: &Contexts, status: Status) -> Result<bool> {
-    if template.contains("${{") {
-        Ok(expressions::interpolate(template, contexts, status)?.is_truthy())
+    let value = if template.contains("${{") {
+        expressions::interpolate(template, contexts, status)?
     } else {
-        Ok(expressions::evaluate(template, contexts, status)?.is_truthy())
+        expressions::evaluate(template, contexts, status)?
+    };
+    match value {
+        Value::Bool(value) => Ok(value),
+        _ => bail!("Expected a boolean value"),
     }
 }
 
 fn minutes(value: f64) -> Result<Duration> {
-    if !value.is_finite() || value <= 0.0 || value > 525600.0 {
-        bail!("timeout-minutes must be a positive number");
-    }
+    workflow::validate_timeout_minutes(value)?;
     Ok(Duration::from_secs_f64(value * 60.0))
 }
 
@@ -180,13 +205,7 @@ fn expand_with_dependency_status(
         .get("jobs")
         .and_then(|jobs| jobs.get(id))
         .and_then(|job| job.get("if"));
-    let condition = match condition {
-        Some(serde_yaml::Value::Bool(true)) => "true",
-        Some(serde_yaml::Value::Bool(false)) => "false",
-        value => value
-            .and_then(serde_yaml::Value::as_str)
-            .unwrap_or("success()"),
-    };
+    let condition = condition.map(|value| workflow::scalar_text(value, "job.if")).transpose()?.unwrap_or_else(|| "success()".into());
     let condition = condition.trim();
     let condition = condition
         .strip_prefix("${{")
@@ -250,37 +269,30 @@ fn ref_name(reference: &str) -> &str {
 
 /// Dispatch inputs arrive as text. The `inputs` context uses the declared types, as on GitHub,
 /// so `if: inputs.publish` sees a boolean. `github.event.inputs` keeps the text.
-fn typed_dispatch_inputs(
-    raw: &serde_yaml::Value,
-    mut inputs: serde_json::Value,
-) -> serde_json::Value {
-    let declared = raw
-        .get("on")
-        .and_then(|on| on.get("workflow_dispatch"))
-        .and_then(|dispatch| dispatch.get("inputs"))
-        .and_then(serde_yaml::Value::as_mapping);
-    if let (Some(declared), Some(values)) = (declared, inputs.as_object_mut()) {
-        for (name, value) in values.iter_mut() {
-            let kind = declared
-                .get(name.as_str())
-                .and_then(|spec| spec.get("type"))
-                .and_then(serde_yaml::Value::as_str);
-            let typed = match (kind, value.as_str()) {
-                (Some("boolean"), Some("true")) => Some(serde_json::Value::Bool(true)),
-                (Some("boolean"), Some("false")) => Some(serde_json::Value::Bool(false)),
-                (Some("number"), Some(number)) => number
-                    .parse::<f64>()
-                    .ok()
-                    .and_then(serde_json::Number::from_f64)
-                    .map(serde_json::Value::Number),
-                _ => None,
-            };
-            if let Some(typed) = typed {
-                *value = typed;
-            }
-        }
+struct DispatchInputs { typed: serde_json::Value, event: serde_json::Value }
+fn typed_dispatch_inputs(raw: &serde_yaml::Value, inputs: serde_json::Value) -> Result<DispatchInputs> {
+    use crate::workflow::dispatch_inputs::{self, InputKind};
+    let declared = dispatch_inputs::parse(raw.get("on").and_then(|on| on.get("workflow_dispatch")).unwrap_or(&serde_yaml::Value::Null))?;
+    let submitted = inputs.as_object().context("Dispatch inputs must be an object")?.iter().map(|(key, value)| {
+        let text = match value {
+            serde_json::Value::String(value) => value.clone(),
+            serde_json::Value::Bool(_) | serde_json::Value::Number(_) => value.to_string(),
+            _ => bail!("Dispatch input must be a scalar"),
+        };
+        Ok((key.clone(), text))
+    }).collect::<Result<BTreeMap<_, _>>>()?;
+    let values = dispatch_inputs::validate_inputs(&declared, &submitted).map_err(anyhow::Error::msg)?;
+    let mut inputs = serde_json::Map::new();
+    for input in declared {
+        let value = &values[&input.name];
+        let value = match input.kind {
+            InputKind::Boolean => serde_json::Value::Bool(value == "true"),
+            InputKind::Number => serde_json::json!(value.parse::<f64>()?),
+            _ => serde_json::Value::String(value.clone()),
+        };
+        inputs.insert(input.name, value);
     }
-    inputs
+    Ok(DispatchInputs { typed: serde_json::Value::Object(inputs), event: serde_json::to_value(values)? })
 }
 
 /// Bounds an action's preparation (fetching, runtime probing, image builds) by the step deadline.
@@ -310,7 +322,7 @@ async fn git_value(directory: &Path, args: &[&str]) -> String {
     .await
     {
         Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).trim().into()
+            String::from_utf8_lossy(&output.stdout).trim_end_matches(['\r', '\n']).into()
         }
         _ => String::new(),
     }
@@ -351,6 +363,12 @@ fn matrix_metadata(matrix: &Value, masker: &Masker) -> Option<Matrix> {
 struct JobTokens {
     tokens: BTreeMap<String, String>,
     completion_secret: String,
+    #[serde(skip)]
+    output: Option<output::Output>,
+    #[serde(skip)]
+    nested: bool,
+    #[serde(skip)]
+    completions: Arc<std::sync::Mutex<BTreeMap<String, usize>>>,
     #[serde(default)]
     oidc_url: String,
     #[serde(default)]
@@ -359,22 +377,46 @@ struct JobTokens {
 
 impl JobTokens {
     fn progress(&self, id: &str, variant: usize) -> Option<Progress> {
-        (!self.completion_secret.is_empty()).then(|| Progress {
+        (!self.nested && !self.completion_secret.is_empty()).then(|| Progress {
             nonce: Arc::from(self.completion_secret.as_str()),
+            output: self.output.clone(),
             job: id.to_owned(),
             variant: variant.try_into().expect("matrix index is bounded"),
             step: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             active: Default::default(),
         })
     }
+    fn reserve_calls(&self, prefix: &str, count: usize) {
+        let mut completions = self.completions.lock().unwrap_or_else(|error| error.into_inner());
+        for id in self.tokens.keys().filter(|id| id.starts_with(prefix)) {
+            *completions.entry(id.clone()).or_insert(1) += count.saturating_sub(1);
+        }
+    }
     fn completed(&self, id: &str) {
         if !self.completion_secret.is_empty() {
-            println!("::codeyard-job-completed::{}:{id}", self.completion_secret);
+            let mut completions = self.completions.lock().unwrap_or_else(|error| error.into_inner());
+            let remaining = completions.entry(id.to_owned()).or_insert(1);
+            if *remaining == 0 { return; }
+            *remaining -= 1;
+            if *remaining == 0 {
+                if let Some(output) = &self.output {
+                    output.line(format!("::codeyard-job-completed::{}:{id}", self.completion_secret), true);
+                }
+            }
         }
     }
 }
 
-/// Run the selected workflow, returning whether all jobs succeeded.
+pub const CANCELLED_EXIT_CODE: i32 = 130;
+pub const CLEANUP_GRACE: Duration = Duration::from_secs(60);
+/// Includes the shared cleanup grace, container removal, and final process reaping.
+pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(95);
+
+#[derive(Debug, thiserror::Error)]
+#[error("The workflow was cancelled")]
+pub struct Cancelled;
+
+/// Run the selected workflow, returning whether all jobs succeeded; cancellation is typed.
 pub async fn run(mut options: Options) -> Result<bool> {
     let secrets = environment_file(options.secret_file.as_deref())?;
     let masker = Masker::default();
@@ -403,7 +445,8 @@ pub async fn run(mut options: Options) -> Result<bool> {
         environment_values,
     )
     .await;
-    result.map_err(|error| anyhow::anyhow!(masker.mask(&format!("{error:#}"))))
+    result.map_err(|error| if error.is::<Cancelled>() { error }
+        else { anyhow::anyhow!(masker.mask(&format!("{error:#}"))) })
 }
 
 async fn run_workflow(
@@ -420,18 +463,6 @@ async fn run_workflow(
     }
     let yaml = std::fs::read_to_string(&options.workflow).context("Unable to read workflow")?;
     let raw: serde_yaml::Value = serde_yaml::from_str(&yaml)?;
-    let workflow_name = raw
-        .get("name")
-        .and_then(serde_yaml::Value::as_str)
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| {
-            options
-                .workflow
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("workflow")
-        })
-        .to_owned();
     let workflow = workflow::parse(&yaml)?;
     let order = workflow::job_order(&workflow)?;
     let replay = if let Some(path) = &options.replay_file {
@@ -486,16 +517,28 @@ async fn run_workflow(
         .directory
         .canonicalize()
         .context("Unable to open checkout directory")?;
-    let event: serde_json::Value = if let Some(path) = &options.eventpath {
+    let mut event: serde_json::Value = if let Some(path) = &options.eventpath {
         serde_json::from_slice(&std::fs::read(path)?)?
     } else {
         serde_json::json!({})
     };
-    let mut env = BTreeMap::new();
+    let submitted_inputs = event.get("inputs").cloned().unwrap_or_else(|| serde_json::json!({}));
+    let inputs = if options.event == "workflow_dispatch" {
+        let inputs = typed_dispatch_inputs(&raw, submitted_inputs)?;
+        event.as_object_mut().context("Dispatch event must be an object")?.insert("inputs".into(), inputs.event);
+        inputs.typed
+    } else { submitted_inputs };
+    let mut env = environment_file(options.env_file.as_deref())?;
     for pair in &options.env {
         let (key, value) = pair.split_once('=').context("--env requires KEY=VALUE")?;
         env.insert(key.to_owned(), value.to_owned());
     }
+    let workflow_name = raw.get("name").and_then(serde_yaml::Value::as_str)
+        .filter(|name| !name.trim().is_empty()).map(str::to_owned).unwrap_or_else(|| {
+            env.get("GITHUB_WORKFLOW_REF").and_then(|reference| reference.split_once('@'))
+                .and_then(|(path, _)| path.splitn(3, '/').nth(2)).map(str::to_owned)
+                .unwrap_or_else(|| options.workflow.strip_prefix(&options.directory).unwrap_or(&options.workflow).to_string_lossy().replace('\\', "/"))
+        });
     if options.debug {
         for (key, value) in [
             ("ACTIONS_RUNNER_DEBUG", "true"),
@@ -510,14 +553,14 @@ async fn run_workflow(
             masker.add(value);
         }
     }
-    let sha = env
-        .get("GITHUB_SHA")
-        .cloned()
-        .unwrap_or(git_value(&options.directory, &["rev-parse", "HEAD"]).await);
-    let reference = env
-        .get("GITHUB_REF")
-        .cloned()
-        .unwrap_or(git_value(&options.directory, &["symbolic-ref", "-q", "HEAD"]).await);
+    let sha = match env.get("GITHUB_SHA") {
+        Some(sha) => sha.clone(),
+        None => git_value(&options.directory, &["rev-parse", "HEAD"]).await,
+    };
+    let reference = match env.get("GITHUB_REF") {
+        Some(reference) => reference.clone(),
+        None => git_value(&options.directory, &["symbolic-ref", "-q", "HEAD"]).await,
+    };
     let repository = env
         .get("GITHUB_REPOSITORY")
         .cloned()
@@ -549,7 +592,7 @@ async fn run_workflow(
         "ref_type":if reference.starts_with("refs/tags/") {"tag"} else {"branch"},
         "sha":sha,"head_ref":event.pointer("/pull_request/head/ref").and_then(serde_json::Value::as_str).unwrap_or(""),"base_ref":event.pointer("/pull_request/base/ref").and_then(serde_json::Value::as_str).unwrap_or(""),"workspace":options.directory,"run_id":run_id,"run_number":number,"run_attempt":env.get("GITHUB_RUN_ATTEMPT").cloned().unwrap_or_else(||"1".into()),
         "server_url":server,"api_url":api_url,"graphql_url":graphql_url,
-        "workflow":workflow_name,"job":"", "action":"", "token":secrets.get("GITHUB_TOKEN").cloned().unwrap_or_default()
+        "workflow":workflow_name,"workflow_ref":env.get("GITHUB_WORKFLOW_REF"),"workflow_sha":env.get("GITHUB_WORKFLOW_SHA"),"job":"", "action":"", "token":secrets.get("GITHUB_TOKEN").cloned().unwrap_or_default()
     });
     let mut contexts = Contexts::default();
     contexts
@@ -558,13 +601,6 @@ async fn run_workflow(
     contexts.values.insert("secrets".into(), object(&secrets));
     let variables = environment_file(options.var_file.as_deref())?;
     contexts.values.insert("vars".into(), object(&variables));
-    let inputs = typed_dispatch_inputs(
-        &raw,
-        event
-            .get("inputs")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({})),
-    );
     contexts
         .values
         .insert("inputs".into(), Value::from_json(&inputs));
@@ -576,6 +612,10 @@ async fn run_workflow(
     contexts.values.insert("env".into(), object(&env));
     let options = Arc::new(options.clone());
     let (cancel_tx, cancel) = watch::channel(false);
+    let (output, output_task) = output::Output::start(cancel_tx.clone())?;
+    let _output_guard = BackgroundTask(output_task.abort_handle());
+    let mut tokens = tokens;
+    tokens.output = Some(output.clone());
     let signal = tokio::spawn(async move {
         #[cfg(unix)]
         {
@@ -591,9 +631,17 @@ async fn run_workflow(
         let _ = tokio::signal::ctrl_c().await;
         let _ = cancel_tx.send(true);
     });
+    let _signal_guard = BackgroundTask(signal.abort_handle());
     let files = reusable::files(&raw, &options.directory)?;
+    let workspace = if options.concurrent_jobs > 1 {
+        let source = options.directory.clone();
+        Some(Arc::new(tokio::task::spawn_blocking(move || crate::fs::snapshot_tree(&source, crate::fs::SnapshotLinks::Preserve)).await??))
+    } else { None };
+    let permits = Arc::new(tokio::sync::Semaphore::new(options.concurrent_jobs.max(1) as usize));
     let execution = WorkflowRun {
         options,
+        permits,
+        workspace,
         tokens: Arc::new(tokens),
         files: Arc::new(files),
         masker,
@@ -605,12 +653,19 @@ async fn run_workflow(
         .execute(raw, contexts, env, String::new(), String::new())
         .await;
     signal.abort();
-    Ok(result?.result == "success")
+    let flushed = output.flush().await;
+    output_task.abort();
+    flushed?;
+    let result = result?;
+    if result.result == "cancelled" { return Err(Cancelled.into()); }
+    Ok(result.result == "success")
 }
 
 #[derive(Clone)]
 struct WorkflowRun {
     options: Arc<Options>,
+    permits: Arc<tokio::sync::Semaphore>,
+    workspace: Option<Arc<tempfile::TempDir>>,
     tokens: Arc<JobTokens>,
     files: Arc<BTreeMap<String, serde_yaml::Value>>,
     masker: Masker,
@@ -620,9 +675,49 @@ struct WorkflowRun {
 }
 
 impl WorkflowRun {
-    fn execute(
+    async fn run_leaf(
+        &self, job: PlannedJob, index: usize, options: Arc<Options>, mut contexts: Contexts,
+        env: BTreeMap<String, String>, log: Log, mut cancel: watch::Receiver<bool>,
+    ) -> JobResult {
+        let result = async {
+            let _permit = tokio::select! {
+                biased;
+                _ = cancel.wait_for(|cancelled| *cancelled) => return Err(anyhow::Error::from(Cancelled)),
+                permit = self.permits.clone().acquire_owned() => permit.context("Job concurrency permits closed")?,
+            };
+            let workspace = if let Some(source) = &self.workspace {
+                let source = source.clone();
+                Some(tokio::task::spawn_blocking(move || crate::fs::snapshot_tree(source.path(), crate::fs::SnapshotLinks::Preserve)).await??)
+            } else { None };
+            let options = if let Some(workspace) = &workspace {
+                let mut options = (*options).clone();
+                options.directory = workspace.path().to_owned();
+                if let Some(Value::Object(github)) = contexts.values.get_mut("github") {
+                    github.insert("workspace".into(), Value::String(options.directory.display().to_string()));
+                }
+                Arc::new(options)
+            } else { options };
+            Ok::<_, anyhow::Error>(run_job(job, index, options, contexts, env, log.clone(), cancel.clone()).await)
+        }.await;
+        match result {
+            Ok(result) => result,
+            Err(error) => {
+                let cancelled = error.is::<Cancelled>();
+                log.emit(Update::Started);
+                log.line(&format!("Job preparation failed: {error:#}"));
+                log.emit(Update::Finished { conclusion: if cancelled { Conclusion::Cancelled } else { Conclusion::Failure }, duration_ms: 0 });
+                JobResult { result: if cancelled { "cancelled" } else { "failure" }.into(), outputs: BTreeMap::new() }
+            }
+        }
+    }
+
+    fn execute_job(
         &self,
-        raw: serde_yaml::Value,
+        raw: Arc<serde_yaml::Value>,
+        workflow: Arc<workflow::Workflow>,
+        id: String,
+        dependencies: Vec<(String, JobResult, Status)>,
+        saved: jobs::SavedJobs,
         mut contexts: Contexts,
         mut env: BTreeMap<String, String>,
         name_prefix: String,
@@ -636,7 +731,6 @@ impl WorkflowRun {
                 cancel,
                 ..
             } = self;
-            let workflow = workflow::parse(&serde_yaml::to_string(&raw)?)?;
             let workflow_name = contexts
                 .values
                 .get("github")
@@ -652,20 +746,16 @@ impl WorkflowRun {
                 None
             };
             let environment_values = &self.environment_values;
-            let mut saved = JobState::default();
             if !tokens.completion_secret.is_empty() {
                 anyhow::ensure!(
                     workflow_name.len() <= 1024,
                     "workflow name exceeds the progress metadata limit"
                 );
             }
-            let mut results = BTreeMap::<String, JobResult>::new();
-            let mut ancestors = BTreeMap::<String, Status>::new();
-            let mut successful = true;
-            for id in workflow::job_order(&workflow)? {
+                anyhow::ensure!(!options.containment_lost.load(std::sync::atomic::Ordering::Acquire),
+                    "Container cleanup failed; refusing further execution");
                 if *cancel.borrow() {
-                    successful = false;
-                    break;
+                    return Ok(JobResult { result: "cancelled".into(), outputs: BTreeMap::new() });
                 }
                 let token_id = format!("{token_prefix}{id}");
                 if options.job_token_file.is_some()
@@ -697,46 +787,26 @@ impl WorkflowRun {
                     }
                 }
                 // expand checks the job's own dependencies; unrelated failures must not skip it.
-                let needs_ids = raw
-                    .get("jobs")
-                    .and_then(|jobs| jobs.get(&id))
-                    .and_then(|job| job.get("needs"));
-                let needs_ids: Vec<String> = match needs_ids {
-                    Some(serde_yaml::Value::String(name)) => vec![name.clone()],
-                    Some(serde_yaml::Value::Sequence(names)) => names
-                        .iter()
-                        .filter_map(|value| value.as_str().map(str::to_owned))
-                        .collect(),
-                    _ => Vec::new(),
-                };
                 let mut needs = BTreeMap::new();
                 let mut status = Status::default();
                 let mut dependency_success = true;
                 let mut direct_status = Status::default();
-                for name in needs_ids {
-                    if let Some((canonical, result)) = results
-                        .iter()
-                        .find(|(key, _)| key.eq_ignore_ascii_case(&name))
-                    {
+                for (name, result, ancestor) in dependencies {
                         status.failed |= result.result == "failure";
                         status.cancelled |= result.result == "cancelled";
                         dependency_success &= result.result == "success";
                         direct_status.failed |= result.result == "failure";
                         direct_status.cancelled |= result.result == "cancelled";
-                        if let Some(ancestor) = ancestors.get(canonical) {
-                            status.failed |= ancestor.failed;
-                            status.cancelled |= ancestor.cancelled;
-                        }
+                        status.failed |= ancestor.failed;
+                        status.cancelled |= ancestor.cancelled;
                         needs.insert(
                     name,
                     Value::from_json(
                         &serde_json::json!({"result":result.result,"outputs":result.outputs}),
                     ),
                 );
-                    }
                 }
                 contexts.values.insert("needs".into(), Value::Object(needs));
-                ancestors.insert(id.clone(), status);
                 if let Some(replay) = &replay {
                     if !replay.selected.contains_key(&id) {
                         let result = replay
@@ -745,9 +815,12 @@ impl WorkflowRun {
                             .get(&id)
                             .context("Source dependency state is unavailable")?
                             .clone();
-                        successful &= matches!(result.result.as_str(), "success" | "skipped");
-                        results.insert(id, result);
-                        continue;
+                        if let Some(expected) = replay.matrices.get(&id) {
+                            let plans = workflow::expand(&workflow, &id, &contexts, status)?
+                                .context("Retained matrix context has changed; re-run the whole workflow")?;
+                            validate_replay_matrix(expected, &plans)?;
+                        }
+                        return Ok(result);
                     }
                 }
                 let expanded = if !dependency_success
@@ -755,12 +828,23 @@ impl WorkflowRun {
                     && !direct_status.cancelled
                     || status != direct_status
                 {
-                    expand_with_dependency_status(&raw, &id, &contexts, status, dependency_success)?
+                    expand_with_dependency_status(&raw, &id, &contexts, status, dependency_success)
                 } else {
-                    workflow::expand(&workflow, &id, &contexts, status)?
+                    workflow::expand(&workflow, &id, &contexts, status)
+                };
+                let expanded = match expanded {
+                    Ok(expanded) => expanded,
+                    Err(error) => {
+                        Log { prefix: format!("{name_prefix}{id}"), masker: masker.clone(), progress: None, output: tokens.output.clone() }
+                            .line(&format!("Job expansion failed: {error:#}"));
+                        let result = JobResult { result: "failure".into(), outputs: BTreeMap::new() };
+                        self.record_state(&saved, |saved| { saved.jobs.insert(id.clone(), result.clone()); })?;
+                        tokens.completed(&token_id);
+                        return Ok(result);
+                    }
                 };
                 // A matrix whose excludes remove every combination runs nothing, like a skipped job.
-                let Some(plans) = expanded.filter(|plans| !plans.is_empty()) else {
+                let Some(mut plans) = expanded.filter(|plans| !plans.is_empty()) else {
                     if let Some(progress) = tokens.progress(&id, 0) {
                         let name = raw
                             .get("jobs")
@@ -774,8 +858,8 @@ impl WorkflowRun {
                             "job metadata exceeds the progress limit"
                         );
                         progress.emit(Update::Queued {
-                            workflow_name: masker.mask(&workflow_name),
-                            name: masker.mask(name),
+                            workflow_name: commands::bounded(&masker.mask(&workflow_name), 1024),
+                            name: commands::bounded(&masker.mask(name), 1024),
                             labels: vec![],
                             matrix: None,
                         });
@@ -789,13 +873,11 @@ impl WorkflowRun {
                         result: "skipped".into(),
                         outputs: BTreeMap::new(),
                     };
-                    results.insert(id.clone(), result.clone());
-                    saved.jobs.insert(id.clone(), result);
-                    save_job_state(options, &mut saved, masker)?;
+                    self.record_state(&saved, |saved| { saved.jobs.insert(id.clone(), result.clone()); })?;
                     if token_prefix.is_empty() {
                         tokens.completed(&token_id);
                     }
-                    continue;
+                    return Ok(result);
                 };
                 let variants = replay
                     .as_ref()
@@ -806,20 +888,18 @@ impl WorkflowRun {
                         && variants.iter().all(|index| (*index as usize) < plans.len())),
                     "selected matrix variant is unavailable"
                 );
-                if let Some(selected) = variants {
-                    let source = replay
-                        .as_ref()
-                        .expect("variant selection requires a replay");
-                    for index in selected {
-                        let expected = source
-                            .matrices
-                            .get(&id)
-                            .and_then(|matrices| matrices.get(index))
-                            .context("Source matrix metadata is unavailable")?;
-                        anyhow::ensure!(
-                            Value::from_json(expected) == plans[*index as usize].matrix,
-                            "Selected matrix context has changed; re-run the whole workflow"
-                        );
+                if variants.is_some() {
+                    if let Some(expected) = replay.as_ref().and_then(|source| source.matrices.get(&id)) {
+                        validate_replay_matrix(expected, &plans)?;
+                    } else {
+                        anyhow::ensure!(raw["jobs"][id.as_str()]["strategy"].get("matrix").is_none(),
+                            "Source matrix metadata is unavailable");
+                    }
+                }
+                for job in &mut plans {
+                    job.name = masker.mask(&job.name);
+                    if job.name.chars().count() > 100 {
+                        job.name = job.name.chars().take(97).collect::<String>() + "...";
                     }
                 }
                 for (index, job) in plans.iter().enumerate() {
@@ -828,15 +908,13 @@ impl WorkflowRun {
                     }
                     if let Some(progress) = tokens.progress(&id, index) {
                         anyhow::ensure!(
-                            id.len() <= 128
-                                && job.name.len() <= 1024
-                                && job.runs_on.iter().map(String::len).sum::<usize>() <= 1024,
+                            id.len() <= 128 && job.name.len() <= 1024,
                             "job metadata exceeds the progress limit"
                         );
                         progress.emit(Update::Queued {
-                            workflow_name: masker.mask(&workflow_name),
-                            name: masker.mask(&job.name),
-                            labels: job.runs_on.iter().map(|label| masker.mask(label)).collect(),
+                            workflow_name: commands::bounded(&masker.mask(&workflow_name), 1024),
+                            name: job.name.clone(),
+                            labels: job.runs_on.iter().map(|label| commands::bounded(&masker.mask(label), 1024)).take(64).collect(),
                             matrix: matrix_metadata(&job.matrix, masker),
                         });
                     }
@@ -850,21 +928,26 @@ impl WorkflowRun {
                 let fail_fast = plans.first().is_none_or(|job| job.fail_fast);
                 let called = plans.first().is_some_and(|job| job.call.is_some());
                 let total = plans.len();
+                if called {
+                    tokens.reserve_calls(&format!("{token_id}/"), variants.map_or(total, |variants| variants.len()));
+                }
                 let mut plans = plans.into_iter().enumerate().filter(|(index, _)| {
                     variants.is_none_or(|variants| variants.contains(&(*index as u32)))
                 });
                 let mut tasks = tokio::task::JoinSet::new();
-                let (matrix_tx, matrix_cancel) = watch::channel(false);
+                let (matrix_tx, matrix_cancel) = watch::channel(*cancel.borrow());
                 let relay_tx = matrix_tx.clone();
                 let mut global_cancel = cancel.clone();
                 let relay = tokio::spawn(async move {
-                    while global_cancel.changed().await.is_ok() {
+                    loop {
                         if *global_cancel.borrow() {
                             let _ = relay_tx.send(true);
                             break;
                         }
+                        if global_cancel.changed().await.is_err() { break; }
                     }
                 });
+                let _relay_guard = BackgroundTask(relay.abort_handle());
                 let mut aggregate = JobResult {
                     result: "success".into(),
                     outputs: BTreeMap::new(),
@@ -902,26 +985,27 @@ impl WorkflowRun {
                         environment_values.apply(&token_id, &mut contexts);
                         contexts.values.insert(
                             "strategy".into(),
-                            Value::from_json(
-                                &serde_json::json!({"job-index":index,"job-total":total}),
-                            ),
+                            Value::from_json(&serde_json::json!({"job-index":index,"job-total":total,"fail-fast":job.fail_fast,"max-parallel":job.max_parallel.map_or(total as f64, f64::from)})),
                         );
                         contexts.values.insert("matrix".into(), job.matrix.clone());
                         let env = env.clone();
+                        let job_masker = masker.fork();
                         let name = format!("{name_prefix}{}", job.name);
                         let log = Log {
                             prefix: format!("{workflow_name}/{name}"),
-                            masker: masker.clone(),
+                            masker: job_masker.clone(),
                             progress: tokens.progress(&id, index),
+                            output: tokens.output.clone(),
                         };
                         let cancel = matrix_cancel.clone();
                         let mut execution = self.clone();
+                        execution.masker = job_masker;
                         execution.cancel = cancel.clone();
                         let mut nested_options = (*options).clone();
                         nested_options.job_state_file = None;
                         execution.options = Arc::new(nested_options);
                         let mut nested_tokens = (**tokens).clone();
-                        nested_tokens.completion_secret.clear();
+                        nested_tokens.nested = true;
                         execution.tokens = Arc::new(nested_tokens);
                         let called_prefix = format!("{token_id}/");
                         tasks.spawn(async move {
@@ -991,7 +1075,7 @@ impl WorkflowRun {
                                 });
                                 result
                             } else {
-                                run_job(job, index, options, contexts, env, log, cancel).await
+                                execution.run_leaf(job, index, options, contexts, env, log, cancel).await
                             };
                             (index, result)
                         });
@@ -999,18 +1083,25 @@ impl WorkflowRun {
                     let Some(result) = tasks.join_next().await else {
                         break;
                     };
-                    let (index, result) = result.context("Job task failed")?;
-                    saved
-                        .variants
-                        .entry(id.clone())
-                        .or_default()
-                        .insert(index.try_into().expect("matrix is bounded"), result.clone());
-                    saved
-                        .variant_order
-                        .entry(id.clone())
-                        .or_default()
-                        .push(index.try_into().expect("matrix is bounded"));
-                    save_job_state(options, &mut saved, masker)?;
+                    let (index, result) = match result {
+                        Ok(result) => result,
+                        Err(error) => {
+                            options.containment_lost.store(true, std::sync::atomic::Ordering::Release);
+                            let _ = matrix_tx.send(true);
+                            tasks.shutdown().await;
+                            relay.abort();
+                            return Err(anyhow::anyhow!("Job task failed: {error}"));
+                        }
+                    };
+                    if let Err(error) = self.record_state(&saved, |saved| {
+                        saved.variants.entry(id.clone()).or_default().insert(index.try_into().expect("matrix is bounded"), result.clone());
+                        saved.variant_order.entry(id.clone()).or_default().push(index.try_into().expect("matrix is bounded"));
+                    }) {
+                        let _ = matrix_tx.send(true);
+                        tasks.shutdown().await;
+                        relay.abort();
+                        return Err(error);
+                    }
                     if result.result == "failure" {
                         aggregate.result = "failure".into();
                         if fail_fast {
@@ -1034,46 +1125,24 @@ impl WorkflowRun {
                         });
                     }
                     let index = index.try_into().expect("matrix is bounded");
-                    saved.variants.entry(id.clone()).or_default().insert(
-                        index,
-                        JobResult {
-                            result: "cancelled".into(),
-                            outputs: BTreeMap::new(),
-                        },
-                    );
-                    saved
-                        .variant_order
-                        .entry(id.clone())
-                        .or_default()
-                        .push(index);
+                    self.record_state(&saved, |saved| {
+                        saved.variants.entry(id.clone()).or_default().insert(index, JobResult { result: "cancelled".into(), outputs: BTreeMap::new() });
+                        saved.variant_order.entry(id.clone()).or_default().push(index);
+                    })?;
                     if aggregate.result == "success" {
                         aggregate.result = "cancelled".into();
                     }
                 }
-                successful &= aggregate.result == "success" || aggregate.result == "skipped";
-                saved.jobs.insert(id.clone(), aggregate.clone());
-                save_job_state(options, &mut saved, masker)?;
-                if token_prefix.is_empty() {
-                    tokens.completed(&token_id);
-                }
-                results.insert(id, aggregate);
-            }
-            contexts.values.insert("jobs".into(), Value::Object(results.iter().map(|(id, result)| (
-        id.clone(), Value::from_json(&serde_json::json!({"result": result.result, "outputs": result.outputs}))
-    )).collect()));
-            Ok(JobResult {
-                result: if *cancel.borrow() {
-                    "cancelled"
-                } else if successful {
-                    "success"
-                } else {
-                    "failure"
-                }
-                .into(),
-                outputs: reusable::outputs(&raw, &contexts, masker)?,
-            })
+                self.record_state(&saved, |saved| { saved.jobs.insert(id, aggregate.clone()); })?;
+                tokens.completed(&token_id);
+                Ok(aggregate)
         })
     }
+}
+
+struct BackgroundTask(tokio::task::AbortHandle);
+impl Drop for BackgroundTask {
+    fn drop(&mut self) { self.0.abort(); }
 }
 
 const ADMISSION_POLL: Duration = Duration::from_millis(500);
@@ -1103,18 +1172,13 @@ async fn admit(
     else {
         return Some(cancel);
     };
-    // A masked name could match other groups, so it keeps a digest of the real name.
-    let mut group = log.masker.mask(&concurrency.group);
-    if group != concurrency.group {
-        let digest = <sha2::Sha256 as sha2::Digest>::digest(concurrency.group.to_lowercase());
-        let digest = format!("{digest:x}");
-        group = format!("{group} #{}", &digest[..16]);
-    }
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(concurrency.group.to_lowercase());
+    let group = format!("{digest:x}");
     log.emit(Update::Concurrency {
-        group: group.clone(),
+        group,
         cancel_in_progress: concurrency.cancel_in_progress,
     });
-    log.line(&format!("Waiting for concurrency group '{group}'"));
+    log.line(&format!("Waiting for concurrency group '{}'", log.masker.mask(&concurrency.group)));
     let path = directory.join(format!("{}.{index}", job.job_id));
     loop {
         match admission(&path) {
@@ -1166,7 +1230,27 @@ fn save_job_state(options: &Options, state: &mut JobState, masker: &Masker) -> R
         path.parent()
             .context("job state needs a parent directory")?,
     )?;
-    serde_json::to_writer(file.as_file_mut(), state)?;
+    struct Bounded<'a> { file: &'a mut std::fs::File, remaining: usize }
+    impl std::io::Write for Bounded<'_> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > self.remaining { return Err(std::io::ErrorKind::FileTooLarge.into()); }
+            let written = std::io::Write::write(self.file, bytes)?;
+            self.remaining -= written;
+            Ok(written)
+        }
+        fn flush(&mut self) -> std::io::Result<()> { std::io::Write::flush(self.file) }
+    }
+    let written = serde_json::to_writer(Bounded { file: file.as_file_mut(), remaining: crate::progress::MAX_STATE_BYTES }, state);
+    if written.as_ref().err().is_some_and(|error| error.io_error_kind() == Some(std::io::ErrorKind::FileTooLarge)) {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        eprintln!("::warning::Private replay state exceeds its budget; replay snapshot omitted");
+        return Ok(());
+    }
+    written?;
     file.persist(path)
         .context("Unable to save private job replay state")?;
     Ok(())
@@ -1178,6 +1262,7 @@ struct Job {
     contexts: Contexts,
     env: BTreeMap<String, String>,
     saved_env: BTreeMap<String, String>,
+    job_exports: BTreeMap<String, String>,
     paths: Vec<String>,
     log: Log,
     cancel: watch::Receiver<bool>,
@@ -1186,11 +1271,27 @@ struct Job {
     temp: tempfile::TempDir,
     cache: PathBuf,
     podman: Podman,
+    explicit_container: bool,
+    default_shell: Option<String>,
+    runtime_path: String,
+    default_working_directory: Option<String>,
     sequence: usize,
+    anonymous_action: usize,
+    command_stopped: Option<String>,
     public_step: u32,
+    next_step: usize,
     active_files: PathBuf,
     posts: Vec<actions::Post>,
+    prepared_actions: BTreeMap<Vec<usize>, actions::PreparedAction>,
+    action_path: Vec<usize>,
+    scope: Option<JobScope>,
+    action_bytes: usize,
     matchers: matchers::Matchers,
+    summaries: BTreeMap<u32, String>,
+    summary_bytes: usize,
+    /// The job's own cgroup under the worker's, so processes a step leaves running survive until
+    /// the job ends and no longer.
+    processes: Option<crate::process::Cgroup>,
 }
 
 async fn run_job(
@@ -1214,10 +1315,9 @@ async fn run_job(
     let continued = plan.continue_on_error;
     let cancelled = cancel.clone();
     let mut interrupted = None;
+    let containment = options.containment_lost.clone();
     let result = async {
-        let temp = tempfile::Builder::new()
-            .prefix("codeyard-actions-")
-            .tempdir()?;
+        let temp = crate::fs::private_tempdir("codeyard-actions-", None)?;
         let prefix = format!(
             "codeyard-{}-{index}-{}",
             std::process::id(),
@@ -1228,6 +1328,11 @@ async fn run_job(
         )
         .to_ascii_lowercase();
         let podman = Podman::new(&options, prefix)?;
+        let processes = options
+            .process_root
+            .as_deref()
+            .map(|root| crate::process::Cgroup::temporary(root, "job-"))
+            .transpose()?;
         let deadline = Instant::now() + minutes(plan.timeout_minutes.unwrap_or(360.0))?;
         let cache = cache_directory();
         std::fs::create_dir_all(&cache)?;
@@ -1237,6 +1342,7 @@ async fn run_job(
             contexts,
             env,
             saved_env: BTreeMap::new(),
+            job_exports: BTreeMap::new(),
             paths: Vec::new(),
             log: log.clone(),
             cancel,
@@ -1245,11 +1351,25 @@ async fn run_job(
             temp,
             cache,
             podman,
+            explicit_container: false,
+            default_shell: None,
+            runtime_path: std::env::var("PATH").unwrap_or_default(),
+            default_working_directory: None,
             sequence: 0,
+            anonymous_action: 0,
+            command_stopped: None,
             public_step:1,
+            next_step: 0,
             active_files: PathBuf::new(),
             posts: Vec::new(),
+            prepared_actions: BTreeMap::new(),
+            action_path: Vec::new(),
+            scope: None,
+            action_bytes: 0,
             matchers: matchers::Matchers::default(),
+            summaries: BTreeMap::new(),
+            summary_bytes: 0,
+            processes,
         };
         let mut cancellation = job.cancel.clone();
         let result = tokio::select! {
@@ -1257,11 +1377,38 @@ async fn run_job(
             _ = tokio::time::sleep_until(deadline.into()) => {interrupted=Some(Conclusion::TimedOut);Err(anyhow::anyhow!("The job has timed out."))},
             _ = cancellation.wait_for(|cancelled| *cancelled) => {interrupted=Some(Conclusion::Cancelled);Err(anyhow::anyhow!("The job was cancelled."))},
         };
-        job.status.failed |= result.is_err();
+        if interrupted.is_none() && result.as_ref().map_or(true, |result| result.result != "success") {
+            if *job.cancel.borrow() { interrupted = Some(Conclusion::Cancelled); }
+            else if Instant::now() >= deadline { interrupted = Some(Conclusion::TimedOut); }
+        }
+        job.restore_scope();
+        job.action_path.clear();
         job.status.cancelled = *job.cancel.borrow();
+        job.status.failed |= result.is_err() && !job.status.cancelled;
+        job.sync_status();
         if result.is_err(){job.log.interrupt_step(interrupted.unwrap_or(Conclusion::Failure));}
         let mut result = result;
+        job.deadline = Instant::now() + CLEANUP_GRACE;
+        let (_cleanup_tx, cleanup_cancel) = watch::channel(false);
+        job.cancel = cleanup_cancel;
+        if interrupted.is_some() && !job.podman.cleanup_active_actions().await {
+            containment.store(true, std::sync::atomic::Ordering::Release);
+        }
+        if interrupted.is_some() && !containment.load(std::sync::atomic::Ordering::Acquire) {
+            let remaining = job.plan.steps[job.next_step..].to_vec();
+            let mut outputs = BTreeMap::new();
+            for (index, step) in remaining.into_iter().enumerate() {
+                if Instant::now() >= job.deadline { break; }
+                job.public_step += 1;
+                let deadline = job.deadline;
+                let _ = tokio::time::timeout_at(deadline.into(), job.step(&step, job.next_step + index, 0, &mut outputs)).await;
+                job.restore_scope();
+                job.action_path.clear();
+            }
+        }
         while let Some(post) = job.posts.pop() {
+            if Instant::now() >= job.deadline || containment.load(std::sync::atomic::Ordering::Acquire) { break; }
+            job.sync_status();
             job.public_step+=1;
             let number=job.public_step;
             let started=Instant::now();
@@ -1277,9 +1424,22 @@ async fn run_job(
         job.public_step+=1;
         let cleanup=Instant::now();
         job.log.start_step(job.public_step,"Complete job");
-        let cleaned=job.podman.cleanup().await;
-        if !cleaned {job.log.line("Container cleanup failed");}
+        let mut cleaned=job.podman.cleanup().await;
+        if !cleaned {
+            job.log.line("Container cleanup failed");
+        }
+        // Processes steps left running end with the job, after the post steps that may use them.
+        if let Some(processes) = job.processes.take() {
+            if let Err(error) = processes.cleanup(Duration::from_secs(30)).await {
+                job.log.line(&format!("Process cleanup failed: {error:#}"));
+                cleaned = false;
+            }
+        }
+        if !cleaned {
+            containment.store(true, std::sync::atomic::Ordering::Release);
+        }
         job.log.finish_step(job.public_step,if cleaned{Conclusion::Success}else{Conclusion::Failure},cleanup);
+        anyhow::ensure!(cleaned, "Job cleanup failed");
         result
     }
     .await;
@@ -1308,7 +1468,7 @@ async fn run_job(
             .try_into()
             .unwrap_or(u64::MAX),
     });
-    if continued && result.result == "failure" {
+    if continued && result.result == "failure" && !containment.load(std::sync::atomic::Ordering::Acquire) {
         log.line("Job failure ignored (continue-on-error)");
         result.result = "success".into();
     }
@@ -1316,16 +1476,83 @@ async fn run_job(
     result
 }
 
+struct JobScope {
+    contexts: Contexts,
+    env: BTreeMap<String, String>,
+    shell: Option<String>,
+    directory: Option<String>,
+    planned_shell: Option<String>,
+    planned_directory: Option<String>,
+    deadline: Instant,
+    status: Status,
+}
+
 impl Job {
+    fn checkpoint_scope(&mut self) {
+        self.scope = Some(JobScope {
+            contexts: self.contexts.clone(), env: self.env.clone(),
+            shell: self.default_shell.clone(), directory: self.default_working_directory.clone(),
+            planned_shell: self.plan.default_shell.clone(), planned_directory: self.plan.default_working_directory.clone(),
+            deadline: self.deadline, status: self.status,
+        });
+    }
+
+    fn restore_scope(&mut self) {
+        if let Some(scope) = self.scope.take() {
+            self.contexts = scope.contexts; self.env = scope.env;
+            self.saved_env = self.job_exports.clone();
+            self.default_shell = scope.shell; self.default_working_directory = scope.directory;
+            self.plan.default_shell = scope.planned_shell; self.plan.default_working_directory = scope.planned_directory;
+            self.deadline = scope.deadline; self.status = scope.status;
+        }
+    }
+
+    fn export_env(&mut self, values: impl IntoIterator<Item = (String, String)>) {
+        for (key, value) in values {
+            self.job_exports.insert(key.clone(), value.clone());
+            self.saved_env.insert(key, value);
+        }
+    }
+
+    async fn evaluate<T: Send + 'static>(
+        &self, deadline: Instant, evaluate: impl FnOnce(&Contexts, Status) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        anyhow::ensure!(Instant::now() < deadline && !*self.cancel.borrow(), "Expression evaluation interrupted");
+        let contexts = self.contexts.clone();
+        let status = self.status;
+        let cancel = self.cancel.clone();
+        tokio::time::timeout_at(deadline.into(), tokio::task::spawn_blocking(move ||
+            expressions::with_execution_limits(deadline, cancel, || evaluate(&contexts, status))
+        )).await.context("Expression evaluation timed out")??
+    }
+
+    async fn text(&self, template: &str, deadline: Instant) -> Result<String> {
+        let template = template.to_owned();
+        self.evaluate(deadline, move |contexts, status| text(&template, contexts, status)).await
+    }
+
+    fn sync_status(&mut self) {
+        if let Some(Value::Object(job)) = self.contexts.values.get_mut("job") {
+            job.insert("status".into(), Value::String(if self.status.cancelled { "cancelled" } else if self.status.failed { "failure" } else { "success" }.into()));
+        }
+    }
+
+    fn restore_event(&self) -> Result<PathBuf> {
+        let path = self.temp.path().join("event.json");
+        let payload = self.contexts.values.get("github").and_then(|github| match github {
+            Value::Object(values) => values.get("event"),
+            _ => None,
+        }).map(Value::to_json).unwrap_or_else(|| serde_json::json!({}));
+        crate::fs::replace_file(&path, &serde_json::to_vec(&payload)?)?;
+        Ok(path)
+    }
+
     async fn execute(&mut self) -> Result<JobResult> {
         let setup = Instant::now();
         self.log.start_step(1, "Set up job");
+        let event = self.restore_event()?;
         if let Some(Value::Object(github)) = self.contexts.values.get_mut("github") {
             github.insert("job".into(), Value::String(self.plan.job_id.clone()));
-            let event = self.temp.path().join("event.json");
-            if let Some(payload) = github.get("event") {
-                std::fs::write(&event, serde_json::to_vec(&payload.to_json())?)?;
-            }
             github.insert(
                 "event_path".into(),
                 Value::String(event.display().to_string()),
@@ -1336,20 +1563,12 @@ impl Job {
             .insert("matrix".into(), self.plan.matrix.clone());
         if let Some(Value::Object(strategy)) = self.contexts.values.get_mut("strategy") {
             strategy.insert("fail-fast".into(), Value::Bool(self.plan.fail_fast));
-            strategy.insert(
-                "max-parallel".into(),
-                Value::Number(
-                    self.plan
-                        .max_parallel
-                        .unwrap_or(self.options.concurrent_jobs) as f64,
-                ),
-            );
+            strategy.entry("max-parallel".into()).or_insert_with(|| Value::Number(self.plan.max_parallel.unwrap_or(self.options.concurrent_jobs) as f64));
         }
         self.contexts.values.insert("runner".into(), Value::from_json(&serde_json::json!({"os":runner_os(),"arch":runner_arch(),"name":"codeyard-actions","temp":self.temp.path(),"tool_cache":self.cache.join("tool_cache"),"environment":"self-hosted","debug":self.env.get("RUNNER_DEBUG").cloned().unwrap_or_default()})));
         std::fs::create_dir_all(self.cache.join("tool_cache"))?;
-        for (key, template) in &self.plan.env {
-            self.env
-                .insert(key.clone(), text(template, &self.contexts, self.status)?);
+        for scope in &self.plan.env {
+            self.env.extend(scope.resolve(&self.contexts, self.status)?);
         }
         self.contexts.values.insert("env".into(), object(&self.env));
         // An empty job container image means no job container, as on GitHub.
@@ -1360,6 +1579,7 @@ impl Job {
             .map(|container| self.container(container))
             .transpose()?
             .filter(|container| !container.image.is_empty());
+        self.explicit_container = container.is_some();
         if container.is_none() {
             // Admission lowercases labels, so the platform key is matched without case.
             let mapped = self.plan.runs_on.iter().find_map(|label| {
@@ -1371,6 +1591,7 @@ impl Job {
                 })
             });
             match mapped {
+                Some(image) if image.starts_with("vm:") => bail!("VM platform mappings are not integrated with workflow execution; use the JobVm API explicitly"),
                 Some(image) if image != "-self-hosted" => {
                     container = Some(Container {
                         image: image.into(),
@@ -1407,13 +1628,32 @@ impl Job {
                 &self.cache,
             )
             .await?;
-        self.contexts.values.insert("job".into(), Value::from_json(&serde_json::json!({"status":"success","services":services,"container":{"id":self.podman.job}})));
-        self.log.finish_step(1, Conclusion::Success, setup);
+        if self.podman.job.is_some() {
+            self.runtime_path = self.podman.path.clone().unwrap_or_else(|| "/usr/bin:/bin".into());
+        }
+        self.contexts.values.insert("job".into(), Value::from_json(&serde_json::json!({"status":"success","services":services,"container":{"id":self.podman.job,"network":self.podman.network}})));
+        self.default_shell = self.plan.default_shell.as_ref().map(|value| text(value, &self.contexts, self.status)).transpose()?;
+        self.default_working_directory = self.plan.default_working_directory.as_ref().map(|value| text(value, &self.contexts, self.status)).transpose()?;
         let steps = self.plan.steps.clone();
+        for (index, step) in steps.iter().enumerate() { self.prepare_step(step, index, 0).await?; }
+        self.log.finish_step(1, Conclusion::Success, setup);
         let mut outputs = BTreeMap::new();
-        for step in &steps {
+        for (index, step) in steps.iter().enumerate() {
+            anyhow::ensure!(!*self.cancel.borrow(), "The job was cancelled.");
+            anyhow::ensure!(Instant::now() < self.deadline, "The job has timed out.");
+            self.next_step = index + 1;
+            anyhow::ensure!(!self.options.containment_lost.load(std::sync::atomic::Ordering::Acquire),
+                "Container cleanup failed; refusing further execution");
             self.public_step += 1;
-            self.step(step, 0, &mut outputs).await?;
+            let started = Instant::now();
+            if let Err(error) = self.step(step, index, 0, &mut outputs).await {
+                self.status.failed = true;
+                self.log.line(&format!("Error evaluating step: {error:#}"));
+                self.log.finish_step(self.public_step, Conclusion::Failure, started);
+                if let Some(Value::Object(job)) = self.contexts.values.get_mut("job") {
+                    job.insert("status".into(), Value::String("failure".into()));
+                }
+            }
         }
         let mut env = self.env.clone();
         env.extend(self.saved_env.clone());
@@ -1503,8 +1743,9 @@ impl Job {
                 },
             });
         }
+        let image = expand(&container.image)?;
         Ok(Container {
-            image: expand(&container.image)?,
+            image: image.strip_prefix("docker://").unwrap_or(&image).to_owned(),
             credentials: container
                 .credentials
                 .as_ref()
@@ -1524,21 +1765,28 @@ impl Job {
     fn step<'a>(
         &'a mut self,
         step: &'a Step,
+        index: usize,
         depth: usize,
         parent_outputs: &'a mut BTreeMap<String, String>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
+            if depth == 0 { self.checkpoint_scope(); }
+            let result = async {
             if depth > 20 {
                 bail!("Composite actions nested more than 20 levels");
             }
-            self.status.cancelled = *self.cancel.borrow();
+            self.status.cancelled |= *self.cancel.borrow();
             self.matchers.reset();
             self.prepare_files()?;
+            let action = match &step.id {
+                Some(id) => id.clone(),
+                None => {
+                    self.anonymous_action += 1;
+                    if self.anonymous_action == 1 { "__run".into() } else { format!("__run_{}", self.anonymous_action) }
+                }
+            };
             if let Some(Value::Object(github)) = self.contexts.values.get_mut("github") {
-                github.insert(
-                    "action".into(),
-                    Value::String(step.id.clone().unwrap_or_else(|| "__run".into())),
-                );
+                github.insert("action".into(), Value::String(action));
             }
             let name = step
                 .name
@@ -1548,29 +1796,19 @@ impl Job {
                     StepAction::Run { .. } => "Run script".into(),
                     StepAction::Uses { reference, .. } => reference.clone(),
                 });
-            let name = text(&name, &self.contexts, self.status)?;
-            if self.log.progress.is_some() {
-                anyhow::ensure!(
-                    name.len() <= 1024,
-                    "step name exceeds the progress metadata limit"
-                );
-            }
-            let step_started = Instant::now();
-            if depth == 0 {
-                self.log.start_step(self.public_step, &name);
-            }
             let mut env = self.env.clone();
             env.extend(self.saved_env.clone());
             self.contexts.values.insert("env".into(), object(&env));
-            for (key, template) in &step.env {
-                env.insert(key.clone(), text(template, &self.contexts, self.status)?);
-            }
+            let template = step.env.clone();
+            env.extend(self.evaluate(self.deadline, move |contexts, status| template.resolve(contexts, status)).await?);
             self.contexts.values.insert("env".into(), object(&env));
-            let condition = expressions::evaluate_condition(
-                step.condition.as_deref().unwrap_or("success()"),
-                &self.contexts,
-                self.status,
-            )?;
+            let name = self.text(&name, self.deadline).await?;
+            let name = commands::bounded(&self.log.masker.mask(&name), 1024);
+            let step_started = Instant::now();
+            if depth == 0 { self.log.start_step(self.public_step, &name); }
+            let condition = step.condition.clone().unwrap_or_else(|| "success()".into());
+            let condition = self.evaluate(self.deadline, move |contexts, status|
+                Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await?;
             let mut outputs = BTreeMap::new();
             let outcome;
             let conclusion;
@@ -1581,16 +1819,22 @@ impl Job {
             } else {
                 self.log.line(&format!("Step started: {name}"));
                 let deadline = if let Some(template) = &step.timeout_minutes {
-                    let value = text(template, &self.contexts, self.status)?
+                    let value = self.text(template, self.deadline).await?
                         .parse::<f64>()
                         .context("timeout-minutes must be a number")?;
                     self.deadline.min(Instant::now() + minutes(value)?)
                 } else {
                     self.deadline
                 };
+                let continued = if let Some(template) = &step.continue_on_error {
+                    let template = template.clone();
+                    self.evaluate(deadline, move |contexts, status| boolean(&template, contexts, status)).await?
+                } else { false };
+                self.action_path.push(index);
                 let result = self
                     .action(&step.action, env, deadline, depth, &mut outputs)
                     .await;
+                self.action_path.pop();
                 let ok = match result {
                     Ok(ok) => ok,
                     Err(error) => {
@@ -1598,17 +1842,12 @@ impl Job {
                         false
                     }
                 };
-                outcome = if self.status.cancelled || *self.cancel.borrow() {
+                outcome = if *self.cancel.borrow() {
                     "cancelled"
                 } else if ok {
                     "success"
                 } else {
                     "failure"
-                };
-                let continued = if let Some(template) = &step.continue_on_error {
-                    boolean(template, &self.contexts, self.status)?
-                } else {
-                    false
                 };
                 conclusion = if outcome == "failure" && continued {
                     "success"
@@ -1635,20 +1874,11 @@ impl Job {
                 }
             }
             parent_outputs.extend(outputs);
-            if let Some(Value::Object(job)) = self.contexts.values.get_mut("job") {
-                job.insert(
-                    "status".into(),
-                    Value::String(
-                        if self.status.failed {
-                            "failure"
-                        } else {
-                            "success"
-                        }
-                        .into(),
-                    ),
-                );
-            }
+            self.sync_status();
             Ok(())
+            }.await;
+            if depth == 0 { self.scope = None; }
+            result
         })
     }
 
@@ -1667,18 +1897,15 @@ impl Job {
                     shell,
                     working_directory,
                 } => {
-                    let script = text(script, &self.contexts, self.status)?;
-                    let shell = shell
-                        .as_ref()
-                        .or(self.plan.default_shell.as_ref())
-                        .map(|value| text(value, &self.contexts, self.status))
-                        .transpose()?;
-                    let directory = working_directory
-                        .as_ref()
-                        .or(self.plan.default_working_directory.as_ref())
-                        .map(|value| text(value, &self.contexts, self.status))
-                        .transpose()?
-                        .unwrap_or_default();
+                    let script = self.text(script, deadline).await?;
+                    let shell = match shell {
+                        Some(value) => Some(self.text(value, deadline).await?),
+                        None => self.default_shell.clone(),
+                    };
+                    let directory = match working_directory {
+                        Some(value) => self.text(value, deadline).await?,
+                        None => self.default_working_directory.clone().unwrap_or_default(),
+                    };
                     let directory = self.options.directory.join(directory);
                     self.script(
                         &script,
@@ -1691,7 +1918,7 @@ impl Job {
                     .await
                 }
                 StepAction::Uses { reference, with } => {
-                    self.uses(reference, with, env, deadline, depth, outputs)
+                    self.uses(reference, with, env, deadline, depth, outputs, actions::ActionStage::Main)
                         .await
                 }
             }
@@ -1709,7 +1936,7 @@ impl Job {
     ) -> Result<bool> {
         // GitHub gives a job container sh and a host job bash, whatever runs the container engine.
         let explicit_shell = shell.is_some();
-        let shell = shell.unwrap_or(if self.plan.container.is_some() {
+        let shell = shell.unwrap_or(if self.explicit_container {
             "sh"
         } else {
             "bash"
@@ -1720,6 +1947,7 @@ impl Job {
         }
         let mut program = parts.remove(0);
         if program == "bash"
+            && !explicit_shell
             && self.podman.job.is_none()
             && !executable("bash", &env)
             && shell == "bash"
@@ -1742,7 +1970,7 @@ impl Job {
             "cmd" => format!("@echo off\n{script}"),
             _ => script.into(),
         };
-        std::fs::write(&path, script)?;
+        crate::fs::replace_file(&path, script.as_bytes())?;
         if parts.is_empty() {
             parts = match program.as_str() {
                 // Only an explicitly chosen bash gets pipefail. GitHub's default is bash -e.
@@ -1782,8 +2010,8 @@ impl Job {
                 }
             }
         }
+        env.entry("CI".into()).or_insert_with(|| "true".into());
         for (key, value) in [
-            ("CI", "true"),
             ("GITHUB_ACTIONS", "true"),
             ("RUNNER_OS", runner_os()),
             ("RUNNER_ARCH", runner_arch()),
@@ -1796,24 +2024,21 @@ impl Job {
             self.cache.join("tool_cache").display().to_string(),
         );
         let mut paths = self.paths.iter().rev().cloned().collect::<Vec<_>>();
-        paths.push(env.get("PATH").cloned().unwrap_or_else(|| {
-            if self.podman.job.is_some() {
-                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".into()
-            } else {
-                std::env::var("PATH").unwrap_or_default()
-            }
-        }));
-        env.insert("PATH".into(), paths.join(":"));
+        let base = env.get("PATH").cloned().or_else(|| {
+            if self.podman.job.is_some() { self.podman.path.clone() }
+            else { Some(self.runtime_path.clone()) }
+        });
+        if let Some(base) = base { paths.push(base); }
+        if !paths.is_empty() { env.insert("PATH".into(), paths.join(":")); }
         env
     }
 
     fn prepare_files(&mut self) -> Result<()> {
         self.sequence += 1;
-        let files = self.temp.path().join(format!("commands-{}", self.sequence));
-        std::fs::create_dir_all(&files)?;
+        let files = crate::fs::private_tempdir("commands-", Some(self.temp.path()))?.keep();
         for name in ["ENV", "OUTPUT", "PATH", "STEP_SUMMARY", "STATE"] {
             let path = files.join(name);
-            std::fs::write(&path, "")?;
+            crate::fs::replace_file(&path, b"")?;
             if let Some(Value::Object(github)) = self.contexts.values.get_mut("github") {
                 github.insert(
                     name.to_ascii_lowercase(),
@@ -1838,12 +2063,7 @@ impl Job {
     ) -> Result<bool> {
         let mut env = self.environment(env);
         let files = self.active_files.clone();
-        let event = self.temp.path().join("event.json");
-        if let Some(Value::Object(github)) = self.contexts.values.get("github") {
-            if let Some(payload) = github.get("event") {
-                std::fs::write(&event, serde_json::to_vec(&payload.to_json())?)?;
-            }
-        }
+        let event = self.restore_event()?;
         env.insert("GITHUB_EVENT_PATH".into(), event.display().to_string());
         let allow_unsafe = env
             .get("ACTIONS_ALLOW_UNSECURE_COMMANDS")
@@ -1853,12 +2073,17 @@ impl Job {
         } else {
             let mut command = Command::new(program);
             command.args(args).envs(&env).current_dir(directory);
+            if let Some(processes) = &self.processes {
+                processes.attach(&mut command)?;
+            }
             command
         };
         let mut commands = Commands::new(
             self.options.directory.clone(),
             std::mem::take(&mut self.matchers),
         );
+        commands.stopped = self.command_stopped.take();
+        commands.debug = self.options.debug || env.get("ACTIONS_STEP_DEBUG").is_some_and(|value| value.eq_ignore_ascii_case("true"));
         let result = process::execute(
             &mut command,
             &self.log,
@@ -1866,12 +2091,14 @@ impl Job {
             &mut self.cancel,
             deadline,
             allow_unsafe,
+            self.processes.is_some() && self.podman.job.is_none(),
         )
         .await;
+        self.command_stopped = commands.stopped.take();
         self.matchers = commands.matchers;
-        self.saved_env.extend(commands.env);
+        self.export_env(commands.env);
         self.paths.extend(commands.paths);
-        outputs.extend(commands.outputs);
+        commands::update_outputs(outputs, commands.outputs);
         // The deprecated ::save-state command feeds the same STATE_ values as GITHUB_STATE.
         if let Some(state) = state.as_mut() {
             state.extend(commands.state);
@@ -1891,21 +2118,37 @@ impl Job {
                 self.log
                     .line("Error: Can't store NODE_OPTIONS using '$GITHUB_ENV' command.");
             } else if !key.starts_with("GITHUB_") && !key.starts_with("RUNNER_") {
-                self.saved_env.insert(key, value);
+                self.export_env([(key, value)]);
             }
         }
-        outputs.extend(commands::pairs(&read_command_file(&files.join("OUTPUT"))?)?);
+        commands::update_outputs(outputs, commands::entries(&read_command_file(&files.join("OUTPUT"))?)?);
         if let Some(state) = state {
             state.extend(commands::pairs(&read_command_file(&files.join("STATE"))?)?);
         }
         let summary = files.join("STEP_SUMMARY");
-        if open_command_file(&summary, false)?.metadata()?.len() > COMMAND_FILE_LIMIT {
-            self.log
-                .line("Error: Step summary exceeds the maximum allowed size of 1024k.");
-            write_command_file(&summary, "")?;
-        } else {
-            let contents = read_command_file(&summary)?;
-            write_command_file(&summary, &self.log.masker.mask(&contents))?;
+        let summary_file = match open_command_file(&summary, false) {
+            Ok(file) => Some(file),
+            Err(error) if error.downcast_ref::<std::io::Error>().is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => None,
+            Err(error) => return Err(error),
+        };
+        if let Some(file) = summary_file {
+            if file.metadata()?.len() > COMMAND_FILE_LIMIT {
+                self.log.line("Error: Step summary exceeds the maximum allowed size of 1024k.");
+                write_command_file(&summary, "")?;
+            } else {
+                let contents = self.log.masker.mask(&read_command_file(&summary)?).replace('\0', "");
+                write_command_file(&summary, &contents)?;
+                if !contents.is_empty() {
+                    let stored = self.summaries.entry(self.public_step).or_default();
+                    let remaining = crate::progress::MAX_STEP_SUMMARY_BYTES.saturating_sub(stored.len())
+                        .min(crate::progress::MAX_RUN_SUMMARY_BYTES.saturating_sub(self.summary_bytes));
+                    if contents.len() > remaining { self.log.line("Warning: Persisted summaries reached their delivery budget."); }
+                    let piece = commands::bounded(&contents, remaining);
+                    self.summary_bytes += piece.len();
+                    stored.push_str(&piece);
+                    if !stored.is_empty() { self.log.emit(Update::Summary { number: self.public_step, markdown: stored.clone() }); }
+                }
+            }
         }
         for path in read_command_file(&files.join("PATH"))?
             .lines()
@@ -1949,14 +2192,13 @@ fn read_command_file(path: &Path) -> Result<String> {
         contents.len() as u64 <= COMMAND_FILE_LIMIT,
         "A command file exceeds the maximum allowed size"
     );
+    if contents.starts_with('\u{feff}') { contents.drain(..3); }
     Ok(contents)
 }
 
 fn write_command_file(path: &Path, contents: &str) -> Result<()> {
-    use std::io::Write;
-    let mut file = open_command_file(path, true)?;
-    file.set_len(0)?;
-    file.write_all(contents.as_bytes())?;
+    let _file = open_command_file(path, false)?;
+    crate::fs::replace_file(path, contents.as_bytes())?;
     Ok(())
 }
 
@@ -2069,7 +2311,7 @@ mod tests {
                 shell: Some("bash".into()),
                 working_directory: None,
             },
-            env: BTreeMap::new(),
+            env: Default::default(),
             continue_on_error: None,
             timeout_minutes: None,
         }
@@ -2091,7 +2333,7 @@ mod tests {
             max_parallel: None,
             timeout_minutes: Some(1.0),
             continue_on_error: false,
-            env: BTreeMap::new(),
+            env: Vec::new(),
             default_shell: None,
             default_working_directory: None,
             container: None,
@@ -2218,14 +2460,14 @@ mod tests {
     #[test]
     fn dispatch_inputs_take_their_declared_types() {
         let raw: serde_yaml::Value = serde_yaml::from_str(
-            "on:\n  workflow_dispatch:\n    inputs:\n      publish: {type: boolean}\n      count: {type: number}\n      name: {type: string}\n",
+            "on:\n  workflow_dispatch:\n    inputs:\n      publish: {type: boolean}\n      count: {type: number}\n      name: {type: string, default: 'true'}\n",
         )
         .unwrap();
         assert_eq!(
             typed_dispatch_inputs(
                 &raw,
-                serde_json::json!({"publish": "false", "count": "2.5", "name": "true"})
-            ),
+                serde_json::json!({"publish": "false", "count": "2.5"})
+            ).unwrap().typed,
             serde_json::json!({"publish": false, "count": 2.5, "name": "true"})
         );
     }

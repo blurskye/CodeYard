@@ -1,6 +1,7 @@
 //! Where uploaded files live: a directory under the state directory, or an
 //! S3-compatible bucket when the S3_* environment variables are set.
 pub mod local;
+pub mod range;
 pub mod s3;
 
 use anyhow::Result;
@@ -246,6 +247,26 @@ impl ObjectStore {
                 if bytes.len() != length { return Err(StorageError::Rejected); }
                 Ok(bytes)
             }
+        }
+    }
+
+    /// Opens one object range; callers retain the reader and bound each read and send.
+    pub async fn open_range(
+        &self, key: &str, offset: u64, length: u64,
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send>, StorageError> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        if !valid_key(key) || length == 0 || offset.checked_add(length).is_none() {
+            return Err(StorageError::Invalid);
+        }
+        match &self.backend {
+            Backend::Local(store) => {
+                let (mut file, size) = store.open_file(key).await?;
+                if offset + length > size { return Err(StorageError::Rejected); }
+                file.seek(std::io::SeekFrom::Start(offset)).await?;
+                Ok(Box::new(file.take(length)))
+            }
+            Backend::S3(store) => store.open_range(key, offset, length).await
+                .map_err(|_| StorageError::Unavailable),
         }
     }
 

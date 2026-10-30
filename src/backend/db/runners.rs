@@ -84,15 +84,6 @@ impl RunnerProjection {
     }
 }
 
-#[derive(Default)]
-pub struct RunnerFilter<'a> {
-    pub id: Option<i64>,
-    pub name: Option<&'a str>,
-    pub group: Option<i64>,
-    pub offset: i64,
-    pub limit: i64,
-}
-
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct GroupInput {
     pub name: Option<String>,
@@ -107,18 +98,19 @@ pub struct GroupInput {
 impl GroupInput {
     /// Whether the edit can take access away from runs already on the group's runners. A
     /// rename alone cannot; runners joining or leaving are handled one by one.
-    pub fn changes_access(&self) -> bool {
-        self.visibility.is_some()
-            || self.allows_public_repositories.is_some()
-            || self.restricted_to_workflows.is_some()
-            || self.selected_workflows.is_some()
-            || self.selected_repository_ids.is_some()
+    pub fn changes_access(&self, existing: &Group) -> bool {
+        self.visibility.as_ref().is_some_and(|value| value != &existing.visibility)
+            || self.allows_public_repositories.is_some_and(|value| value != existing.allows_public_repositories)
+            || self.restricted_to_workflows.is_some_and(|value| value != existing.restricted_to_workflows)
+            || self.selected_workflows.as_ref().is_some_and(|values| {
+                let previous = serde_json::from_str::<Vec<String>>(&existing.selected_workflows);
+                previous.map_or(true, |previous| values.iter().collect::<std::collections::BTreeSet<_>>() != previous.iter().collect())
+            })
+            || self.selected_repository_ids.as_ref().is_some_and(|values| values.iter().collect::<std::collections::BTreeSet<_>>() != existing.repositories.iter().collect())
     }
     pub fn validate(&self) -> Result<()> {
         anyhow::ensure!(
-            self.name.as_ref().is_none_or(|name| !name.trim().is_empty()
-                && name.len() <= 100
-                && !name.chars().any(char::is_control)),
+            self.name.as_ref().is_none_or(|name| valid_group_name(name)),
             Refusal::Invalid("name")
         );
         anyhow::ensure!(
@@ -203,14 +195,18 @@ pub(crate) fn runner_node_name(public_key: &str) -> String {
 pub(crate) fn jit_node_name(id: i64, hash: &str) -> String {
     format!("jit-{id}-{}", hash.chars().take(32).collect::<String>())
 }
+pub fn valid_group_name(name: &str) -> bool {
+    !name.trim().is_empty() && name.len() <= 100 && !name.chars().any(char::is_control)
+}
+pub fn valid_label(label: &str) -> bool {
+    !label.is_empty() && label.len() <= 128
+        && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+}
 pub fn normalize_labels(labels: &[String]) -> Result<Vec<String>> {
     anyhow::ensure!(labels.len() <= 100, Refusal::Invalid("labels"));
     let mut labels: Vec<_> = labels.iter().map(|s| s.to_ascii_lowercase()).collect();
     anyhow::ensure!(
-        labels.iter().all(|s| !s.is_empty()
-            && s.len() <= 128
-            && s.bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))),
+        labels.iter().all(|label| valid_label(label)),
         Refusal::Invalid("labels")
     );
     labels.retain(|label| label != "self-hosted");
@@ -304,10 +300,13 @@ pub struct Scheduling {
     pub labels: Vec<String>,
     pub group: Option<String>,
     pub concurrency: Option<super::action_concurrency::Configuration>,
+    /// Expression and non-run contexts retained until the enqueue transaction assigns identity.
+    pub concurrency_expression: Option<(serde_yaml::Value, codeyard_actions::expressions::Contexts)>,
 }
 
 #[derive(Clone, Debug)]
 pub struct Registration<'a> {
+    pub session: Option<&'a str>,
     pub hash: &'a str,
     pub expires: chrono::DateTime<chrono::Utc>,
     pub name: Option<&'a str>,
@@ -338,16 +337,25 @@ pub(crate) fn workflow_allowed(
     })
 }
 
-#[derive(Default)]
-pub struct GroupQuery<'a> {
-    pub id: Option<i64>,
-    pub repository: Option<&'a str>,
-    pub offset: i64,
-    pub limit: Option<i64>,
+#[derive(Clone, Copy)]
+pub struct Window { pub offset: i64, pub limit: i64 }
+impl Default for Window { fn default() -> Self { Self { offset: 0, limit: 30 } } }
+impl Window {
+    pub(crate) fn validate(self) -> Result<()> {
+        anyhow::ensure!(self.offset >= 0 && (1..=100).contains(&self.limit), Refusal::Invalid("page"));
+        Ok(())
+    }
 }
+#[derive(Default)]
+pub struct GroupQuery { pub page: Window, pub id: Option<i64>, pub repository: Option<i64> }
+#[derive(Default)]
+pub struct RunnerQuery { pub page: Window, pub id: Option<i64>, pub group: Option<i64>, pub name: Option<String> }
+pub struct Listing<T> { pub total: i64, pub rows: Vec<T> }
 
+native_operation!(crate::backend::db::postgres::runners::authorize_scope, crate::backend::db::sqlite::runners::authorize_scope,
+    fn authorize_scope(pool:&DbPool,actor:i64,scope:Scope)->Result<()>);
 native_operation!(crate::backend::db::postgres::runners::list_groups, crate::backend::db::sqlite::runners::list_groups,
-    fn list_groups(pool:&DbPool,actor:i64,org:i64,query:&GroupQuery<'_>)->Result<(i64,Vec<Group>)>);
+    fn list_groups(pool:&DbPool,actor:i64,org:i64,query:&GroupQuery)->Result<Listing<Group>>);
 native_operation!(crate::backend::db::postgres::runners::save_group, crate::backend::db::sqlite::runners::save_group,
     fn save_group(pool:&DbPool,actor:i64,org:i64,id:Option<i64>,input:&GroupInput)->Result<Group>);
 native_operation!(crate::backend::db::postgres::runners::delete_group, crate::backend::db::sqlite::runners::delete_group,
@@ -356,10 +364,8 @@ native_operation!(crate::backend::db::postgres::runners::group_repositories, cra
     fn group_repositories(pool:&DbPool,actor:i64,org:i64,id:i64,selection:&Selection)->Result<()>);
 native_operation!(crate::backend::db::postgres::runners::group_runners, crate::backend::db::sqlite::runners::group_runners,
     fn group_runners(pool:&DbPool,actor:i64,org:i64,id:i64,selection:&Selection)->Result<()>);
-native_operation!(crate::backend::db::postgres::runners::list_runners_page, crate::backend::db::sqlite::runners::list_runners_page,
-    fn list_runners_page(pool:&DbPool,actor:i64,scope:Scope,filter:&RunnerFilter<'_>)->Result<(i64,Vec<Runner>)>);
 native_operation!(crate::backend::db::postgres::runners::list_runners, crate::backend::db::sqlite::runners::list_runners,
-    fn list_runners(pool:&DbPool,actor:i64,scope:Scope)->Result<Vec<Runner>>);
+    fn list_runners(pool:&DbPool,actor:i64,scope:Scope,query:&RunnerQuery)->Result<Listing<Runner>>);
 native_operation!(crate::backend::db::postgres::runners::delete_runner, crate::backend::db::sqlite::runners::delete_runner,
     fn delete_runner(pool:&DbPool,actor:i64,scope:Scope,id:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::runners::labels, crate::backend::db::sqlite::runners::labels,

@@ -252,7 +252,7 @@ async fn contract(pg: bool) {
         .unwrap();
     }
     let deleted = service
-        .dispatch_run(actor, dispatch("new", "push", ".github/workflows/ci.yml"))
+        .dispatch_run(actor, dispatch("new", "push", ".github/workflows/ci.yml"), None)
         .await
         .unwrap();
     assert_eq!(deleted.branch, "new");
@@ -264,7 +264,7 @@ async fn contract(pg: bool) {
     let path = ".github/workflows/unit-test.yml";
     assert!(discovered.iter().any(|definition| definition.path == path));
     let run = service
-        .dispatch_run(actor, dispatch("feature", "workflow_dispatch", path))
+        .dispatch_run(actor, dispatch("feature", "workflow_dispatch", path), None)
         .await
         .unwrap();
     assert_eq!(run.workflow_path, path);
@@ -272,7 +272,7 @@ async fn contract(pg: bool) {
         let path = format!(".github/workflows/{filename}");
         assert!(discovered.iter().any(|definition| definition.path == path));
         let run = service
-            .dispatch_run(actor, dispatch("feature", "workflow_dispatch", &path))
+            .dispatch_run(actor, dispatch("feature", "workflow_dispatch", &path), None)
             .await
             .unwrap();
         assert_eq!(run.workflow_path, path);
@@ -312,7 +312,7 @@ async fn contract(pg: bool) {
             .await
             .unwrap();
         assert_eq!(run.branch, codeyard::backend::ci::branch_name(&reference));
-        let again = service.rerun_run(run.run_id, actor).await.unwrap();
+        let again = service.rerun_run(run.run_id, actor, None).await.unwrap();
         assert_eq!(again.branch, run.branch);
         assert_eq!(again.head_sha, run.head_sha);
     }

@@ -34,53 +34,6 @@ fn limit_message() -> String {
     format!("Raw responses are limited to {}; request a byte range.", download_limit().1)
 }
 
-pub(crate) fn requested_range(headers: &HeaderMap) -> Result<(BlobRange, bool), ()> {
-    // These adapters do not publish a strong validator or Last-Modified. No If-Range
-    // value can be matched, so RFC 9110 requires a complete replacement response.
-    if headers.contains_key(header::IF_RANGE) {
-        return Ok((BlobRange::Full, false));
-    }
-    let mut values = headers.get_all(header::RANGE).iter();
-    let Some(value) = values.next() else {
-        return Ok((BlobRange::Full, false));
-    };
-    if values.next().is_some() {
-        return Err(());
-    }
-    let value = value.to_str().map_err(|_| ())?;
-    let value = value.strip_prefix("bytes=").ok_or(())?;
-    if value.contains(',') {
-        return Err(());
-    }
-    let (start, end) = value.split_once('-').ok_or(())?;
-    let range = match (start.is_empty(), end.is_empty()) {
-        (false, false) => {
-            let start = start.parse::<u64>().map_err(|_| ())?;
-            let end = end.parse::<u64>().map_err(|_| ())?;
-            if end < start {
-                return Err(());
-            }
-            BlobRange::Bytes {
-                start,
-                end: Some(end),
-            }
-        }
-        (false, true) => BlobRange::Bytes {
-            start: start.parse::<u64>().map_err(|_| ())?,
-            end: None,
-        },
-        (true, false) => {
-            let length = end.parse::<u64>().map_err(|_| ())?;
-            if length == 0 {
-                return Err(());
-            }
-            BlobRange::Suffix { length }
-        }
-        (true, true) => return Err(()),
-    };
-    Ok((range, true))
-}
-
 fn raw_store_error(error: RepoError) -> (StatusCode, Json<ApiError>) {
     if error.is_response_too_large() {
         return (
@@ -115,7 +68,7 @@ pub async fn get_raw_blob(
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
     let head = method == Method::HEAD;
-    let (range, partial) = (if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { requested_range(&headers) }).map_err(|_| {
+    let (range, partial) = (if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { crate::backend::api::http::range::requested(&headers, None) }).map_err(|_| {
         (
             StatusCode::RANGE_NOT_SATISFIABLE,
             Json(ApiError::new(
@@ -224,7 +177,7 @@ pub async fn raw_page(
         return token_raw_page(state, headers, method, &params).await;
     }
     let head = method == Method::HEAD;
-    let (range, partial) = match if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { requested_range(&headers) } {
+    let (range, partial) = match if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { crate::backend::api::http::range::requested(&headers, None) } {
         Ok(range) => range,
         Err(()) => return StatusCode::RANGE_NOT_SATISFIABLE.into_response(),
     };
@@ -302,7 +255,7 @@ async fn token_raw_page(state: Arc<AppState>, headers: HeaderMap, method: Method
         return StatusCode::NOT_FOUND.into_response();
     };
     let head = method == Method::HEAD;
-    let (range, partial) = match if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { requested_range(&headers) } {
+    let (range, partial) = match if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { crate::backend::api::http::range::requested(&headers, None) } {
         Ok(range) => range,
         Err(()) => return StatusCode::RANGE_NOT_SATISFIABLE.into_response(),
     };

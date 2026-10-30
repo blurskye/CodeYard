@@ -206,13 +206,7 @@ pub(crate) async fn read_bounded(reader: impl AsyncRead + Unpin, limit: usize) -
     Ok(bytes)
 }
 
-/// Kills the whole process group of a child started by [`command`].
-pub(crate) fn kill_group(pid: Option<u32>) {
-    if let Some(pid) = pid {
-        // SAFETY: plain syscall; a negative pid addresses the child's own group.
-        unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
-    }
-}
+pub(crate) use codeyard_actions::process::{kill_group, ProcessGroup};
 
 /// Keep only the last diagnostics when a transport reports stderr at exit.
 #[derive(Default)]
@@ -248,14 +242,6 @@ impl AsyncWrite for StderrTail {
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         std::task::Poll::Ready(Ok(()))
-    }
-}
-
-pub(crate) struct ProcessGroup(pub(crate) Option<u32>);
-
-impl Drop for ProcessGroup {
-    fn drop(&mut self) {
-        kill_group(self.0);
     }
 }
 
@@ -339,7 +325,7 @@ async fn stream_with_idle(
     idle: Duration,
 ) -> Result<ExitStatus> {
     let mut child = command.spawn().context("start git")?;
-    let mut group = ProcessGroup(child.id());
+    let mut group = ProcessGroup::new(child.id(), Duration::ZERO);
     let stdin = child.stdin.take().context("git stdin")?;
     let stdout = child.stdout.take().context("git stdout")?;
     let stderr = child.stderr.take().context("git stderr")?;
@@ -368,12 +354,12 @@ async fn stream_with_idle(
         // Keep the leader unreaped until its pipes are drained: its PGID must not be
         // reused while cancellation can still signal the group.
         let status = child.wait().await?;
-        group.0 = None;
+        group.disarm();
         Ok(status)
     };
     let result = session_timeout(work, receiver, idle).await;
     if result.is_ok() {
-        group.0 = None;
+        group.disarm();
     }
     result
 }
@@ -447,7 +433,7 @@ where F: FnOnce(tokio::process::ChildStdout, ReadAdmission) -> Fut,
     let permit = Arc::new(operation_slot(timeout).await?);
     command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     let mut child = command.spawn().context("start git")?;
-    let mut group = ProcessGroup(if own_group { child.id() } else { None });
+    let mut group = ProcessGroup::new(if own_group { child.id() } else { None }, Duration::ZERO);
     let mut stdin = child.stdin.take().context("git stdin")?;
     let stdout = child.stdout.take().context("git stdout")?;
     let stderr = child.stderr.take().context("git stderr")?;
@@ -464,7 +450,7 @@ where F: FnOnce(tokio::process::ChildStdout, ReadAdmission) -> Fut,
         };
         let (_, result, errors) = tokio::try_join!(write, parse, read_bounded(stderr, STDERR_LIMIT))?;
         let status = child.wait().await?;
-        group.0 = None;
+        group.disarm();
         let value = match result {
             ReadEnd::Complete(value) => {
                 ensure!(status.success() || (no_match_ok && status.code() == Some(1)), "Git streamed read failed: {}", String::from_utf8_lossy(&errors));
@@ -511,7 +497,7 @@ pub(crate) fn run_in_blocking(command: Command, input: &[u8], output_limit: usiz
 
 async fn run_admitted(mut command: Command, input: &[u8], output_limit: usize, remaining: Duration) -> Result<Output> {
     let mut child = command.spawn().context("start git")?;
-    let mut group = ProcessGroup(child.id());
+    let mut group = ProcessGroup::new(child.id(), Duration::ZERO);
     let mut stdin = child.stdin.take().context("git stdin")?;
     let stdout = child.stdout.take().context("git stdout")?;
     let stderr = child.stderr.take().context("git stderr")?;
@@ -544,12 +530,12 @@ async fn run_admitted(mut command: Command, input: &[u8], output_limit: usize, r
                 kill_group(child.id());
                 let _ = child.wait().await;
             }
-            group.0 = None;
+            group.disarm();
             bail!("git timed out");
         }
     };
     if result.is_ok() {
-        group.0 = None;
+        group.disarm();
     }
     result
 }

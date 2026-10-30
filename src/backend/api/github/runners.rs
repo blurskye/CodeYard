@@ -252,21 +252,17 @@ fn document(row: &Runner) -> Result<Value> {
     Ok(value)
 }
 async fn selected_group(state: &AppState, actor: i64, scope: Scope, p: &Params) -> Result<Group> {
-    native::list_groups(&state.pool, actor, org(scope)?, &native::GroupQuery {
-        id: Some(id(p, "runner_group_id")?), limit: Some(1), ..Default::default()
-    })
+    native::list_groups(&state.pool, actor, org(scope)?, &native::GroupQuery { id: Some(id(p, "runner_group_id")?), ..Default::default() })
         .await
-        .map_err(error)?.1
-        .into_iter()
-        .next()
+        .map_err(error)?
+        .rows.into_iter().next()
         .ok_or_else(Error::missing)
 }
 async fn selected_runner(state: &AppState, actor: i64, scope: Scope, p: &Params) -> Result<Runner> {
-    native::list_runners_page(&state.pool, actor, scope, &native::RunnerFilter { id: Some(id(p, "runner_id")?), limit: 1, ..Default::default() })
+    native::list_runners(&state.pool, actor, scope, &native::RunnerQuery { id: Some(id(p, "runner_id")?), ..Default::default() })
         .await
         .map_err(error)?
-        .1.into_iter()
-        .next()
+        .rows.into_iter().next()
         .ok_or_else(Error::missing)
 }
 #[derive(Deserialize)]
@@ -296,16 +292,26 @@ async fn groups(
     let visible_to_repository = query.visible_to_repository;
     let (actor, scope) = scope(&s, &headers, &p, false).await?;
     let org_id = org(scope)?;
+    native::authorize_scope(&s.pool, actor, scope).await.map_err(error)?;
+    let repository = if let Some(name) = visible_to_repository {
+        let name = name
+            .strip_prefix(&format!("{}/", p["org"]))
+            .unwrap_or(&name);
+        let repo = db::repositories::records::get_repository(&s.pool, &p["org"], name)
+            .await
+            .map_err(Error::unavailable)?
+            .filter(|r| {
+                r.owner_kind == "org" && r.owner_org_id == Some(org_id) && r.owner_user_id.is_none()
+            })
+            .ok_or_else(Error::missing)?;
+        Some(repo.id)
+    } else { None };
     let (offset, limit) = page.window()?;
-    let prefix = format!("{}/", p["org"]);
-    let repository = visible_to_repository.as_deref().map(|name| name.strip_prefix(&prefix).unwrap_or(name));
-    let (total, rows) = native::list_groups(&s.pool, actor, org_id, &native::GroupQuery {
-        repository, offset: i64::try_from(offset).map_err(Error::unavailable)?,
-        limit: Some(limit as i64), ..Default::default()
+    let listing = native::list_groups(&s.pool, actor, org_id, &native::GroupQuery {
+        page: native::Window { offset: offset as i64, limit: limit as i64 }, repository, ..Default::default()
     }).await.map_err(error)?;
-    let rows = rows
-        .iter()
-        .map(|g| group_document(&p["org"], g))
+    let total = listing.total as usize;
+    let rows = listing.rows.iter().map(|g| group_document(&p["org"], g))
         .collect::<Result<Vec<_>>>()?;
     Ok((
         page.headers(&uri, (offset.saturating_add(limit) as u128) < total as u128)?,
@@ -534,11 +540,12 @@ async fn list(
         None
     };
     let (offset, limit) = page.window()?;
-    let (total, rows) = native::list_runners_page(&s.pool, actor, scope, &native::RunnerFilter {
-        name: name.as_deref(), group, offset: offset as i64, limit: limit as i64, ..Default::default()
+    let listing = native::list_runners(&s.pool, actor, scope, &native::RunnerQuery {
+        page: native::Window { offset: offset as i64, limit: limit as i64 }, group, name, ..Default::default()
     }).await.map_err(error)?;
-    let total = total as usize;
-    let rows = rows.iter().map(document).collect::<Result<Vec<_>>>()?;
+    let total = listing.total as usize;
+    let rows = listing.rows.iter().map(document)
+        .collect::<Result<Vec<_>>>()?;
     Ok((
         page.headers(&uri, offset.saturating_add(limit) < total)?,
         Json(json!({"total_count":total,"runners":rows})),
@@ -639,9 +646,7 @@ async fn deprecation(
     Path(p): Path<Params>,
 ) -> Result<Json<Value>> {
     let (actor, scope) = scope(&s, &headers, &p, false).await?;
-    native::list_runners(&s.pool, actor, scope)
-        .await
-        .map_err(error)?;
+    native::authorize_scope(&s.pool, actor, scope).await.map_err(error)?;
     let version = p.get("version").ok_or_else(Error::missing)?;
     if version.len() > 100 || version.chars().any(char::is_control) {
         return Err(Error::validation("Runner", "version", "invalid"));
@@ -656,9 +661,7 @@ async fn downloads(
     Path(p): Path<Params>,
 ) -> Result<Json<Value>> {
     let (actor, scope) = scope(&s, &headers, &p, false).await?;
-    native::list_runners(&s.pool, actor, scope)
-        .await
-        .map_err(error)?;
+    native::authorize_scope(&s.pool, actor, scope).await.map_err(error)?;
     Ok(Json(
         json!([{"os":std::env::consts::OS,"architecture":match std::env::consts::ARCH {"x86_64"=>"x64","aarch64"=>"arm64",arch=>arch},"download_url":format!("{}/api/actions/runners/download",crate::backend::api::http::config::link_origin()),"filename":format!("codeyard-runner-{}-{}",std::env::consts::OS,std::env::consts::ARCH)}]),
     ))
@@ -675,9 +678,7 @@ async fn registration_token(
 ) -> Result<Response> {
     let (actor, scope) = scope(&s, &headers, &p, true).await?;
     // Check scope before disclosing whether this installation serves cluster pairing.
-    native::list_runners(&s.pool, actor, scope)
-        .await
-        .map_err(error)?;
+    native::authorize_scope(&s.pool, actor, scope).await.map_err(error)?;
     let ticket = ticket(&s).await?;
     let expires = chrono::Utc::now() + chrono::Duration::hours(1);
     native::registration(
@@ -685,6 +686,7 @@ async fn registration_token(
         actor,
         scope,
         Registration {
+            session: None,
             hash: &ticket.secret_hash(),
             expires,
             name: None,
@@ -743,9 +745,7 @@ async fn jit(
     input: std::result::Result<Json<Jit>, JsonRejection>,
 ) -> Result<Response> {
     let (actor, scope) = scope(&s, &headers, &p, true).await?;
-    native::list_runners(&s.pool, actor, scope)
-        .await
-        .map_err(error)?;
+    native::authorize_scope(&s.pool, actor, scope).await.map_err(error)?;
     let Json(input) = input.map_err(super::json_error)?;
     if input.labels.is_empty() {
         return Err(Error::invalid_simple("Invalid runner labels"));
@@ -759,6 +759,7 @@ async fn jit(
         actor,
         scope,
         Registration {
+            session: None,
             hash: &ticket.secret_hash(),
             expires: chrono::Utc::now() + chrono::Duration::hours(1),
             name: Some(&input.name),

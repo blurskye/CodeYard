@@ -105,7 +105,7 @@ pub(crate) async fn read_blob_preview(
     command.args(["cat-file", "blob", &oid.to_string()]).current_dir(path);
     process::limit_memory(&mut command);
     let mut child = command.spawn().context("start git cat-file preview")?;
-    let mut group = process::ProcessGroup(child.id());
+    let mut group = process::ProcessGroup::new(child.id(), std::time::Duration::ZERO);
     let mut stdout = child.stdout.take().context("git cat-file stdout")?;
     let stderr = child.stderr.take().context("git cat-file stderr")?;
     drop(child.stdin.take());
@@ -167,6 +167,6 @@ pub(crate) async fn read_blob_preview(
         Ok::<_, anyhow::Error>(result)
     };
     let result = tokio::time::timeout(std::time::Duration::from_secs(10), work).await.context("Git preview timed out")?;
-    if result.is_ok() { group.0 = None; }
+    if result.is_ok() { group.disarm(); }
     result
 }

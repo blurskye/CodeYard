@@ -193,15 +193,10 @@ fn compact(body: String, method: &Method, headers: &HeaderMap) -> Result<Respons
     let mut status = StatusCode::OK;
     // Indexes are rebuilt, not append-only: a changed ETag must replace Bundler's cache,
     // including after deletion or insertion in the middle of a version list.
-    if !headers.contains_key(header::IF_NONE_MATCH)
-        && headers
-            .get(header::IF_RANGE)
-            .and_then(|h| h.to_str().ok())
-            .is_none_or(|h| h == etag)
-    {
+    if !headers.contains_key(header::IF_NONE_MATCH) {
         // Ignoring an unsatisfiable range sends a complete new index instead of stranding
         // a client whose old cached index was longer than the current one.
-        if let Ok(Some((first, last))) = super::oci::byte_range(headers, bytes.len() as u64) {
+        if let Ok(Some((first, last))) = super::oci::byte_range(headers, bytes.len() as u64, Some(&etag)) {
             start = first as usize;
             end = last as usize + 1;
             status = StatusCode::PARTIAL_CONTENT;

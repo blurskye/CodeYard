@@ -4,7 +4,7 @@ use super::{
     ActionsPage,
 };
 use crate::webui::{
-    components::{relative_time, short_sha, LiveTime},
+    components::{relative_time, short_sha, LiveTime, Markdown},
     encode_component,
     navigation::{NavLink, RefreshLink},
 };
@@ -75,6 +75,8 @@ pub struct RunProgress {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SelectedRun {
     pub run: Run,
+    #[serde(default)]
+    pub summaries: Vec<Summary>,
     pub logs: Vec<LogLine>,
     pub deployment: Option<Deployment>,
     pub fetched_lines: usize,
@@ -83,6 +85,13 @@ pub struct SelectedRun {
     /// The jobs and steps the run's workflow file lists, shown before their logs arrive.
     #[serde(default)]
     pub planned: Vec<PlannedJob>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Summary {
+    pub job: String,
+    pub number: i32,
+    pub markdown: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -289,6 +298,12 @@ fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> El
                             div { dt { "Commit" } dd {
                                 if let Some(sha) = &run.head_sha { {commit_link(model, sha)} } else { span { class: "actions-summary-secondary", "Not recorded" } }
                             } }
+                        }
+                    }
+                    for summary in &selected.summaries {
+                        section { class: "actions-summary-card", aria_label: "Step summary",
+                            h2 { "{summary.job} · step {summary.number}" }
+                            Markdown { content: summary.markdown.clone() }
                         }
                     }
                     section { class: "actions-workflow-card", "aria-label": "Workflow jobs",

@@ -164,7 +164,9 @@ async fn submit(
         &ctx.state,
         &loaded.repository,
         &owner,
-        (actor, session.clone()).into(),
+        actor,
+        Credential::Session(&session),
+        crate::backend::db::ci::CiCredential::Session(session.clone()),
         run.suite_id,
         None,
     ).await

@@ -222,6 +222,15 @@ impl S3Store {
         })
     }
 
+    pub async fn open_range(&self, key: &str, offset: u64, length: u64) -> Result<Box<dyn tokio::io::AsyncRead + Unpin + Send>> {
+        use tokio::io::AsyncReadExt;
+        ensure!(valid_key(key) && length > 0 && offset.checked_add(length).is_some(), "invalid range");
+        let result = tokio::time::timeout(Duration::from_secs(60), self.client.get_object()
+            .bucket(self.bucket()).key(key)
+            .range(format!("bytes={offset}-{}", offset + length - 1)).send()).await??;
+        Ok(Box::new(result.body.into_async_read().take(length)))
+    }
+
     pub async fn read_range(&self, key: &str, offset: u64, length: usize) -> Result<Vec<u8>> {
         ensure!(
             valid_key(key) && length > 0 && length <= 1024 * 1024,

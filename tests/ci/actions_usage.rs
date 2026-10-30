@@ -65,7 +65,7 @@ async fn contract(pg: bool) {
             .unwrap()
             .unwrap();
         let generation = runtime::token_hash(&format!("usage-{attempt}"));
-        db::action_objects::issue_token(f.pool(), run.id, &generation, &run.run_id.to_string())
+        db::action_objects::issue_token(f.pool(), run.id, run.worker.as_deref().unwrap_or(""), &generation, &run.run_id.to_string())
             .await
             .unwrap();
         for (variant, labels, duration) in [
@@ -101,7 +101,7 @@ async fn contract(pg: bool) {
                     },
                 )
                 .await
-                .unwrap();
+                .unwrap().id;
             }
             if variant == 0 {
                 expected_jobs.push(json!({"job_id":job_id,"duration_ms":1234}));

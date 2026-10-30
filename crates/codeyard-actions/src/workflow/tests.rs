@@ -687,7 +687,7 @@ outputs:
     assert!(!jobs[1].continue_on_error);
     assert_eq!(jobs[0].runs_on, ["self-hosted", "linux"]);
     assert_eq!(jobs[0].runs_on_group.as_deref(), Some("larger-runners"));
-    assert_eq!(jobs[0].env["OS"], "${{ matrix.os }}");
+    assert!(matches!(&jobs[0].env[1], super::EnvironmentTemplate::Entries(env) if env["OS"] == "${{ matrix.os }}"));
     assert_eq!(
         jobs[0].default_shell.as_deref(),
         Some("${{ matrix.os == 'linux' && 'bash' || 'pwsh' }}")

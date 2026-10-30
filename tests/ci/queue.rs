@@ -741,7 +741,7 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
         .unwrap()
         .expect("claim");
     db.stop_heartbeat(run.id).await;
-    let (finished, _) = db::ci::finish_ci_run(db.pool(), run.id, WORKER, "success", None)
+    let (finished, _, _) = db::ci::finish_ci_run(db.pool(), run.id, WORKER, "success", None)
         .await
         .unwrap()
         .expect("the worker owns the run");
@@ -781,7 +781,7 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
         .unwrap()
         .expect("claim");
     db.stop_heartbeat(run.id).await;
-    let (failed, created) = db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap();
+    let (failed, created, _) = db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap();
     assert_eq!(failed.len(), 1);
     assert_eq!(created.len(), 1);
     assert_eq!(created[0].0, w.owner);
@@ -1070,7 +1070,7 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
 
     // A cancelled run tells no one.
     let cancelled = db.enqueue(w.repo, w.owner, false, &[]).await;
-    assert!(service.cancel_run(cancelled.run_id, w.owner).await.unwrap());
+    assert!(service.cancel_run(cancelled.run_id, w.owner, None).await.unwrap());
     assert!(
         subscriber.try_recv().is_err(),
         "a cancelled run sends nothing"
@@ -1127,7 +1127,7 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
         .await
         .unwrap()
         .is_none());
-    assert!(!service.cancel_run(run.run_id, w.owner).await.unwrap());
+    assert!(!service.cancel_run(run.run_id, w.owner, None).await.unwrap());
     assert!(!queue
         .finish(WORKER, run.id, "failed", failure)
         .await

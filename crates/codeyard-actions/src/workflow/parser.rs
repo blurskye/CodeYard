@@ -19,7 +19,7 @@ pub(super) fn mapping<'a>(value: &'a Value, path: &str) -> Result<&'a Mapping> {
         .with_context(|| format!("{path}: Expected a mapping"))
 }
 
-pub(super) fn text(value: &Value, path: &str) -> Result<String> {
+pub fn text(value: &Value, path: &str) -> Result<String> {
     match value {
         Value::String(s) => Ok(s.clone()),
         Value::Bool(b) => Ok(b.to_string()),
@@ -56,8 +56,7 @@ fn nonempty(value: &Value, path: &str) -> Result<()> {
 
 fn identifier(id: &str, path: &str) -> Result<()> {
     ensure!(
-        !id.is_empty() && id.len() < 100 && !id.starts_with("__")
-            && id.bytes().enumerate().all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && (b.is_ascii_digit() || b == b'-'))),
+        super::valid_identifier(id),
         "{path}: The identifier '{id}' is invalid. IDs must start with a letter or '_' and contain only alphanumeric characters, '_', and '-' (less than 100 characters; '__' is reserved)."
     );
     Ok(())
@@ -69,26 +68,7 @@ fn expressions(template: &str) -> Result<Vec<&str>> {
     let mut rest = template;
     while let Some(start) = rest.find("${{") {
         rest = &rest[start + 3..];
-        let bytes = rest.as_bytes();
-        let mut i = 0;
-        let mut quoted = false;
-        while i < bytes.len() {
-            if bytes[i] == b'\'' {
-                if quoted && bytes.get(i + 1) == Some(&b'\'') {
-                    i += 2;
-                    continue;
-                }
-                quoted = !quoted;
-            }
-            if !quoted && bytes[i..].starts_with(b"}}") {
-                break;
-            }
-            i += 1;
-        }
-        ensure!(
-            i < bytes.len(),
-            "The expression is not closed. An expression starts with '${{{{' and ends with '}}}}'"
-        );
+        let i = crate::expressions::expression_end(rest)?;
         result.push(&rest[..i]);
         rest = &rest[i + 2..];
     }
@@ -174,23 +154,19 @@ fn expression_context(
             i += 1;
         }
     }
-    // Short-circuit evaluation validates the grammar without reading contexts or files.
+    // Validate the original grammar without spending limits on a synthetic wrapper.
     let contexts = crate::expressions::Contexts {
         values: contexts
             .iter()
             .map(|name| ((*name).to_owned(), crate::expressions::Value::Null))
             .collect(),
     };
-    crate::expressions::evaluate(
-        &format!("false && ({expression})"),
-        &contexts,
-        crate::expressions::Status::default(),
-    )
+    crate::expressions::validate(expression, &contexts)
     .with_context(|| path.to_owned())?;
     Ok(())
 }
 
-fn templates(value: &Value, contexts: &[&str], functions: &[&str], path: &str) -> Result<()> {
+pub(super) fn templates(value: &Value, contexts: &[&str], functions: &[&str], path: &str) -> Result<()> {
     match value {
         Value::String(s) => {
             for expression in expressions(s).with_context(|| path.to_owned())? {
@@ -271,6 +247,17 @@ pub(super) fn string_map(value: Option<&Value>, path: &str) -> Result<BTreeMap<S
         .collect()
 }
 
+pub(super) fn environment_template(value: Option<&Value>, path: &str) -> Result<super::EnvironmentTemplate> {
+    if let Some(Value::String(template)) = value {
+        let template = template.trim();
+        let inner = template.strip_prefix("${{").with_context(|| format!("{path}: Expected an environment mapping or whole expression"))?;
+        ensure!(crate::expressions::expression_end(inner)? + 2 == inner.len(), "{path}: Expected a whole expression");
+        Ok(super::EnvironmentTemplate::Expression(template.into()))
+    } else {
+        Ok(super::EnvironmentTemplate::Entries(string_map(value, path)?))
+    }
+}
+
 fn condition(value: &Value, contexts: &[&str], hash_files: bool, path: &str) -> Result<()> {
     let s = text(value, path)?;
     if s.trim().is_empty() {
@@ -298,7 +285,7 @@ fn defaults(value: &Value, job: bool, path: &str) -> Result<()> {
         }
     }
     let mut contexts = MATRIX.to_vec();
-    contexts.push("env");
+    contexts.extend(["env", "runner", "job"]);
     templates(value, if job { &contexts } else { &[] }, &[], path)
 }
 
@@ -312,43 +299,10 @@ fn permissions(value: &Value, path: &str) -> Result<()> {
         return Ok(());
     }
     let map = mapping(value, path)?;
-    keys(
-        map,
-        &[
-            "actions",
-            "artifact-metadata",
-            "attestations",
-            "checks",
-            "contents",
-            "deployments",
-            "discussions",
-            "id-token",
-            "issues",
-            "models",
-            "packages",
-            "pages",
-            "pull-requests",
-            "repository-projects",
-            "security-events",
-            "statuses",
-            "vulnerability-alerts",
-        ],
-        path,
-    )?;
+    keys(map, super::PERMISSION_SCOPES, path)?;
     for (k, v) in map {
         let level = text(v, path)?;
-        ensure!(
-            ["read", "write", "none"].contains(&level.as_str()),
-            "{path}: Unexpected permission level '{level}'"
-        );
-        ensure!(
-            k.as_str() != Some("id-token") || level != "read",
-            "{path}.id-token: Expected 'write' or 'none'"
-        );
-        ensure!(
-            !matches!(k.as_str(), Some("models" | "vulnerability-alerts")) || level != "write",
-            "{path}: Expected 'read' or 'none'"
-        );
+        ensure!(super::permission_level_allowed(k.as_str().unwrap_or(""), &level), "{path}: Unexpected permission level '{level}'");
     }
     Ok(())
 }
@@ -498,7 +452,7 @@ fn strategy(value: &Value, path: &str) -> Result<()> {
     Ok(())
 }
 
-fn events(value: &Value) -> Result<()> {
+pub(super) fn events(value: &Value) -> Result<()> {
     const EVENTS: &[&str] = &[
         "branch_protection_rule",
         "check_run",
@@ -583,7 +537,11 @@ fn events(value: &Value) -> Result<()> {
                     continue;
                 }
                 let map = mapping(config, &p)?;
-                if event == "workflow_dispatch" || event == "workflow_call" {
+                if event == "workflow_dispatch" {
+                    super::dispatch_inputs::parse(config)?;
+                    continue;
+                }
+                if event == "workflow_call" {
                     keys(
                         map,
                         if event == "workflow_call" {
@@ -747,7 +705,7 @@ pub(super) fn parse(yaml: &str) -> Result<Workflow> {
         ],
         "workflow",
     )?;
-    events(required(root, "on", "workflow")?)?;
+    super::events::parse(Some(required(root, "on", "workflow")?))?;
     for (k, v) in root {
         match k.as_str() {
             Some("name" | "description") => {
@@ -760,7 +718,7 @@ pub(super) fn parse(yaml: &str) -> Result<Workflow> {
                 templates(v, WORKFLOW, &[], "run-name")?;
             }
             Some("env") => {
-                string_map(Some(v), "env")?;
+                environment_template(Some(v), "env")?;
                 templates(v, &["github", "inputs", "vars", "secrets"], &[], "env")?;
             }
             Some("defaults") => defaults(v, false, "defaults")?,
@@ -845,6 +803,7 @@ fn validate_job(job: &Mapping, path: &str) -> Result<()> {
             !steps.is_empty(),
             "{path}.steps: Expected at least one step"
         );
+        ensure!(steps.len() <= super::MAX_JOB_STEPS, "{path}.steps: Too many steps");
         let mut ids = BTreeSet::new();
         for (i, step) in steps.iter().enumerate() {
             let step = parse_step(step).with_context(|| format!("{path}.steps[{i}]"))?;
@@ -868,7 +827,7 @@ fn validate_job(job: &Mapping, path: &str) -> Result<()> {
             "concurrency" => concurrency(v, MATRIX, &p)?,
             "defaults" => defaults(v, true, &p)?,
             "env" => {
-                string_map(Some(v), &p)?;
+                environment_template(Some(v), &p)?;
                 templates(
                     v,
                     &[
@@ -1014,9 +973,8 @@ pub(super) fn parse_step(value: &Value) -> Result<Step> {
         match key.as_str() {
             "continue-on-error" => boolean(v, &p)?,
             "timeout-minutes" => number(v, &p)?,
-            "env" | "with" => {
-                string_map(Some(v), &p)?;
-            }
+            "env" => { environment_template(Some(v), &p)?; }
+            "with" => { string_map(Some(v), &p)?; }
             "shell" | "uses" => nonempty(v, &p)?,
             _ => {}
         }
@@ -1027,17 +985,7 @@ pub(super) fn parse_step(value: &Value) -> Result<Step> {
             && !reference.starts_with(".\\")
             && !reference.starts_with("docker://")
         {
-            let segments: Vec<_> = reference.split('@').collect();
-            ensure!(
-                segments.len() == 2
-                    && !segments[1].is_empty()
-                    && segments[0]
-                        .split(['/', '\\'])
-                        .filter(|part| !part.is_empty())
-                        .count()
-                        >= 2,
-                "step.uses: Expected format {{org}}/{{repo}}[/path]@ref. Actual '{reference}'"
-            );
+            crate::runner::ActionReference::parse(&reference).context("step.uses")?;
         }
     }
     let action = if run {
@@ -1057,7 +1005,7 @@ pub(super) fn parse_step(value: &Value) -> Result<Step> {
         name: get("name")?,
         condition: get("if")?,
         action,
-        env: string_map(map.get("env"), "step.env")?,
+        env: environment_template(map.get("env"), "step.env")?,
         continue_on_error: get("continue-on-error")?,
         timeout_minutes: get("timeout-minutes")?,
     })

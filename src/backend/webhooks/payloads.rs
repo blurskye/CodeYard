@@ -1811,6 +1811,31 @@ pub fn workflow_job(action: &str, job: Value, scope: Scope<'_>) -> Value {
         "repository":repository(scope.repo, scope.owner), "sender":person(scope.sender)})
 }
 
+/// `head_repository` is the pull request's head repository, which for a `pull_request_target`
+/// run is not the repository the run checked out.
+pub fn action_run_pull_requests(
+    run: &crate::backend::db::models::CiRun,
+    pull: Option<&PullRequest>,
+    repository: &Value,
+    head_repository: &Value,
+    exclude: bool,
+) -> Value {
+    if exclude { return json!([]); }
+    let Some(pull) = pull else {
+        // The association was deleted; an empty list would falsely claim there never was one.
+        return if run.event == "pull_request" { Value::Null } else { json!([]) };
+    };
+    let snapshot = run.pull_request_event.as_ref();
+    let event_head = run.event_payload.as_ref().map(|event| &event["pull_request"]["head"]);
+    let head_sha = snapshot.and_then(|event| event["head_sha"].as_str())
+        .or_else(|| event_head.and_then(|head| head["sha"].as_str()))
+        .unwrap_or(if run.event == "pull_request_target" { &pull.head_sha } else { run.head_sha.as_deref().unwrap_or(&pull.head_sha) });
+    let side = |reference: &str, sha: &str, repository: &Value| json!({"ref":reference,"sha":sha,"repo":{"id":repository["id"],"url":repository["url"],"name":repository["name"]}});
+    json!([{"id":pull.id,"number":pull.number,"url":format!("{}/pulls/{}",repository["url"].as_str().unwrap_or(""),pull.number),
+        "head":side(snapshot.and_then(|event|event["head_ref"].as_str()).unwrap_or(&pull.head_branch),head_sha,head_repository),
+        "base":side(snapshot.and_then(|event|event["base_ref"].as_str()).unwrap_or(&pull.base_branch),snapshot.and_then(|event|event["base_sha"].as_str()).unwrap_or(&pull.base_sha),repository)}])
+}
+
 pub fn action_run(
     run: &crate::backend::db::models::CiRun,
     owner: &str,
@@ -1837,6 +1862,7 @@ pub fn action_run(
                 .and_then(|message| message.lines().next())
         })
         .unwrap_or(&run.workflow_path);
+    let title = bounded_text(title, 1024);
     let (status, conclusion) = crate::backend::db::action_runs::run_state(run);
     let mut value = json!({
         "id":id,"node_id":node_id::encode("WR",id),"head_branch":(!branch.is_empty()).then_some(branch),

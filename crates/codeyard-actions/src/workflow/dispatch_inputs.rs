@@ -3,12 +3,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// GitHub's limits: ten inputs per workflow and 25 options per choice.
-pub const MAX_INPUTS: usize = 10;
+/// GitHub's limits: 25 inputs per workflow and 25 options per choice.
+pub const MAX_INPUTS: usize = 25;
 pub const MAX_NAME_BYTES: usize = 64;
 pub const MAX_OPTIONS: usize = 25;
 /// Longest accepted value; a form value is capped at the same size.
-pub const MAX_VALUE_BYTES: usize = 2048;
+pub const MAX_VALUE_BYTES: usize = 65_535;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,6 +30,51 @@ pub struct DispatchInput {
     pub default: Option<String>,
     /// The allowed values of a `choice`; an `environment` input may list them too.
     pub options: Vec<String>,
+}
+
+/// Parses typed declarations once for discovery and native execution alike.
+pub fn parse(config: &serde_yaml::Value) -> anyhow::Result<Vec<DispatchInput>> {
+    use super::parser::{keys, mapping, templates, text};
+    use anyhow::{bail, ensure, Context};
+    if config.is_null() { return Ok(Vec::new()); }
+    let config = mapping(config, "workflow_dispatch")?;
+    keys(config, &["inputs"], "workflow_dispatch")?;
+    let Some(inputs) = config.get("inputs") else { return Ok(Vec::new()); };
+    templates(inputs, &[], &[], "workflow_dispatch.inputs")?;
+    let inputs = mapping(inputs, "workflow_dispatch.inputs")?;
+    ensure!(inputs.len() <= MAX_INPUTS, "workflow declares too many inputs");
+    inputs.iter().map(|(name, spec)| {
+        let spec = mapping(spec, "workflow input")?;
+        keys(spec, &["description", "type", "required", "default", "options"], "workflow input")?;
+        let kind = match spec.get("type").map(|value| value.as_str().context("Invalid workflow input type")).transpose()?.unwrap_or("string") {
+            "string" => InputKind::Text,
+            "boolean" => InputKind::Boolean,
+            "number" => InputKind::Number,
+            "choice" => InputKind::Choice,
+            "environment" => InputKind::Environment,
+            _ => bail!("unsupported workflow input type"),
+        };
+        let default = spec.get("default").map(|value| {
+            ensure!(match kind {
+                InputKind::Boolean => value.is_bool(),
+                InputKind::Number => value.is_number(),
+                _ => !value.is_sequence() && !value.is_mapping(),
+            }, "workflow input default has the wrong type");
+            text(value, "workflow input default")
+        }).transpose()?;
+        let options = spec.get("options").map(|value| {
+            value.as_sequence().context("workflow input options must be a list")?.iter()
+                .map(|value| text(value, "workflow input option")).collect::<anyhow::Result<Vec<_>>>()
+        }).transpose()?.unwrap_or_default();
+        let required = spec.get("required").map(|value| value.as_bool().context("workflow input required must be a boolean")).transpose()?.unwrap_or(false);
+        let input = DispatchInput {
+            name: name.as_str().context("invalid workflow input name")?.to_owned(),
+            description: spec.get("description").map(|value| text(value, "workflow input description")).transpose()?.unwrap_or_default(),
+            kind, required, default, options,
+        };
+        check_declaration(&input).map_err(anyhow::Error::msg)?;
+        Ok(input)
+    }).collect()
 }
 
 /// Checks a declaration when its workflow is read, so a bad file is refused before it can
@@ -95,8 +140,18 @@ pub fn validate_inputs(
                 values.insert(input.name.clone(), value.clone());
             }
             None if input.required => return Err("a required workflow input is missing"),
-            None => {}
+            None => {
+                let value = match input.kind {
+                    InputKind::Boolean => "false",
+                    InputKind::Number => "0",
+                    _ => "",
+                };
+                values.insert(input.name.clone(), value.to_owned());
+            }
         }
+    }
+    if serde_json::to_vec(&values).map_err(|_| "invalid workflow input payload")?.len() > MAX_VALUE_BYTES {
+        return Err("workflow input payload is too large");
     }
     Ok(values)
 }

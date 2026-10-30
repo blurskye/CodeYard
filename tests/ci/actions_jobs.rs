@@ -76,7 +76,7 @@ async fn contract(pg: bool) {
     assert_eq!(dispatch["workflow_run_id"], run.id);
     let workflow = ".github/workflows/ci.yml";
     let generation = runtime::token_hash("private-runtime");
-    db::action_objects::issue_token(f.pool(), run.id, &generation, &run.run_id.to_string())
+    db::action_objects::issue_token(f.pool(), run.id, run.worker.as_deref().unwrap_or(""), &generation, &run.run_id.to_string())
         .await
         .unwrap();
     db::action_jobs::save_state(
@@ -122,7 +122,7 @@ async fn contract(pg: bool) {
     .is_err());
     let job = db::action_jobs::apply(f.pool(), "jobs", run.id, &generation, workflow, &queued)
         .await
-        .unwrap();
+        .unwrap().id;
     assert!(db::action_jobs::get(f.pool(), repo.id, job, false)
         .await
         .unwrap()
@@ -155,7 +155,7 @@ async fn contract(pg: bool) {
                 &event(0, update)
             )
             .await
-            .unwrap(),
+            .unwrap().id,
             job
         );
     }
@@ -251,7 +251,7 @@ async fn contract(pg: bool) {
         ),
     )
     .await
-    .unwrap();
+    .unwrap().id;
     db::action_jobs::apply(
         f.pool(),
         "jobs",
@@ -566,6 +566,8 @@ async fn annotations(
         path: "src/main.rs".into(),
         start_line: 7,
         end_line: 9,
+        start_column: None,
+        end_column: None,
         annotation_level: "failure".into(),
         message: "Compiler diagnostic\nsecond line".into(),
         title: Some("Build".into()),
@@ -599,7 +601,7 @@ async fn annotations(
         if worker == "unowned" {
             assert!(result.is_err());
         } else {
-            assert_eq!(result.unwrap(), job);
+            assert_eq!(result.unwrap().id, job);
         }
     }
     assert!(db::action_jobs::annotations(f.pool(), other, job, 0, 100)

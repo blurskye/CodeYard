@@ -54,7 +54,7 @@ pub async fn apply(
     generation: &str,
     workflow: &str,
     event: &Event,
-) -> Result<i64> {
+) -> Result<crate::backend::db::action_jobs::Applied> {
     ensure!(
         !event.job.is_empty()
             && event.job.len() <= 128
@@ -76,6 +76,7 @@ pub async fn apply(
         .bind(run).bind(generation).bind(workflow).bind(&event.job)
         .bind(crate::backend::ci::tokens::MAX_EXPANDED_JOBS as i64).fetch_one(&mut *tx).await?;
     ensure!(admitted, "run job budget exceeded");
+    let mut transitioned = false;
     if let Update::Queued {
         name: display,
         labels,
@@ -100,19 +101,20 @@ pub async fn apply(
         if existing.is_none() {
             let check = super::checks::allocate_run_id(&mut tx).await?;
             sqlx::query("INSERT INTO actions_jobs(run_id,generation,workflow_path,logical_job,variant,name,labels,workflow_name,status,created_at,matrix,check_run_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued',$9,$10,$11)").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).bind(display).bind(Json(labels)).bind(workflow_name).bind(at).bind(matrix.as_ref().map(|matrix|Json(&matrix.values))).bind(check).execute(&mut *tx).await?;
+            transitioned = true;
         }
     }
     let id:i64=sqlx::query_scalar("SELECT id FROM actions_jobs WHERE run_id=$1 AND generation=$2 AND workflow_path=$3 AND logical_job=$4 AND variant=$5").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).fetch_one(&mut *tx).await?;
     match &event.update {
         Update::Queued { .. } => {}
         Update::Started => {
-            sqlx::query("UPDATE actions_jobs SET status='in_progress',started_at=$2 WHERE id=$1 AND status='queued'").bind(id).bind(at).execute(&mut *tx).await?;
+            transitioned = sqlx::query("UPDATE actions_jobs SET status='in_progress',started_at=$2 WHERE id=$1 AND status='queued'").bind(id).bind(at).execute(&mut *tx).await?.rows_affected() == 1;
         }
         Update::StepStarted {
             number,
             name: display,
         } => {
-            ensure!((1..=10000).contains(number), "invalid step number");
+            ensure!((1..=codeyard_actions::progress::MAX_STEP_NUMBER).contains(number), "invalid step number");
             name(display)?;
             let active: bool =
                 sqlx::query_scalar("SELECT status='in_progress' FROM actions_jobs WHERE id=$1")
@@ -134,7 +136,7 @@ pub async fn apply(
             duration_ms,
         } => {
             sqlx::query("UPDATE actions_steps SET status='completed',completed_at=$2 WHERE job_id=$1 AND status='in_progress'").bind(id).bind(at).execute(&mut *tx).await?;
-            sqlx::query("UPDATE actions_jobs SET status='completed',conclusion=$2,completed_at=$3,duration_ms=$4 WHERE id=$1 AND status<>'completed'").bind(id).bind(conclusion.as_str()).bind(at).bind(milliseconds(*duration_ms)?).execute(&mut *tx).await?;
+            transitioned = sqlx::query("UPDATE actions_jobs SET status='completed',conclusion=$2,completed_at=$3,duration_ms=$4 WHERE id=$1 AND status<>'completed'").bind(id).bind(conclusion.as_str()).bind(at).bind(milliseconds(*duration_ms)?).execute(&mut *tx).await?.rows_affected() == 1;
         }
         Update::Annotation { annotation } => {
             let annotation = crate::backend::db::action_jobs::prepare_annotation(annotation)?;
@@ -157,10 +159,17 @@ pub async fn apply(
             };
             super::action_concurrency::request_job(&mut tx, &leased, id, &config).await?;
         }
+        Update::Summary { number, markdown } => {
+            ensure!(*number > 0 && *number <= codeyard_actions::progress::MAX_STEP_NUMBER
+                && markdown.len() <= codeyard_actions::progress::MAX_STEP_SUMMARY_BYTES && !markdown.contains('\0'), "invalid step summary");
+            sqlx::query("INSERT INTO actions_step_summaries(job_id,number,markdown,bytes) SELECT $1,$2,$3,$4 WHERE EXISTS(SELECT 1 FROM actions_jobs WHERE id=$1 AND status='in_progress') AND $4 + COALESCE((SELECT SUM(s.bytes) FROM actions_step_summaries s JOIN actions_jobs j ON j.id=s.job_id WHERE j.run_id=$6 AND NOT(s.job_id=$1 AND s.number=$2)),0)<=$5 ON CONFLICT(job_id,number) DO UPDATE SET markdown=excluded.markdown,bytes=excluded.bytes")
+                .bind(id).bind(*number as i32).bind(markdown).bind(markdown.len() as i32)
+                .bind(codeyard_actions::progress::MAX_RUN_SUMMARY_BYTES as i64).bind(run).execute(&mut *tx).await?;
+        }
         Update::Log { .. } => anyhow::bail!("runner output uses bounded native log storage"),
     }
     tx.commit().await?;
-    Ok(id)
+    Ok(crate::backend::db::action_jobs::Applied { id, transitioned })
 }
 
 /// Answers a job's concurrency request: `Some(true)` once it holds its group,
@@ -191,15 +200,9 @@ pub async fn save_state(
     workflow: &str,
     state: &State,
 ) -> Result<()> {
-    ensure!(
-        state.has_valid_variant_order(),
-        "invalid observed variant order"
-    );
-    ensure!(
-        serde_json::to_vec(state)?.len() <= 8 * 1024 * 1024,
-        "job state exceeds the native limit"
-    );
+    state.validate()?;
     let mut tx = pool.begin().await?;
+    sqlx::query("SET LOCAL statement_timeout='10s'").execute(&mut *tx).await?;
     lease(&mut tx, worker, run, generation, workflow).await?;
     // Recovery abandons prior lease executions, without manufacturing a successful result.
     sqlx::query("UPDATE actions_steps SET status='completed',completed_at=clock_timestamp() WHERE status='in_progress' AND job_id IN(SELECT id FROM actions_jobs WHERE run_id=$1 AND generation<>$2)").bind(run).bind(generation).execute(&mut *tx).await?;
@@ -211,10 +214,9 @@ pub async fn save_state(
     Ok(())
 }
 
-pub(crate) async fn close_active(connection: &mut PgConnection, run: i64) -> Result<()> {
+pub(crate) async fn close_active(connection: &mut PgConnection, run: i64) -> Result<Vec<i64>> {
     sqlx::query("UPDATE actions_steps SET status='completed',completed_at=clock_timestamp() WHERE status='in_progress' AND job_id IN(SELECT id FROM actions_jobs WHERE run_id=$1)").bind(run).execute(&mut *connection).await?;
-    sqlx::query("UPDATE actions_jobs SET status='completed',completed_at=clock_timestamp(),duration_ms=CASE WHEN started_at IS NOT NULL THEN GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (clock_timestamp()-started_at))*1000)::bigint) END WHERE run_id=$1 AND status<>'completed'").bind(run).execute(connection).await?;
-    Ok(())
+    Ok(sqlx::query_scalar("UPDATE actions_jobs SET status='completed',completed_at=clock_timestamp(),duration_ms=CASE WHEN started_at IS NOT NULL THEN GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (clock_timestamp()-started_at))*1000)::bigint) END WHERE run_id=$1 AND status<>'completed' RETURNING id").bind(run).fetch_all(connection).await?)
 }
 
 pub async fn get(pool: &PgPool, repo: i64, id: i64, queued: bool) -> Result<Option<Job>> {
@@ -256,6 +258,11 @@ pub async fn by_check_run(pool: &PgPool, repo: i64, id: i64) -> Result<Option<Jo
 pub async fn steps(pool: &PgPool, repo: i64, job: i64) -> Result<Vec<Step>> {
     Ok(sqlx::query_as("SELECT s.* FROM actions_steps s JOIN actions_jobs j ON j.id=s.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2 ORDER BY s.number").bind(repo).bind(job).fetch_all(pool).await?)
 }
+pub async fn summaries(pool: &PgPool, repo: i64, run: i64) -> Result<Vec<crate::backend::db::action_jobs::Summary>> {
+    Ok(sqlx::query_as("SELECT j.name AS job,s.number,s.markdown FROM actions_step_summaries s JOIN actions_jobs j ON j.id=s.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND c.id=$2 ORDER BY j.id,s.number LIMIT 128")
+        .bind(repo).bind(run).fetch_all(pool).await?)
+}
+
 pub async fn annotations(pool: &PgPool, repo: i64, job: i64, offset: i64, limit: i64) -> Result<(i64, Vec<Json<Annotation>>)> {
     ensure!(offset >= 0 && (1..=100).contains(&limit), "invalid annotation page");
     let mut tx = pool.begin().await?;

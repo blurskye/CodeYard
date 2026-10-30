@@ -36,6 +36,12 @@ pub struct Step {
     pub duration_ms: Option<i64>,
 }
 #[derive(FromRow)]
+pub struct Summary {
+    pub job: String,
+    pub number: i32,
+    pub markdown: String,
+}
+#[derive(FromRow)]
 pub struct Usage {
     pub id: i64,
     pub run_id: i64,
@@ -64,6 +70,11 @@ pub(crate) fn prepare_annotation(annotation: &Annotation) -> Result<Annotation> 
     anyhow::ensure!(
         annotation.start_line > 0
             && annotation.end_line >= annotation.start_line
+            && match (annotation.start_column, annotation.end_column) {
+                (None, None) => true,
+                (Some(start), Some(end)) => annotation.start_line == annotation.end_line && start > 0 && end >= start,
+                _ => false,
+            }
             && matches!(
                 annotation.annotation_level.as_str(),
                 "failure" | "warning" | "notice"
@@ -87,8 +98,14 @@ pub(crate) fn validate_observed_state(state: &State, known: &[(String, i32, Stri
     Ok(())
 }
 
+/// The job identity and whether this transaction owns a new lifecycle transition.
+#[derive(Debug)]
+pub struct Applied {
+    pub id: i64,
+    pub transitioned: bool,
+}
 native_operation!(crate::backend::db::postgres::action_jobs::apply,crate::backend::db::sqlite::action_jobs::apply,
-    fn apply(pool:&DbPool,worker:&str,run:i64,generation:&str,workflow:&str,event:&Event)->Result<i64>);
+    fn apply(pool:&DbPool,worker:&str,run:i64,generation:&str,workflow:&str,event:&Event)->Result<Applied>);
 native_operation!(crate::backend::db::postgres::action_jobs::admit,crate::backend::db::sqlite::action_jobs::admit,
     fn admit(pool:&DbPool,worker:&str,run:i64,generation:&str,workflow:&str,job:i64)->Result<Option<bool>>);
 native_operation!(crate::backend::db::postgres::action_jobs::save_state,crate::backend::db::sqlite::action_jobs::save_state,
@@ -102,6 +119,8 @@ native_operation!(crate::backend::db::postgres::action_jobs::list,crate::backend
     fn list(pool:&DbPool,repo:i64,run:i64,all:bool,offset:i64,limit:i64)->Result<Page>);
 native_operation!(crate::backend::db::postgres::action_jobs::steps,crate::backend::db::sqlite::action_jobs::steps,
     fn steps(pool:&DbPool,repo:i64,job:i64)->Result<Vec<Step>>);
+native_operation!(crate::backend::db::postgres::action_jobs::summaries,crate::backend::db::sqlite::action_jobs::summaries,
+    fn summaries(pool:&DbPool,repo:i64,run:i64)->Result<Vec<Summary>>);
 native_operation!(crate::backend::db::postgres::action_jobs::annotations,crate::backend::db::sqlite::action_jobs::annotations,
     fn annotations(pool:&DbPool,repo:i64,job:i64,offset:i64,limit:i64)->Result<(i64,Vec<Json<Annotation>>)>);
 native_operation!(crate::backend::db::postgres::action_jobs::observed,crate::backend::db::sqlite::action_jobs::observed,

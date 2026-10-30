@@ -1,4 +1,6 @@
+use crate::backend::db::ci::CiCredential;
 use crate::backend::db::credentials::Actor;
+use crate::backend::db::users::accounts::{AccountRestricted, OwnedAccountCredential};
 use anyhow::Result;
 use sqlx::{Sqlite, Transaction};
 
@@ -16,7 +18,7 @@ pub(crate) async fn require_account(tx: &mut Transaction<'_, Sqlite>, actor: &Ac
         None => {
             anyhow::ensure!(
                 super::users::transitions::active_account(tx, actor.user_id).await?,
-                crate::backend::db::users::accounts::AccountRestricted
+                AccountRestricted
             );
             Ok(())
         }
@@ -60,6 +62,32 @@ pub(crate) async fn repository(tx: &mut Transaction<'_, Sqlite>, actor: &Actor, 
         return Ok(crate::backend::identity::oauth_apps::allows(&scopes, &crate::backend::db::credentials::oauth_repository_path(permission), write));
     }
     Ok(true)
+}
+
+/// The credential behind a CI request, checked in the transaction that makes the effect.
+/// A job token acts for the user who triggered its running run in this repository; any
+/// other credential must belong to `actor`. Repository access is the caller's check.
+pub(crate) async fn ci(tx: &mut Transaction<'_, Sqlite>, actor: i64, repo: i64, proof: &CiCredential) -> Result<bool> {
+    let (owner, credential, permission) = match proof {
+        CiCredential::Session(session) => (actor, OwnedAccountCredential::Session(session.clone()), "actions"),
+        CiCredential::Token { id, hash, permission } => {
+            let token: Option<(i64, bool)> = sqlx::query_as("SELECT t.user_id,u.username=$2 FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=$1")
+                .bind(id).bind(crate::backend::db::ci_tokens::BOT).fetch_optional(&mut **tx).await?;
+            let Some((owner, bot)) = token else { return Ok(false); };
+            let job: Option<bool> = sqlx::query_scalar("SELECT r.repo_id=$2 AND r.triggered_by_id=$3 AND r.status='running' AND NOT r.cancel_requested AND g.revoked_at IS NULL FROM actions_github_tokens g JOIN ci_runs r ON r.id=g.run_id WHERE g.token_id=$1")
+                .bind(id).bind(repo).bind(actor).fetch_optional(&mut **tx).await?;
+            // Only the workflow bot holds job tokens, and it holds no other kind.
+            if bot != job.is_some() || job == Some(false) { return Ok(false); }
+            (if bot { owner } else { actor }, OwnedAccountCredential::Token(*id, hash.clone()), *permission)
+        }
+    };
+    let actor = Actor { user_id: owner, credential: Some(credential) };
+    match require_account(tx, &actor).await {
+        Ok(()) => {}
+        Err(error) if error.is::<AccountRestricted>() => return Ok(false),
+        Err(error) => return Err(error),
+    }
+    repository(tx, &actor, repo, permission, true).await
 }
 
 pub(crate) async fn organization(tx: &mut Transaction<'_, Sqlite>, actor: &Actor, org: i64, permission: &str, write: bool) -> Result<bool> {

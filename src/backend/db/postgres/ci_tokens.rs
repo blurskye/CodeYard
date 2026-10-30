@@ -51,26 +51,8 @@ pub(crate) async fn get_in_connection(
         .bind(token_id).fetch_optional(connection).await?)
 }
 
-pub(crate) async fn may_cancel(
-    connection: &mut sqlx::PgConnection,
-    actor: i64,
-    repo: i64,
-    token_id: i64,
-) -> Result<bool> {
-    let Some(token) = get_in_connection(connection, token_id).await? else {
-        return Ok(false);
-    };
-    if token.repo_id != repo {
-        return Ok(false);
-    }
-    let owns:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR expires_at>clock_timestamp()))").bind(token_id).bind(actor).fetch_one(connection).await?;
-    let permissions: crate::backend::ci::tokens::Permissions =
-        serde_json::from_str(&token.permissions)?;
-    Ok(owns && permissions.allows("actions", true))
-}
-
 pub async fn finish_job(pool: &PgPool, run_id: i64, worker: &str, job: &str) -> Result<()> {
-    sqlx::query("UPDATE actions_github_tokens SET revoked_at=COALESCE(revoked_at,FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) WHERE run_id=$1 AND job=$3 AND EXISTS(SELECT 1 FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running')")
+    sqlx::query("UPDATE actions_github_tokens SET revoked_at=COALESCE(revoked_at,FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) WHERE run_id=$1 AND (job=$3 OR left(job,length($3)+1)=$3 || '/') AND EXISTS(SELECT 1 FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running')")
         .bind(run_id).bind(worker).bind(job).execute(pool).await?;
     Ok(())
 }

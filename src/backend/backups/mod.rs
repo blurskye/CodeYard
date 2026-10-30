@@ -12,7 +12,7 @@ mod repair;
 
 pub use repair::{rebuild, verify};
 
-use crate::backend::{db, git::mirror};
+use crate::backend::{db, git::mirror, fs::private_dir};
 use anyhow::{bail, ensure, Context, Result};
 use std::collections::{BTreeSet, HashSet};
 use std::io::Write;
@@ -29,27 +29,6 @@ pub struct Places<'a> {
     pub database_url: &'a str,
     pub state_dir: &'a Path,
     pub repos_path: &'a Path,
-}
-
-fn private_dir(path: &Path) -> Result<()> {
-    let path = std::path::absolute(path)?;
-    let mut missing = Vec::new();
-    let mut parent = path.as_path();
-    while !parent.exists() {
-        missing.push(parent.to_path_buf());
-        parent = parent.parent().context("directory has no parent")?;
-    }
-    std::fs::create_dir_all(&path)?;
-    for made in missing.into_iter().rev() {
-        sync_dir(&made)?;
-        sync_dir(made.parent().context("directory has no parent")?)?;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
-    }
-    Ok(())
 }
 
 fn private_file(path: &Path) -> Result<()> {

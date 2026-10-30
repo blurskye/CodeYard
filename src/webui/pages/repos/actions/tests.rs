@@ -130,6 +130,7 @@ fn concurrency_waiting_is_visible_and_group_names_are_escaped() {
     shown.concurrency_groups = vec!["deploy-<main>".into()];
     shown.waiting_for_concurrency = true;
     model.selected = Some(SelectedRun {
+        summaries: Vec::new(),
         run: shown,
         logs: Vec::new(),
         deployment: None,
@@ -155,6 +156,7 @@ fn pending_fork_run_links_to_the_native_approval_form() {
     shown.approval_required = true;
     shown.approval_pull = Some("/alice/repo/pulls/7".into());
     model.selected = Some(SelectedRun {
+        summaries: Vec::new(),
         run: shown,
         logs: Vec::new(),
         deployment: None,
@@ -173,6 +175,7 @@ fn pending_fork_run_links_to_the_native_approval_form() {
 fn persisted_output_is_escaped_and_absent_deployment_is_honest() {
     let mut model = model();
     model.selected = Some(SelectedRun {
+        summaries: Vec::new(),
         run: run(),
         logs: vec![LogLine {
             id: 42,
@@ -210,6 +213,7 @@ fn artifacts_have_native_downloads_and_writer_delete_forms_after_hydration() {
         can_delete: true,
     });
     model.selected = Some(SelectedRun {
+        summaries: Vec::new(),
         run: shown,
         logs: Vec::new(),
         deployment: None,
@@ -236,6 +240,7 @@ fn only_a_failed_run_shows_the_error_banner() {
     cancelled.status = "cancelled".into();
     cancelled.error_message = Some("Cancelled".into());
     model.selected = Some(SelectedRun {
+        summaries: Vec::new(),
         run: cancelled,
         logs: Vec::new(),
         deployment: None,
@@ -566,6 +571,7 @@ fn run_page_lists_the_inputs_a_manual_run_was_started_with() {
     let mut run = run();
     run.inputs = BTreeMap::from([("target".to_owned(), "production".to_owned())]);
     model.selected = Some(SelectedRun {
+        summaries: Vec::new(),
         run,
         logs: Vec::new(),
         deployment: None,
@@ -739,6 +745,7 @@ fn run_rows_and_empty_logs_present_clear_status_states() {
     page.runs.clear();
     assert!(html(page.clone()).contains("No workflow runs yet"));
     page.selected = Some(SelectedRun {
+        summaries: Vec::new(),
         run: queued,
         logs: vec![],
         deployment: None,
@@ -760,6 +767,7 @@ fn queued_run_header_states_its_status_once_and_what_it_waits_for() {
     queued.started_at = None;
     queued.completed_at = None;
     page.selected = Some(SelectedRun {
+        summaries: Vec::new(),
         run: queued,
         logs: vec![],
         deployment: None,
@@ -778,6 +786,7 @@ fn matcher_annotations_show_the_severity_location_code_and_message() {
     let mut finished = run();
     finished.status = "success".into();
     page.selected = Some(SelectedRun {
+        summaries: Vec::new(),
         run: finished,
         fetched_lines: 1,
         logs_truncated: false,
@@ -819,6 +828,7 @@ fn act_step_markers_show_icons_and_keep_the_raw_line_as_title() {
     })
     .collect();
     page.selected = Some(SelectedRun {
+        summaries: Vec::new(),
         run: finished,
         fetched_lines: lines.len(),
         logs_truncated: false,
@@ -844,6 +854,7 @@ fn selected_summary_groups_metadata_and_only_shows_recorded_deployment() {
     completed.head_sha = Some("a13f729abcdef".into());
     page.query.insert("view".into(), "summary".into());
     page.selected = Some(SelectedRun {
+        summaries: Vec::new(),
         run: completed,
         logs: vec![],
         deployment: None,
@@ -904,6 +915,7 @@ fn restored_log_accordions_keep_all_markers_unknowns_failure_and_history_notice(
     // Logs show one job at a time; the lines after the prelude belong to the job named "test".
     page.query.insert("workflow_job".into(), "test".into());
     page.selected = Some(SelectedRun {
+        summaries: Vec::new(),
         run: finished,
         fetched_lines: lines.len(),
         logs_truncated: false,
@@ -932,6 +944,7 @@ fn restored_log_accordions_keep_all_markers_unknowns_failure_and_history_notice(
 fn byte_limited_logs_explain_truncation_and_link_to_history() {
     let mut page = model();
     page.selected = Some(SelectedRun {
+        summaries: Vec::new(),
         run: run(),
         logs: vec![],
         deployment: None,
@@ -1085,6 +1098,7 @@ fn log_filter_key_resets_local_controls_without_changing_the_run() {
         let mut initial = model();
         initial.query.insert("log_q".into(), "first".into());
         initial.selected = Some(SelectedRun {
+            summaries: Vec::new(),
             run: run(),
             logs: vec![],
             deployment: None,
@@ -1143,6 +1157,7 @@ fn typed_log_search_survives_new_log_lines() {
         let page = use_signal(|| {
             let mut page = model();
             page.selected = Some(SelectedRun {
+                summaries: Vec::new(),
                 run: run(),
                 logs: vec![],
                 deployment: None,
@@ -1263,6 +1278,7 @@ fn the_runs_footer_shows_only_when_the_page_is_full() {
 #[test]
 fn run_page_offers_cancel_and_rerun_forms_only_to_writers() {
     let selected = |run: Run| SelectedRun {
+        summaries: Vec::new(),
         run,
         logs: vec![],
         deployment: None,

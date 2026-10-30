@@ -48,12 +48,9 @@ impl SecretKind {
     }
 }
 
-pub use codeyard_actions::values::{MAX_NAME_BYTES as MAX_SECRET_NAME_BYTES, MAX_VALUE_BYTES as MAX_SECRET_VALUE_BYTES};
-/// Most repository secrets one CI claim carries.
-pub const MAX_REPOSITORY_SECRETS: usize = 100;
-/// Names and values of one claim together. A claim is one RPC reply of at most 8 MiB, and
-/// JSON escapes a control byte as six bytes, so 1 MiB of secret text stays inside the frame.
-pub const MAX_REPOSITORY_SECRETS_BYTES: usize = 1024 * 1024;
+pub use codeyard_actions::values::{MAX_NAME_BYTES as MAX_SECRET_NAME_BYTES,
+    MAX_VALUE_BYTES as MAX_SECRET_VALUE_BYTES, MAX_SCOPE_VALUES as MAX_REPOSITORY_SECRETS,
+    MAX_SECRET_BYTES as MAX_REPOSITORY_SECRETS_BYTES};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SecretsError {

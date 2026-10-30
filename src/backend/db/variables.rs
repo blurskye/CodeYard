@@ -1,5 +1,6 @@
 //! Actions variables are plain text; repository collaborators may inspect their values.
 use super::DbPool;
+use codeyard_actions::values::MAX_VARIABLE_BYTES;
 use chrono::{DateTime, Utc};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
@@ -56,7 +57,7 @@ fn validate_set(variables: &[(String, String)], limit: usize) -> Result<(), Vari
         validate(name, value)?;
         bytes += name.len() + value.len();
     }
-    if bytes > 256 * 1024 {
+    if bytes > MAX_VARIABLE_BYTES {
         return Err(VariableError::Limit);
     }
     Ok(())
@@ -68,7 +69,7 @@ pub(crate) fn ensure_room(
     name: &str,
     value: &str,
 ) -> Result<(), VariableError> {
-    if count >= 500 || bytes + (name.len() + value.len()) as i64 > 256 * 1024 {
+    if count >= 500 || bytes + (name.len() + value.len()) as i64 > MAX_VARIABLE_BYTES as i64 {
         return Err(VariableError::Limit);
     }
     Ok(())

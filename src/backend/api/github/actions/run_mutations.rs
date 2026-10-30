@@ -26,10 +26,10 @@ async fn cancel(
     // Both engines use bounded process-group termination, rather than leaving always() jobs running.
     if !state
         .ci_runs
-        .cancel_run_with_token(
+        .cancel_run(
             run.run_id,
-            authentication.user.id,
-            Some(authentication.token.id),
+            authentication.workflow_actor(&state, repo.id).await?,
+            Some(authentication.ci_credential(&headers, "actions")?),
         )
         .await
         .map_err(admission_error)?

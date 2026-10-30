@@ -452,7 +452,7 @@ pub(super) async fn raw(
         return ctx.with_cookie((StatusCode::NOT_MODIFIED, [(header::ETAG, etag)]).into_response());
     }
     let (range, partial) =
-        match crate::backend::api::repos::code::raw::requested_range(&ctx.headers) {
+        match crate::backend::api::http::range::requested(&ctx.headers, None) {
             Ok(range) => range,
             Err(()) => {
                 return ctx.error(

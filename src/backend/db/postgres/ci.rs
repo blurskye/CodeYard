@@ -102,6 +102,14 @@ fn branch_or_trunk_sql(branch: &str) -> String {
     )
 }
 
+pub async fn accept_repository_dispatch(pool: &PgPool, actor: i64, repo: i64, credential: &crate::backend::db::ci::CiCredential) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let allowed = super::discussions::lock_exclusive_write_authority(&mut tx, actor, repo).await?
+        && super::credentials::ci(&mut tx, actor, repo, credential).await?;
+    tx.commit().await?;
+    Ok(allowed)
+}
+
 pub async fn scheduled_repositories(pool: &PgPool, after: i64) -> Result<Vec<i64>> {
     Ok(sqlx::query_scalar(
         "SELECT id FROM repositories WHERE id>$1 AND NOT is_archived ORDER BY id LIMIT 100",
@@ -133,8 +141,9 @@ pub async fn enqueue_ci_run(
         trusted_ids,
         &crate::backend::db::runners::Scheduling::default(),
         None,
+        None,
     )
-    .await
+    .await.map(|(run, _)| run)
 }
 pub async fn enqueue_ci_run_for_runners(
     pool: &PgPool,
@@ -142,8 +151,9 @@ pub async fn enqueue_ci_run_for_runners(
     trusted_ids: &[i64],
     scheduling: &crate::backend::db::runners::Scheduling,
     event_payload: Option<&serde_json::Value>,
-) -> Result<CiRun> {
-    enqueue_ci_run_inner(pool, input, trusted_ids, None, scheduling, event_payload).await
+    credential: Option<&crate::backend::db::ci::CiCredential>,
+) -> Result<crate::backend::db::ci::Enqueued> {
+    enqueue_ci_run_inner(pool, input, trusted_ids, None, scheduling, event_payload, credential).await
 }
 pub async fn enqueue_ci_run_attempt(
     pool: &PgPool,
@@ -152,7 +162,7 @@ pub async fn enqueue_ci_run_attempt(
     attempt: crate::backend::db::ci::NewCiAttempt,
     scheduling: &crate::backend::db::runners::Scheduling,
     event_payload: Option<&serde_json::Value>,
-) -> Result<CiRun> {
+) -> Result<crate::backend::db::ci::Enqueued> {
     enqueue_ci_run_inner(
         pool,
         input,
@@ -160,6 +170,7 @@ pub async fn enqueue_ci_run_attempt(
         Some(attempt),
         scheduling,
         event_payload,
+        None,
     )
     .await
 }
@@ -170,7 +181,8 @@ async fn enqueue_ci_run_inner(
     requested_attempt: Option<crate::backend::db::ci::NewCiAttempt>,
     scheduling: &crate::backend::db::runners::Scheduling,
     event_payload: Option<&serde_json::Value>,
-) -> Result<CiRun> {
+    credential: Option<&crate::backend::db::ci::CiCredential>,
+) -> Result<crate::backend::db::ci::Enqueued> {
     let mut tx = pool.begin().await?;
     let cd = matches!(input.pipeline, "cd" | "full") || input.environment.is_some();
     let awaiting_approval: bool = !input.manual && input.event == "pull_request" && sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pull_requests WHERE id=$1 AND repo_id=$2 AND head_sha=$3 AND head_repo_id IS DISTINCT FROM repo_id AND workflows_approved_sha IS DISTINCT FROM head_sha AND state='open' AND NOT is_draft)")
@@ -196,6 +208,10 @@ async fn enqueue_ci_run_inner(
         },
         CiAdmissionRefusal::Denied("CI repository execution permission denied")
     );
+    if let Some(proof) = credential.or_else(|| requested_attempt.as_ref().and_then(|attempt| attempt.credential.as_ref())) {
+        ensure!(super::credentials::ci(&mut tx, input.triggered_by_id, input.repo_id, proof).await?,
+            CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
+    }
     let paths: Vec<_> = input.workflow_path.split(',').collect();
     let disabled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_workflows WHERE repo_id=$1 AND path=ANY($2) AND state<>'active')").bind(input.repo_id).bind(&paths).fetch_one(&mut *tx).await?;
     ensure!(!disabled, CiAdmissionRefusal::WorkflowDisabled);
@@ -206,7 +222,7 @@ async fn enqueue_ci_run_inner(
                 .bind(payload["workflow_run"]["id"].to_string())
                 .bind(payload["workflow_run"]["run_attempt"].to_string())
                 .bind(payload["action"].as_str()).fetch_optional(&mut *tx).await? {
-                return Ok(run);
+                return Ok((run, false));
             }
         }
     }
@@ -226,7 +242,7 @@ async fn enqueue_ci_run_inner(
                 .bind(run_id)
                 .fetch_optional(&mut *tx)
                 .await?;
-            return run.ok_or_else(|| {
+            return run.map(|run| (run, false)).ok_or_else(|| {
                 CiAdmissionRefusal::Conflict("Scheduled run was already queued").into()
             });
         }
@@ -238,40 +254,6 @@ async fn enqueue_ci_run_inner(
     let mut parent_run = None;
     let mut replay = None;
     if let Some(request) = &requested_attempt {
-        if let Some(actor) = &request.authority {
-            ensure!(actor.user_id == input.triggered_by_id,
-                CiAdmissionRefusal::Denied("CI credential actor changed"));
-            if let Some(credential) = actor.credential() {
-                super::users::transitions::require_account(&mut tx, input.triggered_by_id, &credential)
-                    .await.map_err(|error| if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
-                        anyhow::anyhow!(CiAdmissionRefusal::Denied("CI credential is no longer authorized"))
-                    } else { error })?;
-            }
-        }
-        if let Some(token) = request.credential {
-            let owns:Option<i64>=sqlx::query_scalar("SELECT id FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE").bind(token).bind(input.triggered_by_id).fetch_optional(&mut *tx).await?;
-            ensure!(
-                owns.is_some() && super::fine_grained_tokens::repository_permission(&mut tx, token, input.triggered_by_id, input.repo_id, "actions", true).await?,
-                CiAdmissionRefusal::Denied("CI credential is no longer authorized")
-            );
-        }
-        let bot: bool = sqlx::query_scalar("SELECT username=$2 FROM users WHERE id=$1")
-            .bind(input.triggered_by_id)
-            .bind(crate::backend::db::ci_tokens::BOT)
-            .fetch_one(&mut *tx)
-            .await?;
-        if bot {
-            let allowed = if let Some(token) = request.credential {
-                super::ci_tokens::may_cancel(&mut tx, input.triggered_by_id, input.repo_id, token)
-                    .await?
-            } else {
-                false
-            };
-            ensure!(
-                allowed,
-                CiAdmissionRefusal::Denied("CI credential is no longer authorized")
-            );
-        }
         let source: CiRun =
             sqlx::query_as("SELECT * FROM ci_runs WHERE id=$1 AND repo_id=$2 FOR UPDATE")
                 .bind(request.source)
@@ -366,11 +348,11 @@ async fn enqueue_ci_run_inner(
                     .bind(latest.id).bind(input.triggered_by_id).fetch_one(&mut *tx).await?;
                 schedule_concurrency(&mut tx, &released, scheduling).await?;
                 tx.commit().await?;
-                return Ok(released);
+                return Ok((released, false));
             }
             if same_event && (!input.manual || matches!(latest.status.as_str(), "queued" | "running")) {
                 ensure!(requested_attempt.as_ref().is_none_or(|request|request.allow_active),CiAdmissionRefusal::Conflict("Cannot re-run an active workflow run"));
-                return Ok(latest);
+                return Ok((latest, false));
             }
             // The attempt keeps this revision's runs unique. A re-run continues the workflow run,
             // while another event at the same revision starts a workflow run of its own.
@@ -447,7 +429,7 @@ async fn enqueue_ci_run_inner(
         schedule_concurrency(&mut tx, &run, scheduling).await?;
     }
     tx.commit().await?;
-    Ok(run)
+    Ok((run, true))
 }
 
 async fn schedule_concurrency(
@@ -455,7 +437,13 @@ async fn schedule_concurrency(
     run: &CiRun,
     scheduling: &crate::backend::db::runners::Scheduling,
 ) -> Result<()> {
-    if let Some(config) = &scheduling.concurrency {
+    let config = if let Some((expression, contexts)) = &scheduling.concurrency_expression {
+        let actor: Option<(i64, String)> = sqlx::query_as("SELECT u.id,u.username FROM ci_runs origin JOIN users u ON u.id=origin.triggered_by_id WHERE origin.id=$1")
+            .bind(run.workflow_run_id.unwrap_or(run.id)).fetch_optional(&mut **tx).await?;
+        let contexts = crate::backend::ci::concurrency::run_contexts(contexts.clone(), run, actor);
+        Some(crate::backend::ci::concurrency::resolve(expression.clone(), contexts).await?)
+    } else { scheduling.concurrency.clone() };
+    if let Some(config) = &config {
         let victims = super::action_concurrency::record(tx, run, config).await?;
         for victim in victims {
             if victim.status == "queued" {
@@ -725,6 +713,17 @@ pub async fn ci_run_allows_repository_read(
 
 /// Records that the worker is alive. Returns whether cancellation was requested,
 /// or `None` if this worker no longer owns the run.
+pub async fn heartbeat_ci_run_on_node(pool: &PgPool, id: i64, worker: &str, node_key: &str) -> Result<Option<bool>> {
+    let mut tx = pool.begin().await?;
+    let active: Option<i64> = sqlx::query_scalar("SELECT id FROM nodes WHERE public_key=$1 AND status='active' AND 'runner'=ANY(roles) FOR SHARE")
+        .bind(node_key).fetch_optional(&mut *tx).await?;
+    if active.is_none() || !worker.starts_with(&format!("{node_key}/")) { return Ok(None); }
+    let cancelled = sqlx::query_scalar("UPDATE ci_runs SET heartbeat_at=clock_timestamp() WHERE id=$1 AND worker=$2 AND status='running' RETURNING cancel_requested")
+        .bind(id).bind(worker).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(cancelled)
+}
+
 pub async fn heartbeat_ci_run(pool: &PgPool, id: i64, worker: &str) -> Result<Option<bool>> {
     Ok(sqlx::query_scalar(
         "UPDATE ci_runs SET heartbeat_at = clock_timestamp() WHERE id = $1 AND worker = $2 AND status = 'running' RETURNING cancel_requested",
@@ -745,7 +744,7 @@ pub(super) async fn finish_in_tx(
     run: &CiRun,
     status: &str,
     message: Option<&str>,
-) -> Result<Option<(CiRun, Vec<(i64, i64)>)>> {
+) -> Result<Option<(CiRun, Vec<(i64, i64)>, Vec<i64>)>> {
     ensure!(
         matches!(status, "success" | "failed" | "cancelled"),
         "invalid CI terminal status"
@@ -763,7 +762,7 @@ pub(super) async fn finish_in_tx(
         return Ok(None);
     };
     super::action_logs::retain_completed(tx, run.repo_id, run.id).await?;
-    super::action_jobs::close_active(tx, run.id).await?;
+    let closed_jobs = super::action_jobs::close_active(tx, run.id).await?;
     super::runners::retire(tx, run.worker.as_deref()).await?;
     if is_deployment(run) {
         sqlx::query("UPDATE ci_deployments SET status = $2, completed_at = NOW(), updated_at = NOW() WHERE run_id = $1 AND status IN ('pending','in_progress','approved')")
@@ -814,7 +813,7 @@ pub(super) async fn finish_in_tx(
             threaded.push((user, id));
         }
     }
-    Ok(Some((finished, threaded)))
+    Ok(Some((finished, threaded, closed_jobs)))
 }
 
 /// Marks a running run finished, if this worker still owns it. The repository and
@@ -826,7 +825,7 @@ pub async fn finish_ci_run(
     worker: &str,
     status: &str,
     message: Option<&str>,
-) -> Result<Option<(CiRun, Vec<(i64, i64)>)>> {
+) -> Result<Option<(CiRun, Vec<(i64, i64)>, Vec<i64>)>> {
     let mut tx = pool.begin().await?;
     let repo_id: Option<i64> = sqlx::query_scalar(
         "SELECT repo_id FROM ci_runs WHERE id = $1 AND worker = $2 AND status = 'running'",
@@ -864,7 +863,7 @@ pub async fn finish_ci_run(
 pub async fn fail_stale_ci_runs(
     pool: &PgPool,
     stale_seconds: i64,
-) -> Result<(Vec<CiRun>, Vec<(i64, i64)>)> {
+) -> Result<(Vec<CiRun>, Vec<(i64, i64)>, Vec<(i64, i64)>)> {
     let candidates: Vec<(i64, i64)> = sqlx::query_as(
         "SELECT id, repo_id FROM ci_runs WHERE status = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - make_interval(secs => $1::double precision))
          ORDER BY id LIMIT 128",
@@ -874,6 +873,7 @@ pub async fn fail_stale_ci_runs(
     .await?;
     let mut finished_runs = Vec::new();
     let mut notifications = Vec::new();
+    let mut closed_jobs = Vec::new();
     for (id, repo_id) in candidates {
         let mut tx = pool.begin().await?;
         lock_run_repository(&mut tx, repo_id).await?;
@@ -887,16 +887,17 @@ pub async fn fail_stale_ci_runs(
         .await?;
         if let Some(run) = run {
             let message = Some("The CI worker stopped before the run finished");
-            if let Some((finished, created)) =
+            if let Some((finished, created, jobs)) =
                 finish_in_tx(&mut tx, &run, "failed", message).await?
             {
                 finished_runs.push(finished);
                 notifications.extend(created);
+                closed_jobs.extend(jobs.into_iter().map(|job| (run.id, job)));
             }
         }
         tx.commit().await?;
     }
-    Ok((finished_runs, notifications))
+    Ok((finished_runs, notifications, closed_jobs))
 }
 
 /// Stops the CI runs in `run_ids` after the people who started them lost access,
@@ -920,6 +921,8 @@ pub(crate) async fn stop_ci_runs(
     .bind(run_ids)
     .fetch_all(&mut **tx)
     .await?;
+    sqlx::query("SELECT id FROM ci_runs WHERE id = ANY($1) ORDER BY id FOR UPDATE")
+        .bind(run_ids).fetch_all(&mut **tx).await?;
     let queued = sqlx::query_as::<_, CiRun>(
         "SELECT * FROM ci_runs WHERE id = ANY($1) AND status = 'queued' ORDER BY id FOR UPDATE",
     )
@@ -1007,25 +1010,25 @@ pub async fn request_ci_cancellation(
     pool: &PgPool,
     run_id: Uuid,
     actor_id: i64,
-) -> Result<(bool, Vec<(i64, i64)>)> {
+) -> Result<crate::backend::db::ci::Cancellation> {
     request_cancellation(pool, run_id, actor_id, None).await
 }
 
-pub async fn request_ci_cancellation_with_token(
+pub async fn request_ci_cancellation_with_credential(
     pool: &PgPool,
     run_id: Uuid,
     actor_id: i64,
-    token_id: i64,
-) -> Result<(bool, Vec<(i64, i64)>)> {
-    request_cancellation(pool, run_id, actor_id, Some(token_id)).await
+    credential: &crate::backend::db::ci::CiCredential,
+) -> Result<crate::backend::db::ci::Cancellation> {
+    request_cancellation(pool, run_id, actor_id, Some(credential)).await
 }
 
 async fn request_cancellation(
     pool: &PgPool,
     run_id: Uuid,
     actor_id: i64,
-    token_id: Option<i64>,
-) -> Result<(bool, Vec<(i64, i64)>)> {
+    credential: Option<&crate::backend::db::ci::CiCredential>,
+) -> Result<crate::backend::db::ci::Cancellation> {
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_membership_shared(&mut tx).await?;
     let user = sqlx::query_as::<_, super::models::User>("SELECT * FROM users WHERE id = $1")
@@ -1047,27 +1050,27 @@ async fn request_cancellation(
         &mut tx,
         actor_id,
         repo_id,
-        super::repositories::access::RepositoryRowLock::Shared,
+        super::repositories::access::RepositoryRowLock::Exclusive,
         true,
     )
     .await?
     .ok_or(CiAdmissionRefusal::Denied(
         "CI cancellation permission denied",
     ))?;
+    if let Some(proof) = credential {
+        ensure!(super::credentials::ci(&mut tx, actor_id, repo_id, proof).await?,
+            CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
+    }
     let run = sqlx::query_as::<_, CiRun>("SELECT * FROM ci_runs WHERE run_id = $1 FOR UPDATE")
         .bind(run_id)
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(CiAdmissionRefusal::Missing("CI run unavailable"))?;
     let personal_admin = authority.is_admin && !authority.organization;
-    let workflow_authorized = match token_id {
-        Some(token) => {
-            let live: Option<i64> = sqlx::query_scalar("SELECT id FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE")
-                .bind(token).bind(actor_id).fetch_optional(&mut *tx).await?;
-            ensure!(live.is_some() && super::fine_grained_tokens::repository_permission(&mut tx, token, actor_id, run.repo_id, "actions", true).await?, CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
-            super::ci_tokens::may_cancel(&mut tx, actor_id, run.repo_id, token).await?
-        }
-        None => false,
+    let workflow_authorized = match credential {
+        Some(crate::backend::db::ci::CiCredential::Token { id, .. }) => sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)")
+            .bind(id).fetch_one(&mut *tx).await?,
+        _ => false,
     };
     ensure!(user.username != crate::backend::db::ci_tokens::BOT || workflow_authorized, CiAdmissionRefusal::Denied("CI cancellation permission denied"));
     ensure!(
@@ -1081,17 +1084,14 @@ async fn request_cancellation(
         CiAdmissionRefusal::Denied("CI cancellation permission denied")
     );
     let mut notifications = Vec::new();
+    let mut completed = None;
     match run.status.as_str() {
         "queued" => {
-            if let Some((_, created)) = finish_in_tx(
-                &mut tx,
-                &run,
-                "cancelled",
-                Some("Cancelled before it started"),
-            )
-            .await?
-            {
+            if let Some((finished, created, _)) = finish_in_tx(
+                &mut tx, &run, "cancelled", Some("Cancelled before it started"),
+            ).await? {
                 notifications = created;
+                completed = Some(finished);
             }
         }
         "running" => {
@@ -1102,10 +1102,10 @@ async fn request_cancellation(
             .execute(&mut *tx)
             .await?;
         }
-        _ => return Ok((false, notifications)),
+        _ => return Ok((false, notifications, None)),
     }
     tx.commit().await?;
-    Ok((true, notifications))
+    Ok((true, notifications, completed))
 }
 
 pub async fn delete_ci_run_data(
@@ -1223,7 +1223,8 @@ pub async fn list_rest_ci_runs(
         .bind(filter.until)
         .fetch_one(pool)
         .await?;
-    let sql = format!("SELECT c.* {condition} ORDER BY c.id DESC LIMIT $10 OFFSET $11");
+    let columns = crate::backend::db::ci::RUN_METADATA_COLUMNS;
+    let sql = format!("SELECT {columns} {condition} ORDER BY c.id DESC LIMIT $10 OFFSET $11");
     let rows = sqlx::query_as(&sql)
         .bind(repo_id)
         .bind(&filter.workflow)
@@ -1250,16 +1251,17 @@ pub async fn list_filtered_ci_runs(
 ) -> Result<Vec<CiRun>> {
     ensure!(limit >= 0, "Result limit must be nonnegative");
     let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let columns = crate::backend::db::ci::RUN_METADATA_COLUMNS;
     Ok(sqlx::query_as::<_, CiRun>(&format!(
         "WITH history AS (
-            SELECT c.*, r.name AS repository_name,
+            SELECT {columns}, r.name AS repository_name,
                 CASE WHEN c.event = 'pull_request' THEN coalesce(c.pull_request_event->>'head_ref', c.branch) ELSE c.branch END AS display_ref
             FROM ci_runs c JOIN repositories r ON r.id = c.repo_id
             WHERE (($2::bigint IS NULL AND c.triggered_by_id = $1) OR c.repo_id = $2)
                 AND c.repo_id IN (SELECT r.id FROM repositories r JOIN users u ON u.id = $1
                     WHERE NOT u.is_banned AND NOT u.must_change_password
                         AND ((r.owner_kind = 'user' AND u.is_admin) OR ({access}) > 0))
-        ), named AS (SELECT *, CASE WHEN display_ref LIKE 'refs/heads/%' AND substr(display_ref, 12, 5) != 'refs/' THEN substr(display_ref, 12) ELSE display_ref END AS display_branch FROM history)
+        ), named AS (SELECT *, CASE WHEN event NOT IN ('pull_request','pull_request_target') AND display_ref LIKE 'refs/heads/%' AND substr(display_ref, 12, 5) != 'refs/' THEN substr(display_ref, 12) ELSE display_ref END AS display_branch FROM history)
         SELECT * FROM named c WHERE ($3 = '' OR EXISTS (SELECT 1 FROM unnest(string_to_array(c.workflow_path, ',')) p WHERE trim(p) = $3))
             AND ($4 = '' OR c.event = $4) AND ($5 = '' OR c.display_branch = $5)
             AND ($6 = '' OR CASE lower(c.status) WHEN 'completed' THEN 'success' WHEN 'error' THEN 'failed' WHEN 'in_progress' THEN 'running' WHEN 'pending' THEN 'queued' WHEN 'canceled' THEN 'cancelled' ELSE lower(c.status) END = $6)
@@ -1270,8 +1272,9 @@ pub async fn list_filtered_ci_runs(
 }
 
 pub async fn list_ci_runs_for_repo(pool: &PgPool, repo_id: i64, limit: i64) -> Result<Vec<CiRun>> {
+    let columns = crate::backend::db::ci::RUN_METADATA_COLUMNS;
     let rows = sqlx::query_as::<_, CiRun>(
-        "SELECT * FROM ci_runs WHERE repo_id = $1 ORDER BY created_at DESC LIMIT $2",
+        &format!("SELECT {columns} FROM ci_runs c WHERE repo_id = $1 ORDER BY created_at DESC LIMIT $2"),
     )
     .bind(repo_id)
     .bind(limit)
@@ -1373,8 +1376,9 @@ pub async fn list_ci_runs_for_user(pool: &PgPool, user_id: i64, limit: i64) -> R
     let access = super::repositories::access::USER_REPO_ACCESS_SQL;
     // Visibility is decided once per repository the user has runs in, in the same
     // statement that orders and limits the runs.
+    let columns = crate::backend::db::ci::RUN_METADATA_COLUMNS;
     Ok(sqlx::query_as::<_, CiRun>(&format!(
-        "SELECT c.* FROM ci_runs c
+        "SELECT {columns} FROM ci_runs c
          WHERE c.triggered_by_id = $1 AND c.repo_id IN (
              SELECT r.id FROM repositories r JOIN users u ON u.id = $1
              WHERE NOT u.is_banned AND NOT u.must_change_password

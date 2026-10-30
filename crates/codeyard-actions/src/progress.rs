@@ -3,6 +3,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Leave room for the authenticated operation envelope inside the 8 MiB queue RPC frame.
+pub const MAX_STATE_BYTES: usize = 7 * 1024 * 1024;
+pub const MAX_STEP_NUMBER: u32 = 10_000;
+pub const MAX_EVENT_BYTES: usize = 512 * 1024;
+pub const MAX_STEP_SUMMARY_BYTES: usize = 64 * 1024;
+pub const MAX_RUN_SUMMARY_BYTES: usize = 256 * 1024;
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Event {
@@ -52,6 +59,10 @@ pub enum Update {
     Annotation {
         annotation: Annotation,
     },
+    Summary {
+        number: u32,
+        markdown: String,
+    },
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -59,6 +70,10 @@ pub struct Annotation {
     pub path: String,
     pub start_line: u32,
     pub end_line: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_column: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<u32>,
     pub annotation_level: String,
     pub message: String,
     pub title: Option<String>,
@@ -113,6 +128,21 @@ pub struct State {
     pub variant_order: BTreeMap<String, Vec<u32>>,
 }
 impl State {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(self.has_valid_variant_order(), "invalid observed variant order");
+        struct Count(usize);
+        impl std::io::Write for Count {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0 = self.0.saturating_add(bytes.len());
+                if self.0 > MAX_STATE_BYTES { return Err(std::io::ErrorKind::FileTooLarge.into()); }
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        }
+        serde_json::to_writer(Count(0), self)?;
+        Ok(())
+    }
+
     pub fn has_valid_variant_order(&self) -> bool {
         self.variant_order.iter().all(|(job, order)| {
             self.variants.get(job).is_some_and(|variants| {

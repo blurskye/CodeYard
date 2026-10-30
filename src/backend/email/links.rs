@@ -6,7 +6,7 @@ use crate::backend::api::http::config::public_origin;
 use crate::backend::db::{self, models::User, DbPool};
 use crate::backend::identity::admission::{self, AdmissionError};
 use rand::{rngs::OsRng, RngCore};
-use sha2::{Digest, Sha256};
+use crate::backend::identity::tokens::token_hash as hash;
 use tracing::warn;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,10 +53,6 @@ fn new_token() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
     hex::encode(bytes)
-}
-
-fn hash(token: &str) -> String {
-    hex::encode(Sha256::digest(token.as_bytes()))
 }
 
 fn unavailable(error: anyhow::Error) -> LinkError {
