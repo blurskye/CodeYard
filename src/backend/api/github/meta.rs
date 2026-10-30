@@ -244,10 +244,10 @@ async fn repository_license(
         .is_some_and(|value| value.contains("application/vnd.github.raw"))
     {
         return contents::blob_response(
-            &headers, &owner, &name, reference, &path, blob,
+            &headers, &owner, &name, reference, &revision, &path, blob,
         ).await;
     }
-    let mut value = contents::entry(&owner, &name, reference, &path, &blob.id, blob.size, "file");
+    let mut value = contents::entry(&owner, &name, reference, &revision, &path, &blob.id, blob.size, "file");
     value["encoding"] = json!("base64");
     value["content"] = json!(STANDARD.encode(&blob.bytes));
     value["license"] = templates::detect_license(&blob.bytes)

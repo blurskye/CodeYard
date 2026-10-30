@@ -95,10 +95,14 @@ fn submodule_url(modules: &str, path: &str) -> Option<String> {
     None
 }
 
+/// A contents entry as GitHub documents it: `url` and `html_url` name the ref the client
+/// asked for, while `git_url` and `download_url` stay on the object and commit read.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn entry(
     owner: &str,
     repo: &str,
     reference: &str,
+    revision: &str,
     path: &str,
     sha: &str,
     size: u64,
@@ -111,7 +115,8 @@ pub(super) fn entry(
         crate::webui::encode_component(reference)
     );
     let base = format!("{}/{}/{}", crate::backend::api::http::config::link_origin(), crate::webui::encode_component(owner), crate::webui::encode_component(repo));
-    let html = crate::webui::pages::repos::ref_path::file_url(&base, if kind == "dir" { "tree" } else { "blob" }, reference, path);
+    // GitHub names the ref as the client gave it, so `main` stays `main` here.
+    let html = format!("{base}/{}/{}/{}", if kind == "dir" { "tree" } else { "blob" }, path_url(reference), path_url(path));
     let git_url = format!(
         "{}/git/{}/{sha}",
         repo_url(owner, repo),
@@ -119,7 +124,14 @@ pub(super) fn entry(
     );
     // REST clients can follow this URL with the same bearer credential. Native raw URLs
     // remain available for browser-session downloads.
-    let download = (kind == "file").then(|| format!("{url}&raw=1"));
+    let download = (kind == "file").then(|| {
+        format!(
+            "{}/contents/{}?ref={}&raw=1",
+            repo_url(owner, repo),
+            path_url(path),
+            crate::webui::encode_component(revision)
+        )
+    });
     json!({
         "type": kind, "name": path.rsplit('/').next().unwrap_or(path), "path": path,
         "sha": sha, "size": size, "url": url, "html_url": html, "git_url": git_url,
@@ -134,6 +146,7 @@ pub(super) async fn blob_response(
     owner: &str,
     name: &str,
     reference: &str,
+    revision: &str,
     path: &str,
     blob: crate::backend::repositories::store::BlobBytes,
 ) -> Result<Response> {
@@ -152,7 +165,7 @@ pub(super) async fn blob_response(
         let references = crate::webui::components::references::References { owner: owner.to_owned(), repo: name.to_owned(), ..Default::default() };
         return super::meta::render(text, references).await;
     }
-    let mut value = entry(owner, name, reference, path, &blob.id, blob.size, "file");
+    let mut value = entry(owner, name, reference, revision, path, &blob.id, blob.size, "file");
     value["encoding"] = json!("base64");
     value["content"] = json!(STANDARD.encode(&blob.bytes));
     Ok(Json(value).into_response())
@@ -188,7 +201,7 @@ async fn readme(
         .await
         .map_err(store_error)?;
     auth::recheck_repository_read(&state, &headers, repo.id, "contents").await?;
-    blob_response(&headers, owner, name, &revision, &path, blob).await
+    blob_response(&headers, owner, name, reference, &revision, &path, blob).await
 }
 
 async fn read(
@@ -218,7 +231,7 @@ async fn read(
                     match store.blob_bytes(&revision, &resolved).await {
                         Ok(file) if file.mode != SYMLINK_MODE => {
                             return blob_response(
-                                &headers, owner, name, &revision, &resolved, file,
+                                &headers, owner, name, reference, &revision, &resolved, file,
                             ).await;
                         }
                         Ok(_) => {}
@@ -228,12 +241,12 @@ async fn read(
                         Err(error) => return Err(store_error(error)),
                     }
                 }
-                let mut value = entry(owner, name, &revision, path, &blob.id, blob.size, "symlink");
+                let mut value = entry(owner, name, reference, &revision, path, &blob.id, blob.size, "symlink");
                 value["target"] = json!(target);
                 return Ok(Json(value).into_response());
             }
             Ok(blob) => {
-                return blob_response(&headers, owner, name, &revision, path, blob).await;
+                return blob_response(&headers, owner, name, reference, &revision, path, blob).await;
             }
             Err(error) if error.reason == Some(RepoErrorReason::NotFile) => {
                 // A submodule is a commit entry, not a directory to list.
@@ -253,7 +266,7 @@ async fn read(
                         Err(error) if error.kind == ErrorKind::MissingPath => None,
                         Err(error) => return Err(store_error(error)),
                     };
-                    let mut value = entry(owner, name, &revision, path, &link.sha, 0, "submodule");
+                    let mut value = entry(owner, name, reference, &revision, path, &link.sha, 0, "submodule");
                     value["submodule_git_url"] = json!(url);
                     value["git_url"] = Value::Null;
                     value["html_url"] = Value::Null;
@@ -276,6 +289,7 @@ async fn read(
                 entry(
                     owner,
                     name,
+                    reference,
                     &revision,
                     &item.path,
                     &item.sha,
@@ -395,7 +409,7 @@ async fn save(
             .blob_bytes(&saved.commit.sha, path)
             .await
             .map_err(store_error)?;
-        entry(owner, name, branch, path, &blob.id, blob.size, "file")
+        entry(owner, name, branch, &saved.commit.sha, path, &blob.id, blob.size, "file")
     };
     let status = if creating {
         StatusCode::CREATED

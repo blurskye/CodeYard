@@ -667,7 +667,10 @@ async fn contract(pg: bool) {
     assert!(url.ends_with("/api/v3/repos/alice/proj/contents/docs/hello.txt?ref=main"));
     assert!(html.ends_with("/alice/proj/blob/main/docs/hello.txt"));
     assert!(git.ends_with(&format!("/git/blobs/{blob}")));
-    assert!(download.ends_with("/alice/proj/raw/main/docs/hello.txt"));
+    // A bearer client can follow the download link, pinned to the commit that was read.
+    assert!(download.ends_with(&format!(
+        "/api/v3/repos/alice/proj/contents/docs/hello.txt?ref={commit}&raw=1"
+    )));
     assert_eq!(
         contents,
         json!({
