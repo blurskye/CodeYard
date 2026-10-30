@@ -35,7 +35,7 @@ pub async fn register(
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner
-        || !credential(&mut tx, grant, org, "organization_custom_properties").await? {
+        || !credential(&mut tx, &grant, org, "organization_custom_properties").await? {
         return Ok(Denied);
     }
     let Some(installation) = installation else { return Ok(Conflict); };
@@ -82,7 +82,7 @@ pub async fn set_values(
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner
-        || !credential(&mut tx, grant, org, "organization_custom_properties").await? {
+        || !credential(&mut tx, &grant, org, "organization_custom_properties").await? {
         return Ok(Denied);
     }
     if values.len() > 3000 {
@@ -114,7 +114,7 @@ pub async fn delete_values(
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner
-        || !credential(&mut tx, grant, org, "organization_custom_properties").await? {
+        || !credential(&mut tx, &grant, org, "organization_custom_properties").await? {
         return Ok(Denied);
     }
     if !external_properties::valid_name(property) {
