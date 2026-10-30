@@ -402,18 +402,22 @@ async fn change(
     let body = field(&form, "body");
     let intent = field(&form, "intent");
     let result = match intent.as_str() {
-        "reply" => records::reply(&ctx.state.pool, authority(&ctx, actor), loaded.repository.id, id, &body).await,
-        "close" => records::set_state(&ctx.state.pool, authority(&ctx, actor), loaded.repository.id, id, true).await,
+        // A reply returns how many replies came before it, which names the page that shows it.
+        "reply" => records::reply(&ctx.state.pool, authority(&ctx, actor), loaded.repository.id, id, &body).await.map(Some),
+        "close" => records::set_state(&ctx.state.pool, authority(&ctx, actor), loaded.repository.id, id, true).await.map(|()| None),
         "reopen" => {
-            records::set_state(&ctx.state.pool, authority(&ctx, actor), loaded.repository.id, id, false).await
+            records::set_state(&ctx.state.pool, authority(&ctx, actor), loaded.repository.id, id, false).await.map(|()| None)
         }
         _ => return ctx.error(StatusCode::BAD_REQUEST, "Unknown report action"),
     };
     match result {
-        Ok(()) if intent != "reply" && !body.is_empty() => {
-            thread_model(&ctx, loaded, id, 1, None, body).await
-        }
-        Ok(()) => ctx.redirect(&format!("{}/security/reports/{id}", loaded.chrome.base())),
+        Ok(None) if !body.is_empty() => thread_model(&ctx, loaded, id, 1, None, body).await,
+        Ok(None) => ctx.redirect(&format!("{}/security/reports/{id}", loaded.chrome.base())),
+        Ok(Some(earlier)) => ctx.redirect(&format!(
+            "{}/security/reports/{id}?page={}",
+            loaded.chrome.base(),
+            earlier / 20 + 1
+        )),
         Err(error) => {
             let (status, message) = failure(&error);
             with_status(
