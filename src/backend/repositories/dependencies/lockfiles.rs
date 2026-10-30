@@ -498,8 +498,9 @@ fn pnpm(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
         let key = key.trim_start_matches('/').split('(').next().unwrap_or(key);
         // Newer keys put '@' between the name and version, and a scope also starts with '@'. Older
         // keys end in "/version".
-        let key = if legacy { key.split('_').next().unwrap_or(key) } else { key };
         let (name, version) = if legacy { key.rsplit_once('/') } else { key.rsplit_once('@').filter(|(name, _)| !name.is_empty()) }.context("Invalid pnpm package identity")?;
+        // Legacy peer contexts suffix the version, not the package name or scope.
+        let version = if legacy { version.split('_').next().unwrap_or(version) } else { version };
         add(out, path, "npm", name, version)?;
     }
     Ok(())
