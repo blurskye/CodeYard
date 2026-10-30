@@ -126,10 +126,8 @@ native_operation!(crate::backend::db::postgres::fine_grained_tokens::regenerate,
     fn regenerate(pool: &DbPool, user: i64, session: &str, token: i64, hash: &str, expires_at: Option<DateTime<Utc>>) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::get, crate::backend::db::sqlite::fine_grained_tokens::get,
     fn get(pool: &DbPool, token: i64) -> Result<Option<Token>>);
-native_operation!(crate::backend::db::postgres::fine_grained_tokens::list, crate::backend::db::sqlite::fine_grained_tokens::list,
-    /// The user's newest 100 fine-grained tokens.
-    fn list(pool: &DbPool, user: i64) -> Result<Vec<Token>>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::list_before, crate::backend::db::sqlite::fine_grained_tokens::list_before,
+    /// The user's newest 100 fine-grained tokens, older than `before` when it is given.
     fn list_before(pool: &DbPool, user: i64, before: Option<i64>) -> Result<Vec<Token>>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::bounds, crate::backend::db::sqlite::fine_grained_tokens::bounds,
     fn bounds(pool: &DbPool, token: i64) -> Result<Option<Bounds>>);

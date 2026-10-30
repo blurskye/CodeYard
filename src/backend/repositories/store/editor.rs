@@ -584,12 +584,6 @@ pub(super) async fn prepare_upload(
     .await
 }
 
-/// Moves the branch to the prepared commit; `Conflict` if it moved meanwhile.
-pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<CommitInfo, RepoError> {
-    let staged = claim_staged(path, prepared)?;
-    publish_staged(path, prepared, staged.as_deref()).await
-}
-
 pub(super) async fn publish_staged(path: &Path, prepared: &PreparedFile, staged: Option<&StagedFile>) -> Result<CommitInfo, RepoError> {
     let repo = Repo(path);
     let objects = Repo(staged.map_or(path, StagedFile::path));
@@ -761,6 +755,12 @@ fn signature(value: &str) -> Result<(String, String, i64, i32), RepoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Moves the branch to the prepared commit; `Conflict` if it moved meanwhile.
+    async fn publish(path: &Path, prepared: &PreparedFile) -> Result<CommitInfo, RepoError> {
+        let staged = claim_staged(path, prepared)?;
+        publish_staged(path, prepared, staged.as_deref()).await
+    }
 
     fn input(path: &str) -> FileWrite {
         FileWrite {

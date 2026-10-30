@@ -89,7 +89,7 @@ async fn range_and_path_history_share_the_commit_page_budget() {
             1_700_000_001 + index,
         );
     }
-    let error = list_range_commits(directory.path(), &base.to_string(), &head.to_string(), 10)
+    let error = range_commits(directory.path(), &base.to_string(), &head.to_string(), 0, 10)
         .await
         .unwrap_err();
     assert!(error.is::<ObjectTooLarge>());
@@ -119,14 +119,14 @@ async fn range_history_prunes_excluded_ancestors_and_checks_returned_objects() {
     );
     let base = commit(&repo, Some(huge), b"two", "small", 1_700_000_001);
     let head = commit(&repo, Some(base), b"three", "head", 1_700_000_002);
-    let commits = list_range_commits(directory.path(), &base.to_string(), &head.to_string(), 1)
+    let commits = range_commits(directory.path(), &base.to_string(), &head.to_string(), 0, 1)
         .await
         .unwrap();
     assert_eq!(commits.len(), 1);
     assert_eq!(commits[0].sha, head.to_string());
     // Objects we actually return still have to fit the same object-size limit.
     assert!(
-        list_range_commits(directory.path(), &head.to_string(), &huge.to_string(), 1)
+        range_commits(directory.path(), &head.to_string(), &huge.to_string(), 0, 1)
             .await
             .unwrap_err()
             .is::<ObjectTooLarge>()
@@ -150,7 +150,7 @@ async fn a_small_pr_does_not_materialize_large_base_history() {
     }
     let base = parent.unwrap();
     let head = commit(&repo, Some(base), b"head", "one change", 1_700_000_301);
-    let commits = list_range_commits(root.path(), &base.to_string(), &head.to_string(), 50)
+    let commits = range_commits(root.path(), &base.to_string(), &head.to_string(), 0, 50)
         .await
         .unwrap();
     assert_eq!(commits.len(), 1);

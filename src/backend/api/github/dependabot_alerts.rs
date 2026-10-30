@@ -95,25 +95,6 @@ fn csv(query: &Params, key: &str, value: &str) -> bool {
         .get(key)
         .is_none_or(|s| s.split(',').any(|s| s == value))
 }
-fn date_matches(value: &str, range: &str) -> bool {
-    let Some(date) = value.get(..10) else {
-        return false;
-    };
-    if let Some((start, end)) = range.split_once("..") {
-        return (start == "*" || date >= start) && (end == "*" || date <= end);
-    }
-    for op in [">=", "<=", ">", "<"] {
-        if let Some(rhs) = range.strip_prefix(op) {
-            return match op {
-                ">=" => date >= rhs,
-                "<=" => date <= rhs,
-                ">" => date > rhs,
-                _ => date < rhs,
-            };
-        }
-    }
-    date == range
-}
 fn validate(q: &Params, global: bool) -> Result<()> {
     let allowed = if global {
         &[

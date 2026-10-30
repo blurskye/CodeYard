@@ -15,7 +15,6 @@ use tokio::sync::watch;
 const MAX_LINE: usize = 16 * 1024;
 #[cfg(test)]
 use codeyard_actions::process::{OMITTED_LINE, KILL_GRACE};
-const TERM_GRACE: Duration = Duration::from_secs(3);
 
 /// A command with a minimal environment in its own process group.
 pub(super) fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
@@ -57,22 +56,6 @@ pub(super) enum Stopped {
     Cancelled,
     #[error("timed out")]
     TimedOut,
-}
-
-/// Runs `command`, passing each output line to `on_line(line, is_stderr)`.
-/// Every return path terminates descendants left in the command's process group.
-pub(super) async fn run<F, Fut>(
-    command: Command,
-    timeout: Duration,
-    cancel: watch::Receiver<bool>,
-    on_line: F,
-) -> Result<ExitStatus>
-where
-    F: Fn(String, bool) -> Fut,
-    Fut: Future<Output = Result<()>>,
-{
-    let (_tx, force) = watch::channel(false);
-    run_with_grace(command, timeout, TERM_GRACE, None, force, cancel, on_line).await
 }
 
 pub(super) async fn run_with_grace<F, Fut>(
@@ -199,9 +182,27 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    const TERM_GRACE: Duration = Duration::from_secs(3);
+
+    /// Runs `command` with a three-second stop grace and no forced stop, passing each output
+    /// line to `on_line(line, is_stderr)`.
+    pub(in crate::backend::ci) async fn run<F, Fut>(
+        command: Command,
+        timeout: Duration,
+        cancel: watch::Receiver<bool>,
+        on_line: F,
+    ) -> Result<ExitStatus>
+    where
+        F: Fn(String, bool) -> Fut,
+        Fut: Future<Output = Result<()>>,
+    {
+        let (_tx, force) = watch::channel(false);
+        run_with_grace(command, timeout, TERM_GRACE, None, force, cancel, on_line).await
+    }
 
     #[tokio::test]
     async fn streams_lines_and_kills_the_group_on_timeout() {

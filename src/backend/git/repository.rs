@@ -1569,13 +1569,6 @@ fn not_a_commit() -> anyhow::Error {
     .into()
 }
 
-/// True for the error above: the revision names a blob or a tree.
-pub(crate) fn is_not_a_commit(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<git2::Error>().is_some_and(|error| {
-        error.code() == git2::ErrorCode::InvalidSpec && error.class() == git2::ErrorClass::Object
-    })
-}
-
 /// Up to `limit` commits after `offset` that pass `filter`, newest first.
 pub(crate) fn list_commits(
     repo_path: &Path,
@@ -1636,18 +1629,6 @@ pub(crate) fn list_commits(
     Ok(commits)
 }
 
-/// The commits reachable from `head` but not from `base`, newest first, at most `limit` of them.
-/// These are the commits of a pull request. Both revisions are peeled to commit IDs first, so a
-/// ref name is never read as an option.
-pub(crate) async fn list_range_commits(
-    repo_path: &Path,
-    base: &str,
-    head: &str,
-    limit: usize,
-) -> Result<Vec<CommitInfo>> {
-    range_commits(repo_path, base, head, 0, limit).await
-}
-
 /// Count without materializing commit bodies, then read the requested oldest window (up to 250).
 pub(crate) async fn pull_request_commits(
     repo_path: &Path,
@@ -1678,6 +1659,9 @@ pub(crate) async fn pull_request_commits(
     Ok((total, commits))
 }
 
+/// The commits reachable from `head` but not from `base`, newest first: at most `limit` of them
+/// after the first `offset`. These are the commits of a pull request. Both revisions are peeled
+/// to commit IDs first, so a ref name is never read as an option.
 pub(crate) async fn range_commits(
     repo_path: &Path,
     base: &str,
@@ -2807,7 +2791,7 @@ mod regression_tests;
 mod read_limit_tests {
     use super::*;
     use crate::backend::git::ci::{
-        list_ci_workflow_files, load_push_workflows, read_ci_workflow, resolve_ci_commit,
+        list_ci_workflow_files, read_ci_workflow, resolve_ci_commit,
     };
 
     fn metadata_for_files(count: usize) -> Vec<u8> {
@@ -3233,8 +3217,7 @@ mod read_limit_tests {
         let file = read_ci_workflow(path, &sha, ".github/workflows/ci.yml").unwrap();
         assert_eq!(file.content, "on: push\n");
         assert_eq!(list_ci_workflow_files(path, "main").unwrap().len(), 1);
-        assert_eq!(load_push_workflows(path, &sha).unwrap().1.len(), 1);
-        assert_eq!(load_push_workflows(path, &plain_sha).unwrap().1, Vec::new());
+        assert!(list_ci_workflow_files(path, &plain_sha).is_err());
         assert!(blob_metadata(path, "main", "docs/missing.txt").is_err());
         assert!(blob_metadata(path, "main", "docs/a.txt/inside").is_err());
         assert!(list_tree(path, "main", "docs/a.txt").await.is_err());
@@ -3293,7 +3276,7 @@ mod read_limit_tests {
             ".github/workflows/ci.yml",
         ));
         assert_too_large(list_ci_workflow_files(path, "refs/heads/huge"));
-        assert_too_large(load_push_workflows(path, &huge_sha));
+        assert_too_large(list_ci_workflow_files(path, &huge_sha));
         assert_too_large(resolve_ci_commit(path, "main", Some(&huge_sha), false));
         assert!(resolve_ci_commit(path, "huge", None, false).is_err());
     }

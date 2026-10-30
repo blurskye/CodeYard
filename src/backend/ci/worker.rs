@@ -2556,7 +2556,7 @@ mod tests {
         let lines = Arc::new(Mutex::new(Vec::new()));
         let captured = lines.clone();
         let (_stop_tx, stop) = watch::channel(false);
-        let status = process::run(command, Duration::from_secs(30), stop, move |line, _| {
+        let status = process::tests::run(command, Duration::from_secs(30), stop, move |line, _| {
             captured.lock().unwrap().push(line);
             async { Ok(()) }
         })

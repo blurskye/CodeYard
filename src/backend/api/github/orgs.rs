@@ -124,10 +124,6 @@ pub(super) async fn target(state: &AppState, name: &str) -> Result<Organization>
         .ok_or_else(Error::missing)
 }
 
-async fn owner(state: &AppState, headers: &HeaderMap, name: &str) -> Result<Organization> {
-    owner_actor(state, headers, name).await.map(|(org, _)| org)
-}
-
 async fn owner_actor(state: &AppState, headers: &HeaderMap, name: &str) -> Result<(Organization, auth::Authentication)> {
     let actor = auth::authenticate(state, headers, true)
         .await?

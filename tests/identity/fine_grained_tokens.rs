@@ -202,7 +202,7 @@ async fn contract(pg: bool) {
     assert_eq!(reply.status, 200, "{}", reply.text());
     let first = value(&reply.text());
     assert!(first[9..].chars().all(|c| c.is_ascii_hexdigit()));
-    let row = db::fine_grained_tokens::list(f.pool(), alice, 0)
+    let row = db::fine_grained_tokens::list_before(f.pool(), alice, None)
         .await
         .unwrap()
         .remove(0);
