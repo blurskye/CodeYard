@@ -60,6 +60,11 @@ pub fn subscribes(stored: &str, event: &str) -> bool {
     stored == EVERYTHING || stored.split(',').any(|name| name == event)
 }
 
+/// Whether two stored subscriptions share an event.
+pub fn overlap(first: &str, second: &str) -> bool {
+    second == EVERYTHING || second.split(',').any(|event| subscribes(first, event))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

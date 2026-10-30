@@ -173,9 +173,9 @@ pub async fn insert_webhook(
     if !may_manage_hooks(&mut tx, owner, actor_id).await? {
         return Ok(None);
     }
-    let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM webhooks WHERE {}=?1", owner.column()))
-        .bind(owner.id()).fetch_one(&mut *tx).await?;
-    anyhow::ensure!(count < crate::backend::db::webhooks::MAX_HOOKS_PER_OWNER as i64, crate::backend::db::webhooks::HookLimit);
+    let hooks = list_webhooks(&mut *tx, owner).await?;
+    anyhow::ensure!(hooks.len() < crate::backend::db::webhooks::MAX_HOOKS_PER_OWNER, crate::backend::db::webhooks::HookLimit);
+    crate::backend::db::webhooks::ensure_distinct(&hooks, None, &fields.payload_url, &fields.content_type, fields.ssl_verify, &fields.events)?;
     let sql = format!(
         "INSERT INTO webhooks ({}, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, username, encrypted_password, password_nonce) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) RETURNING id",
         owner.column()
@@ -231,6 +231,9 @@ pub async fn patch_webhook(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !may_manage_hooks(&mut tx, owner, actor_id).await? {
         return Ok(None);
+    }
+    if !fields.check_distinct(&list_webhooks(&mut *tx, owner).await?, id)? {
+        return Ok(Some(false));
     }
     let sql = format!(
         "UPDATE webhooks SET payload_url = COALESCE(?3,payload_url), content_type = COALESCE(?4,content_type), events = COALESCE(?5,events), active = COALESCE(?6,active), ssl_verify = COALESCE(?7,ssl_verify), \

@@ -55,6 +55,22 @@ fn unavailable<E>(_: E) -> HookError {
     HookError::Unavailable
 }
 
+/// Maps a refused hook write to what the form or API shows.
+fn write_error(owner: HookOwner, error: anyhow::Error) -> HookError {
+    if error.is::<hooks::HookLimit>() {
+        HookError::Invalid(
+            "This owner's webhook limit has been reached. Remove an existing hook first.",
+        )
+    } else if error.is::<hooks::HookExists>() {
+        HookError::Invalid(match owner {
+            HookOwner::Repository(_) => "Hook already exists on this repository",
+            HookOwner::Organization(_) => "Hook already exists on this organization",
+        })
+    } else {
+        HookError::Unavailable
+    }
+}
+
 /// Repository admins manage a repository's hooks, and so do site administrators on user-owned
 /// repositories. Only organization owners manage an organization's.
 pub async fn authorize(pool: &DbPool, actor: &User, owner: HookOwner) -> Result<(), HookError> {
@@ -174,9 +190,7 @@ pub async fn save(
         None => {
             let id = hooks::insert_webhook(pool, owner, actor.id, &fields, secret.as_ref())
                 .await
-                .map_err(|error| if error.is::<hooks::HookLimit>() {
-                    HookError::Invalid("This owner's webhook limit has been reached. Remove an existing hook first.")
-                } else { unavailable(error) })?
+                .map_err(|error| write_error(owner, error))?
                 .ok_or(HookError::Denied)?;
             // A hook that was saved stays saved when its ping cannot be queued.
             if ping(pool, owner, actor, id).await.is_err() {
@@ -195,7 +209,7 @@ pub async fn save(
             patch.clear_password = form.clear_password;
             let updated = hooks::patch_webhook(pool, owner, actor.id, id, &patch, secret.as_ref())
                 .await
-                .map_err(unavailable)?
+                .map_err(|error| write_error(owner, error))?
                 .ok_or(HookError::Denied)?;
             if !updated {
                 return Err(HookError::NotFound);
@@ -249,7 +263,7 @@ pub async fn update(
         .flatten();
     match hooks::patch_webhook(pool, owner, actor.id, id, &fields, secret.as_ref())
         .await
-        .map_err(unavailable)?
+        .map_err(|error| write_error(owner, error))?
     {
         None => Err(HookError::Denied),
         Some(false) => Err(HookError::NotFound),

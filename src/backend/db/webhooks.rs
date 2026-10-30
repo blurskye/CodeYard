@@ -15,6 +15,33 @@ pub struct HookLimit;
 #[error("Webhook administration is required")]
 pub struct HookAuthorityDenied;
 
+/// Another of the owner's hooks already sends one of the events to the same configuration.
+#[derive(Debug, thiserror::Error)]
+#[error("An equivalent webhook already exists")]
+pub struct HookExists;
+
+/// Refuses, with `HookExists`, a hook that would send an event another of the owner's `hooks`
+/// already sends to the same URL, content type and TLS setting, as GitHub does. Sealed secrets
+/// are not compared. `id` is the hook being changed, if any.
+pub(crate) fn ensure_distinct(
+    hooks: &[Webhook],
+    id: Option<i64>,
+    payload_url: &str,
+    content_type: &str,
+    ssl_verify: bool,
+    events: &str,
+) -> Result<()> {
+    let duplicate = hooks.iter().any(|hook| {
+        Some(hook.id) != id
+            && hook.payload_url == payload_url
+            && hook.content_type == content_type
+            && hook.ssl_verify == ssl_verify
+            && crate::backend::webhooks::events::overlap(&hook.events, events)
+    });
+    anyhow::ensure!(!duplicate, HookExists);
+    Ok(())
+}
+
 /// The repository or organization a webhook belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HookOwner {
@@ -87,6 +114,25 @@ impl From<&WebhookFields> for WebhookPatch {
             ssl_verify: Some(fields.ssl_verify),
             clear_secret: false,
         }
+    }
+}
+
+impl WebhookPatch {
+    /// Refuses the patch with `HookExists` when hook `id` would then duplicate another of the
+    /// owner's `hooks`. `Ok(false)` means `hooks` has no hook `id`.
+    pub(crate) fn check_distinct(&self, hooks: &[Webhook], id: i64) -> Result<bool> {
+        let Some(current) = hooks.iter().find(|hook| hook.id == id) else {
+            return Ok(false);
+        };
+        ensure_distinct(
+            hooks,
+            Some(id),
+            self.payload_url.as_deref().unwrap_or(&current.payload_url),
+            self.content_type.as_deref().unwrap_or(&current.content_type),
+            self.ssl_verify.unwrap_or(current.ssl_verify),
+            self.events.as_deref().unwrap_or(&current.events),
+        )?;
+        Ok(true)
     }
 }
 
