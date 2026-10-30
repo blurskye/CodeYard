@@ -779,15 +779,11 @@ async fn branch_rules(
     ctx: &PageContext,
     loaded: &Loaded,
 ) -> Result<Vec<view::settings::BranchRule>, Response> {
-    let rules = db::repositories::protection::list_branch_protection_rules(
-        &ctx.state.pool,
-        loaded.repository.id,
-    )
-    .await
-    .map_err(|_| unavailable(ctx))?;
-    let rules = branch_protection::rule_responses(&ctx.state.pool, rules)
-        .await
-        .map_err(|_| unavailable(ctx))?;
+    let rules = branch_protection::authorized_rule_responses(&ctx.state.pool,
+        db::users::accounts::AccountActor::Session {
+            user_id: ctx.require_user()?.id,
+            session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+        }, loaded.repository.id).await.map_err(|(status, error)| ctx.error(status, &error.0.message))?;
     let mut listed = Vec::with_capacity(rules.len());
     for rule in rules {
         listed.push(view::settings::BranchRule {

@@ -136,8 +136,16 @@ pub(in crate::backend::api::repos) async fn rule_responses(
             teams.insert((rule.repo_id, team.team.id), team.team.slug);
         }
     }
+    Ok(project_rules(rules, &users, &teams))
+}
+
+fn project_rules(
+    rules: Vec<db::models::BranchProtectionRule>,
+    users: &std::collections::HashMap<i64, String>,
+    teams: &std::collections::HashMap<(i64, i64), String>,
+) -> Vec<BranchProtectionRuleResponse> {
     let names = |ids: &[i64]| ids.iter().filter_map(|id| users.get(id)).cloned().collect();
-    Ok(rules
+    rules
         .into_iter()
         .map(|rule| {
             let push_allowances = names(&rule.push_allowances);
@@ -168,7 +176,19 @@ pub(in crate::backend::api::repos) async fn rule_responses(
                 force_push_allowances,
             }
         })
-        .collect())
+        .collect()
+}
+
+pub(in crate::backend::api::repos) async fn authorized_rule_responses(
+    pool: &db::DbPool,
+    actor: impl Into<db::users::accounts::AccountActor>,
+    repository: i64,
+) -> Result<Vec<BranchProtectionRuleResponse>, (StatusCode, Json<ApiError>)> {
+    let snapshot = db::repositories::protection::read_protection_snapshot(pool, actor, repository)
+        .await.map_err(protection_write_error)?;
+    let repository = snapshot.repository_id;
+    let teams = snapshot.teams.into_iter().map(|(id, name)| ((repository, id), name)).collect();
+    Ok(project_rules(snapshot.rules, &snapshot.users, &teams))
 }
 
 pub async fn list_branch_protection_rules(
@@ -180,12 +200,10 @@ pub async fn list_branch_protection_rules(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
 
-    let rules =
-        db::repositories::protection::list_branch_protection_rules(&state.pool, repository.id)
-            .await
-            .map_err(|_| storage_unavailable())?;
-
-    Ok(Json(rule_responses(&state.pool, rules).await?))
+    Ok(Json(authorized_rule_responses(&state.pool, db::users::accounts::AccountActor::Session {
+        user_id: user.id,
+        session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+    }, repository.id).await?))
 }
 
 pub async fn upsert_branch_protection_rule(
