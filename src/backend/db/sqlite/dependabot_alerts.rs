@@ -2,6 +2,7 @@ use crate::backend::{
     db::{
         advisories::{Advisory, Refusal},
         dependabot_alerts::{self, Alert, Update},
+        credentials::Actor,
     },
     dependency_graph::Snapshot,
 };
@@ -128,10 +129,11 @@ pub async fn import(pool: &SqlitePool, actor: i64, value: &Value) -> Result<Valu
     Ok(value)
 }
 pub(crate) async fn refresh(tx: &mut Transaction<'_, Sqlite>, repo: i64) -> Result<()> {
-    let branch: String = sqlx::query_scalar("SELECT default_branch FROM repositories WHERE id=$1")
-        .bind(repo)
-        .fetch_one(&mut **tx)
-        .await?;
+    let (branch, archived): (String, bool) = sqlx::query_as("SELECT default_branch,is_archived FROM repositories WHERE id=$1")
+        .bind(repo).fetch_one(&mut **tx).await?;
+    if archived {
+        return Ok(());
+    }
     let bodies: Vec<String> = sqlx::query_scalar("SELECT body FROM (SELECT body,ROW_NUMBER() OVER(PARTITION BY detector,correlator ORDER BY scanned DESC,id DESC) AS position FROM dependency_snapshots WHERE repo_id=$1 AND reference=$2) ranked WHERE position=1 ORDER BY body")
         .bind(repo).bind(format!("refs/heads/{branch}")).fetch_all(&mut **tx).await?;
     let snapshots: Vec<Snapshot> = bodies
@@ -192,9 +194,10 @@ pub(crate) async fn refresh(tx: &mut Transaction<'_, Sqlite>, repo: i64) -> Resu
     }
     Ok(())
 }
-async fn authorize(tx: &mut Transaction<'_, Sqlite>, actor: i64, repo: i64) -> Result<()> {
+async fn authorize(tx: &mut Transaction<'_, Sqlite>, actor: &Actor, repo: i64, write: bool) -> Result<()> {
     ensure!(
-        super::discussions::lock_admin_authority(tx, actor, repo).await?,
+        super::discussions::lock_security_authority(tx, actor.user_id, repo, write).await?
+            && super::credentials::repository(tx, actor, repo, "vulnerability_alerts", write).await?,
         Refusal::Denied
     );
     let settings: Option<String> = sqlx::query_scalar(
@@ -212,9 +215,10 @@ async fn authorize(tx: &mut Transaction<'_, Sqlite>, actor: i64, repo: i64) -> R
     );
     Ok(())
 }
-pub async fn alerts(pool: &SqlitePool, actor: i64, repo: i64) -> Result<Vec<Alert>> {
+pub async fn alerts(pool: &SqlitePool, actor: impl Into<Actor>, repo: i64) -> Result<Vec<Alert>> {
+    let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, repo).await?;
+    authorize(&mut tx, &actor, repo, false).await?;
     refresh(&mut tx, repo).await?;
     let rows =
         sqlx::query_as("SELECT * FROM dependabot_alerts WHERE repo_id=$1 ORDER BY number DESC")
@@ -226,14 +230,15 @@ pub async fn alerts(pool: &SqlitePool, actor: i64, repo: i64) -> Result<Vec<Aler
 }
 pub async fn update(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<Actor>,
     repo: i64,
     number: i64,
     input: &Update,
 ) -> Result<Alert> {
     input.validate()?;
+    let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, repo).await?;
+    authorize(&mut tx, &actor, repo, true).await?;
     refresh(&mut tx, repo).await?;
     let previous: Alert =
         sqlx::query_as("SELECT * FROM dependabot_alerts WHERE repo_id=$1 AND number=$2")
@@ -246,7 +251,7 @@ pub async fn update(
     let now = Utc::now();
     let dismissed = input.state == "dismissed";
     let row = sqlx::query_as("UPDATE dependabot_alerts SET state=$3,dismissed_reason=$4,dismissed_comment=$5,dismissed_at=$6,dismissed_by=$7,updated_at=$8 WHERE repo_id=$1 AND number=$2 RETURNING *")
-        .bind(repo).bind(number).bind(&input.state).bind(&input.dismissed_reason).bind(&input.dismissed_comment).bind(dismissed.then_some(now)).bind(dismissed.then_some(actor)).bind(now).fetch_one(&mut *tx).await?;
+        .bind(repo).bind(number).bind(&input.state).bind(&input.dismissed_reason).bind(&input.dismissed_comment).bind(dismissed.then_some(now)).bind(dismissed.then_some(actor.user_id)).bind(now).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(row)
 }
@@ -257,9 +262,9 @@ pub async fn organization_repositories(
 ) -> Result<Vec<i64>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin') AND NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM org_memberships owners JOIN users active ON active.id=owners.user_id WHERE owners.org_id=m.org_id AND owners.role='owner' AND NOT active.is_banned AND NOT active.must_change_password))").bind(org).bind(actor).fetch_one(&mut *tx).await?;
-    ensure!(allowed, Refusal::Denied);
+    ensure!(allowed || super::organizations::roles::manages_security(&mut tx, actor, org).await?, Refusal::Denied);
     let rows = sqlx::query_scalar(
-        "SELECT r.id FROM repositories r LEFT JOIN repository_security_settings s ON s.repo_id=r.id WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND NOT r.is_archived AND COALESCE(json_extract(s.security_and_analysis, '$.dependabot_alerts.status'), '') <> 'disabled' ORDER BY r.id",
+        "SELECT r.id FROM repositories r LEFT JOIN repository_security_settings s ON s.repo_id=r.id WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND COALESCE(json_extract(s.security_and_analysis, '$.dependabot_alerts.status'), '') <> 'disabled' ORDER BY r.id",
     )
     .bind(org)
     .fetch_all(&mut *tx)

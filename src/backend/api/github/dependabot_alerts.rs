@@ -386,9 +386,10 @@ async fn list(
             repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
         (vec![repo.id], actor.ok_or_else(auth::required)?)
     };
+    let database_actor = actor.database_actor(&headers)?;
     let mut documents = Vec::new();
     for id in ids {
-        let rows = match store::alerts(&state.pool, actor.user.id, id).await {
+        let rows = match store::alerts(&state.pool, database_actor.clone(), id).await {
             Ok(rows) => rows,
             // A repository with alerts disabled is left out of an organization listing.
             Err(error)
@@ -430,7 +431,7 @@ async fn detail(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let row = store::alerts(&state.pool, actor.user.id, repo.id)
+    let row = store::alerts(&state.pool, actor.database_actor(&headers)?, repo.id)
         .await
         .map_err(failure)?
         .into_iter()
@@ -446,7 +447,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let row = store::update(&state.pool, actor.user.id, repo.id, number, &input)
+    let row = store::update(&state.pool, actor.database_actor(&headers)?, repo.id, number, &input)
         .await
         .map_err(failure)?;
     Ok(Json(document(&state, &row, &owner, &name).await?))

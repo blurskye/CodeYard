@@ -77,7 +77,7 @@ pub async fn create(
         Some(super::repositories::security::create_report_in(&mut tx, actor, repo, &input).await?)
     } else {
         anyhow::ensure!(
-            super::discussions::lock_security_mutation_authority(&mut tx, actor, repo).await?,
+            super::discussions::lock_security_authority(&mut tx, actor, repo, true).await?,
             Refusal::Denied
         );
         None
@@ -93,7 +93,7 @@ async fn administration(
     ghsa: &str,
 ) -> Result<Advisory> {
     anyhow::ensure!(
-        super::discussions::lock_security_mutation_authority(tx, actor, repo).await?,
+        super::discussions::lock_security_authority(tx, actor, repo, true).await?,
         Refusal::Denied
     );
     Ok(

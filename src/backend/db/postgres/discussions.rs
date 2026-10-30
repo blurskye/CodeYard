@@ -39,14 +39,20 @@ async fn lock_discussion_authority(
     actor_id: i64,
     repo_id: i64,
     lock: RepositoryLock,
+    include_archived: bool,
 ) -> Result<Option<DiscussionAuthority>> {
     let Some(authority) = super::repositories::access::lock_user_repo_access_in_transaction(
-        tx, actor_id, repo_id, lock, false,
+        tx, actor_id, repo_id, lock, include_archived,
     )
     .await?
     else {
         return Ok(None);
     };
+    if include_archived && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=$1)")
+        .bind(repo_id).fetch_one(&mut **tx).await?
+    {
+        return Ok(None);
+    }
     // Public/read visibility survives suspension; contribution authority does not.
     if authority.organization && !authority.organization_usable {
         return Ok(None);
@@ -68,7 +74,7 @@ async fn lock_discussion_authority(
 pub(crate) async fn lock_read_authority(
     tx: &mut Transaction<'_, Postgres>, actor_id: i64, repo_id: i64,
 ) -> Result<bool> {
-    Ok(lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared).await?
+    Ok(lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared, false).await?
         .is_some_and(|authority| authority.access.can_read() || authority.personal_override))
 }
 
@@ -78,7 +84,7 @@ pub(crate) async fn lock_triage_authority(
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared)
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared, false)
             .await?
             .is_some_and(|a| a.access >= AccessLevel::Triage || a.personal_override),
     )
@@ -90,7 +96,7 @@ pub(crate) async fn lock_write_authority(
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared)
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared, false)
             .await?
             .is_some_and(|a| a.access.can_write() || a.personal_override),
     )
@@ -104,7 +110,7 @@ pub(crate) async fn lock_exclusive_write_authority(
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive)
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive, false)
             .await?
             .is_some_and(|a| a.access.can_write() || a.personal_override),
     )
@@ -117,7 +123,7 @@ pub(crate) async fn lock_maintain_authority(
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared)
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared, false)
             .await?
             .is_some_and(|a| a.access.can_maintain() || a.personal_override),
     )
@@ -130,7 +136,7 @@ pub(crate) async fn lock_admin_authority(
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared)
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared, false)
             .await?
             .is_some_and(|a| a.access.can_admin() || a.personal_owner || a.personal_override),
     )
@@ -147,17 +153,18 @@ pub(crate) async fn lock_repository_mutation_authority(
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive)
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive, false)
             .await?
             .is_some_and(|a| a.access.can_admin() || a.personal_owner || a.personal_override),
     )
 }
 
-/// Security managers administer advisory state without repository-wide administration.
-pub(crate) async fn lock_security_mutation_authority(
-    tx: &mut Transaction<'_, Postgres>, actor_id: i64, repo_id: i64,
+/// Security managers administer security state without repository-wide administration.
+/// History reads include archived repositories; writers still require a mutable repository.
+pub(crate) async fn lock_security_authority(
+    tx: &mut Transaction<'_, Postgres>, actor_id: i64, repo_id: i64, write: bool,
 ) -> Result<bool> {
-    let Some(authority) = lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive).await? else { return Ok(false); };
+    let Some(authority) = lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive, !write).await? else { return Ok(false); };
     if authority.access.can_admin() || authority.personal_owner || authority.personal_override { return Ok(true); }
     if !authority.organization { return Ok(false); }
     let org: Option<i64> = sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=$1").bind(repo_id).fetch_one(&mut **tx).await?;
@@ -234,7 +241,7 @@ async fn lock_contribution_authority_with(
     repo_id: i64,
     repository_lock: RepositoryLock,
 ) -> Result<bool> {
-    let authority = lock_discussion_authority(tx, actor_id, repo_id, repository_lock).await?;
+    let authority = lock_discussion_authority(tx, actor_id, repo_id, repository_lock, false).await?;
     let Some(authority) = authority else {
         return Ok(false);
     };
@@ -436,7 +443,7 @@ pub(crate) async fn lock_comment_resolution_authority(
             .await?;
     let (repo, author) = scope.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     anyhow::ensure!(
-        lock_discussion_authority(tx, actor_id, repo, RepositoryLock::Shared)
+        lock_discussion_authority(tx, actor_id, repo, RepositoryLock::Shared, false)
             .await?
             .is_some_and(|a| a.access.can_write()
                 || a.personal_override
@@ -455,7 +462,7 @@ pub(crate) async fn lock_review_dismissal_authority(
         .bind(review_id).fetch_optional(&mut **tx).await?;
     let (pr, repo) = scope.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     anyhow::ensure!(
-        lock_discussion_authority(tx, actor_id, repo, RepositoryLock::Shared)
+        lock_discussion_authority(tx, actor_id, repo, RepositoryLock::Shared, false)
             .await?
             .is_some_and(|a| if a.organization {
                 a.access.can_admin()
