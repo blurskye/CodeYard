@@ -244,7 +244,7 @@ async fn check_diff_anchor(
     }
     // Only the selected file's patch is read, so another file's size cannot block this comment.
     let diff = repo_store(repository, cluster)
-        .diff_file(&pull_request.base_sha, &pull_request.head_sha, path)
+        .diff_file(pull_request.diff_base(), &pull_request.head_sha, path)
         .await
         .map_err(|error| {
             if error.is_response_too_large() {
