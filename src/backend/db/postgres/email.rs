@@ -1,7 +1,7 @@
 use super::models::{EmailSettings, OutboxMessage};
 use crate::backend::db::email::{EmailLink, NewEmailSettings, RESEND_SECONDS};
 use anyhow::Result;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 pub async fn get_email_settings(pool: &PgPool) -> Result<Option<EmailSettings>> {
     Ok(sqlx::query_as(
@@ -110,22 +110,30 @@ pub async fn withdraw_email(pool: &PgPool, id: i64, attempt: i32) -> Result<()> 
     Ok(())
 }
 
-pub async fn enqueue_invitation_email(
-    pool: &PgPool,
-    invitation: i64,
-    to: &str,
+/// Queues a message in the caller's transaction, so it commits or rolls back with the change it
+/// reports. Nothing is queued while the site has no mail server, as the outbox would never send
+/// it. `invitation` links an organization invitation's offer to its message; the caller has
+/// already written that invitation row, which keeps the invitation-before-outbox lock order.
+pub(in crate::backend::db) async fn queue_email(
+    connection: &mut PgConnection,
+    to_address: &str,
     subject: &str,
-    body: &str,
+    body_text: &str,
+    invitation: Option<i64>,
 ) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    // Use the invitation-before-outbox order shared with acceptance, cancellation and resend.
-    sqlx::query("SELECT id FROM organization_invitations WHERE id=$1 FOR UPDATE")
-        .bind(invitation)
-        .execute(&mut *tx)
+    let saved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM email_settings WHERE id=1)")
+        .fetch_one(&mut *connection)
         .await?;
-    sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text,organization_invitation_id) SELECT $2,$3,$4,id FROM organization_invitations WHERE id=$1 AND failed_at IS NULL AND expires_at>NOW() AND NOT EXISTS(SELECT 1 FROM email_outbox WHERE organization_invitation_id=$1)")
-        .bind(invitation).bind(to).bind(subject).bind(body).execute(&mut *tx).await?;
-    tx.commit().await?;
+    if !saved && !crate::backend::email::config::environment_configured() {
+        return Ok(());
+    }
+    sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text,organization_invitation_id) VALUES ($1,$2,$3,$4)")
+        .bind(to_address)
+        .bind(subject)
+        .bind(body_text)
+        .bind(invitation)
+        .execute(connection)
+        .await?;
     Ok(())
 }
 
@@ -236,13 +244,22 @@ pub async fn set_email_notifications(pool: &PgPool, user_id: i64, credential: &c
 }
 
 pub async fn notification_email_address(pool: &PgPool, user_id: i64) -> Result<Option<String>> {
+    let mut connection = pool.acquire().await?;
+    notification_address(&mut connection, user_id).await
+}
+
+/// `notification_email_address` inside the caller's transaction.
+pub(in crate::backend::db) async fn notification_address(
+    connection: &mut PgConnection,
+    user_id: i64,
+) -> Result<Option<String>> {
     Ok(sqlx::query_scalar(
         "SELECT email FROM users
          WHERE id = $1 AND email_verified AND email_notifications AND NOT is_banned
            AND email IS NOT NULL AND email <> ''",
     )
     .bind(user_id)
-    .fetch_optional(pool)
+    .fetch_optional(connection)
     .await?)
 }
 

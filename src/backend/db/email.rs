@@ -66,10 +66,6 @@ native_operation!(crate::backend::db::postgres::email::email_delivery_allowed,
     crate::backend::db::sqlite::email::email_delivery_allowed,
     fn email_delivery_allowed(pool: &DbPool, id: i64, attempt: i32) -> Result<bool>);
 
-native_operation!(crate::backend::db::postgres::email::enqueue_invitation_email,
-    crate::backend::db::sqlite::email::enqueue_invitation_email,
-    fn enqueue_invitation_email(pool: &DbPool, invitation: i64, to_address: &str, subject: &str, body_text: &str) -> Result<()>);
-
 native_operation!(crate::backend::db::postgres::email::claim_due_email,
     crate::backend::db::sqlite::email::claim_due_email,
     /// Takes the oldest due message that has attempts left and holds it for `lease_seconds`.

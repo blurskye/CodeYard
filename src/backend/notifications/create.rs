@@ -1,34 +1,35 @@
 use super::NotificationBroadcaster;
 use crate::backend::db;
 use crate::backend::db::notifications::records;
-/// The invitation stands even if its notification cannot be stored.
+/// The invitation stands even if its notification cannot be stored. Its email was queued in the
+/// transaction that saved it.
 pub async fn organization_invitation(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: i64,
     invitation: &db::models::OrgInvitation,
 ) {
+    let Some(user_id) = invitation.user_id else {
+        return;
+    };
     let name =
         match db::organizations::get_organization_metadata(pool, actor, invitation.org_id).await {
             Ok(db::organizations::OrganizationOutcome::Applied(metadata)) => metadata.name,
             _ => return,
         };
-    if let Some(user_id) = invitation.user_id {
-        let request = NotificationRequest {
-            user_id,
-            actor_id: Some(actor),
-            repo_id: None,
-            kind: "organization_invitation",
-            title: &format!("Invitation to join {name}"),
-            body: None,
-            link: Some("/settings/organizations"),
-            metadata: serde_json::json!({ "org_id": invitation.org_id, "role": invitation.role }),
-        };
-        if let Err(error) = create_and_broadcast_notification(pool, broadcaster, request).await {
-            tracing::warn!(%error, "organization invitation notification was not stored");
-        }
+    let request = NotificationRequest {
+        user_id,
+        actor_id: Some(actor),
+        repo_id: None,
+        kind: "organization_invitation",
+        title: &format!("Invitation to join {name}"),
+        body: None,
+        link: Some("/settings/organizations"),
+        metadata: serde_json::json!({ "org_id": invitation.org_id, "role": invitation.role }),
+    };
+    if let Err(error) = create_and_broadcast_notification(pool, broadcaster, request).await {
+        tracing::warn!(%error, "organization invitation notification was not stored");
     }
-    crate::backend::email::organization_invitation(pool, invitation, &name).await;
 }
 
 #[derive(Clone)]

@@ -1,6 +1,6 @@
 //! Mail waits in the `email_outbox` table until a node sends it. Several nodes may run the
 //! sender at once: each claims its own rows. A failed send is tried again later, a few times.
-use super::{config, messages::Mail, send};
+use super::{config, send};
 use crate::backend::crypto::SecretEncryptor;
 use crate::backend::db::{self, DbPool};
 use std::time::Duration;
@@ -21,12 +21,6 @@ const PRUNE_EVERY: u32 = 360;
 /// Seconds to wait after attempt number `attempts` failed: 1, 4, 16 and 64 minutes.
 pub fn retry_delay(attempts: i32) -> i64 {
     60 * 4_i64.pow(u32::try_from(attempts - 1).unwrap_or(0).min(6))
-}
-
-pub async fn enqueue(pool: &DbPool, to: &str, mail: Mail) {
-    if let Err(error) = db::email::enqueue_email(pool, to, &mail.subject, &mail.body).await {
-        warn!(%error, "could not queue an email");
-    }
 }
 
 /// Sends a bounded batch, returning the sent and processed counts separately.

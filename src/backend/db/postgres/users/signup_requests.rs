@@ -151,6 +151,7 @@ pub async fn approve_signup_request(
     .await?;
     sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES($1,'signup.approve','user',$2,$3)")
         .bind(reviewer_user_id).bind(user.id).bind(serde_json::json!({"username":user.username})).execute(&mut *tx).await?;
+    queue_decision_email(&mut tx, user.email.as_deref(), &user.username, true).await?;
 
     tx.commit().await?;
     Ok(user)
@@ -179,8 +180,23 @@ pub async fn reject_signup_request(
     };
     sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES($1,'signup.reject','signup_request',$2,$3)")
         .bind(reviewer_user_id).bind(request_id).bind(serde_json::json!({"username":request.0})).execute(&mut *tx).await?;
+    queue_decision_email(&mut tx, request.1.as_deref(), &request.0, false).await?;
     tx.commit().await?;
     Ok(request)
+}
+
+/// Queues the decision mail in the review transaction, so a recorded decision always has it.
+async fn queue_decision_email(
+    tx: &mut sqlx::PgConnection,
+    email: Option<&str>,
+    username: &str,
+    approved: bool,
+) -> Result<()> {
+    let Some(to) = email.map(str::trim).filter(|email| !email.is_empty()) else {
+        return Ok(());
+    };
+    let mail = crate::backend::email::signup_decision(username, approved);
+    crate::backend::db::postgres::email::queue_email(tx, to, &mail.subject, &mail.body, None).await
 }
 
 async fn require_reviewer(

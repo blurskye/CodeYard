@@ -1,6 +1,7 @@
 //! Outgoing email over SMTP. The server settings live in `config`, the texts in `messages`,
 //! `links` mails the address confirmation and password reset codes, and `outbox` sends the
-//! queued mail. The entry points below queue what the site mails.
+//! queued mail. The entry points below queue what the site mails, or write the mail that a
+//! database transaction queues with the change it reports.
 pub mod config;
 pub mod links;
 mod messages;
@@ -43,46 +44,16 @@ pub async fn notify_user(pool: &DbPool, notification: &db::models::Notification)
     }
 }
 
-/// Invitation messages are linked to their offer so exhausted SMTP retries can be reported.
-pub async fn organization_invitation(
-    pool: &DbPool,
-    invitation: &db::models::OrgInvitation,
-    name: &str,
-) {
-    if !config::is_configured(pool).await {
-        return;
-    }
-    let to = match &invitation.email {
-        Some(email) => Some(email.clone()),
-        None => match invitation.user_id {
-            Some(user) => db::email::notification_email_address(pool, user)
-                .await
-                .ok()
-                .flatten(),
-            None => None,
-        },
-    };
-    let Some(to) = to else {
-        return;
-    };
-    let title = format!("Invitation to join {name}");
-    let body = format!("You have been invited to join {name}. Sign in, or create an account and verify this email address, to accept the invitation at {}/settings/organizations.\n\nThis invitation expires after seven days.", public_origin());
-    if let Err(error) =
-        db::email::enqueue_invitation_email(pool, invitation.id, &to, &title, &body).await
-    {
-        warn!(%error, "could not queue an organization invitation email");
-    }
+/// The offer of a seat in organization `name`. The database queues it in the transaction that
+/// saves the invitation, linked to it so exhausted SMTP retries can be reported.
+pub fn organization_invitation(name: &str) -> messages::Mail {
+    messages::organization_invitation(&public_origin(), name)
 }
 
-/// Tells the person who asked for an account that an administrator decided on the request.
-pub async fn signup_decision(pool: &DbPool, email: Option<&str>, username: &str, approved: bool) {
-    let Some(to) = email.map(str::trim).filter(|email| !email.is_empty()) else {
-        return;
-    };
-    if config::is_configured(pool).await {
-        let mail = messages::signup_decision(&public_origin(), username, approved);
-        outbox::enqueue(pool, to, mail).await;
-    }
+/// Tells the person who asked for an account that an administrator decided on the request. The
+/// database queues it in the transaction that records the decision.
+pub fn signup_decision(username: &str, approved: bool) -> messages::Mail {
+    messages::signup_decision(&public_origin(), username, approved)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -295,7 +266,6 @@ mod tests {
             )
         };
         notify_user(&f.pool, &notification(None, None).await.unwrap()).await;
-        signup_decision(&f.pool, Some("carol@example.com"), "carol", true).await;
         assert!(db::email::claim_due_email(&f.pool, 5, 600)
             .await
             .unwrap()
@@ -307,12 +277,7 @@ mod tests {
             .unwrap();
         let mail = notification(Some("Body"), Some("/x")).await.unwrap();
         notify_user(&f.pool, &mail).await;
-        signup_decision(&f.pool, Some("carol@example.com"), "carol", false).await;
         let first = db::email::claim_due_email(&f.pool, 5, 600)
-            .await
-            .unwrap()
-            .unwrap();
-        let second = db::email::claim_due_email(&f.pool, 5, 600)
             .await
             .unwrap()
             .unwrap();
@@ -326,7 +291,6 @@ mod tests {
                 .await
                 .unwrap()
         );
-        assert_eq!(second.to_address, "carol@example.com");
     }
 
     #[tokio::test]

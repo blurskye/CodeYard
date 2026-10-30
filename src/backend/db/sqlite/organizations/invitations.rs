@@ -210,7 +210,50 @@ pub(super) async fn save_in_transaction(
             sqlx::query("INSERT INTO team_invitations(invitation_id,team_id,role) VALUES(?1,?2,'member') ON CONFLICT DO NOTHING").bind(invitation.id).bind(id).execute(&mut *tx).await?;
         }
     }
+    queue_invitation_email(tx, actor, org, target, &invitation).await?;
     Ok(Applied(invitation))
+}
+
+/// Queues the offer's email with the offer, so a saved invitation always has its message. The
+/// address is the invited one, or the invitee's notification address. An invitee who blocks
+/// the inviter, or whom the inviter blocks, gets none, as they get no notification.
+async fn queue_invitation_email(
+    tx: &mut SqliteConnection,
+    actor: i64,
+    org: i64,
+    target: Option<i64>,
+    invitation: &OrgInvitation,
+) -> Result<()> {
+    if let Some(user) = target {
+        if crate::backend::db::sqlite::users::blocks::interaction_blocked(&mut *tx, user, actor)
+            .await?
+        {
+            return Ok(());
+        }
+    }
+    let to = match (&invitation.email, target) {
+        (Some(email), _) => Some(email.clone()),
+        (None, Some(user)) => {
+            crate::backend::db::sqlite::email::notification_address(&mut *tx, user).await?
+        }
+        (None, None) => None,
+    };
+    let Some(to) = to else {
+        return Ok(());
+    };
+    let name: String = sqlx::query_scalar("SELECT name FROM organizations WHERE id=?1")
+        .bind(org)
+        .fetch_one(&mut *tx)
+        .await?;
+    let mail = crate::backend::email::organization_invitation(&name);
+    crate::backend::db::sqlite::email::queue_email(
+        tx,
+        &to,
+        &mail.subject,
+        &mail.body,
+        Some(invitation.id),
+    )
+    .await
 }
 
 pub async fn list_organization_invitations(

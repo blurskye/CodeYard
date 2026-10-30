@@ -1,7 +1,7 @@
 use super::models::{EmailSettings, OutboxMessage};
 use crate::backend::db::email::{EmailLink, NewEmailSettings, RESEND_SECONDS};
 use anyhow::Result;
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 pub async fn get_email_settings(pool: &SqlitePool) -> Result<Option<EmailSettings>> {
     Ok(sqlx::query_as(
@@ -109,15 +109,29 @@ pub async fn withdraw_email(pool: &SqlitePool, id: i64, attempt: i32) -> Result<
     Ok(())
 }
 
-pub async fn enqueue_invitation_email(
-    pool: &SqlitePool,
-    invitation: i64,
-    to: &str,
+/// Queues a message in the caller's transaction, so it commits or rolls back with the change it
+/// reports. Nothing is queued while the site has no mail server, as the outbox would never send
+/// it. `invitation` links an organization invitation's offer to its message.
+pub(in crate::backend::db) async fn queue_email(
+    connection: &mut SqliteConnection,
+    to_address: &str,
     subject: &str,
-    body: &str,
+    body_text: &str,
+    invitation: Option<i64>,
 ) -> Result<()> {
-    sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text,organization_invitation_id) SELECT ?2,?3,?4,id FROM organization_invitations WHERE id=?1 AND failed_at IS NULL AND julianday(expires_at)>julianday('now') AND NOT EXISTS(SELECT 1 FROM email_outbox WHERE organization_invitation_id=?1)")
-        .bind(invitation).bind(to).bind(subject).bind(body).execute(pool).await?;
+    let saved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM email_settings WHERE id=1)")
+        .fetch_one(&mut *connection)
+        .await?;
+    if !saved && !crate::backend::email::config::environment_configured() {
+        return Ok(());
+    }
+    sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text,organization_invitation_id) VALUES (?1,?2,?3,?4)")
+        .bind(to_address)
+        .bind(subject)
+        .bind(body_text)
+        .bind(invitation)
+        .execute(connection)
+        .await?;
     Ok(())
 }
 
@@ -225,13 +239,22 @@ pub async fn set_email_notifications(pool: &SqlitePool, user_id: i64, credential
 }
 
 pub async fn notification_email_address(pool: &SqlitePool, user_id: i64) -> Result<Option<String>> {
+    let mut connection = pool.acquire().await?;
+    notification_address(&mut connection, user_id).await
+}
+
+/// `notification_email_address` inside the caller's transaction.
+pub(in crate::backend::db) async fn notification_address(
+    connection: &mut SqliteConnection,
+    user_id: i64,
+) -> Result<Option<String>> {
     Ok(sqlx::query_scalar(
         "SELECT email FROM users
          WHERE id = ?1 AND email_verified AND email_notifications AND NOT is_banned
            AND email IS NOT NULL AND email <> ''",
     )
     .bind(user_id)
-    .fetch_optional(pool)
+    .fetch_optional(connection)
     .await?)
 }
 

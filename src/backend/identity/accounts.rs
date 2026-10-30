@@ -272,7 +272,8 @@ pub async fn review_signup(
         .await
         .map_err(SignupReviewError::Authority)?;
     let decision = decision.ok_or(SignupReviewError::InvalidDecision)?;
-    // These named transactions also revalidate reviewer authority after locking.
+    // These named transactions also revalidate reviewer authority after locking, and queue the
+    // decision mail with the decision.
     match decision {
         SignupDecision::Approve => {
             let user = db::users::signup_requests::approve_signup_request(
@@ -285,18 +286,11 @@ pub async fn review_signup(
             )
             .await
             .map_err(review_failure)?;
-            crate::backend::email::signup_decision(
-                pool,
-                user.email.as_deref(),
-                &user.username,
-                true,
-            )
-            .await;
             let _ = links::send_verification(pool, &user).await;
             Ok(SignupReviewOutcome::Approved(Box::new(user)))
         }
         SignupDecision::Reject => {
-            let (username, email) = db::users::signup_requests::reject_signup_request(
+            db::users::signup_requests::reject_signup_request(
                 pool,
                 request_id,
                 (
@@ -306,7 +300,6 @@ pub async fn review_signup(
             )
             .await
             .map_err(review_failure)?;
-            crate::backend::email::signup_decision(pool, email.as_deref(), &username, false).await;
             Ok(SignupReviewOutcome::Rejected)
         }
     }
