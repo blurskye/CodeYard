@@ -2,12 +2,12 @@ use crate::backend::db::pages::{Attempt, Build, Deployment, Refusal, Site, Updat
 use anyhow::Result;
 use sqlx::PgPool;
 
-use crate::backend::db::repositories::credentials::{repository_condition, Reader};
+use crate::backend::db::repositories::credentials::{repository_condition, Access, Reader};
 
 async fn begin_read<'a>(pool: &'a PgPool, reader: &Reader<'_>, repo: i64) -> Result<sqlx::Transaction<'a, sqlx::Postgres>> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
-    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}) AND ({}))", super::repositories::access::readable_condition(), repository_condition(true, "pages", false, "$3", "$4", "$5")))
+    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}) AND ({}))", super::repositories::access::readable_condition(), repository_condition(true, "pages", Access::PublicRead, "$3", "$4", "$5")))
         .bind(reader.user).bind(repo).bind(reader.token()).bind(reader.session()).bind(reader.hash()).fetch_one(&mut *tx).await?;
     anyhow::ensure!(allowed, Refusal::Missing);
     Ok(tx)

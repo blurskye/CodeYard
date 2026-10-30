@@ -118,10 +118,10 @@ async fn credential_authority(
     repo: i64,
     scope: &str,
 ) -> Result<()> {
-    use crate::backend::db::repositories::credentials::{repository_condition, Reader};
+    use crate::backend::db::repositories::credentials::{repository_condition, Access, Reader};
     anyhow::ensure!(super::users::transitions::credential_live(tx, actor, credential, true).await?, Refusal::Denied);
     let reader = Reader::authenticated(actor, credential);
-    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}))", repository_condition(true, scope, true, "$3", "$4", "$5")))
+    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}))", repository_condition(true, scope, Access::Write, "$3", "$4", "$5")))
         .bind(actor).bind(repo).bind(reader.token()).bind(reader.session()).bind(reader.hash()).fetch_one(&mut **tx).await?;
     anyhow::ensure!(allowed, Refusal::Denied);
     Ok(())

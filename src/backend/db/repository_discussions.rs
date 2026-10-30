@@ -145,7 +145,7 @@ impl Filter {
         let token = sql.bind(reader.token().unwrap_or(0).to_string());
         let session = sql.bind(reader.session().unwrap_or(""));
         let hash = sql.bind(reader.hash().unwrap_or(""));
-        let scope = super::repositories::credentials::repository_condition(postgres, "discussions", false, &format!("NULLIF({token},'0')"), &format!("NULLIF({session},'')"), &format!("NULLIF({hash},'')"));
+        let scope = super::repositories::credentials::repository_condition(postgres, "discussions", super::repositories::credentials::Access::PublicRead, &format!("NULLIF({token},'0')"), &format!("NULLIF({session},'')"), &format!("NULLIF({hash},'')"));
         let mut predicates = vec![readable.to_owned(), scope];
         if let Some(repo) = self.repo {
             let value = sql.bind(repo.to_string());

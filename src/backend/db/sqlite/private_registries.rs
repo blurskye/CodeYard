@@ -46,7 +46,11 @@ pub async fn save(
     value: Option<&str>,
 ) -> Result<Registry, RegistryError> {
     let mut tx = super::dependabot::authorized(pool, actor, org).await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await.map_err(SecretsError::authority)?;
+    if !super::users::transitions::credential_live(&mut tx, actor, credential, true)
+        .await.map_err(SecretsError::authority)?
+    {
+        return Err(SecretsError::Denied.into());
+    }
     let mut stored: Option<String> = match name {
         Some(name) => Some(
             sqlx::query_scalar(
@@ -117,7 +121,11 @@ pub async fn delete(
     name: &str,
 ) -> Result<(), RegistryError> {
     let mut tx = super::dependabot::authorized(pool, actor, org).await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await.map_err(SecretsError::authority)?;
+    if !super::users::transitions::credential_live(&mut tx, actor, credential, true)
+        .await.map_err(SecretsError::authority)?
+    {
+        return Err(SecretsError::Denied.into());
+    }
     let deleted = sqlx::query("DELETE FROM org_private_registries WHERE org_id=$1 AND name=$2")
         .bind(org)
         .bind(name)

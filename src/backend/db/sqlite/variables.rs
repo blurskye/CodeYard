@@ -1,6 +1,33 @@
 use super::super::variables::{ensure_room, validate, Variable, VariableError};
 use sqlx::SqlitePool;
 
+async fn credential_authority(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    repo: i64,
+    write: bool,
+) -> Result<(), VariableError> {
+    use crate::backend::db::repositories::credentials::{repository_condition, Access, Reader};
+    if !super::users::transitions::credential_live(tx, actor, credential, write)
+        .await.map_err(VariableError::Authority)?
+    {
+        return Err(VariableError::Denied);
+    }
+    let reader = Reader::authenticated(actor, credential);
+    let access = if write { Access::Write } else { Access::Read };
+    let allowed: bool = sqlx::query_scalar(&format!(
+        "SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND ({}))",
+        repository_condition(false, "variables", access, "?3", "?4", "?5"),
+    ))
+    .bind(actor).bind(repo).bind(reader.token()).bind(reader.session()).bind(reader.hash())
+    .fetch_one(&mut **tx).await?;
+    if !allowed {
+        return Err(VariableError::Denied);
+    }
+    Ok(())
+}
+
 pub async fn list(
     pool: &SqlitePool,
     actor: i64,
@@ -10,9 +37,10 @@ pub async fn list(
     let mut tx = pool.begin().await?;
     let collaborator: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM (SELECT id,owner_kind,owner_user_id,owner_org_id,is_gist,TRUE AS is_private FROM repositories WHERE id=?2) r JOIN users u ON u.id=?1 WHERE NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({})>=1))", super::repositories::access::USER_REPO_ACCESS_SQL))
         .bind(actor).bind(repo).fetch_one(&mut *tx).await?;
-    if !collaborator || !super::users::transitions::credential_live(&mut tx, actor, credential, false).await.map_err(VariableError::Authority)? {
+    if !collaborator {
         return Err(VariableError::Denied);
     }
+    credential_authority(&mut tx, actor, credential, repo, false).await?;
     let variables = sqlx::query_as("SELECT name, value, created_at, updated_at FROM repo_actions_variables WHERE repo_id=?1 ORDER BY name")
         .bind(repo).fetch_all(&mut *tx).await?;
     tx.commit().await?;
@@ -30,13 +58,13 @@ pub async fn save(
 ) -> Result<(), VariableError> {
     validate(name, value.unwrap_or_default())?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await.map_err(super::super::variables::authority)?;
     if !super::discussions::lock_write_authority(&mut tx, actor, repo)
         .await
         .map_err(VariableError::Authority)?
     {
         return Err(VariableError::Denied);
     }
+    credential_authority(&mut tx, actor, credential, repo, true).await?;
     let old: Option<String> = if let Some(previous) = previous {
         Some(
             sqlx::query_scalar(
@@ -88,13 +116,13 @@ pub async fn delete(
     name: &str,
 ) -> Result<(), VariableError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await.map_err(super::super::variables::authority)?;
     if !super::discussions::lock_write_authority(&mut tx, actor, repo)
         .await
         .map_err(VariableError::Authority)?
     {
         return Err(VariableError::Denied);
     }
+    credential_authority(&mut tx, actor, credential, repo, true).await?;
     let result = sqlx::query("DELETE FROM repo_actions_variables WHERE repo_id=?1 AND name=?2")
         .bind(repo)
         .bind(name)
