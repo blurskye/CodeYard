@@ -307,6 +307,14 @@ async fn label_submissions(pg: bool) {
         )
         .await;
     assert_eq!(exact.as_array().unwrap().len(), 2);
+    // Issue 1's history names each of its labels once, with the label's color.
+    let first = db::issues::get_issue(database.pool(), repo.id, 1).await.unwrap().unwrap();
+    for (sql, expected) in [
+        ("SELECT COUNT(*) FROM timeline_events WHERE subject_kind='issue' AND subject_id=$1 AND kind='labeled'", 100),
+        ("SELECT COUNT(*) FROM timeline_events WHERE subject_kind='issue' AND subject_id=$1 AND kind='labeled' AND previous<>'123456'", 0),
+    ] {
+        assert_eq!(database.scalar(sql, &[first.id]).await, expected, "{sql}");
+    }
     // A failed sidebar write must redirect after creating, never leave a replayable POST page.
     if pg {
         database.execute("CREATE FUNCTION reject_test_label() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'sidebar unavailable'; END $$", &[]).await;

@@ -62,7 +62,8 @@ pub async fn create_issue_with_metadata(
         );
         let issue = insert_in_transaction(&mut tx, repo_id, author_id, title, body).await?;
         if !metadata.labels.is_empty() {
-            let labels = super::labels::write_item_labels_transaction(
+            // The label write records each "labeled" event with its color.
+            super::labels::write_item_labels_transaction(
                 &mut tx,
                 Some(author_id),
                 repo_id,
@@ -72,9 +73,6 @@ pub async fn create_issue_with_metadata(
                 false,
             )
             .await?;
-            for label in labels {
-                super::issue_attributes::event(&mut tx, (repo_id, issue.id, author_id), "labeled", &label.name, "").await?;
-            }
         }
         for &user in metadata.assignees {
             super::assignees::assign_in_transaction(
