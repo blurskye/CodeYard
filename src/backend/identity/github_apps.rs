@@ -11,6 +11,12 @@ use rsa::{
 use serde_json::{Map, Value};
 use sha2::Sha256;
 
+/// The stored form of an App name: trimmed, not empty and at most 100 bytes.
+pub fn valid_name(name: &str) -> Option<&str> {
+    let name = name.trim();
+    (!name.is_empty() && name.len() <= 100).then_some(name)
+}
+
 pub fn valid_slug(slug: &str) -> bool {
     (1..=80).contains(&slug.len())
         && slug.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
@@ -77,11 +83,9 @@ pub fn manifest(value: &Value) -> Option<Manifest> {
     {
         return None;
     }
-    let name = object.get("name")?.as_str()?.trim();
+    let name = valid_name(object.get("name")?.as_str()?)?;
     let homepage = object.get("url")?.as_str()?;
-    if name.is_empty()
-        || name.len() > 100
-        || homepage.len() > 2048
+    if homepage.len() > 2048
         || !super::oauth_apps::valid_url(homepage)
     {
         return None;

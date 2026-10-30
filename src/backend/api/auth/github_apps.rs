@@ -241,7 +241,7 @@ async fn register(
         return manifest_approve(&ctx, &form).await;
     }
     let slug = field(&form, "slug");
-    let name = field(&form, "name");
+    let name = apps::valid_name(field(&form, "name"));
     let homepage = field(&form, "homepage");
     let url = url::Url::parse(homepage).ok();
     let permissions = serde_json::from_str::<Value>(field(&form, "permissions"))
@@ -260,8 +260,7 @@ async fn register(
         crate::backend::webhooks::events::subscription(&chosen)
     };
     if !apps::valid_slug(slug)
-        || name.trim().is_empty()
-        || name.len() > 100
+        || name.is_none()
         || field(&form, "description").len() > 1000
         || homepage.len() > 2048
         || !url.is_some_and(|url| {
@@ -305,7 +304,7 @@ async fn register(
         is_public: true,
         client_id: client.clone(),
         slug: slug.into(),
-        name: name.trim().into(),
+        name: name.unwrap_or_default().into(),
         description: field(&form, "description").into(),
         homepage: homepage.into(),
         public_key: public,
