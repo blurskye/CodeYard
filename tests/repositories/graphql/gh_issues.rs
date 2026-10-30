@@ -461,10 +461,9 @@ async fn contract(pg: bool) {
         json!({"input":{"subjectId":parent,"body":"A comment"}}),
     )
     .await;
-    assert!(data["addComment"]["commentEdge"]["node"]["url"]
-        .as_str()
-        .unwrap()
-        .contains("#issuecomment-"));
+    // The same comment link as the REST html_url: the page and anchor the issue page renders.
+    let url = data["addComment"]["commentEdge"]["node"]["url"].as_str().unwrap();
+    assert!(url.contains("?comment=") && url.contains("#comment-"), "{url}");
     let fields = format!("id,number,title,body,state,closed,createdAt,updatedAt,closedAt,url,author{{login,...on User{{id,name}}}},assignees(first:100){{nodes{{id,login,name,databaseId}},totalCount}},labels(first:100){{nodes{{id,name,description,color}},totalCount}},milestone{{number,title,description,dueOn}},reactionGroups{{content,users{{totalCount}}}},{COMMENTS}");
     let issue_fields = format!("{fields},stateReason,issueType{{id,name,description,color}},parent{{id,number,title,url,state,repository{{nameWithOwner}}}},subIssues(first:100){{nodes{{id,number,title,url,state,repository{{nameWithOwner}}}},totalCount}},subIssuesSummary{{total,completed,percentCompleted}},blockedBy(first:50){{nodes{{id,number,title,url,state,repository{{nameWithOwner}}}},totalCount}},blocking(first:50){{nodes{{id,number,title,url,state,repository{{nameWithOwner}}}},totalCount}}");
     let data = query(
