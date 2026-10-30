@@ -55,22 +55,10 @@ pub async fn unassign(
         usernames,
     )
     .await?;
-    for name in &removed {
-        db::timeline::record_for(
-            pool,
-            target.repository.id,
-            target.item,
-            target.actor.id,
-            "unassigned",
-            name,
-        )
-        .await;
-    }
     Ok(removed)
 }
 
-/// Records and announces assignments that are already saved, such as the assignees a new issue
-/// starts with.
+/// Announces assignments already saved. Mutation transactions own their timeline events.
 pub async fn announce(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
@@ -79,17 +67,6 @@ pub async fn announce(
 ) {
     if users.is_empty() {
         return;
-    }
-    for user in users {
-        db::timeline::record_for(
-            pool,
-            target.repository.id,
-            target.item,
-            target.actor.id,
-            "assigned",
-            &user.username,
-        )
-        .await;
     }
     let pull_request = matches!(target.item, AssignedItem::PullRequest(_));
     let link = format!(

@@ -802,6 +802,7 @@ pub(in crate::backend::api) fn assignment_error(error: anyhow::Error) -> Error {
 pub(in crate::backend::api) async fn apply_metadata(
     state: &AppState,
     actor: &db::models::User,
+    authority: db::users::accounts::AccountActor,
     repo: &db::models::Repository,
     item: AssignedItem,
     detail: (&str, i32, &str),
@@ -893,32 +894,16 @@ pub(in crate::backend::api) async fn apply_metadata(
             .await
             .map_err(Error::unavailable)?
         {
-            if !users
-                .iter()
-                .any(|user| user.username.eq_ignore_ascii_case(&name))
-                && db::assignees::unassign_user(&state.pool, actor.id, repo.id, item, &name)
-                    .await
-                    .map_err(assignment_error)?
-            {
-                db::timeline::record_for(&state.pool, repo.id, item, actor.id, "unassigned", &name)
-                    .await;
+            if !users.iter().any(|user| user.username.eq_ignore_ascii_case(&name)) {
+                db::assignees::unassign_user(&state.pool, authority.clone(), repo.id, item, &name)
+                    .await.map_err(assignment_error)?;
             }
         }
         for user in users {
-            if db::assignees::assign_user(&state.pool, actor.id, repo.id, item, user.id)
-                .await
-                .map_err(assignment_error)?
+            if db::assignees::assign_user(&state.pool, authority.clone(), repo.id, item, user.id)
+                .await.map_err(assignment_error)?
             {
                 added.push(user.id);
-                db::timeline::record_for(
-                    &state.pool,
-                    repo.id,
-                    item,
-                    actor.id,
-                    "assigned",
-                    &user.username,
-                )
-                .await;
             }
         }
         let (owner, number, title) = detail;
@@ -955,7 +940,9 @@ async fn create(
     Json(input): Json<Value>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let auth = auth.ok_or_else(auth::required)?;
+    let authority = db::users::accounts::AccountActor::Token { user_id: auth.user.id, token_id: auth.token.id };
+    let actor = auth.user;
     let title = title(input.get("title"))?.ok_or_else(|| Error::invalid("Title is required"))?;
     let parent_issue_id = input
         .get("parent_issue_id")
@@ -987,6 +974,7 @@ async fn create(
     apply_metadata(
         &state,
         &actor,
+        authority,
         &repo,
         item,
         (&p["owner"], issue.number, &issue.title),
@@ -1006,7 +994,9 @@ async fn update(
     Json(input): Json<Value>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let auth = auth.ok_or_else(auth::required)?;
+    let authority = db::users::accounts::AccountActor::Token { user_id: auth.user.id, token_id: auth.token.id };
+    let actor = auth.user;
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
     let title = title(input.get("title"))?;
     let body = text(&input, "body")?;
@@ -1053,6 +1043,7 @@ async fn update(
     apply_metadata(
         &state,
         &actor,
+        authority,
         &repo,
         item,
         (&p["owner"], number, &title),
@@ -1075,7 +1066,9 @@ async fn change_assignees(
     remove: bool,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let auth = auth.ok_or_else(auth::required)?;
+    let authority = db::users::accounts::AccountActor::Token { user_id: auth.user.id, token_id: auth.token.id };
+    let actor = auth.user;
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
     let mut names = db::assignees::list_assignees(&state.pool, item)
         .await
@@ -1105,6 +1098,7 @@ async fn change_assignees(
     apply_metadata(
         &state,
         &actor,
+        authority,
         &repo,
         item,
         (&p["owner"], number, title),

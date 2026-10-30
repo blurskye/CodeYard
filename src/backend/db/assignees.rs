@@ -29,19 +29,19 @@ native_operation!(crate::backend::db::postgres::assignees::assign_users,
     /// Assigns each of `user_ids` in one transaction and returns the ones that were not assigned
     /// before. A user who is already assigned needs no access; a new assignee must be one that
     /// `assignable_user_ids` names.
-    fn assign_users(pool: &DbPool, actor_id: i64, repo_id: i64, item: AssignedItem, user_ids: &[i64]) -> Result<Vec<i64>>);
+    fn assign_users(pool: &DbPool, actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>, repo_id: i64, item: AssignedItem, user_ids: &[i64]) -> Result<Vec<i64>>);
 
 native_operation!(crate::backend::db::postgres::assignees::unassign_users,
     crate::backend::db::sqlite::assignees::unassign_users,
     /// Removes each user named in `usernames` in one transaction and returns the names that were
     /// assigned. The write right is checked before the names are looked up, so a name that is no
     /// user is refused the same way for a reader.
-    fn unassign_users(pool: &DbPool, actor_id: i64, repo_id: i64, item: AssignedItem, usernames: &[String]) -> Result<Vec<String>>);
+    fn unassign_users(pool: &DbPool, actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>, repo_id: i64, item: AssignedItem, usernames: &[String]) -> Result<Vec<String>>);
 
 /// Assigns one user. Returns whether that was a new assignment.
 pub async fn assign_user(
     pool: &DbPool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     item: AssignedItem,
     user_id: i64,
@@ -54,7 +54,7 @@ pub async fn assign_user(
 /// Removes the user named `username`. Returns whether an assignment was removed.
 pub async fn unassign_user(
     pool: &DbPool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     item: AssignedItem,
     username: &str,

@@ -176,6 +176,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         let changes = metadata_mutations::ids(&input[input_key], prefix)?;
         let remove = field.starts_with("remove");
         let actor = request.auth.user.id;
+        let authority = db::users::accounts::AccountActor::Token { user_id: actor, token_id: request.auth.token.id };
         // Preparing checks triage authority, that labels belong to this repository and that new
         // assignees can be assigned. A removed assignee may since have lost access, so removals
         // rely on the write's own triage check instead.
@@ -212,18 +213,11 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         } else if !remove {
             let mut added = Vec::new();
             for user in changes {
-                let username = db::users::accounts::get_user_by_id(pool, user)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?
-                    .username;
-                if db::assignees::assign_user(pool, actor, repo.id, item, user)
+                if db::assignees::assign_user(pool, authority.clone(), repo.id, item, user)
                     .await
                     .map_err(|e| github::issues::assignment_error(e).graphql())?
                 {
                     added.push(user);
-                    db::timeline::record_for(pool, repo.id, item, actor, "assigned", &username)
-                        .await;
                 }
             }
             let owner = repository::owner(&repo, request).await?;
@@ -257,13 +251,8 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     .map_err(unavailable)?
                     .ok_or_else(missing)?
                     .username;
-                if db::assignees::unassign_user(pool, actor, repo.id, item, &username)
-                    .await
-                    .map_err(|e| github::issues::assignment_error(e).graphql())?
-                {
-                    db::timeline::record_for(pool, repo.id, item, actor, "unassigned", &username)
-                        .await;
-                }
+                db::assignees::unassign_user(pool, authority.clone(), repo.id, item, &username)
+                    .await.map_err(|e| github::issues::assignment_error(e).graphql())?;
             }
         }
     }

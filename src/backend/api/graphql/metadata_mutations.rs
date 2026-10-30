@@ -93,6 +93,7 @@ pub(super) async fn apply(
     github::issues::apply_metadata(
         &request.state,
         &request.auth.user,
+        db::users::accounts::AccountActor::Token { user_id: request.auth.user.id, token_id: request.auth.token.id },
         repo,
         item,
         (&owner, number, title),
