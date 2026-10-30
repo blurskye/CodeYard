@@ -39,6 +39,10 @@ pub(crate) async fn native_change(
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
     let actor = ctx.require_user()?.id;
+    let authority = || db::users::accounts::AccountActor::Session {
+        user_id: actor,
+        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    };
     let issue = db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
         .await
         .map_err(|_| unavailable(&ctx))?
@@ -59,7 +63,7 @@ pub(crate) async fn native_change(
         "pin" | "unpin" => {
             store::pin(
                 &ctx.state.pool,
-                actor,
+                authority(),
                 repo.record.id,
                 issue.id,
                 operation == "pin",
@@ -73,7 +77,7 @@ pub(crate) async fn native_change(
                     "Type the issue number to confirm deletion.",
                 ));
             }
-            store::delete(&ctx.state.pool, actor, repo.record.id, issue.id)
+            store::delete(&ctx.state.pool, authority(), repo.record.id, issue.id)
                 .await
                 .map_err(|error| failure(&ctx, error))?;
             return Ok(ctx.redirect(&base));
@@ -88,7 +92,7 @@ pub(crate) async fn native_change(
             .map_err(|_| unavailable(&ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
             let moved =
-                store::transfer(&ctx.state.pool, actor, repo.record.id, issue.id, target.id)
+                store::transfer(&ctx.state.pool, authority(), repo.record.id, issue.id, target.id)
                     .await
                     .map_err(|error| failure(&ctx, error))?;
             return Ok(ctx.redirect(&format!("/{owner}/{}/issues/{}", target.name, moved.number)));
@@ -109,7 +113,7 @@ pub(crate) async fn native_change(
             })?;
             store::close_duplicate(
                 &ctx.state.pool,
-                actor,
+                authority(),
                 repo.record.id,
                 issue.id,
                 duplicate.id,
@@ -135,7 +139,7 @@ pub(crate) async fn native_change(
             })?;
             crate::backend::issues::branches::create(
                 &ctx.state,
-                actor,
+                authority(),
                 &issue,
                 &repo.record,
                 &field(&form, "name"),
