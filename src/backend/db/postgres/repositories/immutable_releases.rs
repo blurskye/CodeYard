@@ -93,13 +93,14 @@ pub(crate) async fn freeze(
     }
     let publication = publication.ok_or(ReleaseRefusal::Conflict)?;
     // Serialize the first permanent alias with owner rename and its capture trigger.
-    let _:String=sqlx::query_scalar("SELECT COALESCE((SELECT username FROM users WHERE id=(SELECT owner_user_id FROM repositories WHERE id=$1) FOR SHARE),(SELECT name FROM organizations WHERE id=(SELECT owner_org_id FROM repositories WHERE id=$1) FOR SHARE))").bind(release.repo_id).fetch_one(&mut **tx).await?;
+    let owner:String=sqlx::query_scalar("SELECT COALESCE((SELECT username FROM users WHERE id=(SELECT owner_user_id FROM repositories WHERE id=$1) FOR SHARE),(SELECT name FROM organizations WHERE id=(SELECT owner_org_id FROM repositories WHERE id=$1) FOR SHARE))").bind(release.repo_id).fetch_one(&mut **tx).await?;
+    let name:String=sqlx::query_scalar("SELECT name FROM repositories WHERE id=$1 FOR SHARE").bind(release.repo_id).fetch_one(&mut **tx).await?;
     // Generic file deletion has a separate lock. The referenced-asset guard
     // protects linked files after publication.
     let _:Vec<Uuid>=sqlx::query_scalar("SELECT f.id FROM files f JOIN release_assets a ON a.file_id=f.id WHERE a.release_id=$1 ORDER BY f.id LIMIT 1001 FOR UPDATE OF f").bind(release.id).fetch_all(&mut **tx).await?;
     let mut assets:Vec<Artifact>=sqlx::query_as("SELECT a.name,a.size,f.sha256_hex AS sha256 FROM release_assets a JOIN files f ON f.id=a.file_id WHERE a.release_id=$1 LIMIT 1001").bind(release.id).fetch_all(&mut **tx).await?;
     assets.sort_by(|a, b| a.name.cmp(&b.name));
-    publication.matches(release.repo_id, &release.tag_name, &assets)?;
+    publication.matches(release.repo_id, &owner, &name, &release.tag_name, &assets)?;
     let inactive:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM release_assets a JOIN files f ON f.id=a.file_id WHERE a.release_id=$1 AND NOT f.is_active)").bind(release.id).fetch_one(&mut **tx).await?;
     ensure!(!inactive, ReleaseRefusal::Conflict);
     sqlx::query("UPDATE releases SET is_immutable=TRUE,target_commitish=$2 WHERE id=$1")

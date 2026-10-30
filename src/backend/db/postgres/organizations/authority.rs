@@ -209,6 +209,23 @@ pub(super) async fn scoped_repo(
     Ok(sqlx::query_scalar::<_, i64>("SELECT id FROM repositories WHERE id=$1 AND owner_kind='org' AND owner_org_id=$2 AND owner_user_id IS NULL FOR UPDATE")
         .bind(repo).bind(org).fetch_optional(connection).await?.is_some())
 }
+/// All of `ids` are repositories of `org`, locked in id order like transfers lock them. At most
+/// `MAX_SCOPED_REPOSITORIES` distinct ids are accepted so one selection stays one bounded query.
+pub(super) async fn scoped_repos(
+    connection: &mut PgConnection,
+    org: i64,
+    ids: &[i64],
+) -> Result<bool> {
+    let mut ids = ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.len() > MAX_SCOPED_REPOSITORIES {
+        return Ok(false);
+    }
+    let found: Vec<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE id=ANY($1) AND owner_kind='org' AND owner_org_id=$2 AND owner_user_id IS NULL ORDER BY id FOR UPDATE")
+        .bind(&ids).bind(org).fetch_all(connection).await?;
+    Ok(found.len() == ids.len())
+}
 // The three cancel helpers pick the runs the revocation affects; `stop_ci_runs`
 // cancels the queued ones and asks workers to stop the running ones.
 pub(super) async fn cancel_actor(

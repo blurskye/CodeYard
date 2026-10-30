@@ -28,10 +28,27 @@ impl Publication {
             signer_key: trusted_key.into(),
         })
     }
-    pub(crate) fn matches(&self, repo: i64, tag: &str, assets: &[Artifact]) -> Result<()> {
+    /// The signed statement still names this release: same repository, tag and assets, and the
+    /// repository URL ends in the live owner and name, so a rename since signing is refused.
+    pub(crate) fn matches(
+        &self,
+        repo: i64,
+        owner: &str,
+        name: &str,
+        tag: &str,
+        assets: &[Artifact],
+    ) -> Result<()> {
         let predicate = &self.statement.predicate;
+        let path = format!(
+            "/{}/{}",
+            crate::webui::encode_component(owner),
+            crate::webui::encode_component(name)
+        );
         ensure!(
-            predicate.repository_id == repo && predicate.tag == tag && predicate.assets == assets,
+            predicate.repository_id == repo
+                && predicate.repository.ends_with(&path)
+                && predicate.tag == tag
+                && predicate.assets == assets,
             db::releases::ReleaseRefusal::Conflict
         );
         Ok(())

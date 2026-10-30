@@ -168,6 +168,21 @@ pub(super) async fn scoped_repo(
     Ok(sqlx::query_scalar::<_, i64>("SELECT id FROM repositories WHERE id=?1 AND owner_kind='org' AND owner_org_id=?2 AND owner_user_id IS NULL")
         .bind(repo).bind(org).fetch_optional(connection).await?.is_some())
 }
+/// All of `ids` are repositories of `org`. At most `MAX_SCOPED_REPOSITORIES` distinct ids are
+/// accepted so one selection stays one bounded query.
+pub(super) async fn scoped_repos(
+    connection: &mut SqliteConnection,
+    org: i64,
+    ids: &[i64],
+) -> Result<bool> {
+    let ids: std::collections::BTreeSet<i64> = ids.iter().copied().collect();
+    if ids.len() > MAX_SCOPED_REPOSITORIES {
+        return Ok(false);
+    }
+    let found: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repositories WHERE id IN (SELECT value FROM json_each(?1)) AND owner_kind='org' AND owner_org_id=?2 AND owner_user_id IS NULL")
+        .bind(serde_json::to_string(&ids)?).bind(org).fetch_one(connection).await?;
+    Ok(found == ids.len() as i64)
+}
 // The cancel helpers pick the runs the revocation affects; `stop_ci_runs`
 // cancels the queued ones and asks workers to stop the running ones.
 pub(super) async fn cancel_actor(

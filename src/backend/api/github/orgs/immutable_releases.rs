@@ -46,7 +46,7 @@ async fn get_settings(
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
     let settings = outcome(
-        data::get(&state.pool, actor.user.id, org.id)
+        data::get(&state.pool, actor.user.id, org.id, 0, 0)
             .await
             .map_err(Error::unavailable)?,
     )?;
@@ -137,20 +137,19 @@ async fn repositories(
         .await?
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
+    let (offset, limit) = page.window()?;
     let settings = outcome(
-        data::get(&state.pool, actor.user.id, org.id)
+        data::get(&state.pool, actor.user.id, org.id, offset as i64, limit as i64)
             .await
             .map_err(Error::unavailable)?,
     )?;
-    let (offset, limit) = page.window()?;
-    let count = settings.repositories.len();
     let mut repositories = Vec::new();
-    for repo in settings.repositories.into_iter().skip(offset).take(limit) {
-        repositories.push(repos::document(&state, &repo, Some(&actor)).await?);
+    for repo in &settings.repositories {
+        repositories.push(repos::document(&state, repo, Some(&actor)).await?);
     }
     Ok((
-        page.headers(&uri, count > offset + limit)?,
-        Json(json!({"total_count":count,"repositories":repositories})),
+        page.headers(&uri, settings.total > (offset + limit) as i64)?,
+        Json(json!({"total_count":settings.total,"repositories":repositories})),
     )
         .into_response())
 }

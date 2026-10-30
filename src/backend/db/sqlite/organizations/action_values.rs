@@ -64,16 +64,14 @@ async fn valid_repositories(
     ids: &[i64],
 ) -> Result<Vec<i64>, ValueError> {
     let ids: std::collections::BTreeSet<_> = ids.iter().copied().collect();
-    for &id in &ids {
-        if id <= 0
-            || !super::authority::scoped_repo(connection, org, id)
-                .await
-                .map_err(ValueError::Authority)?
-        {
-            return Err(ValueError::Repository);
-        }
+    let ids: Vec<i64> = ids.into_iter().collect();
+    if !super::authority::scoped_repos(connection, org, &ids)
+        .await
+        .map_err(ValueError::Authority)?
+    {
+        return Err(ValueError::Repository);
     }
-    Ok(ids.into_iter().collect())
+    Ok(ids)
 }
 
 async fn replace_repositories(
@@ -92,9 +90,8 @@ async fn replace_repositories(
     .bind(name)
     .execute(&mut *connection)
     .await?;
-    for id in ids {
-        sqlx::query("INSERT INTO org_actions_value_repositories(org_id,kind,name,repo_id) VALUES($1,$2,$3,$4)").bind(org).bind(kind.as_str()).bind(name).bind(id).execute(&mut *connection).await?;
-    }
+    sqlx::query("INSERT INTO org_actions_value_repositories(org_id,kind,name,repo_id) SELECT $1,$2,$3,value FROM json_each($4)")
+        .bind(org).bind(kind.as_str()).bind(name).bind(serde_json::to_string(&ids).map_err(|error| ValueError::Authority(error.into()))?).execute(&mut *connection).await?;
     Ok(())
 }
 
@@ -297,7 +294,7 @@ pub async fn inherited(
     if !allowed {
         return Err(ValueError::Denied);
     }
-    let rows = sqlx::query_as("SELECT v.name,v.kind,v.value,v.visibility,v.created_at,v.updated_at FROM org_actions_values v JOIN repositories r ON r.owner_org_id=v.org_id AND r.owner_kind='org' WHERE r.id=$1 AND v.kind=$2 AND (v.visibility='all' OR (v.visibility='private' AND r.is_private) OR (v.visibility='selected' AND EXISTS(SELECT 1 FROM org_actions_value_repositories s WHERE s.org_id=v.org_id AND s.kind=v.kind AND s.name=v.name AND s.repo_id=r.id))) ORDER BY v.name")
+    let rows = sqlx::query_as(&format!("SELECT v.name,v.kind,v.value,v.visibility,v.created_at,v.updated_at FROM org_actions_values v JOIN repositories r ON r.owner_org_id=v.org_id AND r.owner_kind='org' WHERE r.id=$1 AND v.kind=$2 AND {} ORDER BY v.name", organization_values::REACHES_REPOSITORY))
         .bind(repo).bind(kind.as_str()).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
@@ -308,6 +305,6 @@ pub async fn workflow_values(
     repo: i64,
     kind: Kind,
 ) -> Result<Vec<StoredValue>, ValueError> {
-    Ok(sqlx::query_as("SELECT v.name,v.value,v.visibility,v.encrypted_value,v.nonce FROM org_actions_values v JOIN repositories r ON r.owner_org_id=v.org_id AND r.owner_kind='org' WHERE r.id=$1 AND v.kind=$2 AND (v.visibility='all' OR (v.visibility='private' AND r.is_private) OR (v.visibility='selected' AND EXISTS(SELECT 1 FROM org_actions_value_repositories s WHERE s.org_id=v.org_id AND s.kind=v.kind AND s.name=v.name AND s.repo_id=r.id))) ORDER BY v.name LIMIT $3")
+    Ok(sqlx::query_as(&format!("SELECT v.name,v.value,v.visibility,v.encrypted_value,v.nonce FROM org_actions_values v JOIN repositories r ON r.owner_org_id=v.org_id AND r.owner_kind='org' WHERE r.id=$1 AND v.kind=$2 AND {} ORDER BY v.name LIMIT $3", organization_values::REACHES_REPOSITORY))
         .bind(repo).bind(kind.as_str()).bind(if kind==Kind::Secret {100i64} else {1000i64}).fetch_all(pool).await?)
 }

@@ -81,7 +81,7 @@ pub async fn install(
     }
     let installed: Installation=sqlx::query_as("INSERT INTO github_app_installations(app_id,user_id,org_id,all_repos) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING *").bind(app).bind(user).bind(org).bind(repos.is_none()).fetch_one(&mut *tx).await?;
     for repo in repos.unwrap_or(&[]) {
-        let valid: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND (owner_user_id=$2 OR owner_org_id=$3))").bind(repo).bind(user).bind(org).fetch_one(&mut *tx).await?;
+        let valid: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND NOT is_gist AND (owner_user_id=$2 OR owner_org_id=$3))").bind(repo).bind(user).bind(org).fetch_one(&mut *tx).await?;
         if !valid {
             return Ok(None);
         }
@@ -245,7 +245,7 @@ pub async fn change_repository(
 ) -> Result<RepositoryChange> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    let installation: Option<(bool, Option<i64>)> = sqlx::query_as("SELECT i.all_repos,i.org_id FROM github_app_installations i JOIN users u ON u.id=$1 JOIN repositories r ON r.id=$3 WHERE i.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.user_id=u.id OR EXISTS(SELECT 1 FROM org_memberships WHERE org_id=i.org_id AND user_id=u.id AND role='owner'))").bind(actor).bind(id).bind(repo).fetch_optional(&mut *tx).await?;
+    let installation: Option<(bool, Option<i64>)> = sqlx::query_as(&format!("SELECT i.all_repos,i.org_id FROM github_app_installations i JOIN users u ON u.id=$1 JOIN repositories r ON r.id=$3 WHERE i.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND ({})>=5", super::repositories::access::USER_REPO_ACCESS_SQL)).bind(actor).bind(id).bind(repo).fetch_optional(&mut *tx).await?;
     let Some((all_repos, org)) = installation else {
         return Ok(RepositoryChange::Missing);
     };
@@ -317,7 +317,7 @@ pub async fn issue(
     }
     let requested: Vec<i64> = serde_json::from_str(repos)?;
     for repo in requested {
-        let valid: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN github_app_installations i ON i.id=$1 WHERE r.id=$2 AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)))").bind(installation).bind(repo).fetch_one(&mut *tx).await?;
+        let valid: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN github_app_installations i ON i.id=$1 WHERE r.id=$2 AND NOT r.is_gist AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)))").bind(installation).bind(repo).fetch_one(&mut *tx).await?;
         if !valid {
             return Ok(None);
         }
