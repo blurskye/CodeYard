@@ -502,11 +502,19 @@ pub async fn list_viewer_issues(
     open: bool,
     limit: i64,
 ) -> Result<Vec<ViewerIssueEntry>> {
-    anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
+    anyhow::ensure!((0..=500).contains(&limit), "Result limit must be between 0 and 500");
     let access = crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_issue_sql(relation);
-    let issues = sqlx::query_as::<_, ViewerIssueEntry>(&format!(
-        r"SELECT i.*, r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
+    // One snapshot for the rows, their comment counts and their labels: an issue transferred
+    // between the reads cannot bring its new repository's labels or comments to this list.
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let mut issues = sqlx::query_as::<_, ViewerIssueEntry>(&format!(
+        r"SELECT i.id, i.number, i.title, i.state, i.created_at,
+            (SELECT COUNT(*) FROM issue_comments c WHERE c.issue_id = i.id) AS comments,
+            r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
         FROM issues i
         JOIN repositories r ON r.id = i.repo_id
         LEFT JOIN users ou ON ou.id = r.owner_user_id
@@ -520,8 +528,22 @@ pub async fn list_viewer_issues(
     .bind(viewer_id)
     .bind(open)
     .bind(limit)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await?;
+    let ids = issues.iter().map(|issue| issue.id).collect::<Vec<_>>();
+    if !ids.is_empty() {
+        let mut labels = std::collections::BTreeMap::<i64, Vec<super::models::Label>>::new();
+        for row in
+            crate::backend::db::postgres::labels::get_items_labels(&mut tx, LabelTarget::Issue, &ids)
+                .await?
+        {
+            labels.entry(row.item_id).or_default().push(row.label);
+        }
+        for issue in &mut issues {
+            issue.labels = labels.remove(&issue.id).unwrap_or_default();
+        }
+    }
+    tx.commit().await?;
     Ok(issues)
 }
 
@@ -546,17 +568,6 @@ pub async fn count_viewer_issues(
     .fetch_all(pool)
     .await?;
     Ok(StateCounts::from_rows(rows))
-}
-
-impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for ViewerIssueEntry {
-    fn from_row(row: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
-        use sqlx::Row;
-        Ok(Self {
-            issue: Issue::from_row(row)?,
-            repo_owner: row.try_get("repo_owner")?,
-            repo_name: row.try_get("repo_name")?,
-        })
-    }
 }
 
 impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for IssueListEntry {

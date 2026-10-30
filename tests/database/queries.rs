@@ -2309,7 +2309,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             assigned_open
                 .iter()
-                .map(|e| e.issue.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["assigned open"]
@@ -2322,7 +2322,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             created_closed
                 .iter()
-                .map(|e| e.issue.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["opened closed"]
@@ -2348,7 +2348,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             assigned_open
                 .iter()
-                .map(|e| e.issue.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["assigned open", "private assigned"]
@@ -2445,7 +2445,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             review_open
                 .iter()
-                .map(|e| e.pull_request.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["review pr"]
@@ -2466,7 +2466,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             review_open
                 .iter()
-                .map(|e| e.pull_request.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["private review pr", "review pr"]
@@ -2484,7 +2484,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             assigned_pr_open
                 .iter()
-                .map(|e| e.pull_request.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["assigned pr"]
@@ -2502,7 +2502,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             created_closed
                 .iter()
-                .map(|e| e.pull_request.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["merged pr"]
@@ -2529,7 +2529,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             involved_open
                 .iter()
-                .map(|e| e.pull_request.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["assigned pr", "opened pr", "private review pr", "review pr"]

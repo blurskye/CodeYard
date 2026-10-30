@@ -577,7 +577,8 @@ pub async fn list_viewer_pull_requests(
     let access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_pull_request_sql(relation);
     let prs = sqlx::query_as::<_, ViewerPullRequestEntry>(&format!(
-        r"SELECT p.*, r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
+        r"SELECT p.number, p.title, p.state, p.created_at,
+            r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
         FROM pull_requests p
         JOIN repositories r ON r.id = p.repo_id
         LEFT JOIN users ou ON ou.id = r.owner_user_id
@@ -1188,17 +1189,6 @@ pub async fn list_stack_versions(
     .fetch_all(pool)
     .await?;
     Ok(rows)
-}
-
-impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for ViewerPullRequestEntry {
-    fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
-        use sqlx::Row;
-        Ok(Self {
-            pull_request: PullRequest::from_row(row)?,
-            repo_owner: row.try_get("repo_owner")?,
-            repo_name: row.try_get("repo_name")?,
-        })
-    }
 }
 
 impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for PullRequestListEntry {

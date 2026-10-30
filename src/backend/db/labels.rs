@@ -161,10 +161,20 @@ async fn labels_of_items(
     for chunk in ids.chunks(500) {
         let rows = match pool {
             DbPool::Postgres(pool) => {
-                crate::backend::db::postgres::labels::get_items_labels(pool, target, chunk).await?
+                crate::backend::db::postgres::labels::get_items_labels(
+                    &mut *pool.acquire().await?,
+                    target,
+                    chunk,
+                )
+                .await?
             }
             DbPool::Sqlite(pool) => {
-                crate::backend::db::sqlite::labels::get_items_labels(pool, target, chunk).await?
+                crate::backend::db::sqlite::labels::get_items_labels(
+                    &mut *pool.acquire().await?,
+                    target,
+                    chunk,
+                )
+                .await?
             }
         };
         for row in rows {

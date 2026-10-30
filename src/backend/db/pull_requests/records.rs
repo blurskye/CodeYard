@@ -649,10 +649,14 @@ pub struct PullRequestListEntry {
     pub head_repository: Option<PullRequestHeadDisplay>,
 }
 
-/// A pull request with the owner and name of its repository, for a link to it.
-#[derive(Debug, Clone)]
+/// A pull request on the signed-in user's dashboard: what its row shows, and the owner and name
+/// of its repository for a link to it.
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ViewerPullRequestEntry {
-    pub pull_request: PullRequest,
+    pub number: i32,
+    pub title: String,
+    pub state: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
     pub repo_owner: String,
     pub repo_name: String,
 }

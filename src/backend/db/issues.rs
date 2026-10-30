@@ -228,10 +228,19 @@ pub struct IssueCommentEntry {
     pub author: crate::backend::db::users::accounts::AuthorDisplay,
 }
 
-/// An issue with the owner and name of its repository, for a link to it.
-#[derive(Debug, Clone)]
+/// An issue on the signed-in user's dashboard: what its row shows, and the owner and name of its
+/// repository for a link to it. The comment count and labels are read in the same snapshot as
+/// the row, so they belong to the repository the row was authorized in.
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ViewerIssueEntry {
-    pub issue: Issue,
+    pub id: i64,
+    pub number: i32,
+    pub title: String,
+    pub state: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
     pub repo_owner: String,
     pub repo_name: String,
+    pub comments: i64,
+    #[sqlx(skip)]
+    pub labels: Vec<crate::backend::db::models::Label>,
 }
