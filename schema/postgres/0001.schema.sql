@@ -346,7 +346,7 @@ CREATE INDEX IF NOT EXISTS idx_repositories_is_private ON repositories(is_privat
 CREATE INDEX IF NOT EXISTS idx_repositories_forked_from_id ON repositories(forked_from_id);
 CREATE INDEX IF NOT EXISTS idx_repositories_created_at ON repositories(created_at);
 CREATE INDEX IF NOT EXISTS idx_repositories_updated_at ON repositories(updated_at);
-CREATE INDEX IF NOT EXISTS idx_repositories_created_by ON repositories(created_by_id);
+CREATE INDEX IF NOT EXISTS idx_repositories_created_by ON repositories(created_by_id,created_at DESC,id DESC);
 CREATE INDEX IF NOT EXISTS idx_repositories_public_stars
     ON repositories(stars_count DESC, created_at DESC, id DESC) WHERE is_private = false;
 CREATE INDEX IF NOT EXISTS idx_repositories_search_order
@@ -435,7 +435,7 @@ CREATE TABLE IF NOT EXISTS repository_pushes (
     commit_count INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_repository_pushes_actor ON repository_pushes(actor_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_repository_pushes_actor ON repository_pushes(actor_id,created_at DESC,id DESC);
 
 --------------------------------------------------------------------------------
 -- PART 10: BRANCH PROTECTION
@@ -536,7 +536,7 @@ CREATE TABLE IF NOT EXISTS issues (
     closed_at TIMESTAMPTZ,
     UNIQUE(repo_id, number)
 );
-CREATE INDEX IF NOT EXISTS idx_issues_author_id ON issues(author_id);
+CREATE INDEX IF NOT EXISTS idx_issues_author_id ON issues(author_id,created_at DESC,id DESC);
 CREATE INDEX IF NOT EXISTS idx_issues_state ON issues(state);
 CREATE INDEX IF NOT EXISTS idx_issues_repo_state ON issues(repo_id, state);
 CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at);
@@ -611,7 +611,7 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     head_publisher_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     UNIQUE(repo_id, number)
 );
-CREATE INDEX IF NOT EXISTS idx_pull_requests_author_id ON pull_requests(author_id);
+CREATE INDEX IF NOT EXISTS idx_pull_requests_author_id ON pull_requests(author_id,created_at DESC,id DESC);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_state ON pull_requests(state);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_repo_state ON pull_requests(repo_id, state);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_head_repo_state ON pull_requests(head_repo_id, state);
@@ -1391,7 +1391,7 @@ CREATE INDEX IF NOT EXISTS idx_repository_pushes_created_at ON repository_pushes
 
 CREATE INDEX IF NOT EXISTS idx_issue_assignees_user ON issue_assignees(user_id);
 
-CREATE INDEX IF NOT EXISTS idx_pull_requests_merged_by ON pull_requests(merged_by_id, merged_at) WHERE merged_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_pull_requests_merged_by ON pull_requests(merged_by_id,merged_at DESC,id DESC) WHERE merged_at IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_issue_labels_label ON issue_labels(label_id);
 
