@@ -228,7 +228,6 @@ async fn notification_scopes(
         classic_token: false,
         high_water: notification_high_water(connection, user_id).await?,
         readable: std::collections::BTreeMap::new(),
-        classic_token: false,
     })
 }
 

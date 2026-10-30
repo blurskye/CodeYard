@@ -29,7 +29,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     };
     let pool = &request.state.pool;
     let actor = request.auth.user.id;
-    let credential = crate::backend::db::users::accounts::AccountCredential::Token(request.auth.token.id);
+    let credential = request.auth.credential();
     let mut payload = json!({"clientMutationId":input["clientMutationId"]});
     if field == "deleteIssueComment" {
         if pull {

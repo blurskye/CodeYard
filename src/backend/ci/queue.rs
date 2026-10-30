@@ -372,7 +372,7 @@ impl RunQueue {
         platforms: &[String],
         stop: Option<&mut watch::Receiver<bool>>,
     ) -> Result<Option<ClaimedRun>> {
-        let prepare = self.claim_prepared(worker, mode, stop);
+        let prepare = self.claim_prepared(worker, mode, platforms, stop);
         match self {
             Self::Database { pool, .. } => db::ci::prepare_claim(pool, worker, prepare).await,
             Self::Remote { .. } => prepare.await,
@@ -380,7 +380,7 @@ impl RunQueue {
     }
 
     async fn claim_prepared(
-        &self, worker: &str, mode: CiExecutionMode, stop: Option<&mut watch::Receiver<bool>>,
+        &self, worker: &str, mode: CiExecutionMode, platforms: &[String], stop: Option<&mut watch::Receiver<bool>>,
     ) -> Result<Option<ClaimedRun>> {
         match self {
             Self::Remote { .. } => self.call(worker, Operation::Claim { mode, platforms: platforms.to_vec() }, stop).await,

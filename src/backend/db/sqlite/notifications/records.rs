@@ -218,7 +218,6 @@ async fn decide_scopes(
         classic_token: false,
         high_water: notification_high_water(connection, user_id).await?,
         readable: decided.into_iter().collect(),
-        classic_token: false,
     })
 }
 

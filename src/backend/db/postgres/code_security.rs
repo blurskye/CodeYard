@@ -10,7 +10,7 @@ async fn write<'a>(pool: &'a PgPool, actor: &crate::backend::db::credentials::Ac
     let mut tx = pool.begin().await?;
     match super::organizations::authority::authority(&mut tx, actor.user_id, org).await? {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
-        OrganizationOutcome::Applied(OrgRole::Member) if super::organizations::roles::manages_security(&mut tx, actor, org).await? => {}
+        OrganizationOutcome::Applied(OrgRole::Member) if super::organizations::roles::manages_security(&mut tx, actor.user_id, org).await? => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
     }

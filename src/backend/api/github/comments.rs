@@ -3,7 +3,6 @@ use crate::backend::{
     app::AppState,
     db,
     db::assignees::AssignedItem,
-    db::users::accounts::AccountCredential,
     issues::comments::{CommentTarget, CreateCommentRequest},
     repositories::pull_requests::comments::{self, CreatePullRequestCommentRequest},
     webhooks::payloads,
@@ -216,7 +215,7 @@ async fn create(
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
     let auth = auth.ok_or_else(auth::required)?;
-    let (actor, credential) = (auth.user, AccountCredential::Token(auth.token.id));
+    let (actor, credential) = (&auth.user, auth.credential());
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
     let number = p["issue_number"].parse().map_err(|_| Error::missing())?;
     let (id, pull) = match item {
@@ -288,7 +287,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
     let auth = auth.ok_or_else(auth::required)?;
-    let (actor, credential) = (auth.user, AccountCredential::Token(auth.token.id));
+    let (actor, credential) = (&auth.user, auth.credential());
     let api_id = p["comment_id"].parse().map_err(|_| Error::missing())?;
     let comment = find(&state.pool, repo.id, api_id).await?;
     let target = CommentTarget {
@@ -341,7 +340,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
     let auth = auth.ok_or_else(auth::required)?;
-    let (actor, credential) = (auth.user, AccountCredential::Token(auth.token.id));
+    let (actor, credential) = (&auth.user, auth.credential());
     let comment = find(
         &state.pool,
         repo.id,

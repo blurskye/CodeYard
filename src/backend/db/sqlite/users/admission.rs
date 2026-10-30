@@ -26,7 +26,7 @@ async fn charge(
     let window: Option<String> = sqlx::query_scalar("UPDATE auth_login_limits SET attempts=CASE WHEN window_ends_at<=?2 THEN 1 ELSE attempts+1 END,window_ends_at=CASE WHEN window_ends_at<=?2 THEN ?3 ELSE window_ends_at END WHERE account_key=?1 AND (window_ends_at<=?2 OR attempts<?4) RETURNING window_ends_at")
         .bind(key).bind(now).bind(window_ends_at).bind(limit)
         .fetch_optional(&mut *tx).await?;
-    window.as_deref().map(time::decode).transpose()
+    Ok(window.as_deref().map(time::decode).transpose()?)
 }
 
 /// Counts an attempt against the client address, when there is one, and the account. The client

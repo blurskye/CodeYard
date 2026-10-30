@@ -1095,12 +1095,12 @@ mod tests {
         ] {
             assert!(super::super::admission::is_safe_workflow_path(path));
             assert!(parse_workflow_definition(path, "on: workflow_dispatch").is_ok());
-            assert!(parse_push_workflow(path, "on: push").is_ok());
+            assert!(parse_workflow_definition(path, "on: push").is_ok());
         }
         let path = format!(".github/workflows/{}.yml", "x".repeat(238));
         assert!(!super::super::admission::is_safe_workflow_path(&path));
         assert!(parse_workflow_definition(&path, "on: workflow_dispatch").is_err());
-        assert!(parse_push_workflow(&path, "on: push").is_err());
+        assert!(parse_workflow_definition(&path, "on: push").is_err());
         let path = format!(".github/workflows/{}.yml", "x".repeat(233));
         assert_eq!(path.len(), 255);
         assert!(parse_workflow_definition(&path, "on: workflow_dispatch").is_ok());
@@ -1426,7 +1426,7 @@ on: [push, pull_request]
             )
             .is_err());
 
-        let ordinary = parse_push_workflow(
+        let ordinary = parse_workflow_definition(
             ".github/workflows/ordinary.yml",
             "on:\n  push:\n    paths: ['src/**']\n",
         )
@@ -1621,10 +1621,8 @@ on: [push, pull_request]
     }
 
     #[test]
-    fn discovery_and_push_parsers_share_semantic_limits() {
-        let parsers: [fn(&str, &str) -> Result<WorkflowDefinition>; 2] =
-            [parse_workflow_definition, parse_push_workflow];
-        for parse in parsers {
+    fn workflow_parser_enforces_semantic_limits() {
+        for parse in [parse_workflow_definition] {
             let name = "n".repeat(MAX_WORKFLOW_NAME_BYTES);
             assert!(parse(
                 ".github/workflows/ci.yml",
@@ -1717,9 +1715,7 @@ on: [push, pull_request]
         assert_eq!(exact.len(), MAX_CI_WORKFLOW_BYTES);
         let oversized = format!("{exact} ");
 
-        let parsers: [fn(&str, &str) -> Result<WorkflowDefinition>; 2] =
-            [parse_workflow_definition, parse_push_workflow];
-        for parse in parsers {
+        for parse in [parse_workflow_definition] {
             assert!(parse(".github/workflows/ci.yml", &exact).is_ok());
             let error = parse(".github/workflows/ci.yml", &oversized).unwrap_err();
             assert!(
@@ -1773,46 +1769,8 @@ fn field<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
     value.as_mapping()?.iter().find_map(|(key, value)| {
         let matches = key
             .as_str()
-            .is_some_and(|key| key.eq_ignore_ascii_case(name))
-            || (name == "on" && key == &Value::Bool(true));
+            .is_some_and(|key| key.eq_ignore_ascii_case(name));
         matches.then_some(value)
-    })
-}
-
-pub(crate) fn parse_push_workflow(path: &str, text: &str) -> Result<WorkflowDefinition> {
-    ensure!(
-        super::admission::is_safe_workflow_path(path),
-        "invalid CI workflow path"
-    );
-    // `serde_yaml`'s recursion and alias-expansion defaults are intentionally retained.
-    let yaml = parse_workflow_yaml(text)?;
-    let push = match field(&yaml, "on") {
-        Some(Value::String(event)) if event.eq_ignore_ascii_case("push") => {
-            Some(WorkflowEventFilter::default())
-        }
-        Some(Value::Sequence(events))
-            if events.iter().any(|event| {
-                event
-                    .as_str()
-                    .is_some_and(|s| s.eq_ignore_ascii_case("push"))
-            }) =>
-        {
-            Some(WorkflowEventFilter::default())
-        }
-        Some(events @ Value::Mapping(_)) => {
-            field(events, "push").map(parse_event_filter).transpose()?
-        }
-        _ => None,
-    };
-    let name = workflow_name(&yaml, path)?;
-    Ok(WorkflowDefinition {
-        path: path.to_owned(),
-        name,
-        triggers: WorkflowTriggers {
-            push,
-            ..WorkflowTriggers::default()
-        },
-        jobs: Vec::new(),
     })
 }
 
@@ -1827,11 +1785,11 @@ mod push_parser_tests {
             "on: [push, workflow_dispatch]",
             "on:\n  push:\n",
         ] {
-            assert!(parse_push_workflow(".github/workflows/ci.yml", text)
+            assert!(parse_workflow_definition(".github/workflows/ci.yml", text)
                 .unwrap()
                 .matches_event("push", "main"));
         }
-        let workflow = parse_push_workflow(
+        let workflow = parse_workflow_definition(
             ".github/workflows/deploy.yml",
             "on:\n  push:\n    branches: [main]\n    paths: ['src/**']\n",
         )
@@ -1855,7 +1813,7 @@ mod push_parser_tests {
             None
         ));
         assert!(
-            parse_push_workflow(".github/workflows/ci.yml", "on:\n  push:\n    paths: 99").is_err()
+            parse_workflow_definition(".github/workflows/ci.yml", "on:\n  push:\n    paths: 99").is_err()
         );
     }
 }

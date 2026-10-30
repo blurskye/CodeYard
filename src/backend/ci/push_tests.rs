@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::ci::workflows::parse_push_workflow;
+use crate::backend::ci::workflows::parse_workflow_definition;
 
 fn revision(paths: usize) -> (tempfile::TempDir, RepoStore, String) {
     let root = tempfile::tempdir().unwrap();
@@ -22,7 +22,7 @@ fn revision(paths: usize) -> (tempfile::TempDir, RepoStore, String) {
 }
 
 fn workflow(name: &str, filters: &str) -> WorkflowDefinition {
-    parse_push_workflow(
+    parse_workflow_definition(
         &format!(".github/workflows/{name}.yml"),
         &format!(
             "on:\n  push: {filters}\njobs: {{check: {{runs-on: ubuntu-latest, steps: []}}}}\n"

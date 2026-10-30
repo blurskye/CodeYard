@@ -98,7 +98,6 @@ pub(crate) struct NotificationScopes {
     pub classic_token: bool,
     pub high_water: i64,
     pub readable: std::collections::BTreeMap<i64, bool>,
-    pub classic_token: bool,
 }
 
 impl NotificationScopes {

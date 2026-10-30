@@ -15,7 +15,7 @@ pub async fn set_requests(
         .ok_or_else(|| OperationError::Missing { code: "not_found", message: "Repository not found".into() })?;
     let changed = db::pull_requests::team_reviewers::set_requests(pool, actor.id, pull.id, input).await.map_err(error)?;
     for user in &changed.added_users { super::reviews::notify_review_request(pool, broadcaster, actor, &owner, repo, pull, user).await; }
-    for team in &changed.added_teams { notify(pool, broadcaster, actor, repo, pull, team).await; }
+    notify(pool, broadcaster, actor, repo, pull, &changed.added_teams).await;
     Ok(())
 }
 

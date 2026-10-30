@@ -162,7 +162,7 @@ pub async fn send_password_reset(
     if !config::is_configured(pool).await {
         return Err(LinkError::NotConfigured);
     }
-    let key = hex::encode(Sha256::digest(address.to_lowercase().as_bytes()));
+    let key = hash(&address.to_lowercase());
     admission::admit_mail(pool, client, &key).await?;
     let user = db::users::accounts::get_user_by_email(pool, address)
         .await

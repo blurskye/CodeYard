@@ -726,7 +726,7 @@ pub async fn delete_issue_comment(
         .bind(comment_id)
         .fetch_optional(&mut *tx)
         .await?;
-    if removed.rows_affected() == 1 {
+    if removed.is_some() {
         super::issue_attributes::touch(&mut tx, issue_id).await?;
     }
     tx.commit().await?;
