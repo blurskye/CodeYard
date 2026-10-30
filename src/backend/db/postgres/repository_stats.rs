@@ -30,8 +30,8 @@ pub async fn languages_computed(
     source: &LanguageSource,
     revision: &str,
 ) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repo_language_cache WHERE repo_id=$1 AND branch=$2 AND storage_node_id IS NOT DISTINCT FROM $3 AND write_version=$4 AND revision=$5)")
-        .bind(source.repo_id).bind(&source.default_branch).bind(source.storage_node_id).bind(source.write_version).bind(revision).fetch_one(pool).await?)
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repo_language_cache WHERE repo_id=$1 AND branch=$2 AND storage_node_id IS NOT DISTINCT FROM $3 AND revision=$4)")
+        .bind(source.repo_id).bind(&source.default_branch).bind(source.storage_node_id).bind(revision).fetch_one(pool).await?)
 }
 
 pub async fn upsert_repo_languages(

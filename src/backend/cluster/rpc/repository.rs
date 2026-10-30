@@ -48,6 +48,7 @@ pub fn authorize_operation(
         Operation::SizeBytes => ("SizeBytes", false),
         Operation::Refs => ("Refs", false),
         Operation::PrimaryRefs => ("PrimaryRefs", false),
+        Operation::PrimaryLanguages { .. } => ("PrimaryLanguages", false),
         Operation::BranchPublication { .. } => ("BranchPublication", false),
         Operation::Info => ("Info", false),
         Operation::CommitCount => ("CommitCount", false),
@@ -837,7 +838,7 @@ impl RpcHandler {
                 output = store.archive(&git_ref, &prefix, format).await?;
                 Value::Null
             }
-            Operation::Languages { git_ref } => {
+            Operation::Languages { git_ref } | Operation::PrimaryLanguages { git_ref } => {
                 let repository = db::repositories::records::get_repository_by_id(
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,
@@ -845,7 +846,7 @@ impl RpcHandler {
                 .await
                 .map_err(|_| unavailable())?
                 .ok_or_else(|| invalid("repository unavailable"))?;
-                let default_branch = store.info().await?.default_branch;
+                let default_branch = repository.default_branch.clone();
                 if repository.storage_node_id == Some(self.context.node_id)
                     && (git_ref == default_branch
                         || git_ref == format!("refs/heads/{default_branch}"))

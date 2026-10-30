@@ -138,6 +138,8 @@ pub enum Operation {
     /// The same refs as `Refs`, answered only by the primary. For a caller that writes the
     /// answer into the database.
     PrimaryRefs,
+    /// Default-branch statistics are computed and cached by the owning primary.
+    PrimaryLanguages { git_ref: String },
     BranchPublication {
         repository_id: i64,
         reference: String,
@@ -536,6 +538,7 @@ impl Operation {
             | Self::SizeBytes
             | Self::WorkflowFiles { .. }
             | Self::PrimaryRefs
+            | Self::PrimaryLanguages { .. }
             | Self::BranchPublication { .. }
             | Self::GistSnapshot { .. }
             | Self::GistHistory { .. }
