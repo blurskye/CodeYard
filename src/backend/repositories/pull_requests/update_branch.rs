@@ -123,6 +123,10 @@ pub async fn update_branch(
     if head.id != base.id {
         super::branches_moved(pool, &head, ci, actor.id).await;
     }
+    // Keep metadata repair above, but an unchanged ref is not a push event.
+    if sha.eq_ignore_ascii_case(&head_sha) {
+        return Ok(sha);
+    }
     // The head moved, so its push workflows run as they do after any other push.
     let head_owner = db::repositories::records::repository_owner_name(pool, head.id)
         .await
