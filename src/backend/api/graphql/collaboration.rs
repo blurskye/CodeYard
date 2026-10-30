@@ -103,7 +103,11 @@ pub(super) async fn resolve(
                 .ok_or_else(missing)?;
             let mut issues = Vec::new();
             // Only the same repository's issues are named, as the closing-keyword reader links them.
-            if !args.args.try_get("userLinkedOnly")?.deserialize::<bool>()? {
+            // As on GitHub, keywords close issues only when the pull request targets the default
+            // branch.
+            if !args.args.try_get("userLinkedOnly")?.deserialize::<bool>()?
+                && pull.base_branch == repo.default_branch
+            {
                 let owner = repository::owner(repo, request).await?;
                 for number in crate::backend::issues::closing::referenced_numbers(
                     &pull.body,
