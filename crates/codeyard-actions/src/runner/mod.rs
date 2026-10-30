@@ -1558,6 +1558,21 @@ impl Job {
         }
     }
 
+    /// Whether step debug logging is on: `--debug`, or `ACTIONS_STEP_DEBUG` set to true in the
+    /// step's environment, a secret or a repository variable, as on GitHub.
+    fn step_debug(&self, env: &BTreeMap<String, String>) -> bool {
+        let enabled = |value: &str| value.eq_ignore_ascii_case("true");
+        self.options.debug
+            || env.get("ACTIONS_STEP_DEBUG").is_some_and(|value| enabled(value))
+            || ["secrets", "vars"].into_iter().any(|context| {
+                matches!(
+                    self.contexts.values.get(context),
+                    Some(Value::Object(values))
+                        if values.get("ACTIONS_STEP_DEBUG").is_some_and(|value| enabled(&value.to_text()))
+                )
+            })
+    }
+
     fn sync_status(&mut self) {
         if let Some(Value::Object(job)) = self.contexts.values.get_mut("job") {
             job.insert("status".into(), Value::String(if self.status.cancelled { "cancelled" } else if self.status.failed { "failure" } else { "success" }.into()));
@@ -2127,9 +2142,9 @@ impl Job {
         let mut commands = Commands::new(
             self.options.directory.clone(),
             std::mem::take(&mut self.matchers),
+            self.step_debug(&env),
         );
         commands.stopped = self.command_stopped.take();
-        commands.debug = self.options.debug || env.get("ACTIONS_STEP_DEBUG").is_some_and(|value| value.eq_ignore_ascii_case("true"));
         let result = process::execute(
             &mut command,
             &self.log,

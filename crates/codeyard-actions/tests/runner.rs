@@ -971,6 +971,33 @@ jobs:
 }
 
 #[test]
+fn step_debug_from_a_secret_shows_debug_messages_and_echoes_commands() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(
+        workspace.path().join("secrets"),
+        "ACTIONS_STEP_DEBUG=true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.path().join("workflow.yml"),
+        "on: push\njobs:\n  test:\n    runs-on: self-hosted\n    steps:\n      - run: |\n          echo '::debug::shown-debug'\n          echo '::remove-matcher owner=echoed-owner::'\n",
+    )
+    .unwrap();
+    let output = command(workspace.path())
+        .arg("--secret-file")
+        .arg(workspace.path().join("secrets"))
+        .output()
+        .unwrap();
+    success(&output);
+    let text = log(&output);
+    assert!(text.contains("debug: shown-debug"), "{text}");
+    assert!(
+        text.contains("::remove-matcher owner=echoed-owner::"),
+        "{text}"
+    );
+}
+
+#[test]
 fn matrix_fail_fast_does_not_start_queued_runs() {
     let output = run(
         r#"

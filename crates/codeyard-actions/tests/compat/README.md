@@ -22,7 +22,8 @@ The small examples exercise the behavior described in GitHub's documentation:
 - [Contexts](https://docs.github.com/en/actions/learn-github-actions/contexts):
   `contexts`, `env`, `outputs`, `needs`, `continue-on-error`.
 - [Workflow commands](https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions):
-  `file-commands`, `workflow-commands`, `problem-matchers`, `masking`, `local-node`.
+  `file-commands`, `workflow-commands`, `command-parsing`, `problem-matchers`, `masking`,
+  `local-node`.
 - [OIDC](https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect):
   `oidc-permissions` checks per-job request credentials; `tests/ci/oidc.rs` checks the issuer and signatures on both databases.
 - [Matrices](https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs):

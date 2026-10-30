@@ -370,6 +370,7 @@ fixtures! {
     step_timeout => "features/step-timeout",
     job_timeout => "features/job-timeout",
     cancellation => "features/cancellation",
+    command_parsing => "features/command-parsing",
     composite => "features/composite",
     nested_composite => "features/nested-composite",
 }

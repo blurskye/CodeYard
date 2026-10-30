@@ -280,7 +280,9 @@ impl Log {
 #[derive(Default)]
 pub(super) struct Commands {
     pub stopped: Option<String>,
-    pub debug: bool,
+    /// Step debug logging shows `::debug::` messages and turns command echoing on.
+    debug: bool,
+    echo: bool,
     stderr: bool,
     retained_bytes: usize,
     retained_commands: usize,
@@ -295,10 +297,12 @@ pub(super) struct Commands {
 }
 
 impl Commands {
-    pub fn new(workspace: std::path::PathBuf, matchers: super::matchers::Matchers) -> Self {
+    pub fn new(workspace: std::path::PathBuf, matchers: super::matchers::Matchers, debug: bool) -> Self {
         Self {
             workspace,
             matchers,
+            debug,
+            echo: debug,
             ..Self::default()
         }
     }
@@ -334,9 +338,12 @@ impl Commands {
     /// `from_matcher` marks a command the runner generated for a problem matcher. Stop-commands
     /// does not hold those back, and they take the same annotation path as `::error::`.
     fn command_line(&mut self, log: &Log, line: &str, allow_unsafe: bool, from_matcher: bool) {
+        // A `::` command starts its line, after any leading whitespace. The legacy `##[` form
+        // may appear anywhere in the line, as in GitHub's runner.
         let command = line
-            .find("::")
-            .and_then(|start| line[start + 2..].split_once("::"))
+            .trim_start()
+            .strip_prefix("::")
+            .and_then(|rest| rest.split_once("::"))
             .map(|(header, data)| (header, data, false))
             .or_else(|| {
                 line.find("##[")
@@ -377,6 +384,14 @@ impl Commands {
             .collect();
         let data = decode(data);
         let name = name.to_ascii_lowercase();
+        // Echo prints the commands that leave no trace in the log; the others show themselves.
+        if self.echo
+            && !from_matcher
+            && ["set-env", "add-path", "set-output", "add-matcher", "remove-matcher", "save-state", "echo"]
+                .contains(&name.as_str())
+        {
+            log.line(line);
+        }
         if matches!(name.as_str(), "set-output" | "save-state" | "set-env" | "add-path") {
             let bytes = data.len().saturating_add(properties.get("name").map_or(0, String::len));
             if self.storage_full || self.retained_commands >= 4096
@@ -414,6 +429,11 @@ impl Commands {
                         "endgroup",
                         "add-matcher",
                         "remove-matcher",
+                        "set-env",
+                        "add-path",
+                        "set-output",
+                        "save-state",
+                        "echo",
                     ]
                     .contains(&data.as_str())
                 {
@@ -522,6 +542,14 @@ impl Commands {
             }
             "debug" if self.debug => log.line(&format!("debug: {data}")),
             "debug" => {},
+            "echo" => match data.trim().to_ascii_lowercase().as_str() {
+                "on" => self.echo = true,
+                "off" => self.echo = false,
+                _ => {
+                    self.failed = true;
+                    log.line(&format!("Error: Invalid echo command value. Possible values can be: 'on', 'off'. Current value is: '{data}'."));
+                }
+            },
             "group" => log.line(&format!(
                 "::group::{}",
                 super::matchers::escape_data(&log.masker.mask(&data))
@@ -707,7 +735,7 @@ mod tests {
             masker: Masker::default(),
             ..Default::default()
         };
-        let mut commands = Commands::new(temp.path().into(), Default::default());
+        let mut commands = Commands::new(temp.path().into(), Default::default(), false);
         commands.line(&log, "##[add-matcher]matcher%5D%3B.json", false);
         assert!(!commands.failed);
         assert!(commands.matchers.matches("diagnostic", false).unwrap().is_some());
@@ -720,6 +748,33 @@ mod tests {
         commands.line(&log, "##[set-env name=X;]blocked", false);
         assert!(commands.failed);
         assert!(commands.env.is_empty());
+    }
+
+    #[test]
+    fn commands_start_their_line_and_echo_takes_on_or_off() {
+        let log = Log {
+            prefix: "test".into(),
+            masker: Masker::default(),
+            ..Default::default()
+        };
+        let mut commands = Commands::default();
+        commands.line(&log, "text ::set-output name=inline::no", false);
+        assert!(commands.outputs.is_empty());
+        commands.line(&log, "  ::set-output name=indented::yes", false);
+        assert_eq!(commands.outputs["indented"], "yes");
+        commands.line(&log, "prefix ##[set-output name=legacy;]yes", false);
+        assert_eq!(commands.outputs["legacy"], "yes");
+        commands.line(&log, "::echo::ON", false);
+        assert!(commands.echo);
+        commands.line(&log, "::echo::off", false);
+        assert!(!commands.echo);
+        assert!(!commands.failed);
+        commands.line(&log, "::stop-commands::echo", false);
+        assert!(commands.failed);
+        let mut commands = Commands::new(Default::default(), Default::default(), true);
+        assert!(commands.echo);
+        commands.line(&log, "::echo::loud", false);
+        assert!(commands.failed);
     }
 
     #[test]

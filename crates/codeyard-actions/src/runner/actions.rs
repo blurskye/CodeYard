@@ -845,9 +845,9 @@ impl Job {
         let mut commands = Commands::new(
             self.options.directory.clone(),
             std::mem::take(&mut self.matchers),
+            self.step_debug(&env),
         );
         commands.stopped = self.command_stopped.take();
-        commands.debug = self.options.debug || env.get("ACTIONS_STEP_DEBUG").is_some_and(|value| value.eq_ignore_ascii_case("true"));
         let result = process::execute(
             &mut command,
             &self.log,
