@@ -258,8 +258,7 @@ pub fn validate(
     policy: Option<&Policy>,
     now: DateTime<Utc>,
 ) -> Result<Map<String, Value>, TokenError> {
-    let name = request.name.trim();
-    if name.is_empty() || name.len() > 100 || name.chars().any(char::is_control) {
+    if super::tokens::valid_name(&request.name).is_none() {
         return Err(TokenError::Invalid("Use a name of 1-100 characters."));
     }
     if request.description.len() > 1024 || request.description.contains('\0') {

@@ -114,10 +114,16 @@ pub fn token_hash(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
+/// The stored form of a personal access token name, classic or fine-grained: trimmed,
+/// 1-100 characters and without control characters.
+pub fn valid_name(name: &str) -> Option<&str> {
+    let name = name.trim();
+    (!name.is_empty() && name.chars().count() <= 100 && !name.chars().any(char::is_control))
+        .then_some(name)
+}
+
 pub fn validate(input: &TokenInput<'_>, now: DateTime<Utc>) -> Result<(), TokenError> {
-    if input.name.trim().is_empty()
-        || input.name.trim().chars().count() > 100
-        || input.name.contains('\0')
+    if valid_name(input.name).is_none()
         || !matches!(input.scope, "read" | "write")
         || !tokens::supported_expiry(input.expires_at)
         || input.expires_at.is_some_and(|expiry| expiry <= now)
