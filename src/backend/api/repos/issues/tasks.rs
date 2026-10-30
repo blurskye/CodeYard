@@ -133,7 +133,7 @@ async fn comment_body(
                 })
         }
         // Only the author can edit a comment, so another account's comment, pending ones
-        // included, is not found here.
+        // included, is not found here. A reply in a submitted review keeps that review.
         Kind::Pull => {
             let pull =
                 db::pull_requests::records::get_pull_request(&ctx.state.pool, repo_id, number)
@@ -145,9 +145,7 @@ async fn comment_body(
                 .map(|comment| {
                     comment
                         .filter(|comment| {
-                            comment.author_id == actor_id
-                                && comment.pull_request_id == pull.id
-                                && comment.review_id.is_none()
+                            comment.author_id == actor_id && comment.pull_request_id == pull.id
                         })
                         .map(|comment| comment.body)
                 })
@@ -212,13 +210,7 @@ async fn save_comment_text(
             )
             .await
             .map_err(crate::backend::api::repos::pulls::operation_error)?;
-            let position = db::pull_requests::reviews::count_discussion_items_through(
-                pool,
-                comment.pull_request_id,
-                db::pull_requests::reviews::DiscussionRef::of_comment(&comment),
-            )
-            .await;
-            Ok(comment_link(base, id, position))
+            Ok(comment_rules::saved_comment_link(pool, base, &comment).await)
         }
     }
 }
