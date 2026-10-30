@@ -37,7 +37,9 @@ pub async fn emit_ref_moves(
         };
         let (reference, old, new) = (reference.clone(), old.clone(), new.clone());
         let name = name.to_owned();
-        let path = path.to_owned();
+        let check_request = (ref_type == "branch" && !is_zero(&new) && new != old)
+            .then(|| (name.clone(), new.clone()));
+        let push_path = path.to_owned();
         if is_zero(&old) {
             emit_ref_change(pool, repo, events::CREATE, ref_type, name, pusher_id).await;
         } else if is_zero(&new) {
@@ -55,7 +57,7 @@ pub async fn emit_ref_moves(
                 let commits = if is_zero(&new) {
                     payloads::PushedCommits::default()
                 } else {
-                    payloads::pushed_commits(&path, before, &new)
+                    payloads::pushed_commits(&push_path, before, &new)
                 };
                 payloads::push(
                     &reference,
@@ -69,6 +71,11 @@ pub async fn emit_ref_moves(
             },
         )
         .await;
+        if let Some((branch, sha)) = check_request {
+            if let Err(error) = crate::backend::api::github::checks::requested_after_push(pool, repo, pusher_id, path, &sha, &branch).await {
+                tracing::warn!(repo_id=repo.id, ?error, "Automatic check suites could not be requested");
+            }
+        }
     }
 }
 
