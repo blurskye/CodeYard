@@ -116,9 +116,10 @@ pub fn token_hash(value: &str) -> String {
 
 pub fn validate(input: &TokenInput<'_>, now: DateTime<Utc>) -> Result<(), TokenError> {
     if input.name.trim().is_empty()
-        || input.name.trim().len() > 100
+        || input.name.trim().chars().count() > 100
         || input.name.contains('\0')
         || !matches!(input.scope, "read" | "write")
+        || !tokens::supported_expiry(input.expires_at)
         || input.expires_at.is_some_and(|expiry| expiry <= now)
     {
         return Err(TokenError::Invalid);
