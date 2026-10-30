@@ -59,12 +59,22 @@ pub(super) async fn protected(
     if !refs.contains_key(&format!("refs/heads/{branch}")) {
         return Err(Error::missing());
     }
-    let rule = protection::list_branch_protection_rules(&state.pool, repo.id)
-        .await
-        .map_err(Error::unavailable)?
-        .into_iter()
-        .find(|rule| rule.pattern == branch)
-        .ok_or_else(Error::missing)?;
+    let rule = if write {
+        // A concrete-branch edit must not silently modify a wildcard that protects other branches.
+        protection::list_branch_protection_rules(&state.pool, repo.id)
+            .await.map_err(Error::unavailable)?
+            .into_iter().find(|rule| rule.pattern == branch).ok_or_else(Error::missing)?
+    } else {
+        let mut matching = crate::backend::repositories::protection::matching_rules(&state.pool, &repo, branch)
+            .await.map_err(Error::unavailable)?;
+        // Native enforcement intersects all matching rules. Classic protection cannot losslessly
+        // express their actor allowances or conflicting producer pins; never pick an arbitrary one.
+        if matching.len() > 1 {
+            return Err(Error::new(StatusCode::CONFLICT,
+                "Multiple native protection rules apply; inspect the branch rules endpoint"));
+        }
+        matching.pop().ok_or_else(Error::missing)?
+    };
     let url = format!(
         "{}/branches/{}/protection",
         repo_url(owner, name),
