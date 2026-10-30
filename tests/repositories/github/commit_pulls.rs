@@ -432,6 +432,17 @@ pub(super) async fn run(
     )
     .await
     .unwrap();
+    // A read collaborator is a collaborator on issues and pull requests too, as on GitHub.
+    let record = db::repositories::records::get_repository_by_id(pool, repo)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        codeyard::backend::repositories::access::author_association(pool, &record, bob)
+            .await
+            .unwrap(),
+        "COLLABORATOR"
+    );
     let forker = Client::login(router, pool, bob).await;
     let foreign = forker.expect("POST",&format!("/api{native}/pulls"),json!({"title":"Private source association","head_repo_id":fork.id,"head_branch":"main","base_branch":"main"}),StatusCode::CREATED).await;
     let foreign_sha = foreign["head_sha"].as_str().unwrap();
