@@ -1,7 +1,7 @@
 //! Admin email settings and test-mail forms.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::session;
-use crate::backend::api::user::responses::{field, mutation_guard, Fields};
+use crate::backend::api::user::responses::{field, mutation_guard, require_account, Fields};
 use crate::backend::app::AppState;
 use crate::backend::db::{self, email::NewEmailSettings};
 use crate::backend::email::{
@@ -201,8 +201,8 @@ async fn show(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    if ctx.administrator().is_none() {
-        return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
+    if let Err(response) = require_account(&ctx, true) {
+        return response;
     }
     let saved = ctx
         .query
