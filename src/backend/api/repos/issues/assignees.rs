@@ -18,6 +18,13 @@ use axum::Json;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+fn authority(ctx: &PageContext) -> ResultPage<db::users::accounts::AccountActor> {
+    Ok(db::users::accounts::AccountActor::Session {
+        user_id: ctx.require_user()?.id,
+        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    })
+}
+
 pub(crate) fn assignment_error(error: anyhow::Error) -> ApiFailure {
     let (status, code, message) = match error.downcast_ref::<AssignmentRefusal>() {
         Some(AssignmentRefusal::Denied) => (
@@ -100,7 +107,7 @@ pub(crate) async fn native_assign(
     let outcome = match user_id(&ctx, username.trim()).await? {
         Some(assignee) => db::assignees::assign_user(
             &ctx.state.pool,
-            ctx.require_user()?.id,
+            authority(&ctx)?,
             repo.record.id,
             subject,
             assignee,
@@ -110,17 +117,6 @@ pub(crate) async fn native_assign(
         .map_err(assignment_error),
         None => Err(assignment_error(AssignmentRefusal::Unassignable.into())),
     };
-    if matches!(outcome, Ok(Some(_))) {
-        db::timeline::record_for(
-            &ctx.state.pool,
-            repo.record.id,
-            subject,
-            ctx.require_user()?.id,
-            "assigned",
-            username.trim(),
-        )
-        .await;
-    }
     if let Ok(Some(assignee)) = &outcome {
         let link = format!(
             "/{owner}/{name}/{}/{number}",
@@ -166,23 +162,12 @@ pub(crate) async fn native_unassign(
     // A name that is no user, or is not assigned, leaves the item as it is and records nothing.
     let outcome = db::assignees::unassign_user(
         &ctx.state.pool,
-        ctx.require_user()?.id,
+        authority(&ctx)?,
         repo.record.id,
         subject,
         &username,
     )
     .await
     .map_err(assignment_error);
-    if let Ok(true) = outcome {
-        db::timeline::record_for(
-            &ctx.state.pool,
-            repo.record.id,
-            subject,
-            ctx.require_user()?.id,
-            "unassigned",
-            &username,
-        )
-        .await;
-    }
     detail_outcome(&ctx, &repo, kind, &value, number, outcome.map(|_| ())).await
 }
