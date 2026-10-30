@@ -96,7 +96,7 @@ pub async fn update_milestone(
     description: Option<&str>,
     due_date: Option<&str>,
 ) -> Result<Milestone> {
-    save_milestone(
+    save_milestone_inner(
         pool,
         actor_id,
         repo_id,
@@ -107,6 +107,7 @@ pub async fn update_milestone(
             due_on: crate::backend::db::milestones::due_on(due_date)?,
             state: None,
         },
+        true,
     )
     .await
 }
@@ -117,6 +118,17 @@ pub async fn save_milestone(
     repo_id: i64,
     number: Option<i32>,
     input: MilestoneInput<'_>,
+) -> Result<Milestone> {
+    save_milestone_inner(pool, actor_id, repo_id, number, input, false).await
+}
+
+async fn save_milestone_inner(
+    pool: &SqlitePool,
+    actor_id: i64,
+    repo_id: i64,
+    number: Option<i32>,
+    mut input: MilestoneInput<'_>,
+    calendar: bool,
 ) -> Result<Milestone> {
     crate::backend::issues::validate_milestone(input.title, input.description.unwrap_or(""))
         .map_err(anyhow::Error::msg)?;
@@ -133,6 +145,11 @@ pub async fn save_milestone(
         Some(number) => number,
         None => sqlx::query_scalar::<_, i32>("UPDATE repositories SET milestone_number=milestone_number+1 WHERE id=?1 RETURNING milestone_number").bind(repo_id).fetch_one(&mut *tx).await?,
     };
+    if calendar && !creating {
+        let current: Milestone = sqlx::query_as(&format!("SELECT {MILESTONE_COLUMNS} FROM milestones WHERE repo_id=?1 AND number=?2"))
+            .bind(repo_id).bind(number).fetch_optional(&mut *tx).await?.ok_or(MilestoneWriteRefusal::NotFound)?;
+        input.due_on = crate::backend::db::milestones::calendar_due_on(current.due_on, input.due_on);
+    }
     let due_date = input.due_on.map(|date| date.format("%Y-%m-%d").to_string());
     let due_on = input
         .due_on
