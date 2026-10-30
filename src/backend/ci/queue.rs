@@ -655,7 +655,12 @@ impl RunQueue {
                     () = renew => Err(anyhow::anyhow!("the CI run was taken back while it was prepared")),
                 };
                 if loaded.is_err() {
-                    self.finish(worker, run_id, "failed", Some(load_error)).await?;
+                    // A run cancelled while it was prepared ends as cancelled, not as a failure.
+                    let (status, message) = match self.heartbeat(worker, run_id).await {
+                        Ok(Some(true)) => ("cancelled", "Cancelled"),
+                        _ => ("failed", load_error),
+                    };
+                    self.finish(worker, run_id, status, Some(message)).await?;
                 }
                 loaded.map(Some)
             }
