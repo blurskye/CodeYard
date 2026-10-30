@@ -59,7 +59,8 @@ impl NotificationRequest<'_> {
 }
 
 /// Explicit subscriptions augment the existing native recipients once per event; default
-/// threads retain the native recipient policy. The ordinary creation path applies ignores.
+/// threads retain the native recipient policy. The ordinary creation path applies ignores
+/// and, for a fork notice, Read on the fork.
 pub async fn notify_subscribers(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
@@ -84,19 +85,6 @@ pub async fn notify_subscribers(
         if request.actor_id == Some(user) || notified.contains(&user) {
             continue;
         }
-        if request.kind == "repository_forked" {
-            let Some(fork) = request.metadata["fork_repository_id"].as_i64() else {
-                continue;
-            };
-            match crate::backend::repositories::access::check_read(pool, fork, Some(user)).await {
-                Ok(_) => {}
-                Err(crate::backend::repositories::access::AccessError::Unavailable) => {
-                    tracing::warn!(user_id = user, "Fork notification access unavailable");
-                    continue;
-                }
-                Err(_) => continue,
-            }
-        }
         let mut notice = request.clone();
         notice.user_id = user;
         match create_and_broadcast_notification(pool, broadcaster, notice).await {
@@ -105,7 +93,7 @@ pub async fn notify_subscribers(
                 user_id = user,
                 "Thread notification storage unavailable after the native mutation committed"
             ),
-            Err(CreateError::Ignored | CreateError::Suppressed) => {}
+            Err(CreateError::Suppressed) => {}
         }
     }
     sent
@@ -115,9 +103,7 @@ pub async fn notify_subscribers(
 pub enum CreateError {
     #[error("Notification storage is temporarily unavailable")]
     Unavailable,
-    /// The recipient ignores the repository, so nothing is created.
-    #[error("The recipient ignores this repository")]
-    Ignored,
+    /// Blocked, unreadable, ignored or already sent, so nothing is created.
     #[error("Notification is no longer needed")]
     Suppressed,
 }
@@ -136,13 +122,8 @@ pub async fn create_and_broadcast_notification(
             Err(AccessError::Unavailable) => return Err(CreateError::Unavailable),
             Err(_) => return Err(CreateError::Suppressed),
         }
-        let level = db::repositories::engagement::get_watch_level(pool, request.user_id, repo_id)
-            .await
-            .map_err(|_| CreateError::Unavailable)?;
-        if level.is_some_and(|(level, _)| level == "ignoring") {
-            return Err(CreateError::Ignored);
-        }
     }
+    // The insert rechecks Read, the fork's Read and repository ignores in its transaction.
     let notification = records::create_notification(pool, request.as_native())
         .await
         .map_err(|error| {
@@ -152,10 +133,21 @@ pub async fn create_and_broadcast_notification(
                 CreateError::Unavailable
             }
         })?;
+    deliver(pool, broadcaster, &notification).await;
+    Ok(notification)
+}
+
+/// Announces a committed notification and queues its email. Every stored notification is
+/// delivered here, whichever transaction wrote it.
+pub(super) async fn deliver(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    notification: &db::models::Notification,
+) {
     // Delivery reloads the count under the recipient's current authority.
     broadcaster
         .send(super::NotificationEvent::Created {
-            user_id: request.user_id,
+            user_id: notification.user_id,
             notification_id: notification.id,
             kind: notification.kind.clone(),
             title: notification.title.clone(),
@@ -165,12 +157,11 @@ pub async fn create_and_broadcast_notification(
             unread_count: 0,
         })
         .await;
-    // Follows and stars are not worth an email.
+    // Follows and stars are not worth an email. An invitation queues its own email with the offer.
     if !matches!(
         notification.kind.as_str(),
         "user_followed" | "repository_starred" | "organization_invitation"
     ) {
-        crate::backend::email::notify_user(pool, &notification).await;
+        crate::backend::email::notify_user(pool, notification).await;
     }
-    Ok(notification)
 }

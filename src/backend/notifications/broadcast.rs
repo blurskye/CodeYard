@@ -109,19 +109,21 @@ impl NotificationBroadcaster {
         })
     }
 
+    /// Delivers `(user_id, notification_id)` rows another transaction stored, such as CI's,
+    /// as ordinary creation delivers its own: the announcement and the email.
     pub async fn send_created(&self, notifications: &[(i64, i64)]) {
         for &(user_id, notification_id) in notifications {
-            self.send(NotificationEvent::Created {
-                user_id,
-                notification_id,
-                kind: String::new(),
-                title: String::new(),
-                body: None,
-                link: None,
-                created_at: 0,
-                unread_count: 0,
-            })
-            .await;
+            match db::notifications::records::get_notification(&self.pool, user_id, notification_id)
+                .await
+            {
+                Ok(Some(notification)) => {
+                    super::create::deliver(&self.pool, self, &notification).await;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(%error, notification_id, "Stored notification could not be delivered");
+                }
+            }
         }
     }
 
