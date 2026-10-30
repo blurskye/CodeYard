@@ -710,13 +710,13 @@ mod tests {
         let mut commands = Commands::new(temp.path().into(), Default::default());
         commands.line(&log, "##[add-matcher]matcher%5D%3B.json", false);
         assert!(!commands.failed);
-        assert!(commands.matchers.matches("diagnostic").unwrap().is_some());
+        assert!(commands.matchers.matches("diagnostic", false).unwrap().is_some());
         commands.line(&log, "::stop-commands::paused", false);
         commands.line(&log, "##[remove-matcher OWNER=legacy%3B%5D;]", false);
-        assert!(commands.matchers.matches("diagnostic").unwrap().is_some());
+        assert!(commands.matchers.matches("diagnostic", false).unwrap().is_some());
         commands.line(&log, "::paused::", false);
         commands.line(&log, "##[remove-matcher OWNER=legacy%3B%5D;]", false);
-        assert!(commands.matchers.matches("diagnostic").unwrap().is_none());
+        assert!(commands.matchers.matches("diagnostic", false).unwrap().is_none());
         commands.line(&log, "##[set-env name=X;]blocked", false);
         assert!(commands.failed);
         assert!(commands.env.is_empty());

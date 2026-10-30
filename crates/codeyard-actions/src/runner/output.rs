@@ -48,7 +48,7 @@ impl Output {
         // Reserve room for transitions and completion authentication when logs are backed up.
         if !essential && self.sender.capacity() <= 64 { return; }
         let bytes = line.len();
-        let reserved = bytes <= 1024 * 1024 && self.queued.fetch_update(Ordering::Relaxed, Ordering::Relaxed,
+        let reserved = bytes <= 1024 * 1024 && self.queued.try_update(Ordering::Relaxed, Ordering::Relaxed,
             |queued| queued.checked_add(bytes).filter(|total| *total <= 8 * 1024 * 1024)).is_ok();
         let sent = reserved && self.sender.try_send(Frame::Line(line)).is_ok();
         if reserved && !sent { self.queued.fetch_sub(bytes, Ordering::Relaxed); }

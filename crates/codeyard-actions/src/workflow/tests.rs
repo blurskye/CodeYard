@@ -723,8 +723,13 @@ jobs:
         .unwrap()
         .unwrap()
         .remove(0);
+    // The runner resolves the workflow scope, then the job scope over it.
+    let mut env = BTreeMap::new();
+    for scope in &job.env {
+        env.extend(scope.resolve(&Contexts::default(), Status::default()).unwrap());
+    }
     assert_eq!(
-        job.env,
+        env,
         BTreeMap::from([
             ("A".into(), "workflow".into()),
             ("B".into(), "job".into()),
