@@ -76,15 +76,21 @@ pub fn validate_milestone(title: &str, description: &str) -> Result<(), &'static
     }
 }
 
+/// A calendar day written exactly YYYY-MM-DD; other spellings of the day, such as 2026-1-2,
+/// are refused.
+pub fn calendar_day(value: &str) -> Option<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .ok()
+        .filter(|day| day.format("%Y-%m-%d").to_string() == value)
+}
+
 /// A due date is a calendar day written YYYY-MM-DD. An empty value means no due date.
 pub fn parse_due_date(value: &str) -> Result<Option<String>, &'static str> {
     if value.is_empty() {
         return Ok(None);
     }
-    let day = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
-        .ok()
-        .filter(|day| day.format("%Y-%m-%d").to_string() == value);
-    day.map(|day| Some(day.format("%Y-%m-%d").to_string()))
+    calendar_day(value)
+        .map(|_| Some(value.to_owned()))
         .ok_or("Due date must be a day written YYYY-MM-DD.")
 }
 

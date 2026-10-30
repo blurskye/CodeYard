@@ -197,10 +197,8 @@ impl Attribute {
             }
             Some("date") => {
                 let text = value.as_str().ok_or_else(invalid)?;
-                let date = chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d")
-                    .map_err(|_| Refusal::Invalid)?;
                 anyhow::ensure!(
-                    date.format("%Y-%m-%d").to_string() == text,
+                    crate::backend::issues::calendar_day(text).is_some(),
                     Refusal::Invalid
                 );
                 value.clone()
