@@ -24,6 +24,11 @@ cgroup path, and abandoned executions are recovered before slot reuse. Cleanup f
 retain local ownership and the checkout; normal cleanup retries retain the heartbeat and
 run lease. Temporary runner files also live beneath the recoverable workspace.
 
+Each job runs its host steps in a cgroup of its own below the run's. Like on GitHub, a
+process a step leaves running in the background stays alive for the later steps and ends
+with the job. The step does not wait for such a process: three seconds after its command
+exits, the step stops reading output the process still holds open.
+
 Podman mode can optionally use the same delegated parent. No socket permissions or
 exposure need to change.
 

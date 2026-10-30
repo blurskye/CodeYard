@@ -1289,6 +1289,9 @@ struct Job {
     matchers: matchers::Matchers,
     summaries: BTreeMap<u32, String>,
     summary_bytes: usize,
+    /// The job's own cgroup under the worker's, so processes a step leaves running survive until
+    /// the job ends and no longer.
+    processes: Option<crate::process::Cgroup>,
 }
 
 async fn run_job(
@@ -1325,6 +1328,11 @@ async fn run_job(
         )
         .to_ascii_lowercase();
         let podman = Podman::new(&options, prefix)?;
+        let processes = options
+            .process_root
+            .as_deref()
+            .map(|root| crate::process::Cgroup::temporary(root, "job-"))
+            .transpose()?;
         let deadline = Instant::now() + minutes(plan.timeout_minutes.unwrap_or(360.0))?;
         let cache = cache_directory();
         std::fs::create_dir_all(&cache)?;
@@ -1361,6 +1369,7 @@ async fn run_job(
             matchers: matchers::Matchers::default(),
             summaries: BTreeMap::new(),
             summary_bytes: 0,
+            processes,
         };
         let mut cancellation = job.cancel.clone();
         let result = tokio::select! {
@@ -1415,13 +1424,22 @@ async fn run_job(
         job.public_step+=1;
         let cleanup=Instant::now();
         job.log.start_step(job.public_step,"Complete job");
-        let cleaned=job.podman.cleanup().await;
+        let mut cleaned=job.podman.cleanup().await;
         if !cleaned {
-            containment.store(true, std::sync::atomic::Ordering::Release);
             job.log.line("Container cleanup failed");
         }
+        // Processes steps left running end with the job, after the post steps that may use them.
+        if let Some(processes) = job.processes.take() {
+            if let Err(error) = processes.cleanup(Duration::from_secs(30)).await {
+                job.log.line(&format!("Process cleanup failed: {error:#}"));
+                cleaned = false;
+            }
+        }
+        if !cleaned {
+            containment.store(true, std::sync::atomic::Ordering::Release);
+        }
         job.log.finish_step(job.public_step,if cleaned{Conclusion::Success}else{Conclusion::Failure},cleanup);
-        anyhow::ensure!(cleaned, "Container cleanup failed");
+        anyhow::ensure!(cleaned, "Job cleanup failed");
         result
     }
     .await;
@@ -2055,6 +2073,9 @@ impl Job {
         } else {
             let mut command = Command::new(program);
             command.args(args).envs(&env).current_dir(directory);
+            if let Some(processes) = &self.processes {
+                processes.attach(&mut command)?;
+            }
             command
         };
         let mut commands = Commands::new(
@@ -2070,6 +2091,7 @@ impl Job {
             &mut self.cancel,
             deadline,
             allow_unsafe,
+            self.processes.is_some() && self.podman.job.is_none(),
         )
         .await;
         self.command_stopped = commands.stopped.take();

@@ -12,6 +12,10 @@ use tokio::sync::{mpsc, watch};
 /// rather than cut, because a cut can keep the start of a secret that masking no longer matches.
 const MAX_LINE: usize = 64 * 1024;
 
+/// How long output is read after a contained step's command exits. A background process the
+/// step left running may keep the output pipes open; the step does not wait for it forever.
+const OUTPUT_DRAIN: Duration = Duration::from_secs(3);
+
 pub(crate) async fn read_lines(
     reader: impl AsyncRead + Unpin, sender: mpsc::Sender<Result<(String, bool)>>, stderr: bool,
 ) {
@@ -61,6 +65,9 @@ pub(crate) async fn output(
     result
 }
 
+/// Runs one step command. With `contained`, the command runs in the job's own cgroup, which
+/// ends every process it left behind when the job ends. Without it, the command's process
+/// group is killed as soon as the command exits.
 pub(super) async fn execute(
     command: &mut Command,
     log: &Log,
@@ -68,6 +75,7 @@ pub(super) async fn execute(
     cancel: &mut watch::Receiver<bool>,
     deadline: Instant,
     allow_unsafe: bool,
+    contained: bool,
 ) -> Result<bool> {
     if *cancel.borrow() || Instant::now() >= deadline {
         return Ok(false);
@@ -90,6 +98,9 @@ pub(super) async fn execute(
     let stderr = tokio::spawn(read_lines(child.stderr.take().context("No stderr")?, tx, true));
     let end = tokio::time::sleep_until(deadline.into());
     tokio::pin!(end);
+    let drain = tokio::time::sleep_until(deadline.into());
+    tokio::pin!(drain);
+    let mut draining = false;
     let mut status = None;
     let mut closed = false;
     loop {
@@ -109,7 +120,24 @@ pub(super) async fn execute(
                 stdout.abort(); stderr.abort();
                 return Ok(false);
             }
-            result = child.wait(), if status.is_none() => { status = Some(result?); group.kill(); }
+            result = child.wait(), if status.is_none() => {
+                status = Some(result?);
+                if contained {
+                    // Background processes of the step stay alive for later steps.
+                    group.disarm();
+                    drain.as_mut().reset(tokio::time::Instant::now() + OUTPUT_DRAIN);
+                    draining = true;
+                } else {
+                    group.kill();
+                }
+            }
+            // Stopping the readers drops their senders, so the lines already queued are still
+            // handled before the channel reports closed.
+            _ = &mut drain, if draining && !closed => {
+                draining = false;
+                stdout.abort();
+                stderr.abort();
+            }
             line = rx.recv(), if !closed => {
                 if let Some(line) = line {
                     let (line, stderr) = match line {

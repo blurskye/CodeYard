@@ -855,6 +855,7 @@ impl Job {
             &mut self.cancel,
             deadline,
             env.get("ACTIONS_ALLOW_UNSECURE_COMMANDS").is_some_and(|value| value.eq_ignore_ascii_case("true")),
+            false,
         )
         .await;
         let cleaned = self.podman.cleanup_action(&container).await;
