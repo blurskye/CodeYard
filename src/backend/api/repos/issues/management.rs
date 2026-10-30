@@ -111,7 +111,7 @@ pub(crate) async fn native_change(
                     "Issue not found. Use a number or owner/repository#number.",
                 )
             })?;
-            store::close_duplicate(
+            crate::backend::issues::mutations::close_duplicate(
                 &ctx.state.pool,
                 authority(),
                 repo.record.id,
