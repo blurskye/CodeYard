@@ -65,7 +65,7 @@ pub async fn list_ownerless_organizations(
     if !site_administrator(&mut tx, actor).await? {
         return Ok(Denied);
     }
-    let rows = sqlx::query_as("SELECT o.id,o.name,NULL::TEXT AS display_name,NULL::TEXT AS description,FALSE AS is_verified,TRUE AS governance_suspended FROM organizations o WHERE NOT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AND o.id>$1 ORDER BY o.id LIMIT $2")
+    let rows = sqlx::query_as("SELECT o.id,o.name,NULL::TEXT AS display_name,NULL::TEXT AS description,FALSE AS is_verified,TRUE AS governance_suspended,NULL::UUID AS avatar_file_id FROM organizations o WHERE NOT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AND o.id>$1 ORDER BY o.id LIMIT $2")
         .bind(page.after).bind(page.limit)
         .fetch_all(&mut *tx)
         .await?;

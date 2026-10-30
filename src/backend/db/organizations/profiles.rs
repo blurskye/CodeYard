@@ -129,4 +129,5 @@ pub struct OrganizationMetadata {
     pub is_verified: bool,
     /// Derived from usable persisted owners; bans/reset restrictions are not exempted.
     pub governance_suspended: bool,
+    pub avatar_file_id: Option<Uuid>,
 }

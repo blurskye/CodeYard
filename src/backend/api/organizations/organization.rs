@@ -261,7 +261,9 @@ fn metadata(org: OrganizationMetadata) -> view::Organization {
         display_name: org.display_name,
         description: org.description.unwrap_or_default(),
         suspended: org.governance_suspended,
-        avatar_url: None,
+        avatar_url: org
+            .avatar_file_id
+            .map(|id| format!("/api/files/{id}/download")),
     }
 }
 
@@ -335,17 +337,10 @@ pub(super) async fn respond_with_hook_draft(
     // Establish visibility before rejecting query values, so missing and
     // unrelated organizations retain the same refusal even with bad cursors.
     let current = if let Some(org) = org {
-        let mut value = match selected(ctx, actor, org).await {
-            Ok(value) => metadata(value),
+        match selected(ctx, actor, org).await {
+            Ok(value) => Some(metadata(value)),
             Err(response) => return response,
-        };
-        value.avatar_url =
-            match organizations::get_organization_avatar(&ctx.state.pool, actor, org).await {
-                Ok(Applied(avatar)) => avatar.map(|id| format!("/api/files/{id}/download")),
-                Ok(_) => return not_found(ctx),
-                Err(_) => return unavailable(ctx),
-            };
-        Some(value)
+        }
     } else {
         None
     };
@@ -451,7 +446,9 @@ pub(super) async fn respond_with_hook_draft(
         vec![]
     };
     let interactions = if can_manage && tab == "overview" {
-        if let Some(org) = &current {
+        // Interaction limits need working governance; a suspended organization shows its
+        // suspension notice instead.
+        if let Some(org) = current.as_ref().filter(|org| !org.suspended) {
             match crate::backend::api::user::interactions::panel(
                 &ctx.state.pool,
                 actor,
