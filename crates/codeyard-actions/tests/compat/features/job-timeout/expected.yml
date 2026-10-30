@@ -4,10 +4,12 @@
     "test": "failure"
   },
   "contains": [
+    "compat:cleanup-cancelled",
     "Job completed: failure"
   ],
   "absent": [
-    "compat:too-late"
+    "compat:too-late",
+    "compat:skipped-after-timeout"
   ],
   "timeout_seconds": 90
 }

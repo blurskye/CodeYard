@@ -85,6 +85,11 @@ pub struct Options {
     pub no_cache_server: bool,
     #[arg(long)]
     pub action_offline_mode: bool,
+    /// Minutes that `if: always()` and `if: cancelled()` steps and post steps may still run
+    /// after a job is cancelled or times out, like the cancel timeout of GitHub's runner. At most
+    /// one minute, the cleanup share of the worker's shutdown grace.
+    #[arg(long, default_value = "1")]
+    pub cancel_timeout_minutes: f64,
     /// Explicitly allow GitHub when the configured forge cannot supply a repository action.
     #[arg(long)]
     pub github_action_fallback: bool,
@@ -132,6 +137,13 @@ fn boolean(template: &str, contexts: &Contexts, status: Status) -> Result<bool> 
 fn minutes(value: f64) -> Result<Duration> {
     workflow::validate_timeout_minutes(value)?;
     Ok(Duration::from_secs_f64(value * 60.0))
+}
+
+/// How long cleanup steps and post steps may run after a job is cancelled or times out.
+fn cancel_grace(options: &Options) -> Result<Duration> {
+    let grace = minutes(options.cancel_timeout_minutes)?;
+    anyhow::ensure!(grace <= CLEANUP_GRACE, "The cancel timeout is at most one minute");
+    Ok(grace)
 }
 
 // Job success() reads direct dependencies; failure() also reads their ancestors. Skipped
@@ -461,6 +473,7 @@ async fn run_workflow(
             "Mounting a container engine socket is not supported; use --container-daemon-socket -"
         );
     }
+    cancel_grace(options).context("--cancel-timeout-minutes")?;
     let yaml = std::fs::read_to_string(&options.workflow).context("Unable to read workflow")?;
     let raw: serde_yaml::Value = serde_yaml::from_str(&yaml)?;
     let workflow = workflow::parse(&yaml)?;
@@ -1334,6 +1347,7 @@ async fn run_job(
             .map(|root| crate::process::Cgroup::temporary(root, "job-"))
             .transpose()?;
         let deadline = Instant::now() + minutes(plan.timeout_minutes.unwrap_or(360.0))?;
+        let grace = cancel_grace(&options)?;
         let cache = cache_directory();
         std::fs::create_dir_all(&cache)?;
         let mut job = Job {
@@ -1383,12 +1397,17 @@ async fn run_job(
         }
         job.restore_scope();
         job.action_path.clear();
-        job.status.cancelled = *job.cancel.borrow();
+        // GitHub cancels a job that times out, so the cleanup steps of either see cancelled()
+        // and job.status cancelled. A timed-out job still fails.
+        job.status.cancelled = interrupted.is_some() || *job.cancel.borrow();
         job.status.failed |= result.is_err() && !job.status.cancelled;
         job.sync_status();
+        if interrupted.is_some() {
+            job.record_interrupted_step();
+        }
         if result.is_err(){job.log.interrupt_step(interrupted.unwrap_or(Conclusion::Failure));}
         let mut result = result;
-        job.deadline = Instant::now() + CLEANUP_GRACE;
+        job.deadline = Instant::now() + grace;
         let (_cleanup_tx, cleanup_cancel) = watch::channel(false);
         job.cancel = cleanup_cancel;
         if interrupted.is_some() && !job.podman.cleanup_active_actions().await {
@@ -1529,6 +1548,14 @@ impl Job {
     async fn text(&self, template: &str, deadline: Instant) -> Result<String> {
         let template = template.to_owned();
         self.evaluate(deadline, move |contexts, status| text(&template, contexts, status)).await
+    }
+
+    /// The step that was running when the job was cancelled or timed out ends cancelled.
+    fn record_interrupted_step(&mut self) {
+        let Some(id) = self.next_step.checked_sub(1).and_then(|index| self.plan.steps.get(index)).and_then(|step| step.id.clone()) else { return };
+        if let Some(Value::Object(steps)) = self.contexts.values.get_mut("steps") {
+            steps.entry(id).or_insert_with(|| Value::from_json(&serde_json::json!({"outputs":{},"outcome":"cancelled","conclusion":"cancelled"})));
+        }
     }
 
     fn sync_status(&mut self) {
@@ -1800,66 +1827,32 @@ impl Job {
             env.extend(self.saved_env.clone());
             self.contexts.values.insert("env".into(), object(&env));
             let template = step.env.clone();
-            env.extend(self.evaluate(self.deadline, move |contexts, status| template.resolve(contexts, status)).await?);
-            self.contexts.values.insert("env".into(), object(&env));
-            let name = self.text(&name, self.deadline).await?;
+            let step_env = self.evaluate(self.deadline, move |contexts, status| template.resolve(contexts, status)).await;
+            if let Ok(values) = &step_env {
+                env.extend(values.clone());
+                self.contexts.values.insert("env".into(), object(&env));
+            }
+            // A name that does not evaluate is shown as written, as GitHub does.
+            let name = match self.text(&name, self.deadline).await {
+                Ok(evaluated) => evaluated,
+                Err(_) => name,
+            };
             let name = commands::bounded(&self.log.masker.mask(&name), 1024);
             let step_started = Instant::now();
             if depth == 0 { self.log.start_step(self.public_step, &name); }
-            let condition = step.condition.clone().unwrap_or_else(|| "success()".into());
-            let condition = self.evaluate(self.deadline, move |contexts, status|
-                Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await?;
             let mut outputs = BTreeMap::new();
-            let outcome;
-            let conclusion;
-            if !condition {
-                outcome = "skipped";
-                conclusion = "skipped";
-                self.log.line(&format!("Step skipped: {name}"));
-            } else {
-                self.log.line(&format!("Step started: {name}"));
-                let deadline = if let Some(template) = &step.timeout_minutes {
-                    let value = self.text(template, self.deadline).await?
-                        .parse::<f64>()
-                        .context("timeout-minutes must be a number")?;
-                    self.deadline.min(Instant::now() + minutes(value)?)
-                } else {
-                    self.deadline
-                };
-                let continued = if let Some(template) = &step.continue_on_error {
-                    let template = template.clone();
-                    self.evaluate(deadline, move |contexts, status| boolean(&template, contexts, status)).await?
-                } else { false };
-                self.action_path.push(index);
-                let result = self
-                    .action(&step.action, env, deadline, depth, &mut outputs)
-                    .await;
-                self.action_path.pop();
-                let ok = match result {
-                    Ok(ok) => ok,
-                    Err(error) => {
-                        self.log.line(&format!("Error: {error:#}"));
-                        false
-                    }
-                };
-                outcome = if *self.cancel.borrow() {
-                    "cancelled"
-                } else if ok {
-                    "success"
-                } else {
-                    "failure"
-                };
-                conclusion = if outcome == "failure" && continued {
-                    "success"
-                } else {
-                    outcome
-                };
-                if conclusion == "failure" {
-                    self.status.failed = true;
-                }
-                self.log.line(&format!(
-                    "Step completed: {name} ({conclusion}; outcome: {outcome})"
-                ));
+            // An expression error fails only this step, so later `always()` steps still run.
+            let ran = match step_env {
+                Ok(_) => self.run_step(step, index, &name, env, depth, &mut outputs).await,
+                Err(error) => Err(error),
+            };
+            let (outcome, conclusion) = ran.unwrap_or_else(|error| {
+                self.log.line(&format!("Error: {error:#}"));
+                self.log.line(&format!("Step completed: {name} (failure; outcome: failure)"));
+                ("failure", "failure")
+            });
+            if conclusion == "failure" {
+                self.status.failed = true;
             }
             if depth == 0 {
                 self.log.finish_step(
@@ -1880,6 +1873,59 @@ impl Job {
             if depth == 0 { self.scope = None; }
             result
         })
+    }
+
+    /// Evaluates a step's condition, timeout and continue-on-error and runs it, returning its
+    /// outcome and conclusion.
+    async fn run_step(
+        &mut self,
+        step: &Step,
+        index: usize,
+        name: &str,
+        env: BTreeMap<String, String>,
+        depth: usize,
+        outputs: &mut BTreeMap<String, String>,
+    ) -> Result<(&'static str, &'static str)> {
+        let condition = step.condition.clone().unwrap_or_else(|| "success()".into());
+        let condition = self.evaluate(self.deadline, move |contexts, status|
+            Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await?;
+        if !condition {
+            self.log.line(&format!("Step skipped: {name}"));
+            return Ok(("skipped", "skipped"));
+        }
+        self.log.line(&format!("Step started: {name}"));
+        let deadline = if let Some(template) = &step.timeout_minutes {
+            let value = self.text(template, self.deadline).await?
+                .parse::<f64>()
+                .context("timeout-minutes must be a number")?;
+            self.deadline.min(Instant::now() + minutes(value)?)
+        } else {
+            self.deadline
+        };
+        let continued = if let Some(template) = &step.continue_on_error {
+            let template = template.clone();
+            self.evaluate(deadline, move |contexts, status| boolean(&template, contexts, status)).await?
+        } else { false };
+        self.action_path.push(index);
+        let result = self.action(&step.action, env, deadline, depth, outputs).await;
+        self.action_path.pop();
+        let ok = match result {
+            Ok(ok) => ok,
+            Err(error) => {
+                self.log.line(&format!("Error: {error:#}"));
+                false
+            }
+        };
+        let outcome = if *self.cancel.borrow() {
+            "cancelled"
+        } else if ok {
+            "success"
+        } else {
+            "failure"
+        };
+        let conclusion = if outcome == "failure" && continued { "success" } else { outcome };
+        self.log.line(&format!("Step completed: {name} ({conclusion}; outcome: {outcome})"));
+        Ok((outcome, conclusion))
     }
 
     fn action<'a>(

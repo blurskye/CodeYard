@@ -912,6 +912,65 @@ fn job_timeout_covers_the_whole_job() {
 }
 
 #[test]
+fn the_cancel_timeout_bounds_cleanup_steps_after_a_job_timeout() {
+    let started = std::time::Instant::now();
+    let output = run(
+        r#"
+on: push
+jobs:
+  test:
+    runs-on: self-hosted
+    timeout-minutes: 0.01
+    steps:
+      - run: sleep 30
+      - if: always()
+        run: |
+          echo cleanup-started
+          sleep 30
+          echo cleanup-finished
+"#,
+        &[],
+        &["--cancel-timeout-minutes", "0.01"],
+    );
+    assert!(!output.status.success());
+    let text = log(&output);
+    assert!(text.contains("cleanup-started"), "{text}");
+    assert!(!text.contains("cleanup-finished"), "{text}");
+    assert!(text.contains("Job completed: failure"), "{text}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+}
+
+#[test]
+fn a_fail_fast_cancellation_runs_the_cancelled_legs_cleanup() {
+    let started = std::time::Instant::now();
+    let output = run(
+        r#"
+on: push
+jobs:
+  test:
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        leg: [fail, slow]
+    steps:
+      - run: |
+          if [ '${{ matrix.leg }}' = fail ]; then sleep 1; exit 1; fi
+          sleep 30
+      - if: cancelled()
+        run: echo 'cancelled-${{ matrix.leg }}'
+"#,
+        &[],
+        &["--concurrent-jobs", "2"],
+    );
+    assert!(!output.status.success());
+    let text = log(&output);
+    assert!(text.contains("cancelled-slow"), "{text}");
+    assert!(!text.contains("cancelled-fail"), "{text}");
+    assert!(text.contains("Job completed: cancelled"), "{text}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(20));
+}
+
+#[test]
 fn matrix_fail_fast_does_not_start_queued_runs() {
     let output = run(
         r#"

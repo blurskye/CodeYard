@@ -369,6 +369,7 @@ fixtures! {
     continue_on_error => "features/continue-on-error",
     step_timeout => "features/step-timeout",
     job_timeout => "features/job-timeout",
+    cancellation => "features/cancellation",
     composite => "features/composite",
     nested_composite => "features/nested-composite",
 }
