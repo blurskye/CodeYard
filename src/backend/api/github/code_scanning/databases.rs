@@ -236,7 +236,7 @@ pub(in crate::backend::api::github) async fn upload(
         })?;
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     let key = format!("codeql/{}", uuid::Uuid::new_v4());
-    codeql::stage(&state.pool, auth.user.id, repo.id, &key)
+    codeql::stage(&state.pool, (auth.user.id, auth.token.id), repo.id, &key)
         .await
         .map_err(failure)?;
     state
@@ -256,7 +256,7 @@ pub(in crate::backend::api::github) async fn upload(
         &state.pool,
         &codeql::NewDatabase {
             repo: repo.id,
-            actor: auth.user.id,
+            actor: (auth.user.id, auth.token.id).into(),
             language: &language,
             name: &filename,
             key: &key,
@@ -278,7 +278,7 @@ pub(super) async fn delete(
     Path((owner, name, language)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = scope(&state, &headers, &owner, &name, true, false).await?;
-    codeql::delete(&state.pool, auth.user.id, repo.id, &language)
+    codeql::delete(&state.pool, (auth.user.id, auth.token.id), repo.id, &language)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)
