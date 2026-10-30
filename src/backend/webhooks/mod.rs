@@ -26,6 +26,9 @@ use tokio_util::task::TaskTracker;
 
 /// Sends that are queued or running. A send that finds the queue full is dropped and logged.
 const QUEUE_LIMIT: usize = 256;
+/// Body bytes those sends hold. Bodies may be up to `MAX_PAYLOAD_BYTES` each, so the count
+/// alone would let the queue hold half a gigabyte.
+const QUEUE_BYTES: usize = 64 * 1024 * 1024;
 /// Sends running at once.
 const SENDS_AT_ONCE: usize = 4;
 
@@ -65,6 +68,7 @@ impl From<HookOwner> for Owner {
 #[derive(Default)]
 struct Queue {
     total: usize,
+    bytes: usize,
     owners: HashMap<(usize, Owner), OwnerQueue>,
 }
 
@@ -88,6 +92,7 @@ impl Queue {
         owner: impl Into<Owner>,
         hook: Option<i64>,
         manual: bool,
+        bytes: usize,
     ) -> Option<Arc<Semaphore>> {
         let owner = owner.into();
         let now = Instant::now();
@@ -97,7 +102,7 @@ impl Queue {
                 .retain(|at| now.duration_since(*at) < Duration::from_secs(60));
             queue.pending > 0 || !queue.manual.is_empty()
         });
-        if self.total >= QUEUE_LIMIT {
+        if self.total >= QUEUE_LIMIT || self.bytes.saturating_add(bytes) > QUEUE_BYTES {
             return None;
         }
         let queue = self
@@ -125,10 +130,11 @@ impl Queue {
             queue.manual.push(now);
         }
         self.total += 1;
+        self.bytes += bytes;
         Some(hook.slot.clone())
     }
 
-    fn release(&mut self, owner: (usize, impl Into<Owner>), hook: Option<i64>) {
+    fn release(&mut self, owner: (usize, impl Into<Owner>), hook: Option<i64>, bytes: usize) {
         let owner = (owner.0, owner.1.into());
         let queue = self.owners.get_mut(&owner).expect("queued owner");
         queue.pending -= 1;
@@ -138,6 +144,7 @@ impl Queue {
             queue.hooks.remove(&hook);
         }
         self.total -= 1;
+        self.bytes -= bytes;
         if queue.pending == 0 && queue.manual.is_empty() {
             self.owners.remove(&owner);
         }
@@ -148,6 +155,7 @@ impl Queue {
 struct Ticket {
     owner: (usize, Owner),
     hook: Option<i64>,
+    bytes: usize,
     slot: Arc<Semaphore>,
 }
 
@@ -157,15 +165,17 @@ impl Ticket {
         owner: impl Into<Owner>,
         hook: Option<i64>,
         manual: bool,
+        bytes: usize,
     ) -> Option<Self> {
         let owner = owner.into();
         let slot = QUEUED
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .take(pool, owner, hook, manual)?;
+            .take(pool, owner, hook, manual, bytes)?;
         Some(Self {
             owner: (pool_id(pool), owner),
             hook,
+            bytes,
             slot,
         })
     }
@@ -176,7 +186,7 @@ impl Drop for Ticket {
         QUEUED
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .release(self.owner, self.hook);
+            .release(self.owner, self.hook, self.bytes);
     }
 }
 
@@ -213,7 +223,7 @@ fn enqueue_delivery(pool: &DbPool, hook: Webhook, outgoing: Outgoing) -> bool {
     let Some(owner) = hook_owner(&hook) else {
         return false;
     };
-    let Some(ticket) = Ticket::take(pool, owner, Some(hook.id), !outgoing.automatic) else {
+    let Some(ticket) = Ticket::take(pool, owner, Some(hook.id), !outgoing.automatic, outgoing.body.len()) else {
         return false;
     };
     let pool = pool.clone();
@@ -561,27 +571,27 @@ mod tests {
         let mut queue = Queue::default();
         let owner = HookOwner::Repository(1);
         for _ in 0..OWNER_QUEUE_LIMIT {
-            assert!(queue.take(&pool, owner, Some(1), false).is_some());
+            assert!(queue.take(&pool, owner, Some(1), false, 0).is_some());
         }
-        assert!(queue.take(&pool, owner, Some(2), false).is_none());
+        assert!(queue.take(&pool, owner, Some(2), false, 0).is_none());
         let other = HookOwner::Repository(2);
-        let slot = queue.take(&pool, other, Some(3), false).unwrap();
+        let slot = queue.take(&pool, other, Some(3), false, 0).unwrap();
         assert_eq!(slot.available_permits(), 1);
         assert!(queue.owners[&(pool_id(&pool), owner.into())]
             .hooks[&Some(1)].slot
             .try_acquire()
             .is_ok());
         assert!(slot.try_acquire().is_ok());
-        queue.release((pool_id(&pool), other), Some(3));
+        queue.release((pool_id(&pool), other), Some(3), 0);
         for _ in 0..MANUAL_PER_MINUTE {
-            assert!(queue.take(&pool, other, Some(3), true).is_some());
-            queue.release((pool_id(&pool), other), Some(3));
+            assert!(queue.take(&pool, other, Some(3), true, 0).is_some());
+            queue.release((pool_id(&pool), other), Some(3), 0);
         }
-        assert!(queue.take(&pool, other, Some(3), true).is_none());
-        assert!(queue.take(&pool, other, Some(3), false).is_some());
+        assert!(queue.take(&pool, other, Some(3), true, 0).is_none());
+        assert!(queue.take(&pool, other, Some(3), false, 0).is_some());
         let other_pool =
             DbPool::Sqlite(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
-        assert!(queue.take(&other_pool, other, Some(3), true).is_some());
+        assert!(queue.take(&other_pool, other, Some(3), true, 0).is_some());
     }
 
     #[tokio::test]
@@ -590,15 +600,28 @@ mod tests {
         let mut queue = Queue::default();
         for id in 0..QUEUE_LIMIT as i64 {
             assert!(queue
-                .take(&pool, HookOwner::Repository(id), None, false)
+                .take(&pool, HookOwner::Repository(id), None, false, 0)
                 .is_some());
         }
         assert!(queue
-            .take(&pool, HookOwner::Repository(1000), Some(1), false)
+            .take(&pool, HookOwner::Repository(1000), Some(1), false, 0)
             .is_none());
-        queue.release((pool_id(&pool), HookOwner::Repository(0)), None);
+        queue.release((pool_id(&pool), HookOwner::Repository(0)), None, 0);
         assert!(queue
-            .take(&pool, HookOwner::Repository(1000), Some(1), false)
+            .take(&pool, HookOwner::Repository(1000), Some(1), false, 0)
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn queued_bodies_share_one_byte_budget() {
+        let pool = DbPool::Sqlite(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
+        let mut queue = Queue::default();
+        let half = QUEUE_BYTES / 2;
+        assert!(queue.take(&pool, HookOwner::Repository(1), Some(1), false, half).is_some());
+        assert!(queue.take(&pool, HookOwner::Repository(2), Some(2), false, half).is_some());
+        assert!(queue.take(&pool, HookOwner::Repository(3), Some(3), false, 1).is_none());
+        queue.release((pool_id(&pool), HookOwner::Repository(1)), Some(1), half);
+        assert!(queue.take(&pool, HookOwner::Repository(3), Some(3), false, half).is_some());
+        assert_eq!(queue.bytes, QUEUE_BYTES);
     }
 }
