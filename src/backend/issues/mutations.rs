@@ -283,13 +283,8 @@ pub async fn update_issue(
         .await;
     }
 
-    let action = match (issue.state == existing.state, issue.state.as_str()) {
-        (true, _) => "edited",
-        (false, "closed") => "closed",
-        (false, _) => "reopened",
-    };
     let (author_id, sender_id) = (issue.author_id, user.id);
-    // An edited event names the previous value of each field that changed.
+    // Text edits and state transitions are independent effects of one committed update.
     let mut changes = serde_json::Map::new();
     if issue.title != existing.title {
         changes.insert("title".into(), serde_json::json!({"from": existing.title}));
@@ -297,32 +292,42 @@ pub async fn update_issue(
     if issue.body != existing.body {
         changes.insert("body".into(), serde_json::json!({"from": existing.body}));
     }
-    let issue_for_hook = issue.clone();
-    let repository_for_hook = repository.clone();
-    webhooks::emit(
-        pool,
-        &repository,
-        events::ISSUES,
-        vec![author_id, sender_id],
-        move |owner, people| {
-            let (author, sender) = (people.get(author_id), people.get(sender_id));
-            let mut payload = payloads::issues(
-                action,
-                &issue_for_hook,
-                &author,
-                Scope {
-                    repo: &repository_for_hook,
-                    owner,
-                    sender: &sender,
-                },
-            );
-            if action == "edited" {
-                payload["changes"] = serde_json::Value::Object(changes.clone());
-            }
-            payload
-        },
-    )
-    .await;
+    let mut actions = Vec::with_capacity(2);
+    if !changes.is_empty() {
+        actions.push("edited");
+    }
+    if issue.state != existing.state {
+        actions.push(if issue.state == "closed" { "closed" } else { "reopened" });
+    }
+    for action in actions {
+        let issue_for_hook = issue.clone();
+        let repository_for_hook = repository.clone();
+        let changes = changes.clone();
+        webhooks::emit(
+            pool,
+            &repository,
+            events::ISSUES,
+            vec![author_id, sender_id],
+            move |owner, people| {
+                let (author, sender) = (people.get(author_id), people.get(sender_id));
+                let mut payload = payloads::issues(
+                    action,
+                    &issue_for_hook,
+                    &author,
+                    Scope {
+                        repo: &repository_for_hook,
+                        owner,
+                        sender: &sender,
+                    },
+                );
+                if action == "edited" {
+                    payload["changes"] = serde_json::Value::Object(changes.clone());
+                }
+                payload
+            },
+        )
+        .await;
+    }
     Ok(issue)
 }
 
