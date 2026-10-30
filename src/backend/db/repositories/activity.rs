@@ -76,6 +76,24 @@ pub struct Filter<'a> {
     pub kind: Option<Kind>,
     pub since: Option<DateTime<Utc>>,
 }
+pub(crate) fn list_sql(pg: bool, filter: &Filter<'_>) -> String {
+    let direction = if filter.descending { "DESC" } else { "ASC" };
+    let boundary = match (filter.boundary, filter.descending) {
+        (Some(_), true) => "a.id<$2",
+        (Some(_), false) => "a.id>$2",
+        (None, _) => "CAST($2 AS BIGINT) IS NULL",
+    };
+    let reference = if filter.reference.is_some() { "a.reference=$3" } else { "CAST($3 AS TEXT) IS NULL" };
+    let actor = if filter.actor.is_some() { "lower(u.username)=lower($4)" } else { "CAST($4 AS TEXT) IS NULL" };
+    let kind = if filter.kind.is_some() { "a.activity_type=$5" } else { "CAST($5 AS TEXT) IS NULL" };
+    let since = match (filter.since.is_some(), pg) {
+        (true, _) => "a.created_at>=$6",
+        (false, true) => "CAST($6 AS TIMESTAMPTZ) IS NULL",
+        (false, false) => "CAST($6 AS TEXT) IS NULL",
+    };
+    format!("SELECT a.*,u.username AS actor FROM repository_ref_activities a LEFT JOIN users u ON u.id=a.actor_id WHERE a.repo_id=$1 AND {boundary} AND {reference} AND {actor} AND {kind} AND {since} ORDER BY a.id {direction} LIMIT $7")
+}
+
 native_operation!(crate::backend::db::postgres::repositories::activity::record,crate::backend::db::sqlite::repositories::activity::record,
     fn record(pool:&DbPool,repo_id:i64,actor:i64,operation:&Uuid,changes:&[RefActivity<'_>])->Result<()>);
 native_operation!(crate::backend::db::postgres::repositories::activity::list,crate::backend::db::sqlite::repositories::activity::list,

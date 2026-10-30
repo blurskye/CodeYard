@@ -36,6 +36,6 @@ pub async fn list(
     filter: &Filter<'_>,
     limit: i64,
 ) -> Result<Vec<Activity>> {
-    Ok(sqlx::query_as::<_,Activity>("SELECT a.*,u.username AS actor FROM repository_ref_activities a LEFT JOIN users u ON u.id=a.actor_id WHERE a.repo_id=?1 AND (?2 IS NULL OR (?3 AND a.id<?2) OR (NOT ?3 AND a.id>?2)) AND (?4 IS NULL OR a.reference=?4) AND (?5 IS NULL OR lower(u.username)=lower(?5)) AND (?6 IS NULL OR a.activity_type=?6) AND (?7 IS NULL OR a.created_at>=?7) ORDER BY CASE WHEN ?3 THEN a.id END DESC,CASE WHEN NOT ?3 THEN a.id END ASC LIMIT ?8")
-        .bind(repo).bind(filter.boundary).bind(filter.descending).bind(filter.reference).bind(filter.actor).bind(filter.kind.map(Kind::as_str)).bind(filter.since.as_ref().map(|date|date.to_rfc3339_opts(chrono::SecondsFormat::Micros,true))).bind(limit.clamp(1,101)).fetch_all(pool).await?)
+    Ok(sqlx::query_as::<_,Activity>(&crate::backend::db::repositories::activity::list_sql(false, filter))
+        .bind(repo).bind(filter.boundary).bind(filter.reference).bind(filter.actor).bind(filter.kind.map(Kind::as_str)).bind(filter.since.map(super::super::time::encode)).bind(limit.clamp(1,101)).fetch_all(pool).await?)
 }
