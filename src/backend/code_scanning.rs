@@ -480,16 +480,17 @@ async fn notify(
 
 pub async fn dismiss(
     pool: &DbPool,
-    actor: i64,
+    actor: impl Into<db::users::tokens::Actor>,
     repo: i64,
     number: i64,
     input: &db::code_scanning::Dismissal<'_>,
 ) -> Result<db::code_scanning::Alert> {
     input.validate()?;
+    let actor = actor.into();
     let alert = db::code_scanning::dismiss(pool, actor, repo, number, input).await?;
     notify(
         pool,
-        actor,
+        actor.user_id,
         &alert,
         if input.state == "dismissed" {
             "closed_by_user"
