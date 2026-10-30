@@ -336,12 +336,12 @@ pub async fn form_choices(
     let (repository, _) = writable(pool, actor, owner, name).await?;
     let store = repo_store(&repository, cluster);
     let info = store.info().await.map_err(ReleaseError::Git)?;
-    let mut tags: Vec<String> = store
-        .tags()
-        .await
-        .map_err(ReleaseError::Git)?
-        .into_iter()
-        .map(|tag| tag.name)
+    // Only the names are shown, so the ref listing is enough; no tag or commit is read.
+    let refs = store.refs().await.map_err(ReleaseError::Git)?;
+    let mut tags: Vec<String> = refs
+        .keys()
+        .filter_map(|reference| reference.strip_prefix("refs/tags/"))
+        .map(str::to_owned)
         .collect();
     tags.sort();
     Ok(FormChoices {
@@ -549,6 +549,14 @@ pub async fn update(
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?
         .release;
+    // A stale form must not create the tag; the write below checks the same revision again.
+    if fields
+        .expected_revision
+        .as_ref()
+        .is_some_and(|expected| *expected != db::releases::release_revision(&current))
+    {
+        return Err(ReleaseError::Conflict);
+    }
     let publishing = current.is_draft && fields.is_draft == Some(false);
     let store = repo_store(&repository, cluster);
     if publishing {
@@ -605,7 +613,15 @@ pub async fn update(
     if published {
         notify_published(pool, broadcaster, &user, &repository, owner, name, &release).await;
     }
-    let action = if published { "published" } else { "edited" };
+    let action = if published {
+        "published"
+    } else if !current.is_draft && release.is_draft {
+        "unpublished"
+    } else if current.is_prerelease && !release.is_prerelease && !release.is_draft {
+        "released"
+    } else {
+        "edited"
+    };
     emit_release(pool, &repository, &release, actor, action, None).await;
 
     Ok(release)
