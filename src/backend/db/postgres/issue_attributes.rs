@@ -92,6 +92,15 @@ pub async fn values(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
+    // Repository privacy can change after the caller's access check; read it in this snapshot.
+    let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND {})", super::repositories::access::readable_condition()))
+        .bind(repo)
+        .bind(viewer)
+        .fetch_one(&mut *tx)
+        .await?;
+    if !readable {
+        return Ok(Vec::new());
+    }
     let rows:Vec<(i64,i64,String)>=sqlx::query_as("SELECT v.id,v.attribute_id,v.value_json FROM issue_field_values v JOIN issues i ON i.id=v.issue_id WHERE i.id=$1 AND i.repo_id=$2 ORDER BY v.attribute_id").bind(issue).bind(repo).fetch_all(&mut *tx).await?;
     let catalog = if rows.is_empty() {
         Vec::new()
