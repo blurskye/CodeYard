@@ -1,4 +1,4 @@
-use crate::backend::db::oauth_apps::{Application, Exchange, Grant, Token};
+use crate::backend::db::{credentials::Actor, oauth_apps::{Application, ApplicationSummary, Exchange, Grant, Token, APPLICATION_PAGE_SIZE, APPLICATIONS_SQL}};
 use crate::backend::identity::{oauth_apps, tokens::token_hash};
 use anyhow::Result;
 use chrono::Utc;
@@ -35,13 +35,16 @@ pub async fn application(pool: &SqlitePool, client_id: &str) -> Result<Option<Ap
     )
 }
 
-pub async fn applications(pool: &SqlitePool, actor: i64) -> Result<Vec<Application>> {
-    Ok(
-        sqlx::query_as("SELECT * FROM oauth_applications WHERE owner_id=$1 ORDER BY id")
-            .bind(actor)
-            .fetch_all(pool)
-            .await?,
-    )
+pub async fn applications(pool: &SqlitePool, actor: impl Into<Actor>, offset: i64, limit: i64) -> Result<Option<Vec<ApplicationSummary>>> {
+    let actor = actor.into();
+    let mut tx = pool.begin().await?;
+    let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)")
+        .bind(actor.user_id).fetch_one(&mut *tx).await?;
+    if !active || !super::credentials::live(&mut tx, &actor, false).await? { return Ok(None); }
+    let rows = sqlx::query_as(APPLICATIONS_SQL).bind(actor.user_id)
+        .bind(limit.clamp(0, APPLICATION_PAGE_SIZE + 1)).bind(offset.max(0)).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Some(rows))
 }
 
 pub async fn save_grant(pool: &SqlitePool, grant: &Grant) -> Result<()> {

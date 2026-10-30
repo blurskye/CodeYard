@@ -15,6 +15,16 @@ pub struct Application {
     pub created_at: DateTime<Utc>,
 }
 
+pub const APPLICATION_PAGE_SIZE: i64 = 25;
+pub(crate) const APPLICATIONS_SQL: &str = "SELECT name,client_id,redirect_uri FROM oauth_applications WHERE owner_id=$1 ORDER BY id LIMIT $2 OFFSET $3";
+
+#[derive(sqlx::FromRow)]
+pub struct ApplicationSummary {
+    pub name: String,
+    pub client_id: String,
+    pub redirect_uri: String,
+}
+
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Grant {
     pub hash: String,
@@ -58,7 +68,7 @@ native_operation!(crate::backend::db::postgres::oauth_apps::application,
     fn application(pool: &DbPool, client_id: &str) -> Result<Option<Application>>);
 native_operation!(crate::backend::db::postgres::oauth_apps::applications,
     crate::backend::db::sqlite::oauth_apps::applications,
-    fn applications(pool: &DbPool, actor: i64) -> Result<Vec<Application>>);
+    fn applications(pool: &DbPool, actor: impl Into<super::credentials::Actor>, offset: i64, limit: i64) -> Result<Option<Vec<ApplicationSummary>>>);
 native_operation!(crate::backend::db::postgres::oauth_apps::save_grant,
     crate::backend::db::sqlite::oauth_apps::save_grant,
     fn save_grant(pool: &DbPool, grant: &Grant) -> Result<()>);

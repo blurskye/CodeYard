@@ -56,6 +56,10 @@ pub enum Page {
     },
     OAuthApplications {
         applications: Vec<(String, String, String)>,
+        #[serde(default)]
+        previous: Option<String>,
+        #[serde(default)]
+        next: Option<String>,
     },
     GitHubApps {
         csrf_token: String,
@@ -209,8 +213,8 @@ pub fn render(page: Page) -> Element {
             csrf_token,
             credentials,
         } => crate::webui::pages::auth::oauth::register(&csrf_token, credentials),
-        Page::OAuthApplications { applications } => {
-            crate::webui::pages::auth::oauth::applications(applications)
+        Page::OAuthApplications { applications, previous, next } => {
+            crate::webui::pages::auth::oauth::applications(applications, previous, next)
         }
         Page::GitHubApps { csrf_token, model } => {
             crate::webui::pages::auth::apps::page(&csrf_token, model)

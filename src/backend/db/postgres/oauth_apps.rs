@@ -1,4 +1,4 @@
-use crate::backend::db::oauth_apps::{Application, Exchange, Grant, Token};
+use crate::backend::db::{credentials::Actor, oauth_apps::{Application, ApplicationSummary, Exchange, Grant, Token, APPLICATION_PAGE_SIZE, APPLICATIONS_SQL}};
 use crate::backend::identity::{oauth_apps, tokens::token_hash};
 use anyhow::Result;
 use chrono::Utc;
@@ -41,13 +41,17 @@ pub async fn application(pool: &PgPool, client_id: &str) -> Result<Option<Applic
     )
 }
 
-pub async fn applications(pool: &PgPool, actor: i64) -> Result<Vec<Application>> {
-    Ok(
-        sqlx::query_as("SELECT * FROM oauth_applications WHERE owner_id=$1 ORDER BY id")
-            .bind(actor)
-            .fetch_all(pool)
-            .await?,
-    )
+pub async fn applications(pool: &PgPool, actor: impl Into<Actor>, offset: i64, limit: i64) -> Result<Option<Vec<ApplicationSummary>>> {
+    let actor = actor.into();
+    let mut tx = pool.begin().await?;
+    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    let active: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE")
+        .bind(actor.user_id).fetch_optional(&mut *tx).await?;
+    if active.is_none() || !super::credentials::live(&mut tx, &actor, false).await? { return Ok(None); }
+    let rows = sqlx::query_as(APPLICATIONS_SQL).bind(actor.user_id)
+        .bind(limit.clamp(0, APPLICATION_PAGE_SIZE + 1)).bind(offset.max(0)).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Some(rows))
 }
 
 pub async fn save_grant(pool: &PgPool, grant: &Grant) -> Result<()> {
