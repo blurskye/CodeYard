@@ -407,10 +407,12 @@ pub async fn list_received_organization_invitations(
 /// organization ends once the account is a member.
 pub async fn accept_organization_invitation(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let sql = format!("SELECT i.* FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=?2 AND (?3 IS NULL OR i.id=?3) AND {LIVE} ORDER BY i.id LIMIT 1");
     let Some(invitation): Option<OrgInvitation> = sqlx::query_as(&sql)
@@ -431,6 +433,7 @@ pub async fn accept_organization_invitation(
     let Ok(role) = invitation.role.parse::<OrgRole>() else {
         return Ok(Denied);
     };
+    if !credential(&mut tx, &grant, org, "members").await? { return Ok(Denied); }
     if membership_role(&mut tx, org, actor).await?.is_some() {
         return Ok(Conflict);
     }

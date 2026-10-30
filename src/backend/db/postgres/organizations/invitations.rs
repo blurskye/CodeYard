@@ -397,10 +397,12 @@ pub async fn list_received_organization_invitations(
 /// organization ends once the account is a member.
 pub async fn accept_organization_invitation(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     // Hold the account lock before testing verified address ownership. Address removal and
@@ -431,6 +433,7 @@ pub async fn accept_organization_invitation(
     let Ok(role) = invitation.role.parse::<OrgRole>() else {
         return Ok(Denied);
     };
+    if !credential(&mut tx, &grant, org, "members").await? { return Ok(Denied); }
     if membership_role(&mut tx, org, actor).await?.is_some() {
         return Ok(Conflict);
     }
