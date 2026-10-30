@@ -131,6 +131,13 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::merged_a
     /// Whether a pull request stacked on `head_branch` was merged in the same merge commit.
     fn merged_above(pool: &DbPool, repo_id: i64, merge_sha: &str, head_branch: &str) -> Result<bool>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::records::merged_trunk,
+    crate::backend::db::sqlite::pull_requests::records::merged_trunk,
+    /// The base branch and base commit of the bottom layer merged in `merge_sha`: the branch the
+    /// merge commit landed on and its tip before the merge. A stack lands on its trunk, while
+    /// each upper layer keeps naming the layer below it.
+    fn merged_trunk(pool: &DbPool, repo_id: i64, merge_sha: &str) -> Result<Option<(String, String)>>);
+
 native_operation!(crate::backend::db::postgres::pull_requests::records::list_open_pull_requests_from_branches,
     crate::backend::db::sqlite::pull_requests::records::list_open_pull_requests_from_branches,
     fn list_open_pull_requests_from_branches(
@@ -262,6 +269,10 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::count_vi
 pub struct NewBase<'a> {
     pub branch: &'a str,
     pub sha: &'a str,
+    /// The server chose this base while reopening a stacked pull request whose parent merged.
+    /// It belongs to the reopen, so it needs no base-edit permission, and it is refused
+    /// without one.
+    pub reopen_retarget: bool,
 }
 
 #[derive(Default)]

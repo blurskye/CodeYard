@@ -92,6 +92,15 @@ pub async fn merged_above(
         .bind(repo_id).bind(merge_sha).bind(head_branch).fetch_one(pool).await?)
 }
 
+pub async fn merged_trunk(
+    pool: &PgPool,
+    repo_id: i64,
+    merge_sha: &str,
+) -> Result<Option<(String, String)>> {
+    Ok(sqlx::query_as("SELECT base_branch, base_sha FROM pull_requests p WHERE repo_id=$1 AND state='merged' AND merged AND merge_commit_sha=$2 AND NOT EXISTS(SELECT 1 FROM pull_requests q WHERE q.repo_id=$1 AND q.state='merged' AND q.merged AND q.merge_commit_sha=$2 AND q.id<>p.id AND q.head_repo_id=$1 AND q.head_branch=p.base_branch) ORDER BY id LIMIT 1")
+        .bind(repo_id).bind(merge_sha).fetch_optional(pool).await?)
+}
+
 /// Records a new head commit only while the open pull request still has the
 /// expected head. Base movement is independent, so one side cannot starve the other.
 pub async fn move_open_pull_request_head(
@@ -630,6 +639,11 @@ pub async fn update_pull_request(
     if !edit.has_exact_revision() {
         return Ok(None);
     }
+    if base.as_ref().is_some_and(|base| base.reopen_retarget)
+        && !(edit.expected_state == "closed" && edit.state == Some("open"))
+    {
+        return Ok(None);
+    }
     let mut tx = pool.begin().await?;
     let scope: Option<(i64, i64, Option<i64>)> =
         sqlx::query_as("SELECT repo_id,author_id,head_repo_id FROM pull_requests WHERE id=$1")
@@ -672,17 +686,18 @@ pub async fn update_pull_request(
     } else {
         None
     };
-    let policy_only = maintainer_can_modify.is_some()
-        && edit.title.is_none()
-        && edit.body.is_none()
-        && edit.state.is_none()
-        && base.is_none();
     let head_owner = head
         .as_ref()
         .is_some_and(|head| head.is_personal_owner(edit.actor_id));
-    let author_edit = author == edit.actor_id && base.is_none() && maintainer_can_modify.is_none();
+    let explicit_base = base.as_ref().is_some_and(|base| !base.reopen_retarget);
+    let ordinary = edit.title.is_some() || edit.body.is_some() || edit.state.is_some();
+    // Without write access the author keeps ordinary edits, close and reopen, and the
+    // maintainer policy; the personal fork owner keeps the policy; only writers move the base.
+    let contributor_edit = !explicit_base
+        && (author == edit.actor_id
+            || (head_owner && !ordinary && maintainer_can_modify.is_some()));
     if !authority
-        && (!((policy_only && (author == edit.actor_id || head_owner)) || author_edit)
+        && (!contributor_edit
             || !crate::backend::db::postgres::discussions::lock_contribution_authority(
                 &mut tx,
                 edit.actor_id,
