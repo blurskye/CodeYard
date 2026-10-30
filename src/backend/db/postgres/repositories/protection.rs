@@ -13,6 +13,7 @@ pub async fn read_protection_snapshot(
 ) -> Result<crate::backend::db::repositories::protection::ProtectionSnapshot> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
     anyhow::ensure!(super::super::discussions::lock_settings_read_authority(&mut tx, actor.user_id(), repo_id, true).await?, ProtectionWriteRefusal::Denied);
     if let Some(credential) = actor.credential() {
         super::super::users::transitions::require_read_account(&mut tx, actor.user_id(), &credential).await?;
