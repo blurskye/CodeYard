@@ -828,7 +828,7 @@ pub(crate) async fn remove_deleted_repository(
 pub async fn transfer(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repo_id: i64,
     new_owner: &str,
 ) -> Result<Repository, StorageError> {

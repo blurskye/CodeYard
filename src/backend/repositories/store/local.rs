@@ -2908,9 +2908,10 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         new_owner: &str,
     ) -> Result<db::models::Repository, RepoError> {
+        let actor = authority.user_id();
         let (store, pool, new_owner) = (self.clone(), pool.clone(), new_owner.to_owned());
         tokio::spawn(async move {
             let _lock = git::locks::lock(store.path()).await;
@@ -2926,6 +2927,7 @@ impl LocalStore {
             if !repository_matches_path(&repository, store.path(), store.node_id) {
                 return Err(RepoError::write_denied());
             }
+            access::credential_user(&pool, &authority, true).await.map_err(RepoError::from)?;
             let (target, owner) =
                 crate::backend::repositories::lifecycle::transfer_target(&pool, &new_owner)
                     .await
@@ -2939,7 +2941,7 @@ impl LocalStore {
             )
             .await?;
             db::repositories::records::transfer_repository_checked(
-                &pool, actor, repo_id, target, &owner, &repository.name,
+                &pool, authority, repo_id, target, &owner, &repository.name,
             )
             .await
             .map_err(|error| {

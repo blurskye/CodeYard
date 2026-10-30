@@ -226,7 +226,10 @@ pub async fn transfer_repo(
     let updated = lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
-        user.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: user.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         repository.id,
         &req.new_owner,
     )
@@ -1911,7 +1914,7 @@ async fn mutate(
             let updated = lifecycle::transfer(
                 pool,
                 ctx.state.cluster.as_ref(),
-                actor.id,
+                authority(),
                 repository.id,
                 &field(form, "new_owner"),
             )

@@ -1552,9 +1552,10 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         new_owner: &str,
     ) -> Result<db::models::Repository, RepoError> {
+        let actor = actor.into();
         match &self.0 {
             Backend::Local(local) => {
                 local
@@ -1564,9 +1565,9 @@ impl RepoStore {
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor,
+                        actor.user_id(),
                         Operation::TransferRepository {
-                            new_owner: new_owner.into(),
+                            new_owner: rpc::wire::PublicationText::retain(new_owner, actor),
                         },
                         b"",
                     )
