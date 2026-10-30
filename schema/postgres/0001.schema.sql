@@ -795,7 +795,7 @@ CREATE TABLE IF NOT EXISTS follows (
     PRIMARY KEY (follower_id, following_id),
     CHECK (follower_id != following_id)
 );
-CREATE INDEX IF NOT EXISTS idx_follows_following_id ON follows(following_id);
+CREATE INDEX IF NOT EXISTS idx_follows_following_id ON follows(following_id,follower_id);
 
 --------------------------------------------------------------------------------
 -- PART 17: SECRETS (encrypted)

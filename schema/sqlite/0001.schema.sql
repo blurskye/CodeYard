@@ -1014,7 +1014,7 @@ CREATE INDEX idx_stars_repo_id ON stars(repo_id);
 
 CREATE INDEX idx_watches_repo_id ON watches(repo_id);
 
-CREATE INDEX idx_follows_following_id ON follows(following_id);
+CREATE INDEX idx_follows_following_id ON follows(following_id,follower_id);
 
 CREATE INDEX idx_audit_log_org_id ON audit_log(org_id);
 
