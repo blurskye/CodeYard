@@ -353,9 +353,10 @@ mode, `act`, concurrency and run timeout are worker settings.
 
 Failed claims retry with backoff. If the core disappears, an executing workflow
 finishes or times out; logs that cannot be delivered are dropped. Core nodes fail
-runs that stop heartbeating. SIGTERM gives act a bounded graceful stop, force-stops
-remaining local processes, removes only that run's labeled Podman containers, and
-then records the result. Revoking the worker refuses its next request.
+runs that stop heartbeating. Cancelling a run sends act SIGINT, as Ctrl+C would, so the
+steps that clean up still run, for up to a minute before SIGTERM and SIGKILL. Stopping
+the worker with SIGTERM cancels its runs the same way within its 30-second shutdown,
+force-stops remaining local processes, removes only that run's labeled Podman containers, and then records the result. Revoking the worker refuses its next request.
 
 The Podman trust warning still applies: pairing does not sandbox workflows.
 

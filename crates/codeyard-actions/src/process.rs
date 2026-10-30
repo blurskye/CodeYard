@@ -8,9 +8,13 @@ pub const OMITTED_LINE: &str = "Warning: An oversized output line was omitted.";
 pub const KILL_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[cfg(unix)]
+const INT: i32 = libc::SIGINT;
+#[cfg(unix)]
 const TERM: i32 = libc::SIGTERM;
 #[cfg(unix)]
 const KILL: i32 = libc::SIGKILL;
+#[cfg(not(unix))]
+const INT: i32 = 0;
 #[cfg(not(unix))]
 const TERM: i32 = 0;
 #[cfg(not(unix))]
@@ -31,6 +35,15 @@ impl ProcessGroup {
     pub fn terminate(&self) -> std::io::Result<()> {
         if let Some(id) = self.id { signal_group(id, TERM)?; }
         Ok(())
+    }
+
+    /// Sends SIGINT, as a terminal's Ctrl+C does, and waits up to `grace` for the group to end.
+    /// True when it ended.
+    pub async fn interrupt(&mut self, child: &mut tokio::process::Child, grace: std::time::Duration) -> std::io::Result<bool> {
+        let Some(id) = self.id else { return Ok(true); };
+        signal_group(id, INT)?;
+        if wait_for_group(child, id, grace).await? { self.disarm(); return Ok(true); }
+        Ok(false)
     }
 
     pub async fn stop(&mut self, child: &mut tokio::process::Child) -> std::io::Result<()> {

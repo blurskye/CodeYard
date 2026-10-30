@@ -621,7 +621,13 @@ async fn run_workflows(
                     None => std::future::pending().await,
                 }
             };
-            let grace = if native { codeyard_actions::runner::SHUTDOWN_GRACE } else { Duration::from_secs(3) };
+            let grace = if native {
+                process::Grace { interrupt: Duration::ZERO, terminate: codeyard_actions::runner::SHUTDOWN_GRACE }
+            } else {
+                // act cancels its job on SIGINT and runs the steps that clean up after it, as the
+                // native runner does on SIGTERM. SIGTERM makes act stop at once.
+                process::Grace { interrupt: codeyard_actions::runner::CLEANUP_GRACE, terminate: Duration::from_secs(3) }
+            };
             let output = process::run_with_grace(command, remaining, grace, scope, force.clone(), cancel.clone(), |line, stderr| {
                 let completed = if native && !claim.github_tokens.completion_secret.is_empty() {
                     line.strip_prefix(&completion_prefix)

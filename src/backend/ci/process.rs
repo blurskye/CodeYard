@@ -33,13 +33,15 @@ pub(super) fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
-    // A server started with SIGTERM ignored or blocked (nohup, some supervisors) would otherwise
-    // hand that to every job, and cancelling a job could only end in SIGKILL.
+    // A server started with SIGTERM or SIGINT ignored or blocked (nohup, a script's background
+    // job, some supervisors) would otherwise hand that to every job, and cancelling a job could
+    // only end in SIGKILL.
     // SAFETY: `signal`, `sigemptyset` and `sigprocmask` are async-signal-safe, which is all
     // `pre_exec` allows.
     unsafe {
         command.pre_exec(|| {
             libc::signal(libc::SIGTERM, libc::SIG_DFL);
+            libc::signal(libc::SIGINT, libc::SIG_DFL);
             let mut none: libc::sigset_t = std::mem::zeroed();
             libc::sigemptyset(&mut none);
             libc::sigprocmask(libc::SIG_SETMASK, &none, std::ptr::null_mut());
@@ -58,8 +60,17 @@ pub(super) enum Stopped {
     TimedOut,
 }
 
+/// How a command that is cancelled or runs out of time is stopped. It first gets SIGINT and
+/// `interrupt` to finish, which act takes as a request to cancel its job and still run the steps
+/// that clean up; zero skips this. Then it gets SIGTERM and `terminate`, then SIGKILL.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Grace {
+    pub(super) interrupt: Duration,
+    pub(super) terminate: Duration,
+}
+
 pub(super) async fn run_with_grace<F, Fut>(
-    mut command: Command, timeout: Duration, grace: Duration,
+    mut command: Command, timeout: Duration, grace: Grace,
     scope: Option<&codeyard_actions::process::Cgroup>, force: watch::Receiver<bool>,
     cancel: watch::Receiver<bool>, on_line: F,
 ) -> Result<ExitStatus>
@@ -74,7 +85,7 @@ where
         return Err(Stopped::TimedOut.into());
     }
     let mut child = command.spawn()?;
-    let mut group = ProcessGroup::new(child.id(), grace);
+    let mut group = ProcessGroup::new(child.id(), grace.terminate);
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     // Output is read until the group is gone, also while a cancelled or timed-out command shuts
@@ -122,9 +133,17 @@ where
         _ = cancelled(force.clone()) => Err(Stopped::Cancelled.into()),
         Some(error) = error_rx.recv() => Err(error),
     };
+    let interrupt = result.is_err() && !grace.interrupt.is_zero();
     let stopping = async {
+        if interrupt {
+            // A failed signal leaves the stop below to end the command.
+            tokio::select! {
+                _ = group.interrupt(&mut child, grace.interrupt) => {}
+                _ = cancelled(force.clone()) => {}
+            }
+        }
         let graceful = async {
-            if let Some(scope) = scope { scope.stop(&mut child, &mut group, grace).await }
+            if let Some(scope) = scope { scope.stop(&mut child, &mut group, grace.terminate).await }
             else { group.stop(&mut child).await.map_err(anyhow::Error::from) }
         };
         tokio::select! {
@@ -188,8 +207,8 @@ pub(super) mod tests {
 
     const TERM_GRACE: Duration = Duration::from_secs(3);
 
-    /// Runs `command` with a three-second stop grace and no forced stop, passing each output
-    /// line to `on_line(line, is_stderr)`.
+    /// Runs `command` with a three-second stop grace, no interrupt and no forced stop, passing
+    /// each output line to `on_line(line, is_stderr)`.
     pub(in crate::backend::ci) async fn run<F, Fut>(
         command: Command,
         timeout: Duration,
@@ -201,7 +220,8 @@ pub(super) mod tests {
         Fut: Future<Output = Result<()>>,
     {
         let (_tx, force) = watch::channel(false);
-        run_with_grace(command, timeout, TERM_GRACE, None, force, cancel, on_line).await
+        let grace = Grace { interrupt: Duration::ZERO, terminate: TERM_GRACE };
+        run_with_grace(command, timeout, grace, None, force, cancel, on_line).await
     }
 
     #[tokio::test]
@@ -495,6 +515,45 @@ pub(super) mod tests {
         // A command that prints is not killed by a closed pipe before its handler runs.
         assert!(term_marker.exists());
         assert!(lines.lock().unwrap().iter().any(|line| line == "goodbye"));
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_command_is_interrupted_and_cleans_up_before_it_is_terminated() {
+        // As act does, the command cancels its work on SIGINT and still runs its cleanup.
+        let directory = tempfile::tempdir().unwrap();
+        let ready = directory.path().join("ready");
+        let mut child = command("/bin/sh");
+        child
+            .args([
+                "-c",
+                "trap 'echo cleaned up; exit 0' INT; trap 'echo terminated; exit 1' TERM; : > \"$1\"; while :; do sleep .1; done",
+                "sh",
+            ])
+            .arg(&ready);
+        let (tx, cancel) = watch::channel(false);
+        let (_force_tx, force) = watch::channel(false);
+        let grace = Grace { interrupt: Duration::from_secs(20), terminate: TERM_GRACE };
+        let lines = std::sync::Mutex::new(Vec::new());
+        let (result, cancelled_at) = tokio::join!(
+            run_with_grace(child, Duration::from_secs(60), grace, None, force, cancel, |line, _| {
+                lines.lock().unwrap().push(line);
+                async { Ok(()) }
+            }),
+            async {
+                while !ready.exists() {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                let cancelled_at = Instant::now();
+                tx.send(true).unwrap();
+                cancelled_at
+            }
+        );
+        assert!(matches!(
+            result.unwrap_err().downcast_ref(),
+            Some(Stopped::Cancelled)
+        ));
+        assert!(cancelled_at.elapsed() < Duration::from_secs(10));
+        assert_eq!(*lines.lock().unwrap(), ["cleaned up"]);
     }
 
     #[tokio::test]
