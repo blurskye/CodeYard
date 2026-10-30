@@ -85,14 +85,26 @@ impl<'a> ActionReference<'a> {
     }
 }
 
-async fn git(directory: &Path, args: &[&str]) -> Result<()> {
+async fn git(directory: &Path, args: &[&str], credential: Option<(&str, &str)>) -> Result<()> {
     let mut command = Command::new("git");
     command
         .arg("-C")
         .arg(directory)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_COUNT", "0")
+        .env_remove("GIT_CONFIG_PARAMETERS")
         .kill_on_drop(true);
+    if let Some((origin, token)) = credential {
+        use base64::Engine;
+        let authorization = base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{token}"));
+        command.env("GIT_CONFIG_COUNT", "2")
+            .env("GIT_CONFIG_KEY_0", format!("http.{}/.extraheader", origin.trim_end_matches('/')))
+            .env("GIT_CONFIG_VALUE_0", format!("Authorization: Basic {authorization}"))
+            .env("GIT_CONFIG_KEY_1", "http.followRedirects").env("GIT_CONFIG_VALUE_1", "false");
+    }
     let output = process::output(&mut command, Duration::from_secs(120))
         .await
         .context("Fetching action failed")?;
@@ -106,6 +118,41 @@ async fn git(directory: &Path, args: &[&str]) -> Result<()> {
 }
 
 impl Job {
+    async fn fetch_action_repository(&self, reference: &str, components: &[&str], version: &str, source: &url::Url, token: Option<&str>) -> Result<(PathBuf, String)> {
+        // The source URL participates in immutable cache identity, including forge base paths.
+        let encoded = format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(format!("{source}\0{version}")));
+        let directory = self.cache.join("actions").join(components[0]).join(components[1]).join(encoded);
+        let parent = directory.parent().context("Invalid action cache directory")?;
+        std::fs::create_dir_all(parent)?;
+        type Selection = Arc<tokio::sync::Mutex<Option<String>>>;
+        static FETCHED: OnceLock<tokio::sync::Mutex<BTreeMap<PathBuf, Selection>>> = OnceLock::new();
+        let selection = FETCHED.get_or_init(|| tokio::sync::Mutex::new(Default::default()))
+            .lock().await.entry(directory.clone()).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None))).clone();
+        let mut selected = selection.lock().await;
+        let _lock = cache_lock(directory.with_extension("lock")).await?;
+        if let Some(token) = token { self.log.masker.add(&format!("x-access-token:{token}")); }
+        let credential = token.map(|token| (source.as_str(), token));
+        if selected.is_none() && !directory.join(".git").exists() {
+            ensure!(!self.options.action_offline_mode, "Action '{reference}' is not available in the offline cache");
+            let staging = tempfile::Builder::new().prefix("download-").tempdir_in(parent)?;
+            git(staging.path(), &["init", "--quiet"], None).await?;
+            let mut url = source.clone();
+            url.set_path(&format!("{}/{}/{}.git", source.path().trim_end_matches('/'), components[0], components[1]));
+            git(staging.path(), &["remote", "add", "origin", url.as_str()], None).await?;
+            git(staging.path(), &["fetch", "--depth=1", "origin", version], credential).await?;
+            git(staging.path(), &["checkout", "--force", "--detach", "FETCH_HEAD"], None).await?;
+            std::fs::rename(staging.path(), &directory)?;
+        } else if selected.is_none() && !self.options.action_offline_mode {
+            git(&directory, &["fetch", "--depth=1", "origin", version], credential).await?;
+        }
+        if selected.is_none() {
+            let commit = git_value(&directory, &["rev-parse", "FETCH_HEAD"]).await;
+            ensure!(!commit.is_empty(), "Cached action '{reference}' has no fetched revision");
+            *selected = Some(commit);
+        }
+        Ok((directory, selected.as_ref().expect("selected revision").clone()))
+    }
+
     async fn action_directory(&self, reference: &str) -> Result<PathBuf> {
         if reference.starts_with("./") {
             let directory = self
@@ -120,67 +167,38 @@ impl Job {
             return Ok(directory);
         }
         let ActionReference { components, version } = ActionReference::parse(reference)?;
-        // A digest keeps the cache name within filename limits however long the ref is.
-        let encoded = format!(
-            "{:x}",
-            <sha2::Sha256 as sha2::Digest>::digest(version.as_bytes())
-        );
-        let directory = self
-            .cache
-            .join("actions")
-            .join(components[0])
-            .join(components[1])
-            .join(encoded);
-        let parent = directory
-            .parent()
-            .context("Invalid action cache directory")?;
-        std::fs::create_dir_all(parent)?;
-        type Selection = Arc<tokio::sync::Mutex<Option<String>>>;
-        static FETCHED: OnceLock<tokio::sync::Mutex<BTreeMap<PathBuf, Selection>>> = OnceLock::new();
-        let selection = FETCHED.get_or_init(|| tokio::sync::Mutex::new(Default::default()))
-            .lock().await.entry(directory.clone()).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None))).clone();
-        let mut selected = selection.lock().await;
-        let lock = cache_lock(directory.with_extension("lock")).await?;
-        if selected.is_none() && !directory.join(".git").exists() {
-            if self.options.action_offline_mode {
-                bail!("Action '{reference}' is not available in the offline cache");
+        let origin = self.contexts.values.get("github").and_then(|github| match github {
+            Value::Object(github) => github.get("server_url").map(Value::to_text), _ => None,
+        }).filter(|origin| !origin.is_empty()).unwrap_or_else(|| "https://github.com".into());
+        let origin = url::Url::parse(&origin).context("Invalid action forge URL")?;
+        ensure!(matches!(origin.scheme(), "http" | "https") && origin.host_str().is_some()
+            && origin.username().is_empty() && origin.password().is_none() && origin.query().is_none() && origin.fragment().is_none(), "Invalid action forge URL");
+        let mut sources = vec![origin.clone()];
+        if self.options.github_action_fallback && origin.as_str().trim_end_matches('/') != "https://github.com" {
+            sources.push(url::Url::parse("https://github.com")?);
+        }
+        let token = self.contexts.values.get("github").and_then(|github| match github {
+            Value::Object(github) => github.get("token").map(Value::to_text), _ => None,
+        }).filter(|token| !token.is_empty());
+        let mut resolved = None;
+        let mut last = None;
+        for (index, source) in sources.iter().enumerate() {
+            if index > 0 { self.log.line("Warning: Using explicitly permitted GitHub action fallback"); }
+            match self.fetch_action_repository(reference, &components, version, source,
+                (source == &origin).then_some(token.as_deref()).flatten()).await {
+                Ok(selection) => { resolved = Some(selection); break; }
+                Err(error) => last = Some(error),
             }
-            let parent = directory
-                .parent()
-                .context("Invalid action cache directory")?;
-            std::fs::create_dir_all(parent)?;
-            let staging = tempfile::Builder::new()
-                .prefix("download-")
-                .tempdir_in(parent)?;
-            git(staging.path(), &["init", "--quiet"]).await?;
-            let url = format!("https://github.com/{}/{}.git", components[0], components[1]);
-            git(staging.path(), &["remote", "add", "origin", &url]).await?;
-            git(staging.path(), &["fetch", "--depth=1", "origin", version]).await?;
-            git(
-                staging.path(),
-                &["checkout", "--force", "--detach", "FETCH_HEAD"],
-            )
-            .await?;
-            std::fs::rename(staging.path(), &directory)?;
-        } else if selected.is_none() && !self.options.action_offline_mode {
-            git(&directory, &["fetch", "--depth=1", "origin", version]).await?;
         }
-        if selected.is_none() {
-            let commit = git_value(&directory, &["rev-parse", "FETCH_HEAD"]).await;
-            ensure!(!commit.is_empty(), "Cached action '{reference}' has no fetched revision");
-            *selected = Some(commit);
-        }
-        let commit = selected.as_ref().expect("selected revision").clone();
-        drop(selected);
-        drop(lock);
+        let (directory, commit) = resolved.ok_or_else(|| last.unwrap_or_else(|| anyhow::anyhow!("Action source is unavailable")))?;
         let checkout_key = format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(format!("{}\0{commit}", directory.display())));
         let checkout = self.temp.path().join(format!("action-{checkout_key}"));
         if let Ok(info) = std::fs::symlink_metadata(&checkout) {
             ensure!(info.is_dir(), "Action checkout is not a directory");
         } else {
             let staging = crate::fs::private_tempdir("action-", Some(self.temp.path()))?;
-            git(staging.path(), &["clone", "--quiet", "--shared", "--no-checkout", &directory.display().to_string(), "."]).await?;
-            git(staging.path(), &["checkout", "--quiet", "--detach", &commit]).await?;
+            git(staging.path(), &["clone", "--quiet", "--shared", "--no-checkout", &directory.display().to_string(), "."], None).await?;
+            git(staging.path(), &["checkout", "--quiet", "--detach", &commit], None).await?;
             std::fs::rename(staging.path(), &checkout)?;
         }
         let action = components[2..]

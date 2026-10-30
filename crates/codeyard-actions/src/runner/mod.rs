@@ -84,6 +84,9 @@ pub struct Options {
     pub no_cache_server: bool,
     #[arg(long)]
     pub action_offline_mode: bool,
+    /// Explicitly allow GitHub when the configured forge cannot supply a repository action.
+    #[arg(long)]
+    pub github_action_fallback: bool,
     #[arg(long, hide = true)]
     pub deny_docker: bool,
     #[arg(skip)]

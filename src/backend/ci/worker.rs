@@ -965,6 +965,7 @@ fn act_command(
     if let Some(reference) = github_ref(claim) {
         command.arg("--env").arg(format!("GITHUB_REF={reference}"));
     }
+    if native && config.github_action_fallback { command.arg("--github-action-fallback"); }
     match config.mode {
         CiExecutionMode::Local => {
             command.env("CODEYARD_DENY_DOCKER", "1");

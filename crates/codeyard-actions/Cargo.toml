@@ -24,6 +24,7 @@ libc = "0.2"
 aho-corasick = "=1.1.4"
 base64 = "=0.22.1"
 dotenvy = "=0.15.7"
+url = "2"
 sha2.workspace = true
 regex = "=1.12.2"
 fancy-regex = "=0.16.2"

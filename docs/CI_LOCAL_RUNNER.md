@@ -73,6 +73,15 @@ permissions and logs a warning when this restricts a job. Credentials expire one
 the run or in-house job ends. REST, GraphQL, and smart HTTP Git enforce the same repository
 and resource permissions; a bot's grants from other runs do not widen a job's credential.
 
+Native `owner/repository[/path]@ref` actions resolve against `GITHUB_SERVER_URL`
+(the Codeyard forge for managed runs), with credentials scoped to that origin.
+Their cache identity includes the source URL. GitHub fallback is disabled by default;
+set `CI_GITHUB_ACTION_FALLBACK=true`, or pass `--github-action-fallback` to the standalone
+runner, to explicitly permit github.com after a forge fetch fails. This includes missing
+or inaccessible repositories and revisions: enable fallback only when that naming policy
+is intended. Forge credentials are never sent to the fallback host. Private forge actions
+require a credential with Git read authority for their repository.
+
 ## Workflow run history
 
 The GitHub REST API exposes repository/workflow run lists, run documents, and individual
