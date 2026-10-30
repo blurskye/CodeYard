@@ -278,6 +278,8 @@ native_operation!(super::postgres::code_scanning::alert, super::sqlite::code_sca
     fn alert(pool: &DbPool, repo: i64, number: i64) -> Result<Option<Alert>>);
 native_operation!(super::postgres::code_scanning::instance, super::sqlite::code_scanning::instance,
     fn instance(pool: &DbPool, alert: i64, reference: Option<&str>) -> Result<Option<Instance>>);
+native_operation!(super::postgres::code_scanning::instance_in_category, super::sqlite::code_scanning::instance_in_category,
+    fn instance_in_category(pool: &DbPool, alert: i64, reference: Option<&str>, category: Option<&str>) -> Result<Option<Instance>>);
 native_operation!(super::postgres::code_scanning::instances, super::sqlite::code_scanning::instances,
     fn instances(pool: &DbPool, alert: i64, reference: Option<&str>, offset: i64, limit: i64) -> Result<Vec<Instance>>);
 native_operation!(super::postgres::code_scanning::dismiss, super::sqlite::code_scanning::dismiss,

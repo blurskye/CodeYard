@@ -129,11 +129,12 @@ async fn model(
         && super::paging::has_next_page(page_number, rows.len(), limit, super::paging::MAX_PAGE);
     let mut alerts = Vec::new();
     let mut selected = None;
+    let category = ctx.query.get("category").map(String::as_str);
     for row in rows.into_iter().take(limit) {
         let mut instance =
-            db::code_scanning::instance(&ctx.state.pool, row.id, Some(&reference)).await?;
+            db::code_scanning::instance_in_category(&ctx.state.pool, row.id, Some(&reference), category).await?;
         if instance.is_none() && number.is_some() && explicit.is_none() {
-            instance = db::code_scanning::instance(&ctx.state.pool, row.id, None).await?;
+            instance = db::code_scanning::instance_in_category(&ctx.state.pool, row.id, None, category).await?;
         }
         let Some(instance) = instance else {
             continue;

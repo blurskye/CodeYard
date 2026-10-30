@@ -154,7 +154,11 @@ pub async fn instance(
     alert: i64,
     reference: Option<&str>,
 ) -> Result<Option<Instance>> {
-    Ok(sqlx::query_as("SELECT * FROM code_scanning_instances WHERE alert_id=$1 AND (CAST($2 AS TEXT) IS NULL OR ref_name=$2) ORDER BY CASE WHEN state='open' THEN 0 ELSE 1 END,upload_sequence DESC,ref_name,category LIMIT 1").bind(alert).bind(reference).fetch_optional(pool).await?)
+    instance_in_category(pool, alert, reference, None).await
+}
+
+pub async fn instance_in_category(pool: &PgPool, alert: i64, reference: Option<&str>, category: Option<&str>) -> Result<Option<Instance>> {
+    Ok(sqlx::query_as("SELECT * FROM code_scanning_instances WHERE alert_id=$1 AND (CAST($2 AS TEXT) IS NULL OR ref_name=$2) AND (CAST($3 AS TEXT) IS NULL OR category=$3) ORDER BY CASE WHEN state='open' THEN 0 ELSE 1 END,upload_sequence DESC,ref_name,category LIMIT 1").bind(alert).bind(reference).bind(category).fetch_optional(pool).await?)
 }
 
 pub async fn instances(
