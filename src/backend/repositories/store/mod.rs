@@ -1302,6 +1302,7 @@ impl RepoStore {
                     .call(
                         Operation::CommitStatistics {
                             branch: branch.into(),
+                            raw_json: true,
                         },
                         b"",
                     )
