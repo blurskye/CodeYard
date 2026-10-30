@@ -201,14 +201,15 @@ pub async fn remove_old_email(pool: &SqlitePool, max_attempts: i32, days: i64) -
     .rows_affected())
 }
 
-pub async fn get_email_notifications(pool: &SqlitePool, user_id: i64) -> Result<bool> {
-    Ok(
-        sqlx::query_scalar("SELECT email_notifications FROM users WHERE id = ?1")
-            .bind(user_id)
-            .fetch_optional(pool)
-            .await?
-            .unwrap_or(true),
-    )
+pub async fn get_email_notifications(pool: &SqlitePool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::users::transitions::require_account(&mut tx, user_id, credential).await?;
+    let enabled: bool = sqlx::query_scalar("SELECT email_notifications FROM users WHERE id = ?1")
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(enabled)
 }
 
 pub async fn set_email_notifications(pool: &SqlitePool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, enabled: bool) -> Result<()> {

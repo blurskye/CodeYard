@@ -1186,7 +1186,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(public["public_repos"], 0);
     assert!(public.get("total_private_repos").is_none());
-    let credentials = db::users::tokens::list_tokens(f.pool(), alice, 0)
+    let credentials = db::users::tokens::list_tokens(f.pool(), alice, &db::users::accounts::AccountCredential::Trusted, 0)
         .await
         .unwrap();
     let read_token = credentials

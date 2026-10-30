@@ -96,7 +96,8 @@ native_operation!(crate::backend::db::postgres::email::remove_old_email,
 
 native_operation!(crate::backend::db::postgres::email::get_email_notifications,
     crate::backend::db::sqlite::email::get_email_notifications,
-    fn get_email_notifications(pool: &DbPool, user_id: i64) -> Result<bool>);
+    /// The account's own setting, read while `credential` is still live.
+    fn get_email_notifications(pool: &DbPool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::email::set_email_notifications,
     crate::backend::db::sqlite::email::set_email_notifications,

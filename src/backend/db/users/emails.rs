@@ -22,6 +22,10 @@ pub enum EmailRefusal {
 native_operation!(crate::backend::db::postgres::users::emails::list_emails,
     crate::backend::db::sqlite::users::emails::list_emails,
     fn list_emails(pool: &DbPool, user: i64) -> Result<Vec<EmailAddress>>);
+native_operation!(crate::backend::db::postgres::users::emails::list_account_emails,
+    crate::backend::db::sqlite::users::emails::list_account_emails,
+    /// The account's own settings listing, read while `credential` is still live.
+    fn list_account_emails(pool: &DbPool, user: i64, credential: &AccountCredential<'_>) -> Result<Vec<EmailAddress>>);
 native_operation!(crate::backend::db::postgres::users::emails::change_emails,
     crate::backend::db::sqlite::users::emails::change_emails,
     fn change_emails(pool: &DbPool, user: i64, credential: &AccountCredential<'_>, emails: &[String], add: bool) -> Result<()>);

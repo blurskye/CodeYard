@@ -1323,7 +1323,7 @@ async fn token_insert_waiting_behind_password_revocation_is_refused() {
         racing.await.unwrap(),
         Err(identity::tokens::TokenError::Denied)
     ));
-    assert!(db::users::tokens::list_tokens(&fixture.pool, user.id, 0)
+    assert!(db::users::tokens::list_tokens(&fixture.pool, user.id, &db::users::accounts::AccountCredential::Trusted, 0)
         .await
         .unwrap()
         .is_empty());

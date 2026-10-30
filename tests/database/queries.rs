@@ -982,7 +982,7 @@ async fn token_session_revocation_contract(pool: &DbPool) {
         Err(TokenError::Denied)
     ));
     assert!(
-        codeyard::backend::db::users::tokens::list_tokens(pool, user.id, 0)
+        codeyard::backend::db::users::tokens::list_tokens(pool, user.id, &codeyard::backend::db::users::accounts::AccountCredential::Trusted, 0)
             .await
             .unwrap()
             .is_empty()

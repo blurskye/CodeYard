@@ -9,10 +9,15 @@ use sqlx::PgPool;
 pub async fn list_signing_key_summaries(
     pool: &PgPool,
     user: i64,
+    credential: &AccountCredential<'_>,
     after: i64,
 ) -> Result<Vec<crate::backend::db::users::ssh_keys::SshKeySummary>> {
-    Ok(sqlx::query_as("SELECT id,title AS name,fingerprint,split_part(key,' ',1) AS key_type,created_at FROM ssh_signing_keys WHERE user_id=$1 AND id>$2 ORDER BY id LIMIT 100")
-        .bind(user).bind(after.max(0)).fetch_all(pool).await?)
+    let mut tx = pool.begin().await?;
+    super::transitions::require_account(&mut tx, user, credential).await?;
+    let keys = sqlx::query_as("SELECT id,title AS name,fingerprint,split_part(key,' ',1) AS key_type,created_at FROM ssh_signing_keys WHERE user_id=$1 AND id>$2 ORDER BY id LIMIT 100")
+        .bind(user).bind(after.max(0)).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(keys)
 }
 
 pub async fn find_signing_key(pool: &PgPool, fingerprint: &str) -> Result<Option<SigningKeyOwner>> {

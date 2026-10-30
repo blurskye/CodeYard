@@ -45,10 +45,15 @@ pub async fn create_token(
 pub async fn list_tokens(
     pool: &PgPool,
     user_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     before: i64,
 ) -> Result<Vec<PersonalAccessToken>> {
-    Ok(sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at,last_used_at,last_used_ip FROM personal_access_tokens WHERE user_id=$1 AND ($2<=0 OR id<$2) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens f WHERE f.token_id=personal_access_tokens.id) ORDER BY id DESC LIMIT 100")
-        .bind(user_id).bind(before).fetch_all(pool).await?)
+    let mut tx = pool.begin().await?;
+    super::transitions::require_account(&mut tx, user_id, credential).await?;
+    let tokens = sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at,last_used_at,last_used_ip FROM personal_access_tokens WHERE user_id=$1 AND ($2<=0 OR id<$2) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens f WHERE f.token_id=personal_access_tokens.id) ORDER BY id DESC LIMIT 100")
+        .bind(user_id).bind(before).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(tokens)
 }
 
 pub async fn delete_token(

@@ -258,13 +258,13 @@ mod tests {
             None
         );
 
-        assert!(db::email::get_email_notifications(&f.pool, f.admin)
+        assert!(db::email::get_email_notifications(&f.pool, f.admin, &db::users::accounts::AccountCredential::Session("live"))
             .await
             .unwrap());
         db::email::set_email_notifications(&f.pool, f.admin, &db::users::accounts::AccountCredential::Session("live"), false)
             .await
             .unwrap();
-        assert!(!db::email::get_email_notifications(&f.pool, f.admin)
+        assert!(!db::email::get_email_notifications(&f.pool, f.admin, &db::users::accounts::AccountCredential::Session("live"))
             .await
             .unwrap());
         assert_eq!(
