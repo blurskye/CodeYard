@@ -233,7 +233,7 @@ impl LocalStore {
             )
             .await?;
         self.upstream_authority(pool, repo, actor, source).await?;
-        let grant = self.check_publication_grant(
+        self.check_publication_grant(
             pool,
             repo,
             actor,
@@ -251,7 +251,6 @@ impl LocalStore {
             ))
             .await
             .map_err(RepoError::from)?;
-        drop(grant);
         let followup = self
             .after_ref_change(
                 pool,

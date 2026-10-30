@@ -118,57 +118,72 @@ pub struct RelationCounts {
     pub total_blocked_by: i64,
     pub total_blocking: i64,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Order {
     Position,
     CreatedAt,
     DependencyAddedAt,
 }
-
+/// One page of the issues related to `root` that `viewer` may read, optionally limited to some
+/// repositories.
+#[derive(Clone, Copy)]
 pub struct Window<'a> {
-    pub viewer: i64,
+    pub viewer: Option<i64>,
     pub root: i64,
     pub kind: Kind,
-    pub credential: &'a super::repositories::access::ReadFilter,
+    pub repositories: Option<&'a [i64]>,
     pub order: Order,
     pub descending: bool,
     pub offset: i64,
     pub limit: i64,
-    pub count: bool,
 }
-
-pub struct RelationPage {
-    pub total: Option<i64>,
-    /// Lightweight issue identities, not titles or bodies.
-    pub issues: Vec<(i64, i64)>,
+/// The related issues of `$2` that viewer `$1` may read. `$3` is the edge kind, `$4` the CI bot
+/// name, and `repositories` may refer to `$5`.
+pub(crate) fn related_sql(kind: Kind, readable: &str, repositories: &str) -> String {
+    let (target, source) = kind.selection();
+    format!("FROM issue_relations e JOIN issues i ON i.id={target} JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1 LEFT JOIN users owners ON r.owner_kind='user' AND owners.id=r.owner_user_id LEFT JOIN organizations orgs ON r.owner_kind='org' AND orgs.id=r.owner_org_id WHERE {source}=$2 AND e.kind=$3 AND {readable} AND ({repositories}) AND (COALESCE(u.username,'')<>$4 OR i.repo_id=(SELECT repo_id FROM issues WHERE id=$2))")
 }
-
-pub(crate) fn window_sql(window: &Window<'_>, readable: &str, count: bool) -> String {
-    let (target, source) = window.kind.selection();
-    let select = if count { "COUNT(*)" } else { "i.id,i.repo_id" };
-    let credential = window.credential.condition();
-    let direction = if window.descending { "DESC" } else { "ASC" };
-    let order = match window.order {
+/// The page query: `$6` is the limit and `$7` the offset. Issue IDs break ties, so offsets are
+/// stable.
+pub(crate) fn window_sql(page: &Window<'_>, readable: &str, repositories: &str) -> String {
+    let direction = if page.descending { "DESC" } else { "ASC" };
+    let order = match page.order {
         Order::Position => "e.position",
         Order::CreatedAt => "i.created_at",
         Order::DependencyAddedAt => "e.created_at",
     };
-    let tail = if count { String::new() } else {
-        format!(" ORDER BY {order} {direction},e.source_id {direction},e.target_id {direction} LIMIT $4 OFFSET $5")
-    };
-    format!("SELECT {select} FROM issue_relations e JOIN issues i ON i.id={target} \
-        JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1 \
-        WHERE {source}=$2 AND e.kind=$3 AND ({readable}) AND ({credential}) \
-        AND (COALESCE(u.username,'')<>$6 OR i.repo_id=(SELECT repo_id FROM issues WHERE id=$2)) \
-        AND CAST($4 AS BIGINT)>=0 AND CAST($5 AS BIGINT)>=0{tail}")
+    format!("SELECT i.id,i.repo_id,i.number,i.title,i.state,i.created_at,COALESCE(owners.username,orgs.name) AS owner,r.name AS repo {} ORDER BY {order} {direction},i.id {direction} LIMIT $6 OFFSET $7", related_sql(page.kind, readable, repositories))
 }
-
-native_operation!(crate::backend::db::postgres::relationships::window,
-    crate::backend::db::sqlite::relationships::window,
-    fn window(pool: &DbPool, window: &Window<'_>) -> Result<RelationPage>);
-
-native_operation!(crate::backend::db::postgres::relationships::list,crate::backend::db::sqlite::relationships::list,
-    fn list(pool:&DbPool,viewer:Option<i64>,root:i64,kind:Kind,offset:i64,limit:i64)->Result<Vec<Link>>);
+native_operation!(crate::backend::db::postgres::relationships::window,crate::backend::db::sqlite::relationships::window,
+    fn window(pool:&DbPool,page:&Window<'_>)->Result<Vec<Link>>);
+native_operation!(crate::backend::db::postgres::relationships::repository_counts,crate::backend::db::sqlite::relationships::repository_counts,
+    /// How many readable related issues each repository holds, so callers that filter whole
+    /// repositories can count and page without loading the issues.
+    fn repository_counts(pool:&DbPool,viewer:Option<i64>,root:i64,kind:Kind)->Result<Vec<(i64,i64)>>);
+/// The related issues in edge position order.
+pub async fn list(
+    pool: &DbPool,
+    viewer: Option<i64>,
+    root: i64,
+    kind: Kind,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<Link>> {
+    window(
+        pool,
+        &Window {
+            viewer,
+            root,
+            kind,
+            repositories: None,
+            order: Order::Position,
+            descending: false,
+            offset,
+            limit,
+        },
+    )
+    .await
+}
 pub async fn change(pool: &DbPool, actor: i64, repo: i64, root: i64, mutation: Mutation) -> Result<()> {
     change_with_token(pool, actor, repo, root, mutation, None).await
 }

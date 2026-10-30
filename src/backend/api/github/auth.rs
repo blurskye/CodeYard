@@ -86,53 +86,6 @@ impl Authentication {
         Ok(())
     }
 
-    /// A collection reader can apply these bounds before its SQL count and LIMIT/OFFSET.
-    /// GraphQL preserves missing-family denial on explicitly selected public repositories;
-    /// REST collection metadata keeps its anonymous-equivalent public fallback.
-    pub(in crate::backend::api) async fn read_filter(
-        &self,
-        pool: &db::DbPool,
-        scope: &str,
-        graphql: bool,
-    ) -> Result<db::repositories::access::ReadFilter> {
-        use crate::backend::{db::repositories::access::{ReadFilter, ReadSelection}, identity::{fine_grained, github_apps, oauth_apps}};
-        if db::users::tokens::token_user(pool, self.token.id, false).await.map_err(Error::unavailable)?
-            .is_none_or(|user| user.id != self.user.id) { return Err(required()); }
-        let mut filter = ReadFilter { selection: ReadSelection::None, public_fallback: true, classic: false };
-        if self.is_job() {
-            let job = db::ci_tokens::get(pool, self.token.id).await.map_err(Error::unavailable)?.ok_or_else(required)?;
-            let permissions: crate::backend::ci::tokens::Permissions = serde_json::from_str(&job.permissions).map_err(Error::unavailable)?;
-            if permissions.allows(scope, false) { filter.selection = ReadSelection::Repository(job.repo_id); }
-            filter.public_fallback = !graphql;
-        } else if let Some(bounds) = github_apps::authority(pool, self.token.id).await.map_err(Error::unavailable)? {
-            match bounds.source {
-                github_apps::Source::Personal(grant) => {
-                    let permitted = fine_grained::allows(&grant.group(fine_grained::Group::Repository), &scope.replace('-', "_"), false);
-                    if grant.active && grant.access != fine_grained::Access::Public && (permitted || graphql) {
-                        let (user, org) = match grant.owner {
-                            fine_grained::Owner::User(id) => (Some(id), None),
-                            fine_grained::Owner::Organization(id) => (None, Some(id)),
-                        };
-                        filter.selection = ReadSelection::Personal { token: grant.token_id, user, org,
-                            all: grant.access == fine_grained::Access::All, permitted };
-                    }
-                }
-                github_apps::Source::App { app_id, installation, repositories } => {
-                    if github_apps::allows(&bounds.permissions, &scope.replace('-', "_"), false) {
-                        filter.selection = ReadSelection::App { app: app_id, installation, repositories };
-                    }
-                }
-            }
-        } else {
-            let oauth = db::oauth_apps::token(pool, self.token.id).await.map_err(Error::unavailable)?;
-            filter.classic = oauth.is_none();
-            if !graphql || oauth.is_none_or(|token| oauth_apps::has_scope(&token.scopes, "repo")) {
-                filter.selection = ReadSelection::All;
-            }
-        }
-        Ok(filter)
-    }
-
     /// Dispatches may use a live job token, but host execution retains its original actor's authority.
     pub async fn workflow_actor(&self, state: &AppState, repo: i64) -> Result<i64> {
         if self.user.username != db::ci_tokens::BOT {

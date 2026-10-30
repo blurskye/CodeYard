@@ -233,6 +233,9 @@ pub async fn allows_workflows(pool: &DbPool, token_id: i64) -> anyhow::Result<bo
     if db::ci_tokens::get(pool, token_id).await?.is_some() {
         return Ok(false);
     }
+    if let Some(grant) = super::fine_grained::grant(pool, token_id).await? {
+        return Ok(grant.active && super::fine_grained::allows(&grant.permissions, "workflows", true));
+    }
     if let Some(bounds) = super::github_apps::authority(pool, token_id).await? {
         return Ok(super::github_apps::allows(
             &bounds.permissions,
