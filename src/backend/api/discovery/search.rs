@@ -210,7 +210,6 @@ async fn load_search(
     viewer: Option<i64>,
     filters: SearchFilters,
 ) -> Result<SearchModel, DiscoveryReadError> {
-    let _permit = admit_search().await?;
     let SearchFilters {
         text,
         tab,
@@ -228,6 +227,7 @@ async fn load_search(
         model.tab = tab.unwrap_or_else(|| "repos".into());
         return Ok(model);
     }
+    let _permit = admit_search().await?;
     let unavailable = |_| DiscoveryReadError::Unavailable;
     // Explicit content searches do not scan unrelated tables for tab badges.
     let cap = SEARCH_COUNT_CAP as i64;
