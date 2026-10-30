@@ -196,11 +196,13 @@ impl Scanner {
             toml::from_str(include_str!("../../../../spec/gitleaks/gitleaks.toml"))?;
         // Personal tokens issued before prefixes were introduced remain valid, but cannot be
         // distinguished reliably from arbitrary hexadecimal values in source code.
-        use crate::backend::identity::tokens::{PAT_PREFIX, FGPAT_PREFIX, ACTIONS_PREFIX, HEX_TOKEN_CHARS, URL_TOKEN_CHARS};
+        use crate::backend::identity::tokens::{PAT_PREFIX, FGPAT_PREFIX, ACTIONS_PREFIX, INSTALLATION_PREFIX, HEX_TOKEN_CHARS, URL_TOKEN_CHARS};
         for (id, prefix, alphabet, length) in [
             ("codeyard-pat", PAT_PREFIX, "a-f0-9", HEX_TOKEN_CHARS),
             ("codeyard-fine-grained-pat", FGPAT_PREFIX, "a-f0-9", HEX_TOKEN_CHARS),
             ("codeyard-actions-token", ACTIONS_PREFIX, "A-Za-z0-9_-", URL_TOKEN_CHARS),
+            // Before the imported GitHub rule, whose shorter capture would truncate these.
+            ("github-app-token", INSTALLATION_PREFIX, "a-f0-9", HEX_TOKEN_CHARS),
         ] {
             let regex = format!("(?:^|[^{alphabet}])({prefix}[{alphabet}]{{{length}}})(?:[^{alphabet}]|$)");
             let keyword = prefix;
