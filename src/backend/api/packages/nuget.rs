@@ -342,8 +342,14 @@ async fn dispatch(
         let semver2 = supports_semver2(query.semver_level.as_deref())?;
         let registration_kind = if semver2 { "registration-semver2" } else { "registration" };
         let needle = query.q.unwrap_or_default().to_lowercase();
+        let skip = query.skip.unwrap_or(0).min(1_000_000);
+        let take = query.take.unwrap_or(20).min(100);
+        let mut packages = super::owner_packages(state, &owner, "nuget", auth.as_ref()).await?;
+        packages.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut total = 0usize;
+        let mut constructed = 128usize;
         let mut data = Vec::new();
-        for package in super::owner_packages(state, &owner, "nuget", auth.as_ref()).await? {
+        for package in packages {
             let mut versions = versions(state, &package, auth.as_ref()).await?;
             versions = compatible_versions(versions, semver2)?;
             let downloads = versions.iter().try_fold(0u64, |n, v| {
@@ -366,16 +372,32 @@ async fn dispatch(
             {
                 continue;
             }
+            let selected = total >= skip && data.len() < take;
+            total += 1;
+            if !selected { continue; }
+            // Count text, repeated URLs and JSON container overhead before constructing
+            // the selected record. Unselected matches retain no response document.
+            fn allocation(value: &Value) -> usize {
+                128usize.saturating_add(match value {
+                    Value::Array(values) => values.iter().map(allocation).fold(0usize, usize::saturating_add),
+                    Value::Object(values) => values.iter().map(|(key, value)| key.len().saturating_add(allocation(value))).fold(0usize, usize::saturating_add),
+                    Value::String(value) => value.len(),
+                    _ => 0,
+                })
+            }
+            let metadata_cost = catalog.to_string().len().saturating_add(allocation(&catalog))
+                .saturating_add(catalog["authors"].as_str().unwrap_or("").split(',').count().saturating_mul(64));
+            let cost = versions.iter().try_fold(metadata_cost, |bytes, version| {
+                bytes.checked_add(version.name.len().saturating_mul(2))
+                    .and_then(|bytes| bytes.checked_add(base.len() + package.name.len() + 768))
+            }).ok_or_else(Error::unavailable)?;
+            constructed = constructed.checked_add(cost).ok_or_else(Error::unavailable)?;
+            if constructed > db::packages::MAX_METADATA_RESPONSE_BYTES { return Err(Error::unavailable()); }
             data.push(json!({"id":catalog["id"],"version":latest.name,"description":catalog["description"],"title":catalog["title"],"authors":catalog["authors"].as_str().unwrap_or("").split(',').map(str::trim).collect::<Vec<_>>(),"tags":catalog["tags"],"totalDownloads":downloads,"registration":format!("{base}/{registration_kind}/{}/index.json",package.name),"versions":versions.iter().map(|v| json!({"version":v.name,"downloads":v.downloads,"@id":format!("{base}/{registration_kind}/{}/{}.json",package.name,v.name)})).collect::<Vec<_>>()}));
         }
-        data.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
-        let total = data.len();
-        let data: Vec<_> = data
-            .into_iter()
-            .skip(query.skip.unwrap_or(0).min(1_000_000))
-            .take(query.take.unwrap_or(20).min(100))
-            .collect();
-        return Ok(Json(json!({"totalHits":total,"data":data})).into_response());
+        let bytes = serde_json::to_vec(&json!({"totalHits":total,"data":data})).map_err(|_| Error::unavailable())?;
+        if bytes.len() > db::packages::MAX_METADATA_RESPONSE_BYTES { return Err(Error::unavailable()); }
+        return Ok(([(header::CONTENT_TYPE, "application/json")], bytes).into_response());
     }
     let parts: Vec<_> = path.split('/').collect();
     if parts.len() < 3 {
