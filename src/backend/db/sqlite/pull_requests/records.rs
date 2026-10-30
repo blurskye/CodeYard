@@ -190,6 +190,44 @@ pub async fn move_open_pull_request_base(
     Ok(changed == 1)
 }
 
+pub async fn clear_fork_point(
+    pool: &SqlitePool,
+    pull_request_id: i64,
+    fork: &str,
+    base: &str,
+    head: &str,
+) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let stored: Option<String> = sqlx::query_scalar(
+        "SELECT updated_at FROM pull_requests WHERE id = ?1 AND state = 'open' AND fork_sha = ?2 AND base_sha = ?3 AND head_sha = ?4",
+    )
+    .bind(pull_request_id)
+    .bind(fork)
+    .bind(base)
+    .bind(head)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(stored) = stored else {
+        return Ok(false);
+    };
+    let next = crate::backend::db::sqlite::time::next_revision(
+        crate::backend::db::sqlite::time::decode(&stored)?,
+    )?;
+    let changed = sqlx::query(
+        "UPDATE pull_requests SET fork_sha = NULL, updated_at = ?2 WHERE id = ?1 AND state = 'open' AND fork_sha = ?3 AND base_sha = ?4 AND head_sha = ?5",
+    )
+    .bind(pull_request_id)
+    .bind(next)
+    .bind(fork)
+    .bind(base)
+    .bind(head)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    tx.commit().await?;
+    Ok(changed == 1)
+}
+
 /// Approves workflow execution for this exact head, while the actor can write.
 pub async fn approve_pull_request_workflows(
     pool: &SqlitePool,

@@ -152,6 +152,26 @@ pub async fn move_open_pull_request_base(
     Ok(changed == 1)
 }
 
+pub async fn clear_fork_point(
+    pool: &PgPool,
+    pull_request_id: i64,
+    fork: &str,
+    base: &str,
+    head: &str,
+) -> Result<bool> {
+    let changed = sqlx::query(
+        "UPDATE pull_requests SET fork_sha = NULL, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE id = $1 AND state = 'open' AND fork_sha = $2 AND base_sha = $3 AND head_sha = $4",
+    )
+    .bind(pull_request_id)
+    .bind(fork)
+    .bind(base)
+    .bind(head)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(changed == 1)
+}
+
 /// Approves workflow execution for this exact head, while the actor can write.
 pub async fn approve_pull_request_workflows(
     pool: &PgPool,

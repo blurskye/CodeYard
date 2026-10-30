@@ -425,6 +425,9 @@ async fn refresh_one(
             return Err(RefreshError::Storage);
         }
         if !retry {
+            if changed {
+                drop_obsolete_fork(pool, &base_store, pull.id).await;
+            }
             return Ok(changed);
         }
         if attempt + 1 < MAX_REFRESH_ATTEMPTS {
@@ -432,6 +435,43 @@ async fn refresh_one(
         }
     }
     Err(RefreshError::Conflict)
+}
+
+/// A fork point keeps the base a stacked layer was built on while its head lacks the current base.
+/// Once the head contains that base again, as after a restack, the old fork point would show the
+/// rewritten layers below as this layer's own changes, so it is dropped. A failure only leaves the
+/// fork point for the next refresh.
+async fn drop_obsolete_fork(pool: &DbPool, store: &RepoStore, pull_id: i64) {
+    let pull = match db::pull_requests::records::get_pull_request_by_id(pool, pull_id).await {
+        Ok(Some(pull)) if pull.state == "open" => pull,
+        Ok(_) => return,
+        Err(error) => {
+            tracing::warn!(pull_request_id = pull_id, %error, "could not read the fork point");
+            return;
+        }
+    };
+    let Some(fork) = pull.fork_sha.as_deref() else {
+        return;
+    };
+    match store.is_ancestor(&pull.base_sha, &pull.head_sha).await {
+        Ok(true) => {
+            if let Err(error) = db::pull_requests::records::clear_fork_point(
+                pool,
+                pull.id,
+                fork,
+                &pull.base_sha,
+                &pull.head_sha,
+            )
+            .await
+            {
+                tracing::warn!(pull_request_id = pull_id, %error, "could not drop the fork point");
+            }
+        }
+        Ok(false) => {}
+        Err(error) => {
+            tracing::warn!(pull_request_id = pull_id, %error, "could not check the fork point")
+        }
+    }
 }
 
 /// Refreshes one pull request against its base repository. Operations on one PR

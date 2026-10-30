@@ -171,6 +171,19 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::move_ope
     fork: Option<&str>,
 ) -> Result<bool>);
 
+// Drops the recorded fork point of an open pull request whose head now contains its base, as after
+// a restack, so its diff starts at the base again. Only while the fork, base and head are still
+// the ones the caller checked.
+native_operation!(crate::backend::db::postgres::pull_requests::records::clear_fork_point,
+    crate::backend::db::sqlite::pull_requests::records::clear_fork_point,
+    fn clear_fork_point(
+    pool: &DbPool,
+    pull_request_id: i64,
+    fork: &str,
+    base: &str,
+    head: &str,
+) -> Result<bool>);
+
 /// What came of asking to take a pull request out of draft.
 #[derive(Debug)]
 pub enum ReadyOutcome {
