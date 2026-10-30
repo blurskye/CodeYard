@@ -11,6 +11,7 @@ pub(crate) const URL_TOKEN_CHARS: usize = (TOKEN_BYTES * 8 + 5) / 6;
 pub(crate) const PAT_PREFIX: &str = "cy_pat_";
 pub(crate) const FGPAT_PREFIX: &str = "cy_fgpat_";
 pub(crate) const ACTIONS_PREFIX: &str = "ghs_";
+pub(crate) const INSTALLATION_PREFIX: &str = "ghs_";
 
 pub struct TokenInput<'a> {
     pub name: &'a str,
@@ -39,6 +40,12 @@ pub(super) fn random_token() -> String {
     let mut random = [0u8; TOKEN_BYTES];
     rand::rngs::OsRng.fill_bytes(&mut random);
     hex::encode(random)
+}
+
+/// Installation credentials use the hex format; Actions uses the URL-safe format with
+/// the same public prefix. Scanners must recognize both complete values.
+pub(crate) fn installation_token() -> String {
+    format!("{INSTALLATION_PREFIX}{}", random_token())
 }
 
 /// A feed credential has only read-only event access and remains bound to this API token's

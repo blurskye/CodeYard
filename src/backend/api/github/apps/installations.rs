@@ -10,7 +10,7 @@ use crate::backend::{
         github_apps::{App, Installation, InstallationFilter, RepositoryChange},
         models::PersonalAccessToken,
     },
-    identity::{github_apps as apps, oauth_apps, tokens::token_hash},
+    identity::{github_apps as apps, oauth_apps, tokens::{installation_token, token_hash}},
     webhooks::payloads,
 };
 use axum::{
@@ -361,11 +361,11 @@ async fn issue(
     {
         return Err(Error::invalid("Select at least one repository"));
     }
-    let value = format!(
-        "{}_{}",
-        if actor.is_some() { "ghu" } else { "ghs" },
-        oauth_apps::random()
-    );
+    let value = if actor.is_some() {
+        format!("ghu_{}", oauth_apps::random())
+    } else {
+        installation_token()
+    };
     let source = body
         .get("access_token")
         .and_then(Value::as_str)
