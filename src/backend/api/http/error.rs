@@ -45,6 +45,16 @@ pub(crate) fn protection_write_error(
     (status, Json(ApiError::new(code, message)))
 }
 
+/// The status of a refused native OIDC settings save: a denial is 403, any other typed refusal
+/// is 422, and an untyped failure is 503.
+pub(crate) fn oidc_settings_status(error: &anyhow::Error) -> StatusCode {
+    match error.downcast_ref::<db::oidc::Refusal>() {
+        Some(db::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
+        Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
+        None => StatusCode::SERVICE_UNAVAILABLE,
+    }
+}
+
 /// Current native settings authority, without driver/path disclosure.
 pub(crate) fn repository_settings_error(
     error: anyhow::Error,

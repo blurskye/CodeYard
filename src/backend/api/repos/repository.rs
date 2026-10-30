@@ -1788,12 +1788,11 @@ async fn mutate(
             )
             .await
             .map_err(|error| {
-                let status = match error.downcast_ref::<db::oidc::Refusal>() {
-                    Some(db::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
-                    Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
-                    None => StatusCode::SERVICE_UNAVAILABLE,
-                };
-                ApiError::failure(status, "oidc_settings", "Could not save OIDC settings")
+                ApiError::failure(
+                    crate::backend::api::http::error::oidc_settings_status(&error),
+                    "oidc_settings",
+                    "Could not save OIDC settings",
+                )
             })?;
             Ok(format!("{base}/settings?tab=actions"))
         }
