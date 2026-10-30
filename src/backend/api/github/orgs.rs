@@ -617,7 +617,7 @@ async fn accept(
     }
     let org = target(&state, &name).await?;
     let member = outcome(
-        organizations::accept_organization_invitation(&state.pool, actor.user.id, org.id, None)
+        organizations::accept_organization_invitation(&state.pool, (actor.user.id, actor.token.id), org.id, None)
             .await
             .map_err(Error::unavailable)?,
     )?;
