@@ -1,13 +1,29 @@
-use super::access::readable_condition;
+use super::access::{lock_readable_repository_in_transaction, readable_condition, RepositoryRowLock};
 use crate::backend::db::discussions::contains_pattern;
 use crate::backend::db::models::{Repository, Star, User, Watch};
 use crate::backend::db::repositories::engagement::StarSort;
+use crate::backend::db::users::blocks::InteractionBlocked;
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
 
 /// Locks the repository before any watch or star row. Repository deletion locks the repository
 /// first and then the watch rows it cascades to, so a watch change must not hold a watch
 /// row while the counter trigger waits for the repository.
+/// Locks the repository row and checks, under that lock, that the user can still read it. The
+/// caller's earlier check may be stale by now.
+async fn lock_readable(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i64,
+    repo_id: i64,
+) -> Result<()> {
+    anyhow::ensure!(
+        lock_readable_repository_in_transaction(&mut **tx, user_id, repo_id, RepositoryRowLock::Exclusive)
+            .await?,
+        InteractionBlocked
+    );
+    Ok(())
+}
+
 async fn lock_repository(tx: &mut Transaction<'_, Postgres>, repo_id: i64) -> Result<bool> {
     let locked: Option<i64> =
         sqlx::query_scalar("SELECT id FROM repositories WHERE id = $1 FOR NO KEY UPDATE")
@@ -75,9 +91,7 @@ pub async fn list_watched_repositories(
 pub async fn watch_repo(pool: &PgPool, user_id: i64, repo_id: i64) -> Result<bool> {
     let mut tx = pool.begin().await?;
     super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
-    if !lock_repository(&mut tx, repo_id).await? {
-        return Ok(false);
-    }
+    lock_readable(&mut tx, user_id, repo_id).await?;
     let result = sqlx::query(
         r#"
         INSERT INTO watches (user_id, repo_id, level)
@@ -126,9 +140,7 @@ pub async fn is_repo_watched(pool: &PgPool, user_id: i64, repo_id: i64) -> Resul
 pub async fn star_repo(pool: &PgPool, user_id: i64, repo_id: i64) -> Result<bool> {
     let mut tx = pool.begin().await?;
     super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
-    if !lock_repository(&mut tx, repo_id).await? {
-        return Ok(false);
-    }
+    lock_readable(&mut tx, user_id, repo_id).await?;
     let result =
         sqlx::query("INSERT INTO stars (user_id, repo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
             .bind(user_id)
@@ -276,9 +288,7 @@ pub async fn set_watch_level(
     let events = if level == "custom" { events } else { "" };
     let mut tx = pool.begin().await?;
     super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
-    if !lock_repository(&mut tx, repo_id).await? {
-        return Ok(());
-    }
+    lock_readable(&mut tx, user_id, repo_id).await?;
     sqlx::query(
         r#"
         INSERT INTO watches (user_id, repo_id, level, events)

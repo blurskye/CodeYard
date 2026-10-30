@@ -1,9 +1,20 @@
-use super::access::readable_condition;
+use super::access::{lock_readable_repository_in_transaction, readable_condition};
 use crate::backend::db::models::{Repository, Star, User, Watch};
 use crate::backend::db::repositories::engagement::StarSort;
+use crate::backend::db::users::blocks::InteractionBlocked;
 use crate::backend::db::sqlite::search::contains;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use sqlx::{Sqlite, SqlitePool, Transaction};
+
+/// Checks that the user can still read the repository. The caller's earlier check may be stale
+/// by now; BEGIN IMMEDIATE keeps the answer valid until commit.
+async fn require_readable(tx: &mut Transaction<'_, Sqlite>, user_id: i64, repo_id: i64) -> Result<()> {
+    anyhow::ensure!(
+        lock_readable_repository_in_transaction(&mut **tx, user_id, repo_id).await?,
+        InteractionBlocked
+    );
+    Ok(())
+}
 
 pub async fn list_star_history(
     pool: &SqlitePool,
@@ -62,6 +73,7 @@ pub async fn list_watched_repositories(
 pub async fn watch_repo(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
+    require_readable(&mut tx, user_id, repo_id).await?;
     let result = sqlx::query("INSERT INTO watches (user_id, repo_id, level) VALUES (?1,?2,'watching') ON CONFLICT (user_id,repo_id) DO UPDATE SET level='watching',events='' WHERE watches.level<>'watching'")
         .bind(user_id).bind(repo_id).execute(&mut *tx).await?;
     tx.commit().await?;
@@ -93,6 +105,7 @@ pub async fn is_repo_watched(pool: &SqlitePool, user_id: i64, repo_id: i64) -> R
 pub async fn star_repo(pool: &SqlitePool, user_id: i64, repo_id: i64) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
+    require_readable(&mut tx, user_id, repo_id).await?;
     let result =
         sqlx::query("INSERT INTO stars (user_id, repo_id) VALUES (?1, ?2) ON CONFLICT DO NOTHING")
             .bind(user_id)
@@ -235,6 +248,7 @@ pub async fn set_watch_level(
     let events = if level == "custom" { events } else { "" };
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
+    require_readable(&mut tx, user_id, repo_id).await?;
     sqlx::query(
         r#"
         INSERT INTO watches (user_id, repo_id, level, events)
