@@ -168,6 +168,15 @@ async fn canonical_access_contract(database: &Database) {
     database.expect(900_000, public, NoAccess).await;
     database.expect(member, foreign_repo, NoAccess).await;
     database.expect(owner, personal, Owner).await;
+    // Exercise Git's outer access CASE through the declared SQLx i16 result type.
+    for write in [false, true] {
+        assert_eq!(
+            db::repositories::access::git_access(pool, owner, personal, write)
+                .await
+                .unwrap(),
+            Owner,
+        );
+    }
 
     // Visibility or org membership alone never supplies private repository READ.
     database.grant_team(owner, org, secret, private, 3).await;

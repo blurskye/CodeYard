@@ -5,7 +5,7 @@ use anyhow::Result;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
 pub async fn git_access(pool: &PgPool, user_id: i64, repo_id: i64, write: bool) -> Result<AccessLevel> {
-    let level: Option<i16> = sqlx::query_scalar(&format!("SELECT CASE WHEN u.is_banned OR u.must_change_password OR ($3 AND r.is_archived) THEN 0 WHEN r.is_gist THEN CASE WHEN EXISTS(SELECT 1 FROM gists g JOIN users own ON own.id=r.owner_user_id WHERE g.repo_id=r.id AND g.ready AND NOT own.is_banned) THEN CASE WHEN r.owner_user_id=u.id THEN 6 WHEN NOT $3 THEN 1 ELSE 0 END ELSE 0 END WHEN r.owner_kind='user' AND u.is_admin THEN 6 ELSE ({USER_REPO_ACCESS_SQL}) END FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2"))
+    let level: Option<i16> = sqlx::query_scalar(&format!("SELECT (CASE WHEN u.is_banned OR u.must_change_password OR ($3 AND r.is_archived) THEN 0 WHEN r.is_gist THEN CASE WHEN EXISTS(SELECT 1 FROM gists g JOIN users own ON own.id=r.owner_user_id WHERE g.repo_id=r.id AND g.ready AND NOT own.is_banned) THEN CASE WHEN r.owner_user_id=u.id THEN 6 WHEN NOT $3 THEN 1 ELSE 0 END ELSE 0 END WHEN r.owner_kind='user' AND u.is_admin THEN 6 ELSE ({USER_REPO_ACCESS_SQL}) END)::smallint FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2"))
         .bind(user_id).bind(repo_id).bind(write).fetch_optional(pool).await?;
     Ok(AccessLevel::from(level.unwrap_or(0)))
 }
