@@ -55,8 +55,8 @@ native_operation!(crate::backend::db::postgres::projects::items_at, crate::backe
     fn items_at(pool: &DbPool, viewer: Option<i64>, project: i64, include_deleted: bool) -> Result<Vec<Item>>);
 native_operation!(crate::backend::db::postgres::projects::item_by_id_at, crate::backend::db::sqlite::projects::item_by_id_at,
     fn item_by_id_at(pool: &DbPool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Item>);
-native_operation!(crate::backend::db::postgres::projects::content_items_page, crate::backend::db::sqlite::projects::content_items_page,
-    fn content_items_page(pool: &DbPool, viewer: Option<i64>, content: &Content, include_archived: bool, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Item>)>);
+native_operation!(crate::backend::db::postgres::projects::content_items, crate::backend::db::sqlite::projects::content_items,
+    fn content_items(pool: &DbPool, viewer: Option<i64>, content: &Content, include_archived: bool, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Item>)>);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
@@ -497,9 +497,6 @@ native_operation!(super::postgres::projects::views, super::sqlite::projects::vie
     fn views(pool: &DbPool, viewer: Option<i64>, project: i64) -> Result<Vec<View>>);
 native_operation!(super::postgres::projects::link_repository, super::sqlite::projects::link_repository,
     fn link_repository(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, repo: i64, linked: bool) -> Result<()>);
-
-native_operation!(super::postgres::projects::content_items, super::sqlite::projects::content_items,
-    fn content_items(pool: &DbPool, viewer: Option<i64>, content: &Content, include_archived: bool, offset: i64, limit: i64) -> Result<(i64, Vec<Item>)>);
 
 native_operation!(super::postgres::projects::link_team, super::sqlite::projects::link_team,
     fn link_team(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, team: i64, linked: bool) -> Result<()>);

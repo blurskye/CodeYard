@@ -238,7 +238,10 @@ pub async fn close_duplicate_with_previous(
     let previous = issue(&mut tx, repo, id).await?;
     issue(&mut tx, target_repo, duplicate).await?;
     sqlx::query("INSERT INTO issue_duplicates(issue_id,duplicate_id) VALUES($1,$2) ON CONFLICT(issue_id) DO UPDATE SET duplicate_id=excluded.duplicate_id").bind(id).bind(duplicate).execute(&mut *tx).await?;
-    let result = sqlx::query_as("UPDATE issues SET state='closed',state_reason='duplicate',closed_by_id=$1,closed_at=COALESCE(closed_at,clock_timestamp()),updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$2 RETURNING *").bind(actor).bind(id).fetch_one(&mut *tx).await?;
+    let result: Issue = sqlx::query_as("UPDATE issues SET state='closed',state_reason='duplicate',closed_by_id=$1,closed_at=COALESCE(closed_at,clock_timestamp()),updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$2 RETURNING *").bind(actor).bind(id).fetch_one(&mut *tx).await?;
+    for (kind, detail, old) in crate::backend::db::timeline::edit_events(&previous.title, &previous.state, &result.title, &result.state) {
+        super::super::timeline::append(&mut tx, repo, "issue", id, actor, kind, detail, old).await?;
+    }
     tx.commit().await?;
     Ok((previous, result))
 }

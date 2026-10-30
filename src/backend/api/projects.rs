@@ -66,7 +66,7 @@ pub(crate) async fn sidebar(
     let mut item_ids = HashMap::new();
     let mut offset = 0;
     loop {
-        let (count, items) = projects::content_items(pool, viewer, &content, true, offset, 100).await?;
+        let (count, items) = projects::content_items(pool, viewer, &content, true, offset, 100, true).await?;
         for item in items { item_ids.insert(item.project_id, item.id); }
         offset += 100;
         if offset >= count { break; }

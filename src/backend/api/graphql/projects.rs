@@ -328,10 +328,10 @@ pub(super) async fn content_items(
         .transpose()?
         .unwrap_or(true);
     connection::validate(ctx)?;
-    let total = store::content_items_page(pool, viewer, &content, include_archived, 0, 0, true).await.map_err(operation)?.0;
+    let total = store::content_items(pool, viewer, &content, include_archived, 0, 0, true).await.map_err(operation)?.0;
     let page = connection::Page::new(ctx, total)?;
     let rows = if page.limit == 0 { Vec::new() } else {
-        store::content_items_page(pool, viewer, &content, include_archived, page.offset, page.limit, false).await.map_err(operation)?.1
+        store::content_items(pool, viewer, &content, include_archived, page.offset, page.limit, false).await.map_err(operation)?.1
     };
     let mut nodes = Vec::new();
     for item in rows { nodes.push(item_object(&item, request).await?); }
@@ -564,7 +564,7 @@ async fn resolve_at(
     }
     match (ty, field) {
         ("ProjectV2", "readme") => {
-            let project = store::by_id(pool, viewer, parent["databaseId"].as_i64().ok_or_else(missing)?).await.map_err(operation)?;
+            let project = store::by_id_at(pool, viewer, parent["databaseId"].as_i64().ok_or_else(missing)?, parent["_deleted"] == true).await.map_err(operation)?;
             Ok(json!(project.readme))
         }
         (_, "project") if parent["_deleted"] == true => Ok(project_object(&store::by_id_at(pool, viewer, parent["_project"].as_i64().ok_or_else(missing)?, true).await.map_err(operation)?)),

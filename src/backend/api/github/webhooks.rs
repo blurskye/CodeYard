@@ -120,7 +120,7 @@ async fn list(
 ) -> Result<Response> {
     let (owner, actor) = scope(&state, &headers, &params, false).await?;
     let (offset, limit) = page.window()?;
-    let hooks = db::webhooks::list_managed_webhooks(&state.pool, owner, actor.id, offset as i64, (limit + 1) as i64)
+    let hooks = db::webhooks::list_managed_webhooks(&state.pool, owner, actor.user.id, &actor.credential(), offset as i64, (limit + 1) as i64)
         .await.map_err(Error::unavailable)?.ok_or_else(|| hook_error(HookError::Denied))?;
     let next = hooks.len() > limit;
     let mut values = Vec::new();

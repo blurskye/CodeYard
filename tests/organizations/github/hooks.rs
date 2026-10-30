@@ -569,12 +569,12 @@ async fn contract(pg: bool) {
         .unwrap();
     assert!(stored.encrypted_secret.is_none());
     assert!(stored.secret_nonce.is_none());
-    let (ciphertext, nonce) = webhooks::webhook_secret_sample(f.pool())
-        .await
-        .unwrap()
-        .unwrap();
     assert_eq!(
-        key.decrypt(&ciphertext, &nonce).unwrap(),
+        key.decrypt(
+            stored.encrypted_password.as_deref().unwrap(),
+            stored.password_nonce.as_deref().unwrap()
+        )
+        .unwrap(),
         b"rotated-password"
     );
     let (status, page) = browser

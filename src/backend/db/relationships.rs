@@ -137,11 +137,11 @@ pub struct Window<'a> {
     pub offset: i64,
     pub limit: i64,
 }
-/// The related issues of `$2` that viewer `$1` may read. `$3` is the edge kind, `$4` the CI bot
-/// name, and `repositories` may refer to `$5`.
+/// The related issues of `$2` that viewer `$1` may read; `$1` must also be able to read `$2`.
+/// `$3` is the edge kind, `$4` the CI bot name, and `repositories` may refer to `$5`.
 pub(crate) fn related_sql(kind: Kind, readable: &str, repositories: &str) -> String {
     let (target, source) = kind.selection();
-    format!("FROM issue_relations e JOIN issues i ON i.id={target} JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1 LEFT JOIN users owners ON r.owner_kind='user' AND owners.id=r.owner_user_id LEFT JOIN organizations orgs ON r.owner_kind='org' AND orgs.id=r.owner_org_id WHERE {source}=$2 AND e.kind=$3 AND {readable} AND ({repositories}) AND (COALESCE(u.username,'')<>$4 OR i.repo_id=(SELECT repo_id FROM issues WHERE id=$2))")
+    format!("FROM issue_relations e JOIN issues i ON i.id={target} JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1 LEFT JOIN users owners ON r.owner_kind='user' AND owners.id=r.owner_user_id LEFT JOIN organizations orgs ON r.owner_kind='org' AND orgs.id=r.owner_org_id WHERE {source} AND e.kind=$3 AND {readable} AND EXISTS(SELECT 1 FROM issues root JOIN repositories r ON r.id=root.repo_id WHERE root.id=$2 AND {readable}) AND ({repositories}) AND (COALESCE(u.username,'')<>$4 OR i.repo_id=(SELECT repo_id FROM issues WHERE id=$2))")
 }
 /// The page query: `$6` is the limit and `$7` the offset. Issue IDs break ties, so offsets are
 /// stable.

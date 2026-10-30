@@ -29,7 +29,8 @@ async fn index(State(state): State<Arc<AppState>>, Path((owner, name)): Path<(St
     let ctx = PageContext::load(state, headers, &uri).await?;
     let loaded = chrome::load_database(&ctx, &owner, &name).await?;
     let (page, offset) = window(&ctx)?;
-    let mut rows = store::list_rows(&ctx.state.pool, ctx.user.as_ref().map_or(-1, |user| user.id), &store::Filter { repo: Some(loaded.repository.id), order: store::Order::Updated, ..Default::default() }, offset, 31).await.map_err(|_| chrome::unavailable(&ctx))?;
+    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let mut rows = store::list_rows(&ctx.state.pool, ctx.user.as_ref().map_or(-1, |user| user.id), &db::users::accounts::AccountCredential::Session(&session), &store::Filter { repo: Some(loaded.repository.id), order: store::Order::Updated, ..Default::default() }, offset, 31).await.map_err(|_| chrome::unavailable(&ctx))?;
     let more = rows.len() > 30;
     rows.truncate(30);
     let names = names(&ctx, rows.iter().map(|row| row.author_id).collect()).await?;

@@ -12,32 +12,6 @@ pub async fn item_links(pool: &PgPool, viewer: Option<i64>, project: i64, items:
     Ok(links)
 }
 
-pub async fn content_items(
-    pool: &PgPool,
-    viewer: Option<i64>,
-    content: &Content,
-    include_archived: bool,
-    offset: i64,
-    limit: i64,
-) -> Result<(i64, Vec<Item>)> {
-    anyhow::ensure!(offset >= 0 && (0..=100).contains(&limit), Refusal::Invalid);
-    let (issue, pull) = match content {
-        Content::Issue(id) => (Some(*id), None),
-        Content::PullRequest(id) => (None, Some(*id)),
-        Content::Draft { .. } => return Ok((0, vec![])),
-    };
-    let joins = "JOIN projects p ON p.id=i.project_id JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1";
-    let condition = format!("(i.issue_id=$2 OR i.pull_request_id=$3) AND ($4 OR NOT i.archived) AND ({}) AND ({})", crate::backend::db::projects::readable_condition("$1"), super::super::repositories::access::readable_condition());
-    let mut tx = pool.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
-    let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM project_items i {joins} WHERE {condition}"))
-        .bind(viewer).bind(issue).bind(pull).bind(include_archived).fetch_one(&mut *tx).await?;
-    let rows = sqlx::query_as(&format!("{ITEM} {joins} WHERE {condition} ORDER BY i.id LIMIT $5 OFFSET $6"))
-        .bind(viewer).bind(issue).bind(pull).bind(include_archived).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
-    tx.commit().await?;
-    Ok((count, rows))
-}
-
 pub(super) const ITEM: &str = "SELECT i.id,i.project_id,i.creator_id,COALESCE(issues.repo_id,pr.repo_id,i.repo_id) AS repo_id,i.issue_id,i.pull_request_id,i.draft_title,i.draft_body,i.field_values,i.archived,i.position,i.created_at,i.updated_at,COALESCE(issues.title,pr.title,i.draft_title) AS title,COALESCE(issues.state,pr.state,'open') AS state FROM project_items i LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id";
 
 pub(super) async fn repository_read(
@@ -198,7 +172,7 @@ pub async fn add_item(pool: &PgPool, actor: i64, credential: &AccountCredential<
     Ok(item)
 }
 
-pub async fn content_items_page(pool: &PgPool, viewer: Option<i64>, content: &Content, include_archived: bool, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Item>)> {
+pub async fn content_items(pool: &PgPool, viewer: Option<i64>, content: &Content, include_archived: bool, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Item>)> {
     anyhow::ensure!(offset >= 0 && (0..=100).contains(&limit), Refusal::Invalid);
     let (issue, pull) = match content { Content::Issue(id) => (Some(*id), None), Content::PullRequest(id) => (None, Some(*id)), _ => return Ok((0, Vec::new())) };
     let joins = format!(" JOIN projects p ON p.id=i.project_id LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$3 WHERE (i.issue_id=$1 OR i.pull_request_id=$2) AND ($4 OR NOT i.archived) AND {} AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {})", crate::backend::db::projects::readable_condition("$3"), super::super::repositories::access::readable_condition());
