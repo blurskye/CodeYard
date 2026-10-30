@@ -8,6 +8,25 @@ container. Installing Podman in the container alone is not enough.
 and mount host paths with your user's privileges. Separate storage is not a
 sandbox. Do not expose the socket over TCP and do not run untrusted workflows.
 
+## Host execution containment
+
+`CI_EXECUTION_MODE=local` requires Linux 5.14 or newer, unified cgroup v2, and a
+writable delegated cgroup parent. `CI_PROCESS_CGROUP_ROOT` selects that parent;
+when omitted, the server uses its current cgroup. A systemd service must use
+`Delegate=yes` and retain `KillMode=control-group`, so service death also cleans up
+delegated descendants. Refusal to establish containment fails the run before execution.
+This does not make trusted host execution a sandbox.
+
+The worker migrates the runner before exec, so new sessions and process groups stay in
+its run-owned subtree. It kills that subtree and waits for it to become empty before
+releasing execution ownership or removing the workspace. Recovery records include the
+cgroup path, and abandoned executions are recovered before slot reuse. Cleanup failures
+retain local ownership and the checkout; normal cleanup retries retain the heartbeat and
+run lease. Temporary runner files also live beneath the recoverable workspace.
+
+Podman mode can optionally use the same delegated parent. No socket permissions or
+exposure need to change.
+
 ## Start the engine
 
 On a Linux host with Podman, curl and a systemd user session:

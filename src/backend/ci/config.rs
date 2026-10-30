@@ -54,6 +54,8 @@ pub struct CiConfig {
     pub act_binary: String,
     pub actions_binary: String,
     pub github_action_fallback: bool,
+    /// Delegated cgroup v2 parent. Local execution requires one; omission uses this process's cgroup.
+    pub process_cgroup_root: Option<std::path::PathBuf>,
     /// `runs-on` label → container image, for Podman mode.
     pub act_platform_map: BTreeMap<String, String>,
     /// Podman API socket used as `DOCKER_HOST` in Podman mode.
@@ -73,6 +75,7 @@ impl Default for CiConfig {
             mode: CiExecutionMode::Podman,
             act_binary: "act".into(),
             github_action_fallback: false,
+            process_cgroup_root: None,
             actions_binary: std::env::current_exe()
                 .ok()
                 .and_then(|path| path.parent().map(|parent| parent.join("codeyard-actions")))
@@ -133,6 +136,7 @@ impl CiConfig {
             max_active_runs: number("CI_MAX_ACTIVE_RUNS", defaults.max_active_runs as u32)?
                 as usize,
             run_timeout_seconds: number("CI_RUN_TIMEOUT_SECONDS", defaults.run_timeout_seconds)?,
+            process_cgroup_root: var("CI_PROCESS_CGROUP_ROOT").map(std::path::PathBuf::from),
             github_action_fallback: match var("CI_GITHUB_ACTION_FALLBACK").as_deref() {
                 None | Some("false" | "0") => false,
                 Some("true" | "1") => true,

@@ -243,16 +243,25 @@ async fn execute(
         } else {
             ""
         };
-        match ContainerOwnership::create(&service.cleanup_dir, socket, run.run_id) {
+        let prepared = (|| -> Result<_> {
+            let root = match &service.config.process_cgroup_root {
+                Some(root) => Some(std::fs::canonicalize(root)?),
+                None if service.config.mode == CiExecutionMode::Local => Some(codeyard_actions::process::Cgroup::current_root()?),
+                None => None,
+            };
+            ContainerOwnership::create(&service.cleanup_dir, socket, run.run_id, root.as_deref())
+                .context("Unable to contain CI processes; configure a writable delegated CI_PROCESS_CGROUP_ROOT")
+        })();
+        match prepared {
             Ok(ownership) => ownership,
             Err(error) => {
-                warn!(%error, "could not persist CI container ownership");
+                warn!(%error, "could not persist CI execution ownership");
                 record_result(
                     &service.queue,
                     worker,
                     run,
                     "failed",
-                    Some("CI container recovery is unavailable"),
+                    Some("CI execution recovery is unavailable"),
                     &mut stop,
                 )
                 .await;
@@ -319,7 +328,8 @@ async fn execute(
     let work = async {
         let (cleaned, cleanup) = oneshot::channel();
         let mut names = Vec::new();
-        let result = run_workflows(service, worker, &claim, cancel, cleaned, &mut names).await;
+        let mut workspace = None;
+        let result = run_workflows(service, worker, &claim, cancel, cleaned, &mut names, &mut workspace, ownership.group.as_ref()).await;
         let shutting_down = *stop.borrow();
         let (status, message) = match &result {
             Ok(true) => ("success", None),
@@ -372,6 +382,9 @@ async fn execute(
             delay = (delay * 2).min(FINISH_RETRY_MAX);
         }
         drop(names);
+        // No process or container can still access this checkout when removal starts.
+        if let Some(workspace) = &mut workspace { workspace.removable = true; }
+        drop(workspace);
         record_result(
             &service.queue,
             worker,
@@ -457,6 +470,8 @@ async fn run_workflows(
     cancel: watch::Receiver<bool>,
     cleaned: oneshot::Sender<()>,
     names: &mut Vec<WorkflowName>,
+    workspace_owner: &mut Option<Workspace>,
+    scope: Option<&codeyard_actions::process::Cgroup>,
 ) -> Result<bool> {
     let timeout = claim
         .limits
@@ -477,6 +492,8 @@ async fn run_workflows(
             return Err(Stopped::TimedOut.into());
         }
     };
+    *workspace_owner = Some(workspace);
+    let workspace = workspace_owner.as_ref().unwrap();
     let native = run.engine.as_deref() == Some("codeyard-actions");
     ensure!(
         claim.replay.is_none() || native,
@@ -548,7 +565,7 @@ async fn run_workflows(
         let mut command = act_command(
             service,
             claim,
-            &workspace,
+            workspace,
             &definition,
             &all_labels,
             secret_file.as_deref(),
@@ -588,6 +605,10 @@ async fn run_workflows(
                 concurrency_dir = Some(directory);
             }
         }
+        if let Some(scope) = scope {
+            scope.attach(&mut command)?;
+            if native { command.arg("--process-root").arg(scope.path()); }
+        }
         let completion_prefix = format!(
             "::codeyard-job-completed::{}:",
             claim.github_tokens.completion_secret
@@ -624,7 +645,7 @@ async fn run_workflows(
                 }
             };
             let grace = if native { codeyard_actions::runner::SHUTDOWN_GRACE } else { Duration::from_secs(3) };
-            let output = process::run_with_grace(command, remaining, grace, cancel.clone(), |line, stderr| {
+            let output = process::run_with_grace(command, remaining, grace, scope, cancel.clone(), |line, stderr| {
                 let completed = if native && !claim.github_tokens.completion_secret.is_empty() {
                     line.strip_prefix(&completion_prefix)
                         .map(|job| format!("{workflow}:{job}"))
@@ -873,6 +894,7 @@ fn act_command(
         // act reads `.actrc` from its working directory; keep the repository's out of it.
         .current_dir(workspace.root())
         .env("HOME", &home)
+        .env("TMPDIR", workspace.root().join("tmp"))
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_CACHE_HOME", home.join(".cache"))
         .env("DOCKER_CONFIG", home.join(".docker"))
@@ -1151,6 +1173,8 @@ fn append_container_option(spec: &mut Value, option: &str) -> Result<()> {
 struct ContainerRecord {
     socket: String,
     run_id: uuid::Uuid,
+    #[serde(default)]
+    cgroup: Option<PathBuf>,
 }
 
 struct ContainerOwnership {
@@ -1158,6 +1182,7 @@ struct ContainerOwnership {
     _lock: std::fs::File,
     path: PathBuf,
     record: ContainerRecord,
+    group: Option<codeyard_actions::process::Cgroup>,
 }
 
 impl Drop for ContainerOwnership {
@@ -1172,10 +1197,11 @@ impl Drop for ContainerOwnership {
 }
 
 impl ContainerOwnership {
-    fn create(directory: &Path, socket: &str, run_id: uuid::Uuid) -> Result<Self> {
+    fn create(directory: &Path, socket: &str, run_id: uuid::Uuid, cgroup_root: Option<&Path>) -> Result<Self> {
         let record = ContainerRecord {
             socket: socket.to_owned(),
             run_id,
+            cgroup: cgroup_root.map(|root| root.join(format!("codeyard-{run_id}"))),
         };
         let mut pending = tempfile::NamedTempFile::new_in(directory)?;
         ensure!(
@@ -1187,10 +1213,13 @@ impl ContainerOwnership {
         let path = directory.join(format!("{run_id}.json"));
         let file = pending.persist_noclobber(&path)?;
         std::fs::File::open(directory)?.sync_all()?;
+        // Persist recovery identity before creating anything in the delegated hierarchy.
+        let group = cgroup_root.map(|root| codeyard_actions::process::Cgroup::create(root, &format!("codeyard-{run_id}"))).transpose()?;
         Ok(Self {
             _lock: file,
             path,
             record,
+            group,
         })
     }
 
@@ -1200,6 +1229,7 @@ impl ContainerOwnership {
     }
 
     async fn remove_containers(&self) -> Result<()> {
+        if let Some(group) = &self.group { group.cleanup(Duration::from_secs(30)).await?; }
         if !self.record.socket.is_empty() {
             remove_run_containers(
                 &self.record.socket,
@@ -1211,7 +1241,18 @@ impl ContainerOwnership {
     }
 
     async fn remove_workspace(&self) -> Result<()> {
-        match tokio::fs::remove_dir_all(self.path.with_extension("workspace")).await {
+        let directory = self.path.with_extension("workspace");
+        let mut locks = Vec::new();
+        match tokio::fs::read_dir(&directory).await {
+            Ok(mut entries) => while let Some(entry) = entries.next_entry().await? {
+                if entry.file_type().await?.is_dir() {
+                    locks.push(crate::backend::git::locks::lock(&entry.path().join("repo")).await);
+                }
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        match tokio::fs::remove_dir_all(&directory).await {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
@@ -1266,10 +1307,19 @@ pub(super) async fn reconcile_containers(directory: &Path) -> Result<()> {
                 return Ok(());
             }
             let record: ContainerRecord = serde_json::from_reader(&file)?;
+            let group = match record.cgroup.as_deref() {
+                Some(path) => match std::fs::symlink_metadata(path) {
+                    Ok(_) => Some(codeyard_actions::process::Cgroup::open(path)?),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => return Err(error.into()),
+                },
+                None => None,
+            };
             ContainerOwnership {
                 _lock: file,
                 path,
                 record,
+                group,
             }
             .remove()
             .await
@@ -1500,10 +1550,15 @@ struct Workspace {
     temp: Option<tempfile::TempDir>,
     cleanups: Arc<Mutex<JoinSet<()>>>,
     cleaned: Option<oneshot::Sender<()>>,
+    removable: bool,
 }
 
 impl Drop for Workspace {
     fn drop(&mut self) {
+        if !self.removable {
+            if let Some(temp) = self.temp.take() { let _ = temp.keep(); }
+            return;
+        }
         let checkout = self.checkout();
         let temp = self.temp.take().unwrap();
         let cleaned = self.cleaned.take();
@@ -1573,8 +1628,9 @@ impl Workspace {
             temp: Some(codeyard_actions::fs::private_tempdir("workspace-", Some(directory)).context("could not create a CI workspace")?),
             cleanups,
             cleaned: Some(cleaned),
+            removable: false,
         };
-        for dir in ["home/.docker", "definitions"] {
+        for dir in ["home/.docker", "definitions", "tmp"] {
             tokio::fs::create_dir_all(workspace.root().join(dir)).await?;
         }
         let store = queue.checkout(claim, &workspace.checkout()).await?;
@@ -2229,6 +2285,7 @@ mod tests {
             temp: Some(tempfile::tempdir().unwrap()),
             cleanups: Arc::new(Mutex::new(JoinSet::new())),
             cleaned: None,
+            removable: true,
         }
     }
 
@@ -2749,7 +2806,7 @@ jobs:
         if let Ok(input) = std::env::var(CHILD) {
             let (directory, socket, run): (PathBuf, String, uuid::Uuid) =
                 serde_json::from_str(&input).unwrap();
-            let _ownership = ContainerOwnership::create(&directory, &socket, run).unwrap();
+            let _ownership = ContainerOwnership::create(&directory, &socket, run, None).unwrap();
             let workspace = directory.join(format!("{run}.workspace"));
             std::fs::create_dir(&workspace).unwrap();
             std::fs::write(workspace.join("secrets.env"), "TOKEN=private").unwrap();
@@ -2769,7 +2826,7 @@ jobs:
         ])
         .await;
         let live = uuid::Uuid::new_v4();
-        let _ownership = ContainerOwnership::create(records.path(), &socket, live).unwrap();
+        let _ownership = ContainerOwnership::create(records.path(), &socket, live, None).unwrap();
         let live_workspace = records.path().join(format!("{live}.workspace"));
         std::fs::create_dir(&live_workspace).unwrap();
         reconcile_containers(records.path()).await.unwrap();
@@ -2830,7 +2887,7 @@ jobs:
     async fn local_run_recovery_removes_abandoned_workspaces() {
         let records = tempfile::tempdir().unwrap();
         let run = uuid::Uuid::new_v4();
-        let ownership = ContainerOwnership::create(records.path(), "", run).unwrap();
+        let ownership = ContainerOwnership::create(records.path(), "", run, None).unwrap();
         let workspace = ownership.path.with_extension("workspace");
         std::fs::create_dir(&workspace).unwrap();
         std::fs::write(workspace.join("secrets.env"), "TOKEN=private").unwrap();

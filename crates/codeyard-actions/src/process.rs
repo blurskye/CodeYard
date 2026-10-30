@@ -1,6 +1,8 @@
 //! Shared bounded subprocess output framing. Oversized lines are omitted, never truncated:
 //! retaining a prefix could expose part of a credential that whole-value masking cannot match.
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt};
+mod cgroup;
+pub use cgroup::Cgroup;
 
 pub const OMITTED_LINE: &str = "Warning: An oversized output line was omitted.";
 pub const KILL_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
@@ -26,6 +28,10 @@ impl ProcessGroup {
     pub fn pid(&self) -> Option<u32> { self.id }
     pub fn disarm(&mut self) { self.id = None; }
     pub fn kill(&mut self) { kill_group(self.id.take()); }
+    pub fn terminate(&self) -> std::io::Result<()> {
+        if let Some(id) = self.id { signal_group(id, TERM)?; }
+        Ok(())
+    }
 
     pub async fn stop(&mut self, child: &mut tokio::process::Child) -> std::io::Result<()> {
         let Some(id) = self.id else { return Ok(()); };

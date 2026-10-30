@@ -71,12 +71,12 @@ where
     F: Fn(String, bool) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    run_with_grace(command, timeout, TERM_GRACE, cancel, on_line).await
+    run_with_grace(command, timeout, TERM_GRACE, None, cancel, on_line).await
 }
 
 pub(super) async fn run_with_grace<F, Fut>(
     mut command: Command, timeout: Duration, grace: Duration,
-    cancel: watch::Receiver<bool>, on_line: F,
+    scope: Option<&codeyard_actions::process::Cgroup>, cancel: watch::Receiver<bool>, on_line: F,
 ) -> Result<ExitStatus>
 where
     F: Fn(String, bool) -> Fut,
@@ -121,8 +121,9 @@ where
     let work = async {
         let (_, status) = tokio::try_join!(&mut forwarding, async {
             let status = child.wait().await?;
-            // Descendants can inherit the output pipes after the runner exits.
-            group.stop(&mut child).await?;
+            // Kill independently grouped descendants before waiting for inherited output pipes.
+            if let Some(scope) = scope { group.disarm(); scope.kill()?; }
+            else { group.stop(&mut child).await?; }
             Ok::<_, anyhow::Error>(status)
         })?;
         Ok::<_, anyhow::Error>(status)
@@ -135,7 +136,10 @@ where
         _ = cancelled(cancel) => Err(Stopped::Cancelled.into()),
         Some(error) = error_rx.recv() => Err(error),
     };
-    let stopping = group.stop(&mut child);
+    let stopping = async {
+        if let Some(scope) = scope { scope.stop(&mut child, &mut group, grace).await }
+        else { group.stop(&mut child).await.map_err(anyhow::Error::from) }
+    };
     tokio::pin!(stopping);
     loop {
         tokio::select! {

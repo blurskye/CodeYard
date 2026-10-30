@@ -88,6 +88,9 @@ pub struct Options {
     /// Explicitly allow GitHub when the configured forge cannot supply a repository action.
     #[arg(long)]
     pub github_action_fallback: bool,
+    /// Worker-owned delegated cgroup for native job/step process trees.
+    #[arg(long, hide = true)]
+    pub process_root: Option<PathBuf>,
     #[arg(long, hide = true)]
     pub deny_docker: bool,
     #[arg(skip)]
