@@ -8,6 +8,16 @@ pub mod hydration;
 pub mod navigation;
 pub mod pages;
 
+/// The first `limit` characters of `text`, with an ellipsis when more follow.
+pub fn excerpt(text: &str, limit: usize) -> String {
+    let mut chars = text.chars();
+    let mut output: String = chars.by_ref().take(limit).collect();
+    if chars.next().is_some() {
+        output.push('…');
+    }
+    output
+}
+
 /// Percent-encode one path segment or query value, never an entire URL.
 pub fn encode_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());

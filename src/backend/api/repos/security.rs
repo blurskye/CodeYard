@@ -12,6 +12,7 @@ use crate::{
     },
     webui::{
         app::Page,
+        excerpt,
         pages::repos::{page::Page as RepoPage, security as view},
     },
 };
@@ -54,15 +55,6 @@ async fn current_authority(ctx: &PageContext, repo: i64) -> anyhow::Result<bool>
     let Some(user) = &ctx.user else { return Ok(false); };
     let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else { return Ok(false); };
     db::code_scanning::security_read_allowed(&ctx.state.pool, user.id, &session, repo).await
-}
-
-pub(super) fn excerpt(text: &str, limit: usize) -> String {
-    let mut chars = text.chars();
-    let mut output: String = chars.by_ref().take(limit).collect();
-    if chars.next().is_some() {
-        output.push('…');
-    }
-    output
 }
 
 async fn model(

@@ -2,14 +2,11 @@
 use crate::backend::{
     api::{
         http::context::PageContext,
-        repos::{
-            discussion::{unavailable, RepositoryData, ResultPage},
-            security::excerpt,
-        },
+        repos::discussion::{unavailable, RepositoryData, ResultPage},
     },
     db::{code_scanning as records, models::PullRequest},
 };
-use crate::webui::{encode_component, pages::repos::security as view};
+use crate::webui::{encode_component, excerpt, pages::repos::security as view};
 use serde_json::Value;
 
 pub(super) async fn checks(

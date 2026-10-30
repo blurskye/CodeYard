@@ -126,15 +126,10 @@ pub(super) async fn populate(
                 allowed_values: fields.allowed_values.clone().unwrap_or_default(),
                 required: fields.needs_explicit_value(),
                 editable: owner || fields.values_editable_by == data::EditableBy::OrgAndRepoActors,
-                default_preview: fields.default_value.as_ref().map(|value| {
-                    let text = value.form_value();
-                    let mut chars = text.chars();
-                    let mut preview: String = chars.by_ref().take(256).collect();
-                    if chars.next().is_some() {
-                        preview.push('…');
-                    }
-                    preview
-                }),
+                default_preview: fields
+                    .default_value
+                    .as_ref()
+                    .map(|value| crate::webui::excerpt(&value.form_value(), 256)),
             }
         })
         .collect();
