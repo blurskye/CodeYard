@@ -1,7 +1,7 @@
 //! Organization issue types are the same definitions inherited by repository issues.
 use super::{auth, target, AppState, Error, Result};
 use crate::backend::{
-    db::issue_attributes::{self, Definition},
+    db::{issue_attributes::{self, Definition}, users::accounts::AccountActor},
     webhooks::payloads,
 };
 use axum::{
@@ -65,9 +65,10 @@ async fn save(
     let id = issue_attributes::configure_organization(
         &state.pool,
         org.id,
-        actor.user.id,
+        AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id },
         &Definition {
             id,
+            expected_updated: None,
             kind: "type".into(),
             name: input.name,
             description: input.description,
@@ -101,7 +102,7 @@ async fn remove(
     issue_attributes::delete_organization_definition(
         &state.pool,
         org.id,
-        actor.user.id,
+        AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id },
         id,
         "type",
     )

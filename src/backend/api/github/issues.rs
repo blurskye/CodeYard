@@ -812,7 +812,7 @@ pub(in crate::backend::api) async fn apply_metadata(
         let AssignedItem::Issue(id) = item else {
             return Err(Error::invalid("Pull requests do not support issue types"));
         };
-        db::issue_attributes::set_type(&state.pool, repo.id, actor.id, id, kind)
+        db::issue_attributes::set_type(&state.pool, repo.id, authority.clone(), id, kind)
             .await
             .map_err(super::issue_attributes::error)?;
     }

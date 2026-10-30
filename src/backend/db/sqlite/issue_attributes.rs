@@ -1,6 +1,7 @@
 use crate::backend::db::issue_attributes::{
     AssignedType, Attribute, Definition, FieldChanges, FieldValue, Refusal, SelectOption, ValueInput,
 };
+use crate::backend::db::users::accounts::{AccountActor, AccountRestricted};
 use anyhow::Result;
 use serde_json::{json, Value};
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
@@ -111,18 +112,28 @@ async fn owner_connection(c: &mut SqliteConnection, repo: i64, actor: i64) -> Re
 pub async fn owner_can_configure(pool: &SqlitePool, repo: i64, actor: i64) -> Result<bool> {
     owner_connection(&mut *pool.acquire().await?, repo, actor).await
 }
-async fn begin_write(
-    pool: &SqlitePool,
+async fn require_actor(tx: &mut Transaction<'_, Sqlite>, actor: &AccountActor) -> Result<()> {
+    if let Some(credential) = actor.credential() {
+        super::users::transitions::require_account(tx, actor.user_id(), &credential).await
+            .map_err(|error| if error.is::<AccountRestricted>() { Refusal::Denied.into() } else { error })?;
+    }
+    Ok(())
+}
+
+async fn begin_write<'a>(
+    pool: &'a SqlitePool,
     repo: i64,
-    actor: i64,
+    authority: &AccountActor,
     issue: Option<i64>,
     owner: bool,
-) -> Result<Transaction<'_, Sqlite>> {
+) -> Result<Transaction<'a, Sqlite>> {
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
+    require_actor(&mut tx, authority).await?;
     lock_metadata(&mut tx).await?;
     if owner {
         anyhow::ensure!(
@@ -147,9 +158,11 @@ pub(crate) async fn lock_metadata(tx: &mut Transaction<'_, Sqlite>) -> Result<()
         .await?;
     Ok(())
 }
-pub async fn configure(pool: &SqlitePool, repo: i64, actor: i64, d: &Definition) -> Result<i64> {
+pub async fn configure(pool: &SqlitePool, repo: i64, actor: impl Into<AccountActor>, d: &Definition) -> Result<i64> {
     d.validate()?;
-    let mut tx = begin_write(pool, repo, actor, None, true).await?;
+    let authority = actor.into();
+    let actor = authority.user_id();
+    let mut tx = begin_write(pool, repo, &authority, None, true).await?;
     let (user, org): (Option<i64>, Option<i64>) =
         sqlx::query_as("SELECT owner_user_id,owner_org_id FROM repositories WHERE id=?1")
             .bind(repo)
@@ -172,6 +185,7 @@ async fn configure_owner(
             .into_iter()
             .find(|a| a.id == id)
             .ok_or(Refusal::Missing)?;
+        anyhow::ensure!(d.expected_updated.is_none_or(|expected| expected == old.updated_at), Refusal::Conflict);
         anyhow::ensure!(old.data_type == d.data_type, Refusal::Invalid);
         Some(old)
     } else {
@@ -189,7 +203,8 @@ async fn configure_owner(
         anyhow::ensure!(d.options.iter().all(|o| o.id.is_none()), Refusal::Invalid);
     }
     let id = if let Some(id) = d.id {
-        sqlx::query("UPDATE issue_attributes SET name=?2,description=?3,visibility=?4,is_enabled=?5,color=?6,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1").bind(id).bind(&d.name).bind(&d.description).bind(&d.visibility).bind(d.is_enabled).bind(&d.color).execute(&mut *tx).await?;
+        let next = super::time::next_revision(old.as_ref().ok_or(Refusal::Missing)?.updated_at)?;
+        sqlx::query("UPDATE issue_attributes SET name=?2,description=?3,visibility=?4,is_enabled=?5,color=?6,updated_at=?7 WHERE id=?1").bind(id).bind(&d.name).bind(&d.description).bind(&d.visibility).bind(d.is_enabled).bind(&d.color).bind(next).execute(&mut *tx).await?;
         id
     } else {
         sqlx::query_scalar("INSERT INTO issue_attributes(owner_user_id,owner_org_id,kind,name,description,data_type,visibility,is_enabled,color) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) RETURNING id").bind(user).bind(org).bind(&d.kind).bind(&d.name).bind(&d.description).bind(&d.data_type).bind(&d.visibility).bind(d.is_enabled).bind(&d.color).fetch_one(&mut *tx).await?
@@ -315,29 +330,33 @@ pub async fn organization_catalog(
     tx.commit().await?;
     Ok(result)
 }
-async fn begin_organization_write(
-    pool: &SqlitePool,
+async fn begin_organization_write<'a>(
+    pool: &'a SqlitePool,
     org: i64,
-    actor: i64,
-) -> Result<Transaction<'_, Sqlite>> {
+    authority: &AccountActor,
+) -> Result<Transaction<'a, Sqlite>> {
     use crate::backend::db::{models::OrgRole, organizations::OrganizationOutcome};
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     match super::organizations::authority::authority(&mut tx, actor, org).await? {
         OrganizationOutcome::Applied(OrgRole::Owner) => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
     }
+    require_actor(&mut tx, authority).await?;
     lock_metadata(&mut tx).await?;
     Ok(tx)
 }
 pub async fn configure_organization(
     pool: &SqlitePool,
     org: i64,
-    actor: i64,
+    actor: impl Into<AccountActor>,
     d: &Definition,
 ) -> Result<i64> {
     d.validate()?;
-    let tx = begin_organization_write(pool, org, actor).await?;
+    let authority = actor.into();
+    let actor = authority.user_id();
+    let tx = begin_organization_write(pool, org, &authority).await?;
     configure_owner(tx, actor, (None, Some(org)), d)
         .await
         .map(|attribute| attribute.id)
@@ -345,22 +364,26 @@ pub async fn configure_organization(
 pub async fn create_organization_field(
     pool: &SqlitePool,
     org: i64,
-    actor: i64,
+    actor: impl Into<AccountActor>,
     d: &Definition,
 ) -> Result<Attribute> {
     anyhow::ensure!(d.id.is_none() && d.kind == "field", Refusal::Invalid);
     d.validate()?;
-    let tx = begin_organization_write(pool, org, actor).await?;
+    let authority = actor.into();
+    let actor = authority.user_id();
+    let tx = begin_organization_write(pool, org, &authority).await?;
     configure_owner(tx, actor, (None, Some(org)), d).await
 }
 pub async fn patch_organization_field(
     pool: &SqlitePool,
     org: i64,
-    actor: i64,
+    actor: impl Into<AccountActor>,
     id: i64,
     changes: &FieldChanges,
 ) -> Result<Attribute> {
-    let mut tx = begin_organization_write(pool, org, actor).await?;
+    let authority = actor.into();
+    let actor = authority.user_id();
+    let mut tx = begin_organization_write(pool, org, &authority).await?;
     let current = catalog_owner(&mut tx, None, Some(org), Some(actor), "field")
         .await?
         .into_iter()
@@ -373,11 +396,12 @@ pub async fn patch_organization_field(
 pub async fn delete_organization_definition(
     pool: &SqlitePool,
     org: i64,
-    actor: i64,
+    actor: impl Into<AccountActor>,
     id: i64,
     kind: &str,
 ) -> Result<()> {
-    let mut tx = begin_organization_write(pool, org, actor).await?;
+    let authority = actor.into();
+    let mut tx = begin_organization_write(pool, org, &authority).await?;
     let deleted =
         sqlx::query("DELETE FROM issue_attributes WHERE id=?1 AND owner_org_id=?2 AND kind=?3")
             .bind(id)
@@ -389,8 +413,9 @@ pub async fn delete_organization_definition(
     tx.commit().await?;
     Ok(())
 }
-pub async fn delete_definition(pool: &SqlitePool, repo: i64, actor: i64, id: i64) -> Result<()> {
-    let mut tx = begin_write(pool, repo, actor, None, true).await?;
+pub async fn delete_definition(pool: &SqlitePool, repo: i64, actor: impl Into<AccountActor>, id: i64) -> Result<()> {
+    let authority = actor.into();
+    let mut tx = begin_write(pool, repo, &authority, None, true).await?;
     let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM issue_attributes a JOIN repositories r ON r.id=?2 WHERE a.id=?1 AND (a.owner_user_id=r.owner_user_id OR a.owner_org_id=r.owner_org_id))").bind(id).bind(repo).fetch_one(&mut *tx).await?;
     anyhow::ensure!(exists, Refusal::Missing);
     sqlx::query("DELETE FROM issue_attributes WHERE id=?1")
@@ -403,12 +428,14 @@ pub async fn delete_definition(pool: &SqlitePool, repo: i64, actor: i64, id: i64
 pub async fn set_values(
     pool: &SqlitePool,
     repo: i64,
-    actor: i64,
+    actor: impl Into<AccountActor>,
     issue: i64,
     values: &[ValueInput],
     replace: bool,
 ) -> Result<()> {
-    let mut tx = begin_write(pool, repo, actor, Some(issue), false).await?;
+    let authority = actor.into();
+    let actor = authority.user_id();
+    let mut tx = begin_write(pool, repo, &authority, Some(issue), false).await?;
     fields_in_transaction(&mut tx, repo, actor, issue, values, replace).await?;
     tx.commit().await?;
     Ok(())
@@ -476,11 +503,13 @@ pub(crate) async fn fields_in_transaction(
 pub async fn delete_value(
     pool: &SqlitePool,
     repo: i64,
-    actor: i64,
+    actor: impl Into<AccountActor>,
     issue: i64,
     field: i64,
 ) -> Result<()> {
-    let mut tx = begin_write(pool, repo, actor, Some(issue), false).await?;
+    let authority = actor.into();
+    let actor = authority.user_id();
+    let mut tx = begin_write(pool, repo, &authority, Some(issue), false).await?;
     let fields = catalog_connection(&mut tx, repo, Some(actor), "field").await?;
     anyhow::ensure!(fields.iter().any(|f| f.id == field), Refusal::Missing);
     let result =
@@ -498,11 +527,13 @@ pub async fn delete_value(
 pub async fn set_type(
     pool: &SqlitePool,
     repo: i64,
-    actor: i64,
+    actor: impl Into<AccountActor>,
     issue: i64,
     kind: Option<i64>,
 ) -> Result<()> {
-    let mut tx = begin_write(pool, repo, actor, Some(issue), false).await?;
+    let authority = actor.into();
+    let actor = authority.user_id();
+    let mut tx = begin_write(pool, repo, &authority, Some(issue), false).await?;
     type_in_transaction(&mut tx, repo, actor, issue, kind).await?;
     tx.commit().await?;
     Ok(())
