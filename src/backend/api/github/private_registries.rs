@@ -134,7 +134,7 @@ async fn create(
     let registry = db::private_registries::save(
         &state.pool,
         state.secret_encryptor.as_deref(),
-        actor.user.id,
+        (actor.user.id, actor.token.id),
         org,
         None,
         &body,
@@ -161,7 +161,7 @@ async fn update(
     db::private_registries::save(
         &state.pool,
         state.secret_encryptor.as_deref(),
-        actor.user.id,
+        (actor.user.id, actor.token.id),
         org,
         Some(&name.to_ascii_uppercase()),
         &body,
@@ -178,7 +178,7 @@ async fn remove(
     Path((org, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     let (org, actor) = dependabot::organization(&state, &headers, &org, true).await?;
-    db::private_registries::delete(&state.pool, actor.user.id, org, &name.to_ascii_uppercase())
+    db::private_registries::delete(&state.pool, (actor.user.id, actor.token.id), org, &name.to_ascii_uppercase())
         .await
         .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)
