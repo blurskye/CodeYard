@@ -130,7 +130,7 @@ pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<
     // cannot both succeed with a one-time token.
     let token = sqlx::query_as::<_, (Vec<String>, bool)>(
         "UPDATE join_tokens SET uses = uses + 1
-         WHERE token_hash = $1 AND expires_at > NOW() AND (reusable OR uses = 0)
+         WHERE token_hash = $1 AND expires_at > clock_timestamp() AND (reusable OR uses = 0)
          RETURNING roles, requires_approval",
     )
     .bind(request.token_hash)
