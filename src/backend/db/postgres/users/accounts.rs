@@ -151,19 +151,6 @@ pub async fn get_user_by_email(pool: &PgPool, email: &str) -> Result<Option<User
     Ok(user)
 }
 
-pub async fn get_users_by_emails(pool: &PgPool, emails: &[String]) -> Result<Vec<User>> {
-    if emails.is_empty() {
-        return Ok(vec![]);
-    }
-
-    let users = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = ANY($1)")
-        .bind(emails)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(users)
-}
-
 /// Git attribution prefers the account's noreply identity, then verified addresses, with
 /// the lowest account ID resolving legacy duplicate claims. Banned accounts never attribute.
 pub async fn commit_authors(pool: &PgPool, emails: &[String]) -> Result<Vec<CommitAuthor>> {
@@ -185,25 +172,6 @@ pub async fn commit_authors(pool: &PgPool, emails: &[String]) -> Result<Vec<Comm
             FROM candidates c JOIN users u ON u.id=c.id WHERE NOT u.is_banned
          )
          SELECT ranked.address, u.* FROM ranked JOIN users u ON u.id=ranked.id WHERE ranked.ordinal=1",
-    )
-    .bind(emails)
-    .fetch_all(pool)
-    .await?)
-}
-
-/// The verified owner of each address, as `(address, user id)`. Primary and secondary addresses
-/// both count, and the address is returned as it was requested.
-pub async fn get_verified_email_owners(
-    pool: &PgPool,
-    emails: &[String],
-) -> Result<Vec<(String, i64)>> {
-    if emails.is_empty() {
-        return Ok(vec![]);
-    }
-    Ok(sqlx::query_as(
-        "SELECT a.address, u.id FROM unnest($1::text[]) AS a(address) JOIN users u ON u.email_verified AND lower(u.email)=lower(a.address)
-         UNION
-         SELECT a.address, e.user_id FROM unnest($1::text[]) AS a(address) JOIN user_emails e ON e.verified AND lower(e.email)=lower(a.address)",
     )
     .bind(emails)
     .fetch_all(pool)
