@@ -206,6 +206,11 @@ pub fn job_order(workflow: &Workflow) -> anyhow::Result<Vec<String>> {
     planner::job_order(workflow)
 }
 
+/// Declared dependency names, with the same scalar and case rules used by planning.
+pub fn job_dependencies(workflow: &Workflow) -> anyhow::Result<BTreeMap<String, Vec<String>>> {
+    workflow.jobs.iter().map(|(id, job)| Ok((id.clone(), planner::needs(job)?))).collect()
+}
+
 /// The runs a job makes once the jobs it needs have finished: `contexts` holds `github`,
 /// `needs`, `vars`, `inputs` and the others the job level may read, and `status` says whether
 /// a needed job failed. `None` means the job's `if` skipped it.

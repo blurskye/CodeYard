@@ -91,6 +91,12 @@ including hooks nested in remote composites. Their main handlers reuse prepared 
 runtimes without rerunning pre. Local actions retain just-in-time preparation after checkout.
 Lifecycle context/state copying has a 64 MiB per-job retention/work budget.
 
+The native dependency-ready scheduler runs independent jobs concurrently when
+`--concurrent-jobs` is greater than one (1–256). Matrix and reusable-workflow leaves share
+one run-wide permit pool; reusable parents do not occupy leaf permits. Parallel leaves
+receive independent workspaces from the same initial snapshot. Managed Podman workers
+retain their one-job setting so the configured run-wide resource caps remain unchanged.
+
 ## Workflow run history
 
 The GitHub REST API exposes repository/workflow run lists, run documents, and individual

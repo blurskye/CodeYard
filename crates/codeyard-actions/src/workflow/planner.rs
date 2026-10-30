@@ -33,7 +33,7 @@ pub(super) fn job_order(workflow: &Workflow) -> Result<Vec<String>> {
     Ok(result)
 }
 
-fn needs(job: &Mapping) -> Result<Vec<String>> {
+pub(super) fn needs(job: &Mapping) -> Result<Vec<String>> {
     job.get("needs")
         .map(|v| strings(v, "needs"))
         .transpose()

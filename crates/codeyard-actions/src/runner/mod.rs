@@ -1,5 +1,6 @@
 //! Job and step execution following actions/runner's `Runner.Worker/JobRunner.cs` and `StepsRunner.cs`.
 mod actions;
+mod jobs;
 pub(crate) use actions::ActionReference;
 mod commands;
 mod containers;
@@ -53,7 +54,7 @@ pub struct Options {
     pub platforms: Vec<String>,
     #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
     pub pull: bool,
-    #[arg(long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..))]
+    #[arg(long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..=256))]
     pub concurrent_jobs: u32,
     #[arg(long, default_value = "", allow_hyphen_values = true)]
     pub container_options: String,
@@ -609,6 +610,7 @@ async fn run_workflow(
     let options = Arc::new(options.clone());
     let (cancel_tx, cancel) = watch::channel(false);
     let (output, output_task) = output::Output::start(cancel_tx.clone())?;
+    let _output_guard = BackgroundTask(output_task.abort_handle());
     let mut tokens = tokens;
     tokens.output = Some(output.clone());
     let signal = tokio::spawn(async move {
@@ -626,6 +628,7 @@ async fn run_workflow(
         let _ = tokio::signal::ctrl_c().await;
         let _ = cancel_tx.send(true);
     });
+    let _signal_guard = BackgroundTask(signal.abort_handle());
     let files = reusable::files(&raw, &options.directory)?;
     let workspace = if options.concurrent_jobs > 1 {
         let source = options.directory.clone();
@@ -705,9 +708,13 @@ impl WorkflowRun {
         }
     }
 
-    fn execute(
+    fn execute_job(
         &self,
-        raw: serde_yaml::Value,
+        raw: Arc<serde_yaml::Value>,
+        workflow: Arc<workflow::Workflow>,
+        id: String,
+        dependencies: Vec<(String, JobResult, Status)>,
+        saved: jobs::SavedJobs,
         mut contexts: Contexts,
         mut env: BTreeMap<String, String>,
         name_prefix: String,
@@ -721,7 +728,6 @@ impl WorkflowRun {
                 cancel,
                 ..
             } = self;
-            let workflow = workflow::parse(&serde_yaml::to_string(&raw)?)?;
             let workflow_name = contexts
                 .values
                 .get("github")
@@ -737,22 +743,16 @@ impl WorkflowRun {
                 None
             };
             let environment_values = &self.environment_values;
-            let mut saved = JobState::default();
             if !tokens.completion_secret.is_empty() {
                 anyhow::ensure!(
                     workflow_name.len() <= 1024,
                     "workflow name exceeds the progress metadata limit"
                 );
             }
-            let mut results = BTreeMap::<String, JobResult>::new();
-            let mut ancestors = BTreeMap::<String, Status>::new();
-            let mut successful = true;
-            for id in workflow::job_order(&workflow)? {
                 anyhow::ensure!(!options.containment_lost.load(std::sync::atomic::Ordering::Acquire),
                     "Container cleanup failed; refusing further execution");
                 if *cancel.borrow() {
-                    successful = false;
-                    break;
+                    return Ok(JobResult { result: "cancelled".into(), outputs: BTreeMap::new() });
                 }
                 let token_id = format!("{token_prefix}{id}");
                 if options.job_token_file.is_some()
@@ -784,43 +784,26 @@ impl WorkflowRun {
                     }
                 }
                 // expand checks the job's own dependencies; unrelated failures must not skip it.
-                let needs_ids = raw
-                    .get("jobs")
-                    .and_then(|jobs| jobs.get(&id))
-                    .and_then(|job| job.get("needs"));
-                let needs_ids: Vec<String> = match needs_ids {
-                    Some(serde_yaml::Value::Sequence(names)) => names.iter().map(|value| workflow::scalar_text(value, "needs")).collect::<Result<_>>()?,
-                    Some(value) => vec![workflow::scalar_text(value, "needs")?],
-                    None => Vec::new(),
-                };
                 let mut needs = BTreeMap::new();
                 let mut status = Status::default();
                 let mut dependency_success = true;
                 let mut direct_status = Status::default();
-                for name in needs_ids {
-                    if let Some((canonical, result)) = results
-                        .iter()
-                        .find(|(key, _)| key.eq_ignore_ascii_case(&name))
-                    {
+                for (name, result, ancestor) in dependencies {
                         status.failed |= result.result == "failure";
                         status.cancelled |= result.result == "cancelled";
                         dependency_success &= result.result == "success";
                         direct_status.failed |= result.result == "failure";
                         direct_status.cancelled |= result.result == "cancelled";
-                        if let Some(ancestor) = ancestors.get(canonical) {
-                            status.failed |= ancestor.failed;
-                            status.cancelled |= ancestor.cancelled;
-                        }
+                        status.failed |= ancestor.failed;
+                        status.cancelled |= ancestor.cancelled;
                         needs.insert(
                     name,
                     Value::from_json(
                         &serde_json::json!({"result":result.result,"outputs":result.outputs}),
                     ),
                 );
-                    }
                 }
                 contexts.values.insert("needs".into(), Value::Object(needs));
-                ancestors.insert(id.clone(), status);
                 if let Some(replay) = &replay {
                     if !replay.selected.contains_key(&id) {
                         let result = replay
@@ -834,9 +817,7 @@ impl WorkflowRun {
                                 .context("Retained matrix context has changed; re-run the whole workflow")?;
                             validate_replay_matrix(expected, &plans)?;
                         }
-                        successful &= matches!(result.result.as_str(), "success" | "skipped");
-                        results.insert(id, result);
-                        continue;
+                        return Ok(result);
                     }
                 }
                 let expanded = if !dependency_success
@@ -854,12 +835,9 @@ impl WorkflowRun {
                         Log { prefix: format!("{name_prefix}{id}"), masker: masker.clone(), progress: None, output: tokens.output.clone() }
                             .line(&format!("Job expansion failed: {error:#}"));
                         let result = JobResult { result: "failure".into(), outputs: BTreeMap::new() };
-                        saved.jobs.insert(id.clone(), result.clone());
-                        save_job_state(options, &mut saved, masker)?;
-                        results.insert(id, result);
-                        successful = false;
+                        self.record_state(&saved, |saved| { saved.jobs.insert(id.clone(), result.clone()); })?;
                         tokens.completed(&token_id);
-                        continue;
+                        return Ok(result);
                     }
                 };
                 // A matrix whose excludes remove every combination runs nothing, like a skipped job.
@@ -892,13 +870,11 @@ impl WorkflowRun {
                         result: "skipped".into(),
                         outputs: BTreeMap::new(),
                     };
-                    results.insert(id.clone(), result.clone());
-                    saved.jobs.insert(id.clone(), result);
-                    save_job_state(options, &mut saved, masker)?;
+                    self.record_state(&saved, |saved| { saved.jobs.insert(id.clone(), result.clone()); })?;
                     if token_prefix.is_empty() {
                         tokens.completed(&token_id);
                     }
-                    continue;
+                    return Ok(result);
                 };
                 let variants = replay
                     .as_ref()
@@ -956,17 +932,19 @@ impl WorkflowRun {
                     variants.is_none_or(|variants| variants.contains(&(*index as u32)))
                 });
                 let mut tasks = tokio::task::JoinSet::new();
-                let (matrix_tx, matrix_cancel) = watch::channel(false);
+                let (matrix_tx, matrix_cancel) = watch::channel(*cancel.borrow());
                 let relay_tx = matrix_tx.clone();
                 let mut global_cancel = cancel.clone();
                 let relay = tokio::spawn(async move {
-                    while global_cancel.changed().await.is_ok() {
+                    loop {
                         if *global_cancel.borrow() {
                             let _ = relay_tx.send(true);
                             break;
                         }
+                        if global_cancel.changed().await.is_err() { break; }
                     }
                 });
+                let _relay_guard = BackgroundTask(relay.abort_handle());
                 let mut aggregate = JobResult {
                     result: "success".into(),
                     outputs: BTreeMap::new(),
@@ -1102,18 +1080,25 @@ impl WorkflowRun {
                     let Some(result) = tasks.join_next().await else {
                         break;
                     };
-                    let (index, result) = result.context("Job task failed")?;
-                    saved
-                        .variants
-                        .entry(id.clone())
-                        .or_default()
-                        .insert(index.try_into().expect("matrix is bounded"), result.clone());
-                    saved
-                        .variant_order
-                        .entry(id.clone())
-                        .or_default()
-                        .push(index.try_into().expect("matrix is bounded"));
-                    save_job_state(options, &mut saved, masker)?;
+                    let (index, result) = match result {
+                        Ok(result) => result,
+                        Err(error) => {
+                            options.containment_lost.store(true, std::sync::atomic::Ordering::Release);
+                            let _ = matrix_tx.send(true);
+                            tasks.shutdown().await;
+                            relay.abort();
+                            return Err(anyhow::anyhow!("Job task failed: {error}"));
+                        }
+                    };
+                    if let Err(error) = self.record_state(&saved, |saved| {
+                        saved.variants.entry(id.clone()).or_default().insert(index.try_into().expect("matrix is bounded"), result.clone());
+                        saved.variant_order.entry(id.clone()).or_default().push(index.try_into().expect("matrix is bounded"));
+                    }) {
+                        let _ = matrix_tx.send(true);
+                        tasks.shutdown().await;
+                        relay.abort();
+                        return Err(error);
+                    }
                     if result.result == "failure" {
                         aggregate.result = "failure".into();
                         if fail_fast {
@@ -1137,44 +1122,24 @@ impl WorkflowRun {
                         });
                     }
                     let index = index.try_into().expect("matrix is bounded");
-                    saved.variants.entry(id.clone()).or_default().insert(
-                        index,
-                        JobResult {
-                            result: "cancelled".into(),
-                            outputs: BTreeMap::new(),
-                        },
-                    );
-                    saved
-                        .variant_order
-                        .entry(id.clone())
-                        .or_default()
-                        .push(index);
+                    self.record_state(&saved, |saved| {
+                        saved.variants.entry(id.clone()).or_default().insert(index, JobResult { result: "cancelled".into(), outputs: BTreeMap::new() });
+                        saved.variant_order.entry(id.clone()).or_default().push(index);
+                    })?;
                     if aggregate.result == "success" {
                         aggregate.result = "cancelled".into();
                     }
                 }
-                successful &= aggregate.result == "success" || aggregate.result == "skipped";
-                saved.jobs.insert(id.clone(), aggregate.clone());
-                save_job_state(options, &mut saved, masker)?;
+                self.record_state(&saved, |saved| { saved.jobs.insert(id, aggregate.clone()); })?;
                 tokens.completed(&token_id);
-                results.insert(id, aggregate);
-            }
-            contexts.values.insert("jobs".into(), Value::Object(results.iter().map(|(id, result)| (
-        id.clone(), Value::from_json(&serde_json::json!({"result": result.result, "outputs": result.outputs}))
-    )).collect()));
-            Ok(JobResult {
-                result: if *cancel.borrow() || results.values().any(|result| result.result == "cancelled") {
-                    "cancelled"
-                } else if successful {
-                    "success"
-                } else {
-                    "failure"
-                }
-                .into(),
-                outputs: if token_prefix.is_empty() { BTreeMap::new() } else { reusable::outputs(&raw, &contexts, masker)? },
-            })
+                Ok(aggregate)
         })
     }
+}
+
+struct BackgroundTask(tokio::task::AbortHandle);
+impl Drop for BackgroundTask {
+    fn drop(&mut self) { self.0.abort(); }
 }
 
 const ADMISSION_POLL: Duration = Duration::from_millis(500);
