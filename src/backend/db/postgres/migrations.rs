@@ -5,14 +5,11 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use tracing::info;
 
-const MIGRATIONS: &[(i64, &str, &str)] = &[
-    (1, "schema", include_str!("../../../../schema/postgres/0001.schema.sql")),
-    (2, "admission", include_str!("../../../../schema/postgres/0002.admission.sql")),
-    (3, "registry_compatibility", include_str!("../../../../schema/postgres/0003.registry_compatibility.sql")),
-    (4, "relationship_times", include_str!("../../../../schema/postgres/0002.relationship_times.sql")),
-    (5, "secret_scan_ancestry", include_str!("../../../../schema/postgres/0002.secret_scan_ancestry.sql")),
-    (6, "ci_ref_names", include_str!("../../../../schema/postgres/0003.ci_ref_names.sql")),
-];
+const MIGRATIONS: &[(i64, &str, &str)] = &[(
+    1,
+    "schema",
+    include_str!("../../../../schema/postgres/0001.schema.sql"),
+)];
 
 static MIGRATION_TURNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -47,21 +44,6 @@ pub async fn run_migrations(pool: &PgPool) -> Result<()> {
         sqlx::Executor::execute(&mut *tx, sqlx::raw_sql(sql))
             .await
             .with_context(|| format!("apply database migration {version} ({name})"))?;
-        if version == 3 {
-            let mut after = 0i64;
-            loop {
-                let rows: Vec<(i64, String, String)> = sqlx::query_as("SELECT v.id,v.name,v.manifest FROM package_versions v JOIN packages p ON p.id=v.package_id WHERE p.package_type='nuget' AND v.id>$1 ORDER BY v.id LIMIT 16")
-                    .bind(after).fetch_all(&mut *tx).await?;
-                if rows.is_empty() { break; }
-                for (id, name, manifest) in rows {
-                    let mut metadata: serde_json::Value = serde_json::from_str(&manifest)?;
-                    metadata["semver2"] = crate::backend::nuget::metadata_semver2(&name, &metadata)?.into();
-                    sqlx::query("UPDATE package_versions SET manifest=$1 WHERE id=$2")
-                        .bind(metadata.to_string()).bind(id).execute(&mut *tx).await?;
-                    after = id;
-                }
-            }
-        }
         sqlx::query("INSERT INTO _gitserv_migrations (version, name, sha256) VALUES ($1, $2, $3)")
             .bind(version)
             .bind(name)

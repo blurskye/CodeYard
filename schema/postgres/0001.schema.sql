@@ -1009,6 +1009,7 @@ INSERT INTO file_reason_limits (reason, max_file_size_bytes, max_uploads_per_hou
 ('readme_image', 5242880, 10, 52428800, 50, 262144000, ARRAY['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'], 'README and wiki images'),
 ('repo_asset', 52428800, 10, 262144000, 50, 1073741824, NULL, 'Repository assets'),
 ('codeql_database', 104857600, 10, 1073741824, 40, 4294967296, ARRAY['application/zip'], 'CodeQL databases'),
+('package', 104857600, 100, 1073741824, 500, 5368709120, NULL, 'Package blob uploads'),
 ('other', 10485760, 5, 52428800, 20, 104857600, NULL, 'Uncategorized files')
 ON CONFLICT (reason) DO NOTHING;
 
@@ -1025,7 +1026,7 @@ CREATE TABLE IF NOT EXISTS ci_runs (
     pipeline VARCHAR(20) NOT NULL DEFAULT 'ci', -- ci, cd, full
     event VARCHAR(50) NOT NULL,
     is_fork BOOLEAN NOT NULL DEFAULT FALSE,
-    branch VARCHAR(255) NOT NULL,
+    branch VARCHAR(1024) NOT NULL,
     head_sha VARCHAR(40),
     workflow_path TEXT NOT NULL,
     environment VARCHAR(255),
@@ -1193,6 +1194,8 @@ CREATE TABLE IF NOT EXISTS repository_replicas (
 );
 
 CREATE INDEX IF NOT EXISTS idx_repository_replicas_node ON repository_replicas(node_id);
+CREATE INDEX idx_repository_replicas_pending ON repository_replicas(node_id, repository_id)
+WHERE applied_version < 0 AND synced_at IS NULL;
 
 -- Forks of private repositories stay private, including forks of forks.
 CREATE OR REPLACE FUNCTION enforce_repository_visibility_floor() RETURNS TRIGGER AS $$
@@ -1649,12 +1652,15 @@ CREATE TABLE issue_relations (
     source_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
     target_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
     position BIGINT NOT NULL DEFAULT 0 CHECK (position>=0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY(kind,source_id,target_id),
     CHECK (source_id<>target_id),
     CHECK (kind<>'related' OR source_id<target_id)
 );
 CREATE UNIQUE INDEX issue_one_parent ON issue_relations(target_id) WHERE kind='parent';
 CREATE INDEX issue_relations_target ON issue_relations(kind,target_id);
+CREATE INDEX issue_relations_added_source ON issue_relations(kind,source_id,created_at,target_id);
+CREATE INDEX issue_relations_added_target ON issue_relations(kind,target_id,created_at,source_id);
 
 CREATE TABLE pr_comment_pins (
     pull_request_id BIGINT PRIMARY KEY REFERENCES pull_requests(id) ON DELETE CASCADE,
@@ -2407,6 +2413,13 @@ CREATE TABLE deployment_statuses (
 CREATE INDEX deployment_statuses_deployment ON deployment_statuses(deployment_id,id);
 
 -- packages
+CREATE TABLE registry_namespaces (
+    namespace TEXT PRIMARY KEY,
+    owner_user_id BIGINT UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    owner_org_id BIGINT UNIQUE REFERENCES organizations(id) ON DELETE CASCADE,
+    CHECK ((owner_user_id IS NOT NULL) <> (owner_org_id IS NOT NULL))
+);
+
 CREATE TABLE packages (
     id BIGSERIAL PRIMARY KEY,
     owner_kind TEXT NOT NULL CHECK (owner_kind IN ('user','org')),
@@ -2804,7 +2817,9 @@ CREATE TABLE code_scanning_uploads (
     checkout_uri TEXT,
     processing_status TEXT NOT NULL DEFAULT 'pending' CHECK(processing_status IN ('pending','complete','failed')),
     error TEXT,
-    created_at TIMESTAMPTZ NOT NULL
+    created_at TIMESTAMPTZ NOT NULL,
+    claim_id TEXT,
+    claim_until TIMESTAMPTZ
 );
 CREATE INDEX code_scanning_uploads_pending ON code_scanning_uploads(processing_status,sequence);
 
@@ -3152,6 +3167,8 @@ CREATE INDEX secret_scanning_jobs_history ON secret_scanning_jobs(repo_id, id DE
 CREATE TABLE secret_scanning_commits (
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     commit_sha TEXT NOT NULL,
+    -- TRUE once the commit's ancestors were scanned too, not only its own tree.
+    ancestry_complete BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (repo_id, commit_sha)
 );
 

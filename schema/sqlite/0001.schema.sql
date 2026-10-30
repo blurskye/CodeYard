@@ -770,7 +770,7 @@ CREATE TABLE ci_runs (
     pipeline TEXT NOT NULL DEFAULT 'ci' CHECK (length(pipeline)<=20), 
     event TEXT NOT NULL CHECK (length(event)<=50),
     is_fork INTEGER NOT NULL DEFAULT 0 CHECK (is_fork IN (0,1)),
-    branch TEXT NOT NULL CHECK (length(branch)<=255),
+    branch TEXT NOT NULL CHECK (length(branch)<=1024),
     head_sha TEXT CHECK (length(head_sha)<=40),
     workflow_path TEXT NOT NULL,
     environment TEXT CHECK (length(environment)<=255),
@@ -895,6 +895,8 @@ CREATE TABLE repository_replicas (
 );
 
 CREATE INDEX idx_repository_replicas_node ON repository_replicas(node_id);
+CREATE INDEX idx_repository_replicas_pending ON repository_replicas(node_id, repository_id)
+WHERE applied_version < 0 AND synced_at IS NULL;
 
 CREATE INDEX idx_files_user_id ON files(user_id);
 
@@ -1087,6 +1089,7 @@ INSERT INTO file_reason_limits (reason, max_file_size_bytes, max_uploads_per_hou
 ('readme_image', 5242880, 10, 52428800, 50, 262144000, '["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"]', 'README and wiki images'),
 ('repo_asset', 52428800, 10, 262144000, 50, 1073741824, NULL, 'Repository assets'),
 ('codeql_database', 104857600, 10, 1073741824, 40, 4294967296, '["application/zip"]', 'CodeQL databases'),
+('package', 104857600, 100, 1073741824, 500, 5368709120, NULL, 'Package blob uploads'),
 ('other', 10485760, 5, 52428800, 20, 104857600, NULL, 'Uncategorized files')
 ON CONFLICT (reason) DO NOTHING;
 
@@ -1524,12 +1527,15 @@ CREATE TABLE issue_relations (
     source_id INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE CHECK (typeof(source_id)='integer'),
     target_id INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE CHECK (typeof(target_id)='integer'),
     position INTEGER NOT NULL DEFAULT 0 CHECK (typeof(position)='integer' AND position>=0),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     PRIMARY KEY(kind,source_id,target_id),
     CHECK (source_id<>target_id),
     CHECK (kind<>'related' OR source_id<target_id)
 );
 CREATE UNIQUE INDEX issue_one_parent ON issue_relations(target_id) WHERE kind='parent';
 CREATE INDEX issue_relations_target ON issue_relations(kind,target_id);
+CREATE INDEX issue_relations_added_source ON issue_relations(kind,source_id,created_at,target_id);
+CREATE INDEX issue_relations_added_target ON issue_relations(kind,target_id,created_at,source_id);
 
 CREATE TABLE pr_comment_pins (
     pull_request_id INTEGER NOT NULL PRIMARY KEY REFERENCES pull_requests(id) ON DELETE CASCADE CHECK (typeof(pull_request_id)='integer'),
@@ -2263,6 +2269,13 @@ CREATE TABLE deployment_statuses (
 CREATE INDEX deployment_statuses_deployment ON deployment_statuses(deployment_id,id);
 
 -- packages
+CREATE TABLE registry_namespaces (
+    namespace TEXT PRIMARY KEY,
+    owner_user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    owner_org_id INTEGER UNIQUE REFERENCES organizations(id) ON DELETE CASCADE,
+    CHECK ((owner_user_id IS NOT NULL) <> (owner_org_id IS NOT NULL))
+);
+
 CREATE TABLE packages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_kind TEXT NOT NULL CHECK (owner_kind IN ('user','org')),
@@ -2660,7 +2673,9 @@ CREATE TABLE code_scanning_uploads (
     checkout_uri TEXT,
     processing_status TEXT NOT NULL DEFAULT 'pending' CHECK(processing_status IN ('pending','complete','failed')),
     error TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    claim_id TEXT,
+    claim_until TEXT
 );
 CREATE INDEX code_scanning_uploads_pending ON code_scanning_uploads(processing_status,sequence);
 
@@ -3005,6 +3020,8 @@ CREATE INDEX secret_scanning_jobs_history ON secret_scanning_jobs(repo_id, id DE
 CREATE TABLE secret_scanning_commits (
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     commit_sha TEXT NOT NULL,
+    -- TRUE once the commit's ancestors were scanned too, not only its own tree.
+    ancestry_complete BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (repo_id, commit_sha)
 );
 
