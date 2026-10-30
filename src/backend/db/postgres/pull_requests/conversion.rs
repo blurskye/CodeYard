@@ -41,7 +41,7 @@ pub(super) async fn read_source(
     anyhow::ensure!(metadata, IssueConversionRefusal::Invalid);
     // The creation lock excludes new issue metadata. PRs have no equivalents for these
     // records, so conversion must not silently cascade-delete them.
-    let portable: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM issue_type_assignments WHERE issue_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_field_values WHERE issue_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_relations WHERE kind IN ('parent','blocks','related') AND source_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_relations WHERE kind IN ('parent','blocks','related') AND target_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_suggestions WHERE issue_id=$1)")
+    let portable: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM issue_type_assignments WHERE issue_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_field_values WHERE issue_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_relations WHERE kind IN ('parent','blocks','related') AND source_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_relations WHERE kind IN ('parent','blocks','related') AND target_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_suggestions WHERE issue_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_redirects WHERE issue_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_duplicates WHERE issue_id=$1 OR duplicate_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_linked_branches WHERE issue_id=$1)")
         .bind(issue.id).fetch_one(&mut **tx).await?;
     anyhow::ensure!(portable, IssueConversionRefusal::Invalid);
     Ok(issue)
