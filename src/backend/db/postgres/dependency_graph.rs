@@ -1,6 +1,6 @@
 use crate::backend::{
     db::dependency_graph::{
-        self, GraphError, Submission, SBOM_REPORTS_PER_REPOSITORY, SBOM_REPORT_LIFETIME_SECONDS,
+        self, GraphError, Reader, Submission, SBOM_REPORTS_PER_REPOSITORY, SBOM_REPORT_LIFETIME_SECONDS,
     },
     dependency_graph::Snapshot,
 };
@@ -11,19 +11,38 @@ pub(super) async fn enabled_in(connection: &mut sqlx::PgConnection, repo: i64) -
         .bind(repo).fetch_one(connection).await
 }
 
-async fn check_enabled_in(connection: &mut sqlx::PgConnection, repo: i64) -> Result<(), GraphError> {
-    super::repositories::access::lock_membership_shared(connection).await.map_err(GraphError::Authority)?;
-    super::repositories::records::lock_fork_ancestors(connection, repo, "FOR SHARE").await.map_err(GraphError::Authority)?;
-    let row: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE id=$1 AND NOT is_gist FOR SHARE")
-        .bind(repo).fetch_optional(&mut *connection).await?;
-    if row.is_none() { return Err(GraphError::Denied); }
+async fn authorize_in(connection: &mut sqlx::PgConnection, reader: &Reader, repo: i64, exclusive: bool) -> Result<(), GraphError> {
+    match reader {
+        Reader::Viewer(Some(actor)) => {
+            use super::repositories::access::{lock_readable_repository_in_transaction, RepositoryRowLock};
+            let lock = if exclusive { RepositoryRowLock::Exclusive } else { RepositoryRowLock::Shared };
+            if !lock_readable_repository_in_transaction(connection, actor.user_id, repo, lock).await.map_err(GraphError::Authority)?
+                || !super::credentials::repository(connection, actor, repo, "contents", false).await.map_err(GraphError::Authority)? {
+                return Err(GraphError::Denied);
+            }
+        }
+        Reader::Viewer(None) | Reader::Scan(_) => {
+            super::repositories::access::lock_membership_shared(connection).await.map_err(GraphError::Authority)?;
+            let source_lock = if exclusive { "FOR NO KEY UPDATE" } else { "FOR SHARE" };
+            super::repositories::records::lock_fork_ancestors(connection, repo, source_lock).await.map_err(GraphError::Authority)?;
+            let lock = if exclusive { "FOR UPDATE" } else { "FOR SHARE" };
+            let row: Option<i64> = sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived) {lock} OF r", super::repositories::access::readable_condition()))
+                .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_optional(&mut *connection).await?;
+            if row.is_none() { return Err(GraphError::Denied); }
+        }
+    }
+    if let Reader::Scan(generation) = reader {
+        let job: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM vulnerability_jobs WHERE repo_id=$1 AND generation=$2 FOR SHARE")
+            .bind(repo).bind(generation).fetch_optional(&mut *connection).await?;
+        if job.is_none() { return Err(GraphError::Denied); }
+    }
     if !enabled_in(connection, repo).await? { return Err(GraphError::Disabled); }
     Ok(())
 }
 
-pub async fn check_enabled(pool: &PgPool, repo: i64) -> Result<(), GraphError> {
+pub async fn check_read(pool: &PgPool, reader: &Reader, repo: i64) -> Result<(), GraphError> {
     let mut tx = pool.begin().await?;
-    check_enabled_in(&mut tx, repo).await?;
+    authorize_in(&mut tx, reader, repo, false).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -78,7 +97,7 @@ pub async fn submit(
     Ok(submission)
 }
 
-/// The caller retains its read snapshot or repository write lock through payload loading.
+/// The caller retains its read snapshot or repository scope lock through payload loading.
 pub(super) async fn bounded_snapshot_ids(
     connection: &mut sqlx::PgConnection, repo: i64, reference: Option<&str>, sha: Option<&str>,
 ) -> Result<Vec<i64>, GraphError> {
@@ -99,26 +118,22 @@ pub(super) async fn snapshots_in(
 
 pub async fn snapshots(
     pool: &PgPool,
+    reader: &Reader,
     repo: i64,
     reference: Option<&str>,
     sha: Option<&str>,
 ) -> Result<Vec<Snapshot>, GraphError> {
     let mut tx = pool.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
-    check_enabled_in(&mut tx, repo).await?;
+    authorize_in(&mut tx, reader, repo, false).await?;
     let rows = snapshots_in(&mut tx, repo, reference, sha).await?;
     tx.commit().await?;
     Ok(rows)
 }
 
-pub async fn save_report(pool: &PgPool, repo: i64, id: &str, body: &str) -> Result<(), GraphError> {
+pub async fn save_report(pool: &PgPool, reader: &Reader, repo: i64, id: &str, body: &str) -> Result<(), GraphError> {
     let mut tx = pool.begin().await?;
-    // Saves of one repository take turns, so concurrent pruning keeps the limit exact.
-    sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR NO KEY UPDATE")
-        .bind(repo)
-        .execute(&mut *tx)
-        .await?;
-    if !enabled_in(&mut tx, repo).await? { return Err(GraphError::Disabled); }
+    // Read-authorized saves serialize before taking any repository locks, avoiding upgrades.
+    authorize_in(&mut tx, reader, repo, true).await?;
     sqlx::query("INSERT INTO dependency_sbom_reports(repo_id,id,body) VALUES($1,$2,$3)")
         .bind(repo)
         .bind(id)
@@ -148,10 +163,10 @@ pub async fn prune_expired_reports(pool: &PgPool) -> Result<u64, GraphError> {
     )
 }
 
-pub async fn report(pool: &PgPool, repo: i64, id: &str) -> Result<Option<String>, GraphError> {
+pub async fn report(pool: &PgPool, reader: &Reader, repo: i64, id: &str) -> Result<Option<String>, GraphError> {
     let cutoff = chrono::Utc::now() - chrono::Duration::seconds(SBOM_REPORT_LIFETIME_SECONDS);
     let mut tx = pool.begin().await?;
-    check_enabled_in(&mut tx, repo).await?;
+    authorize_in(&mut tx, reader, repo, false).await?;
     let body = sqlx::query_scalar("SELECT body FROM dependency_sbom_reports WHERE repo_id=$1 AND id=$2 AND created_at > $3")
         .bind(repo).bind(id).bind(cutoff).fetch_optional(&mut *tx).await?;
     tx.commit().await?;

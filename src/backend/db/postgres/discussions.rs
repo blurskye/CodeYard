@@ -194,7 +194,7 @@ pub(crate) async fn lock_settings_read_authority(
     if admin {
         lock_policy_authority(tx, actor_id, repo_id, false).await
     } else {
-        super::repositories::access::lock_readable_repository_in_transaction(tx, actor_id, repo_id).await
+        super::repositories::access::lock_readable_repository_in_transaction(tx, actor_id, repo_id, super::repositories::access::RepositoryRowLock::Shared).await
     }
 }
 

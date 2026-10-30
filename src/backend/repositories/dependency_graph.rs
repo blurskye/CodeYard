@@ -5,7 +5,7 @@ use super::{
 };
 use crate::backend::{
     app::AppState,
-    db::{self, models::Repository},
+    db::{self, dependency_graph::Reader, models::Repository},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -30,7 +30,7 @@ fn unavailable(_: anyhow::Error) -> RepoError {
 
 fn graph_error(error: db::dependency_graph::GraphError) -> RepoError {
     match error {
-        error @ (db::dependency_graph::GraphError::Disabled | db::dependency_graph::GraphError::Limit) => invalid(error.to_string()),
+        error @ (db::dependency_graph::GraphError::Denied | db::dependency_graph::GraphError::Disabled | db::dependency_graph::GraphError::Limit) => invalid(error.to_string()),
         error => unavailable(error.into()),
     }
 }
@@ -128,12 +128,13 @@ pub(crate) fn is_native(snapshot: &crate::backend::dependency_graph::Snapshot) -
 /// The submitted snapshots of `reference` at `sha`, as their JSON documents.
 async fn snapshot_values(
     state: &AppState,
+    reader: &Reader,
     repo: &Repository,
     reference: &str,
     sha: &str,
 ) -> Result<Vec<serde_json::Value>, RepoError> {
     let branch = reference.starts_with("refs/heads/").then_some(reference);
-    db::dependency_graph::snapshots(&state.pool, repo.id, branch, Some(sha))
+    db::dependency_graph::snapshots(&state.pool, reader, repo.id, branch, Some(sha))
         .await
         .map_err(graph_error)?
         .iter()
@@ -145,10 +146,11 @@ async fn snapshot_values(
 /// inventory, unless a submitted snapshot of the commit covers that manifest.
 pub(crate) async fn native_inventory(
     state: &AppState,
+    reader: &Reader,
     repo: &Repository,
     reference: &str,
 ) -> Result<(String, Vec<Package>), RepoError> {
-    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(graph_error)?;
+    db::dependency_graph::check_read(&state.pool, reader, repo.id).await.map_err(graph_error)?;
     let store = repo_store(repo, state.cluster.as_ref());
     let sha = store.commit(reference).await?.sha;
     let listing = store.file_paths(&sha, MAX_LISTED_PATHS).await?;
@@ -162,7 +164,7 @@ pub(crate) async fn native_inventory(
     // Codeyard's own earlier scan of this commit is not a submission, so it covers nothing. A
     // manifest is named by its source location, as `dependency_graph::packages` reads it.
     let covered: HashSet<String> =
-        db::dependency_graph::snapshots(&state.pool, repo.id, branch, Some(&sha))
+        db::dependency_graph::snapshots(&state.pool, reader, repo.id, branch, Some(&sha))
             .await
             .map_err(graph_error)?
             .iter()
@@ -213,16 +215,17 @@ pub(crate) async fn native_inventory(
             }
         }
     }
-    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(graph_error)?;
+    db::dependency_graph::check_read(&state.pool, reader, repo.id).await.map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
 }
 
 pub async fn inventory(
     state: &AppState,
+    reader: &Reader,
     repo: &Repository,
     reference: &str,
 ) -> Result<(String, Vec<Package>), RepoError> {
-    let (sha, native) = native_inventory(state, repo, reference).await?;
+    let (sha, native) = native_inventory(state, reader, repo, reference).await?;
     let mut packages: BTreeMap<_, _> = native
         .into_iter()
         .map(|package| {
@@ -232,7 +235,7 @@ pub async fn inventory(
             )
         })
         .collect();
-    for value in snapshot_values(state, repo, reference, &sha).await? {
+    for value in snapshot_values(state, reader, repo, reference, &sha).await? {
         if let Some(manifests) = value["manifests"].as_object() {
             for (key, manifest) in manifests {
                 // The file a manifest names, as the snapshot projection reads it: its source
@@ -278,7 +281,7 @@ pub async fn inventory(
             "Dependency inventory exceeds its limit",
         ));
     }
-    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(graph_error)?;
+    db::dependency_graph::check_read(&state.pool, reader, repo.id).await.map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
 }
 

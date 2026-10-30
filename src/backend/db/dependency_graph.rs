@@ -53,6 +53,12 @@ pub enum GraphError {
     Stored(#[from] serde_json::Error),
 }
 
+/// HTTP readers retain the original credential. Scan generations are trusted worker inputs only.
+pub enum Reader {
+    Viewer(Option<super::credentials::Actor>),
+    Scan(i64),
+}
+
 #[derive(sqlx::FromRow)]
 pub struct Submission {
     pub id: i64,
@@ -61,9 +67,9 @@ pub struct Submission {
     pub updated: bool,
 }
 
-native_operation!(super::postgres::dependency_graph::check_enabled,
-    super::sqlite::dependency_graph::check_enabled,
-    fn check_enabled(pool: &DbPool, repo: i64) -> Result<(), GraphError>);
+native_operation!(super::postgres::dependency_graph::check_read,
+    super::sqlite::dependency_graph::check_read,
+    fn check_read(pool: &DbPool, reader: &Reader, repo: i64) -> Result<(), GraphError>);
 
 native_operation!(super::postgres::dependency_graph::submit,
     super::sqlite::dependency_graph::submit,
@@ -72,12 +78,12 @@ native_operation!(super::postgres::dependency_graph::submit,
 
 native_operation!(super::postgres::dependency_graph::snapshots,
     super::sqlite::dependency_graph::snapshots,
-    fn snapshots(pool: &DbPool, repo: i64, reference: Option<&str>, sha: Option<&str>)
+    fn snapshots(pool: &DbPool, reader: &Reader, repo: i64, reference: Option<&str>, sha: Option<&str>)
     -> Result<Vec<Snapshot>, GraphError>);
 
 native_operation!(super::postgres::dependency_graph::save_report,
     super::sqlite::dependency_graph::save_report,
-    fn save_report(pool: &DbPool, repo: i64, id: &str, body: &str)
+    fn save_report(pool: &DbPool, reader: &Reader, repo: i64, id: &str, body: &str)
     -> Result<(), GraphError>);
 
 native_operation!(super::postgres::dependency_graph::prune_expired_reports,
@@ -87,5 +93,5 @@ native_operation!(super::postgres::dependency_graph::prune_expired_reports,
 
 native_operation!(super::postgres::dependency_graph::report,
     super::sqlite::dependency_graph::report,
-    fn report(pool: &DbPool, repo: i64, id: &str)
+    fn report(pool: &DbPool, reader: &Reader, repo: i64, id: &str)
     -> Result<Option<String>, GraphError>);

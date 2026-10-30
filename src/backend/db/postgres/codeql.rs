@@ -6,7 +6,7 @@ async fn authorized(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, actor: &Acto
     let allowed = if write {
         super::discussions::lock_write_authority(tx, actor.user_id, repo).await?
     } else {
-        super::repositories::access::lock_readable_repository_in_transaction(tx, actor.user_id, repo).await?
+        super::repositories::access::lock_readable_repository_in_transaction(tx, actor.user_id, repo, super::repositories::access::RepositoryRowLock::Shared).await?
     };
     ensure!(allowed && super::credentials::repository(tx, actor, repo, "security_events", write).await?, Refusal::Denied);
     Ok(())

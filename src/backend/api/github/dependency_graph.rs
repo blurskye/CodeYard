@@ -26,14 +26,17 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 fn error(error: db::dependency_graph::GraphError) -> Error {
     use db::dependency_graph::GraphError;
     match error {
-        GraphError::Denied => Error::new(
-            StatusCode::FORBIDDEN,
-            "Must have write access to this repository",
-        ),
+        GraphError::Denied => Error::new(StatusCode::FORBIDDEN, GraphError::Denied.to_string()),
         GraphError::Invalid => Error::validation("Snapshot", "snapshot", "invalid"),
         error @ (GraphError::Limit | GraphError::Disabled) => Error::new(StatusCode::UNPROCESSABLE_ENTITY, error.to_string()),
         _ => Error::unavailable(error),
     }
+}
+
+async fn readable(state: &AppState, headers: &HeaderMap, owner: &str, name: &str) -> Result<(db::models::Repository, db::dependency_graph::Reader)> {
+    let (repo, authentication) = repository(state, headers, owner, name, false).await?;
+    let actor = authentication.as_ref().map(|auth| auth.database_actor(headers)).transpose()?;
+    Ok((repo, db::dependency_graph::Reader::Viewer(actor)))
 }
 
 async fn submit(
@@ -84,12 +87,12 @@ async fn compare(
     OriginalUri(uri): OriginalUri,
     Query(query): Query<Compare>,
 ) -> Result<Response> {
-    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
+    let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
     let (base, head) = range
         .split_once("...")
         .filter(|(base, head)| !base.is_empty() && !head.is_empty())
         .ok_or_else(|| Error::new(StatusCode::BAD_REQUEST, "Invalid comparison"))?;
-    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(error)?;
+    db::dependency_graph::check_read(&state.pool, &reader, repo.id).await.map_err(error)?;
     let store = repo_store(&repo, state.cluster.as_ref());
     let comparison = store
         .comparison_from(&store, base, head, 0, 1)
@@ -97,6 +100,7 @@ async fn compare(
         .map_err(store_error)?;
     let mut base = db::dependency_graph::snapshots(
         &state.pool,
+        &reader,
         repo.id,
         None,
         Some(&comparison.merge_base_commit.sha),
@@ -104,11 +108,11 @@ async fn compare(
     .await
     .map_err(error)?;
     let mut head =
-        db::dependency_graph::snapshots(&state.pool, repo.id, None, Some(&comparison.head_sha))
+        db::dependency_graph::snapshots(&state.pool, &reader, repo.id, None, Some(&comparison.head_sha))
             .await
             .map_err(error)?;
-    append_inventory(&state, &repo, &comparison.merge_base_commit.sha, &mut base).await?;
-    append_inventory(&state, &repo, &comparison.head_sha, &mut head).await?;
+    append_inventory(&state, &reader, &repo, &comparison.merge_base_commit.sha, &mut base).await?;
+    append_inventory(&state, &reader, &repo, &comparison.head_sha, &mut head).await?;
     let changes = dependency_graph::diff(&base, &head, query.name.as_deref());
     let page = Pagination {
         page: query.page,
@@ -135,7 +139,7 @@ async fn compare(
                 "advisory_url":format!("https://osv.dev/vulnerability/{}",crate::webui::encode_component(&a.id)),
             })).collect::<Vec<_>>());
     }
-    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(error)?;
+    db::dependency_graph::check_read(&state.pool, &reader, repo.id).await.map_err(error)?;
     Ok((page.headers(&uri, has_more)?, Json(changes)).into_response())
 }
 
@@ -143,12 +147,13 @@ async fn compare(
 // submitted detector snapshots, retaining the latter's dependency relationships and metadata.
 async fn append_inventory(
     state: &AppState,
+    reader: &db::dependency_graph::Reader,
     repo: &db::models::Repository,
     reference: &str,
     snapshots: &mut Vec<dependency_graph::Snapshot>,
 ) -> Result<()> {
     use crate::backend::repositories::{dependency_graph as inventory, store::ErrorKind};
-    let (sha, packages) = match inventory::native_inventory(state, repo, reference).await {
+    let (sha, packages) = match inventory::native_inventory(state, reader, repo, reference).await {
         Ok(inventory) => inventory,
         // Submitted detector snapshots also support repositories with no native commits yet.
         Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
@@ -198,8 +203,8 @@ async fn append_inventory(
     Ok(())
 }
 
-async fn current(state: &AppState, repo: &db::models::Repository, owner: &str) -> Result<Value> {
-    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(error)?;
+async fn current(state: &AppState, reader: &db::dependency_graph::Reader, repo: &db::models::Repository, owner: &str) -> Result<Value> {
+    db::dependency_graph::check_read(&state.pool, reader, repo.id).await.map_err(error)?;
     let (refs, branch) = repo_store(repo, state.cluster.as_ref())
         .refs_and_default()
         .await
@@ -209,16 +214,16 @@ async fn current(state: &AppState, repo: &db::models::Repository, owner: &str) -
     // mid-request cannot mix versions.
     let Some(sha) = refs.get(&reference).cloned() else {
         let value = dependency_graph::sbom(&format!("{owner}/{}", repo.name), &[]);
-        db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(error)?;
+        db::dependency_graph::check_read(&state.pool, reader, repo.id).await.map_err(error)?;
         return Ok(value);
     };
     let mut snapshots =
-        db::dependency_graph::snapshots(&state.pool, repo.id, Some(&reference), Some(&sha))
+        db::dependency_graph::snapshots(&state.pool, reader, repo.id, Some(&reference), Some(&sha))
             .await
             .map_err(error)?;
-    append_inventory(state, repo, &sha, &mut snapshots).await?;
+    append_inventory(state, reader, repo, &sha, &mut snapshots).await?;
     let value = dependency_graph::sbom(&format!("{owner}/{}", repo.name), &snapshots);
-    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(error)?;
+    db::dependency_graph::check_read(&state.pool, reader, repo.id).await.map_err(error)?;
     Ok(value)
 }
 
@@ -233,15 +238,15 @@ async fn export(
     Path((owner, name)): Path<(String, String)>,
     Query(query): Query<Export>,
 ) -> Result<Json<Value>> {
-    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
+    let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
     let value = if let Some(id) = query.report {
-        let body = db::dependency_graph::report(&state.pool, repo.id, &id)
+        let body = db::dependency_graph::report(&state.pool, &reader, repo.id, &id)
             .await
             .map_err(error)?
             .ok_or_else(Error::missing)?;
         serde_json::from_str(&body).map_err(Error::unavailable)?
     } else {
-        current(&state, &repo, &owner).await?
+        current(&state, &reader, &repo, &owner).await?
     };
     Ok(Json(value))
 }
@@ -252,14 +257,14 @@ async fn generate(
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Response> {
-    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(error)?;
+    let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
+    db::dependency_graph::check_read(&state.pool, &reader, repo.id).await.map_err(error)?;
     if method == Method::HEAD {
         return Ok(StatusCode::CREATED.into_response());
     }
-    let body = current(&state, &repo, &owner).await?;
+    let body = current(&state, &reader, &repo, &owner).await?;
     let id = uuid::Uuid::new_v4().to_string();
-    db::dependency_graph::save_report(&state.pool, repo.id, &id, &body.to_string())
+    db::dependency_graph::save_report(&state.pool, &reader, repo.id, &id, &body.to_string())
         .await
         .map_err(error)?;
     Ok((StatusCode::CREATED, Json(json!({"sbom_url":format!("{}/dependency-graph/sbom/fetch-report/{id}", repo_url(&owner, &name))}))).into_response())
@@ -270,8 +275,8 @@ async fn fetch(
     headers: HeaderMap,
     Path((owner, name, id)): Path<(String, String, String)>,
 ) -> Result<Response> {
-    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    if db::dependency_graph::report(&state.pool, repo.id, &id)
+    let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
+    if db::dependency_graph::report(&state.pool, &reader, repo.id, &id)
         .await
         .map_err(error)?
         .is_none()

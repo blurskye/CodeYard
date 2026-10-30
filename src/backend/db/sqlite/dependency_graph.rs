@@ -1,6 +1,6 @@
 use crate::backend::{
     db::dependency_graph::{
-        self, GraphError, Submission, SBOM_REPORTS_PER_REPOSITORY, SBOM_REPORT_LIFETIME_SECONDS,
+        self, GraphError, Reader, Submission, SBOM_REPORTS_PER_REPOSITORY, SBOM_REPORT_LIFETIME_SECONDS,
     },
     dependency_graph::Snapshot,
 };
@@ -11,17 +11,32 @@ pub(super) async fn enabled_in(connection: &mut sqlx::SqliteConnection, repo: i6
         .bind(repo).fetch_one(connection).await
 }
 
-async fn check_enabled_in(connection: &mut sqlx::SqliteConnection, repo: i64) -> Result<(), GraphError> {
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND NOT is_gist)")
-        .bind(repo).fetch_one(&mut *connection).await?;
-    if !exists { return Err(GraphError::Denied); }
+async fn authorize_in(connection: &mut sqlx::SqliteConnection, reader: &Reader, repo: i64) -> Result<(), GraphError> {
+    match reader {
+        Reader::Viewer(Some(actor)) => {
+            if !super::repositories::access::lock_readable_repository_in_transaction(connection, actor.user_id, repo).await.map_err(GraphError::Authority)?
+                || !super::credentials::repository(connection, actor, repo, "contents", false).await.map_err(GraphError::Authority)? {
+                return Err(GraphError::Denied);
+            }
+        }
+        Reader::Viewer(None) | Reader::Scan(_) => {
+            let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived))", super::repositories::access::readable_condition()))
+                .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_one(&mut *connection).await?;
+            if !visible { return Err(GraphError::Denied); }
+        }
+    }
+    if let Reader::Scan(generation) = reader {
+        let job: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM vulnerability_jobs WHERE repo_id=$1 AND generation=$2)")
+            .bind(repo).bind(generation).fetch_one(&mut *connection).await?;
+        if !job { return Err(GraphError::Denied); }
+    }
     if !enabled_in(connection, repo).await? { return Err(GraphError::Disabled); }
     Ok(())
 }
 
-pub async fn check_enabled(pool: &SqlitePool, repo: i64) -> Result<(), GraphError> {
+pub async fn check_read(pool: &SqlitePool, reader: &Reader, repo: i64) -> Result<(), GraphError> {
     let mut tx = pool.begin().await?;
-    check_enabled_in(&mut tx, repo).await?;
+    authorize_in(&mut tx, reader, repo).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -97,12 +112,13 @@ pub(super) async fn snapshots_in(
 
 pub async fn snapshots(
     pool: &SqlitePool,
+    reader: &Reader,
     repo: i64,
     reference: Option<&str>,
     sha: Option<&str>,
 ) -> Result<Vec<Snapshot>, GraphError> {
     let mut tx = pool.begin().await?;
-    check_enabled_in(&mut tx, repo).await?;
+    authorize_in(&mut tx, reader, repo).await?;
     let rows = snapshots_in(&mut tx, repo, reference, sha).await?;
     tx.commit().await?;
     Ok(rows)
@@ -110,12 +126,13 @@ pub async fn snapshots(
 
 pub async fn save_report(
     pool: &SqlitePool,
+    reader: &Reader,
     repo: i64,
     id: &str,
     body: &str,
 ) -> Result<(), GraphError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !enabled_in(&mut tx, repo).await? { return Err(GraphError::Disabled); }
+    authorize_in(&mut tx, reader, repo).await?;
     sqlx::query("INSERT INTO dependency_sbom_reports(repo_id,id,body) VALUES($1,$2,$3)")
         .bind(repo)
         .bind(id)
@@ -141,9 +158,9 @@ pub async fn prune_expired_reports(pool: &SqlitePool) -> Result<u64, GraphError>
         .rows_affected())
 }
 
-pub async fn report(pool: &SqlitePool, repo: i64, id: &str) -> Result<Option<String>, GraphError> {
+pub async fn report(pool: &SqlitePool, reader: &Reader, repo: i64, id: &str) -> Result<Option<String>, GraphError> {
     let mut tx = pool.begin().await?;
-    check_enabled_in(&mut tx, repo).await?;
+    authorize_in(&mut tx, reader, repo).await?;
     let body = sqlx::query_scalar("SELECT body FROM dependency_sbom_reports WHERE repo_id=$1 AND id=$2 AND created_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-' || $3 || ' seconds')")
         .bind(repo).bind(id).bind(SBOM_REPORT_LIFETIME_SECONDS).fetch_optional(&mut *tx).await?;
     tx.commit().await?;

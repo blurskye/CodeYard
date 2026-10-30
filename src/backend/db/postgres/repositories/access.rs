@@ -130,9 +130,9 @@ pub(crate) fn readable_condition() -> String {
 /// Read authority includes archived repositories and does not require interaction privileges.
 /// Keep the supplying authority locks until the caller has loaded its protected payload.
 pub(crate) async fn lock_readable_repository_in_transaction(
-    connection: &mut PgConnection, user_id: i64, repo_id: i64,
+    connection: &mut PgConnection, user_id: i64, repo_id: i64, repository_lock: RepositoryRowLock,
 ) -> Result<bool> {
-    if lock_user_repo_access_in_transaction(connection, user_id, repo_id, RepositoryRowLock::Shared, true).await?.is_none() {
+    if lock_user_repo_access_in_transaction(connection, user_id, repo_id, repository_lock, true).await?.is_none() {
         return Ok(false);
     }
     Ok(sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})", readable_condition()))
