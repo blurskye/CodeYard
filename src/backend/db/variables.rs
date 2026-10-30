@@ -30,11 +30,6 @@ pub enum VariableError {
     Limit,
 }
 
-pub(crate) fn authority(error: anyhow::Error) -> VariableError {
-    if error.is::<super::users::accounts::AccountRestricted>() { VariableError::Denied }
-    else { VariableError::Authority(error) }
-}
-
 pub fn validate(name: &str, value: &str) -> Result<(), VariableError> {
     use codeyard_actions::values::InvalidValue;
     codeyard_actions::values::validate(name, value).map_err(|error| match error {
