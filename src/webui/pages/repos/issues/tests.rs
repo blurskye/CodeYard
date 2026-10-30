@@ -485,6 +485,8 @@ fn page_modes() -> Vec<Page> {
         runs: vec![run_fixture("<script>run</script>", "success")],
         statuses: Vec::new(),
         code_scanning: Vec::new(),
+        check_page: 1,
+        more_checks: false,
     });
     let hostile = "<script>alert(1)</script>";
     modes.push(Page::Milestones {
@@ -731,7 +733,9 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     runs,
                     statuses,
                     code_scanning,
-                } => checks_page(repository, item, runs, statuses, code_scanning),
+                    check_page,
+                    more_checks,
+                } => checks_page(repository, item, runs, statuses, code_scanning, (*check_page, *more_checks)),
             };
             let html = dioxus_ssr::render_element(render(decoded));
             assert_eq!(html, dioxus_ssr::render_element(plain));
@@ -3101,6 +3105,28 @@ fn pr_commits_tab_lists_each_commit_with_a_copy_button_and_marks_its_tab() {
 }
 
 #[test]
+fn pr_checks_tab_links_the_neighbouring_pages_of_integration_checks() {
+    crate::webui::tests::in_scope(|| {
+        let page = |check_page, more_checks| {
+            dioxus_ssr::render_element(render(Page::PullChecks {
+                repository: repository_at(Kind::Pull, "/7/checks"),
+                item: item(),
+                runs: Vec::new(),
+                statuses: Vec::new(),
+                code_scanning: Vec::new(),
+                check_page,
+                more_checks,
+            }))
+        };
+        let middle = page(2, true);
+        assert!(middle.contains("checks?checks_page=1"));
+        assert!(middle.contains("checks?checks_page=3"));
+        assert!(!page(1, false).contains("checks_page="));
+        assert!(!page(3, false).contains("checks_page=4"));
+    });
+}
+
+#[test]
 fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
     crate::webui::tests::in_scope(|| {
         let mut shown = item();
@@ -3111,6 +3137,8 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             runs: vec![run_fixture("real-run", "success")],
             statuses: Vec::new(),
             code_scanning: Vec::new(),
+            check_page: 1,
+            more_checks: false,
         }));
         assert_eq!(html.matches("class=\"actions-run-row\"").count(), 1);
         assert!(html.contains("/alice/repo/actions?job=real-run"));
@@ -3121,6 +3149,8 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             runs: Vec::new(),
             statuses: Vec::new(),
             code_scanning: Vec::new(),
+            check_page: 1,
+            more_checks: false,
         }));
         assert!(empty.contains("No workflow runs have started on this commit."));
         assert!(!empty.contains("actions-run-row"));
@@ -3134,6 +3164,8 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             runs: Vec::new(),
             statuses: Vec::new(),
             code_scanning: Vec::new(),
+            check_page: 1,
+            more_checks: false,
         }));
         assert!(read_only.contains("No workflow runs have started on this commit."));
         assert!(!read_only.contains(".github/workflows"));
@@ -3142,6 +3174,8 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             item: item(),
             runs: Vec::new(),
             code_scanning: Vec::new(),
+            check_page: 1,
+            more_checks: false,
             statuses: vec![crate::webui::pages::repos::pulls::CheckStatus {
                 context: "external/compiler".into(),
                 state: "failure".into(),

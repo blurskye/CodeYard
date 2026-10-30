@@ -52,14 +52,27 @@ async fn render_checks(
             .await
             .map_err(|_| unavailable(ctx))?;
     // Check runs an integration published through the API, latest per name, link to their pages.
-    let filter = db::checks::Filter {
-        head_sha: Some(head.to_owned()),
-        ..Default::default()
-    };
-    let check_runs = db::checks::runs(&ctx.state.pool, repo.record.id, &filter, 0, 100)
+    // They come a page at a time and without their summaries and text, which this tab never shows.
+    const CHECKS_PER_PAGE: usize = 100;
+    let max_page = crate::backend::api::repos::paging::MAX_PAGE;
+    let check_page = crate::backend::api::repos::paging::number(ctx, "checks_page", 1, 1..=max_page)?;
+    let offset = (check_page - 1) * CHECKS_PER_PAGE;
+    let check_total = db::checks::summary(&ctx.state.pool, repo.record.id, head)
         .await
         .map_err(|_| unavailable(ctx))?
-        .into_iter()
+        .total;
+    let more_checks = check_page < max_page
+        && i64::try_from(offset + CHECKS_PER_PAGE).is_ok_and(|end| end < check_total);
+    let check_runs = db::checks::rollup_runs(
+        &ctx.state.pool,
+        repo.record.id,
+        head,
+        offset as i64,
+        CHECKS_PER_PAGE as i64,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?
+    .into_iter()
         .map(|run| crate::webui::pages::repos::pulls::CheckStatus {
             state: match (run.status.as_str(), run.conclusion.as_deref()) {
                 ("completed", Some("success" | "neutral" | "skipped")) => "success",
@@ -109,6 +122,8 @@ async fn render_checks(
             runs,
             statuses,
             code_scanning,
+            check_page: u32::try_from(check_page).unwrap_or(1),
+            more_checks,
         }),
     ))
 }

@@ -27,6 +27,7 @@ pub fn checks_page(
     runs: &[Run],
     statuses: &[CheckStatus],
     code_scanning: &[repos::security::Check],
+    (check_page, more_checks): (u32, bool),
 ) -> Element {
     let url = format!("{}/{}", repo.family_url(Kind::Pull), item.number);
     let actions_url = format!("{}/actions", repo.url());
@@ -85,6 +86,12 @@ pub fn checks_page(
                                 }
                             }
                         }
+                    }
+                }
+                if check_page > 1 || more_checks {
+                    nav { class: "repo-pagination", aria_label: "Check pages",
+                        if check_page > 1 { NavLink { class: "btn btn-secondary", href: format!("{url}/checks?checks_page={}", check_page - 1), "Previous" } }
+                        if more_checks { NavLink { class: "btn btn-secondary", href: format!("{url}/checks?checks_page={}", check_page + 1), "Next" } }
                     }
                 }
             }

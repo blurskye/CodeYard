@@ -691,6 +691,11 @@ pub enum Page {
         statuses: Vec<pulls::CheckStatus>,
         #[serde(default)]
         code_scanning: Vec<security::Check>,
+        /// The page of integration checks shown, from 1, and whether another follows.
+        #[serde(default)]
+        check_page: u32,
+        #[serde(default)]
+        more_checks: bool,
     },
 }
 
@@ -896,6 +901,8 @@ pub fn render(page: Page) -> Element {
             runs,
             statuses,
             code_scanning,
-        } => pulls::checks_page(&repository, &item, &runs, &statuses, &code_scanning),
+            check_page,
+            more_checks,
+        } => pulls::checks_page(&repository, &item, &runs, &statuses, &code_scanning, (check_page, more_checks)),
     }
 }
