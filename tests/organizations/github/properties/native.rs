@@ -30,6 +30,7 @@ pub(super) async fn contract(f: &Database, router: &Router, actors: [i64; 3], ta
         "{}",
         response.text()
     );
+    let id=f.scalar("SELECT id FROM organization_repository_properties WHERE org_id=$1 AND property_name='native_tags'",&[org]).await.to_string();
     let selected = format!("{base}?tab=properties&property=native_tags");
     let (status, html) = owner.page(&selected).await;
     assert_eq!(status, StatusCode::OK);
@@ -58,6 +59,7 @@ pub(super) async fn contract(f: &Database, router: &Router, actors: [i64; 3], ta
             &[
                 ("action", "delete-property"),
                 ("property_name", "native_tags"),
+                ("definition_id", &id),
                 ("confirm", "native_tags"),
             ],
         )
@@ -108,7 +110,6 @@ pub(super) async fn contract(f: &Database, router: &Router, actors: [i64; 3], ta
     let (status, html) = outside.page(settings).await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Save explicit value"));
-    let id=f.scalar("SELECT id FROM organization_repository_properties WHERE org_id=$1 AND property_name='native_tags'",&[org]).await.to_string();
     let repo = repo.to_string();
     let response = outside
         .form_reply(
@@ -196,6 +197,7 @@ pub(super) async fn contract(f: &Database, router: &Router, actors: [i64; 3], ta
             &[
                 ("action", "delete-property"),
                 ("property_name", "native_tags"),
+                ("definition_id", &id),
                 ("confirm", "native_tags"),
             ],
         )
@@ -225,6 +227,27 @@ pub(super) async fn contract(f: &Database, router: &Router, actors: [i64; 3], ta
         )
         .await;
     assert_eq!(response.status, StatusCode::CONFLICT);
+    // A delete form for the old definition leaves its same-named replacement alone.
+    let response = owner
+        .form_reply(
+            &action,
+            &[
+                ("action", "delete-property"),
+                ("property_name", "native_tags"),
+                ("definition_id", &id),
+                ("confirm", "native_tags"),
+            ],
+        )
+        .await;
+    assert_eq!(response.status, StatusCode::CONFLICT);
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM organization_repository_properties WHERE org_id=$1 AND property_name='native_tags'",
+            &[org]
+        )
+        .await,
+        1
+    );
 
     let stale = properties::set_repository_value(
         f.pool(),
@@ -312,6 +335,7 @@ pub(super) async fn contract(f: &Database, router: &Router, actors: [i64; 3], ta
         "{}",
         response.text()
     );
+    let required_id=f.scalar("SELECT id FROM organization_repository_properties WHERE org_id=$1 AND property_name='native_required'",&[org]).await.to_string();
     let org = org.to_string();
     let (status, html) = owner.page(&format!("/new?owner_org_id={org}")).await;
     assert_eq!(status, StatusCode::OK);
@@ -433,6 +457,7 @@ pub(super) async fn contract(f: &Database, router: &Router, actors: [i64; 3], ta
             &[
                 ("action", "delete-property"),
                 ("property_name", "native_required"),
+                ("definition_id", &required_id),
                 ("confirm", "native_required"),
             ],
         )
