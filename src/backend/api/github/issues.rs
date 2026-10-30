@@ -775,17 +775,18 @@ pub(in crate::backend::api) fn assignment_error(error: anyhow::Error) -> Error {
 
 pub(in crate::backend::api) async fn apply_metadata(
     state: &AppState,
-    actor: &db::models::User,
+    authentication: &auth::Authentication,
     repo: &db::models::Repository,
     item: AssignedItem,
     detail: (&str, i32, &str),
     metadata: Metadata,
 ) -> Result<()> {
+    let actor = &authentication.user;
     if let Some(kind) = metadata.issue_type {
         let AssignedItem::Issue(id) = item else {
             return Err(Error::invalid("Pull requests do not support issue types"));
         };
-        db::issue_attributes::set_type(&state.pool, repo.id, actor.id, id, kind)
+        db::issue_attributes::set_type(&state.pool, repo.id, (actor.id, authentication.token.id), id, kind)
             .await
             .map_err(super::issue_attributes::error)?;
     }
@@ -986,7 +987,7 @@ async fn update(
     };
     apply_metadata(
         &state,
-        &actor,
+        &authentication,
         &repo,
         item,
         (&p["owner"], number, &title),
