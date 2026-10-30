@@ -277,7 +277,7 @@ fn required_status_check_failures(
     statuses: &[db::models::CommitStatus],
     ci_runs: &[db::models::CiRun],
     // The newest check run of each required name, from its bound app when the context has one.
-    check_runs: &[db::checks::Run],
+    check_runs: &[&db::checks::Run],
     // None stands for a bound app that no longer exists, so nothing meets its context.
     bound_apps: &HashMap<&str, Option<i64>>,
 ) -> Vec<String> {
@@ -332,6 +332,7 @@ fn required_status_check_failures(
         let app = bound_apps.get(required.as_str()).copied();
         let run = check_runs
             .iter()
+            .copied()
             .find(|run| run.name == *required && app != Some(None))
             .map(check_run_state);
         let status = by_context
@@ -387,6 +388,12 @@ async fn merge_blockers(
     let mut blockers = Vec::new();
     // Every rule judges the same reviews, so they are read once, when the first rule needs them.
     let mut reviews = None;
+    // Every rule also judges the same head, so its statuses, CI runs, app bindings and newest
+    // check runs are read once, when a rule first needs them, and shared between the rules.
+    let mut statuses: Option<Vec<db::models::CommitStatus>> = None;
+    let mut ci_runs: Option<Vec<db::models::CiRun>> = None;
+    let mut app_clients: HashMap<i64, Option<i64>> = HashMap::new();
+    let mut latest_runs: HashMap<(String, Option<i64>), Option<db::checks::Run>> = HashMap::new();
     let mut changes_requested_reported = false;
     for rule in &rules {
         if reviews.is_none() {
@@ -496,22 +503,30 @@ async fn merge_blockers(
                 }
             }
             if !required_status_checks.is_empty() {
-                let statuses = db::repositories::protection::list_commit_statuses(
-                    pool,
-                    repository.id,
-                    &pull_request.head_sha,
-                )
-                .await
-                .map_err(database_error)?;
-                let ci_runs = db::ci::latest_ci_runs_for_commit(
-                    pool,
-                    repository.id,
-                    &pull_request.head_sha,
-                    pull_request.id,
-                    target.0,
-                )
-                .await
-                .map_err(database_error)?;
+                if statuses.is_none() {
+                    statuses = Some(
+                        db::repositories::protection::list_commit_statuses(
+                            pool,
+                            repository.id,
+                            &pull_request.head_sha,
+                        )
+                        .await
+                        .map_err(database_error)?,
+                    );
+                }
+                if ci_runs.is_none() {
+                    ci_runs = Some(
+                        db::ci::latest_ci_runs_for_commit(
+                            pool,
+                            repository.id,
+                            &pull_request.head_sha,
+                            pull_request.id,
+                            target.0,
+                        )
+                        .await
+                        .map_err(database_error)?,
+                    );
+                }
                 // Protection binds GitHub App ids, but a check suite records the app's OAuth
                 // client row, so each binding is translated to that row.
                 let mut bound_apps: HashMap<&str, Option<i64>> = HashMap::new();
@@ -521,22 +536,29 @@ async fn merge_blockers(
                     else {
                         continue;
                     };
-                    let app = db::github_apps::app(pool, &id.to_string())
-                        .await
-                        .map_err(database_error)?
-                        .filter(|app| app.id == id);
-                    let client = match app {
-                        Some(app) => db::oauth_apps::application(pool, &app.client_id)
-                            .await
-                            .map_err(database_error)?
-                            .map(|client| client.id),
-                        None => None,
+                    let client = match app_clients.get(&id) {
+                        Some(client) => *client,
+                        None => {
+                            let app = db::github_apps::app(pool, &id.to_string())
+                                .await
+                                .map_err(database_error)?
+                                .filter(|app| app.id == id);
+                            let client = match app {
+                                Some(app) => db::oauth_apps::application(pool, &app.client_id)
+                                    .await
+                                    .map_err(database_error)?
+                                    .map(|client| client.id),
+                                None => None,
+                            };
+                            app_clients.insert(id, client);
+                            client
+                        }
                     };
                     bound_apps.insert(context, client);
                 }
                 // Only the newest check run of each required name is read, from its bound app
                 // when the context has one, so a long check history is never loaded whole.
-                let mut check_runs = Vec::new();
+                let mut wanted = Vec::new();
                 for required in &required_status_checks {
                     let app_id = match bound_apps.get(required.as_str()) {
                         Some(None) => continue,
@@ -546,8 +568,9 @@ async fn merge_blockers(
                     if !bound_apps.contains_key(required.as_str()) && db::repositories::protection::server_owned_status_context(required) {
                         continue;
                     }
-                    check_runs.extend(
-                        db::checks::runs(
+                    let key = (required.clone(), app_id);
+                    if !latest_runs.contains_key(&key) {
+                        let run = db::checks::runs(
                             pool,
                             repository.id,
                             &db::checks::Filter {
@@ -560,14 +583,22 @@ async fn merge_blockers(
                             1,
                         )
                         .await
-                        .map_err(database_error)?,
-                    );
+                        .map_err(database_error)?
+                        .into_iter()
+                        .next();
+                        latest_runs.insert(key.clone(), run);
+                    }
+                    wanted.push(key);
                 }
+                let check_runs: Vec<&db::checks::Run> = wanted
+                    .iter()
+                    .filter_map(|key| latest_runs.get(key).and_then(Option::as_ref))
+                    .collect();
                 let failures = required_status_check_failures(
                     &pull_request.head_sha,
                     &required_status_checks,
-                    &statuses,
-                    &ci_runs,
+                    statuses.as_deref().unwrap_or_default(),
+                    ci_runs.as_deref().unwrap_or_default(),
                     &check_runs,
                     &bound_apps,
                 );
@@ -1694,7 +1725,8 @@ mod tests {
         let failures = |runs: &[db::checks::Run],
                         statuses: &[db::models::CommitStatus],
                         bound: &HashMap<&str, Option<i64>>| {
-            required_status_check_failures("H1", &required, statuses, &[], runs, bound)
+            let runs: Vec<&db::checks::Run> = runs.iter().collect();
+            required_status_check_failures("H1", &required, statuses, &[], &runs, bound)
         };
         let passed = [run("completed", Some("success"))];
         assert!(failures(&passed, &[], &none).is_empty());
