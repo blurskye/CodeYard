@@ -14,7 +14,8 @@ pub use repair::{rebuild, verify};
 
 use crate::backend::{db, git::mirror};
 use anyhow::{bail, ensure, Context, Result};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const SQLITE_FILE: &str = "database.sqlite";
@@ -30,18 +31,23 @@ pub struct Places<'a> {
     pub repos_path: &'a Path,
 }
 
-fn uploads_in_s3() -> bool {
-    ["S3_ENDPOINT", "S3_BUCKET"]
-        .iter()
-        .any(|name| std::env::var_os(name).is_some())
-}
-
 fn private_dir(path: &Path) -> Result<()> {
-    std::fs::create_dir_all(path)?;
+    let path = std::path::absolute(path)?;
+    let mut missing = Vec::new();
+    let mut parent = path.as_path();
+    while !parent.exists() {
+        missing.push(parent.to_path_buf());
+        parent = parent.parent().context("directory has no parent")?;
+    }
+    std::fs::create_dir_all(&path)?;
+    for made in missing.into_iter().rev() {
+        sync_dir(&made)?;
+        sync_dir(made.parent().context("directory has no parent")?)?;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
 }
@@ -65,8 +71,12 @@ fn sync_dir(path: &Path) -> Result<()> {
 
 /// Copies a file, then syncs the copy and the directory that holds it.
 fn copy_synced(from: &Path, to: &Path) -> Result<()> {
-    std::fs::copy(from, to)?;
-    std::fs::File::open(to)?.sync_all()?;
+    reject_symlink(to)?;
+    let parent = to.parent().context("copy destination has no parent")?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    std::io::copy(&mut std::fs::File::open(from)?, temporary.as_file_mut())?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(to).map_err(|error| error.error)?;
     if let Some(parent) = to.parent() {
         sync_dir(parent)?;
     }
@@ -82,7 +92,9 @@ fn repositories_in(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     };
     let mut repositories = Vec::new();
     for entry in entries {
-        let path = entry?.path();
+        let entry = entry?;
+        ensure!(!entry.file_type()?.is_symlink(), "repository directory contains an unsupported symlink: {}", entry.path().display());
+        let path = entry.path();
         if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
             if name.ends_with(".git") && path.join("HEAD").is_file() {
                 repositories.push((name.to_owned(), path));
@@ -107,14 +119,17 @@ fn directory_name(path: &Path) -> Result<String> {
 /// place, so the previous backup keeps everything its database names until then.
 async fn mirror_all(repositories: &[(String, PathBuf)], copy: &Path) -> Result<Vec<PathBuf>> {
     private_dir(copy)?;
+    let retained: HashSet<_> = repositories.iter().map(|(name, _)| name.as_str()).collect();
+    reject_symlink(copy)?;
     for (name, path) in repositories {
+        reject_symlink(&copy.join(name))?;
         mirror::mirror(path, &copy.join(name))
             .await
             .with_context(|| format!("copy repository {name}"))?;
     }
     Ok(repositories_in(copy)?
         .into_iter()
-        .filter(|(name, _)| !repositories.iter().any(|(kept, _)| kept == name))
+        .filter(|(name, _)| !retained.contains(name.as_str()))
         .map(|(_, path)| path)
         .collect())
 }
@@ -154,10 +169,25 @@ fn resolved(path: &Path) -> Result<PathBuf> {
 fn check_destination(dir: &Path, places: &Places<'_>) -> Result<()> {
     let dir = resolved(dir)?;
     let targets = [
-        dir.join(REPOSITORIES_DIR),
-        dir.join(mirror::DELETED_DIR),
-        dir.join(UPLOADS_DIR),
+        resolved(&dir.join(REPOSITORIES_DIR))?,
+        resolved(&dir.join(mirror::DELETED_DIR))?,
+        resolved(&dir.join(UPLOADS_DIR))?,
     ];
+    for name in [REPOSITORIES_DIR, mirror::DELETED_DIR, UPLOADS_DIR, SQLITE_FILE, POSTGRES_FILE, NODE_KEY, "database.sqlite.partial", "database.pgdump.partial", "backup.lock"] {
+        reject_symlink(&dir.join(name))?;
+    }
+    if !places.database_url.is_empty() {
+        if let Some(database) = db::sqlite_file(places.database_url)? {
+            for suffix in ["", "-wal", "-shm"] {
+                let mut path = database.as_os_str().to_owned();
+                path.push(suffix);
+                let source = resolved(Path::new(&path))?;
+                for target in targets.iter().cloned().chain([dir.join(SQLITE_FILE), dir.join("database.sqlite.partial"), dir.join(POSTGRES_FILE), dir.join("database.pgdump.partial"), dir.join(NODE_KEY), dir.join("backup.lock")]) {
+                    ensure!(!source.starts_with(&target), "backup destination collides with the live SQLite database or its sidecars");
+                }
+            }
+        }
+    }
     for source in [
         places.state_dir.join(UPLOADS_DIR),
         places.repos_path.to_path_buf(),
@@ -180,8 +210,19 @@ fn check_destination(dir: &Path, places: &Places<'_>) -> Result<()> {
 /// caller to remove. Names starting with a dot, such as the uploads' `.staging`, are skipped. A
 /// file is written under a temporary name and renamed into place once it is synced, so an
 /// interrupted copy never leaves a short file behind.
+fn reject_symlink(path: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => ensure!(!metadata.is_symlink(), "unsupported symlink {}; use a bind mount instead", path.display()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
 fn copy_tree(source: &Path, copy: &Path, stale: &mut Vec<PathBuf>) -> Result<usize> {
-    std::fs::create_dir_all(copy)?;
+    reject_symlink(source)?;
+    reject_symlink(copy)?;
+    private_dir(copy)?;
     let mut copied = 0;
     let mut changed = false;
     let mut present = std::collections::HashSet::new();
@@ -194,6 +235,8 @@ fn copy_tree(source: &Path, copy: &Path, stale: &mut Vec<PathBuf>) -> Result<usi
         present.insert(name.clone());
         let (from, to) = (entry.path(), copy.join(&name));
         let kind = entry.file_type()?;
+        ensure!(!kind.is_symlink(), "unsupported source symlink {}; use a bind mount instead", from.display());
+        reject_symlink(&to)?;
         if kind.is_dir() {
             changed |= !to.is_dir();
             copied += copy_tree(&from, &to, stale)?;
@@ -206,15 +249,11 @@ fn copy_tree(source: &Path, copy: &Path, stale: &mut Vec<PathBuf>) -> Result<usi
             }) {
                 continue;
             }
-            let mut temporary_name = std::ffi::OsString::from(".");
-            temporary_name.push(&name);
-            temporary_name.push(".partial");
-            let temporary = copy.join(temporary_name);
-            std::fs::copy(&from, &temporary)?;
-            let written = std::fs::File::options().write(true).open(&temporary)?;
-            written.set_modified(modified)?;
-            written.sync_all()?;
-            std::fs::rename(&temporary, &to)?;
+            let mut temporary = tempfile::NamedTempFile::new_in(copy)?;
+            std::io::copy(&mut std::fs::File::open(&from)?, temporary.as_file_mut())?;
+            temporary.as_file().set_modified(modified)?;
+            temporary.as_file().sync_all()?;
+            temporary.persist(&to).map_err(|error| error.error)?;
             copied += 1;
             changed = true;
         }
@@ -234,6 +273,7 @@ fn copy_tree(source: &Path, copy: &Path, stale: &mut Vec<PathBuf>) -> Result<usi
 /// Removes what `mirror_all` and `copy_tree` found stale.
 fn remove_stale(stale: &[PathBuf]) -> Result<()> {
     for path in stale {
+        reject_symlink(path)?;
         if path.is_dir() {
             std::fs::remove_dir_all(path)?;
         } else if path.exists() {
@@ -276,12 +316,17 @@ fn libpq_url(database_url: &str) -> Result<(String, Option<String>)> {
         .to_owned();
         query.push((name, value.into_owned()));
     }
-    url.set_password(None)
-        .map_err(|_| anyhow::anyhow!("invalid DATABASE_URL"))?;
+    if url.password().is_some() {
+        url.set_password(None)
+            .map_err(|_| anyhow::anyhow!("invalid DATABASE_URL"))?;
+    }
     if query.is_empty() {
         url.set_query(None);
     } else {
-        url.query_pairs_mut().clear().extend_pairs(query);
+        let query = query.into_iter().map(|(name, value)| {
+            format!("{}={}", crate::webui::encode_component(&name), crate::webui::encode_component(&value))
+        }).collect::<Vec<_>>().join("&");
+        url.set_query(Some(&query));
     }
     Ok((url.to_string(), password))
 }
@@ -293,6 +338,7 @@ async fn postgres_tool(program: &str, database_url: &str, arguments: &[&str]) ->
     command
         .arg(format!("--dbname={url}"))
         .args(arguments)
+        .env("PGCONNECT_TIMEOUT", "10")
         .kill_on_drop(true);
     if let Some(password) = password {
         command.env("PGPASSWORD", password);
@@ -308,14 +354,46 @@ async fn postgres_tool(program: &str, database_url: &str, arguments: &[&str]) ->
     Ok(())
 }
 
+fn directory_empty(path: &Path) -> Result<bool> {
+    match std::fs::read_dir(path) {
+        Ok(mut entries) => Ok(entries.next().transpose()?.is_none()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn lock_destination(dir: &Path) -> Result<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    let path = dir.join("backup.lock");
+    reject_symlink(&path)?;
+    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path)?;
+    // SAFETY: the owned descriptor remains open for the whole backup or restore.
+    ensure!(unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
+        "another backup or restore is using {}", dir.display());
+    Ok(file)
+}
+
 /// Writes a backup of this installation into `dir`.
 pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Result<()> {
     ensure!(
         !db::cluster::cluster_enabled(pool).await?,
         "codeyard backup covers a single-node installation; this one is in cluster mode"
     );
+    let s3 = crate::backend::storage::s3::S3Config::optional_from_env()?.is_some();
+    let started = std::time::Instant::now();
+    let before = db::backups::list_repositories(pool).await?;
+    ensure!(before.iter().all(|repo| repo.storage_node_id.is_none()), "single-node backup cannot include repositories assigned to storage nodes");
     check_destination(dir, places)?;
+    for repo in &before {
+        let source = resolved(Path::new(&repo.disk_path))?;
+        let root = resolved(dir)?;
+        for name in [REPOSITORIES_DIR, mirror::DELETED_DIR, UPLOADS_DIR] {
+            let target = resolved(&root.join(name))?;
+            ensure!(!source.starts_with(&target) && !target.starts_with(&source), "backup destination overlaps repository {}", repo.id);
+        }
+    }
     private_dir(dir)?;
+    let _lock = lock_destination(dir)?;
     let file = match pool {
         db::DbPool::Sqlite(_) => SQLITE_FILE,
         db::DbPool::Postgres(_) => POSTGRES_FILE,
@@ -326,30 +404,39 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
     if partial.exists() {
         std::fs::remove_file(&partial)?;
     }
-    // The rows read before the snapshot include the repositories deleted while it runs. The
-    // snapshot still names them, and their kept copies sit under `deleted/` beside them.
-    let before = db::backups::list_repositories(pool).await?;
-    match pool {
+    let after = match pool {
         db::DbPool::Sqlite(_) => {
             let target = partial.to_str().context("backup path is not UTF-8")?;
             db::backups::copy_sqlite(pool, target).await?;
+            db::backups::sqlite_snapshot_repositories(&partial).await?
         }
         db::DbPool::Postgres(_) => {
+            let (snapshot_tx, snapshot, repositories) = db::backups::postgres_snapshot(pool).await?;
+            let snapshot = format!("--snapshot={snapshot}");
             let target = format!("--file={}", partial.display());
             postgres_tool(
                 "pg_dump",
                 places.database_url,
-                &["--format=custom", "--no-owner", "--no-privileges", &target],
+                &["--format=custom", "--no-owner", "--no-privileges", "--lock-wait-timeout=30s", &snapshot, &target],
             )
             .await?;
+            snapshot_tx.commit().await?;
+            repositories
         }
-    }
+    };
     private_file(&partial)?;
     std::fs::File::open(&partial)?.sync_all()?;
 
-    // Git after the database, so every repository state the database names is in the copy. The
-    // rows are read again after the snapshot, so a repository created meanwhile is copied too.
-    let after = db::backups::list_repositories(pool).await?;
+    // The exact snapshot inventory is authoritative, including rows created and removed while
+    // the snapshot ran. Missing required storage refuses publication rather than losing it.
+    ensure!(after.iter().all(|repo| repo.storage_node_id.is_none()), "snapshot contains placed repositories; single-node backup refused");
+    for repository in &after {
+        let source = resolved(Path::new(&repository.disk_path))?;
+        for name in [REPOSITORIES_DIR, mirror::DELETED_DIR, UPLOADS_DIR] {
+            let target = resolved(&dir.join(name))?;
+            ensure!(!source.starts_with(&target) && !target.starts_with(&source), "backup destination overlaps repository {}", repository.id);
+        }
+    }
     // A repository's directory can sit outside REPOS_PATH, so its parent is a root too.
     let mut roots = BTreeSet::from([places.repos_path.to_path_buf()]);
     for repository in before.iter().chain(&after) {
@@ -359,23 +446,18 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
             }
         }
     }
-    // A repository deleted since the snapshot is copied from its place while its retirement
-    // has not moved it yet. Once moved, it is among the kept deleted ones read below, and a
-    // move in between fails its copy, so the backup is not published without it.
-    let live: BTreeSet<&str> = after.iter().map(|row| row.disk_path.as_str()).collect();
-    let deleted = before
-        .iter()
-        .filter(|row| !live.contains(row.disk_path.as_str()));
     let mut repositories = Vec::new();
-    for repository in after
-        .iter()
-        .chain(deleted)
-        .filter(|row| row.storage_node_id.is_none())
-    {
-        let path = PathBuf::from(&repository.disk_path);
-        if live.contains(repository.disk_path.as_str()) || path.is_dir() {
-            repositories.push((directory_name(&path)?, path));
+    for repository in &after {
+        let mut path = PathBuf::from(&repository.disk_path);
+        let name = directory_name(&path)?;
+        if !path.is_dir() {
+            // Deleted after the snapshot: the newest kept copy, `deleted/<seconds>-<name>`.
+            let parent = path.parent().context("repository path has no parent")?;
+            path = mirror::deleted_copy(parent, &name)?.unwrap_or_default();
         }
+        ensure!(path.is_dir(), "snapshot repository {} is missing; backup not published", repository.id);
+        reject_symlink(&path)?;
+        repositories.push((name, path));
     }
     let kept = kept_deleted(&roots)?;
     let mut stale = mirror_all(&repositories, &dir.join(REPOSITORIES_DIR)).await?;
@@ -386,10 +468,11 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
         kept.len()
     );
 
-    if uploads_in_s3() {
+    if s3 {
         println!("Uploads are in S3 and are not copied; back up the bucket with its own tools.");
     } else {
         let (source, copy) = (places.state_dir.join(UPLOADS_DIR), dir.join(UPLOADS_DIR));
+        reject_symlink(&source)?;
         if source.is_dir() {
             let (copied, removed) = tokio::task::spawn_blocking(move || {
                 let mut removed = Vec::new();
@@ -400,14 +483,22 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
             println!("Copied {copied} changed upload files.");
         }
     }
-    let key = places.state_dir.join(NODE_KEY);
-    if key.is_file() {
-        copy_synced(&key, &dir.join(NODE_KEY))?;
-        private_file(&dir.join(NODE_KEY))?;
+    if let Some(key) = crate::backend::cluster::load_existing(places.state_dir)? {
+        let mut temporary = tempfile::NamedTempFile::new_in(dir)?;
+        writeln!(temporary, "{}", key.secret_hex())?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(dir.join(NODE_KEY)).map_err(|error| error.error)?;
+        sync_dir(dir)?;
     }
     // Publish the new database last. Until this rename the previous backup is still complete:
     // nothing it names has been removed yet.
+    ensure!(started.elapsed().as_secs() < db::files::RESTORE_WINDOW_SECONDS as u64, "backup exceeded the object retention window; refusing publication");
     std::fs::rename(&partial, dir.join(file))?;
+    let opposite = dir.join(if file == SQLITE_FILE { POSTGRES_FILE } else { SQLITE_FILE });
+    match std::fs::remove_file(opposite) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
+        _ => {}
+    }
     sync_dir(dir)?;
     println!("Database copied to {}.", dir.join(file).display());
     tokio::task::spawn_blocking(move || remove_stale(&stale)).await??;
@@ -421,18 +512,32 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
 /// state directory, then repairs and rebuilds what the database and Git disagree on.
 /// Returns the open database, migrated to this version.
 pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<db::DbPool> {
+    let s3 = crate::backend::storage::s3::S3Config::optional_from_env()?.is_some();
+    let _lock = lock_destination(dir)?;
+    let key = std::env::var_os("NODE_KEY_FILE").map(PathBuf::from)
+        .unwrap_or_else(|| places.state_dir.join(NODE_KEY));
+    let backup_key = dir.join(NODE_KEY);
+    if backup_key.is_file() {
+        let saved = crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(&backup_key)?)?;
+        let existing = if key.exists() || std::env::var_os("NODE_KEY").is_some() {
+            crate::backend::cluster::load_existing(places.state_dir)?
+        } else {
+            None
+        };
+        ensure!(existing.is_none_or(|key| key.public_hex() == saved.public_hex()), "existing node identity conflicts with backup; neither key has been overwritten");
+    }
+    ensure!(!(dir.join(SQLITE_FILE).exists() && dir.join(POSTGRES_FILE).exists()), "backup contains ambiguous mixed-engine snapshots");
+    let source_objects = resolved(&dir.join(UPLOADS_DIR))?;
+    let target_objects = resolved(&places.state_dir.join(UPLOADS_DIR))?;
+    ensure!(!source_objects.starts_with(&target_objects) && !target_objects.starts_with(&source_objects), "restore object source and destination overlap");
     ensure!(
-        repositories_in(places.repos_path)?.is_empty()
-            && repositories_in(&places.repos_path.join(mirror::DELETED_DIR))?.is_empty(),
+        directory_empty(places.repos_path)?,
         "restore needs an empty REPOS_PATH; {} already holds repositories",
         places.repos_path.display()
     );
     let uploads = places.state_dir.join(UPLOADS_DIR);
     ensure!(
-        uploads_in_s3()
-            || std::fs::read_dir(&uploads)
-                .ok()
-                .is_none_or(|mut entries| entries.next().is_none()),
+        s3 || directory_empty(&uploads)?,
         "restore needs an empty upload directory; {} is not empty",
         uploads.display()
     );
@@ -452,11 +557,11 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<db::DbPool> {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            let partial = path.with_extension("restoring");
-            std::fs::copy(&source, &partial)?;
-            private_file(&partial)?;
-            std::fs::File::open(&partial)?.sync_all()?;
-            std::fs::rename(&partial, &path)?;
+            let parent = path.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or(Path::new("."));
+            let mut partial = tempfile::NamedTempFile::new_in(parent)?;
+            std::io::copy(&mut std::fs::File::open(&source)?, partial.as_file_mut())?;
+            partial.as_file().sync_all()?;
+            partial.persist_noclobber(&path).map_err(|error| error.error)?;
             if let Some(parent) = std::path::absolute(&path)?.parent() {
                 sync_dir(parent)?;
             }
@@ -517,15 +622,14 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<db::DbPool> {
     println!("Repositories restored.");
 
     let copy = dir.join(UPLOADS_DIR);
-    if !uploads_in_s3() && copy.is_dir() {
+    if !s3 && copy.is_dir() {
         let copied =
             tokio::task::spawn_blocking(move || copy_tree(&copy, &uploads, &mut Vec::new()))
                 .await??;
         println!("Restored {copied} upload files.");
     }
-    let key = places.state_dir.join(NODE_KEY);
-    if dir.join(NODE_KEY).is_file() && !key.exists() {
-        private_dir(places.state_dir)?;
+    if backup_key.is_file() && !key.exists() && std::env::var_os("NODE_KEY").is_none() {
+        private_dir(key.parent().context("node key has no parent")?)?;
         copy_synced(&dir.join(NODE_KEY), &key)?;
         private_file(&key)?;
     }

@@ -19,6 +19,14 @@ use subtle::ConstantTimeEq;
 
 const CSRF_TTL_SECONDS: i64 = 2 * 60 * 60;
 
+fn admission_redirect(page: &str, location: &str) -> String {
+    if super::origin::safe_redirect_path(location) {
+        format!("{page}?redirect={}", crate::webui::encode_component(location))
+    } else {
+        page.to_owned()
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ExistingCsrfError {
     Missing,
@@ -132,7 +140,8 @@ impl PageContext {
             return Err(redirect_response("/setup"));
         }
         if setup_completed && private_mode && user.is_none() && !public_identity_path(&path) {
-            return Err(redirect_response("/enter"));
+            let location = uri.path_and_query().map_or("/", |value| value.as_str());
+            return Err(redirect_response(&admission_redirect("/enter", location)));
         }
         // A temporary password may only reach the settings page, its password form,
         // sign-out and the theme switch.
@@ -164,6 +173,11 @@ impl PageContext {
             let (verified_session, pending_session_cookie) = match existing_session {
                 Some(s) => (s, None),
                 None => {
+                    match crate::backend::identity::admission::admit_anonymous_session(&state.pool, session::client_address(&headers)).await {
+                        Ok(()) => {},
+                        Err(crate::backend::identity::admission::AdmissionError::Limited) => return Err(public_error(StatusCode::TOO_MANY_REQUESTS, "Too many sign-in page requests. Try again later.")),
+                        Err(_) => return Err(unavailable()),
+                    }
                     // Never adopt an attacker-supplied unknown cookie ID.
                     let id = session::generate_session_id();
                     let agent = session::extract_user_agent(&headers);
@@ -238,7 +252,7 @@ impl PageContext {
         reason = "The shared HTML helper contract returns complete Axum responses without boxing."
     )]
     pub fn require_user(&self) -> Result<&User, Response> {
-        self.user.as_ref().ok_or_else(|| self.redirect("/login"))
+        self.user.as_ref().ok_or_else(|| self.redirect(&admission_redirect("/login", &self.location)))
     }
 
     /// The signed-in account when it may use administrator pages.
@@ -257,7 +271,7 @@ impl PageContext {
             || !csrf_matches(&self.csrf_token, form.get("csrf_token").map(String::as_str))
             || !same_origin_submission(&self.headers)
         {
-            return Err(self.error(
+            return Err(public_error(
                 StatusCode::FORBIDDEN,
                 "The form expired or came from another site. Reload the page and try again.",
             ));

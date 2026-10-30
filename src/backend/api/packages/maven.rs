@@ -162,6 +162,7 @@ pub(crate) fn route(
             )
             .await,
             anonymous,
+            super::RegistryFormat::Standard,
         )
     })
 }
@@ -195,6 +196,11 @@ fn dispatch(
                 .await
                 .map_err(Error::db)?;
             if let Some(algorithm) = &artifact.checksum {
+                let length = match algorithm.as_str() { "sha1" => 40, "sha256" => 64, "sha512" => 128, _ => 32 };
+                if request.method() == Method::HEAD {
+                    return Ok(([(header::CONTENT_TYPE, "text/plain"), (header::CONTENT_LENGTH, &length.to_string())], "").into_response());
+                }
+                let _slot = state.storage.try_acquire_download().ok_or_else(Error::unavailable)?;
                 let bytes = packages::read(&state.storage, &blob)
                     .await
                     .map_err(Error::db)?;
@@ -219,6 +225,10 @@ fn dispatch(
                 response
                     .headers_mut()
                     .insert(header::CONTENT_TYPE, "application/xml".parse().unwrap());
+                response.headers_mut().insert(
+                    header::CONTENT_SECURITY_POLICY,
+                    "default-src 'none'; sandbox".parse().unwrap(),
+                );
             }
             return Ok(response);
         }
@@ -366,6 +376,7 @@ fn dispatch(
             package.id,
             auth.token.id,
             bytes.to_vec(),
+            db::packages::Charge::Upload,
         )
         .await
         .map_err(Error::db)?;

@@ -667,8 +667,7 @@ impl LocalStore {
     ) -> Result<Self, RepoError> {
         let refused = || unavailable("Repository storage is unavailable.");
         let root = std::path::absolute(repos_root).map_err(|_| refused())?;
-        let disk_path = root
-            .join(format!("{}.git", Uuid::new_v4()))
+        let disk_path = super::primary_path(&root, Uuid::new_v4())
             .to_str()
             .ok_or_else(refused)?
             .to_owned();
@@ -2626,6 +2625,10 @@ impl LocalStore {
         Ok((self.mirror_refs().await?, self.head_target().await?))
     }
 
+    pub(super) async fn existing_commits(&self, ids: &[String]) -> Result<std::collections::HashSet<String>, RepoError> {
+        crate::backend::git::mirror::existing_commits(self.path(), ids).await.map_err(RepoError::from)
+    }
+
     /// Streams a pack of the objects that the listed refs need beyond the tips a copy
     /// holds. The copy sets its refs from the listing sent with this request, so every
     /// target has to be covered by the pack.
@@ -2644,7 +2647,8 @@ impl LocalStore {
             revs.push_str(target);
             revs.push('\n');
         }
-        for tip in have {
+        let present = self.existing_commits(have).await?;
+        for tip in have.iter().filter(|tip| present.contains(*tip)) {
             anyhow::ensure!(
                 crate::backend::git::is_full_commit_id(tip),
                 "invalid replica tip"

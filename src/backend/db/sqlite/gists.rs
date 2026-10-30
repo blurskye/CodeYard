@@ -13,6 +13,11 @@ const FROM:&str="FROM gists g JOIN repositories r ON r.id=g.repo_id AND r.is_gis
 
 /// An unready gist with no pending commit is a creation that died before its first write; one
 /// an hour old is no longer in flight.
+/// Bound recovery of backings that outlived provisioning without acquiring gist metadata.
+pub async fn orphaned_for_owner(pool: &SqlitePool, owner: i64) -> Result<Vec<i64>> {
+    Ok(sqlx::query_scalar("SELECT r.id FROM repositories r JOIN users u ON u.id=r.owner_user_id WHERE r.is_gist AND r.owner_kind='user' AND r.owner_user_id=?1 AND r.owner_org_id IS NULL AND NOT u.is_banned AND julianday(r.created_at)<julianday('now','-2 hours') AND NOT EXISTS(SELECT 1 FROM gists g WHERE g.repo_id=r.id) ORDER BY r.created_at,r.id LIMIT 10").bind(owner).fetch_all(pool).await?)
+}
+
 pub async fn unready_for_owner(pool: &SqlitePool, owner: i64) -> Result<Vec<String>> {
     Ok(sqlx::query_scalar("SELECT g.id FROM gists g JOIN repositories r ON r.id=g.repo_id JOIN users u ON u.id=r.owner_user_id WHERE r.is_gist AND r.owner_kind='user' AND r.owner_user_id=?1 AND r.owner_org_id IS NULL AND NOT u.is_banned AND NOT g.ready AND (g.pending_sha IS NOT NULL OR g.created_at < strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) ORDER BY g.created_at,g.id LIMIT 10").bind(owner).fetch_all(pool).await?)
 }
@@ -290,8 +295,11 @@ pub async fn delete(
     tx.commit().await?;
     Ok(repo)
 }
-pub async fn discard(pool: &SqlitePool, repo: i64) -> Result<Option<Repository>> {
-    Ok(sqlx::query_as("DELETE FROM repositories WHERE id=?1 AND is_gist AND NOT EXISTS(SELECT 1 FROM gists g WHERE g.repo_id=repositories.id AND (g.ready OR g.pending_sha IS NOT NULL)) RETURNING *").bind(repo).fetch_optional(pool).await?)
+pub async fn discard(pool: &SqlitePool, repo: i64, orphan_only: bool) -> Result<Option<Repository>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let deleted = sqlx::query_as("DELETE FROM repositories WHERE id=?1 AND is_gist AND NOT EXISTS(SELECT 1 FROM gists g WHERE g.repo_id=repositories.id AND (?2 OR g.ready OR g.pending_sha IS NOT NULL)) RETURNING *").bind(repo).bind(orphan_only).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(deleted)
 }
 pub async fn starred(pool: &SqlitePool, actor: i64, repo: i64) -> Result<bool> {
     Ok(sqlx::query_scalar(

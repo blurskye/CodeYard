@@ -8,9 +8,12 @@ use super::authority::*;
 pub async fn delete_organization(
     pool: &PgPool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     org: i64,
 ) -> Result<OrganizationOutcome<()>> {
     let mut tx = begin(pool).await?;
+    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential).await?;
     let role = require_org!(tx, actor, org);
     if role != OrgRole::Owner {
         return Ok(Denied);
@@ -65,10 +68,13 @@ pub async fn count_organization_repositories(
 pub async fn list_organization_deletion_repositories(
     pool: &PgPool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     org: i64,
 ) -> Result<OrganizationOutcome<Vec<i64>>> {
-    let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    let mut tx = begin(pool).await?;
+    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential).await?;
+    if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let repository = sqlx::query_scalar(
@@ -85,12 +91,14 @@ pub async fn list_organization_deletion_repositories(
 pub async fn delete_organization_repository(
     pool: &PgPool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     org: i64,
     repo: i64,
 ) -> Result<OrganizationOutcome<crate::backend::db::models::Repository>> {
     let mut tx = begin(pool).await?;
-    // Deletion locks the organization before fork ancestors; exclude notification reads.
+    // Deletion locks membership and the initiating credential before organization/fork rows.
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::require_account(&mut tx, actor, credential).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }

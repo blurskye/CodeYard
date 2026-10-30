@@ -2,6 +2,13 @@ use crate::backend::db::{backups::PullRequestHead, models::Repository};
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+pub async fn snapshot_repositories(path: &std::path::Path) -> Result<Vec<Repository>> {
+    use sqlx::Connection;
+    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(path).read_only(true);
+    let mut connection = sqlx::SqliteConnection::connect_with(&options).await?;
+    Ok(sqlx::query_as("SELECT * FROM repositories ORDER BY id").fetch_all(&mut connection).await?)
+}
+
 pub async fn list_repositories(pool: &SqlitePool) -> Result<Vec<Repository>> {
     Ok(sqlx::query_as("SELECT * FROM repositories ORDER BY id")
         .fetch_all(pool)
@@ -22,7 +29,7 @@ pub async fn list_pull_request_heads(
     repo_id: i64,
 ) -> Result<Vec<PullRequestHead>> {
     Ok(sqlx::query_as(
-        "SELECT id, number, state, head_sha, head_repo_id, head_branch, base_sha, fork_sha, merge_commit_sha FROM pull_requests WHERE repo_id = ?1 ORDER BY number",
+        "SELECT id, number, state, head_sha, head_repo_id, head_branch, base_sha, base_branch, fork_sha, merge_commit_sha FROM pull_requests WHERE repo_id = ?1 ORDER BY number",
     )
     .bind(repo_id)
     .fetch_all(pool)

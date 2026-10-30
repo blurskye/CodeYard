@@ -414,6 +414,11 @@ pub async fn get_pull_requests_by_ids(
     .await?)
 }
 
+pub async fn retained_revisions(pool: &PgPool, repo: i64) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar("WITH pulls AS (SELECT id,head_sha,base_sha,fork_sha,merge_commit_sha FROM pull_requests WHERE repo_id=$1), revisions AS (SELECT head_sha AS revision FROM pulls UNION SELECT base_sha FROM pulls UNION SELECT fork_sha FROM pulls UNION SELECT merge_commit_sha FROM pulls UNION SELECT r.commit_sha FROM pr_reviews r JOIN pulls p ON p.id=r.pull_request_id UNION SELECT c.commit_sha FROM pr_comments c JOIN pulls p ON p.id=c.pull_request_id) SELECT revision FROM revisions WHERE revision IS NOT NULL AND revision<>'' ORDER BY revision")
+        .bind(repo).fetch_all(pool).await?)
+}
+
 pub async fn get_pull_request_by_id(pool: &PgPool, id: i64) -> Result<Option<PullRequest>> {
     let pr = sqlx::query_as::<_, PullRequest>("SELECT * FROM pull_requests WHERE id = $1")
         .bind(id)

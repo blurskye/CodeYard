@@ -215,7 +215,7 @@ pub(crate) fn setup_failure(error: SetupError) -> ApiFailure {
     }
 }
 
-fn admin_authority_failure(error: AccountAuthorityError) -> ApiFailure {
+pub(crate) fn admin_authority_failure(error: AccountAuthorityError) -> ApiFailure {
     match error {
         AccountAuthorityError::NotAuthenticated | AccountAuthorityError::SessionExpired => {
             ApiError::failure(

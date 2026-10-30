@@ -18,7 +18,7 @@ use tokio::{
     io::split,
     net::{TcpListener, TcpStream},
     sync::{watch, OwnedSemaphorePermit, Semaphore},
-    task::{JoinHandle, JoinSet},
+    task::JoinSet,
     time::Instant,
 };
 use tokio_rustls::{rustls::pki_types::ServerName, TlsAcceptor, TlsConnector};
@@ -47,7 +47,7 @@ pub struct Listener {
     stop: watch::Sender<bool>,
     /// Closes when the accept loop has ended. The loop holds its only sender.
     ended: watch::Receiver<()>,
-    task: JoinHandle<()>,
+    _task: tokio_util::task::AbortOnDropHandle<()>,
 }
 
 impl Listener {
@@ -63,12 +63,6 @@ impl Listener {
         // The wait ends when the loop drops its sender, which it does only after it has
         // closed the listening socket and every connection.
         let _ = self.ended.clone().changed().await;
-    }
-}
-
-impl Drop for Listener {
-    fn drop(&mut self) {
-        self.task.abort();
     }
 }
 
@@ -94,7 +88,7 @@ pub async fn bind(address: SocketAddr, key: &NodeKey, services: Services) -> Res
         addr,
         stop,
         ended,
-        task,
+        _task: tokio_util::task::AbortOnDropHandle::new(task),
     })
 }
 
@@ -275,6 +269,10 @@ pub async fn dial(
 fn tune(socket: &TcpStream) {
     if let Err(error) = socket.set_nodelay(true) {
         warn!(%error, "cannot turn off Nagle's algorithm on a cluster connection");
+    }
+    #[cfg(target_os = "linux")]
+    if let Err(error) = socket2::SockRef::from(socket).set_tcp_user_timeout(Some(Duration::from_secs(15))) {
+        warn!(%error, "cannot bound unacknowledged data on a cluster connection");
     }
     let keepalive = socket2::TcpKeepalive::new()
         .with_time(Duration::from_secs(5))

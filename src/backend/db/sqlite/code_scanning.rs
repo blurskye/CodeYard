@@ -34,7 +34,9 @@ pub async fn upload(pool: &SqlitePool, repo: i64, id: &str) -> Result<Option<Upl
 }
 
 pub async fn pending(pool: &SqlitePool) -> Result<Option<Upload>> {
-    Ok(sqlx::query_as("SELECT * FROM code_scanning_uploads WHERE processing_status='pending' ORDER BY sequence LIMIT 1").fetch_optional(pool).await?)
+    let claim = uuid::Uuid::new_v4().to_string();
+    Ok(sqlx::query_as("UPDATE code_scanning_uploads SET claim_id=$1,claim_until=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+10 minutes') WHERE sequence=(SELECT sequence FROM code_scanning_uploads WHERE processing_status='pending' AND (claim_until IS NULL OR claim_until<=strftime('%Y-%m-%dT%H:%M:%f000Z','now')) ORDER BY sequence LIMIT 1) RETURNING *")
+        .bind(claim).fetch_optional(pool).await?)
 }
 
 pub async fn finish(
@@ -45,8 +47,8 @@ pub async fn finish(
 ) -> Result<Vec<Change>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let status: Option<String> =
-        sqlx::query_scalar("SELECT processing_status FROM code_scanning_uploads WHERE id=$1")
-            .bind(&upload.id)
+        sqlx::query_scalar("SELECT processing_status FROM code_scanning_uploads WHERE id=$1 AND claim_id IS $2")
+            .bind(&upload.id).bind(&upload.claim_id)
             .fetch_optional(&mut *tx)
             .await?;
     if status.as_deref() != Some("pending") {
@@ -97,8 +99,10 @@ pub async fn finish(
         .bind(upload.repo_id).bind(upload.sequence)
         .fetch_all(&mut *tx)
         .await?;
+    let instances = sqlx::query_as("SELECT i.* FROM code_scanning_instances i JOIN code_scanning_alerts a ON a.id=i.alert_id WHERE a.repo_id=$1 AND i.upload_sequence=$2 AND i.ref_name=$3 ORDER BY i.category")
+        .bind(upload.repo_id).bind(upload.sequence).bind(&upload.ref_name).fetch_all(&mut *tx).await?;
     tx.commit().await?;
-    Ok(changes(&before, after))
+    Ok(changes(&before, after, instances))
 }
 
 async fn save_alert(
@@ -162,12 +166,15 @@ pub async fn instances(
 pub async fn dismiss(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
     number: i64,
     input: &Dismissal<'_>,
 ) -> Result<Alert> {
     input.validate()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await
+        .map_err(|error| if error.is::<crate::backend::db::users::accounts::AccountRestricted>() { anyhow::Error::new(Refusal::Denied) } else { error })?;
     ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied

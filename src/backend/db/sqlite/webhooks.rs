@@ -108,10 +108,6 @@ pub async fn list_webhook_summaries<'e>(
         .await?)
 }
 
-pub async fn webhook_secret_sample(pool: &SqlitePool) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
-    Ok(sqlx::query_as("SELECT COALESCE(encrypted_secret,encrypted_password), CASE WHEN encrypted_secret IS NOT NULL THEN secret_nonce ELSE password_nonce END FROM webhooks WHERE encrypted_secret IS NOT NULL OR encrypted_password IS NOT NULL UNION ALL SELECT encrypted_secret, secret_nonce FROM github_app_hooks WHERE encrypted_secret IS NOT NULL LIMIT 1").fetch_optional(pool).await?)
-}
-
 pub async fn get_webhook<'e>(
     pool: impl sqlx::Executor<'e, Database = Sqlite>,
     owner: HookOwner,

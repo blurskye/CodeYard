@@ -774,6 +774,8 @@ async fn contract(pg: bool) {
     assert_eq!(generated.status, StatusCode::OK);
     assert!(generated.text().starts_with("<svg"), "{}", generated.text());
 
+    let deletion_session = db::users::sessions::create_session(f.pool(), &uuid::Uuid::new_v4().simple().to_string().repeat(2), ids[2], None, None, chrono::Utc::now() + chrono::Duration::hours(1)).await.unwrap();
+    let deletion_credential = db::users::accounts::AccountCredential::Session(&deletion_session.id);
     // Deleting an organization removes its selected picture and queues the bytes.
     let deleted_picture = upload(&carol, "org_avatar", PNG, true).await;
     let file = db::files::get_file_by_id(f.pool(), uuid(&deleted_picture))
@@ -787,7 +789,7 @@ async fn contract(pg: bool) {
         OrganizationOutcome::Applied(_)
     ));
     assert!(matches!(
-        organizations::delete_organization(f.pool(), ids[2], org)
+        organizations::delete_organization(f.pool(), ids[2], &deletion_credential, org)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(())
@@ -827,14 +829,14 @@ async fn contract(pg: bool) {
         ));
     }
     assert!(matches!(
-        organizations::delete_organization(f.pool(), ids[2], deleted_org)
+        organizations::delete_organization(f.pool(), ids[2], &deletion_credential, deleted_org)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(())
     ));
     assert_eq!(download(&nobody, &picture).await, StatusCode::OK);
     assert!(matches!(
-        organizations::delete_organization(f.pool(), ids[2], other_org)
+        organizations::delete_organization(f.pool(), ids[2], &deletion_credential, other_org)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(())

@@ -88,6 +88,25 @@ fn source(lookup: &dyn Fn(&str) -> Option<String>) -> Result<Source> {
     }
 }
 
+pub(crate) fn durable_directory(directory: &Path) -> Result<()> {
+    let mut created = Vec::new();
+    let mut missing = directory;
+    while !missing.exists() {
+        created.push(missing);
+        match missing.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => missing = parent,
+            _ => break,
+        }
+    }
+    fs::create_dir_all(directory).with_context(|| format!("cannot create {}", directory.display()))?;
+    for made in created.into_iter().rev() {
+        fs::File::open(made)?.sync_all()?;
+        let parent = made.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
 /// The key for `serve` and `join`: the configured one, or the one saved in the state
 /// directory, which is generated on first use.
 pub fn load_or_create(state_dir: &Path) -> Result<NodeKey> {
@@ -141,28 +160,7 @@ fn saved_key(path: &Path, create: bool) -> Result<Option<NodeKey>> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let mut created = Vec::new();
-    let mut missing = directory;
-    while !missing.exists() {
-        created.push(missing);
-        match missing.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => missing = parent,
-            _ => break,
-        }
-    }
-    fs::create_dir_all(directory)
-        .with_context(|| format!("cannot create {}", directory.display()))?;
-    // A directory made here must survive a power loss with the key, so its entry is synced in
-    // its parent.
-    for made in created {
-        let parent = made
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        fs::File::open(parent)
-            .and_then(|parent| parent.sync_all())
-            .with_context(|| format!("cannot sync {}", parent.display()))?;
-    }
+    durable_directory(directory)?;
     let temporary = write_private(
         directory.join(format!("{KEY_FILE}.{}.tmp", Uuid::new_v4().simple())),
         &format!("{}\n", key.secret_hex()),

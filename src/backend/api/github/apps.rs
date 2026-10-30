@@ -12,11 +12,10 @@ use crate::backend::{
 };
 use axum::{
     extract::{Path, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode},
     routing::{delete, get, patch, post, put, MethodRouter},
     Json,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -120,24 +119,12 @@ pub(super) fn client_credentials(path: &str) -> bool {
 }
 
 async fn application(state: &AppState, headers: &HeaderMap, id: &str) -> Result<Application> {
-    let credentials = || {
-        let mut values = headers.get_all(header::AUTHORIZATION).iter();
-        let value = values.next()?.to_str().ok()?;
-        if values.next().is_some() {
-            return None;
-        }
-        let (scheme, value) = value.split_once(' ')?;
-        if !scheme.eq_ignore_ascii_case("basic") || value.len() > 2048 {
-            return None;
-        }
-        let decoded = String::from_utf8(STANDARD.decode(value).ok()?).ok()?;
-        let (client, secret) = decoded.split_once(':')?;
-        (client == id).then(|| secret.to_owned())
-    };
+    let credentials = crate::backend::api::http::credentials::basic(headers)
+        .filter(|(client, _)| client == id).map(|(_, secret)| secret);
     let app = oauth::client(&state.pool, id)
         .await
         .map_err(Error::unavailable)?;
-    if let (Some(app), Some(secret)) = (app, credentials()) {
+    if let (Some(app), Some(secret)) = (app, credentials) {
         if oauth::valid_secret(&app, &secret) {
             return Ok(app);
         }

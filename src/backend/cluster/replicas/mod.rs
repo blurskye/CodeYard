@@ -3,7 +3,6 @@
 //! longer needs. It also takes over the fork families of a primary that has gone offline,
 //! when it holds a copy with every write of each member. A node acts only on its own
 //! primaries and its own copies, so the nodes coordinate through the database alone.
-mod plan;
 mod promote;
 mod transfer;
 
@@ -12,7 +11,7 @@ pub use promote::{promote, repository_name, take_over, Promotion, Silent, TAKE_O
 use super::{rpc, NodeContext};
 use crate::backend::db::{
     self,
-    models::{ClusterNode, HeldReplica, ReplicaSetting},
+    models::{HeldReplica, ReplicaSetting},
     DbPool,
 };
 use crate::backend::git::{maintenance, mirror};
@@ -26,6 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{sync::watch, task::JoinSet};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -150,7 +150,7 @@ mod tests {
             .await
             .unwrap();
         let allocations = db::cluster::pending_replica_bytes(&pool).await.unwrap();
-        assert_eq!(allocations.iter().map(|row| row.1).sum::<i64>(), 20 * GIB);
+        assert_eq!(allocations.iter().map(|row| row.1).sum::<i64>(), 22 * GIB);
         assert!(allocations
             .iter()
             .any(|row| row.0 == nodes[1] && row.1 <= 12 * GIB));
@@ -187,7 +187,8 @@ const PARALLEL: usize = 2;
 const RETRY_FIRST: Duration = Duration::from_secs(5);
 const RETRY_CAP: Duration = Duration::from_secs(30);
 /// Copies are kept here, under the repositories root, never at a primary's location.
-const MIRRORS: &str = "mirrors";
+pub(crate) const MIRRORS: &str = "mirrors";
+pub(crate) const QUARANTINES: &str = ".quarantines";
 
 /// Runs passes every `INTERVAL` until `stop` is set. A failed pass is logged and the next
 /// one tries again. A copy that finishes frees its slot at once, so the next copy in line
@@ -195,7 +196,7 @@ const MIRRORS: &str = "mirrors";
 pub async fn run(context: NodeContext, mut stop: watch::Receiver<bool>) {
     let mut retry = Retry::default();
     let mut silent = Silent::default();
-    // Dropping this on shutdown aborts the copies still running.
+    // Downloads stop cooperatively; installation retains directory protection until joined.
     let mut copying = Copying::default();
     let mut ticker = tokio::time::interval(INTERVAL);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -224,6 +225,8 @@ pub async fn run(context: NodeContext, mut stop: watch::Receiver<bool>) {
             }
         }
     }
+    copying.cancel_all();
+    copying.finish(&mut retry).await;
 }
 
 /// One pass that also waits for the copies it started, for an operator or a test that wants
@@ -303,25 +306,17 @@ impl Retry {
 struct Primary {
     repository_id: i64,
     disk_path: String,
-    copies: Vec<plan::Holder>,
-    size: i64,
 }
 
 /// The database lists one row per copy; rows of one repository are next to each other.
 fn group_primaries(rows: Vec<db::cluster::PrimaryReplicaRow>) -> Vec<Primary> {
     let mut primaries: Vec<Primary> = Vec::new();
-    for (repository_id, disk_path, node, applied_version, size) in rows {
-        let copy = node.map(|node| plan::Holder {
-            node,
-            version: applied_version.unwrap_or(-1),
-        });
+    for (repository_id, disk_path, _, _, _, _) in rows {
         match primaries.last_mut() {
-            Some(last) if last.repository_id == repository_id => last.copies.extend(copy),
+            Some(last) if last.repository_id == repository_id => {},
             _ => primaries.push(Primary {
                 repository_id,
                 disk_path,
-                copies: copy.into_iter().collect(),
-                size: size.max(1),
             }),
         }
     }
@@ -336,49 +331,10 @@ async fn assign(
     setting: ReplicaSetting,
     primaries: &[Primary],
 ) -> Result<()> {
-    if primaries.is_empty() {
-        return Ok(());
-    }
-    let mut storage: Vec<ClusterNode> = db::cluster::list_nodes(pool)
-        .await?
-        .into_iter()
-        .filter(|candidate| {
-            candidate.status == "active" && candidate.roles.iter().any(|role| role == "storage")
-        })
-        .collect();
-    for (holder, bytes) in db::cluster::pending_replica_bytes(pool).await? {
-        if let Some(candidate) = storage.iter_mut().find(|node| node.id == holder) {
-            candidate.disk_free = candidate.disk_free.map(|free| free.saturating_sub(bytes));
-        }
-    }
+    let mut attempted = HashSet::new();
     for primary in primaries {
-        // Reconsider this repository's pending reservations against all the other copies.
-        for copy in primary.copies.iter().filter(|copy| copy.version < 0) {
-            if let Some(candidate) = storage.iter_mut().find(|node| node.id == copy.node) {
-                candidate.disk_free = candidate
-                    .disk_free
-                    .map(|free| free.saturating_add(primary.size));
-            }
-        }
-        let change = plan::plan(setting, node, &storage, &primary.copies, primary.size);
-        for holder in primary
-            .copies
-            .iter()
-            .filter(|copy| copy.version < 0 && !change.remove.contains(&copy.node))
-            .map(|copy| copy.node)
-            .chain(change.add.iter().copied())
-        {
-            if let Some(candidate) = storage.iter_mut().find(|node| node.id == holder) {
-                candidate.disk_free = candidate
-                    .disk_free
-                    .map(|free| free.saturating_sub(primary.size));
-            }
-        }
-        for copy_node in change.add {
-            db::cluster::insert_replica(pool, primary.repository_id, copy_node, node).await?;
-        }
-        for copy_node in change.remove {
-            db::cluster::delete_replica(pool, primary.repository_id, copy_node, node).await?;
+        if attempted.insert(primary.repository_id) {
+            attempted.extend(db::cluster::assign_replica_family(pool, primary.repository_id, node, setting).await?);
         }
     }
     Ok(())
@@ -388,22 +344,22 @@ async fn assign(
 async fn place_and_start(
     context: &NodeContext,
     primaries: &[Primary],
-    retry: &Retry,
+    retry: &mut Retry,
     copying: &mut Copying,
 ) -> Result<()> {
     let node = context.node_id;
-    let held = db::cluster::list_held_replicas(context.database()?, node).await?;
-    locate(&context.repos_path, node, primaries, &held, copying);
+    let mut held = db::cluster::list_held_replicas(context.database()?, node).await?;
+    copying.cancel_obsolete(&held);
+    let live: HashSet<_> = held.iter().map(|row| row.repository_id).collect();
+    retry.failures.retain(|repository, _| live.contains(repository));
+    let failed = locate(context.database()?, &context.repos_path, node, primaries, &held, copying).await;
+    held.retain(|row| !failed.contains(&row.repository_id));
     copying.start(context, &held, retry);
     Ok(())
 }
 
 pub(crate) fn copy_path(repos: &Path, uuid: Uuid) -> PathBuf {
     repos.join(MIRRORS).join(format!("{uuid}.git"))
-}
-
-fn place_path(repos: &Path, uuid: Uuid) -> PathBuf {
-    repos.join(format!("{uuid}.git"))
 }
 
 /// A recorded version outlives its directory. Clear it for a copy Git cannot open, before
@@ -422,7 +378,7 @@ pub(crate) async fn reconcile(pool: &DbPool, node: i64, repos: &Path) -> Result<
         let Ok(uuid) = rpc::repository_uuid(&row.disk_path) else {
             continue;
         };
-        let usable = match opens(&copy_path(repos, uuid)).await {
+        let usable = match connected(&copy_path(repos, uuid)).await {
             Ok(usable) => usable,
             Err(error) => {
                 warn!(repository = row.repository_id, %error, "could not read a replica copy");
@@ -447,10 +403,15 @@ async fn opens(mirror: &Path) -> Result<bool> {
     .context("the copy check stopped")?
 }
 
+async fn connected(path: &Path) -> Result<bool> {
+    Ok(opens(path).await? && mirror::check(path).await?.is_none())
+}
+
 /// Puts each directory where its role says: a repository this node is primary of moves
 /// from `mirrors` to the primary location, and a copy whose primary moved away keeps its
 /// directory as a copy. A directory moves only into a free place, and nothing is deleted.
-fn locate(repos: &Path, node: i64, primaries: &[Primary], held: &[HeldReplica], copying: &Copying) {
+async fn locate(pool: &DbPool, repos: &Path, node: i64, primaries: &[Primary], held: &[HeldReplica], copying: &Copying) -> HashSet<i64> {
+    let mut failed = HashSet::new();
     for primary in primaries {
         let Ok(uuid) = rpc::repository_uuid(&primary.disk_path) else {
             continue;
@@ -458,9 +419,12 @@ fn locate(repos: &Path, node: i64, primaries: &[Primary], held: &[HeldReplica], 
         if copying.is_running(uuid) {
             continue;
         }
-        let (copy, place) = (copy_path(repos, uuid), place_path(repos, uuid));
-        if copy.exists() && !place.exists() {
-            move_directory(&copy, &place);
+        let (copy, place) = (copy_path(repos, uuid), crate::backend::repositories::store::primary_path(repos, uuid));
+        if tokio::fs::try_exists(&copy).await.unwrap_or(true) && !tokio::fs::try_exists(&place).await.unwrap_or(false) {
+            if let Err(error) = move_directory(pool, primary.repository_id, node, true, &copy, &place).await {
+                warn!(repository=primary.repository_id, %error, "could not relocate a primary directory");
+                failed.insert(primary.repository_id);
+            }
         }
     }
     for row in held.iter().filter(|row| row.primary_node_id != Some(node)) {
@@ -470,20 +434,43 @@ fn locate(repos: &Path, node: i64, primaries: &[Primary], held: &[HeldReplica], 
         if copying.is_running(uuid) {
             continue;
         }
-        let (copy, place) = (copy_path(repos, uuid), place_path(repos, uuid));
-        if place.exists() && !copy.exists() {
-            move_directory(&place, &copy);
+        let (copy, place) = (copy_path(repos, uuid), crate::backend::repositories::store::primary_path(repos, uuid));
+        if tokio::fs::try_exists(&place).await.unwrap_or(true) {
+            let moved = if tokio::fs::try_exists(&copy).await.unwrap_or(true) {
+                Err(anyhow::anyhow!("both primary and mirror directories exist; refusing to copy ambiguous storage"))
+            } else {
+                move_directory(pool, row.repository_id, node, false, &place, &copy).await
+            };
+            if let Err(error) = moved {
+                warn!(repository=row.repository_id, %error, "could not relocate a former primary; copy deferred");
+                failed.insert(row.repository_id);
+            }
         }
     }
+    failed
 }
 
-fn move_directory(from: &Path, to: &Path) {
-    if let Some(parent) = to.parent() {
-        let _ = std::fs::create_dir_all(parent);
+async fn move_directory(pool: &DbPool, repository: i64, node: i64, primary: bool, from: &Path, to: &Path) -> Result<()> {
+    let (primary_path, mirror_path) = if primary { (to, from) } else { (from, to) };
+    let _primary = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::lock(primary_path)).await?;
+    let _mirror = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::lock(mirror_path)).await?;
+    let primary_readers = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::exclusive(primary_path)).await?;
+    let mirror_readers = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::exclusive(mirror_path)).await?;
+    let row = db::repositories::records::get_repository_by_id(pool, repository).await?.context("repository was deleted before relocation")?;
+    anyhow::ensure!(row.storage_node_id.is_some() && (row.storage_node_id == Some(node)) == primary, "repository placement changed before relocation");
+    if !primary {
+        anyhow::ensure!(db::cluster::replica_applied_version(pool, repository, node).await?.is_some(), "copy assignment changed before relocation");
     }
-    if let Err(error) = std::fs::rename(from, to) {
-        warn!(path = %from.display(), %error, "could not move a repository directory");
-    }
+    let from = from.to_owned();
+    let to = to.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let _guards = (_primary, _mirror, primary_readers, mirror_readers);
+        anyhow::ensure!(!to.try_exists()?, "relocation target already exists");
+        if let Some(parent) = to.parent() { std::fs::create_dir_all(parent)?; }
+        std::fs::rename(from, to)?;
+        Ok::<_, anyhow::Error>(())
+    }).await?
+
 }
 
 /// Copies that are running, at most `PARALLEL`. Each one brings a copy up to its primary. A
@@ -493,6 +480,8 @@ pub struct Copying {
     running: JoinSet<(i64, Result<()>)>,
     /// The directory each running copy writes, which nothing else may move or remove.
     directories: HashMap<tokio::task::Id, Uuid>,
+    /// Source identity and cancellation stay owned until the task is joined.
+    transfers: HashMap<tokio::task::Id, (i64, Option<i64>, CancellationToken)>,
     /// The repository whose copy was started last. The next scan starts after it, so a
     /// repository that is behind at every pass cannot take both slots every time. Kept in
     /// memory only.
@@ -502,6 +491,20 @@ pub struct Copying {
 }
 
 impl Copying {
+    fn cancel_all(&self) {
+        for (_, _, stop) in self.transfers.values() {
+            stop.cancel();
+        }
+    }
+
+    fn cancel_obsolete(&self, held: &[HeldReplica]) {
+        for (repository, primary, stop) in self.transfers.values() {
+            if !held.iter().any(|row| row.repository_id == *repository && row.primary_node_id == *primary) {
+                stop.cancel();
+            }
+        }
+    }
+
     fn is_running(&self, directory: Uuid) -> bool {
         self.directories
             .values()
@@ -529,7 +532,12 @@ impl Copying {
     ) {
         match joined {
             Ok((id, (repository_id, result))) => {
+                let cancelled = self.transfers.remove(&id).is_some_and(|(_, _, stop)| stop.is_cancelled());
                 self.directories.remove(&id);
+                if cancelled {
+                    retry.succeeded(repository_id);
+                    return;
+                }
                 match result {
                     Ok(()) => retry.succeeded(repository_id),
                     // The primary is writing to the repository. The next pass asks again.
@@ -547,6 +555,7 @@ impl Copying {
                 }
             }
             Err(error) => {
+                self.transfers.remove(&error.id());
                 self.directories.remove(&error.id());
                 warn!(%error, "a replica copy stopped unexpectedly");
             }
@@ -588,10 +597,15 @@ impl Copying {
             }
             self.last_started = row.repository_id;
             let context = context.clone();
-            let handle = self
-                .running
-                .spawn(async move { (row.repository_id, copy_one(&context, &row, uuid).await) });
+            let stop = CancellationToken::new();
+            let task_stop = stop.clone();
+            let repository = row.repository_id;
+            let primary = row.primary_node_id;
+            let handle = self.running.spawn(async move {
+                (repository, copy_one(&context, &row, uuid, &task_stop).await)
+            });
             self.directories.insert(handle.id(), uuid);
+            self.transfers.insert(handle.id(), (repository, primary, stop));
         }
     }
 }
@@ -605,7 +619,7 @@ fn busy(error: &anyhow::Error) -> bool {
 
 /// Brings one copy up to date. The version is read before the transfer starts, so the
 /// pack lists at least the refs of that version.
-async fn copy_one(context: &NodeContext, row: &HeldReplica, uuid: Uuid) -> Result<()> {
+async fn copy_one(context: &NodeContext, row: &HeldReplica, uuid: Uuid, stop: &CancellationToken) -> Result<()> {
     let pool = context.database()?;
     let primary = row
         .primary_node_id
@@ -614,35 +628,10 @@ async fn copy_one(context: &NodeContext, row: &HeldReplica, uuid: Uuid) -> Resul
         return Ok(());
     };
     if version > row.applied_version {
-        // Replacing refs takes several steps, so the copy stops counting as a usable version
-        // first. A crash part way leaves it unusable until the next copy completes it.
-        if row.applied_version >= 0
-            && !db::cluster::set_applied_version(
-                pool,
-                row.repository_id,
-                context.node_id,
-                primary,
-                -1,
-            )
-            .await?
-        {
-            return Ok(());
-        }
+        // Downloading the temporary pack cannot change the last usable copy. Transfer
+        // invalidates it only immediately before installation, after a complete download.
         let mirror = copy_path(&context.repos_path, uuid);
-        if let Err(error) = transfer::copy(context, primary, uuid, &mirror).await {
-            // A busy primary refuses before it sends anything, so the copy is as it was.
-            if busy(&error) && row.applied_version >= 0 {
-                db::cluster::set_applied_version(
-                    pool,
-                    row.repository_id,
-                    context.node_id,
-                    primary,
-                    row.applied_version,
-                )
-                .await?;
-            }
-            return Err(error);
-        }
+        transfer::copy(context, primary, uuid, &mirror, stop).await?;
         // Finish packing before publishing a promotable version: a running maintenance
         // command still needs the mirror directory and prevents relocation.
         maintenance::after_copy(row.repository_id, &mirror).await;
@@ -674,7 +663,7 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
             return;
         }
     };
-    for directory in [context.repos_path.join(MIRRORS), context.repos_path.clone()] {
+    for directory in [context.repos_path.join(MIRRORS), context.repos_path.join(MIRRORS).join(QUARANTINES), context.repos_path.clone()] {
         let Ok(mut entries) = tokio::fs::read_dir(&directory).await else {
             continue;
         };
@@ -686,37 +675,24 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
             if keep.contains(&uuid) {
                 continue;
             }
-            if directory == context.repos_path {
-                // The keep list may predate a promotion that made this node a copy holder.
-                match needed_here(pool, context.node_id, uuid).await {
-                    Ok(true) => continue,
-                    Ok(false) => {}
-                    Err(error) => {
-                        warn!(%error, "could not check former primary; none removed");
-                        return;
-                    }
-                }
-                // A repository whose deletion is still retiring it has no row yet. Keep its
-                // directory in deleted/, as a retirement does, instead of removing it.
-                let path = entry.path();
-                match tokio::task::spawn_blocking(move || mirror::retire(&path)).await {
-                    Ok(Ok(())) => {
-                        info!(repository = %uuid, "moved an unowned repository to deleted/")
-                    }
-                    Ok(Err(error)) => {
-                        warn!(repository = %uuid, %error, "could not move an unowned repository")
-                    }
-                    Err(error) => {
-                        warn!(repository = %uuid, %error, "could not move an unowned repository")
-                    }
-                }
-                continue;
+            let path = entry.path();
+            // Never wait behind an admitted Git session in the maintenance loop.
+            let Ok(_reader_guard) = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::lock(&path)).await else { continue; };
+            let Ok(readers) = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::exclusive(&path)).await else { continue; };
+            match db::cluster::storage_needed(pool, &uuid.to_string(), context.node_id).await {
+                Ok(true) => continue,
+                Ok(false) => {},
+                Err(error) => { warn!(%error, "could not check storage assignment; none removed"); return; }
             }
-            match tokio::fs::remove_dir_all(entry.path()).await {
-                Ok(()) => {
-                    info!(repository = %uuid, "removed a replica copy this node no longer holds")
-                }
-                Err(error) => warn!(repository = %uuid, %error, "could not remove a replica copy"),
+            // Rename only. The expiry worker owns recursive deletion outside the
+            // takeover loop; its restore window also protects recoverable retired bytes.
+            match tokio::task::spawn_blocking(move || {
+                let _guards = (_reader_guard, readers);
+                mirror::retire(&path)
+            }).await {
+                Ok(Ok(())) => info!(repository = %uuid, "retired storage this node no longer holds"),
+                Ok(Err(error)) => warn!(repository = %uuid, %error, "could not retire unassigned storage"),
+                Err(error) => warn!(repository = %uuid, %error, "storage retirement stopped"),
             }
         }
     }
@@ -733,21 +709,6 @@ fn copy_directory_uuid(name: &str) -> Option<Uuid> {
         name
     };
     Uuid::parse_str(name.strip_suffix(".git")?).ok()
-}
-
-/// Whether this node still needs the directory of `uuid`: an unplaced repository, a primary
-/// here, or a copy held here. Read the repository before its copies so a concurrent promotion's
-/// new primary and former-primary copy row are both visible.
-async fn needed_here(pool: &DbPool, node: i64, uuid: Uuid) -> Result<bool> {
-    let Some(repo) = db::cluster::get_repository_by_uuid(pool, &uuid.to_string()).await? else {
-        return Ok(false);
-    };
-    // Rows without placement belong to pre-cluster installations and must survive.
-    if repo.storage_node_id.is_none() || repo.storage_node_id == Some(node) {
-        return Ok(true);
-    }
-    let copies = db::cluster::list_replicas(pool, repo.id).await?;
-    Ok(copies.iter().any(|(copy, _)| *copy == node))
 }
 
 /// Removes pack files that a crash left in the copies directory. A pack that a running copy
@@ -770,8 +731,11 @@ async fn keep_directories(context: &NodeContext) -> Result<HashSet<Uuid>> {
     for row in db::cluster::list_held_replicas(pool, node).await? {
         keep.insert(rpc::repository_uuid(&row.disk_path)?);
     }
-    for (_, disk_path, _, _, _) in db::cluster::list_primary_repositories(pool, node).await? {
+    for (_, disk_path) in db::cluster::list_primary_paths(pool, node).await? {
         keep.insert(rpc::repository_uuid(&disk_path)?);
+    }
+    for (_, disk_path) in db::cluster::list_unplaced_repositories(pool).await? {
+        if let Ok(uuid) = rpc::repository_uuid(&disk_path) { keep.insert(uuid); }
     }
     Ok(keep)
 }

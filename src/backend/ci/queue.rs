@@ -510,6 +510,7 @@ impl RunQueue {
                                 })
                                 .context("storage node unavailable")?;
                             Some(cluster::CorePeer {
+                                target: None,
                                 public_key: node.public_key,
                                 address: serde_json::from_str(
                                     node.addr_hint
@@ -536,6 +537,7 @@ impl RunQueue {
                             storage_replicas.push((
                                 id,
                                 cluster::CorePeer {
+                                    target: None,
                                     public_key: node.public_key,
                                     address,
                                 },
@@ -663,7 +665,7 @@ impl RunQueue {
                     }
                 };
                 let loaded = tokio::select! {
-                    loaded = loaded => loaded,
+                    loaded = tokio::time::timeout(std::time::Duration::from_secs(60), loaded) => loaded.unwrap_or_else(|_| Err(anyhow::anyhow!("CI claim preparation timed out"))),
                     () = renew => Err(anyhow::anyhow!("the CI run was taken back while it was prepared")),
                 };
                 if loaded.is_err() {
@@ -894,7 +896,10 @@ impl RunQueue {
             // dial_node bounds each attempt itself. An outer timeout here would cut the
             // fallback short, so the other addresses and iroh would never be tried. A stop
             // ends only the dial: once the request is written, its reply is awaited below.
-            let dial = cluster::dial_node(&context.iroh, node, &peer.address, cluster::ALPN_EVENTS);
+            let dial = async {
+                let address = peer.resolved_address().await?;
+                cluster::dial_node(&context.iroh, node, &address, cluster::ALPN_EVENTS).await
+            };
             let dialed = match stop.as_deref_mut() {
                 Some(stop) => {
                     // The stop wins a tie, and is read again once the dial is ready, so a
@@ -918,8 +923,8 @@ impl RunQueue {
             let Ok(mut link) = dialed else {
                 continue;
             };
-            let result = tokio::time::timeout(std::time::Duration::from_secs(20), async {
-                rpc::write_frame(&mut link.writer, &header, rpc::MAX_JSON).await?;
+            let result = tokio::time::timeout(std::time::Duration::from_secs(100), async {
+                rpc::write_frame(&mut link.writer, &header, rpc::MAX_JSON + 64 * 1024).await?;
                 link.finish().await?;
                 let reply: Reply = serde_json::from_slice(
                     &rpc::read_frame(&mut link.reader, rpc::MAX_JSON).await?,

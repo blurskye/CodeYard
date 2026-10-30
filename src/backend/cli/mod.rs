@@ -244,7 +244,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
             return node::serve_worker(&cli.state_dir).await;
         }
         if configured_database_url.is_none() {
-            anyhow::ensure!(roles == &node::NodeRoles::default() && cluster_runtime::Settings::from_env()?.is_none(),
+            anyhow::ensure!(roles.single_node() && cluster_runtime::Settings::from_env()?.is_none(),
                 "a server and the cluster roles require DATABASE_URL (PostgreSQL for a cluster, sqlite://... for a single node); only a runner can run without a database");
         }
     }

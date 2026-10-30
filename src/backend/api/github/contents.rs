@@ -202,6 +202,7 @@ async fn readme(
         .blob_bytes(&revision, &path)
         .await
         .map_err(store_error)?;
+    auth::recheck_repository_read(&state, &headers, repo.id, "contents").await?;
     Ok(blob_response(&headers, owner, name, reference, &path, blob))
 }
 
@@ -214,6 +215,7 @@ async fn read(
     let (owner, name) = (&params["owner"], &params["repo"]);
     let (repo, _) = repository(&state, &headers, owner, name, false).await?;
     let reference = query.get("ref").unwrap_or(&repo.default_branch);
+    let response = async {
     let path = params.get("path").map(String::as_str).unwrap_or("");
     let store = repo_store(&repo, state.cluster.as_ref());
     // Pin both file and directory reads so a moving branch cannot mix revisions.
@@ -296,6 +298,9 @@ async fn read(
             .collect::<Vec<_>>(),
     )
     .into_response())
+    }.await?;
+    auth::recheck_repository_read(&state, &headers, repo.id, "contents").await?;
+    Ok(response)
 }
 
 #[derive(Deserialize)]

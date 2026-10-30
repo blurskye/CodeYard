@@ -92,6 +92,10 @@ pub async fn disable(
 /// Tries every waiting pull request once. A merge that its requirements still refuse waits
 /// for the next check; a pull request that closed or merged some other way drops its request.
 pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
+    run_due_until_stop(state, None).await
+}
+
+async fn run_due_until_stop(state: &AppState, stop: Option<&tokio::sync::watch::Receiver<bool>>) -> anyhow::Result<()> {
     let pool = &state.pool;
     let mut after = 0;
     loop {
@@ -104,6 +108,9 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
             return Ok(());
         };
         for entry in page {
+            if stop.is_some_and(|stop| *stop.borrow()) {
+                return Ok(());
+            }
             let pull =
                 db::pull_requests::records::get_pull_request_by_id(pool, entry.pull_request_id)
                     .await?;
@@ -169,7 +176,7 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
 /// A check is never cut short: a merge in progress finishes before the loop stops.
 pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bool>) {
     while !*stop.borrow() {
-        if let Err(error) = run_due(&state).await {
+        if let Err(error) = run_due_until_stop(&state, Some(&stop)).await {
             tracing::warn!(%error, "auto-merge check failed");
         }
         tokio::select! {

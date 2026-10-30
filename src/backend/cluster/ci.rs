@@ -99,8 +99,9 @@ mod tests {
             std::io::Cursor::new(frame),
             tokio::io::sink(),
         );
+        let slot = handler.slots.clone().try_acquire_owned().unwrap();
         assert_eq!(
-            handler.answer(&mut link).await.unwrap(),
+            handler.answer(&mut link, slot).await.unwrap(),
             Err(CORE_UNAVAILABLE.into())
         );
         assert!(handler
@@ -258,6 +259,8 @@ pub struct CiHandler {
     queue: RunQueue,
     slots: Arc<Semaphore>,
     accepting_claims: Arc<AtomicBool>,
+    headers: Arc<std::sync::Mutex<std::collections::HashMap<iroh::PublicKey, Arc<Semaphore>>>>,
+    sessions: rpc::SessionGate,
 }
 
 impl std::fmt::Debug for CiHandler {
@@ -273,6 +276,8 @@ impl CiHandler {
             queue,
             slots: Arc::new(Semaphore::new(16)),
             accepting_claims: Arc::new(AtomicBool::new(true)),
+            headers: Default::default(),
+            sessions: rpc::SessionGate::default(),
         }
     }
 
@@ -284,6 +289,15 @@ impl CiHandler {
 
     pub(super) fn stop_claiming(&self) {
         self.accepting_claims.store(false, Ordering::Release);
+    }
+
+    pub(super) fn close(&self) {
+        self.stop_claiming();
+        self.sessions.close();
+    }
+
+    pub(super) async fn drain(&self) {
+        self.sessions.drain().await;
     }
 
     /// Whether this core's node may read repositories held by other nodes. Only web and ssh
@@ -316,6 +330,12 @@ impl CiHandler {
                 // worker would then fail it instead of asking another core.
                 ensure!(self.may_read_repositories().await?, CORE_UNAVAILABLE);
                 let mut claim = self.queue.claim(&worker, mode, &platforms).await?;
+                if let Some(refusal) = self.refusal(peer).await {
+                    if let Some(claim) = &claim {
+                        self.queue.finish(&worker, claim.run.id, "failed", Some("Runner authority lost during preparation")).await?;
+                    }
+                    anyhow::bail!(refusal);
+                }
                 if let Some(claim) = &mut claim {
                     claim.storage_node_id = claim.storage_node_id.or(Some(self.context.node_id));
                 }
@@ -350,6 +370,7 @@ impl CiHandler {
                     })
                     .ok_or_else(|| anyhow::anyhow!(CORE_UNAVAILABLE))?;
                 let peer = super::CorePeer {
+                    target: None,
                     public_key: node.public_key,
                     address: serde_json::from_str(
                         node.addr_hint
@@ -442,13 +463,13 @@ impl CiHandler {
 
     /// The reply to the request on `link`. An error means the frame is broken, and it ends
     /// the connection instead.
-    async fn answer(&self, link: &mut Link) -> Result<Result<serde_json::Value, String>> {
+    async fn answer(&self, link: &mut Link, slot: tokio::sync::OwnedSemaphorePermit) -> Result<Result<serde_json::Value, String>> {
         let peer = link.peer;
         if let Some(refusal) = self.refusal(peer).await {
             return Ok(Err(refusal.to_owned()));
         }
         tracing::trace!(name: "ci_request_authorized", %peer, "CI queue request authorized; waiting for frame");
-        let header = rpc::read_frame(&mut link.reader, rpc::MAX_JSON).await?;
+        let header = rpc::read_frame(&mut link.reader, rpc::MAX_JSON + 64 * 1024).await?;
         let request = match serde_json::from_slice::<Request>(&header) {
             Ok(request) => request,
             Err(error) => {
@@ -466,7 +487,12 @@ impl CiHandler {
                 tracing::debug!(%error, "could not record a worker's last request");
             }
         }
-        Ok(match self.execute(peer, request).await {
+        let handler = self.clone();
+        let result = self.sessions.spawn_admitted(async move {
+            let _slot = slot;
+            handler.execute(peer, request).await
+        }).await?;
+        Ok(match result {
             Ok(value) => Ok(value),
             Err(error) => {
                 // Never return database errors or decrypted secret contents to the peer.
@@ -481,13 +507,21 @@ impl CiHandler {
     }
 
     /// Answers the one request on `link`.
-    pub(crate) async fn serve_link(&self, mut link: Link) -> Result<()> {
-        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+    pub(crate) async fn serve_link(&self, link: Link) -> Result<()> {
+        let Some(request) = self.sessions.admit(self.answer_link(link)) else {
+            return Ok(());
+        };
+        request.await
+    }
+
+    async fn answer_link(&self, mut link: Link) -> Result<()> {
+        let _header = transport::peer_header_slot(&self.headers, link.peer)?;
+        tokio::time::timeout(std::time::Duration::from_secs(90), async {
             // A busy core refuses at once, as pairing does, so the client asks another
             // core instead of waiting in a queue. Hold admission through the reply write.
-            let slot = self.slots.try_acquire();
-            let result = match &slot {
-                Ok(_) => self.answer(&mut link).await?,
+            let slot = self.slots.clone().try_acquire_owned();
+            let result = match slot {
+                Ok(slot) => self.answer(&mut link, slot).await?,
                 Err(_) => Err(CORE_UNAVAILABLE.to_owned()),
             };
             let header = serde_json::to_vec(&Reply { result })?;
@@ -502,6 +536,7 @@ impl CiHandler {
 
 impl ProtocolHandler for CiHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+        let Ok(_connection) = transport::connection_slot(&connection) else { return Ok(()); };
         while let Some(link) = transport::accept_stream(&connection).await {
             if let Err(error) = self.serve_link(link).await {
                 tracing::warn!(%error, "CI queue RPC failed");

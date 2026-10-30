@@ -210,31 +210,10 @@ pub(crate) fn discussion_write_error(error: anyhow::Error) -> (StatusCode, Json<
     (status, Json(ApiError::new(code, message)))
 }
 
-pub(crate) fn repo_store_error(
-    error: crate::backend::repositories::store::RepoError,
-    fallback: StatusCode,
-) -> (StatusCode, Json<ApiError>) {
-    let (status, code, message) = if error.is_response_too_large() {
-        (
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "response_too_large",
-            "Repository response exceeds its limit",
-        )
-    } else if error.is_storage_node_unavailable() {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "git_error",
-            "storage node unavailable",
-        )
-    } else {
-        (fallback, "git_error", "Repository operation failed")
-    };
-    (status, Json(ApiError::new(code, message)))
-}
-
 #[cfg(test)]
 mod discussion_errors {
     use super::*;
+    use crate::backend::api::repos::responses::repo_store_error;
 
     #[test]
     fn repository_store_errors_do_not_expose_paths_or_credentials() {
@@ -246,9 +225,9 @@ mod discussion_errors {
             ),
             StatusCode::BAD_REQUEST,
         );
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body.error, "git_error");
-        assert_eq!(body.message, "Repository operation failed");
+        assert_eq!(body.message, "Repository storage is unavailable");
         let (status, Json(body)) = repo_store_error(
             RepoError::storage_node_unavailable(),
             StatusCode::BAD_REQUEST,

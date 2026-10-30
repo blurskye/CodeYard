@@ -2484,6 +2484,7 @@ CREATE TABLE package_uploads (
     token_id BIGINT NOT NULL REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
     uploaded_bytes BIGINT NOT NULL DEFAULT 0,
     chunks TEXT NOT NULL DEFAULT '[]',
+    charge_id UUID,
     expires_at BIGINT NOT NULL
 );
 

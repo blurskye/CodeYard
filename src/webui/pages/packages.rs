@@ -49,6 +49,8 @@ pub struct Listing {
     pub explore: bool,
     pub base: String,
     pub kind: String,
+    #[serde(default)]
+    pub container_namespace: Option<String>,
     pub packages: Vec<Package>,
     pub newer: Option<String>,
     pub older: Option<String>,
@@ -111,6 +113,9 @@ pub fn render(page: Page) -> Element {
                     }
                 }
                 h1 { class: "text-2xl font-semibold mb-4", "{list.title}" }
+                if let Some(namespace) = &list.container_namespace {
+                    p { class: "text-sm text-muted mb-4", "Container registry namespace: ", code { "{namespace}" } }
+                }
                 form { method: "get", action: list.base.clone(), class: "filter-toolbar mb-4",
                     label { r#for: "package-type", "Type" }
                     DraftSelect { id: Some("package-type".to_owned()), name: "type", initial_value: list.kind.clone(), options: vec![

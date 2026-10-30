@@ -55,17 +55,17 @@ pub async fn create(
 }
 
 fn condition() -> String {
-    format!("FROM artifact_attestations a JOIN repositories r ON r.id=a.repo_id LEFT JOIN users u ON u.id=$1 WHERE (CAST($2 AS BIGINT) IS NULL OR r.owner_org_id=$2) AND (CAST($9 AS BIGINT) IS NULL OR r.owner_user_id=$9) AND (CAST($3 AS BIGINT) IS NULL OR r.id=$3) AND (CAST($4 AS TEXT[]) IS NULL OR EXISTS(SELECT 1 FROM attestation_subjects s WHERE s.attestation_id=a.id AND s.digest=ANY($4))) AND (CAST($5 AS TEXT) IS NULL OR a.predicate_type=$5 OR ($5='provenance' AND a.predicate_type LIKE 'https://slsa.dev/provenance/%') OR ($5='sbom' AND (a.predicate_type LIKE 'https://spdx.dev/Document%' OR a.predicate_type LIKE 'https://cyclonedx.org/bom%')) OR ($5='release' AND (a.predicate_type LIKE 'https://in-toto.io/attestation/release/%' OR a.predicate_type LIKE 'https://github.com/attestations/release/%'))) AND {}", super::repositories::access::readable_condition())
+    format!("FROM artifact_attestations a JOIN repositories r ON r.id=a.repo_id LEFT JOIN users u ON u.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND (CAST($10 AS TEXT) IS NULL OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=$10 AND s.user_id=u.id AND s.expires_at>NOW())) WHERE (CAST($2 AS BIGINT) IS NULL OR r.owner_org_id=$2) AND (CAST($9 AS BIGINT) IS NULL OR r.owner_user_id=$9) AND (CAST($3 AS BIGINT) IS NULL OR r.id=$3) AND (CAST($4 AS TEXT[]) IS NULL OR EXISTS(SELECT 1 FROM attestation_subjects s WHERE s.attestation_id=a.id AND s.digest=ANY($4))) AND (CAST($5 AS TEXT) IS NULL OR a.predicate_type=$5 OR ($5='provenance' AND a.predicate_type LIKE 'https://slsa.dev/provenance/%') OR ($5='sbom' AND (a.predicate_type LIKE 'https://spdx.dev/Document%' OR a.predicate_type LIKE 'https://cyclonedx.org/bom%')) OR ($5='release' AND (a.predicate_type LIKE 'https://in-toto.io/attestation/release/%' OR a.predicate_type LIKE 'https://github.com/attestations/release/%'))) AND {}", super::repositories::access::readable_condition())
 }
 
 pub async fn list(pool: &PgPool, filter: &Filter<'_>) -> Result<Vec<Attestation>> {
     Ok(sqlx::query_as(&format!("SELECT a.id,a.repo_id,(SELECT b.bundle FROM attestation_bundles b WHERE b.hash=a.bundle_hash) AS bundle,a.predicate_type,a.initiator {} AND a.id>$6 AND a.id<$7 ORDER BY a.id {} LIMIT $8", condition(), if filter.before < i64::MAX { "DESC" } else { "ASC" }))
-        .bind(filter.actor).bind(filter.owner.and_then(Owner::org)).bind(filter.repo).bind(filter.digests).bind(filter.predicate).bind(filter.after).bind(filter.before).bind(filter.limit).bind(filter.owner.and_then(Owner::user)).fetch_all(pool).await?)
+        .bind(filter.actor).bind(filter.owner.and_then(Owner::org)).bind(filter.repo).bind(filter.digests).bind(filter.predicate).bind(filter.after).bind(filter.before).bind(filter.limit).bind(filter.owner.and_then(Owner::user)).bind(filter.session).fetch_all(pool).await?)
 }
 
 pub async fn summaries(pool: &PgPool, filter: &Filter<'_>) -> Result<Vec<Summary>> {
-    Ok(sqlx::query_as(&format!("SELECT a.id,a.repo_id,a.predicate_type,(SELECT COALESCE(json_agg(s.digest ORDER BY s.digest),'[]')::text FROM attestation_subjects s WHERE s.attestation_id=a.id) AS subjects {} AND a.id>$6 AND a.id<$7 ORDER BY a.id {} LIMIT $8", condition(), if filter.before < i64::MAX { "DESC" } else { "ASC" }))
-        .bind(filter.actor).bind(filter.owner.and_then(Owner::org)).bind(filter.repo).bind(filter.digests).bind(filter.predicate).bind(filter.after).bind(filter.before).bind(filter.limit).bind(filter.owner.and_then(Owner::user)).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&format!("SELECT a.id,a.repo_id,r.name AS repository,r.owner_org_id,COALESCE((SELECT name FROM organizations WHERE id=r.owner_org_id),(SELECT username FROM users WHERE id=r.owner_user_id)) AS owner_name,COALESCE(NOT r.is_archived AND ({write_access})>=3,false) AS can_delete,a.predicate_type,(SELECT COALESCE(json_agg(s.digest ORDER BY s.digest),'[]')::text FROM attestation_subjects s WHERE s.attestation_id=a.id) AS subjects {} AND a.id>$6 AND a.id<$7 ORDER BY a.id {} LIMIT $8", condition(), if filter.before < i64::MAX { "DESC" } else { "ASC" }, write_access=super::repositories::access::USER_REPO_ACCESS_SQL))
+        .bind(filter.actor).bind(filter.owner.and_then(Owner::org)).bind(filter.repo).bind(filter.digests).bind(filter.predicate).bind(filter.after).bind(filter.before).bind(filter.limit).bind(filter.owner.and_then(Owner::user)).bind(filter.session).fetch_all(pool).await?)
 }
 
 pub async fn repositories(pool: &PgPool, filter: &Filter<'_>) -> Result<Vec<(i64, String)>> {
@@ -87,6 +87,7 @@ pub async fn repositories(pool: &PgPool, filter: &Filter<'_>) -> Result<Vec<(i64
     .bind(filter.before)
     .bind(filter.limit)
     .bind(filter.owner.and_then(Owner::user))
+    .bind(filter.session)
     .fetch_all(pool)
     .await?)
 }
@@ -94,11 +95,14 @@ pub async fn repositories(pool: &PgPool, filter: &Filter<'_>) -> Result<Vec<(i64
 pub async fn delete(
     pool: &PgPool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     owner: Owner,
     ids: &[i64],
     digests: &[String],
 ) -> Result<u64> {
     let mut tx = begin(pool).await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await
+        .map_err(|error| if error.is::<crate::backend::db::users::accounts::AccountRestricted>() { anyhow::Error::new(Refusal::Denied) } else { error })?;
     let rows: Vec<(i64,i64)> = sqlx::query_as(&format!("SELECT DISTINCT a.id,a.repo_id FROM artifact_attestations a JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=$4 WHERE ((CAST($1 AS BIGINT) IS NOT NULL AND r.owner_org_id=$1) OR (CAST($5 AS BIGINT) IS NOT NULL AND r.owner_user_id=$5)) AND (a.id=ANY($2) OR EXISTS(SELECT 1 FROM attestation_subjects s WHERE s.attestation_id=a.id AND s.digest=ANY($3))) AND {} ORDER BY a.repo_id,a.id",super::repositories::access::readable_condition()))
         .bind(owner.org()).bind(ids).bind(digests).bind(actor).bind(owner.user()).fetch_all(&mut *tx).await?;
     for (_, repo) in &rows {

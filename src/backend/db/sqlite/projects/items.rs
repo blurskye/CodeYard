@@ -2,6 +2,16 @@ use super::*;
 use crate::backend::db::projects::{valid_name, Content, FieldUpdate, Item, NewView, View};
 use serde_json::Value;
 
+pub async fn item_links(pool: &SqlitePool, viewer: Option<i64>, project: i64, items: &[i64]) -> Result<Vec<crate::backend::db::projects::ItemLink>> {
+    anyhow::ensure!(items.len() <= 50, Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, viewer, project).await?;
+    let links = sqlx::query_as(&format!("SELECT i.id,COALESCE(owner_user.username,owner_org.name),r.name,CASE WHEN i.issue_id IS NOT NULL THEN 'issues' ELSE 'pulls' END,COALESCE(issues.number,pr.number) FROM project_items i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=?2 LEFT JOIN users owner_user ON owner_user.id=r.owner_user_id LEFT JOIN organizations owner_org ON owner_org.id=r.owner_org_id LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id WHERE i.project_id=?1 AND i.id IN (SELECT value FROM json_each(?3)) AND {}", super::super::repositories::access::readable_condition()))
+        .bind(project).bind(viewer).bind(serde_json::to_string(items)?).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(links)
+}
+
 pub async fn content_items(
     pool: &SqlitePool,
     viewer: Option<i64>,

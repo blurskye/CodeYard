@@ -1911,7 +1911,7 @@ async fn keyed_storage_node(pool: &DbPool, name: &str) -> (i64, String) {
 
 async fn report_in(pool: &DbPool, key: &str) {
     assert!(
-        db::cluster::record_node_heartbeat(pool, key, "test", "{}", None)
+        db::cluster::record_node_heartbeat(pool, key, "test", "{}", Some(1024 * 1024 * 1024 * 1024))
             .await
             .unwrap()
     );
@@ -2561,7 +2561,7 @@ async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
     lock.commit().await.unwrap();
     let error = task.await.unwrap().unwrap_err().to_string();
     assert!(error.contains("fork family changed"), "{error}");
-    assert_eq!(primary_of(pool, source).await, b);
+    assert_eq!(primary_of(pool, source).await, a);
     assert_eq!(primary_of(pool, fork).await, a);
 }
 

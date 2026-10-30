@@ -198,6 +198,9 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::get_conv
     crate::backend::db::sqlite::pull_requests::records::get_converted_pull_request,
     fn get_converted_pull_request(pool: &DbPool, repo_id: i64, number: i32) -> Result<Option<PullRequest>>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::records::retained_revisions,
+    crate::backend::db::sqlite::pull_requests::records::retained_revisions,
+    fn retained_revisions(pool: &DbPool, repo: i64) -> Result<Vec<String>>);
 native_operation!(crate::backend::db::postgres::pull_requests::records::get_pull_request_by_id,
     crate::backend::db::sqlite::pull_requests::records::get_pull_request_by_id,
     fn get_pull_request_by_id(pool: &DbPool, id: i64) -> Result<Option<PullRequest>>);

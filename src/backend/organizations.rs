@@ -5,58 +5,20 @@ use crate::backend::{
     repositories::lifecycle,
 };
 use organizations::OrganizationOutcome::{self, Applied};
-use std::sync::{Arc, LazyLock};
 use tokio::sync::Semaphore;
-use tokio_util::task::TaskTracker;
 
-static CONVERSIONS: LazyLock<TaskTracker> = LazyLock::new(TaskTracker::new);
-static CONVERSION_SLOTS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(16)));
+static CONVERSION_SLOTS: Semaphore = Semaphore::const_new(16);
 
-/// Admission is bounded and checks the same owner/last-owner rules as the eventual transaction.
-/// The worker rechecks all authority rather than turning the preflight read into a write permit.
-pub async fn enqueue_outside_conversion(
+/// Acknowledgement follows the authoritative transaction, including for asynchronous REST requests.
+pub async fn convert_to_outside(
     pool: &DbPool,
     actor: i64,
     org: i64,
     target: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
-    match organizations::prepare_outside_conversion(pool, actor, org, target).await? {
-        Applied(()) => {}
-        other => return Ok(other),
-    }
-    anyhow::ensure!(
-        !CONVERSIONS.is_closed(),
-        "Organization workers are stopping"
-    );
-    let permit = CONVERSION_SLOTS
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| anyhow::anyhow!("Organization conversion queue is full"))?;
-    let pool = pool.clone();
-    CONVERSIONS.spawn(async move {
-        let _permit = permit;
-        match organizations::convert_to_outside_collaborator(&pool, actor, org, target).await {
-            Ok(Applied(())) => {}
-            outcome => tracing::warn!(
-                actor,
-                org,
-                target,
-                ?outcome,
-                "queued organization conversion was refused"
-            ),
-        }
-    });
-    Ok(Applied(()))
-}
-
-pub(crate) async fn shutdown(deadline: tokio::time::Instant) {
-    CONVERSIONS.close();
-    if tokio::time::timeout_at(deadline, CONVERSIONS.wait())
-        .await
-        .is_err()
-    {
-        tracing::warn!("organization conversion shutdown grace expired");
-    }
+    let _permit = CONVERSION_SLOTS.try_acquire()
+        .map_err(|_| anyhow::anyhow!("Organization conversion admission is full"))?;
+    organizations::convert_to_outside_collaborator(pool, actor, org, target).await
 }
 
 /// Deletes repositories first, then the organization. A partial failure leaves the remaining
@@ -64,10 +26,11 @@ pub(crate) async fn shutdown(deadline: tokio::time::Instant) {
 pub async fn delete(
     state: &AppState,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     org: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
     let repositories =
-        match organizations::list_organization_deletion_repositories(&state.pool, actor, org)
+        match organizations::list_organization_deletion_repositories(&state.pool, actor, credential, org)
             .await?
         {
             Applied(repositories) => repositories,
@@ -77,6 +40,7 @@ pub async fn delete(
         let deleted = match organizations::delete_organization_repository(
             &state.pool,
             actor,
+            credential,
             org,
             repository,
         )
@@ -87,5 +51,5 @@ pub async fn delete(
         };
         lifecycle::remove_deleted_repository(state.cluster.as_ref(), &deleted).await?;
     }
-    organizations::delete_organization(&state.pool, actor, org).await
+    organizations::delete_organization(&state.pool, actor, credential, org).await
 }

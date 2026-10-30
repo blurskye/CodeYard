@@ -42,7 +42,7 @@ async fn charge(
     size: i64,
     file: Option<Uuid>,
     limits: &FileReasonLimit,
-) -> Result<(), AdmissionError> {
+) -> Result<Uuid, AdmissionError> {
     let allowed: bool = sqlx::query_scalar(
         r#"SELECT COUNT(*) FILTER (WHERE uploaded_at > NOW() - INTERVAL '1 hour') < $3
            AND COALESCE(SUM(file_size) FILTER (WHERE uploaded_at > NOW() - INTERVAL '1 hour'), 0) <= $5 - $4
@@ -63,15 +63,49 @@ async fn charge(
     if !allowed {
         return Err(AdmissionError::Quota);
     }
-    sqlx::query(
-        "INSERT INTO upload_rate_limit (user_id, file_id, file_size, reason) VALUES ($1,$2,$3,$4)",
+    let id = sqlx::query_scalar(
+        "INSERT INTO upload_rate_limit (user_id, file_id, file_size, reason) VALUES ($1,$2,$3,$4) RETURNING id",
     )
     .bind(user)
     .bind(file)
     .bind(size)
     .bind(reason)
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await?;
+    Ok(id)
+}
+
+/// Adds `size` bytes to the earlier charge `id` of the same upload, checking only the byte
+/// limits, since the upload was already counted.
+async fn charge_part(
+    tx: &mut PgConnection,
+    id: Uuid,
+    user: i64,
+    reason: &str,
+    size: i64,
+    limits: &FileReasonLimit,
+) -> Result<(), AdmissionError> {
+    let allowed: bool = sqlx::query_scalar(
+        r#"SELECT COALESCE(SUM(file_size) FILTER (WHERE uploaded_at > NOW() - INTERVAL '1 hour'), 0) <= $4 - $3
+           AND COALESCE(SUM(file_size), 0) <= $5 - $3
+        FROM upload_rate_limit
+        WHERE user_id = $1 AND reason = $2 AND uploaded_at > NOW() - INTERVAL '24 hours'"#,
+    )
+    .bind(user)
+    .bind(reason)
+    .bind(size)
+    .bind(limits.max_bytes_per_hour)
+    .bind(limits.max_bytes_per_day)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !allowed {
+        return Err(AdmissionError::Quota);
+    }
+    sqlx::query("UPDATE upload_rate_limit SET file_size = file_size + $2, uploaded_at = NOW() WHERE id = $1")
+        .bind(id)
+        .bind(size)
+        .execute(&mut *tx)
+        .await?;
     Ok(())
 }
 
@@ -118,13 +152,44 @@ pub async fn charge_upload(
     size: i64,
 ) -> Result<(), AdmissionError> {
     let mut tx = pool.begin().await?;
-    let limits = admit(&mut tx, user, reason).await?;
-    if !(1..=limits.max_file_size_bytes).contains(&size) {
-        return Err(AdmissionError::Invalid);
-    }
-    charge(&mut tx, user, reason, size, None, &limits).await?;
+    charge_upload_in_transaction(&mut tx, user, reason, size, None).await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// Charges an upload of `size` bytes and returns the charge. An upload sent in parts passes the
+/// charge of its earlier parts as `earlier`, so it counts as one upload of all its bytes.
+pub(super) async fn charge_upload_in_transaction(
+    tx: &mut PgConnection,
+    user: i64,
+    reason: &str,
+    size: i64,
+    earlier: Option<Uuid>,
+) -> Result<Uuid, AdmissionError> {
+    let limits = admit(tx, user, reason).await?;
+    let earlier = match earlier {
+        Some(id) => sqlx::query_scalar::<_, i64>(
+            "SELECT file_size FROM upload_rate_limit WHERE id = $1 AND user_id = $2 AND reason = $3",
+        )
+        .bind(id)
+        .bind(user)
+        .bind(reason)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(|charged| (id, charged)),
+        None => None,
+    };
+    let total = size.checked_add(earlier.map_or(0, |(_, charged)| charged));
+    if size < 1 || !total.is_some_and(|total| total <= limits.max_file_size_bytes) {
+        return Err(AdmissionError::Invalid);
+    }
+    match earlier {
+        Some((id, _)) => {
+            charge_part(tx, id, user, reason, size, &limits).await?;
+            Ok(id)
+        }
+        None => charge(tx, user, reason, size, None, &limits).await,
+    }
 }
 
 /// Files anyone may download: the owner's own, public ones, and avatars.

@@ -305,41 +305,35 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
             options,
         });
     }
-    let items = projects::items(pool, viewer, project.id).await?;
+    let items = projects::items(pool, viewer, project.id).await?.into_iter().filter(|item| !item.archived).collect();
     let items =
         crate::backend::projects::filter_items(items, &fields, &page.filter, Some(&config))?;
-    // One page of the filtered, sorted items keeps large drafts within the page model.
     const ITEMS_PAGE: usize = 50;
-    let page_number = ctx
-        .query
-        .get("page")
-        .and_then(|page| page.parse::<usize>().ok())
-        .filter(|page| (1..=10000).contains(page))
-        .unwrap_or(1);
-    let link = |page_number: usize| {
-        let mut query: Vec<(String, String)> = ctx
-            .query
-            .iter()
-            .filter(|(key, _)| key.as_str() != "page")
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect();
-        query.push(("page".into(), page_number.to_string()));
+    // Item identities, rather than fixed row offsets, delimit byte-sized pages in
+    // the current filtered/sorted order. Backward pages are budgeted in reverse.
+    let backwards = ctx.query.contains_key("before");
+    let cursor = ctx.query.get(if backwards { "before" } else { "after" });
+    let position = cursor.map(|cursor| -> anyhow::Result<usize> {
+        let id: i64 = cursor.parse().map_err(|_| projects::Refusal::Invalid)?;
+        items.iter().position(|item| item.id == id).ok_or_else(|| projects::Refusal::Missing.into())
+    }).transpose()?;
+    let total = items.len();
+    let start = if backwards { 0 } else { position.map_or(0, |index| index + 1) };
+    let end = if backwards { position.unwrap_or(total) } else { total };
+    let link = |direction: &str, id: i64| {
+        let mut query: Vec<(String, String)> = ctx.query.iter()
+            .filter(|(key, _)| !matches!(key.as_str(), "page" | "after" | "before"))
+            .map(|(key, value)| (key.clone(), value.clone())).collect();
+        query.push((direction.into(), id.to_string()));
         query.sort();
-        format!(
-            "{}?{}",
-            ctx.path,
-            url::form_urlencoded::Serializer::new(String::new())
-                .extend_pairs(query)
-                .finish()
-        )
+        format!("{}?{}", ctx.path, url::form_urlencoded::Serializer::new(String::new()).extend_pairs(query).finish())
     };
-    page.previous = (page_number > 1).then(|| link(page_number - 1));
-    page.next = (items.len() > page_number * ITEMS_PAGE).then(|| link(page_number + 1));
-    let items: Vec<_> = items
-        .into_iter()
-        .skip((page_number - 1) * ITEMS_PAGE)
-        .take(ITEMS_PAGE)
-        .collect();
+    let mut items: Vec<_> = items.into_iter().enumerate().skip(start).take(end.saturating_sub(start)).collect();
+    if backwards { items.reverse(); }
+    items.truncate(ITEMS_PAGE);
+    let item_ids: Vec<_> = items.iter().map(|(_, item)| item.id).collect();
+    let links: HashMap<_, _> = projects::item_links(pool, viewer, project.id, &item_ids).await?
+        .into_iter().map(|(id, owner, name, kind, number)| (id, format!("/{}/{}/{kind}/{number}", crate::webui::encode_component(&owner), crate::webui::encode_component(&name)))).collect();
     let group = if config.layout == "board" {
         config
             .vertical_group_by
@@ -363,48 +357,18 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
             }
         }
     }
-    for item in items {
-        let url = if let Some(repo) = item.repo_id {
-            let owner = db::repositories::records::repository_owner_name(pool, repo)
-                .await?
-                .ok_or(projects::Refusal::Missing)?;
-            let repo = db::repositories::records::get_repository_by_id(pool, repo)
-                .await?
-                .ok_or(projects::Refusal::Missing)?;
-            // Recheck before projecting content links after the item query's snapshot ends.
-            anyhow::ensure!(
-                crate::backend::repositories::access::can_read(pool, ctx.user.as_ref(), &repo)
-                    .await?,
-                projects::Refusal::Missing
-            );
-            let number = if let Some(id) = item.issue_id {
-                db::issues::get_issue_by_id(pool, id)
-                    .await?
-                    .ok_or(projects::Refusal::Missing)?
-                    .number
-            } else {
-                db::pull_requests::records::get_pull_request_by_id(
-                    pool,
-                    item.pull_request_id.ok_or(projects::Refusal::Missing)?,
-                )
-                .await?
-                .ok_or(projects::Refusal::Missing)?
-                .number
-            };
-            Some(format!(
-                "/{}/{}/{}/{}",
-                crate::webui::encode_component(&owner),
-                crate::webui::encode_component(&repo.name),
-                if item.issue_id.is_some() {
-                    "issues"
-                } else {
-                    "pulls"
-                },
-                number
-            ))
-        } else {
-            None
-        };
+    page.project = Some(summary(project));
+    // Reserve envelope/pager space and count JSON escaping and board duplication.
+    let limit = crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES - 256 * 1024;
+    let mut bytes = serde_json::to_vec(&page)?.len();
+    anyhow::ensure!(bytes < limit, projects::Refusal::Invalid);
+    let mut first = None;
+    let mut last = None;
+    for (index, item) in items {
+        // The batched projection rechecks repository access after loading and sorting items.
+        let url = if item.repo_id.is_some() {
+            Some(links.get(&item.id).cloned().ok_or(projects::Refusal::Missing)?)
+        } else { None };
         let mut values = Vec::new();
         for field in fields.iter().filter(|f| f.data_type != "title") {
             let value = item.value(field)?;
@@ -428,6 +392,15 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
             body: item.draft_body.clone().unwrap_or_default(),
             values,
         };
+        let cost = serde_json::to_vec(&output)?.len().saturating_add(16)
+            .saturating_mul(if group.is_some() { 2 } else { 1 });
+        if bytes.saturating_add(cost) > limit {
+            anyhow::ensure!(!page.items.is_empty(), projects::Refusal::Invalid);
+            break;
+        }
+        bytes += cost;
+        first = Some(first.map_or(index, |first: usize| first.min(index)));
+        last = Some(last.map_or(index, |last: usize| last.max(index)));
         if let Some(field) = group {
             let value = item.value(field)?;
             let options = &page
@@ -444,7 +417,12 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         }
         page.items.push(output);
     }
-    page.project = Some(summary(project));
+    if backwards {
+        page.items.reverse();
+        for column in &mut page.columns { column.items.reverse(); }
+    }
+    page.previous = first.filter(|first| *first > 0).and_then(|_| page.items.first()).map(|item| link("before", item.id));
+    page.next = last.filter(|last| *last + 1 < total).and_then(|_| page.items.last()).map(|item| link("after", item.id));
     Ok(page)
 }
 

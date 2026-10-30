@@ -159,12 +159,18 @@ async fn bounded_mutation_body(state: Arc<AppState>, request: Request, next: Nex
     let permit = if declared.is_some_and(|size| size <= SMALL_BODY) {
         None
     } else {
-        let authenticated = match session::get_optional_user(&state.pool, request.headers()).await {
+        let mut authenticated = match session::get_optional_user(&state.pool, request.headers()).await {
             Ok(user) => user.is_some(),
             // Password-change forms still need to reach their own session check.
             Err((StatusCode::PRECONDITION_REQUIRED, _)) => true,
             Err(error) => return error.into_response(),
         };
+        if !authenticated && (request.uri().path().starts_with("/api/v3/") || request.uri().path() == "/api/graphql") {
+            authenticated = match crate::backend::api::github::auth::authenticate(&state, request.headers(), false).await {
+                Ok(auth) => auth.is_some(),
+                Err(error) => return error.into_response(),
+            };
+        }
         let reads = if authenticated {
             &state.form_reads
         } else {
@@ -189,14 +195,6 @@ async fn bounded_mutation_body(state: Arc<AppState>, request: Request, next: Nex
     drop(permit);
     next.run(Request::from_parts(parts, axum::body::Body::from(bytes)))
         .await
-}
-
-struct DownloadTask(tokio::task::JoinHandle<io::Result<()>>);
-
-impl Drop for DownloadTask {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
 }
 
 /// How long a download or search waits for a free slot before the request is refused.
@@ -232,7 +230,7 @@ pub(crate) fn download_body(
     stream: impl Stream<Item = io::Result<bytes::Bytes>> + Send + 'static,
 ) -> axum::body::Body {
     let (sender, receiver) = tokio::sync::mpsc::channel(1);
-    let task = DownloadTask(tokio::spawn(async move {
+    let task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
         let mut stream = Box::pin(stream);
         let started = tokio::time::Instant::now();
         let mut sent = 0_u64;
@@ -274,7 +272,7 @@ pub(crate) fn download_body(
             match receiver.recv().await {
                 Some(chunk) => Ok(Some((chunk, (receiver, task)))),
                 None => {
-                    (&mut task.0)
+                    (&mut task)
                         .await
                         .map_err(|_| io::Error::other("Download task unavailable"))??;
                     Ok::<_, io::Error>(None)
@@ -400,13 +398,7 @@ pub(crate) async fn no_ai_html(
 }
 
 pub(crate) async fn private_api_response(request: Request, next: Next) -> Response {
-    if session::has_session_cookie(request.headers())
-        || request.headers().contains_key(header::AUTHORIZATION)
-    {
-        private_sensitive_response(request, next).await
-    } else {
-        next.run(request).await
-    }
+    private_sensitive_response(request, next).await
 }
 
 #[cfg(test)]

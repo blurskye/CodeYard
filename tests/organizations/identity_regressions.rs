@@ -205,8 +205,10 @@ async fn discovery_and_deletion(pg: bool) {
         .unwrap()
         .is_empty());
     }
+    let deletion_session = db::users::sessions::create_session(f.pool(), &uuid::Uuid::new_v4().simple().to_string().repeat(2), owner, None, None, chrono::Utc::now() + chrono::Duration::hours(1)).await.unwrap();
+    let credential = db::users::accounts::AccountCredential::Session(&deletion_session.id);
     let initial = applied(
-        list_organization_deletion_repositories(f.pool(), owner, first_org)
+        list_organization_deletion_repositories(f.pool(), owner, &credential, first_org)
             .await
             .unwrap(),
     );
@@ -220,7 +222,7 @@ async fn discovery_and_deletion(pg: bool) {
     .await
     .unwrap();
     assert!(matches!(
-        delete_organization_repository(f.pool(), owner, first_org, repositories[0].id)
+        delete_organization_repository(f.pool(), owner, &credential, first_org, repositories[0].id)
             .await
             .unwrap(),
         OrganizationOutcome::Conflict
@@ -230,13 +232,13 @@ async fn discovery_and_deletion(pg: bool) {
         .unwrap();
     for id in initial.into_iter().filter(|id| *id != repositories[0].id) {
         applied(
-            delete_organization_repository(f.pool(), owner, first_org, id)
+            delete_organization_repository(f.pool(), owner, &credential, first_org, id)
                 .await
                 .unwrap(),
         );
     }
     assert!(matches!(
-        delete_organization(f.pool(), owner, first_org)
+        delete_organization(f.pool(), owner, &credential, first_org)
             .await
             .unwrap(),
         OrganizationOutcome::Conflict
@@ -316,8 +318,9 @@ async fn release_upload_cleanup(pg: bool) {
     )
     .await
     .unwrap();
+    let deletion_session = db::users::sessions::create_session(f.pool(), &uuid::Uuid::new_v4().simple().to_string().repeat(2), owner, None, None, chrono::Utc::now() + chrono::Duration::hours(1)).await.unwrap();
     applied(
-        delete_organization_repository(f.pool(), owner, org, repo.id)
+        delete_organization_repository(f.pool(), owner, &db::users::accounts::AccountCredential::Session(&deletion_session.id), org, repo.id)
             .await
             .unwrap(),
     );

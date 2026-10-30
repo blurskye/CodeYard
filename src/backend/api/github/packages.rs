@@ -97,8 +97,8 @@ async fn package(
     .map_err(error)
 }
 
-async fn document(state: &AppState, owner: &Owner, package: &Package) -> Result<Value> {
-    let count = db::packages::version_count(&state.pool, package.id)
+async fn document(state: &AppState, owner: &Owner, package: &Package, token: Option<db::packages::Credential<'_>>) -> Result<Value> {
+    let count = db::packages::version_count(&state.pool, package.id, token)
         .await
         .map_err(error)?;
     let repository = if let Some(id) = package.repo_id {
@@ -150,7 +150,7 @@ async fn list(
         .await
         .map_err(error)?;
         for version in versions {
-            let tags = db::packages::tags(&state.pool, version.id)
+            let tags = db::packages::tags(&state.pool, package.id, token, version.id)
                 .await
                 .map_err(error)?;
             items.push(payloads::package_version(&owner, &package, &version, &tags));
@@ -179,7 +179,7 @@ async fn list(
         .await
         .map_err(error)?;
         for package in packages {
-            items.push(document(&state, &owner, &package).await?);
+            items.push(document(&state, &owner, &package, token).await?);
         }
     }
     let has_next = items.len() > limit;
@@ -217,12 +217,12 @@ async fn get_one(
         )
         .await
         .map_err(error)?;
-        let tags = db::packages::tags(&state.pool, version.id)
+        let tags = db::packages::tags(&state.pool, package.id, token, version.id)
             .await
             .map_err(error)?;
         payloads::package_version(&owner, &package, &version, &tags)
     } else {
-        document(&state, &owner, &package).await?
+        document(&state, &owner, &package, token).await?
     };
     Ok(Json(value))
 }

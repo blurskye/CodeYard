@@ -7,6 +7,7 @@ mod oci;
 mod rubygems;
 pub(crate) use maven::route as maven_requests;
 mod pages;
+pub(super) use pages::router as browser_router;
 mod tokens;
 
 use super::github::auth::{self, Authentication};
@@ -23,7 +24,6 @@ use axum::{
     response::{IntoResponse, Response},
     Json, Router,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -48,20 +48,6 @@ impl Error {
             "UNAUTHORIZED",
             "Authentication required",
         )
-    }
-
-    fn registry_response(self) -> Response {
-        let mut response = (self.0, Json(json!({"message":self.2}))).into_response();
-        response
-            .headers_mut()
-            .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
-        if self.0 == StatusCode::UNAUTHORIZED {
-            response.headers_mut().insert(
-                header::WWW_AUTHENTICATE,
-                "Basic realm=\"Codeyard Packages\"".parse().unwrap(),
-            );
-        }
-        response
     }
 
     fn invalid() -> Self {
@@ -156,12 +142,7 @@ async fn authenticate(
             .get(..6)
             .is_some_and(|v| v.eq_ignore_ascii_case("basic "))
         {
-            if headers.get_all(header::AUTHORIZATION).iter().count() != 1 {
-                return Err(Error::invalid());
-            }
-            let bytes = STANDARD.decode(&value[6..]).map_err(|_| Error::invalid())?;
-            let value = std::str::from_utf8(&bytes).map_err(|_| Error::invalid())?;
-            let (_, token) = value.split_once(':').ok_or_else(Error::invalid)?;
+            let (_, token) = super::http::credentials::basic(headers).ok_or_else(Error::invalid)?;
             normalized.insert(
                 header::AUTHORIZATION,
                 format!("Bearer {token}")
@@ -198,6 +179,10 @@ async fn owner(state: &AppState, name: &str) -> Result<Owner> {
         .await
         .map_err(Error::db)?
         .ok_or_else(Error::missing)
+}
+
+async fn container_owner(state: &AppState, name: &str) -> Result<Owner> {
+    db::packages::container_owner(&state.pool, name).await.map_err(Error::db)?.ok_or_else(Error::missing)
 }
 
 async fn package(
@@ -250,20 +235,37 @@ async fn all_versions(
     package: i64,
     auth: Option<&Authentication>,
 ) -> Result<Vec<db::packages::Version>> {
+    all_version_fields(state, package, auth, false).await
+}
+
+async fn all_version_fields(
+    state: &AppState,
+    package: i64,
+    auth: Option<&Authentication>,
+    names_only: bool,
+) -> Result<Vec<db::packages::Version>> {
     let mut versions = Vec::new();
+    let mut before = i64::MAX;
+    let mut bytes = 0usize;
     loop {
-        let page = db::packages::versions(
+        let page = db::packages::version_page(
             &state.pool,
             package,
             auth.map(|a| a.token.id.into()),
-            false,
-            versions.len() as i64,
-            100,
+            before,
+            names_only,
         )
         .await
         .map_err(Error::db)?;
         let done = page.len() < 100;
-        versions.extend(page);
+        for version in page {
+            bytes = bytes.saturating_add(version.manifest.len() + version.name.len() + 512);
+            if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
+                return Err(Error::unavailable());
+            }
+            before = version.id;
+            versions.push(version);
+        }
         if done {
             return Ok(versions);
         }
@@ -277,48 +279,53 @@ async fn owner_packages(
     auth: Option<&Authentication>,
 ) -> Result<Vec<Package>> {
     let mut packages = Vec::new();
+    let mut before = i64::MAX;
+    let mut bytes = 0usize;
     loop {
-        let page = db::packages::list(
-            &state.pool,
-            auth.map(|a| a.token.id.into()),
-            db::packages::Listing {
-                owner: Some(owner),
-                repo: None,
-                kind: Some(kind),
-                visibility: None,
-                offset: packages.len() as i64,
-                limit: 100,
-            },
-        )
-        .await
-        .map_err(Error::db)?;
+        let page = db::packages::owner_page(&state.pool, auth.map(|a| a.token.id.into()), owner, kind, before)
+            .await.map_err(Error::db)?;
         let done = page.len() < 100;
-        packages.extend(page);
+        for package in page {
+            bytes = bytes.saturating_add(package.name.len() + 512);
+            if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES { return Err(Error::unavailable()); }
+            before = package.id;
+            packages.push(package);
+        }
         if done {
             return Ok(packages);
         }
     }
 }
 
+enum RegistryFormat { Standard, Npm }
+
 fn finish(
     result: std::result::Result<Result<Response>, tokio::time::error::Elapsed>,
     anonymous: bool,
+    format: RegistryFormat,
 ) -> Response {
-    match result {
-        Ok(Ok(mut response)) => {
-            response
-                .headers_mut()
-                .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+    let mut response = match result {
+        Ok(Ok(response)) => response,
+        result => {
+            // Private and unknown resources challenge alike, without an existence oracle.
+            let error = match result {
+                Ok(Err(error)) if anonymous && error.0 == StatusCode::NOT_FOUND => Error::required(),
+                Ok(Err(error)) => error,
+                _ => Error::unavailable(),
+            };
+            let body = match format {
+                RegistryFormat::Standard => json!({"message":error.2}),
+                RegistryFormat::Npm => json!({"error":error.1,"reason":error.2}),
+            };
+            let mut response = (error.0, Json(body)).into_response();
+            if error.0 == StatusCode::UNAUTHORIZED {
+                response.headers_mut().insert(header::WWW_AUTHENTICATE, "Basic realm=\"Codeyard Packages\"".parse().unwrap());
+            }
             response
         }
-        // Challenge private and unknown resources alike so Basic-auth clients can retry.
-        // Authenticated outsiders still receive 404, with no resource-existence disclosure.
-        Ok(Err(error)) if anonymous && error.0 == StatusCode::NOT_FOUND => {
-            Error::required().registry_response()
-        }
-        Ok(Err(error)) => error.registry_response(),
-        Err(_) => Error::unavailable().registry_response(),
-    }
+    };
+    response.headers_mut().insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+    response
 }
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -326,5 +333,4 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(npm::router())
         .merge(nuget::router())
         .merge(rubygems::router())
-        .merge(pages::router())
 }

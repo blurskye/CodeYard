@@ -3,11 +3,11 @@ use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use sqlx::{pool::PoolConnection, Connection, Sqlite, SqliteConnection, SqlitePool};
 
-const MIGRATIONS: &[(i64, &str, &str)] = &[(
-    1,
-    "schema",
-    include_str!("../../../../schema/sqlite/0001.schema.sql"),
-)];
+const MIGRATIONS: &[(i64, &str, &str)] = &[
+    (1, "schema", include_str!("../../../../schema/sqlite/0001.schema.sql")),
+    (2, "admission", include_str!("../../../../schema/sqlite/0002.admission.sql")),
+    (3, "registry_compatibility", include_str!("../../../../schema/sqlite/0003.registry_compatibility.sql")),
+];
 
 // Cancellation must not return a connection with foreign keys disabled to the pool.
 struct ForeignKeysOff<'a>(&'a mut PoolConnection<Sqlite>);
@@ -67,6 +67,21 @@ async fn apply_migrations(connection: &mut SqliteConnection) -> Result<()> {
         sqlx::Executor::execute(&mut *tx, sqlx::raw_sql(sql))
             .await
             .with_context(|| format!("apply native SQLite migration {version}"))?;
+        if version == 3 {
+            let mut after = 0i64;
+            loop {
+                let rows: Vec<(i64, String, String)> = sqlx::query_as("SELECT v.id,v.name,v.manifest FROM package_versions v JOIN packages p ON p.id=v.package_id WHERE p.package_type='nuget' AND v.id>?1 ORDER BY v.id LIMIT 16")
+                    .bind(after).fetch_all(&mut *tx).await?;
+                if rows.is_empty() { break; }
+                for (id, name, manifest) in rows {
+                    let mut metadata: serde_json::Value = serde_json::from_str(&manifest)?;
+                    metadata["semver2"] = crate::backend::nuget::metadata_semver2(&name, &metadata)?.into();
+                    sqlx::query("UPDATE package_versions SET manifest=?1 WHERE id=?2")
+                        .bind(metadata.to_string()).bind(id).execute(&mut *tx).await?;
+                    after = id;
+                }
+            }
+        }
         sqlx::query(
             "INSERT INTO _gitserv_sqlite_migrations(version,name,sha256) VALUES (?1,?2,?3)",
         )

@@ -34,6 +34,7 @@ pub enum Operation {
         default_branch_only: bool,
     },
     Remove,
+    Retire,
     GistSnapshot {
         revision: Option<String>,
     },
@@ -150,6 +151,8 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "is_zero")]
         offset: usize,
         limit: usize,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        raw_json: bool,
     },
     /// Commits that changed `path`, as `git log -- <path>` lists them.
     PathCommits {
@@ -248,6 +251,8 @@ pub enum Operation {
     Contributors,
     CommitStatistics {
         branch: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        raw_json: bool,
     },
     CodeFrequency {
         branch: String,
@@ -446,7 +451,9 @@ impl Operation {
             | Self::Contributors
             | Self::CommitStatistics { .. }
             | Self::CodeFrequency { .. }
-            | Self::BranchStatuses { .. } => true,
+            | Self::BranchStatuses { .. }
+            | Self::GistSnapshot { .. }
+            | Self::GistHistory { .. } => true,
             Self::AdvertiseRefs { service } => *service == GitService::UploadPack,
             Self::GitSession(session) => session.service == GitService::UploadPack,
             Self::Exists
@@ -454,8 +461,6 @@ impl Operation {
             | Self::WorkflowFiles { .. }
             | Self::PrimaryRefs
             | Self::BranchPublication { .. }
-            | Self::GistSnapshot { .. }
-            | Self::GistHistory { .. }
             | Self::PrimaryCommit { .. }
             | Self::ReleaseHistory { .. }
             | Self::ChangedPaths { .. }
@@ -467,6 +472,7 @@ impl Operation {
             Self::Initialize { .. }
             | Self::InitializeCopy { .. }
             | Self::Remove
+            | Self::Retire
             | Self::FetchPullHead { .. }
             | Self::PrepareFile { .. }
             | Self::WriteGitObject { .. }
@@ -512,7 +518,7 @@ pub struct CiRunAccess {
     pub worker: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
     pub repository: Uuid,
     pub operation: Operation,
@@ -686,6 +692,7 @@ mod tests {
             text: "needle".into(),
             offset: 0,
             limit: 5,
+            raw_json: false,
         };
         assert_eq!(
             serde_json::to_value(&operation).unwrap(),

@@ -22,21 +22,31 @@ fn validate_cluster_encryptor(
         return Ok(());
     }
     let encryptor = encryptor.context(
-        "Cluster core nodes require the same SECRETS_MASTER_KEY for signed webhook delivery",
+        "Cluster core nodes require the same SECRETS_MASTER_KEY for encrypted secrets",
     )?;
     if let Some((ciphertext, nonce)) = sample {
         encryptor
             .decrypt(ciphertext, nonce)
-            .context("SECRETS_MASTER_KEY cannot open existing webhook secrets")?;
+            .context("SECRETS_MASTER_KEY cannot open existing encrypted secrets")?;
     }
     Ok(())
 }
 
-/// Holds the state directory for this server until the returned file is dropped. A second
-/// server started on it by mistake would otherwise recover the first one's merges as abandoned.
+/// All background owners use the same shutdown deadline and abort fallback.
+async fn drain_worker<T>(task: Option<tokio::task::JoinHandle<T>>, deadline: tokio::time::Instant) {
+    if let Some(task) = task {
+        let mut task = tokio_util::task::AbortOnDropHandle::new(task);
+        if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
+            task.abort();
+            let _ = task.await;
+        }
+    }
+}
+
+/// Holds the state directory so a second server cannot recover this server's active merges.
 fn lock_state_dir(state_dir: &Path) -> Result<std::fs::File> {
     use std::os::fd::AsRawFd;
-    std::fs::create_dir_all(state_dir)?;
+    cluster::durable_directory(state_dir)?;
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -73,41 +83,21 @@ async fn prepare_application(
     serves_web: bool,
     cluster: Option<crate::backend::cluster::NodeContext>,
 ) -> Result<AppState> {
+    crate::backend::api::http::config::public_url()?;
     let secret_encryptor = SecretEncryptor::configured_from_env()?.map(Arc::new);
-    let sample = if cluster.is_some() {
-        crate::backend::db::webhooks::webhook_secret_sample(&pool).await?
-    } else {
-        None
-    };
-    validate_cluster_encryptor(
-        cluster.is_some(),
-        secret_encryptor.as_deref(),
-        sample
-            .as_ref()
-            .map(|(text, nonce)| (text.as_slice(), nonce.as_slice())),
-    )?;
+    validate_cluster_encryptor(cluster.is_some(), secret_encryptor.as_deref(), None)?;
+    if cluster.is_some() {
+        for (text, nonce) in crate::backend::db::secrets::encryption_samples(&pool).await? {
+            validate_cluster_encryptor(true, secret_encryptor.as_deref(), Some((&text, &nonce)))?;
+        }
+    }
     if secret_encryptor.is_none() {
         tracing::warn!("SECRETS_MASTER_KEY not set, secrets API disabled");
     }
-    let has_s3 = [
-        "S3_ENDPOINT",
-        "S3_PUBLIC_ENDPOINT",
-        "S3_ACCESS_KEY",
-        "S3_SECRET_KEY",
-        "S3_BUCKET",
-        "S3_REGION",
-    ]
-    .iter()
-    .any(|name| std::env::var_os(name).is_some());
-    let s3 = if has_s3 {
-        let config = S3Config::from_env()?;
-        if serves_web {
-            config.validate_browser_cookie_scope_from_env()?;
-        }
-        Some(config)
-    } else {
-        None
-    };
+    let s3 = S3Config::optional_from_env()?;
+    if let Some(config) = s3.as_ref().filter(|_| serves_web) {
+        config.validate_browser_cookie_scope_from_env()?;
+    }
     let storage = Arc::new(ObjectStore::open(state_dir, s3).await?);
     // Only web nodes take uploads, so an object storage outage does not keep a Git-only
     // node from starting.
@@ -177,7 +167,13 @@ async fn remove_expired_rows(
                 crate::backend::db::files::RESTORE_WINDOW_SECONDS as u64,
             );
             let sweep = tokio::task::spawn_blocking(move || {
-                crate::backend::git::mirror::remove_expired_deleted(&root, window)
+                let mirrors = root.join(crate::backend::cluster::replicas::MIRRORS);
+                let quarantines = mirrors.join(crate::backend::cluster::replicas::QUARANTINES);
+                let mut removed = 0;
+                for root in [root, mirrors, quarantines] {
+                    removed += crate::backend::git::mirror::remove_expired_deleted(&root, window)?;
+                }
+                anyhow::Ok(removed)
             });
             match sweep.await {
                 Ok(Ok(0)) => {}
@@ -285,7 +281,16 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
         true,
         state_dir,
     );
-    workers.startup().await?;
+    let started = tokio::select! {
+        biased;
+        result = &mut signal => { let stopped = workers.shutdown().await; context.iroh.close().await; return result.and(stopped); },
+        result = workers.startup() => result,
+    };
+    if let Err(error) = started {
+        let _ = workers.shutdown().await;
+        context.iroh.close().await;
+        return Err(error);
+    }
     info!("database-free runner ready; no web, SSH or cluster listener");
     let result = signal.await;
     info!("shutting down");
@@ -297,11 +302,21 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
 pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let signal = shutdown_signal();
     tokio::pin!(signal);
-    if !config.roles.single_node() && !crate::backend::db::cluster::cluster_enabled(&pool).await? {
+    let clustered = crate::backend::db::cluster::cluster_enabled(&pool).await?;
+    let _installation_lock = if !clustered {
+        Some(crate::backend::db::cluster::serving_lock(&pool, "installation").await?)
+    } else {
+        None
+    };
+    if !config.roles.single_node() && !clustered {
         pool.close().await;
         anyhow::bail!(super::SINGLE_NODE_ROLES);
     }
-    let repos_path = prepare_repository_root(&config.repos_path)?;
+    let repos_path = if config.roles.contains(NodeRole::Storage) {
+        prepare_repository_root(&config.repos_path)?
+    } else {
+        std::path::absolute(&config.repos_path)?
+    };
     let _state_dir_lock = match lock_state_dir(&config.state_dir) {
         Ok(lock) => lock,
         Err(error) => {
@@ -325,6 +340,11 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             "this database is in cluster mode; set the CLUSTER_* settings so this node can serve it"
         );
     }
+    let _repository_lock = if member.is_none() && config.roles.contains(NodeRole::Storage) {
+        Some(crate::backend::locks::exclusive_file(&repos_path.join("storage.lock"))?)
+    } else {
+        None
+    };
     let prepared = async {
         anyhow::ensure!(
         config.roles.faces_users() || member.is_some(),
@@ -410,6 +430,8 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         pool.close().await;
         return started.map(|_| ()).and(stopped);
     }
+    let (stop_traffic, traffic_stop) = tokio::sync::watch::channel(false);
+    let traffic = tokio::spawn(crate::backend::repositories::traffic::maintain(pool.clone(), traffic_stop));
     let (stop_vulnerabilities, vulnerabilities_stop) = tokio::sync::watch::channel(false);
     let vulnerabilities = config.roles.contains(NodeRole::Web).then(|| {
         tokio::spawn(crate::backend::vulnerabilities::run(
@@ -537,6 +559,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     if signalled {
         stop_listeners.send_replace(true);
     }
+    stop_traffic.send_replace(true);
     stop_vulnerabilities.send_replace(true);
     stop_scanning.send_replace(true);
     stop_schedules.send_replace(true);
@@ -572,82 +595,36 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     if let Some(member) = &member {
         let _ = tokio::time::timeout_at(deadline, member.drain_sessions()).await;
     }
-    if let Some(mut task) = vulnerabilities {
-        if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
-            task.abort();
-            let _ = task.await;
+    drain_worker(Some(traffic), deadline).await;
+    drain_worker(vulnerabilities, deadline).await;
+    drain_worker(scanning, deadline).await;
+    drain_worker(schedules, deadline).await;
+    drain_worker(expiry, deadline).await;
+    drain_worker(email, deadline).await;
+    drain_worker(metadata, deadline).await;
+    drain_worker(secret_scanning, deadline).await;
+    // A merge may already have published Git. Stop between PRs, but never abort
+    // its authoritative post-publication bookkeeping on the listener deadline.
+    if let Some(auto_merge) = auto_merge {
+        if let Err(error) = auto_merge.await {
+            warn!(%error, "auto-merge stopped unexpectedly");
         }
     }
-    if let Some(mut scanning) = scanning {
-        if tokio::time::timeout_at(deadline, &mut scanning)
-            .await
-            .is_err()
-        {
-            scanning.abort();
-            let _ = scanning.await;
+    // Replica downloads cancel on stop; an installation already mutating Git must
+    // be joined before directory ownership and the storage-root lock can be released.
+    if let Some(replicas) = replicas {
+        if let Err(error) = replicas.await {
+            warn!(%error, "replica worker stopped unexpectedly");
         }
     }
-    if let Some(mut schedules) = schedules {
-        if tokio::time::timeout_at(deadline, &mut schedules)
-            .await
-            .is_err()
-        {
-            schedules.abort();
-            let _ = schedules.await;
-        }
-    }
-    if let Some(mut expiry) = expiry {
-        let finished = tokio::time::timeout_at(deadline, &mut expiry).await;
-        if finished.is_err() {
-            expiry.abort();
-            let _ = expiry.await;
-        }
-    }
-    if let Some(mut email) = email {
-        let finished = tokio::time::timeout_at(deadline, &mut email).await;
-        if finished.is_err() {
-            email.abort();
-            let _ = email.await;
-        }
-    }
-    if let Some(mut metadata) = metadata {
-        let finished = tokio::time::timeout_at(deadline, &mut metadata).await;
-        if finished.is_err() {
-            metadata.abort();
-            let _ = metadata.await;
-        }
-    }
-    if let Some(mut scanning) = secret_scanning {
-        if tokio::time::timeout_at(deadline, &mut scanning)
-            .await
-            .is_err()
-        {
-            scanning.abort();
-            let _ = scanning.await;
-        }
-    }
-    if let Some(mut auto_merge) = auto_merge {
-        if tokio::time::timeout_at(deadline, &mut auto_merge)
-            .await
-            .is_err()
-        {
-            auto_merge.abort();
-            let _ = auto_merge.await;
-        }
-    }
-    if let Some(mut replicas) = replicas {
-        let finished = tokio::time::timeout_at(deadline, &mut replicas).await;
-        if finished.is_err() {
-            replicas.abort();
-            let _ = replicas.await;
-        }
-    }
-    crate::backend::organizations::shutdown(deadline).await;
-    crate::backend::webhooks::shutdown(deadline).await;
     let stopped = workers.shutdown().await;
     if let Some(member) = &member {
         member.shutdown().await;
+        // Listener shutdown cancels network waiters, not admitted mutation tasks.
+        // Keep the pool and event sinks alive until their effects have finished.
+        member.drain_sessions().await;
     }
+    crate::backend::webhooks::shutdown(tokio::time::Instant::now() + SHUTDOWN_GRACE).await;
     notifications.shutdown().await;
     pool.close().await;
     result.and(stopped)

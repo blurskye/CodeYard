@@ -52,7 +52,7 @@ tokio-util = { version = "0.7", features = ["io", "rt"] }
 # The TLS provider iroh already uses (aws-lc-rs), so node connections over TCP share it.
 tokio-rustls = "0.26"
 # TCP keepalive on node connections; tokio does not expose the socket option.
-socket2 = "0.6"
+socket2 = { version = "0.6", features = ["all"] }
 flate2 = "1"
 tar = "=0.4.46"
 zip = { version = "=2.6.1", default-features = false, features = ["deflate", "deflate-flate2", "flate2"] }

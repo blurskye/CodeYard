@@ -103,6 +103,30 @@ pub enum ReceiveCredential {
     Token(i64),
 }
 
+/// Typed policy refusals let ingress project transport-specific denials without
+/// reimplementing credential, token-bound, or repository policy.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CredentialRefusal {
+    #[error("credential unavailable")]
+    Credential,
+    #[error("repository not found")]
+    Missing,
+    #[error("repository access denied")]
+    Denied,
+    #[error("token is read-only")]
+    ReadOnly,
+    #[error("resource not accessible by token")]
+    TokenScope,
+    #[error("resource not accessible by integration")]
+    Integration,
+    #[error("the organization refuses classic tokens")]
+    Classic,
+    #[error("repository is locked for migration")]
+    Migration,
+    #[error("repository archived")]
+    Archived,
+}
+
 impl ReceiveCredential {
     /// Rechecks the live key or token and the repository's current access policy.
     pub(crate) async fn authorize(
@@ -120,93 +144,88 @@ impl ReceiveCredential {
         };
         anyhow::ensure!(
             !(repo.is_gist && write && matches!(self, Self::DeployKey(_))),
-            "Gists require an account credential"
-        );
-        // Checked before the deploy-key return below, so every write credential is covered. A
-        // migration lock keeps the export's snapshot complete.
-        anyhow::ensure!(
-            !write || !db::repository_exports::locked(pool, repo.id).await?,
-            "repository is locked for migration"
+            CredentialRefusal::Denied
         );
         let identity = match self {
             Self::SshKey(id) => {
-                anyhow::ensure!(id > 0, "invalid key ID");
+                anyhow::ensure!(id > 0, CredentialRefusal::Credential);
                 let identity = db::users::ssh_keys::get_user_by_ssh_key_id(pool, id)
                     .await?
-                    .ok_or_else(|| anyhow::anyhow!("key unavailable"))?;
+                    .ok_or(CredentialRefusal::Credential)?;
                 anyhow::ensure!(
                     !identity.user.is_banned && !identity.user.must_change_password,
-                    "identity unavailable"
+                    CredentialRefusal::Credential
                 );
                 let canonical =
                     validation::canonical_db_key(&identity.key.public_key, &identity.key.key_type)?;
                 anyhow::ensure!(
                     db::users::ssh_keys::calculate_fingerprint(&canonical)?
                         == identity.key.fingerprint,
-                    "stored key fingerprint mismatch"
+                    CredentialRefusal::Credential
                 );
                 identity.user
             }
-            Self::DeployKey(id) => return deploy_keys::authorize(pool, id, repo, write).await,
+            Self::DeployKey(id) => {
+                let admitted = deploy_keys::authorize(pool, id, repo, write).await?;
+                anyhow::ensure!(!write || !db::repository_exports::locked(pool, repo.id).await?, CredentialRefusal::Migration);
+                return Ok(admitted);
+            }
             Self::Token(id) => {
                 anyhow::ensure!(
                     crate::backend::identity::oauth_apps::allows_git(pool, id, repo.is_gist)
                         .await?,
-                    "OAuth repository access denied"
+                    CredentialRefusal::TokenScope
                 );
-                db::users::tokens::token_user(pool, id, write)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("token unavailable"))?
+                let user = db::users::tokens::token_user(pool, id, false).await?
+                    .ok_or(CredentialRefusal::Credential)?;
+                user
             }
         };
         anyhow::ensure!(
             !identity.username.ends_with("[bot]") || matches!(self, Self::Token(_)),
-            "bot identities require a scoped token"
+            CredentialRefusal::Denied
         );
         if let Self::Token(id) = self {
             if let Some(bounds) = crate::backend::identity::github_apps::authority(pool, id).await?
             {
-                anyhow::ensure!(
-                    bounds
-                        .allows(pool, identity.id, repo.id, "contents", write)
-                        .await?,
-                    "integration repository access denied"
-                );
+                let granted = bounds.repository(pool, identity.id, repo.id).await?;
+                if !granted.as_ref().is_some_and(|granted| crate::backend::identity::github_apps::allows(granted, "contents", write)) {
+                    if bounds.personal().is_some() && (granted.is_none() || !access::user_git_access(pool, &identity, repo).await?.can_read()) {
+                        anyhow::bail!(CredentialRefusal::Missing);
+                    }
+                    anyhow::bail!(CredentialRefusal::Integration);
+                }
             } else if let Some(org) = repo.owner_org_id {
                 anyhow::ensure!(
                     !db::fine_grained_tokens::classic_refused(pool, id, org).await?,
-                    "the organization refuses classic tokens"
+                    CredentialRefusal::Classic
                 );
             }
         }
         anyhow::ensure!(
             !repo.is_gist || !write || repo.owner_user_id == Some(identity.id),
-            "Only the gist owner may push"
+            CredentialRefusal::Denied
         );
         if identity.username == db::ci_tokens::BOT {
             let Self::Token(id) = self else {
-                anyhow::bail!("bot requires a run token");
+                anyhow::bail!(CredentialRefusal::TokenScope);
             };
             let token = db::ci_tokens::get(pool, id)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("run token unavailable"))?;
+                .ok_or(CredentialRefusal::Credential)?;
             let permissions: crate::backend::ci::tokens::Permissions =
                 serde_json::from_str(&token.permissions)?;
-            anyhow::ensure!(
-                token.repo_id == repo.id && permissions.allows("contents", write),
-                "run token repository access denied"
-            );
+            anyhow::ensure!(token.repo_id == repo.id, CredentialRefusal::Missing);
+            anyhow::ensure!(permissions.allows("contents", write), CredentialRefusal::TokenScope);
         }
         let level = access::user_git_access(pool, &identity, repo).await?;
-        anyhow::ensure!(
-            if write {
-                level.can_write()
-            } else {
-                level.can_read()
-            },
-            "repository access denied"
-        );
-        anyhow::ensure!(!write || !repo.is_archived, "repository archived");
+        anyhow::ensure!(level.can_read(), CredentialRefusal::Missing);
+        if let Self::Token(id) = self {
+            anyhow::ensure!(!write || db::users::tokens::token_user(pool, id, true).await?.is_some(), CredentialRefusal::ReadOnly);
+        }
+        anyhow::ensure!(!write || level.can_write(), CredentialRefusal::Denied);
+        anyhow::ensure!(!write || !repo.is_archived, CredentialRefusal::Archived);
+        anyhow::ensure!(!write || !db::repository_exports::locked(pool, repo.id).await?, CredentialRefusal::Migration);
         Ok((identity, level))
     }
 

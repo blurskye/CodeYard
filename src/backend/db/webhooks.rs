@@ -120,9 +120,6 @@ native_operation!(crate::backend::db::postgres::webhooks::patch_webhook, crate::
 native_operation!(crate::backend::db::postgres::webhooks::list_webhooks, crate::backend::db::sqlite::webhooks::list_webhooks,
     fn list_webhooks(pool: &DbPool, owner: HookOwner) -> Result<Vec<Webhook>>);
 
-native_operation!(crate::backend::db::postgres::webhooks::webhook_secret_sample, crate::backend::db::sqlite::webhooks::webhook_secret_sample,
-    fn webhook_secret_sample(pool: &DbPool) -> Result<Option<(Vec<u8>, Vec<u8>)>>);
-
 native_operation!(crate::backend::db::postgres::webhooks::get_webhook, crate::backend::db::sqlite::webhooks::get_webhook,
     fn get_webhook(pool: &DbPool, owner: HookOwner, id: i64) -> Result<Option<Webhook>>);
 

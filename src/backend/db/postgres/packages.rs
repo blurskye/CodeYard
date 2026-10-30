@@ -1,5 +1,5 @@
 use crate::backend::db::packages::{
-    self, Blob, Credential, Listing, Owner, Package, Permission, Publish, Refusal, Upload, Version,
+    self, Blob, Charge, Credential, Listing, Owner, Package, Permission, Publish, Refusal, Upload, Version,
 };
 use anyhow::{ensure, Result};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -21,6 +21,7 @@ struct Actor {
     repo: Option<i64>,
     /// A fine-grained token acts only on its resource owner's packages, as `(kind, id)`.
     owner: Option<(&'static str, i64)>,
+    classic: bool,
 }
 
 impl Actor {
@@ -28,6 +29,7 @@ impl Actor {
         id: None,
         repo: None,
         owner: None,
+        classic: false,
     };
     /// A fine-grained token reads another owner's packages as an anonymous request would.
     fn for_owner(self, kind: &str, id: Option<i64>) -> Self {
@@ -59,6 +61,7 @@ async fn actor<'a>(
                 id: Some(id.ok_or(Refusal::Unauthorized)?),
                 repo: None,
                 owner: None,
+                classic: false,
             });
         }
     };
@@ -106,14 +109,20 @@ async fn actor<'a>(
         id: Some(id),
         repo,
         owner,
+        classic: owner.is_none() && repo.is_none(),
     })
 }
 
-fn read_condition() -> String {
+fn read_condition(classic: bool) -> String {
     // Public repository access alone does not make a private package public.
     let access = super::repositories::access::USER_REPO_ACCESS_SQL
         .replace("CASE WHEN NOT r.is_private THEN 1 ELSE 0 END", "0");
-    format!("((p.visibility='public' AND (p.repo_id IS NULL OR NOT r.is_private)) OR p.owner_user_id=u.id OR (p.owner_kind='user' AND u.is_admin) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=p.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin')) OR (p.repo_id IS NOT NULL AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id) AND ({access})>=1))")
+    let policy = if classic {
+        "NOT EXISTS(SELECT 1 FROM organization_token_policies policy WHERE policy.org_id=p.owner_org_id AND NOT policy.classic_allowed)"
+    } else {
+        "true"
+    };
+    format!("({policy}) AND ((p.visibility='public' AND (p.repo_id IS NULL OR NOT r.is_private)) OR p.owner_user_id=u.id OR (p.owner_kind='user' AND u.is_admin) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=p.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin')) OR (p.repo_id IS NOT NULL AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id) AND ({access})>=1))")
 }
 
 async fn owner_level(tx: &mut Tx<'_>, package: &Package, user: i64) -> Result<i64> {
@@ -164,7 +173,7 @@ async fn authorize<'a>(
             .bind(repo).bind(&package.owner_kind).bind(package.owner_user_id.or(package.owner_org_id)).fetch_one(&mut **tx).await?;
         ensure!(same_owner, Refusal::Missing);
     }
-    let readable: bool = sqlx::query_scalar(&format!("SELECT COALESCE({},false) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.id=$1", read_condition()))
+    let readable: bool = sqlx::query_scalar(&format!("SELECT COALESCE({},false) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.id=$1", read_condition(actor.classic)))
         .bind(id).bind(actor.id).fetch_one(&mut **tx).await?;
     ensure!(readable, Refusal::Missing);
     if !matches!(permission, Permission::Read) {
@@ -199,6 +208,41 @@ async fn authorize<'a>(
     Ok(package)
 }
 
+pub async fn container_namespace(pool: &PgPool, owner: &Owner) -> Result<String> {
+    let mut tx = begin(pool).await?;
+    if let Some(namespace) = sqlx::query_scalar::<_, String>("SELECT namespace FROM registry_namespaces WHERE ($1='user' AND owner_user_id=$2) OR ($1='org' AND owner_org_id=$2)")
+        .bind(&owner.kind).bind(owner.id).fetch_optional(&mut *tx).await? { return Ok(namespace); }
+    let base = owner.name.to_ascii_lowercase();
+    let base = if crate::backend::packages::valid_name(&base) { base } else { format!("cy-{}-{}", owner.kind, owner.id) };
+    for attempt in 0..1024 {
+        let candidate = if attempt == 0 { base.clone() } else { format!("{base}-{}-{}-{attempt}", owner.kind, owner.id) };
+        // Never steal the literal namespace of an existing lower-case account. Once
+        // assigned, the mapping remains stable across case collisions and renames.
+        let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registry_namespaces WHERE namespace=$1) OR EXISTS(SELECT 1 FROM users WHERE username=$1 AND NOT ($2='user' AND id=$3)) OR EXISTS(SELECT 1 FROM organizations WHERE name=$1 AND NOT ($2='org' AND id=$3))")
+            .bind(&candidate).bind(&owner.kind).bind(owner.id).fetch_one(&mut *tx).await?;
+        if occupied { continue; }
+        sqlx::query("INSERT INTO registry_namespaces(namespace,owner_user_id,owner_org_id) VALUES($1,$2,$3)")
+            .bind(&candidate).bind((owner.kind == "user").then_some(owner.id)).bind((owner.kind == "org").then_some(owner.id))
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
+        return Ok(candidate);
+    }
+    anyhow::bail!("container namespace allocation exhausted")
+}
+
+pub async fn container_owner(pool: &PgPool, namespace: &str) -> Result<Option<Owner>> {
+    if !crate::backend::packages::valid_name(namespace) || namespace.contains('/') { return Ok(None); }
+    let mapped: Option<Owner> = sqlx::query_as("SELECT u.id,u.username AS name,'user' AS kind FROM registry_namespaces n JOIN users u ON u.id=n.owner_user_id WHERE n.namespace=$1 UNION ALL SELECT o.id,o.name,'org' AS kind FROM registry_namespaces n JOIN organizations o ON o.id=n.owner_org_id WHERE n.namespace=$1")
+        .bind(namespace).fetch_optional(pool).await?;
+    if mapped.is_some() { return Ok(mapped); }
+    let owner: Option<Owner> = sqlx::query_as("SELECT * FROM (SELECT id,username AS name,'user' AS kind FROM users UNION ALL SELECT id,name,'org' AS kind FROM organizations) owners WHERE LOWER(name)=$1 ORDER BY CASE WHEN name=$1 THEN 0 ELSE 1 END,id LIMIT 1")
+        .bind(namespace).fetch_optional(pool).await?;
+    if let Some(owner) = owner {
+        if container_namespace(pool, &owner).await? == namespace { return Ok(Some(owner)); }
+    }
+    Ok(None)
+}
+
 pub async fn owner(pool: &PgPool, name: &str, kind: Option<&str>) -> Result<Option<Owner>> {
     Ok(sqlx::query_as("SELECT id,username AS name,'user' AS kind FROM users WHERE username=$1 AND ($2::text IS NULL OR $2='user') UNION ALL SELECT id,name,'org' AS kind FROM organizations WHERE name=$1 AND ($2::text IS NULL OR $2='org')")
         .bind(name).bind(kind).fetch_optional(pool).await?)
@@ -228,11 +272,15 @@ pub async fn find(
     Ok(result)
 }
 
-pub async fn list(
-    pool: &PgPool,
-    token: Option<Credential<'_>>,
-    query: Listing<'_>,
-) -> Result<Vec<Package>> {
+pub async fn list(pool: &PgPool, token: Option<Credential<'_>>, query: Listing<'_>) -> Result<Vec<Package>> {
+    listing(pool, token, query, None).await
+}
+
+pub async fn owner_page(pool: &PgPool, token: Option<Credential<'_>>, owner: &Owner, kind: &str, before: i64) -> Result<Vec<Package>> {
+    listing(pool, token, Listing { owner: Some(owner), repo: None, kind: Some(kind), visibility: None, offset: 0, limit: 100 }, Some(before)).await
+}
+
+async fn listing(pool: &PgPool, token: Option<Credential<'_>>, query: Listing<'_>, before: Option<i64>) -> Result<Vec<Package>> {
     let mut tx = begin(pool).await?;
     let actor = actor(&mut tx, token, Permission::Read).await?;
     let actor = match query.owner {
@@ -240,8 +288,8 @@ pub async fn list(
         None if actor.owner.is_some() => Actor::ANONYMOUS,
         None => actor,
     };
-    let rows = sqlx::query_as(&format!("SELECT p.* FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$5 WHERE ($1::text IS NULL OR p.owner_kind=$1) AND ($2::bigint IS NULL OR COALESCE(p.owner_user_id,p.owner_org_id)=$2) AND ($3::text IS NULL OR p.package_type=$3) AND p.deleted_at IS NULL AND ($4::text IS NULL OR p.visibility=$4) AND ($6::bigint IS NULL OR (p.repo_id=$6 AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id))) AND ($9::bigint IS NULL OR p.repo_id=$9) AND {} ORDER BY p.id DESC LIMIT $7 OFFSET $8",read_condition()))
-        .bind(query.owner.map(|o| o.kind.as_str())).bind(query.owner.map(|o| o.id)).bind(query.kind).bind(query.visibility).bind(actor.id).bind(actor.repo).bind(query.limit).bind(query.offset).bind(query.repo).fetch_all(&mut *tx).await?;
+    let rows = sqlx::query_as(&format!("SELECT p.* FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$5 WHERE ($1::text IS NULL OR p.owner_kind=$1) AND ($2::bigint IS NULL OR COALESCE(p.owner_user_id,p.owner_org_id)=$2) AND ($3::text IS NULL OR p.package_type=$3) AND p.deleted_at IS NULL AND ($4::text IS NULL OR p.visibility=$4) AND ($6::bigint IS NULL OR (p.repo_id=$6 AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id))) AND ($9::bigint IS NULL OR p.repo_id=$9) AND ($10::bigint IS NULL OR p.id<$10) AND {} ORDER BY p.id DESC LIMIT $7 OFFSET $8",read_condition(actor.classic)))
+        .bind(query.owner.map(|o| o.kind.as_str())).bind(query.owner.map(|o| o.id)).bind(query.kind).bind(query.visibility).bind(actor.id).bind(actor.repo).bind(query.limit).bind(query.offset).bind(query.repo).bind(before).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
 }
@@ -255,7 +303,7 @@ pub async fn count_linked(pool: &PgPool, token: Option<Credential<'_>>, repo: i6
     } else {
         actor
     };
-    let count = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.repo_id=$1 AND p.deleted_at IS NULL AND ($3::bigint IS NULL OR p.repo_id=$3) AND {}",read_condition()))
+    let count = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.repo_id=$1 AND p.deleted_at IS NULL AND ($3::bigint IS NULL OR p.repo_id=$3) AND {}",read_condition(actor.classic)))
         .bind(repo).bind(actor.id).bind(actor.repo).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(count)
@@ -277,6 +325,11 @@ pub async fn create(
         let package = authorize(&mut tx, id, Some(token), Permission::Write, false).await?;
         tx.commit().await?;
         return Ok(package);
+    }
+    if actor.classic && owner.kind == "org" {
+        let allowed: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM organization_token_policies WHERE org_id=$1 AND NOT classic_allowed)")
+            .bind(owner.id).fetch_one(&mut *tx).await?;
+        ensure!(allowed, Refusal::Forbidden);
     }
     let now = packages::now();
     let candidate = Package {
@@ -378,8 +431,30 @@ pub async fn versions(
         false,
     )
     .await?;
-    let rows = sqlx::query_as("SELECT * FROM package_versions WHERE package_id=$1 AND ((deleted_at IS NOT NULL)=$2) ORDER BY id DESC LIMIT $3 OFFSET $4")
+    let rows = sqlx::query_as("SELECT id,package_id,name,digest,media_type,'{}' AS manifest,downloads,created_at,updated_at,deleted_at FROM package_versions WHERE package_id=$1 AND ((deleted_at IS NOT NULL)=$2) ORDER BY id DESC LIMIT $3 OFFSET $4")
         .bind(package).bind(deleted).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(rows)
+}
+
+pub async fn version_page(
+    pool: &PgPool,
+    package: i64,
+    token: Option<Credential<'_>>,
+    before: i64,
+    names_only: bool,
+) -> Result<Vec<Version>> {
+    let mut tx = begin(pool).await?;
+    let p = authorize(&mut tx, package, token, Permission::Read, false).await?;
+    let metadata = if names_only {
+        "'{}'"
+    } else if p.package_type == "nuget" {
+        "(manifest::jsonb-'nuspec')::text"
+    } else {
+        "manifest"
+    };
+    let rows = sqlx::query_as(&format!("SELECT id,package_id,name,digest,media_type,{metadata} AS manifest,downloads,created_at,updated_at,deleted_at FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL AND id<$2 ORDER BY id DESC LIMIT 100"))
+        .bind(package).bind(before).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
 }
@@ -392,7 +467,7 @@ pub async fn version(
 ) -> Result<Version> {
     let mut tx = begin(pool).await?;
     authorize(&mut tx, package, token, Permission::Read, false).await?;
-    let result = sqlx::query_as("SELECT v.* FROM package_versions v WHERE v.package_id=$1 AND v.deleted_at IS NULL AND (v.name=$2 OR EXISTS(SELECT 1 FROM package_tags t WHERE t.package_id=v.package_id AND t.version_id=v.id AND t.tag=$2)) ORDER BY v.id DESC LIMIT 1")
+    let result = sqlx::query_as("SELECT v.* FROM package_versions v WHERE v.package_id=$1 AND v.deleted_at IS NULL AND (v.name=$2 OR EXISTS(SELECT 1 FROM package_tags t WHERE t.package_id=v.package_id AND t.version_id=v.id AND t.tag=$2)) ORDER BY (v.name=$2) DESC,v.id DESC LIMIT 1")
         .bind(package).bind(reference).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
     tx.commit().await?;
     Ok(result)
@@ -418,13 +493,13 @@ pub async fn version_by_id(
     Ok(version)
 }
 
-pub async fn version_count(pool: &PgPool, package: i64) -> Result<i64> {
-    Ok(sqlx::query_scalar(
-        "SELECT COUNT(*) FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL",
-    )
-    .bind(package)
-    .fetch_one(pool)
-    .await?)
+pub async fn version_count(pool: &PgPool, package: i64, token: Option<Credential<'_>>) -> Result<i64> {
+    let mut tx = begin(pool).await?;
+    authorize(&mut tx, package, token, Permission::Read, false).await?;
+    let count = sqlx::query_scalar("SELECT COUNT(*) FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL")
+        .bind(package).fetch_one(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(count)
 }
 
 pub async fn tag_page(
@@ -433,22 +508,67 @@ pub async fn tag_page(
     token: Option<Credential<'_>>,
     after: &str,
     limit: i64,
-) -> Result<Vec<String>> {
+) -> Result<Vec<(String, String)>> {
     let mut tx = begin(pool).await?;
     authorize(&mut tx, package, token, Permission::Read, false).await?;
-    let tags = sqlx::query_scalar("SELECT t.tag FROM package_tags t JOIN package_versions v ON v.id=t.version_id AND v.package_id=t.package_id WHERE t.package_id=$1 AND v.deleted_at IS NULL AND t.tag>$2 ORDER BY t.tag LIMIT $3")
+    let tags = sqlx::query_as("SELECT t.tag,v.name FROM package_tags t JOIN package_versions v ON v.id=t.version_id AND v.package_id=t.package_id WHERE t.package_id=$1 AND v.deleted_at IS NULL AND t.tag>$2 ORDER BY t.tag LIMIT $3")
         .bind(package).bind(after).bind(limit).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(tags)
 }
 
-pub async fn tags(pool: &PgPool, version: i64) -> Result<Vec<String>> {
-    Ok(
-        sqlx::query_scalar("SELECT tag FROM package_tags WHERE version_id=$1 ORDER BY tag")
-            .bind(version)
-            .fetch_all(pool)
-            .await?,
-    )
+/// Points `tag` at the published version named `version`.
+pub async fn set_tag(pool: &PgPool, package: i64, token: i64, tag: &str, version: &str) -> Result<()> {
+    let mut tx = begin(pool).await?;
+    authorize(&mut tx, package, Some(token), Permission::Write, false).await?;
+    let changed = sqlx::query("INSERT INTO package_tags(package_id,tag,version_id) SELECT $1,$2,id FROM package_versions WHERE package_id=$1 AND name=$3 AND deleted_at IS NULL ON CONFLICT(package_id,tag) DO UPDATE SET version_id=excluded.version_id")
+        .bind(package).bind(tag).bind(version).execute(&mut *tx).await?;
+    ensure!(changed.rows_affected() == 1, Refusal::Missing);
+    sqlx::query("UPDATE packages SET updated_at=$2 WHERE id=$1")
+        .bind(package)
+        .bind(packages::now())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn delete_tag(pool: &PgPool, package: i64, token: i64, tag: &str) -> Result<()> {
+    let mut tx = begin(pool).await?;
+    authorize(&mut tx, package, Some(token), Permission::Write, false).await?;
+    let changed = sqlx::query("DELETE FROM package_tags WHERE package_id=$1 AND tag=$2")
+        .bind(package).bind(tag).execute(&mut *tx).await?;
+    ensure!(changed.rows_affected() == 1, Refusal::Missing);
+    sqlx::query("UPDATE packages SET updated_at=$2 WHERE id=$1")
+        .bind(package)
+        .bind(packages::now())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn rubygems_file(pool: &PgPool, owner: &Owner, token: Option<Credential<'_>>, filename: &str) -> Result<Blob> {
+    ensure!(filename.len() <= 465, Refusal::Missing);
+    let mut tx = begin(pool).await?;
+    let rows: Vec<(i64, String, i64)> = sqlx::query_as("SELECT p.id,b.digest,b.size FROM packages p JOIN package_versions v ON v.package_id=p.id JOIN package_blobs b ON b.digest=v.digest WHERE p.owner_kind=$1 AND COALESCE(p.owner_user_id,p.owner_org_id)=$2 AND p.package_type='rubygems' AND p.deleted_at IS NULL AND v.deleted_at IS NULL AND b.ready AND NOT b.deleting AND p.name||'-'||v.name=$3 LIMIT 2")
+        .bind(&owner.kind).bind(owner.id).bind(filename).fetch_all(&mut *tx).await?;
+    for (package, _, _) in &rows {
+        authorize(&mut tx, *package, token, Permission::Read, false).await?;
+    }
+    ensure!(rows.len() <= 1, Refusal::Conflict);
+    let (_, digest, size) = rows.into_iter().next().ok_or(Refusal::Missing)?;
+    tx.commit().await?;
+    Ok(Blob { digest, size })
+}
+
+pub async fn tags(pool: &PgPool, package: i64, token: Option<Credential<'_>>, version: i64) -> Result<Vec<String>> {
+    let mut tx = begin(pool).await?;
+    authorize(&mut tx, package, token, Permission::Read, false).await?;
+    let tags = sqlx::query_scalar("SELECT tag FROM package_tags WHERE version_id=$1 AND package_id=$2 ORDER BY tag")
+        .bind(version).bind(package).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(tags)
 }
 
 async fn check_blobs(tx: &mut Tx<'_>, package: i64, blobs: &[Blob], now: i64) -> Result<()> {
@@ -536,7 +656,9 @@ pub async fn put_maven_file(
     .bind(&file.blob.digest)
     .execute(&mut *tx)
     .await?;
-    // Replaced SNAPSHOT files are collectible; deleted versions retain their own files for recovery.
+    // Keep snapshot-referenced bytes available to an online backup after their final reference goes.
+    sqlx::query("UPDATE package_blobs SET expires_at=GREATEST(expires_at,$2) WHERE digest IN (SELECT vb.digest FROM package_version_blobs vb JOIN package_versions v ON v.id=vb.version_id JOIN packages p ON p.id=v.package_id WHERE p.repo_id=$1 AND p.package_type='maven' AND NOT EXISTS(SELECT 1 FROM package_files f WHERE f.version_id=vb.version_id AND f.digest=vb.digest))")
+        .bind(p.repo_id).bind(now + crate::backend::db::files::RESTORE_WINDOW_SECONDS).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM package_version_blobs WHERE version_id IN (SELECT v.id FROM package_versions v JOIN packages p ON p.id=v.package_id WHERE p.repo_id=$1 AND p.package_type='maven') AND NOT EXISTS(SELECT 1 FROM package_files f WHERE f.version_id=package_version_blobs.version_id AND f.digest=package_version_blobs.digest)").bind(p.repo_id).execute(&mut *tx).await?;
     // Repository/group index updates do not replace the version's artifact digest.
     sqlx::query("UPDATE package_versions SET digest=CASE WHEN $4 THEN digest ELSE $2 END,updated_at=$3 WHERE id=$1")
@@ -565,6 +687,12 @@ pub async fn publish(pool: &PgPool, token: i64, new: Publish<'_>) -> Result<Vers
         false,
     )
     .await?;
+    ensure!(packages::listed_metadata_fits(&package.package_type, new.manifest), Refusal::Conflict);
+    if package.package_type == "rubygems" {
+        let collision: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM packages p JOIN package_versions v ON v.package_id=p.id WHERE p.owner_kind=$1 AND COALESCE(p.owner_user_id,p.owner_org_id)=$2 AND p.package_type='rubygems' AND p.id<>$3 AND p.name||'-'||v.name=$4)")
+            .bind(&package.owner_kind).bind(package.owner_user_id.or(package.owner_org_id)).bind(package.id).bind(format!("{}-{}", package.name, new.name)).fetch_one(&mut *tx).await?;
+        ensure!(!collision, Refusal::Conflict);
+    }
     let now = packages::now();
     check_blobs(&mut tx, package.id, new.blobs, now).await?;
     let existing: Option<Version> =
@@ -729,21 +857,45 @@ pub async fn settings(
     Ok(())
 }
 
-pub async fn reserve_blob(pool: &PgPool, package: i64, token: i64, blob: &Blob) -> Result<bool> {
+pub async fn reserve_blob(
+    pool: &PgPool,
+    package: i64,
+    token: i64,
+    blob: &Blob,
+    charge: Charge<'_>,
+) -> Result<bool> {
     let mut tx = begin(pool).await?;
     authorize(&mut tx, package, Some(token), Permission::Write, false).await?;
+    let actor = actor(&mut tx, Some(token), Permission::Write).await?;
+    let user = actor.id.ok_or(Refusal::Unauthorized)?;
     let now = packages::now();
+    match charge {
+        Charge::Upload => {
+            super::files::charge_upload_in_transaction(&mut tx, user, "package", blob.size.max(1), None).await?;
+        }
+        Charge::Chunk(upload) => {
+            let earlier: Option<uuid::Uuid> = sqlx::query_scalar("SELECT charge_id FROM package_uploads WHERE id=$1 AND package_id=$2 AND token_id=$3 AND expires_at>$4 FOR UPDATE")
+                .bind(upload).bind(package).bind(token).bind(now).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
+            let charge = super::files::charge_upload_in_transaction(&mut tx, user, "package", blob.size.max(1), earlier).await?;
+            sqlx::query("UPDATE package_uploads SET charge_id=$2 WHERE id=$1")
+                .bind(upload)
+                .bind(charge)
+                .execute(&mut *tx)
+                .await?;
+        }
+        Charge::Assembled => {}
+    }
     sqlx::query("INSERT INTO package_blobs(digest,size,expires_at) VALUES($1,$2,$3) ON CONFLICT(digest) DO NOTHING")
-        .bind(&blob.digest).bind(blob.size).bind(now+86400).execute(&mut *tx).await?;
+        .bind(&blob.digest).bind(blob.size).bind(now + crate::backend::db::files::RESTORE_WINDOW_SECONDS).execute(&mut *tx).await?;
     let (size, ready, deleting): (i64, bool, bool) =
         sqlx::query_as("SELECT size,ready,deleting FROM package_blobs WHERE digest=$1")
             .bind(&blob.digest)
             .fetch_one(&mut *tx)
             .await?;
     ensure!(size == blob.size && !deleting, Refusal::Blob);
-    sqlx::query("UPDATE package_blobs SET expires_at=$2 WHERE digest=$1")
+    sqlx::query("UPDATE package_blobs SET expires_at=GREATEST(expires_at,$2) WHERE digest=$1")
         .bind(&blob.digest)
-        .bind(now + 86400)
+        .bind(now + crate::backend::db::files::RESTORE_WINDOW_SECONDS)
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO package_blob_grants(package_id,digest,expires_at) VALUES($1,$2,$3) ON CONFLICT(package_id,digest) DO UPDATE SET expires_at=excluded.expires_at")
@@ -810,7 +962,7 @@ pub async fn append_upload(
     let mut upload = get_upload(&mut tx, package, token, id).await?;
     ensure!(upload.offset == offset, Refusal::Offset);
     let mut chunks: Vec<Blob> = serde_json::from_str(&upload.chunks)?;
-    ensure!(chunks.len() < 10000, Refusal::Offset);
+    ensure!(chunks.len() < 101, Refusal::Offset);
     chunks.push(chunk.clone());
     upload.offset += chunk.size;
     upload.chunks = serde_json::to_string(&chunks)?;
@@ -835,6 +987,15 @@ pub async fn cancel_upload(pool: &PgPool, package: i64, token: i64, id: &str) ->
     Ok(())
 }
 
+pub async fn finish_upload(pool: &PgPool, package: i64, token: i64, id: &str, offset: i64) -> Result<()> {
+    let mut tx = begin(pool).await?;
+    let upload = get_upload(&mut tx, package, token, id).await?;
+    ensure!(upload.offset == offset, Refusal::Offset);
+    sqlx::query("DELETE FROM package_uploads WHERE id=$1").bind(id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn garbage(pool: &PgPool) -> Result<Vec<String>> {
     let mut tx = begin(pool).await?;
     let now = packages::now();
@@ -846,6 +1007,8 @@ pub async fn garbage(pool: &PgPool) -> Result<Vec<String>> {
         .bind(now)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("UPDATE package_blobs SET expires_at=GREATEST(expires_at,$2) WHERE digest IN (SELECT vb.digest FROM package_version_blobs vb JOIN package_versions v ON v.id=vb.version_id JOIN packages p ON p.id=v.package_id WHERE v.deleted_at<=$1 OR p.deleted_at<=$1)")
+        .bind(now - 30 * 86400).bind(now + crate::backend::db::files::RESTORE_WINDOW_SECONDS).execute(&mut *tx).await?;
     sqlx::query(
         "DELETE FROM packages WHERE id IN (SELECT id FROM packages WHERE deleted_at<=$1 LIMIT 100)",
     )

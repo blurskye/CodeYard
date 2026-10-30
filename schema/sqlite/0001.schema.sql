@@ -2340,6 +2340,7 @@ CREATE TABLE package_uploads (
     token_id INTEGER NOT NULL REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
     uploaded_bytes INTEGER NOT NULL DEFAULT 0,
     chunks TEXT NOT NULL DEFAULT '[]',
+    charge_id BLOB CHECK (charge_id IS NULL OR (typeof(charge_id)='blob' AND length(charge_id)=16)),
     expires_at INTEGER NOT NULL
 );
 

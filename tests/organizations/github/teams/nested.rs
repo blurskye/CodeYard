@@ -264,8 +264,9 @@ pub(super) async fn run(
         ("teams/delete-legacy", 204),
     )
     .await;
+    let deletion_session = db::users::sessions::create_session(pool, &uuid::Uuid::new_v4().simple().to_string().repeat(2), alice, None, None, chrono::Utc::now() + chrono::Duration::hours(1)).await.unwrap();
     applied(
-        orgs::delete_organization(pool, alice, foreign_org.id)
+        orgs::delete_organization(pool, alice, &db::users::accounts::AccountCredential::Session(&deletion_session.id), foreign_org.id)
             .await
             .unwrap(),
     );

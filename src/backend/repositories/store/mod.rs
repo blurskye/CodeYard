@@ -55,6 +55,10 @@ pub use types::{
 };
 pub(crate) use types::{BlobMetadata, WorkflowPayloadEntry, MAX_WORKFLOW_PAYLOAD_BYTES};
 
+pub(crate) fn primary_path(root: &Path, uuid: uuid::Uuid) -> std::path::PathBuf {
+    root.join(format!("{uuid}.git"))
+}
+
 /// The store for a repository row. Cheap to create and to clone.
 pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore {
     match repo.storage_node_id {
@@ -66,10 +70,7 @@ pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore
             let context = context.expect("this node owns the repository");
             match rpc::repository_uuid(&repo.disk_path) {
                 Ok(uuid) => RepoStore::on_node(
-                    &context
-                        .repos_path
-                        .join(format!("{uuid}.git"))
-                        .to_string_lossy(),
+                    &primary_path(&context.repos_path, uuid).to_string_lossy(),
                     id,
                 ),
                 Err(_) => RepoStore(Backend::Remote(remote::RemoteStore::new(
@@ -458,11 +459,11 @@ impl RepoStore {
 
     /// Removes a deleted repository. A local repository moves to `deleted/` under its
     /// parent directory and stays there for [`db::files::RESTORE_WINDOW_SECONDS`], so a database
-    /// restored to before the delete still finds its files. A remote store removes it.
+    /// restored to before the delete still finds its files. Remote storage uses the same retirement.
     pub async fn retire(&self) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.retire().await,
-            Backend::Remote(remote) => remote.call(Operation::Remove, b"").await,
+            Backend::Remote(remote) => remote.call(Operation::Retire, b"").await,
         }
     }
 
@@ -522,6 +523,13 @@ impl RepoStore {
                     )
                     .await
             }
+        }
+    }
+
+    pub(crate) async fn existing_commits(&self, ids: &[String]) -> Result<std::collections::HashSet<String>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.existing_commits(ids).await,
+            Backend::Remote(_) => Err(rpc::wire::invalid("replica commit checks run on their node")),
         }
     }
 
@@ -804,6 +812,7 @@ impl RepoStore {
                             text: text.into(),
                             offset,
                             limit,
+                            raw_json: true,
                         },
                         b"",
                     )
@@ -1276,6 +1285,7 @@ impl RepoStore {
                     .call(
                         Operation::CommitStatistics {
                             branch: branch.into(),
+                            raw_json: true,
                         },
                         b"",
                     )
