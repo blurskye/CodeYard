@@ -61,13 +61,13 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let actor = auth.ok_or_else(auth::required)?.database_actor();
     crate::backend::issues::validate_label(&input.name, input.description.as_deref())
         .map_err(Error::invalid)?;
     let color = color(input.color.as_deref().unwrap_or("ededed"))?;
     let label = db::labels::create_label(
         &state.pool,
-        actor.id,
+        actor,
         repo.id,
         &input.name,
         &color,
@@ -135,7 +135,7 @@ async fn update(
     Json(input): Json<Update>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let actor = auth.ok_or_else(auth::required)?.database_actor();
     let existing = find(&state.pool, repo.id, &p["name"]).await?;
     crate::backend::issues::validate_label(
         input.new_name.as_deref().unwrap_or(&existing.name),
@@ -145,7 +145,7 @@ async fn update(
     let color = input.color.as_deref().map(color).transpose()?;
     let label = db::labels::update_label(
         &state.pool,
-        actor.id,
+        actor,
         repo.id,
         existing.id,
         input.new_name.as_deref(),
@@ -163,9 +163,9 @@ async fn remove(
     Path(p): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let actor = auth.ok_or_else(auth::required)?.database_actor();
     let label = find(&state.pool, repo.id, &p["name"]).await?;
-    db::labels::delete_label(&state.pool, actor.id, repo.id, label.id)
+    db::labels::delete_label(&state.pool, actor, repo.id, label.id)
         .await
         .map_err(write_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -249,7 +249,7 @@ async fn change(
     replace: bool,
 ) -> Result<Json<Vec<Value>>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let actor = auth.ok_or_else(auth::required)?.database_actor();
     let item = item(&state.pool, repo.id, &p["issue_number"]).await?;
     if names.len() > db::labels::MAX_ISSUE_LABELS {
         return Err(Error::invalid("Too many labels"));
@@ -260,7 +260,7 @@ async fn change(
         catalog.iter().find(|label| label.name.eq_ignore_ascii_case(&name)).map(|label| label.id)
             .ok_or_else(|| Error::invalid("Label does not exist"))
     }).collect::<Result<Vec<_>>>()?;
-    let labels = save_labels(&state.pool, actor.id, repo.id, item, &ids, replace).await?;
+    let labels = save_labels(&state.pool, actor, repo.id, item, &ids, replace).await?;
     Ok(Json(
         labels
             .iter()
@@ -271,7 +271,7 @@ async fn change(
 
 pub(in crate::backend::api) async fn save_labels(
     pool: &db::DbPool,
-    actor_id: i64,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     item: db::assignees::AssignedItem,
     ids: &[i64],
@@ -279,18 +279,18 @@ pub(in crate::backend::api) async fn save_labels(
 ) -> Result<Vec<db::models::Label>> {
     match (item, replace) {
         (db::assignees::AssignedItem::Issue(id), true) => {
-            db::labels::set_issue_labels(pool, actor_id, repo_id, id, ids).await
+            db::labels::set_issue_labels(pool, actor, repo_id, id, ids).await
         }
         (db::assignees::AssignedItem::PullRequest(id), true) => {
-            db::labels::set_pull_request_labels(pool, actor_id, repo_id, id, ids).await
+            db::labels::set_pull_request_labels(pool, actor, repo_id, id, ids).await
         }
         (db::assignees::AssignedItem::Issue(id), false) => {
-            db::labels::add_issue_labels(pool, actor_id, repo_id, id, ids)
+            db::labels::add_issue_labels(pool, actor, repo_id, id, ids)
                 .await
                 .map(|_| ())
         }
         (db::assignees::AssignedItem::PullRequest(id), false) => {
-            db::labels::add_pull_request_labels(pool, actor_id, repo_id, id, ids)
+            db::labels::add_pull_request_labels(pool, actor, repo_id, id, ids)
                 .await
                 .map(|_| ())
         }
@@ -334,15 +334,15 @@ async fn remove_from_issue(
     Path(p): Path<Params>,
 ) -> Result<Json<Vec<Value>>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let actor = auth.ok_or_else(auth::required)?.database_actor();
     let item = item(&state.pool, repo.id, &p["issue_number"]).await?;
     let label = find(&state.pool, repo.id, &p["name"]).await?;
     let removed = match item {
         db::assignees::AssignedItem::Issue(id) => {
-            db::labels::remove_issue_label(&state.pool, actor.id, repo.id, id, label.id).await
+            db::labels::remove_issue_label(&state.pool, actor, repo.id, id, label.id).await
         }
         db::assignees::AssignedItem::PullRequest(id) => {
-            db::labels::remove_pull_request_label(&state.pool, actor.id, repo.id, id, label.id)
+            db::labels::remove_pull_request_label(&state.pool, actor, repo.id, id, label.id)
                 .await
         }
     }

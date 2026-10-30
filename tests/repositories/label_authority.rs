@@ -39,7 +39,7 @@ const MUTATIONS: [Mutation; 7] = [
 
 async fn mutate(
     pool: &db::DbPool,
-    actor: i64,
+    actor: impl Into<db::credentials::Actor>,
     repo: i64,
     issue: i64,
     label: i64,
@@ -534,6 +534,59 @@ async fn scope_and_batches(pg: bool) {
     f.finish().await;
 }
 
+/// A request whose own session ends before its write reaches the database writes nothing,
+/// although the account still has write access.
+async fn revoked_session(pg: bool) {
+    let mut f = Fixture::new(pg).await;
+    let owner = f.actor("label_owner").await;
+    let repo = f.label_repo(owner, None).await;
+    let (issue, label) = seed(f.pool(), owner, repo).await;
+    let session = crate::support::live_session(f.pool(), owner).await;
+    db::labels::create_label(f.pool(), (owner, session.clone()), repo, "live", "#123456", None)
+        .await
+        .unwrap();
+    db::milestones::create_milestone(f.pool(), (owner, session.clone()), repo, "live", None, None)
+        .await
+        .unwrap();
+    db::users::sessions::delete_session(f.pool(), &session).await.unwrap();
+    let before = snapshot(f.pool(), &[repo]).await;
+    for mutation in MUTATIONS {
+        refusal(
+            mutate(f.pool(), (owner, session.clone()), repo, issue, label, mutation).await,
+            LabelWriteRefusal::Denied,
+        );
+    }
+    for result in [
+        db::milestones::create_milestone(f.pool(), (owner, session.clone()), repo, "late", None, None)
+            .await
+            .map(|_| ()),
+        db::milestones::set_milestone_state(f.pool(), (owner, session.clone()), repo, 1, "closed")
+            .await
+            .map(|_| ()),
+        db::milestones::set_issue_milestone(f.pool(), (owner, session.clone()), repo, issue, Some(1))
+            .await,
+    ] {
+        let error = result.expect_err("a revoked session must not write");
+        assert_eq!(
+            error.downcast_ref::<db::milestones::MilestoneWriteRefusal>(),
+            Some(&db::milestones::MilestoneWriteRefusal::Denied)
+        );
+    }
+    assert_eq!(snapshot(f.pool(), &[repo]).await, before);
+    let milestone = db::milestones::get_milestone(f.pool(), repo, 1).await.unwrap().unwrap();
+    assert_eq!(milestone.milestone.state, "open");
+    assert!(db::milestones::get_milestone(f.pool(), repo, 2).await.unwrap().is_none());
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn postgres_label_revoked_session() {
+    revoked_session(true).await;
+}
+#[tokio::test]
+async fn sqlite_label_revoked_session() {
+    revoked_session(false).await;
+}
 #[tokio::test]
 async fn postgres_label_authority_matrix() {
     authority_matrix(true).await;

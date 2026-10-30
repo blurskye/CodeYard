@@ -816,18 +816,18 @@ pub(in crate::backend::api) async fn apply_metadata(
             .map_err(super::issue_attributes::error)?;
     }
     if let Some(ids) = metadata.labels {
-        labels::save_labels(&state.pool, actor.id, repo.id, item, &ids, true).await?;
+        labels::save_labels(&state.pool, authentication.database_actor(), repo.id, item, &ids, true).await?;
     }
     if let Some(number) = metadata.milestone {
         match item {
             AssignedItem::Issue(id) => {
-                db::milestones::set_issue_milestone(&state.pool, actor.id, repo.id, id, number)
+                db::milestones::set_issue_milestone(&state.pool, authentication.database_actor(), repo.id, id, number)
                     .await
             }
             AssignedItem::PullRequest(id) => {
                 db::milestones::set_pull_request_milestone(
                     &state.pool,
-                    actor.id,
+                    authentication.database_actor(),
                     repo.id,
                     id,
                     number,

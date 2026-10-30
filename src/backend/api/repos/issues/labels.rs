@@ -1,6 +1,6 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session::get_current_user;
+use crate::backend::api::http::session::{extract_session_id, get_current_user};
 use crate::backend::api::repos::access::{check_repo_admin_access, find_repository};
 use crate::backend::api::repos::discussion::*;
 use crate::backend::api::repos::forms::authorize_post;
@@ -48,7 +48,7 @@ pub async fn add_issue_labels(
 
     let labels = add_labels(
         &state.pool,
-        actor.id,
+        (actor.id, extract_session_id(&headers).unwrap_or_default()),
         repository.id,
         AssignedItem::Issue(issue.id),
         &req.labels,
@@ -79,7 +79,7 @@ pub async fn remove_issue_label(
 
     remove_label(
         &state.pool,
-        actor.id,
+        (actor.id, extract_session_id(&headers).unwrap_or_default()),
         repository.id,
         AssignedItem::Issue(issue.id),
         label_id,
@@ -94,17 +94,17 @@ pub async fn remove_issue_label(
 /// not on it yet. Returns every label the item has afterwards.
 async fn add_labels(
     pool: &db::DbPool,
-    actor_id: i64,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     subject: AssignedItem,
     ids: &[i64],
 ) -> anyhow::Result<Vec<db::models::Label>> {
     let labels = match subject {
         AssignedItem::Issue(item_id) => {
-            db::labels::add_issue_labels(pool, actor_id, repo_id, item_id, ids).await?
+            db::labels::add_issue_labels(pool, actor, repo_id, item_id, ids).await?
         }
         AssignedItem::PullRequest(item_id) => {
-            db::labels::add_pull_request_labels(pool, actor_id, repo_id, item_id, ids).await?
+            db::labels::add_pull_request_labels(pool, actor, repo_id, item_id, ids).await?
         }
     };
     Ok(labels)
@@ -114,17 +114,17 @@ async fn add_labels(
 /// it. Returns whether it was.
 async fn remove_label(
     pool: &db::DbPool,
-    actor_id: i64,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     subject: AssignedItem,
     label_id: i64,
 ) -> anyhow::Result<bool> {
     let removed = match subject {
         AssignedItem::Issue(item_id) => {
-            db::labels::remove_issue_label(pool, actor_id, repo_id, item_id, label_id).await?
+            db::labels::remove_issue_label(pool, actor, repo_id, item_id, label_id).await?
         }
         AssignedItem::PullRequest(item_id) => {
-            db::labels::remove_pull_request_label(pool, actor_id, repo_id, item_id, label_id)
+            db::labels::remove_pull_request_label(pool, actor, repo_id, item_id, label_id)
                 .await?
         }
     };
@@ -166,7 +166,7 @@ pub(crate) async fn native_add_label(
         .await;
     };
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
-    let actor = ctx.require_user()?.id;
+    let actor = ctx.database_actor(ctx.require_user()?.id);
     let applied = add_labels(&ctx.state.pool, actor, repo.record.id, subject, &[id])
         .await
         .map_err(label_write_error);
@@ -213,7 +213,7 @@ pub(crate) async fn native_remove_label(
         ));
     }
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
-    let actor = ctx.require_user()?.id;
+    let actor = ctx.database_actor(ctx.require_user()?.id);
     let removed = remove_label(&ctx.state.pool, actor, repo.record.id, subject, label_id)
         .await
         .map_err(label_write_error);

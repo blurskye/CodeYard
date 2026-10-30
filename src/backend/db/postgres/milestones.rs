@@ -46,9 +46,8 @@ async fn begin_write(
         super::discussions::lock_exclusive_write_authority(&mut tx, actor_id, repo_id).await?,
         MilestoneWriteRefusal::Denied
     );
-    if let Some(token) = credential.token_id() {
-        anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor_id, token, Some(repo_id), None, "issues").await?, MilestoneWriteRefusal::Denied);
-    }
+    // The request's own session or token must still be live and may still write issues here.
+    anyhow::ensure!(super::credentials::repository(&mut tx, &credential, repo_id, "issues", true).await?, MilestoneWriteRefusal::Denied);
     Ok(tx)
 }
 
@@ -74,7 +73,7 @@ async fn ensure_unique_title(
 
 pub async fn create_milestone(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     title: &str,
     description: Option<&str>,
@@ -82,7 +81,7 @@ pub async fn create_milestone(
 ) -> Result<Milestone> {
     save_milestone(
         pool,
-        actor_id,
+        actor,
         repo_id,
         None,
         MilestoneInput {
@@ -97,7 +96,7 @@ pub async fn create_milestone(
 
 pub async fn update_milestone(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     number: i32,
     title: &str,
@@ -106,7 +105,7 @@ pub async fn update_milestone(
 ) -> Result<Milestone> {
     save_milestone_in(
         pool,
-        actor_id.into(),
+        actor.into(),
         repo_id,
         Some(number),
         MilestoneInput {
@@ -217,7 +216,7 @@ async fn save_milestone_in(
 
 pub async fn set_milestone_state(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     number: i32,
     state: &str,
@@ -226,7 +225,7 @@ pub async fn set_milestone_state(
         state == "open" || state == "closed",
         "Milestone state must be open or closed"
     );
-    let mut tx = begin_write(pool, actor_id, repo_id).await?;
+    let mut tx = begin_write(pool, actor, repo_id).await?;
     let milestone = sqlx::query_as::<_, Milestone>(&format!(
         r#"UPDATE milestones SET state = $3::TEXT, updated_at = NOW(),
             closed_at = CASE WHEN $3::TEXT = 'closed' THEN COALESCE(closed_at, NOW()) END
@@ -438,14 +437,14 @@ pub async fn milestone_choices_by_ids(
 
 pub async fn set_issue_milestone(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     issue_id: i64,
     milestone_number: Option<i32>,
 ) -> Result<()> {
     set_item_milestone(
         pool,
-        actor_id,
+        actor,
         repo_id,
         "issues",
         issue_id,
@@ -456,14 +455,14 @@ pub async fn set_issue_milestone(
 
 pub async fn set_pull_request_milestone(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     pull_request_id: i64,
     milestone_number: Option<i32>,
 ) -> Result<()> {
     set_item_milestone(
         pool,
-        actor_id,
+        actor,
         repo_id,
         "pull_requests",
         pull_request_id,
@@ -476,13 +475,15 @@ pub async fn set_pull_request_milestone(
 /// callers in this module.
 async fn set_item_milestone(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     table: &'static str,
     item_id: i64,
     milestone_number: Option<i32>,
 ) -> Result<()> {
-    let mut tx = begin_write(pool, actor_id, repo_id).await?;
+    let actor = actor.into();
+    let actor_id = actor.user_id;
+    let mut tx = begin_write(pool, actor, repo_id).await?;
     set_item_milestone_in_transaction(&mut tx, actor_id, repo_id, table, item_id, milestone_number).await?;
     tx.commit().await?;
     Ok(())

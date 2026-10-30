@@ -1,6 +1,6 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session::get_current_user;
+use crate::backend::api::http::session::{extract_session_id, get_current_user};
 use crate::backend::api::repos::access::{
     check_repo_admin_access, find_repository, readable_repository,
 };
@@ -123,7 +123,7 @@ pub async fn create_label(
 
     let label = db::labels::create_label(
         &state.pool,
-        actor.id,
+        (actor.id, extract_session_id(&headers).unwrap_or_default()),
         repository.id,
         &req.name,
         &color,
@@ -144,7 +144,7 @@ pub async fn delete_label(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
-    db::labels::delete_label(&state.pool, actor.id, repository.id, label_id)
+    db::labels::delete_label(&state.pool, (actor.id, extract_session_id(&headers).unwrap_or_default()), repository.id, label_id)
         .await
         .map_err(label_write_error)?;
 

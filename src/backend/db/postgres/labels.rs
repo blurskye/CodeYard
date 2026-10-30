@@ -5,16 +5,17 @@ use sqlx::{PgPool, Postgres, Transaction};
 
 async fn begin_label_write(
     pool: &PgPool,
-    actor_id: i64,
+    actor: &crate::backend::db::credentials::Actor,
     repo_id: i64,
 ) -> Result<Transaction<'_, Postgres>> {
     let mut tx = pool.begin().await?;
     // CI singleton FIRST, before any issue/label lock. Retain authority to commit. Catalog
     // writers queue on the repository row, so a name check holds until the commit.
     anyhow::ensure!(
-        super::discussions::lock_exclusive_write_authority(&mut tx, actor_id, repo_id).await?,
+        super::discussions::lock_exclusive_write_authority(&mut tx, actor.user_id, repo_id).await?,
         LabelWriteRefusal::Denied
     );
+    anyhow::ensure!(writes_labels(&mut tx, actor, repo_id).await?, LabelWriteRefusal::Denied);
     Ok(tx)
 }
 
@@ -40,16 +41,28 @@ async fn ensure_name_free(
 /// Labels on an issue or pull request need triage authority; the label catalog needs write.
 async fn begin_item_label_write(
     pool: &PgPool,
-    actor_id: i64,
+    actor: &crate::backend::db::credentials::Actor,
     repo_id: i64,
 ) -> Result<Transaction<'_, Postgres>> {
     let mut tx = pool.begin().await?;
     // CI singleton FIRST, before any issue/label lock. Retain authority to commit.
     anyhow::ensure!(
-        super::discussions::lock_triage_authority(&mut tx, actor_id, repo_id).await?,
+        super::discussions::lock_triage_authority(&mut tx, actor.user_id, repo_id).await?,
         LabelWriteRefusal::Denied
     );
+    anyhow::ensure!(writes_labels(&mut tx, actor, repo_id).await?, LabelWriteRefusal::Denied);
     Ok(tx)
+}
+
+/// The request's own session or token is still live and may still write issues or pull
+/// requests here, checked in the transaction that writes.
+async fn writes_labels(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &crate::backend::db::credentials::Actor,
+    repo_id: i64,
+) -> Result<bool> {
+    Ok(super::credentials::repository(tx, actor, repo_id, "issues", true).await?
+        || super::credentials::repository(tx, actor, repo_id, "pull_requests", true).await?)
 }
 
 pub(crate) async fn lock_item_labels(
@@ -83,13 +96,14 @@ pub(crate) async fn lock_item_labels(
 
 pub async fn create_label(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     name: &str,
     color: &str,
     description: Option<&str>,
 ) -> Result<Label> {
-    let mut tx = begin_label_write(pool, actor_id, repo_id).await?;
+    let actor = actor.into();
+    let mut tx = begin_label_write(pool, &actor, repo_id).await?;
     ensure_name_free(&mut tx, repo_id, name, 0).await?;
     let label = sqlx::query_as::<_, Label>(
         r#"
@@ -196,18 +210,19 @@ pub async fn list_label_usage(pool: &PgPool, repo_id: i64, label_ids: &[i64]) ->
 
 pub async fn update_label(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     label_id: i64,
     name: Option<&str>,
     color: Option<&str>,
     description: Option<&str>,
 ) -> Result<Label> {
-    update_label_checked(pool, actor_id, repo_id, label_id, (name, color, description), None).await
+    update_label_checked(pool, actor, repo_id, label_id, (name, color, description), None).await
 }
 
-pub async fn update_label_checked(pool: &PgPool, actor_id: i64, repo_id: i64, label_id: i64, (name, color, description): (Option<&str>, Option<&str>, Option<&str>), expected: Option<&str>) -> Result<Label> {
-    let mut tx = begin_label_write(pool, actor_id, repo_id).await?;
+pub async fn update_label_checked(pool: &PgPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, label_id: i64, (name, color, description): (Option<&str>, Option<&str>, Option<&str>), expected: Option<&str>) -> Result<Label> {
+    let actor = actor.into();
+    let mut tx = begin_label_write(pool, &actor, repo_id).await?;
     if let Some(expected) = expected {
         let current: Label = sqlx::query_as("SELECT * FROM labels WHERE repo_id=$1 AND id=$2 FOR UPDATE").bind(repo_id).bind(label_id).fetch_optional(&mut *tx).await?.ok_or(LabelWriteRefusal::InvalidLabels)?;
         anyhow::ensure!(serde_json::to_string(&(current.name, current.color, current.description.unwrap_or_default()))? == expected, LabelWriteRefusal::Conflict);
@@ -240,11 +255,12 @@ pub async fn update_label_checked(pool: &PgPool, actor_id: i64, repo_id: i64, la
 
 pub async fn delete_label(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     label_id: i64,
 ) -> Result<bool> {
-    let mut tx = begin_label_write(pool, actor_id, repo_id).await?;
+    let actor = actor.into();
+    let mut tx = begin_label_write(pool, &actor, repo_id).await?;
     // Deleting a label removes it from its issues and pull requests, so they get a new revision.
     for (table, links, column) in [("issues", "issue_labels", "issue_id"), ("pull_requests", "pr_labels", "pull_request_id")] {
         sqlx::query(&format!("UPDATE {table} SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id IN (SELECT x.{column} FROM {links} x JOIN labels l ON l.id=x.label_id WHERE l.id=$1 AND l.repo_id=$2)"))
@@ -268,25 +284,25 @@ pub async fn delete_label(
 
 pub async fn add_issue_label(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     issue_id: i64,
     label_id: i64,
 ) -> Result<()> {
-    add_issue_labels(pool, actor_id, repo_id, issue_id, &[label_id]).await?;
+    add_issue_labels(pool, actor, repo_id, issue_id, &[label_id]).await?;
     Ok(())
 }
 
 pub async fn add_issue_labels(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     issue_id: i64,
     label_ids: &[i64],
 ) -> Result<Vec<Label>> {
     write_item_labels(
         pool,
-        actor_id,
+        actor,
         repo_id,
         LabelTarget::Issue,
         issue_id,
@@ -298,14 +314,14 @@ pub async fn add_issue_labels(
 
 pub async fn add_pull_request_labels(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     pull_request_id: i64,
     label_ids: &[i64],
 ) -> Result<Vec<Label>> {
     write_item_labels(
         pool,
-        actor_id,
+        actor,
         repo_id,
         LabelTarget::PullRequest,
         pull_request_id,
@@ -317,14 +333,14 @@ pub async fn add_pull_request_labels(
 
 pub async fn remove_issue_label(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     issue_id: i64,
     label_id: i64,
 ) -> Result<bool> {
     remove_item_label(
         pool,
-        actor_id,
+        actor,
         repo_id,
         LabelTarget::Issue,
         issue_id,
@@ -335,14 +351,14 @@ pub async fn remove_issue_label(
 
 pub async fn remove_pull_request_label(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     pull_request_id: i64,
     label_id: i64,
 ) -> Result<bool> {
     remove_item_label(
         pool,
-        actor_id,
+        actor,
         repo_id,
         LabelTarget::PullRequest,
         pull_request_id,
@@ -353,14 +369,15 @@ pub async fn remove_pull_request_label(
 
 async fn remove_item_label(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     target: LabelTarget,
     item_id: i64,
     label_id: i64,
 ) -> Result<bool> {
+    let actor = actor.into();
     let (subject, link, column) = target.tables();
-    let mut tx = begin_item_label_write(pool, actor_id, repo_id).await?;
+    let mut tx = begin_item_label_write(pool, &actor, repo_id).await?;
     lock_item_labels(&mut tx, repo_id, target, item_id, &[label_id]).await?;
     let before = item_labels_snapshot(&mut tx, target, item_id).await?;
     let result = sqlx::query(&format!(
@@ -373,7 +390,7 @@ async fn remove_item_label(
     if result.rows_affected() > 0 {
         touch_subject(&mut tx, subject, item_id).await?;
         let after: Vec<_> = before.iter().filter(|label| label.id != label_id).cloned().collect();
-        record_label_changes(&mut tx, repo_id, target, item_id, actor_id, &before, &after).await?;
+        record_label_changes(&mut tx, repo_id, target, item_id, actor.user_id, &before, &after).await?;
     }
     tx.commit().await?;
     Ok(result.rows_affected() > 0)
@@ -415,14 +432,14 @@ async fn get_item_labels(pool: &PgPool, target: LabelTarget, item_id: i64) -> Re
 
 pub async fn set_issue_labels(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     issue_id: i64,
     label_ids: &[i64],
 ) -> Result<()> {
     write_item_labels(
         pool,
-        actor_id,
+        actor,
         repo_id,
         LabelTarget::Issue,
         issue_id,
@@ -435,14 +452,14 @@ pub async fn set_issue_labels(
 
 pub async fn set_pull_request_labels(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     pull_request_id: i64,
     label_ids: &[i64],
 ) -> Result<()> {
     write_item_labels(
         pool,
-        actor_id,
+        actor,
         repo_id,
         LabelTarget::PullRequest,
         pull_request_id,
@@ -455,16 +472,17 @@ pub async fn set_pull_request_labels(
 
 async fn write_item_labels(
     pool: &PgPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     target: LabelTarget,
     item_id: i64,
     label_ids: &[i64],
     replace: bool,
 ) -> Result<Vec<Label>> {
-    let mut tx = begin_item_label_write(pool, actor_id, repo_id).await?;
+    let actor = actor.into();
+    let mut tx = begin_item_label_write(pool, &actor, repo_id).await?;
     let labels =
-        write_item_labels_transaction(&mut tx, Some(actor_id), repo_id, target, item_id, label_ids, replace)
+        write_item_labels_transaction(&mut tx, Some(actor.user_id), repo_id, target, item_id, label_ids, replace)
             .await?;
     tx.commit().await?;
     Ok(labels)

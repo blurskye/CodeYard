@@ -47,7 +47,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     }
     let mut payload = json!({"clientMutationId":input["clientMutationId"],"actor":super::user::actor_object(&request.auth.user,request.auth.user.id)});
     let pool = &request.state.pool;
-    let actor = request.auth.user.id;
+    let actor = request.actor.clone();
     if matches!(field, "createLabel" | "updateLabel" | "deleteLabel") {
         let existing = if field == "createLabel" {
             None
@@ -180,7 +180,6 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             return Err(async_graphql::Error::new("Too many metadata IDs"));
         }
         let remove = field.starts_with("remove");
-        let actor = request.auth.user.id;
         let authority = request.actor.clone();
         // Preparing checks triage authority, that labels belong to this repository and that new
         // assignees can be assigned. A removed assignee may since have lost access, so removals
@@ -190,17 +189,17 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         }
         // Additions use native atomic batches; removals leave unrelated assignments intact.
         if label && !remove {
-            github::labels::save_labels(pool, actor, repo.id, item, &changes, false)
+            github::labels::save_labels(pool, authority, repo.id, item, &changes, false)
                 .await
                 .map_err(github::Error::graphql)?;
         } else if label {
             for label_id in changes {
                 match item {
                     AssignedItem::Issue(id) => {
-                        db::labels::remove_issue_label(pool, actor, repo.id, id, label_id).await
+                        db::labels::remove_issue_label(pool, authority.clone(), repo.id, id, label_id).await
                     }
                     AssignedItem::PullRequest(id) => {
-                        db::labels::remove_pull_request_label(pool, actor, repo.id, id, label_id)
+                        db::labels::remove_pull_request_label(pool, authority.clone(), repo.id, id, label_id)
                             .await
                     }
                 }

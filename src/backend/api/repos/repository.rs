@@ -2054,7 +2054,7 @@ async fn mutate(
             let (name, color, description) = label_fields(form)?;
             db::labels::create_label(
                 pool,
-                actor.id,
+                ctx.database_actor(actor.id),
                 repository.id,
                 &name,
                 &color,
@@ -2068,7 +2068,7 @@ async fn mutate(
             let id = label_id(form)?;
             let (name, color, description) = label_fields(form)?;
             db::labels::update_label_checked(
-                pool, actor.id, repository.id, id,
+                pool, ctx.database_actor(actor.id), repository.id, id,
                 (Some(&name), Some(&color),
                     (serde_json::to_string(&description).unwrap_or_default() != field(form, "original_description")).then_some(description.as_str())),
                 Some(&field(form, "original")),
@@ -2079,7 +2079,7 @@ async fn mutate(
         }
         "delete-label" => {
             let id = label_id(form)?;
-            db::labels::delete_label(pool, actor.id, repository.id, id)
+            db::labels::delete_label(pool, ctx.database_actor(actor.id), repository.id, id)
                 .await
                 .map_err(label_write_error)?;
             Ok(format!("{base}/labels"))

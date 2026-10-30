@@ -279,7 +279,7 @@ pub(crate) async fn native_create(
         Ok(input) => input,
         Err(failure) => return Ok(new_form_refused(&ctx, &repo, &draft, &failure)),
     };
-    let actor = ctx.require_user()?.id;
+    let actor = ctx.database_actor(ctx.require_user()?.id);
     match db::milestones::create_milestone(
         &ctx.state.pool,
         actor,
@@ -492,7 +492,7 @@ pub(crate) async fn native_update(
             return milestone_page(&ctx, &repo, number, "open", Some((draft, failure))).await
         }
     };
-    let actor = ctx.require_user()?.id;
+    let actor = ctx.database_actor(ctx.require_user()?.id);
     match db::milestones::save_milestone_checked(
         &ctx.state.pool, actor, repo.record.id, Some(number),
         db::milestones::MilestoneInput {
@@ -526,7 +526,7 @@ async fn change_state(
     number: i32,
     state: &str,
 ) -> ResultPage<Response> {
-    let actor = ctx.require_user()?.id;
+    let actor = ctx.database_actor(ctx.require_user()?.id);
     match db::milestones::set_milestone_state(&ctx.state.pool, actor, repo.record.id, number, state)
         .await
     {
@@ -582,7 +582,7 @@ pub(crate) async fn native_delete(
             "Confirm the deletion before the milestone is deleted.",
         ));
     }
-    let actor = ctx.require_user()?.id;
+    let actor = ctx.database_actor(ctx.require_user()?.id);
     let expected_id = field(&form, "milestone_id").parse::<i64>().unwrap_or(0);
     require_current_repository(&ctx, &form, &repo)?;
     match db::milestones::delete_milestone(
@@ -639,7 +639,7 @@ pub(crate) async fn native_set_item_milestone(
             }
         },
     };
-    let actor = ctx.require_user()?.id;
+    let actor = ctx.database_actor(ctx.require_user()?.id);
     let outcome = match subject {
         AssignedItem::Issue(item_id) => {
             db::milestones::set_issue_milestone(

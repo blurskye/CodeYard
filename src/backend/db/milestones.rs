@@ -64,7 +64,7 @@ native_operation!(crate::backend::db::postgres::milestones::create_milestone,
     crate::backend::db::sqlite::milestones::create_milestone,
     fn create_milestone(
     pool: &DbPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     title: &str,
     description: Option<&str>,
@@ -75,7 +75,7 @@ native_operation!(crate::backend::db::postgres::milestones::update_milestone,
     crate::backend::db::sqlite::milestones::update_milestone,
     fn update_milestone(
     pool: &DbPool,
-    actor_id: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     number: i32,
     title: &str,
@@ -86,7 +86,7 @@ native_operation!(crate::backend::db::postgres::milestones::update_milestone,
 // Sets the state to `open` or `closed`.
 native_operation!(crate::backend::db::postgres::milestones::set_milestone_state,
     crate::backend::db::sqlite::milestones::set_milestone_state,
-    fn set_milestone_state(pool: &DbPool, actor_id: i64, repo_id: i64, number: i32, state: &str) -> Result<Milestone>);
+    fn set_milestone_state(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, number: i32, state: &str) -> Result<Milestone>);
 
 // Deletes the milestone and clears it from every issue that named it.
 native_operation!(crate::backend::db::postgres::milestones::delete_milestone,
@@ -186,9 +186,9 @@ native_operation!(crate::backend::db::postgres::milestones::milestone_choices_by
 // the same repository.
 native_operation!(crate::backend::db::postgres::milestones::set_issue_milestone,
     crate::backend::db::sqlite::milestones::set_issue_milestone,
-    fn set_issue_milestone(pool: &DbPool, actor_id: i64, repo_id: i64, issue_id: i64, milestone_number: Option<i32>) -> Result<()>);
+    fn set_issue_milestone(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, issue_id: i64, milestone_number: Option<i32>) -> Result<()>);
 
 // The same for a pull request.
 native_operation!(crate::backend::db::postgres::milestones::set_pull_request_milestone,
     crate::backend::db::sqlite::milestones::set_pull_request_milestone,
-    fn set_pull_request_milestone(pool: &DbPool, actor_id: i64, repo_id: i64, pull_request_id: i64, milestone_number: Option<i32>) -> Result<()>);
+    fn set_pull_request_milestone(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, pull_request_id: i64, milestone_number: Option<i32>) -> Result<()>);
