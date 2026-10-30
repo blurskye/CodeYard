@@ -492,10 +492,11 @@ pub async fn list_admin_activity_points(
                 WHERE i.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
                 GROUP BY DATE(i.created_at)
                 UNION ALL
-                SELECT DATE(i.closed_at) AS day, 0::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT, COUNT(*)::BIGINT, 0::BIGINT
-                FROM issues i
-                WHERE i.closed_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
-                GROUP BY DATE(i.closed_at)
+                SELECT DATE(te.created_at) AS day, 0::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT, COUNT(*)::BIGINT, 0::BIGINT
+                FROM timeline_events te
+                WHERE te.subject_kind = 'issue' AND te.kind = 'closed'
+                    AND te.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
+                GROUP BY DATE(te.created_at)
                 UNION ALL
                 SELECT DATE(cr.created_at) AS day, 0::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT, COUNT(*)::BIGINT
                 FROM ci_runs cr

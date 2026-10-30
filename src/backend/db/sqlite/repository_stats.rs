@@ -154,8 +154,8 @@ pub async fn list_repo_activity_points(
                 WHERE repo_id=?1 AND merged_at>=moment
             UNION ALL SELECT date(created_at),0,0,0,1,0,0 FROM issues,window_start
                 WHERE repo_id=?1 AND created_at>=moment
-            UNION ALL SELECT date(closed_at),0,0,0,0,1,0 FROM issues,window_start
-                WHERE repo_id=?1 AND closed_at>=moment
+            UNION ALL SELECT date(created_at),0,0,0,0,1,0 FROM timeline_events,window_start
+                WHERE repo_id=?1 AND subject_kind='issue' AND kind='closed' AND created_at>=moment
             UNION ALL SELECT date(created_at),0,0,0,0,0,1 FROM ci_runs,window_start
                 WHERE repo_id=?1 AND created_at>=moment
         ), daily AS (

@@ -357,8 +357,8 @@ pub async fn list_admin_activity_points(
                 WHERE merged_at>=moment GROUP BY date(merged_at)
             UNION ALL SELECT date(created_at),0,0,0,COUNT(*),0,0 FROM issues,window_start
                 WHERE created_at>=moment GROUP BY date(created_at)
-            UNION ALL SELECT date(closed_at),0,0,0,0,COUNT(*),0 FROM issues,window_start
-                WHERE closed_at>=moment GROUP BY date(closed_at)
+            UNION ALL SELECT date(created_at),0,0,0,0,COUNT(*),0 FROM timeline_events,window_start
+                WHERE subject_kind='issue' AND kind='closed' AND created_at>=moment GROUP BY date(created_at)
             UNION ALL SELECT date(created_at),0,0,0,0,0,COUNT(*) FROM ci_runs,window_start
                 WHERE created_at>=moment GROUP BY date(created_at)
         ), count_daily AS (

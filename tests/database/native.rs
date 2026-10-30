@@ -4548,6 +4548,70 @@ async fn postgres_activity_window_starts_at_midnight_utc() {
     fixture.pool.close().await;
 }
 
+/// Reopening clears `closed_at`, but the closure stays in the activity charts.
+async fn check_reopening_keeps_the_closure_in_activity(pool: &db::DbPool) {
+    let owner = db::users::accounts::create_user(pool, "closure-owner", None)
+        .await
+        .unwrap();
+    let repo = repository(pool, owner.id, "closures").await;
+    let issue = db::issues::create_issue(pool, repo.id, owner.id, "closed once", "body")
+        .await
+        .unwrap();
+    let closed = db::issues::update_issue(
+        pool,
+        issue.id,
+        DiscussionEdit {
+            actor_id: owner.id,
+            expected_state: "open",
+            expected_updated: issue.updated_at,
+            title: None,
+            body: None,
+            state: Some("closed"),
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let reopened = db::issues::update_issue(
+        pool,
+        issue.id,
+        DiscussionEdit {
+            actor_id: owner.id,
+            expected_state: "closed",
+            expected_updated: closed.updated_at,
+            title: None,
+            body: None,
+            state: Some("open"),
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(reopened.closed_at.is_none());
+    let admin = db::users::accounts::list_admin_activity_points(pool, 7)
+        .await
+        .unwrap();
+    assert_eq!(admin.iter().map(|point| point.issues_closed).sum::<i64>(), 1);
+    let points = db::repository_stats::list_repo_activity_points(pool, repo.id, 7)
+        .await
+        .unwrap();
+    assert_eq!(points.iter().map(|point| point.issues_closed).sum::<i64>(), 1);
+}
+
+#[tokio::test]
+async fn sqlite_reopening_keeps_the_closure_in_activity() {
+    let fixture = NativeDatabase::new().await;
+    check_reopening_keeps_the_closure_in_activity(&fixture.pool).await;
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn postgres_reopening_keeps_the_closure_in_activity() {
+    let fixture = PostgresDatabase::new().await;
+    check_reopening_keeps_the_closure_in_activity(&fixture.pool).await;
+    fixture.pool.close().await;
+}
+
 fn issue_titles(entries: Vec<db::issues::IssueListEntry>) -> Vec<String> {
     let mut titles = entries
         .into_iter()
