@@ -45,9 +45,12 @@ native_operation!(crate::backend::db::postgres::issues::management::transfer,
 native_operation!(crate::backend::db::postgres::issues::management::redirect,
     crate::backend::db::sqlite::issues::management::redirect,
     fn redirect(pool: &DbPool, repo: i64, number: i32) -> Result<Option<Issue>>);
-native_operation!(crate::backend::db::postgres::issues::management::close_duplicate,
-    crate::backend::db::sqlite::issues::management::close_duplicate,
-    fn close_duplicate(pool: &DbPool, actor: impl Into<AccountActor>, repo: i64, issue: i64, duplicate: i64) -> Result<Issue>);
+pub async fn close_duplicate(pool: &DbPool, actor: impl Into<AccountActor>, repo: i64, issue: i64, duplicate: i64) -> Result<Issue> {
+    close_duplicate_transition(pool, actor, repo, issue, duplicate).await.map(|(issue, _)| issue)
+}
+native_operation!(crate::backend::db::postgres::issues::management::close_duplicate_transition,
+    crate::backend::db::sqlite::issues::management::close_duplicate_transition,
+    fn close_duplicate_transition(pool: &DbPool, actor: impl Into<AccountActor>, repo: i64, issue: i64, duplicate: i64) -> Result<(Issue, bool)>);
 native_operation!(crate::backend::db::postgres::issues::management::linked_branches,
     crate::backend::db::sqlite::issues::management::linked_branches,
     fn linked_branches(pool: &DbPool, issue: i64) -> Result<Vec<LinkedBranch>>);

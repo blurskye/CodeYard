@@ -25,6 +25,55 @@ pub struct UpdateIssueRequest {
     pub state_reason: Option<String>,
 }
 
+async fn emit_issue_event(
+    pool: &db::DbPool,
+    repository: &db::models::Repository,
+    issue: &db::models::Issue,
+    sender_id: i64,
+    action: &'static str,
+    previous: Option<&db::models::Issue>,
+) {
+    let author_id = issue.author_id;
+    let mut changes = serde_json::Map::new();
+    if let Some(previous) = previous {
+        if previous.title != issue.title {
+            changes.insert("title".into(), serde_json::json!({"from": previous.title}));
+        }
+        if previous.body != issue.body {
+            changes.insert("body".into(), serde_json::json!({"from": previous.body}));
+        }
+    }
+    let issue = issue.clone();
+    let document = repository.clone();
+    webhooks::emit(pool, repository, events::ISSUES, vec![author_id, sender_id], move |owner, people| {
+        let (author, sender) = (people.get(author_id), people.get(sender_id));
+        let mut payload = payloads::issues(action, &issue, &author, Scope { repo: &document, owner, sender: &sender });
+        if action == "edited" { payload["changes"] = serde_json::Value::Object(changes.clone()); }
+        payload
+    }).await;
+}
+
+/// The duplicate relationship, closure and timeline event commit together; accepted
+/// closure notification finishes even if the initiating HTTP request is cancelled.
+pub async fn close_duplicate(
+    pool: &db::DbPool,
+    actor: impl Into<db::users::accounts::AccountActor>,
+    repo: i64,
+    issue: i64,
+    duplicate: i64,
+) -> anyhow::Result<db::models::Issue> {
+    let pool = pool.clone();
+    let actor = actor.into();
+    tokio::spawn(async move {
+        let repository = db::repositories::records::get_repository_by_id(&pool, repo).await?
+            .ok_or(db::issues::management::Refusal::Missing)?;
+        let sender = actor.user_id();
+        let (issue, closed) = db::issues::management::close_duplicate_transition(&pool, actor, repo, issue, duplicate).await?;
+        if closed { emit_issue_event(&pool, &repository, &issue, sender, "closed", None).await; }
+        Ok::<_, anyhow::Error>(issue)
+    }).await.map_err(|_| anyhow::anyhow!("Duplicate closure was interrupted; check the issue before retrying"))?
+}
+
 pub async fn create_issue(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
@@ -106,29 +155,7 @@ pub async fn create_issue(
     )
     .await;
 
-    let (author_id, sender_id) = (issue.author_id, user.id);
-    let issue_for_hook = issue.clone();
-    let repository_for_hook = repository.clone();
-    webhooks::emit(
-        pool,
-        &repository,
-        events::ISSUES,
-        vec![author_id, sender_id],
-        move |owner, people| {
-            let (author, sender) = (people.get(author_id), people.get(sender_id));
-            payloads::issues(
-                "opened",
-                &issue_for_hook,
-                &author,
-                Scope {
-                    repo: &repository_for_hook,
-                    owner,
-                    sender: &sender,
-                },
-            )
-        },
-    )
-    .await;
+    emit_issue_event(pool, &repository, &issue, user.id, "opened", None).await;
     Ok(issue)
 }
 
@@ -290,41 +317,7 @@ pub async fn update_issue(
         (false, "closed") => "closed",
         (false, _) => "reopened",
     };
-    let (author_id, sender_id) = (issue.author_id, user.id);
-    // An edited event names the previous value of each field that changed.
-    let mut changes = serde_json::Map::new();
-    if issue.title != existing.title {
-        changes.insert("title".into(), serde_json::json!({"from": existing.title}));
-    }
-    if issue.body != existing.body {
-        changes.insert("body".into(), serde_json::json!({"from": existing.body}));
-    }
-    let issue_for_hook = issue.clone();
-    let repository_for_hook = repository.clone();
-    webhooks::emit(
-        pool,
-        &repository,
-        events::ISSUES,
-        vec![author_id, sender_id],
-        move |owner, people| {
-            let (author, sender) = (people.get(author_id), people.get(sender_id));
-            let mut payload = payloads::issues(
-                action,
-                &issue_for_hook,
-                &author,
-                Scope {
-                    repo: &repository_for_hook,
-                    owner,
-                    sender: &sender,
-                },
-            );
-            if action == "edited" {
-                payload["changes"] = serde_json::Value::Object(changes.clone());
-            }
-            payload
-        },
-    )
-    .await;
+    emit_issue_event(pool, &repository, &issue, user.id, action, Some(&existing)).await;
     Ok(issue)
 }
 
