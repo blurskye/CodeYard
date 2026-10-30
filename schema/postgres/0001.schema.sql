@@ -3901,6 +3901,7 @@ CREATE INDEX project_repositories_repository ON project_repositories(repo_id,pro
 CREATE INDEX discussion_comments_reply ON discussion_comments(reply_to_id);
 CREATE INDEX discussions_answer ON discussions(answer_id);
 CREATE INDEX issue_field_values_attribute ON issue_field_values(attribute_id);
+CREATE INDEX issue_type_assignments_attribute ON issue_type_assignments(attribute_id);
 CREATE INDEX ci_accepted_pushes_history ON ci_accepted_pushes(repo_id,reference,sha,accepted_at DESC);
 CREATE INDEX stars_roster ON stars(repo_id,created_at DESC,user_id DESC);
 CREATE INDEX watches_roster ON watches(repo_id,created_at DESC,user_id DESC) WHERE level IN ('watching','custom');
