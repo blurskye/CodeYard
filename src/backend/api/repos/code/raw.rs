@@ -89,8 +89,7 @@ pub async fn get_raw_blob(
         .blob_range(&git_ref, &path, range)
         .await
         .map_err(raw_store_error)?;
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
-
+    // Access may have been lost while the blob was read.
     check_repo_read_access(&state.pool, &repository, &headers).await?;
     Ok(raw_response(&path, blob, partial, permit))
 }
