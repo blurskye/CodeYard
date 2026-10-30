@@ -1425,11 +1425,13 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
     );
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let podman = tokio::spawn(async move {
-        // The first worker lists the run's containers and removes them, then lists the run's
-        // networks and images. Nothing else asks.
+        // The first worker lists the run's containers, reads and removes each, then lists the
+        // run's networks and images. Nothing else asks.
         for (index, (status, body)) in [
             (200, r#"[{"Id":"workflow"},{"Id":"service"}]"#),
+            (200, r#"{"Name":"/workflow","Mounts":[]}"#),
             (204, ""),
+            (200, r#"{"Name":"/service","Mounts":[]}"#),
             (204, ""),
             (200, "[]"),
             (200, "[]"),
@@ -1454,12 +1456,22 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
                 .nth(1)
                 .unwrap();
             let url = url::Url::parse(&format!("http://localhost{target}")).unwrap();
-            if matches!(index, 0 | 3 | 4) {
+            if matches!(index, 1 | 3) {
+                assert!(request.starts_with("GET "));
+                assert_eq!(
+                    url.path(),
+                    if index == 1 {
+                        "/v1.40/containers/workflow/json"
+                    } else {
+                        "/v1.40/containers/service/json"
+                    }
+                );
+            } else if matches!(index, 0 | 5 | 6) {
                 assert_eq!(
                     url.path(),
                     match index {
                         0 => "/v1.40/containers/json",
-                        3 => "/v1.40/networks",
+                        5 => "/v1.40/networks",
                         _ => "/v1.40/images/json",
                     }
                 );
@@ -1477,7 +1489,7 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
                 assert!(request.starts_with("DELETE "));
                 assert_eq!(
                     url.path(),
-                    if index == 1 {
+                    if index == 2 {
                         "/v1.40/containers/workflow"
                     } else {
                         "/v1.40/containers/service"

@@ -58,7 +58,7 @@ In Podman mode the worker runs `act` with one job at a time. Job containers have
 memory cap unless an administrator sets one under Administration → Actions; a repository
 can set lower caps and a shorter timeout in its own settings. Every container of a run carries a per-run label.
 After act exits, the worker uses that exact label on the configured Podman socket to
-remove containers left by that run; it never prunes or matches container names. Before act starts, the worker writes an ownership record for
+remove containers left by that run. It then removes the workspace volumes and service network that act named after each job container, found through that container; it never prunes or matches other names. act gets the run's ID through `CODEYARD_ACT_INSTANCE` and adds it to those names, so concurrent runs of one workflow never share them and `github.workflow` keeps the workflow's own name. Before act starts, the worker writes an ownership record for
 the run to `ci-containers/` in the state directory and holds a lock on it while the run
 executes. When the server starts, and every 30 seconds after, it removes the containers of
 each record whose lock is free, then deletes the record. Containers left by a crashed
