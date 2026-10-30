@@ -546,6 +546,9 @@ pub(super) fn assert_gh_job(
     let url = url::Url::parse(value["html_url"].as_str().unwrap()).unwrap();
     assert_eq!(url.path(), "/alice/project/actions");
     assert!(url.query().unwrap().starts_with("job="));
+    assert!(url
+        .query_pairs()
+        .any(|(key, value)| key == "workflow_job" && value == name));
     chrono::DateTime::parse_from_rfc3339(value["started_at"].as_str().unwrap()).unwrap();
     if status == "completed" {
         chrono::DateTime::parse_from_rfc3339(value["completed_at"].as_str().unwrap()).unwrap();

@@ -2070,10 +2070,16 @@ pub fn action_job(
     let api = repo_url(owner, repo);
     let run_id = run.workflow_run_id.unwrap_or(run.id);
     let branch = run.head_branch();
+    // The run page opens a job's logs by its name when no other job shares it.
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("job", &run.run_id.to_string())
+        .append_pair("view", "logs")
+        .append_pair("workflow_job", &job.name)
+        .finish();
     json!({"id":job.id,"node_id":node_id::encode("J",job.id),"run_id":run_id,"run_attempt":run.workflow_run_attempt.unwrap_or(1),
         "run_url":format!("{api}/actions/runs/{run_id}"),"head_sha":run.head_sha,"workflow_name":job.workflow_name,
         "head_branch":branch,"name":job.name,"url":format!("{api}/actions/jobs/{}",job.id),
-        "html_url":format!("{}/{}/{}/actions?job={}",link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(repo),run.run_id),
+        "html_url":format!("{}/{}/{}/actions?{query}",link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(repo)),
         "status":job.status,"conclusion":job.conclusion,"started_at":time(job.started_at.unwrap_or(job.created_at)),"completed_at":optional_time(job.completed_at),"created_at":time(job.created_at),
         "check_run_url":"","labels":job.labels.0,"runner_id":null,"runner_name":if run.engine.as_deref()==Some("codeyard-actions"){Some("codeyard-actions")}else{None},"runner_group_id":null,"runner_group_name":null,
         "steps":steps.iter().map(|step|json!({"number":step.number,"name":step.name,"status":step.status,"conclusion":step.conclusion,"started_at":time(step.started_at),"completed_at":optional_time(step.completed_at)})).collect::<Vec<_>>()})
