@@ -57,7 +57,12 @@ async fn fill(
                     }
                 }
             }
-            payload["issue"] = stored;
+            // A transfer committed while the document was read could have swapped in the
+            // destination's labels and milestone. A transfer moves the issue and gives it a new
+            // number, so the document is kept only if the issue is still here under its number.
+            if still_here(pool, repo, item, &payload["issue"]).await? {
+                payload["issue"] = stored;
+            }
         }
         if payload["comment"].is_object() {
             comment(pool, repo, item, &mut payload["comment"]).await?;
@@ -103,6 +108,21 @@ async fn topics(pool: &DbPool, repo_id: i64) -> anyhow::Result<Vec<String>> {
             .remove(&repo_id)
             .unwrap_or_default(),
     )
+}
+
+/// Whether `item` is still the issue `event` describes in `repo`. Pull requests do not move.
+async fn still_here(
+    pool: &DbPool,
+    repo: &Repository,
+    item: AssignedItem,
+    event: &Value,
+) -> anyhow::Result<bool> {
+    let AssignedItem::Issue(id) = item else {
+        return Ok(true);
+    };
+    Ok(db::issues::get_issue_by_id(pool, id).await?.is_some_and(|issue| {
+        issue.repo_id == repo.id && Some(i64::from(issue.number)) == event["number"].as_i64()
+    }))
 }
 
 /// A pull request's issue document has a `pull_request` object and the pull request's id.
