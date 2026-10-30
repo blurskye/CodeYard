@@ -26,7 +26,7 @@ fn packet(input: &mut &[u8]) -> Result<Option<Vec<u8>>> {
     Ok(Some(payload))
 }
 
-fn append_packet(output: &mut Vec<u8>, line: &str) {
+pub(crate) fn append_packet(output: &mut Vec<u8>, line: &str) {
     output.extend_from_slice(format!("{:04x}", line.len() + 4).as_bytes());
     output.extend_from_slice(line.as_bytes());
 }
