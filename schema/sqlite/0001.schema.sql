@@ -1640,6 +1640,7 @@ CREATE TABLE notification_threads (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     UNIQUE(user_id,scope_repository_id,subject_type,subject_key)
 );
+CREATE INDEX notification_threads_subject ON notification_threads(scope_repository_id,subject_type,subject_key,user_id);
 
 CREATE TABLE notification_thread_subscriptions (
     thread_id INTEGER PRIMARY KEY REFERENCES notification_threads(id) ON DELETE CASCADE,
