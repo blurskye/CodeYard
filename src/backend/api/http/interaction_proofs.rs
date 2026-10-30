@@ -21,7 +21,8 @@ pub(crate) async fn prepare(
     request: Request,
     next: Next,
 ) -> Response {
-    let contribution = ["/issues", "/issues/new", "/pulls", "/pulls/new", "/comments", "/reviews", "/review"]
+    // Review comment replies and review submissions end in /replies and /events.
+    let contribution = ["/issues", "/issues/new", "/pulls", "/pulls/new", "/comments", "/replies", "/reviews", "/review", "/events"]
         .iter().any(|suffix| request.uri().path().ends_with(suffix));
     if !contribution || request.method() != Method::POST || (!request.headers().contains_key(header::COOKIE)
         && !request.headers().contains_key(header::AUTHORIZATION))

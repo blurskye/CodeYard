@@ -376,6 +376,7 @@ fn dispatch(
             package.id,
             auth.token.id,
             bytes.to_vec(),
+            db::packages::Charge::Upload,
         )
         .await
         .map_err(Error::db)?;

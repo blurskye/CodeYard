@@ -37,7 +37,8 @@ impl Xml {
 }
 
 pub(super) fn xml(bytes: &[u8]) -> Result<Xml> {
-    if bytes.len() > METADATA_LIMIT {
+    // XML forbids NUL, and PostgreSQL cannot keep it in the JSON metadata built from this.
+    if bytes.len() > METADATA_LIMIT || bytes.contains(&0) {
         return Err(Error::invalid());
     }
     let mut reader = Reader::from_reader(bytes);

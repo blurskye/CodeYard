@@ -186,7 +186,13 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                             )
                             .await
                             .map_err(Error::db)?;
-                            db::packages::reserve_blob(&state.pool, package.id, token, &blob)
+                            db::packages::reserve_blob(
+                                &state.pool,
+                                package.id,
+                                token,
+                                &blob,
+                                db::packages::Charge::Upload,
+                            )
                                 .await
                                 .map_err(Error::db)?;
                             Ok::<_, Error>(blob)
@@ -339,6 +345,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 package.id,
                 token,
                 bytes.to_vec(),
+                db::packages::Charge::Upload,
             )
             .await
             .map_err(Error::db)?;
@@ -397,7 +404,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 .map_err(|_| Error::invalid())?
                 .unwrap_or(100)
                 .clamp(1, 1000);
-            let mut tags = db::packages::tag_page(
+            let mut tags: Vec<String> = db::packages::tag_page(
                 &state.pool,
                 package.id,
                 token,
@@ -405,7 +412,10 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 n as i64 + 1,
             )
             .await
-            .map_err(Error::db)?;
+            .map_err(Error::db)?
+            .into_iter()
+            .map(|(tag, _)| tag)
+            .collect();
             let more = tags.len() > n;
             tags.truncate(n);
             let last = tags.last().cloned();
@@ -480,7 +490,14 @@ async fn append(
     if bytes.is_empty() {
         return Ok(upload);
     }
-    let chunk = packages::store(&state.pool, &state.storage, package, token, bytes.to_vec())
+    let chunk = packages::store(
+        &state.pool,
+        &state.storage,
+        package,
+        token,
+        bytes.to_vec(),
+        db::packages::Charge::Chunk(&upload.id),
+    )
         .await
         .map_err(Error::db)?;
     db::packages::append_upload(
@@ -536,7 +553,15 @@ async fn finish(
                 "Blob digest does not match",
             ));
         }
-        packages::store(&state.pool, &state.storage, package.id, token, bytes)
+        // The chunks were charged as they arrived.
+        packages::store(
+            &state.pool,
+            &state.storage,
+            package.id,
+            token,
+            bytes,
+            db::packages::Charge::Assembled,
+        )
             .await
             .map_err(Error::db)?
     };

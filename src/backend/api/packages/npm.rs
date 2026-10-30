@@ -99,7 +99,7 @@ fn valid_tag(tag: &str) -> bool {
 }
 
 fn version_metadata(namespace: &str, slug: &str, version: &db::packages::Version) -> Result<Value> {
-    if version.manifest.len() > db::packages::MAX_NPM_METADATA_BYTES {
+    if version.manifest.len() > db::packages::MAX_LISTED_METADATA_BYTES {
         return Err(Error::unavailable());
     }
     let mut metadata: Value = serde_json::from_str(&version.manifest).map_err(|_| Error::unavailable())?;
@@ -132,6 +132,9 @@ async fn dispatch(
             Json(json!({"username":auth.ok_or_else(Error::missing)?.user.username}))
                 .into_response(),
         );
+    }
+    if let Some(path) = path.strip_prefix("-/package/") {
+        return dist_tags(state, namespace, path, auth.as_ref(), request).await;
     }
     let (slug, rest) = package_name(namespace, path)?;
     let name = format!("@{namespace}/{slug}");
@@ -260,7 +263,7 @@ async fn dispatch(
         .filter(|v| v.len() == 1)
         .ok_or_else(Error::invalid)?;
     let (version, metadata) = versions.iter().next().ok_or_else(Error::invalid)?;
-    if metadata.to_string().len() > db::packages::MAX_NPM_METADATA_BYTES {
+    if metadata.to_string().len() > db::packages::MAX_LISTED_METADATA_BYTES {
         return Err(Error::invalid());
     }
     if !valid_version(version)
@@ -307,7 +310,14 @@ async fn dispatch(
         return Err(Error::invalid());
     }
     let tags: Vec<_> = tags.keys().cloned().collect();
-    let blob = packages::store(&state.pool, &state.storage, package.id, token, tarball)
+    let blob = packages::store(
+        &state.pool,
+        &state.storage,
+        package.id,
+        token,
+        tarball,
+        db::packages::Charge::Upload,
+    )
         .await
         .map_err(Error::db)?;
     let mut metadata = metadata.clone();
@@ -346,6 +356,79 @@ async fn dispatch(
         Json(json!({"ok":true,"id":name,"rev":version})),
     )
         .into_response())
+}
+
+/// `npm dist-tag`: `GET .../dist-tags` lists the tags, and `PUT` or `DELETE .../dist-tags/<tag>`
+/// points a tag at a published version or removes it.
+async fn dist_tags(
+    state: &AppState,
+    namespace: &str,
+    path: &str,
+    auth: Option<&super::Authentication>,
+    request: Request,
+) -> Result<Response> {
+    let (slug, rest) = package_name(namespace, path)?;
+    let tag = match rest.strip_prefix("dist-tags") {
+        Some("") => None,
+        Some(tag) => Some(
+            tag.strip_prefix('/')
+                .filter(|tag| valid_tag(tag))
+                .ok_or_else(Error::invalid)?,
+        ),
+        None => return Err(Error::missing()),
+    };
+    let owner = super::owner(state, namespace).await?;
+    let package = super::package(state, &owner, "npm", slug, auth, false).await?;
+    let method = request.method().clone();
+    match (method, tag) {
+        (Method::GET | Method::HEAD, None) => {
+            let token = auth.map(|auth| auth.token.id.into());
+            let (mut tags, mut after, mut bytes) = (Map::new(), String::new(), 0usize);
+            loop {
+                let page = db::packages::tag_page(&state.pool, package.id, token, &after, 100)
+                    .await
+                    .map_err(Error::db)?;
+                let done = page.len() < 100;
+                for (tag, version) in page {
+                    bytes = bytes.saturating_add(tag.len() + version.len() + 16);
+                    if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
+                        return Err(Error::unavailable());
+                    }
+                    after.clone_from(&tag);
+                    tags.insert(tag, json!(version));
+                }
+                if done {
+                    return Ok(Json(Value::Object(tags)).into_response());
+                }
+            }
+        }
+        (Method::PUT, Some(tag)) => {
+            let token = super::writer(auth)?.token.id;
+            let bytes = to_bytes(request.into_body(), 1024)
+                .await
+                .map_err(|_| Error::invalid())?;
+            let version: String = serde_json::from_slice(&bytes).map_err(|_| Error::invalid())?;
+            if !valid_version(&version) {
+                return Err(Error::invalid());
+            }
+            db::packages::set_tag(&state.pool, package.id, token, tag, &version)
+                .await
+                .map_err(Error::db)?;
+            Ok(Json(json!({"ok":true})).into_response())
+        }
+        (Method::DELETE, Some(tag)) => {
+            let token = super::writer(auth)?.token.id;
+            db::packages::delete_tag(&state.pool, package.id, token, tag)
+                .await
+                .map_err(Error::db)?;
+            Ok(Json(json!({"ok":true})).into_response())
+        }
+        _ => Err(Error(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "UNSUPPORTED",
+            "Unsupported npm operation",
+        )),
+    }
 }
 
 #[cfg(test)]

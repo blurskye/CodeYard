@@ -454,6 +454,8 @@ async fn move_directory(pool: &DbPool, repository: i64, node: i64, primary: bool
     let (primary_path, mirror_path) = if primary { (to, from) } else { (from, to) };
     let _primary = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::lock(primary_path)).await?;
     let _mirror = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::lock(mirror_path)).await?;
+    let primary_readers = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::exclusive(primary_path)).await?;
+    let mirror_readers = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::exclusive(mirror_path)).await?;
     let row = db::repositories::records::get_repository_by_id(pool, repository).await?.context("repository was deleted before relocation")?;
     anyhow::ensure!(row.storage_node_id.is_some() && (row.storage_node_id == Some(node)) == primary, "repository placement changed before relocation");
     if !primary {
@@ -462,7 +464,7 @@ async fn move_directory(pool: &DbPool, repository: i64, node: i64, primary: bool
     let from = from.to_owned();
     let to = to.to_owned();
     tokio::task::spawn_blocking(move || {
-        let (_primary, _mirror) = (_primary, _mirror);
+        let _guards = (_primary, _mirror, primary_readers, mirror_readers);
         anyhow::ensure!(!to.try_exists()?, "relocation target already exists");
         if let Some(parent) = to.parent() { std::fs::create_dir_all(parent)?; }
         std::fs::rename(from, to)?;
@@ -676,6 +678,7 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
             let path = entry.path();
             // Never wait behind an admitted Git session in the maintenance loop.
             let Ok(_reader_guard) = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::lock(&path)).await else { continue; };
+            let Ok(readers) = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::exclusive(&path)).await else { continue; };
             match db::cluster::storage_needed(pool, &uuid.to_string(), context.node_id).await {
                 Ok(true) => continue,
                 Ok(false) => {},
@@ -684,7 +687,7 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
             // Rename only. The expiry worker owns recursive deletion outside the
             // takeover loop; its restore window also protects recoverable retired bytes.
             match tokio::task::spawn_blocking(move || {
-                let _reader_guard = _reader_guard;
+                let _guards = (_reader_guard, readers);
                 mirror::retire(&path)
             }).await {
                 Ok(Ok(())) => info!(repository = %uuid, "retired storage this node no longer holds"),

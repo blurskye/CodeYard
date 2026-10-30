@@ -116,13 +116,15 @@ async fn fetch(
     let row = crate::backend::db::cluster::get_repository_by_uuid(pool, &repository.to_string())
         .await?.context("replica repository was deleted")?;
     let primary_path = crate::backend::repositories::store::primary_path(&context.repos_path, repository);
-    let (_installation, _mirror_installation) = tokio::select! {
+    let _installation = tokio::select! {
         biased;
         _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),
         guards = async {
             let primary = crate::backend::git::repository::locks::lock(&primary_path).await;
             let mirror = crate::backend::git::repository::locks::lock(mirror).await;
-            (primary, mirror)
+            let primary_readers = crate::backend::git::repository::locks::exclusive(&primary_path).await;
+            let mirror_readers = crate::backend::git::repository::locks::exclusive(mirror).await;
+            (primary, mirror, primary_readers, mirror_readers)
         } => guards,
     };
     // From here cancellation is deferred until installation has ended. Copying retains

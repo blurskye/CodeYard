@@ -149,7 +149,7 @@ impl NodeContext {
 
     /// The store of the copy this node holds. A node cannot dial itself, so the handler's
     /// own checks run in process. The caller already holds a session permit.
-    async fn own_copy(&self, request: &Request) -> Result<(RepoStore, bool, tokio::sync::OwnedMutexGuard<()>), RepoError> {
+    async fn own_copy(&self, request: &Request) -> Result<(RepoStore, bool, tokio::sync::OwnedRwLockReadGuard<()>), RepoError> {
         let handler = RpcHandler::new(self.clone());
         let admitted = handler.read_admission(request, self.key.public_key()).await?;
         readable(&admitted.store).await?;

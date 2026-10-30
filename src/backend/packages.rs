@@ -73,6 +73,7 @@ pub async fn store(
     package: i64,
     token: i64,
     bytes: Vec<u8>,
+    charge: db::packages::Charge<'_>,
 ) -> Result<Blob> {
     ensure!(bytes.len() <= MAX_OBJECT_BYTES as usize, Refusal::Blob);
     let io = std::sync::Arc::new(storage.try_acquire_io()?);
@@ -84,7 +85,7 @@ pub async fn store(
     let blob = Blob { digest: hash, size: bytes.len() as i64 };
     let key = db::packages::object_key(&blob.digest);
     let _lock = storage.lock_file(&key).await?;
-    if !db::packages::reserve_blob(pool, package, token, &blob).await? {
+    if !db::packages::reserve_blob(pool, package, token, &blob, charge).await? {
         let upload = Upload {
             key: &key,
             bytes: blob.size,

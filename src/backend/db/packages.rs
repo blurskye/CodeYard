@@ -53,6 +53,17 @@ pub struct RegistryToken {
     pub expires_at: i64,
 }
 
+/// How storing a blob counts against the uploader's package upload quota.
+#[derive(Clone, Copy)]
+pub enum Charge<'a> {
+    /// A whole upload.
+    Upload,
+    /// A chunk of the named OCI upload; the chunks of one upload count as one upload.
+    Chunk(&'a str),
+    /// A blob assembled from chunks that were already charged.
+    Assembled,
+}
+
 #[derive(sqlx::FromRow)]
 pub struct Upload {
     pub id: String,
@@ -119,7 +130,23 @@ native_operation!(crate::backend::db::postgres::packages::container_owner,
     crate::backend::db::sqlite::packages::container_owner,
     fn container_owner(pool: &DbPool, namespace: &str) -> Result<Option<Owner>>);
 
-pub const MAX_NPM_METADATA_BYTES: usize = 64 * 1024;
+/// Registry listings read up to 100 versions' metadata at a time, so publication bounds the
+/// part they read: all of it for npm and RubyGems, and all but the stored .nuspec for NuGet.
+pub const MAX_LISTED_METADATA_BYTES: usize = 64 * 1024;
+
+pub(crate) fn listed_metadata_fits(package_type: &str, manifest: &str) -> bool {
+    match package_type {
+        "npm" | "rubygems" => manifest.len() <= MAX_LISTED_METADATA_BYTES,
+        "nuget" => serde_json::from_str::<serde_json::Value>(manifest)
+            .ok()
+            .and_then(|mut catalog| {
+                catalog.as_object_mut()?.remove("nuspec");
+                Some(catalog.to_string().len() <= MAX_LISTED_METADATA_BYTES)
+            })
+            .unwrap_or(false),
+        _ => true,
+    }
+}
 pub const MAX_METADATA_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 native_operation!(crate::backend::db::postgres::packages::owner_page, crate::backend::db::sqlite::packages::owner_page,
@@ -198,6 +225,7 @@ native_operation!(crate::backend::db::postgres::packages::count_linked,
 native_operation!(crate::backend::db::postgres::packages::create,
     crate::backend::db::sqlite::packages::create,
     fn create(pool: &DbPool, owner: &Owner, kind: &str, name: &str, token: i64, repo: Option<i64>) -> Result<Package>);
+// A page of versions without their metadata (`manifest` is `{}`); read one version for it.
 native_operation!(crate::backend::db::postgres::packages::versions,
     crate::backend::db::sqlite::packages::versions,
     fn versions(pool: &DbPool, package: i64, token: Option<Credential<'_>>, deleted: bool, offset: i64, limit: i64) -> Result<Vec<Version>>);
@@ -212,7 +240,13 @@ native_operation!(crate::backend::db::postgres::packages::tags,
     fn tags(pool: &DbPool, package: i64, token: Option<Credential<'_>>, version: i64) -> Result<Vec<String>>);
 native_operation!(crate::backend::db::postgres::packages::tag_page,
     crate::backend::db::sqlite::packages::tag_page,
-    fn tag_page(pool: &DbPool, package: i64, token: Option<Credential<'_>>, after: &str, limit: i64) -> Result<Vec<String>>);
+    fn tag_page(pool: &DbPool, package: i64, token: Option<Credential<'_>>, after: &str, limit: i64) -> Result<Vec<(String, String)>>);
+native_operation!(crate::backend::db::postgres::packages::set_tag,
+    crate::backend::db::sqlite::packages::set_tag,
+    fn set_tag(pool: &DbPool, package: i64, token: i64, tag: &str, version: &str) -> Result<()>);
+native_operation!(crate::backend::db::postgres::packages::delete_tag,
+    crate::backend::db::sqlite::packages::delete_tag,
+    fn delete_tag(pool: &DbPool, package: i64, token: i64, tag: &str) -> Result<()>);
 native_operation!(crate::backend::db::postgres::packages::publish,
     crate::backend::db::sqlite::packages::publish,
     fn publish(pool: &DbPool, token: i64, new: Publish<'_>) -> Result<Version>);
@@ -224,7 +258,7 @@ native_operation!(crate::backend::db::postgres::packages::settings,
     fn settings(pool: &DbPool, package: i64, token: Credential<'_>, visibility: &str, repo: Option<i64>) -> Result<()>);
 native_operation!(crate::backend::db::postgres::packages::reserve_blob,
     crate::backend::db::sqlite::packages::reserve_blob,
-    fn reserve_blob(pool: &DbPool, package: i64, token: i64, blob: &Blob) -> Result<bool>);
+    fn reserve_blob(pool: &DbPool, package: i64, token: i64, blob: &Blob, charge: Charge<'_>) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::packages::ready_blob,
     crate::backend::db::sqlite::packages::ready_blob,
     fn ready_blob(pool: &DbPool, package: i64, token: i64, blob: &Blob) -> Result<()>);

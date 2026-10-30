@@ -204,13 +204,16 @@ fn artifact_path(run: &SarifRun, physical: &Value, checkout: Option<&str>) -> Re
         next = base["uriBaseId"].as_str();
     }
     let fallback = "https://codeyard.invalid/";
-    let mut absolute = url::Url::parse(checkout.unwrap_or(fallback))?;
+    // The checkout names a directory, also without a trailing slash.
+    let checkout = checkout.map(|base| if base.ends_with('/') { base.to_owned() } else { format!("{base}/") });
+    let mut absolute = url::Url::parse(checkout.as_deref().unwrap_or(fallback))?;
     for part in parts.into_iter().rev() {
         absolute = absolute.join(part)?;
     }
     let absolute = absolute.to_string();
     let uri = absolute.strip_prefix(fallback).unwrap_or(&absolute);
     let uri = checkout
+        .as_deref()
         .and_then(|base| {
             uri.strip_prefix(base.strip_suffix('/').unwrap_or(base))
                 .and_then(|path| path.strip_prefix('/'))

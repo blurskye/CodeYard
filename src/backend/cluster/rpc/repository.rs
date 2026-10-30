@@ -187,7 +187,7 @@ fn requires_actor(operation: &Operation) -> bool {
 pub(super) struct ReadAdmission {
     pub store: RepoStore,
     pub repo_id: Option<i64>,
-    pub guard: tokio::sync::OwnedMutexGuard<()>,
+    pub guard: tokio::sync::OwnedRwLockReadGuard<()>,
 }
 
 fn store_at(path: &Path, node_id: i64) -> Result<RepoStore, RepoError> {
@@ -254,11 +254,13 @@ impl RpcHandler {
                 // the same mutex or waiting behind a long clone.
                 let primary_guard = tokio::time::timeout(std::time::Duration::from_millis(1), crate::backend::git::locks::lock(&primary)).await.map_err(|_| unavailable())?;
                 let mirror_guard = tokio::time::timeout(std::time::Duration::from_millis(1), crate::backend::git::locks::lock(&copy)).await.map_err(|_| unavailable())?;
+                let primary_readers = tokio::time::timeout(std::time::Duration::from_millis(1), crate::backend::git::locks::exclusive(&primary)).await.map_err(|_| unavailable())?;
+                let mirror_readers = tokio::time::timeout(std::time::Duration::from_millis(1), crate::backend::git::locks::exclusive(&copy)).await.map_err(|_| unavailable())?;
                 let current = db::repositories::records::get_repository_by_id(pool, repo.id).await.map_err(|_| unavailable())?.ok_or_else(unavailable)?;
                 if current.storage_node_id != Some(self.context.node_id) { return Err(RepoError::storage_node_unavailable()); }
                 let target = primary.clone();
                 tokio::task::spawn_blocking(move || {
-                    let (_primary, _mirror) = (primary_guard, mirror_guard);
+                    let _guards = (primary_guard, mirror_guard, primary_readers, mirror_readers);
                     if !target.exists() { std::fs::rename(&copy, &target)?; }
                     Ok::<_, std::io::Error>(())
                 }).await.map_err(|_| unavailable())?.map_err(|_| unavailable())?;
@@ -454,7 +456,7 @@ impl RpcHandler {
     pub(super) async fn read_admission(&self, request: &Request, caller: iroh::PublicKey) -> Result<ReadAdmission, RepoError> {
         if !request.operation.is_read_only() { return Err(invalid("read admission requires a read-only operation")); }
         let (store, _) = self.authorize_request(request, caller).await?;
-        let guard = crate::backend::git::locks::lock(Path::new(store.location())).await;
+        let guard = crate::backend::git::locks::read(Path::new(store.location())).await;
         let (current, repo_id) = self.authorize_request(request, caller).await?;
         if current.location() != store.location() { return Err(RepoError::storage_node_unavailable()); }
         Ok(ReadAdmission { store, repo_id, guard })

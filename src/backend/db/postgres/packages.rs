@@ -1,5 +1,5 @@
 use crate::backend::db::packages::{
-    self, Blob, Credential, Listing, Owner, Package, Permission, Publish, Refusal, Upload, Version,
+    self, Blob, Charge, Credential, Listing, Owner, Package, Permission, Publish, Refusal, Upload, Version,
 };
 use anyhow::{ensure, Result};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -431,7 +431,7 @@ pub async fn versions(
         false,
     )
     .await?;
-    let rows = sqlx::query_as("SELECT id,package_id,name,digest,media_type,jsonb_build_object('version',manifest::jsonb->'version')::text AS manifest,downloads,created_at,updated_at,deleted_at FROM package_versions WHERE package_id=$1 AND ((deleted_at IS NOT NULL)=$2) ORDER BY id DESC LIMIT $3 OFFSET $4")
+    let rows = sqlx::query_as("SELECT id,package_id,name,digest,media_type,'{}' AS manifest,downloads,created_at,updated_at,deleted_at FROM package_versions WHERE package_id=$1 AND ((deleted_at IS NOT NULL)=$2) ORDER BY id DESC LIMIT $3 OFFSET $4")
         .bind(package).bind(deleted).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
@@ -453,7 +453,7 @@ pub async fn version_page(
     } else {
         "manifest"
     };
-    let rows = sqlx::query_as(&format!("SELECT id,package_id,name,digest,media_type,CASE WHEN octet_length({metadata})<=65536 THEN {metadata} ELSE NULL END AS manifest,downloads,created_at,updated_at,deleted_at FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL AND id<$2 ORDER BY id DESC LIMIT 100"))
+    let rows = sqlx::query_as(&format!("SELECT id,package_id,name,digest,media_type,{metadata} AS manifest,downloads,created_at,updated_at,deleted_at FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL AND id<$2 ORDER BY id DESC LIMIT 100"))
         .bind(package).bind(before).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
@@ -508,13 +508,44 @@ pub async fn tag_page(
     token: Option<Credential<'_>>,
     after: &str,
     limit: i64,
-) -> Result<Vec<String>> {
+) -> Result<Vec<(String, String)>> {
     let mut tx = begin(pool).await?;
     authorize(&mut tx, package, token, Permission::Read, false).await?;
-    let tags = sqlx::query_scalar("SELECT t.tag FROM package_tags t JOIN package_versions v ON v.id=t.version_id AND v.package_id=t.package_id WHERE t.package_id=$1 AND v.deleted_at IS NULL AND t.tag>$2 ORDER BY t.tag LIMIT $3")
+    let tags = sqlx::query_as("SELECT t.tag,v.name FROM package_tags t JOIN package_versions v ON v.id=t.version_id AND v.package_id=t.package_id WHERE t.package_id=$1 AND v.deleted_at IS NULL AND t.tag>$2 ORDER BY t.tag LIMIT $3")
         .bind(package).bind(after).bind(limit).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(tags)
+}
+
+/// Points `tag` at the published version named `version`.
+pub async fn set_tag(pool: &PgPool, package: i64, token: i64, tag: &str, version: &str) -> Result<()> {
+    let mut tx = begin(pool).await?;
+    authorize(&mut tx, package, Some(token), Permission::Write, false).await?;
+    let changed = sqlx::query("INSERT INTO package_tags(package_id,tag,version_id) SELECT $1,$2,id FROM package_versions WHERE package_id=$1 AND name=$3 AND deleted_at IS NULL ON CONFLICT(package_id,tag) DO UPDATE SET version_id=excluded.version_id")
+        .bind(package).bind(tag).bind(version).execute(&mut *tx).await?;
+    ensure!(changed.rows_affected() == 1, Refusal::Missing);
+    sqlx::query("UPDATE packages SET updated_at=$2 WHERE id=$1")
+        .bind(package)
+        .bind(packages::now())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn delete_tag(pool: &PgPool, package: i64, token: i64, tag: &str) -> Result<()> {
+    let mut tx = begin(pool).await?;
+    authorize(&mut tx, package, Some(token), Permission::Write, false).await?;
+    let changed = sqlx::query("DELETE FROM package_tags WHERE package_id=$1 AND tag=$2")
+        .bind(package).bind(tag).execute(&mut *tx).await?;
+    ensure!(changed.rows_affected() == 1, Refusal::Missing);
+    sqlx::query("UPDATE packages SET updated_at=$2 WHERE id=$1")
+        .bind(package)
+        .bind(packages::now())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 pub async fn rubygems_file(pool: &PgPool, owner: &Owner, token: Option<Credential<'_>>, filename: &str) -> Result<Blob> {
@@ -656,7 +687,7 @@ pub async fn publish(pool: &PgPool, token: i64, new: Publish<'_>) -> Result<Vers
         false,
     )
     .await?;
-    ensure!(package.package_type != "npm" || new.manifest.len() <= packages::MAX_NPM_METADATA_BYTES, Refusal::Conflict);
+    ensure!(packages::listed_metadata_fits(&package.package_type, new.manifest), Refusal::Conflict);
     if package.package_type == "rubygems" {
         let collision: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM packages p JOIN package_versions v ON v.package_id=p.id WHERE p.owner_kind=$1 AND COALESCE(p.owner_user_id,p.owner_org_id)=$2 AND p.package_type='rubygems' AND p.id<>$3 AND p.name||'-'||v.name=$4)")
             .bind(&package.owner_kind).bind(package.owner_user_id.or(package.owner_org_id)).bind(package.id).bind(format!("{}-{}", package.name, new.name)).fetch_one(&mut *tx).await?;
@@ -826,12 +857,34 @@ pub async fn settings(
     Ok(())
 }
 
-pub async fn reserve_blob(pool: &PgPool, package: i64, token: i64, blob: &Blob) -> Result<bool> {
+pub async fn reserve_blob(
+    pool: &PgPool,
+    package: i64,
+    token: i64,
+    blob: &Blob,
+    charge: Charge<'_>,
+) -> Result<bool> {
     let mut tx = begin(pool).await?;
     authorize(&mut tx, package, Some(token), Permission::Write, false).await?;
     let actor = actor(&mut tx, Some(token), Permission::Write).await?;
-    super::files::charge_upload_in_transaction(&mut tx, actor.id.ok_or(Refusal::Unauthorized)?, "package", blob.size.max(1)).await?;
+    let user = actor.id.ok_or(Refusal::Unauthorized)?;
     let now = packages::now();
+    match charge {
+        Charge::Upload => {
+            super::files::charge_upload_in_transaction(&mut tx, user, "package", blob.size.max(1), None).await?;
+        }
+        Charge::Chunk(upload) => {
+            let earlier: Option<uuid::Uuid> = sqlx::query_scalar("SELECT charge_id FROM package_uploads WHERE id=$1 AND package_id=$2 AND token_id=$3 AND expires_at>$4 FOR UPDATE")
+                .bind(upload).bind(package).bind(token).bind(now).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
+            let charge = super::files::charge_upload_in_transaction(&mut tx, user, "package", blob.size.max(1), earlier).await?;
+            sqlx::query("UPDATE package_uploads SET charge_id=$2 WHERE id=$1")
+                .bind(upload)
+                .bind(charge)
+                .execute(&mut *tx)
+                .await?;
+        }
+        Charge::Assembled => {}
+    }
     sqlx::query("INSERT INTO package_blobs(digest,size,expires_at) VALUES($1,$2,$3) ON CONFLICT(digest) DO NOTHING")
         .bind(&blob.digest).bind(blob.size).bind(now + crate::backend::db::files::RESTORE_WINDOW_SECONDS).execute(&mut *tx).await?;
     let (size, ready, deleting): (i64, bool, bool) =

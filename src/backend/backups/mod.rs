@@ -451,7 +451,9 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
         let mut path = PathBuf::from(&repository.disk_path);
         let name = directory_name(&path)?;
         if !path.is_dir() {
-            path = path.parent().context("repository path has no parent")?.join(mirror::DELETED_DIR).join(&name);
+            // Deleted after the snapshot: the newest kept copy, `deleted/<seconds>-<name>`.
+            let parent = path.parent().context("repository path has no parent")?;
+            path = mirror::deleted_copy(parent, &name)?.unwrap_or_default();
         }
         ensure!(path.is_dir(), "snapshot repository {} is missing; backup not published", repository.id);
         reject_symlink(&path)?;

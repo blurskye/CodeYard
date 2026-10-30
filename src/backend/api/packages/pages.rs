@@ -238,17 +238,21 @@ async fn model(
         .map_err(|error| failure(ctx, error))?;
         let mut more = versions.len() > 30;
         versions.truncate(30);
-        let selected = if let Some(id) = params.get("version") {
-            let id = id
-                .parse()
-                .map_err(|_| ctx.error(StatusCode::NOT_FOUND, "Package version not found."))?;
-            Some(
+        // The page lists versions without metadata, so the selected one is read whole.
+        let selected = match params.get("version") {
+            Some(id) => Some(
+                id.parse()
+                    .map_err(|_| ctx.error(StatusCode::NOT_FOUND, "Package version not found."))?,
+            ),
+            None => versions.first().map(|version| version.id),
+        };
+        let selected = match selected {
+            Some(id) => Some(
                 db::packages::version_by_id(&ctx.state.pool, package.id, credential, id)
                     .await
                     .map_err(|error| failure(ctx, error))?,
-            )
-        } else {
-            versions.first().cloned()
+            ),
+            None => None,
         };
         if settings {
             let mut deleted = db::packages::versions(

@@ -1,21 +1,39 @@
 //! Repository serialization. Ordinary operations use the process mutex and Git CAS;
 //! branch provenance additionally uses an interprocess lease. Publication subprocesses
 //! inherit that lease, so cancellation or a backend crash cannot release it before Git exits.
+//! Readers of a directory share a reader guard, which replacing, moving or retiring the
+//! directory takes exclusively.
 use std::fs::File;
 use std::future::Future;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
-use tokio::sync::OwnedMutexGuard;
+use tokio::sync::{OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard};
 
 static LOCKS: LazyLock<crate::backend::locks::KeyedMutex<PathBuf>> =
     LazyLock::new(Default::default);
+static READERS: LazyLock<crate::backend::locks::KeyedRwLock<PathBuf>> =
+    LazyLock::new(Default::default);
+
+fn canonical(path: &Path) -> PathBuf {
+    // Receive sessions use canonical paths; API writes may retain a symlink alias.
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
 
 pub async fn lock(path: &Path) -> OwnedMutexGuard<()> {
-    // Receive sessions use canonical paths; API writes may retain a symlink alias.
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    LOCKS.lock(path).await
+    LOCKS.lock(canonical(path)).await
+}
+
+/// Held for the whole of a read, alongside other readers and writers of the directory.
+pub async fn read(path: &Path) -> OwnedRwLockReadGuard<()> {
+    READERS.read(canonical(path)).await
+}
+
+/// Waits for the directory's readers to finish and keeps new ones out, before it is replaced,
+/// moved or retired. Take it after `lock`.
+pub async fn exclusive(path: &Path) -> OwnedRwLockWriteGuard<()> {
+    READERS.write(canonical(path)).await
 }
 
 #[derive(Debug)]
