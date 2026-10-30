@@ -84,8 +84,8 @@ pub struct PlannedJob {
     pub max_parallel: Option<u32>,
     pub timeout_minutes: Option<f64>,
     pub continue_on_error: bool,
-    /// The workflow's `env` with the job's on top.
-    pub env: BTreeMap<String, String>,
+    /// Workflow and job environment scopes, retained until their execution contexts exist.
+    pub env: Vec<EnvironmentTemplate>,
     /// `defaults.run`, the job's over the workflow's.
     pub default_shell: Option<String>,
     pub default_working_directory: Option<String>,
@@ -118,6 +118,45 @@ pub struct Container {
     pub options: Option<String>,
 }
 
+/// Environment entries or one expression producing an environment object.
+#[derive(Clone, Debug, PartialEq)]
+pub enum EnvironmentTemplate {
+    Entries(BTreeMap<String, String>),
+    Expression(String),
+}
+impl Default for EnvironmentTemplate {
+    fn default() -> Self { Self::Entries(BTreeMap::new()) }
+}
+impl EnvironmentTemplate {
+    pub fn resolve(&self, contexts: &Contexts, status: Status) -> anyhow::Result<BTreeMap<String, String>> {
+        use crate::expressions::{self, Value};
+        fn insert(result: &mut BTreeMap<String, String>, bytes: &mut usize, key: String, value: Value) -> anyhow::Result<()> {
+            anyhow::ensure!(!key.is_empty() && !key.contains(['=', '\0']), "Invalid environment name");
+            anyhow::ensure!(!matches!(value, Value::Array(_) | Value::Object(_)), "Environment values must be scalar");
+            let value = value.to_text();
+            anyhow::ensure!(!value.contains('\0'), "Invalid environment value");
+            *bytes = bytes.saturating_add(key.len()).saturating_add(value.len());
+            anyhow::ensure!(*bytes <= crate::values::MAX_ENVIRONMENT_FILE_BYTES, "Environment scope exceeds its delivery budget");
+            result.insert(key, value);
+            Ok(())
+        }
+        let mut result = BTreeMap::new();
+        let mut bytes = 0;
+        match self {
+            Self::Entries(entries) => for (key, template) in entries {
+                insert(&mut result, &mut bytes, key.clone(), expressions::interpolate(template, contexts, status)?)?;
+            },
+            Self::Expression(template) => {
+                let Value::Object(entries) = expressions::interpolate(template, contexts, status)? else {
+                    anyhow::bail!("Environment expression must produce an object");
+                };
+                for (key, value) in entries { insert(&mut result, &mut bytes, key, value)?; }
+            }
+        }
+        Ok(result)
+    }
+}
+
 /// A step of a job or of a composite action.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Step {
@@ -125,7 +164,7 @@ pub struct Step {
     pub name: Option<String>,
     pub condition: Option<String>,
     pub action: StepAction,
-    pub env: BTreeMap<String, String>,
+    pub env: EnvironmentTemplate,
     pub continue_on_error: Option<String>,
     pub timeout_minutes: Option<String>,
 }

@@ -1502,9 +1502,8 @@ impl Job {
         }
         self.contexts.values.insert("runner".into(), Value::from_json(&serde_json::json!({"os":runner_os(),"arch":runner_arch(),"name":"codeyard-actions","temp":self.temp.path(),"tool_cache":self.cache.join("tool_cache"),"environment":"self-hosted","debug":self.env.get("RUNNER_DEBUG").cloned().unwrap_or_default()})));
         std::fs::create_dir_all(self.cache.join("tool_cache"))?;
-        for (key, template) in &self.plan.env {
-            self.env
-                .insert(key.clone(), text(template, &self.contexts, self.status)?);
+        for scope in &self.plan.env {
+            self.env.extend(scope.resolve(&self.contexts, self.status)?);
         }
         self.contexts.values.insert("env".into(), object(&self.env));
         // An empty job container image means no job container, as on GitHub.
@@ -1729,9 +1728,7 @@ impl Job {
             let mut env = self.env.clone();
             env.extend(self.saved_env.clone());
             self.contexts.values.insert("env".into(), object(&env));
-            for (key, template) in &step.env {
-                env.insert(key.clone(), text(template, &self.contexts, self.status)?);
-            }
+            env.extend(step.env.resolve(&self.contexts, self.status)?);
             self.contexts.values.insert("env".into(), object(&env));
             let name = text(&name, &self.contexts, self.status)?;
             let name = commands::bounded(&self.log.masker.mask(&name), 1024);
@@ -2224,7 +2221,7 @@ mod tests {
                 shell: Some("bash".into()),
                 working_directory: None,
             },
-            env: BTreeMap::new(),
+            env: Default::default(),
             continue_on_error: None,
             timeout_minutes: None,
         }
@@ -2246,7 +2243,7 @@ mod tests {
             max_parallel: None,
             timeout_minutes: Some(1.0),
             continue_on_error: false,
-            env: BTreeMap::new(),
+            env: Vec::new(),
             default_shell: None,
             default_working_directory: None,
             container: None,

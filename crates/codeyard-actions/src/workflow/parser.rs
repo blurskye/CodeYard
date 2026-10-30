@@ -247,6 +247,17 @@ pub(super) fn string_map(value: Option<&Value>, path: &str) -> Result<BTreeMap<S
         .collect()
 }
 
+pub(super) fn environment_template(value: Option<&Value>, path: &str) -> Result<super::EnvironmentTemplate> {
+    if let Some(Value::String(template)) = value {
+        let template = template.trim();
+        let inner = template.strip_prefix("${{").with_context(|| format!("{path}: Expected an environment mapping or whole expression"))?;
+        ensure!(crate::expressions::expression_end(inner)? + 2 == inner.len(), "{path}: Expected a whole expression");
+        Ok(super::EnvironmentTemplate::Expression(template.into()))
+    } else {
+        Ok(super::EnvironmentTemplate::Entries(string_map(value, path)?))
+    }
+}
+
 fn condition(value: &Value, contexts: &[&str], hash_files: bool, path: &str) -> Result<()> {
     let s = text(value, path)?;
     if s.trim().is_empty() {
@@ -707,7 +718,7 @@ pub(super) fn parse(yaml: &str) -> Result<Workflow> {
                 templates(v, WORKFLOW, &[], "run-name")?;
             }
             Some("env") => {
-                string_map(Some(v), "env")?;
+                environment_template(Some(v), "env")?;
                 templates(v, &["github", "inputs", "vars", "secrets"], &[], "env")?;
             }
             Some("defaults") => defaults(v, false, "defaults")?,
@@ -816,7 +827,7 @@ fn validate_job(job: &Mapping, path: &str) -> Result<()> {
             "concurrency" => concurrency(v, MATRIX, &p)?,
             "defaults" => defaults(v, true, &p)?,
             "env" => {
-                string_map(Some(v), &p)?;
+                environment_template(Some(v), &p)?;
                 templates(
                     v,
                     &[
@@ -962,9 +973,8 @@ pub(super) fn parse_step(value: &Value) -> Result<Step> {
         match key.as_str() {
             "continue-on-error" => boolean(v, &p)?,
             "timeout-minutes" => number(v, &p)?,
-            "env" | "with" => {
-                string_map(Some(v), &p)?;
-            }
+            "env" => { environment_template(Some(v), &p)?; }
+            "with" => { string_map(Some(v), &p)?; }
             "shell" | "uses" => nonempty(v, &p)?,
             _ => {}
         }
@@ -995,7 +1005,7 @@ pub(super) fn parse_step(value: &Value) -> Result<Step> {
         name: get("name")?,
         condition: get("if")?,
         action,
-        env: string_map(map.get("env"), "step.env")?,
+        env: environment_template(map.get("env"), "step.env")?,
         continue_on_error: get("continue-on-error")?,
         timeout_minutes: get("timeout-minutes")?,
     })

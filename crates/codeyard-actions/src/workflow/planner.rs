@@ -1,5 +1,5 @@
 //! Follows actions/runner's `Sdk/WorkflowParser/Conversion/{MatrixBuilder,JobNameBuilder}.cs`.
-use super::parser::{keys, mapping, string_map, strings, text};
+use super::parser::{environment_template, keys, mapping, string_map, strings, text};
 use super::{parse_step, Concurrency, Container, PlannedJob, Workflow};
 use crate::expressions::{evaluate, evaluate_condition, interpolate, Contexts, Status, Value};
 use anyhow::{bail, ensure, Context, Result};
@@ -646,8 +646,8 @@ pub(super) fn expand(
         let concurrency = resolved(job, "concurrency", &contexts, status)?
             .map(|value| job_concurrency(&value, &format!("{path}.concurrency")))
             .transpose()?;
-        let mut env = string_map(workflow.fields.get("env"), "env")?;
-        env.extend(string_map(job.get("env"), &format!("{path}.env"))?);
+        let env = vec![environment_template(workflow.fields.get("env"), "env")?,
+            environment_template(job.get("env"), &format!("{path}.env"))?];
         let (shell, directory) = defaults(&workflow.fields)?;
         let (job_shell, job_directory) = defaults(job)?;
         let container = job
