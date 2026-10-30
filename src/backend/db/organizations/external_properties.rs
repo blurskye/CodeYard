@@ -3,6 +3,7 @@ use super::OrganizationOutcome;
 use crate::backend::db::DbPool;
 use anyhow::Result;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[derive(sqlx::FromRow)]
 pub struct Installation {
@@ -28,6 +29,46 @@ pub fn valid_value(value: &Value) -> bool {
                     .iter()
                     .all(|value| value.as_str().is_some_and(|value| value.len() <= 4096))
         })
+}
+
+/// The last value given for each repository and property, split into values to
+/// store and values to remove (a null value unsets the property).
+pub(crate) struct Changes<'a> {
+    pub repositories: Vec<&'a str>,
+    pub sets: Vec<(&'a str, &'a str, String)>,
+    pub unsets: Vec<(&'a str, &'a str)>,
+}
+
+/// Validates every value and groups them by repository, or returns `None` when one is invalid.
+pub(crate) fn changes(values: &[RepositoryValue]) -> Result<Option<Changes<'_>>> {
+    let mut latest = BTreeMap::new();
+    for value in values {
+        if !valid_name(&value.property_name) || !valid_value(&value.value) {
+            return Ok(None);
+        }
+        latest.insert(
+            (value.repository_name.as_str(), value.property_name.as_str()),
+            &value.value,
+        );
+    }
+    let mut changes = Changes {
+        repositories: Vec::new(),
+        sets: Vec::new(),
+        unsets: Vec::new(),
+    };
+    for ((repository, property), value) in latest {
+        if changes.repositories.last() != Some(&repository) {
+            changes.repositories.push(repository);
+        }
+        if value.is_null() {
+            changes.unsets.push((repository, property));
+        } else {
+            changes
+                .sets
+                .push((repository, property, serde_json::to_string(value)?));
+        }
+    }
+    Ok(Some(changes))
 }
 
 native_operation!(crate::backend::db::postgres::organizations::external_properties::installations,
