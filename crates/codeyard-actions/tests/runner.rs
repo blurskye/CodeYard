@@ -1128,6 +1128,150 @@ fn sigterm_stops_the_running_process_group() {
 }
 
 #[test]
+fn independent_jobs_run_together_and_dependents_wait_for_them() {
+    let output = run(
+        r#"
+on: push
+jobs:
+  first:
+    runs-on: self-hosted
+    steps:
+      - run: |
+          touch first-started
+          for i in $(seq 200); do test -f second-started && break; sleep 0.05; done
+          test -f second-started
+          touch first-done
+  second:
+    runs-on: self-hosted
+    steps:
+      - run: |
+          touch second-started
+          for i in $(seq 200); do test -f first-started && break; sleep 0.05; done
+          test -f first-started
+          touch second-done
+  last:
+    needs: [first, second]
+    runs-on: self-hosted
+    steps:
+      - run: test -f first-done && test -f second-done && echo dependents-$(echo waited)
+"#,
+        &[],
+        &["--concurrent-jobs", "2"],
+    );
+    success(&output);
+    assert!(
+        log(&output).contains("dependents-waited"),
+        "{}",
+        log(&output)
+    );
+}
+
+#[test]
+fn concurrent_jobs_and_max_parallel_bound_how_many_jobs_run_at_once() {
+    // mkdir is atomic, so a job that overlaps another one holding the directory fails.
+    let output = run(
+        r#"
+on: push
+jobs:
+  first:
+    runs-on: self-hosted
+    steps:
+      - run: mkdir running && sleep 1 && rmdir running
+  second:
+    runs-on: self-hosted
+    steps:
+      - run: mkdir running && sleep 1 && rmdir running
+"#,
+        &[],
+        &["--concurrent-jobs", "1"],
+    );
+    success(&output);
+    let output = run(
+        r#"
+on: push
+jobs:
+  matrix:
+    runs-on: self-hosted
+    strategy:
+      max-parallel: 1
+      matrix:
+        leg: [a, b]
+    steps:
+      - run: |
+          mkdir matrix-running
+          touch leg-started
+          for i in $(seq 200); do test -f other-started && break; sleep 0.05; done
+          sleep 0.5
+          rmdir matrix-running
+  other:
+    runs-on: self-hosted
+    steps:
+      - run: |
+          touch other-started
+          for i in $(seq 200); do test -f leg-started && break; sleep 0.05; done
+          test -f leg-started
+"#,
+        &[],
+        &["--concurrent-jobs", "4"],
+    );
+    success(&output);
+}
+
+#[cfg(unix)]
+#[test]
+fn sigterm_stops_every_running_job() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(
+        workspace.path().join("workflow.yml"),
+        r#"
+on: push
+jobs:
+  first:
+    runs-on: self-hosted
+    steps:
+      - run: |
+          echo ready > first-ready
+          (sleep 2; echo leaked > first-leaked) &
+          wait
+  second:
+    runs-on: self-hosted
+    steps:
+      - run: |
+          echo ready > second-ready
+          (sleep 2; echo leaked > second-leaked) &
+          wait
+"#,
+    )
+    .unwrap();
+    let mut child = command(workspace.path())
+        .args(["--concurrent-jobs", "2"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !["first-ready", "second-ready"]
+        .iter()
+        .all(|name| workspace.path().join(name).exists())
+    {
+        if std::time::Instant::now() > deadline || child.try_wait().unwrap().is_some() {
+            let _ = child.kill();
+            panic!(
+                "Runner did not start both jobs: {}",
+                log(&child.wait_with_output().unwrap())
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success(), "{}", log(&output));
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    assert!(!workspace.path().join("first-leaked").exists());
+    assert!(!workspace.path().join("second-leaked").exists());
+}
+
+#[test]
 #[ignore = "needs node"]
 fn node_pre_main_post_and_state() {
     let output = run(r#"
