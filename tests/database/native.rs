@@ -4168,7 +4168,7 @@ async fn profile_after_update(
     organization: i64,
     profile: db::organizations::OrganizationProfile,
 ) -> (Option<String>, Option<String>) {
-    match db::organizations::update_organization_profile(pool, actor, organization, &profile)
+    match db::organizations::update_organization_profile(pool, actor, &db::users::accounts::AccountCredential::Trusted, organization, &profile)
         .await
         .unwrap()
     {

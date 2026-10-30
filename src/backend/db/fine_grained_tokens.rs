@@ -133,8 +133,9 @@ native_operation!(crate::backend::db::postgres::fine_grained_tokens::policy, cra
     /// The organization's policy, or the defaults when it has none.
     fn policy(pool: &DbPool, org: i64) -> Result<Policy>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::set_policy, crate::backend::db::sqlite::fine_grained_tokens::set_policy,
-    /// Saves the policy while `actor` owns the organization; false when they do not.
-    fn set_policy(pool: &DbPool, actor: i64, org: i64, policy: &Policy) -> Result<bool>);
+    /// Saves the policy while `actor` owns the organization through a live `credential`;
+    /// false when they do not.
+    fn set_policy(pool: &DbPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, org: i64, policy: &Policy) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::organization_tokens, crate::backend::db::sqlite::fine_grained_tokens::organization_tokens,
     /// The organization's newest 1000 tokens with `status` whose users are still members.
     fn organization_tokens(pool: &DbPool, org: i64, status: &str) -> Result<Vec<Token>>);

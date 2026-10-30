@@ -1057,7 +1057,10 @@ async fn apply(
         Command::Create(_) => return Err(invalid(ctx)),
         Command::Delete => return delete_with_repositories(ctx, actor, org).await,
         Command::Profile(profile) => {
-            organizations::update_organization_profile(pool, actor, org, &profile)
+            let credential = crate::backend::db::users::accounts::AccountCredential::Session(
+                ctx.session_id.as_deref().unwrap_or(""),
+            );
+            organizations::update_organization_profile(pool, actor, &credential, org, &profile)
                 .await
                 .map(unit)
         }

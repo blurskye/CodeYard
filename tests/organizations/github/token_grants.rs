@@ -292,6 +292,7 @@ async fn contract(pg: bool) {
     assert!(!db::fine_grained_tokens::set_policy(
         f.pool(),
         erin,
+        &db::users::accounts::AccountCredential::Trusted,
         org,
         &db::fine_grained_tokens::policy(f.pool(), org).await.unwrap()
     )

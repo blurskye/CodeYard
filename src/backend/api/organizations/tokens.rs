@@ -200,7 +200,13 @@ async fn apply(ctx: &PageContext, actor: i64, org: i64, form: &Fields) -> anyhow
     Ok(match (organization::field(form, "action"), token) {
         ("token-policy", _) => match policy(form) {
             Ok(policy) => {
-                changed(db::fine_grained_tokens::set_policy(pool, actor, org, &policy).await?)
+                let credential = db::users::accounts::AccountCredential::Session(
+                    ctx.session_id.as_deref().unwrap_or(""),
+                );
+                changed(
+                    db::fine_grained_tokens::set_policy(pool, actor, &credential, org, &policy)
+                        .await?,
+                )
             }
             Err(message) => Outcome::Invalid(message),
         },

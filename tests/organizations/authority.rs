@@ -357,7 +357,7 @@ async fn atomic_creation_safe_metadata_namespace_and_validation(database: &Datab
     database.org(owner, "Creation_owner").await;
     database.execute("UPDATE organizations SET billing_email='private@example.test',is_verified=TRUE WHERE id=$1", &[organization.id]).await;
     let safe = applied(
-        update_organization_profile(&database.pool, owner, organization.id, &profile())
+        update_organization_profile(&database.pool, owner, &db::users::accounts::AccountCredential::Trusted, organization.id, &profile())
             .await
             .unwrap(),
     );
@@ -412,19 +412,19 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
             .unwrap(),
     );
     assert!(matches!(
-        update_organization_profile(&database.pool, outsider, org.id, &profile())
+        update_organization_profile(&database.pool, outsider, &db::users::accounts::AccountCredential::Trusted, org.id, &profile())
             .await
             .unwrap(),
         Denied
     ));
     assert!(matches!(
-        update_organization_profile(&database.pool, member, org.id, &profile())
+        update_organization_profile(&database.pool, member, &db::users::accounts::AccountCredential::Trusted, org.id, &profile())
             .await
             .unwrap(),
         Denied
     ));
     applied(
-        update_organization_profile(&database.pool, admin, org.id, &profile())
+        update_organization_profile(&database.pool, admin, &db::users::accounts::AccountCredential::Trusted, org.id, &profile())
             .await
             .unwrap(),
     );
@@ -476,7 +476,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
             )
             .await;
         assert!(matches!(
-            update_organization_profile(&database.pool, admin, org.id, &profile())
+            update_organization_profile(&database.pool, admin, &db::users::accounts::AccountCredential::Trusted, org.id, &profile())
                 .await
                 .unwrap(),
             Denied
@@ -502,7 +502,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
             .await;
     }
     assert!(matches!(
-        update_organization_profile(&database.pool, 900_000, org.id, &profile())
+        update_organization_profile(&database.pool, 900_000, &db::users::accounts::AccountCredential::Trusted, org.id, &profile())
             .await
             .unwrap(),
         Denied
@@ -1046,7 +1046,7 @@ async fn invalid_persisted_roles_levels_and_joins_fail_closed(database: &Databas
             Denied
         ));
         assert!(matches!(
-            update_organization_profile(&database.pool, member, org.id, &profile())
+            update_organization_profile(&database.pool, member, &db::users::accounts::AccountCredential::Trusted, org.id, &profile())
                 .await
                 .unwrap(),
             Denied
@@ -1657,7 +1657,7 @@ async fn numeric_user_org_collision_and_personal_owner_unchanged(database: &Data
         db::models::AccessLevel::None
     );
     assert!(matches!(
-        update_organization_profile(&database.pool, 700000, 700000, &profile())
+        update_organization_profile(&database.pool, 700000, &db::users::accounts::AccountCredential::Trusted, 700000, &profile())
             .await
             .unwrap(),
         Denied
@@ -2642,7 +2642,7 @@ async fn suspended_governance_and_explicit_audited_recovery(database: &Database)
         "suspension retains reads, not tenant write authority"
     );
     assert!(matches!(
-        update_organization_profile(&database.pool, replacement, org.id, &profile())
+        update_organization_profile(&database.pool, replacement, &db::users::accounts::AccountCredential::Trusted, org.id, &profile())
             .await
             .unwrap(),
         OrganizationOutcome::Suspended
@@ -2879,7 +2879,7 @@ async fn postgres_organization_writes_finish_before_banning_non_owner_admin() {
                 }
                 "profile" => {
                     let metadata = applied(
-                        update_organization_profile(&pool, admin, org, &profile())
+                        update_organization_profile(&pool, admin, &db::users::accounts::AccountCredential::Trusted, org, &profile())
                             .await
                             .unwrap(),
                     );
@@ -2920,7 +2920,7 @@ async fn postgres_organization_writes_finish_before_banning_non_owner_admin() {
             db::users::transitions::BanChange::Updated(user) if user.is_banned
         ));
         assert!(matches!(
-            update_organization_profile(&database.pool, admin, org, &profile())
+            update_organization_profile(&database.pool, admin, &db::users::accounts::AccountCredential::Trusted, org, &profile())
                 .await
                 .unwrap(),
             Denied

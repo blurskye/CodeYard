@@ -158,9 +158,11 @@ async fn active_owner(connection: &mut SqliteConnection, actor: i64, org: i64) -
     ))
 }
 
-pub async fn set_policy(pool: &SqlitePool, actor: i64, org: i64, policy: &Policy) -> Result<bool> {
+pub async fn set_policy(pool: &SqlitePool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, org: i64, policy: &Policy) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !active_owner(&mut tx, actor, org).await? {
+    if !active_owner(&mut tx, actor, org).await?
+        || !super::users::transitions::retain_write_credential(&mut tx, actor, credential).await?
+    {
         return Ok(false);
     }
     sqlx::query("INSERT INTO organization_token_policies(org_id,fine_grained_allowed,fine_grained_approval,classic_allowed,max_lifetime_days) VALUES($1,$2,$3,$4,$5) ON CONFLICT(org_id) DO UPDATE SET fine_grained_allowed=excluded.fine_grained_allowed,fine_grained_approval=excluded.fine_grained_approval,classic_allowed=excluded.classic_allowed,max_lifetime_days=excluded.max_lifetime_days")

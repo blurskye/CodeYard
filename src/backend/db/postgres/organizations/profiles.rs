@@ -39,12 +39,17 @@ pub async fn create_organization(
 pub async fn update_organization_profile(
     pool: &PgPool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     org: i64,
     input: &OrganizationProfile,
 ) -> Result<OrganizationOutcome<OrganizationMetadata>> {
     let mut tx = begin(pool).await?;
     let role = require_org!(tx, actor, org);
     if !administers(role) {
+        return Ok(Denied);
+    }
+    // The browser session or token that sent the change must still be live when it commits.
+    if !crate::backend::db::postgres::users::transitions::retain_write_credential(&mut tx, actor, credential).await? {
         return Ok(Denied);
     }
     // The authority check locked this row, so an omitted field keeps the value committed
