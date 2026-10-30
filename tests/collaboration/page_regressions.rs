@@ -257,6 +257,7 @@ async fn label_submissions(pg: bool) {
     );
     let labels = db::labels::get_issue_labels(
         database.pool(),
+        repo.id,
         db::issues::get_issue(database.pool(), repo.id, 1)
             .await
             .unwrap()

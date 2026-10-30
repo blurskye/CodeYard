@@ -350,7 +350,7 @@ async fn milestone_page(
         .iter()
         .map(|entry| entry.issue.id)
         .collect::<Vec<_>>();
-    let mut labels = db::labels::get_issues_labels(&ctx.state.pool, &ids)
+    let mut labels = db::labels::get_issues_labels(&ctx.state.pool, repo.record.id, &ids)
         .await
         .map_err(|_| unavailable(ctx))?;
     let mut assignees = listed_assignees(ctx, &ids, false).await?;
@@ -388,7 +388,7 @@ async fn milestone_page(
         .iter()
         .map(|value| value.pull_request.id)
         .collect::<Vec<_>>();
-    let mut pull_labels = db::labels::get_pull_requests_labels(&ctx.state.pool, &pull_ids)
+    let mut pull_labels = db::labels::get_pull_requests_labels(&ctx.state.pool, repo.record.id, &pull_ids)
         .await
         .map_err(|_| unavailable(ctx))?;
     let mut pull_assignees = listed_assignees(ctx, &pull_ids, true).await?;

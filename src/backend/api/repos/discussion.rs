@@ -538,7 +538,7 @@ async fn item_with_comparison(
                 .map_err(|_| unavailable(ctx))?
                 .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
             let author = author(ctx, value.author_id).await?;
-            let labels = db::labels::get_issue_labels(&ctx.state.pool, value.id)
+            let labels = db::labels::get_issue_labels(&ctx.state.pool, repo.record.id, value.id)
                 .await
                 .map_err(|_| unavailable(ctx))?;
             let assignees = db::assignees::list_assignees(
@@ -609,7 +609,7 @@ async fn item_with_comparison(
                 _ => false,
             };
             let milestone_id = value.milestone_id;
-            let labels = db::labels::get_pull_request_labels(&ctx.state.pool, current)
+            let labels = db::labels::get_pull_request_labels(&ctx.state.pool, repo.record.id, current)
                 .await
                 .map_err(|_| unavailable(ctx))?;
             let head_sha = value.head_sha.clone();

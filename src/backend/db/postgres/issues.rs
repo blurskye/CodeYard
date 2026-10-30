@@ -570,7 +570,7 @@ pub async fn list_viewer_issues(
     if !ids.is_empty() {
         let mut labels = std::collections::BTreeMap::<i64, Vec<super::models::Label>>::new();
         for row in
-            crate::backend::db::postgres::labels::get_items_labels(&mut tx, LabelTarget::Issue, &ids)
+            crate::backend::db::postgres::labels::get_items_labels(&mut tx, LabelTarget::Issue, None, &ids)
                 .await?
         {
             labels.entry(row.item_id).or_default().push(row.label);

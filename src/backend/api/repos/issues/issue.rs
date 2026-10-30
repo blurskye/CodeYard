@@ -98,7 +98,7 @@ pub(crate) async fn load_issue_response(
     issue: db::models::Issue,
     author: Option<UserResponse>,
 ) -> anyhow::Result<IssueResponse> {
-    let labels = db::labels::get_issue_labels(pool, issue.id).await?;
+    let labels = db::labels::get_issue_labels(pool, issue.repo_id, issue.id).await?;
     let comments_count = db::issues::count_issue_comments(pool, &[issue.id])
         .await?
         .first()

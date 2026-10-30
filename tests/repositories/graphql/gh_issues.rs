@@ -739,7 +739,7 @@ async fn contract(pg: bool) {
         json!({"input":{"labelableId":parent,"labelIds":[label_id]}}),
     )
     .await;
-    assert!(db::labels::get_issue_labels(f.pool(), parent_record.id)
+    assert!(db::labels::get_issue_labels(f.pool(), parent_record.repo_id, parent_record.id)
         .await
         .unwrap()
         .is_empty());
@@ -771,7 +771,7 @@ async fn contract(pg: bool) {
             .title,
         "Renamed by gh"
     );
-    assert!(db::labels::get_issue_labels(f.pool(), parent_record.id)
+    assert!(db::labels::get_issue_labels(f.pool(), parent_record.repo_id, parent_record.id)
         .await
         .unwrap()
         .is_empty());
@@ -843,7 +843,7 @@ async fn contract(pg: bool) {
         vec!["gh-issues-alice"]
     );
     assert_eq!(
-        db::labels::get_issue_labels(f.pool(), metadata_record.id)
+        db::labels::get_issue_labels(f.pool(), metadata_record.repo_id, metadata_record.id)
             .await
             .unwrap()[0]
             .id,
@@ -871,7 +871,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .is_empty());
-    assert!(db::labels::get_issue_labels(f.pool(), metadata_record.id)
+    assert!(db::labels::get_issue_labels(f.pool(), metadata_record.repo_id, metadata_record.id)
         .await
         .unwrap()
         .is_empty());
@@ -1158,7 +1158,7 @@ async fn contract(pg: bool) {
         target.id
     );
     assert_eq!(
-        db::labels::get_issue_labels(f.pool(), moved.id)
+        db::labels::get_issue_labels(f.pool(), moved.repo_id, moved.id)
             .await
             .unwrap()[0]
             .id,

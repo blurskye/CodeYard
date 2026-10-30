@@ -120,7 +120,7 @@ async fn document(
     } else {
         json!({"label":pull.head_branch,"ref":pull.head_branch,"sha":pull.head_sha,"user":null,"repo":null})
     };
-    let labels = db::labels::get_pull_request_labels(&state.pool, pull.id)
+    let labels = db::labels::get_pull_request_labels(&state.pool, repo.id, pull.id)
         .await
         .map_err(Error::unavailable)?;
     value["labels"] = json!(labels

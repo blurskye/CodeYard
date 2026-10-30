@@ -289,7 +289,7 @@ async fn pull_request(
         document["head"]["user"] = Value::Null;
         document["head"]["label"] = json!(head_branch);
     }
-    let labels = db::labels::get_pull_request_labels(pool, pull.id).await?;
+    let labels = db::labels::get_pull_request_labels(pool, pull.repo_id, pull.id).await?;
     document["labels"] = json!(labels
         .iter()
         .map(|label| payloads::label(label, owner, &repo.name))

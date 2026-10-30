@@ -109,7 +109,7 @@ native_operation!(crate::backend::db::postgres::labels::update_label,
 
 native_operation!(crate::backend::db::postgres::labels::update_label_checked,
     crate::backend::db::sqlite::labels::update_label_checked,
-    fn update_label_checked(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, label_id: i64, fields: (Option<&str>, Option<&str>, Option<&str>), expected: Option<&str>) -> Result<Label>);
+    fn update_label_checked(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, label_id: i64, fields: (Option<&str>, Option<&str>, Option<Option<&str>>), expected: Option<&str>) -> Result<Label>);
 
 native_operation!(crate::backend::db::postgres::labels::delete_label,
     crate::backend::db::sqlite::labels::delete_label,
@@ -137,31 +137,35 @@ native_operation!(crate::backend::db::postgres::labels::remove_pull_request_labe
 
 native_operation!(crate::backend::db::postgres::labels::get_issue_labels,
     crate::backend::db::sqlite::labels::get_issue_labels,
-    fn get_issue_labels(pool: &DbPool, issue_id: i64) -> Result<Vec<Label>>);
+    fn get_issue_labels(pool: &DbPool, repo_id: i64, issue_id: i64) -> Result<Vec<Label>>);
 
 native_operation!(crate::backend::db::postgres::labels::get_pull_request_labels,
     crate::backend::db::sqlite::labels::get_pull_request_labels,
-    fn get_pull_request_labels(pool: &DbPool, pull_request_id: i64) -> Result<Vec<Label>>);
+    fn get_pull_request_labels(pool: &DbPool, repo_id: i64, pull_request_id: i64) -> Result<Vec<Label>>);
 
 /// Loads a list's label assignments in bounded queries, preserving label-name order.
+/// Only labels of `repo_id` are returned, so an item moved away meanwhile shows none.
 pub async fn get_issues_labels(
     pool: &DbPool,
+    repo_id: i64,
     issue_ids: &[i64],
 ) -> Result<std::collections::BTreeMap<i64, Vec<Label>>> {
-    labels_of_items(pool, LabelTarget::Issue, issue_ids).await
+    labels_of_items(pool, LabelTarget::Issue, repo_id, issue_ids).await
 }
 
 /// The same as `get_issues_labels`, for the rows of a pull request list.
 pub async fn get_pull_requests_labels(
     pool: &DbPool,
+    repo_id: i64,
     pull_request_ids: &[i64],
 ) -> Result<std::collections::BTreeMap<i64, Vec<Label>>> {
-    labels_of_items(pool, LabelTarget::PullRequest, pull_request_ids).await
+    labels_of_items(pool, LabelTarget::PullRequest, repo_id, pull_request_ids).await
 }
 
 async fn labels_of_items(
     pool: &DbPool,
     target: LabelTarget,
+    repo_id: i64,
     item_ids: &[i64],
 ) -> Result<std::collections::BTreeMap<i64, Vec<Label>>> {
     let mut ids = item_ids.to_vec();
@@ -174,6 +178,7 @@ async fn labels_of_items(
                 crate::backend::db::postgres::labels::get_items_labels(
                     &mut *pool.acquire().await?,
                     target,
+                    Some(repo_id),
                     chunk,
                 )
                 .await?
@@ -182,6 +187,7 @@ async fn labels_of_items(
                 crate::backend::db::sqlite::labels::get_items_labels(
                     &mut *pool.acquire().await?,
                     target,
+                    Some(repo_id),
                     chunk,
                 )
                 .await?

@@ -2650,7 +2650,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
     let ids = db::users::accounts::get_users_by_ids(pool, &[reader.id, i64::MAX])
         .await
         .unwrap();
-    json!({"issue":[closed.number,pr.number],"closed":[closed.state,closed.title,closed.closed_by_id],"labels":db::labels::get_issue_labels(pool,issue.id).await.unwrap().into_iter().map(|l|l.name).collect::<Vec<_>>(),
+    json!({"issue":[closed.number,pr.number],"closed":[closed.state,closed.title,closed.closed_by_id],"labels":db::labels::get_issue_labels(pool,repo.id,issue.id).await.unwrap().into_iter().map(|l|l.name).collect::<Vec<_>>(),
         "comments":db::issues::list_issue_comments(pool,issue.id,100,0).await.unwrap().len(),"reviews":db::pull_requests::reviews::list_pull_request_reviews(pool,pr.id,100,0).await.unwrap().into_iter().map(|entry|entry.review.state).collect::<Vec<_>>(),
         "languages":db::repository_stats::get_repo_languages(pool,repo.id).await.unwrap().into_iter().map(|l|(l.language,l.bytes,l.percentage)).collect::<Vec<_>>(),
         "social":[repo.stars_count,repo.watchers_count,repo.forks_count],"followers":db::following::count_user_followers(pool,owner.id).await.unwrap(),"rule":[rule.required_status_checks,rule.push_allowances],
@@ -2902,7 +2902,10 @@ async fn check_list_display_projections(pool: &db::DbPool) {
         .unwrap();
     let mut issue_ids: Vec<i64> = (1_000_000..1_000_600).collect();
     issue_ids.extend([newer.id, older.id, newer.id]);
-    let batched = labels::get_issues_labels(pool, &issue_ids).await.unwrap();
+    let batched = labels::get_issues_labels(pool, base.id, &issue_ids).await.unwrap();
+    // Labels are read for the repository the caller resolved, never another one.
+    assert!(labels::get_issues_labels(pool, i64::MAX, &issue_ids).await.unwrap().is_empty());
+    assert!(labels::get_issue_labels(pool, i64::MAX, newer.id).await.unwrap().is_empty());
     assert_eq!(batched.len(), 1);
     assert_eq!(
         batched[&newer.id]
@@ -2912,7 +2915,7 @@ async fn check_list_display_projections(pool: &db::DbPool) {
         vec![alpha.id, zeta.id]
     );
     assert_eq!(
-        labels::get_issue_labels(pool, newer.id)
+        labels::get_issue_labels(pool, base.id, newer.id)
             .await
             .unwrap()
             .iter()
@@ -2920,7 +2923,7 @@ async fn check_list_display_projections(pool: &db::DbPool) {
             .collect::<Vec<_>>(),
         vec![alpha.id, zeta.id]
     );
-    assert!(labels::get_issues_labels(pool, &[])
+    assert!(labels::get_issues_labels(pool, base.id, &[])
         .await
         .unwrap()
         .is_empty());
@@ -3396,7 +3399,7 @@ async fn sqlite_read_failures_propagate() {
             .await
             .is_err()
     );
-    assert!(db::labels::get_issues_labels(&fixture.pool, &[issue.id])
+    assert!(db::labels::get_issues_labels(&fixture.pool, repo.id, &[issue.id])
         .await
         .is_err());
     assert!(

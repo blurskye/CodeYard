@@ -150,7 +150,7 @@ pub async fn list_issues(
         .iter()
         .map(|entry| entry.issue.id)
         .collect::<Vec<_>>();
-    let mut labels = db::labels::get_issues_labels(&state.pool, &ids)
+    let mut labels = db::labels::get_issues_labels(&state.pool, repository.id, &ids)
         .await
         .map_err(|_| storage_unavailable())?;
     let mut comments: HashMap<i64, i64> = db::issues::count_issue_comments(&state.pool, &ids)
@@ -430,7 +430,7 @@ pub(crate) async fn native_index(
                 .iter()
                 .map(|entry| entry.issue.id)
                 .collect::<Vec<_>>();
-            let mut labels = db::labels::get_issues_labels(&ctx.state.pool, &ids)
+            let mut labels = db::labels::get_issues_labels(&ctx.state.pool, repo.record.id, &ids)
                 .await
                 .map_err(|_| unavailable(&ctx))?;
             let mut assignees = listed_assignees(&ctx, &ids, false).await?;
@@ -488,7 +488,7 @@ pub(crate) async fn native_index(
                 .iter()
                 .map(|value| value.pull_request.id)
                 .collect::<Vec<_>>();
-            let mut labels = db::labels::get_pull_requests_labels(&ctx.state.pool, &ids)
+            let mut labels = db::labels::get_pull_requests_labels(&ctx.state.pool, repo.record.id, &ids)
                 .await
                 .map_err(|_| unavailable(&ctx))?;
             let mut assignees = listed_assignees(&ctx, &ids, true).await?;

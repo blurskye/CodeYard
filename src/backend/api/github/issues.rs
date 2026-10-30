@@ -224,10 +224,10 @@ async fn documents_page(
     };
     let authors = sorted(issues.values().map(|issue| issue.author_id).chain(pulls.values().map(|pull| pull.author_id)).collect());
     let associations = crate::backend::repositories::access::author_associations(pool, repo, &authors).await.map_err(Error::unavailable)?;
-    let issue_labels = db::labels::get_issues_labels(pool, &issue_ids)
+    let issue_labels = db::labels::get_issues_labels(pool, repo.id, &issue_ids)
         .await
         .map_err(Error::unavailable)?;
-    let pull_labels = db::labels::get_pull_requests_labels(pool, &pull_ids)
+    let pull_labels = db::labels::get_pull_requests_labels(pool, repo.id, &pull_ids)
         .await
         .map_err(Error::unavailable)?;
     let issue_comments: HashMap<i64, i64> = db::issues::count_issue_comments(pool, &issue_ids)

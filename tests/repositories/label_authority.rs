@@ -92,11 +92,16 @@ async fn snapshot(pool: &db::DbPool, repos: &[i64]) -> Value {
             .await
             .unwrap()
             .unwrap();
+        // Every listed repository's labels, so a foreign label attached here still shows.
+        let mut associations = Vec::new();
+        for owner in repos {
+            associations.extend(db::labels::get_issue_labels(pool, *owner, issue.id).await.unwrap());
+        }
         rows.push(json!({
             "repo": db::repositories::records::get_repository_by_id(pool, *repo).await.unwrap(),
             "issue": &issue,
             "labels": db::labels::list_repo_labels(pool, *repo).await.unwrap(),
-            "associations": db::labels::get_issue_labels(pool, issue.id).await.unwrap(),
+            "associations": associations,
         }));
     }
     json!(rows)
@@ -154,7 +159,7 @@ async fn accepted(f: &Fixture, actor: i64, repo: i64, issue: i64, baseline: i64)
         .await
         .unwrap();
     assert_eq!(
-        db::labels::get_issue_labels(pool, issue)
+        db::labels::get_issue_labels(pool, repo, issue)
             .await
             .unwrap()
             .len(),
@@ -246,7 +251,7 @@ async fn authority_matrix(pg: bool) {
         db::labels::add_issue_label(f.pool(), member, repo, authored.id, label).await,
         LabelWriteRefusal::Denied,
     );
-    assert!(db::labels::get_issue_labels(f.pool(), authored.id)
+    assert!(db::labels::get_issue_labels(f.pool(), repo, authored.id)
         .await
         .unwrap()
         .is_empty());
@@ -514,7 +519,7 @@ async fn scope_and_batches(pg: bool) {
         .await
         .unwrap();
     assert_eq!(
-        db::labels::get_issue_labels(f.pool(), issue)
+        db::labels::get_issue_labels(f.pool(), repo, issue)
             .await
             .unwrap()
             .len(),
@@ -523,7 +528,7 @@ async fn scope_and_batches(pg: bool) {
     db::labels::set_issue_labels(f.pool(), owner, repo, issue, &[])
         .await
         .unwrap();
-    assert!(db::labels::get_issue_labels(f.pool(), issue)
+    assert!(db::labels::get_issue_labels(f.pool(), repo, issue)
         .await
         .unwrap()
         .is_empty());

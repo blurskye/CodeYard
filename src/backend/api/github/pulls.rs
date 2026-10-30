@@ -108,7 +108,7 @@ pub(super) async fn document(
         (pull.head_branch.clone(), Value::Null, Value::Null)
     };
     value["head"] = json!({"label": head_label, "ref": pull.head_branch, "sha": pull.head_sha, "user": head_user, "repo": head_repo});
-    let labels = db::labels::get_pull_request_labels(&state.pool, pull.id)
+    let labels = db::labels::get_pull_request_labels(&state.pool, pull.repo_id, pull.id)
         .await
         .map_err(Error::unavailable)?;
     value["labels"] = json!(labels

@@ -393,7 +393,7 @@ async fn suggestions(pg: bool) {
     )
     .await;
     assert_eq!(
-        db::labels::get_issue_labels(f.pool(), issue.id)
+        db::labels::get_issue_labels(f.pool(), issue.repo_id, issue.id)
             .await
             .unwrap()
             .len(),
@@ -642,7 +642,7 @@ async fn suggestions(pg: bool) {
         let status = reply.status().as_u16();
         document(reply, op, status).await;
     }
-    let labels = db::labels::get_issue_labels(f.pool(), issue.id)
+    let labels = db::labels::get_issue_labels(f.pool(), issue.repo_id, issue.id)
         .await
         .unwrap();
     assert_eq!(labels.iter().any(|l| l.id == race_label.id), accepted);

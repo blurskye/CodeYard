@@ -192,12 +192,13 @@ pub(super) async fn item(
 
 async fn assigned(
     pool: &db::DbPool,
+    repo_id: i64,
     item: db::assignees::AssignedItem,
 ) -> Result<Vec<db::models::Label>> {
     match item {
-        db::assignees::AssignedItem::Issue(id) => db::labels::get_issue_labels(pool, id).await,
+        db::assignees::AssignedItem::Issue(id) => db::labels::get_issue_labels(pool, repo_id, id).await,
         db::assignees::AssignedItem::PullRequest(id) => {
-            db::labels::get_pull_request_labels(pool, id).await
+            db::labels::get_pull_request_labels(pool, repo_id, id).await
         }
     }
     .map_err(Error::unavailable)
@@ -212,7 +213,7 @@ async fn list_on_issue(
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let item = item(&state.pool, repo.id, &p["issue_number"]).await?;
-    let labels = assigned(&state.pool, item).await?;
+    let labels = assigned(&state.pool, repo.id, item).await?;
     let (offset, limit) = page.window()?;
     let next = labels.len() > offset + limit;
     page.response(
@@ -296,7 +297,7 @@ pub(in crate::backend::api) async fn save_labels(
         }
     }
     .map_err(write_error)?;
-    assigned(pool, item).await
+    assigned(pool, repo_id, item).await
 }
 
 async fn add(
@@ -351,7 +352,7 @@ async fn remove_from_issue(
         return Err(Error::missing());
     }
     Ok(Json(
-        assigned(&state.pool, item)
+        assigned(&state.pool, repo.id, item)
             .await?
             .iter()
             .map(|label| payloads::label(label, &p["owner"], &repo.name))

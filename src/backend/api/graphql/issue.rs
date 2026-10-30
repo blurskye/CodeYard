@@ -88,9 +88,9 @@ pub(super) async fn resolve(
         "labels" => {
             connection::validate(ctx)?;
             let labels = if ty == "Issue" {
-                db::labels::get_issue_labels(pool, id).await
+                db::labels::get_issue_labels(pool, repo.id, id).await
             } else {
-                db::labels::get_pull_request_labels(pool, id).await
+                db::labels::get_pull_request_labels(pool, repo.id, id).await
             }
             .map_err(unavailable)?;
             repository::label_connection(ctx, labels, if ty == "PullRequest" { "pull-requests" } else { "issues" })

@@ -410,20 +410,21 @@ pub(crate) async fn touch_subject(
     Ok(())
 }
 
-pub async fn get_issue_labels(pool: &PgPool, issue_id: i64) -> Result<Vec<Label>> {
-    get_item_labels(pool, LabelTarget::Issue, issue_id).await
+pub async fn get_issue_labels(pool: &PgPool, repo_id: i64, issue_id: i64) -> Result<Vec<Label>> {
+    get_item_labels(pool, LabelTarget::Issue, repo_id, issue_id).await
 }
 
-pub async fn get_pull_request_labels(pool: &PgPool, pull_request_id: i64) -> Result<Vec<Label>> {
-    get_item_labels(pool, LabelTarget::PullRequest, pull_request_id).await
+pub async fn get_pull_request_labels(pool: &PgPool, repo_id: i64, pull_request_id: i64) -> Result<Vec<Label>> {
+    get_item_labels(pool, LabelTarget::PullRequest, repo_id, pull_request_id).await
 }
 
-async fn get_item_labels(pool: &PgPool, target: LabelTarget, item_id: i64) -> Result<Vec<Label>> {
+async fn get_item_labels(pool: &PgPool, target: LabelTarget, repo_id: i64, item_id: i64) -> Result<Vec<Label>> {
     let (_, link, column) = target.tables();
     let labels = sqlx::query_as::<_, Label>(&format!(
-        "SELECT l.* FROM labels l INNER JOIN {link} il ON l.id = il.label_id WHERE il.{column} = $1 ORDER BY l.name"
+        "SELECT l.* FROM labels l INNER JOIN {link} il ON l.id = il.label_id WHERE il.{column} = $1 AND l.repo_id = $2 ORDER BY l.name"
     ))
     .bind(item_id)
+    .bind(repo_id)
     .fetch_all(pool)
     .await?;
 
@@ -562,13 +563,20 @@ async fn record_label_changes(tx: &mut Transaction<'_, Postgres>, repo: i64, tar
 pub(crate) async fn get_items_labels(
     connection: &mut sqlx::PgConnection,
     target: LabelTarget,
+    repo: Option<i64>,
     item_ids: &[i64],
 ) -> Result<Vec<ItemLabel>> {
     debug_assert!(!item_ids.is_empty() && item_ids.len() <= 500);
     let (_, link, column) = target.tables();
     let mut query = sqlx::QueryBuilder::<sqlx::Postgres>::new(format!(
-        "SELECT il.{column} AS item_id, l.* FROM {link} il JOIN labels l ON l.id=il.label_id WHERE il.{column} IN ("
+        "SELECT il.{column} AS item_id, l.* FROM {link} il JOIN labels l ON l.id=il.label_id WHERE "
     ));
+    // A repository's list reads only that repository's labels; `None` is for reads that
+    // already chose their items in the same snapshot.
+    if let Some(repo) = repo {
+        query.push("l.repo_id=").push_bind(repo).push(" AND ");
+    }
+    query.push(format!("il.{column} IN ("));
     let mut ids = query.separated(",");
     for id in item_ids {
         ids.push_bind(id);
