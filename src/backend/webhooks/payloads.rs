@@ -1102,6 +1102,7 @@ pub fn conversation_comment(
 
 pub fn issue_comment(
     action: &str,
+    previous_body: Option<&str>,
     comment: &IssueComment,
     issue: &Issue,
     issue_author: &Person,
@@ -1113,7 +1114,7 @@ pub fn issue_comment(
         owner,
         sender,
     } = scope;
-    json!({
+    let mut payload = json!({
         "action": action,
         "issue": issue_json(issue, issue_author, repo, owner),
         "comment": ({
@@ -1123,7 +1124,11 @@ pub fn issue_comment(
         }),
         "repository": repository(repo, owner),
         "sender": person(sender),
-    })
+    });
+    if let Some(body) = previous_body {
+        payload["changes"] = json!({"body":{"from":body}});
+    }
+    payload
 }
 
 /// The issue page resolves `?comment=` to the page that holds the comment. A deleted comment

@@ -185,6 +185,7 @@ pub async fn create_issue_comment(
             );
             payloads::issue_comment(
                 "created",
+                None,
                 &comment_for_hook,
                 &issue_for_hook,
                 &issue_author,
@@ -302,6 +303,7 @@ pub async fn edit_issue_comment(
             );
             payloads::issue_comment(
                 "edited",
+                Some(&previous.body),
                 &comment_for_hook,
                 &issue_for_hook,
                 &issue_author,
@@ -357,6 +359,7 @@ pub async fn delete_issue_comment(
                 );
                 payloads::issue_comment(
                     "deleted",
+                    None,
                     &comment_for_hook,
                     &issue_for_hook,
                     &issue_author,
