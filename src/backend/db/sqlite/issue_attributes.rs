@@ -114,16 +114,21 @@ pub async fn owner_can_configure(pool: &SqlitePool, repo: i64, actor: i64) -> Re
 async fn begin_write(
     pool: &SqlitePool,
     repo: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     issue: Option<i64>,
     owner: bool,
 ) -> Result<Transaction<'_, Sqlite>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
     lock_metadata(&mut tx).await?;
+    if let Some(token) = grant.token_id {
+        anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "issues").await?, Refusal::Denied);
+    }
     if owner {
         anyhow::ensure!(
             owner_connection(&mut tx, repo, actor).await?,
@@ -407,12 +412,14 @@ pub async fn delete_definition(pool: &SqlitePool, repo: i64, actor: i64, id: i64
 pub async fn set_values(
     pool: &SqlitePool,
     repo: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     issue: i64,
     values: &[ValueInput],
     replace: bool,
 ) -> Result<()> {
-    let mut tx = begin_write(pool, repo, actor, Some(issue), false).await?;
+    let grant = actor.into();
+    let actor = grant.user_id;
+    let mut tx = begin_write(pool, repo, grant, Some(issue), false).await?;
     fields_in_transaction(&mut tx, repo, actor, issue, values, replace).await?;
     tx.commit().await?;
     Ok(())
@@ -480,11 +487,13 @@ pub(crate) async fn fields_in_transaction(
 pub async fn delete_value(
     pool: &SqlitePool,
     repo: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     issue: i64,
     field: i64,
 ) -> Result<()> {
-    let mut tx = begin_write(pool, repo, actor, Some(issue), false).await?;
+    let grant = actor.into();
+    let actor = grant.user_id;
+    let mut tx = begin_write(pool, repo, grant, Some(issue), false).await?;
     let fields = catalog_connection(&mut tx, repo, Some(actor), "field").await?;
     anyhow::ensure!(fields.iter().any(|f| f.id == field), Refusal::Missing);
     let result =
@@ -502,11 +511,13 @@ pub async fn delete_value(
 pub async fn set_type(
     pool: &SqlitePool,
     repo: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     issue: i64,
     kind: Option<i64>,
 ) -> Result<()> {
-    let mut tx = begin_write(pool, repo, actor, Some(issue), false).await?;
+    let grant = actor.into();
+    let actor = grant.user_id;
+    let mut tx = begin_write(pool, repo, grant, Some(issue), false).await?;
     type_in_transaction(&mut tx, repo, actor, issue, kind).await?;
     tx.commit().await?;
     Ok(())

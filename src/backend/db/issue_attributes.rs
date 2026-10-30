@@ -274,8 +274,8 @@ native_operation!(crate::backend::db::postgres::issue_attributes::configure,crat
 native_operation!(crate::backend::db::postgres::issue_attributes::delete_definition,crate::backend::db::sqlite::issue_attributes::delete_definition,
     fn delete_definition(pool:&DbPool,repo:i64,actor:i64,id:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::issue_attributes::set_values,crate::backend::db::sqlite::issue_attributes::set_values,
-    fn set_values(pool:&DbPool,repo:i64,actor:i64,issue:i64,values:&[ValueInput],replace:bool)->Result<()>);
+    fn set_values(pool:&DbPool,repo:i64,actor:impl Into<crate::backend::db::users::tokens::Actor>,issue:i64,values:&[ValueInput],replace:bool)->Result<()>);
 native_operation!(crate::backend::db::postgres::issue_attributes::delete_value,crate::backend::db::sqlite::issue_attributes::delete_value,
-    fn delete_value(pool:&DbPool,repo:i64,actor:i64,issue:i64,field:i64)->Result<()>);
+    fn delete_value(pool:&DbPool,repo:i64,actor:impl Into<crate::backend::db::users::tokens::Actor>,issue:i64,field:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::issue_attributes::set_type,crate::backend::db::sqlite::issue_attributes::set_type,
-    fn set_type(pool:&DbPool,repo:i64,actor:i64,issue:i64,kind:Option<i64>)->Result<()>);
+    fn set_type(pool:&DbPool,repo:i64,actor:impl Into<crate::backend::db::users::tokens::Actor>,issue:i64,kind:Option<i64>)->Result<()>);
