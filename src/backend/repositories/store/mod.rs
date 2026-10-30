@@ -2314,10 +2314,9 @@ impl RepoStore {
                     .call_as(
                         actor,
                         Operation::PublishRestack {
-                            authority,
                             stack_id,
                             versions: versions.to_vec(),
-                            base_branch: base_branch.into(),
+                            base_branch: rpc::wire::PublicationText::retain(base_branch, authority),
                             base: base.into(),
                             moves: moves.to_vec(),
                         },

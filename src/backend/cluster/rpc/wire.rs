@@ -358,6 +358,7 @@ pub enum Operation {
         old: String,
         new: PublicationText,
     },
+    #[serde(rename = "MergeUpstreamWithCredential", alias = "MergeUpstream")]
     MergeUpstream {
         source: Uuid,
         branch: String,
@@ -377,6 +378,7 @@ pub enum Operation {
     TransferRepository {
         new_owner: PublicationText,
     },
+    #[serde(rename = "ConfigureDependencySecurityWithAuthority", alias = "ConfigureDependencySecurity")]
     ConfigureDependencySecurity {
         #[serde(default)]
         authority: Option<crate::backend::db::users::accounts::AccountActor>,
@@ -407,9 +409,11 @@ pub enum Operation {
         author: String,
         email: String,
     },
+    #[serde(rename = "PublishFileWithAuthority", alias = "PublishFile")]
     PublishFile {
         prepared: PreparedFile,
     },
+    #[serde(rename = "PublishDependencyUpdateWithAuthority", alias = "PublishDependencyUpdate")]
     PublishDependencyUpdate {
         prepared: PreparedFile,
         publication: Box<crate::backend::db::repositories::dependencies::Publication>,
@@ -440,6 +444,7 @@ pub enum Operation {
     PublishAsyncMerge {
         request: AsyncMergePublication,
     },
+    #[serde(rename = "PublishBranchMergeWithAuthority", alias = "PublishBranchMerge")]
     PublishBranchMerge {
         publication: crate::backend::repositories::store::BranchMergePublication,
     },
@@ -473,10 +478,9 @@ pub enum Operation {
     /// Moves the branches of a restack, each checked against its old commit, with `base_branch`
     /// checked against `base` and the stack against the `versions` the rebase read.
     PublishRestack {
-        authority: crate::backend::db::users::accounts::AccountActor,
         stack_id: i64,
         versions: Vec<(i64, i64)>,
-        base_branch: String,
+        base_branch: PublicationText,
         base: String,
         moves: Vec<RestackMove>,
     },
