@@ -876,7 +876,10 @@ impl RpcHandler {
                 Value::Null
             }
             Operation::Contributors => json!(store.contributors()),
-            Operation::CommitStatistics { branch } => json!(store.commit_statistics(&branch)),
+            Operation::CommitStatistics { branch, raw_json } => {
+                let statistics = store.commit_statistics(&branch).await?;
+                encode_json(&statistics, raw_json, &mut output)?
+            },
             Operation::CodeFrequency { branch } => json!(store.code_frequency(&branch)),
             Operation::IsAncestor {
                 ancestor,

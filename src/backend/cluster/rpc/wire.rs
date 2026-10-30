@@ -330,6 +330,8 @@ pub enum Operation {
     Contributors,
     CommitStatistics {
         branch: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        raw_json: bool,
     },
     CodeFrequency {
         branch: String,

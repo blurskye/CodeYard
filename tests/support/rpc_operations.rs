@@ -333,6 +333,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (
             Operation::CommitStatistics {
                 branch: "main".into(),
+                raw_json: false,
             },
             false,
         ),
