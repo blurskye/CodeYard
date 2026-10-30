@@ -629,6 +629,7 @@ pub fn need(path: &str, write: bool) -> Need {
                 Need::Free
             }
         }
+        ["user", "repos"] if !write => Need::Free,
         ["user", "repos"] if write => Need::CreateRepository,
         ["user", "packages", ..] | ["users", _, "packages", ..] => Need::Packages,
         ["user", id] if !write && id.parse::<i64>().is_ok() => Need::Public,
