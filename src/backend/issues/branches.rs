@@ -2,7 +2,10 @@
 use super::{db, OperationError};
 use crate::backend::{
     app::AppState,
-    repositories::{access, refs},
+    repositories::{
+        access, refs,
+        store::{repo_store, ErrorKind},
+    },
 };
 
 pub fn default_name(issue: &db::models::Issue) -> String {
@@ -65,6 +68,10 @@ pub async fn create(
         oid,
     )
     .await;
+    let unconfirmed = || OperationError::Unavailable {
+        code: "branch_error",
+        message: "Branch creation was not confirmed; inspect the repository before retrying".into(),
+    };
     match created {
         // The branch exists; only refreshing open pull requests after it failed, so the
         // issue still gets its link.
@@ -81,14 +88,31 @@ pub async fn create(
                 message: "Write access is required".into(),
             })
         }
-        Err(_) => {
-            return Err(OperationError::Unavailable {
-                code: "branch_error",
-                message:
-                    "Branch creation was not confirmed; inspect the repository before retrying"
-                        .into(),
-            })
-        }
+        Err(refs::RefError::Git(error)) => match error.kind {
+            ErrorKind::Invalid | ErrorKind::NotFound | ErrorKind::MissingPath => {
+                return Err(OperationError::Invalid {
+                    code: "invalid_branch",
+                    message: "The branch name or the commit it starts from is not valid".into(),
+                })
+            }
+            // A retry after the branch was published but its link was not saved finds the
+            // branch at the requested commit; it then only saves the link.
+            ErrorKind::Conflict => {
+                let reference = crate::backend::git::branch_ref(name).ok_or_else(unconfirmed)?;
+                let tip = repo_store(target, state.cluster.as_ref())
+                    .commit_from_primary(&reference)
+                    .await
+                    .map_err(|_| unconfirmed())?;
+                if !tip.sha.eq_ignore_ascii_case(oid) {
+                    return Err(OperationError::Conflict {
+                        code: "branch_exists",
+                        message: "A branch with this name already exists".into(),
+                    });
+                }
+            }
+            ErrorKind::Unavailable => return Err(unconfirmed()),
+        },
+        Err(refs::RefError::Unavailable) => return Err(unconfirmed()),
     }
     db::issues::management::link_branch(
         &state.pool,
