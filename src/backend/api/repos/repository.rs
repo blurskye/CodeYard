@@ -1259,11 +1259,15 @@ impl FormAction {
     }
 }
 
-fn form_page_suffix(name: &str) -> &'static str {
-    FORM_ACTIONS
-        .iter()
-        .find(|row| row.name == name)
-        .map_or("", |row| row.page)
+fn form_page_suffix(name: &str) -> String {
+    let Some(row) = FORM_ACTIONS.iter().find(|row| row.name == name) else {
+        return String::new();
+    };
+    // A settings form returns to its own section.
+    match (row.page, view::settings::settings_section(name)) {
+        ("/settings", Some(section)) => format!("/settings?tab={section}"),
+        _ => row.page.to_owned(),
+    }
 }
 
 /// The editor or delete page a rejected save names in `from`, when it is a page of this repository
