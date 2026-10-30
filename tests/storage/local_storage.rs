@@ -2519,9 +2519,9 @@ async fn storage_overview_is_for_admins_and_shows_no_paths_or_secrets() {
         }
         builder.body(Body::empty()).unwrap()
     };
-    for denied in [None, Some(&fixture.login)] {
-        assert_eq!(status_of(&router, get(denied)).await, StatusCode::FORBIDDEN);
-    }
+    // A signed-out visitor is sent to sign in, like every other administrator page.
+    assert_eq!(status_of(&router, get(None)).await, StatusCode::SEE_OTHER);
+    assert_eq!(status_of(&router, get(Some(&fixture.login))).await, StatusCode::FORBIDDEN);
     let response = call(&router, get(Some(&admin_login))).await;
     assert_eq!(response.status(), StatusCode::OK);
     let text = String::from_utf8(body_of(response).await).unwrap();
