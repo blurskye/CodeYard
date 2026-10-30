@@ -35,6 +35,11 @@ impl ClusterNode {
                 age >= chrono::Duration::zero() && age <= chrono::Duration::seconds(60)
             })
     }
+
+    /// Online and holding the `storage` role, which a repository needs of its primary.
+    pub fn is_online_storage(&self) -> bool {
+        self.is_online() && self.roles.iter().any(|role| role == "storage")
+    }
 }
 
 /// An invite as an operator sees it. The secret and its hash are never listed.

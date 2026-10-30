@@ -636,10 +636,11 @@ pub async fn replica_counts(pool: &PgPool) -> Result<Vec<NodeReplicaCounts>> {
 }
 
 /// The node as the database sees it now, with its heartbeat read against the database clock,
-/// which is the clock that records it.
+/// which is the clock that records it. The row stays locked against revocation and role
+/// changes until the transaction ends.
 async fn node_at_db_time(conn: &mut PgConnection, node: i64) -> Result<Option<ClusterNode>> {
     Ok(sqlx::query_as::<_, ClusterNode>(
-        "SELECT *, clock_timestamp() AS observed_at FROM nodes WHERE id = $1",
+        "SELECT *, clock_timestamp() AS observed_at FROM nodes WHERE id = $1 FOR SHARE",
     )
     .bind(node)
     .fetch_optional(&mut *conn)
@@ -686,7 +687,7 @@ pub async fn promote_repository(
     }
     // A repository moved to a node that is down would have no primary to serve it.
     let target = node_at_db_time(&mut tx, to).await?;
-    if !target.is_some_and(|node| node.status == "active" && node.is_online()) {
+    if !target.is_some_and(|node| node.is_online_storage()) {
         return Ok(PromoteOutcome::TargetOffline);
     }
     move_primary(&mut tx, repo_id, from, to, applied_version).await?;
@@ -733,7 +734,7 @@ pub async fn promote_fork_family(
     }
     // The taker must be reporting in too, or the family would move onto a node that is down.
     let target = node_at_db_time(&mut tx, to).await?;
-    if !target.is_some_and(|node| node.status == "active" && node.is_online()) {
+    if !target.is_some_and(|node| node.is_online_storage()) {
         return Ok(FamilyOutcome::Refused);
     }
     for &(member, _, write_version) in &members {
