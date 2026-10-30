@@ -32,6 +32,11 @@ pub enum View {
         token: Detail,
         value: Option<String>,
     },
+    /// A committed regeneration must reveal its value even if optional metadata fails.
+    Revealed {
+        id: i64,
+        value: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -170,6 +175,15 @@ pub fn render(model: Model) -> Element {
             token: detail,
             value,
         } => show(&token, detail, value.as_deref()),
+        View::Revealed { id, value } => rsx! {
+            section { class: "identity-settings-section", aria_labelledby: "fine-grained-revealed-title",
+                header { class: "identity-section-header",
+                    h2 { id: "fine-grained-revealed-title", "Token regenerated" }
+                    NavLink { href: format!("{BASE}/{id}"), "Return to token details" }
+                }
+                {reveal(value)}
+            }
+        },
     };
     rsx! {
         div { class: "identity-settings page-shell",
@@ -301,6 +315,16 @@ fn level_label(level: &str) -> &'static str {
     }
 }
 
+fn reveal(value: &str) -> Element {
+    rsx! {
+        div { class: "identity-token-reveal", role: "status",
+            strong { "Copy this token now" }
+            p { "You won't be able to see it again." }
+            code { "{value}" }
+        }
+    }
+}
+
 fn show(token: &str, detail: &Detail, value: Option<&str>) -> Element {
     let row = &detail.row;
     let repositories = detail.repositories.join(", ");
@@ -312,11 +336,7 @@ fn show(token: &str, detail: &Detail, value: Option<&str>) -> Element {
                 NavLink { href: BASE.to_owned(), "Back to tokens" }
             }
             if let Some(value) = value {
-                div { class: "identity-token-reveal", role: "status",
-                    strong { "Copy this token now" }
-                    p { "You won't be able to see it again." }
-                    code { "{value}" }
-                }
+                {reveal(value)}
             }
             dl { class: "org-facts",
                 dt { "Resource owner" } dd { "{row.owner}" }
