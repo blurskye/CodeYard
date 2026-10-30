@@ -18,12 +18,30 @@ pub struct IssueMetadata<'a> {
     pub issue_type: Option<i64>,
 }
 
+#[derive(Default)]
+pub struct OwnedIssueMetadata {
+    pub parent: Option<i64>,
+    pub labels: Vec<i64>,
+    pub assignees: Vec<i64>,
+    pub milestone: Option<i32>,
+    pub issue_type: Option<i64>,
+}
+
+impl OwnedIssueMetadata {
+    pub fn borrowed(&self) -> IssueMetadata<'_> {
+        IssueMetadata {
+            parent: self.parent, labels: &self.labels, assignees: &self.assignees,
+            milestone: self.milestone, issue_type: self.issue_type,
+        }
+    }
+}
+
 native_operation!(crate::backend::db::postgres::issues::create_issue_with_metadata,
     crate::backend::db::sqlite::issues::create_issue_with_metadata,
     fn create_issue_with_metadata(
     pool: &DbPool,
     repo_id: i64,
-    author_id: i64,
+    author_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     title: &str,
     body: &str,
     metadata: IssueMetadata<'_>,

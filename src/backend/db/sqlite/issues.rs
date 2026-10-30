@@ -14,11 +14,13 @@ use sqlx::{Sqlite, SqlitePool, Transaction};
 pub async fn create_issue_with_metadata(
     pool: &SqlitePool,
     repo_id: i64,
-    author_id: i64,
+    author_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     title: &str,
     body: &str,
     metadata: IssueMetadata<'_>,
 ) -> Result<Issue> {
+    let authority = author_id.into();
+    let author_id = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::discussions::require_contribution_authority(&mut tx, author_id, repo_id).await?;
     if !metadata.labels.is_empty() || !metadata.assignees.is_empty() {
@@ -35,7 +37,7 @@ pub async fn create_issue_with_metadata(
     }
     let issue = insert_in_transaction(&mut tx, repo_id, author_id, title, body).await?;
     if !metadata.labels.is_empty() {
-        super::labels::write_item_labels_transaction(
+        let labels = super::labels::write_item_labels_transaction(
             &mut tx,
             repo_id,
             LabelTarget::Issue,
@@ -44,12 +46,16 @@ pub async fn create_issue_with_metadata(
             false,
         )
         .await?;
+        for label in labels {
+            super::issue_attributes::event(&mut tx, (repo_id, issue.id, author_id), "labeled", &label.name, "").await?;
+        }
     }
     for &user in metadata.assignees {
-        super::assignees::assign_in_transaction(
+        super::assignees::assign_with_event_in_transaction(
             &mut tx,
             repo_id,
             AssignedItem::Issue(issue.id),
+            author_id,
             user,
         )
         .await?;
@@ -63,6 +69,9 @@ pub async fn create_issue_with_metadata(
             Some(number),
         )
         .await?;
+        let title: String = sqlx::query_scalar("SELECT title FROM milestones WHERE repo_id=?1 AND number=?2")
+            .bind(repo_id).bind(number).fetch_one(&mut *tx).await?;
+        super::issue_attributes::event(&mut tx, (repo_id, issue.id, author_id), "milestoned", &title, "").await?;
     }
     if let Some(kind) = metadata.issue_type {
         super::issue_attributes::lock_metadata(&mut tx).await?;
@@ -93,6 +102,9 @@ pub async fn create_issue_with_metadata(
         }
         None => tx,
     };
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, author_id, &credential).await?;
+    }
     let issue = sqlx::query_as("SELECT * FROM issues WHERE id=?1")
         .bind(issue.id)
         .fetch_one(&mut *tx)

@@ -105,10 +105,7 @@ pub async fn assign_users(
     let mut tx = begin_write(pool, &authority, repo_id).await?;
     let mut added = Vec::new();
     for &user_id in user_ids {
-        if assign_in_transaction(&mut tx, repo_id, item, user_id).await? {
-            let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id=?1")
-                .bind(user_id).fetch_one(&mut *tx).await?;
-            record_change(&mut tx, repo_id, item, authority.user_id(), "assigned", &username).await?;
+        if assign_with_event_in_transaction(&mut tx, repo_id, item, authority.user_id(), user_id).await? {
             added.push(user_id);
         }
     }
@@ -172,6 +169,22 @@ pub(crate) async fn assign_in_transaction(
     }
     if added {
         super::labels::touch_subject(tx, tables(item).0, item_id(item)).await?;
+    }
+    Ok(added)
+}
+
+pub(crate) async fn assign_with_event_in_transaction(
+    tx: &mut Transaction<'_, Sqlite>,
+    repo: i64,
+    item: AssignedItem,
+    actor: i64,
+    user: i64,
+) -> Result<bool> {
+    let added = assign_in_transaction(tx, repo, item, user).await?;
+    if added {
+        let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id=?1")
+            .bind(user).fetch_one(&mut **tx).await?;
+        record_change(tx, repo, item, actor, "assigned", &username).await?;
     }
     Ok(added)
 }

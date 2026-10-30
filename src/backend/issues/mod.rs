@@ -241,6 +241,25 @@ pub(super) async fn require_write(
 
 pub(super) fn write_error(error: anyhow::Error) -> OperationError {
     use db::discussions::DiscussionWriteRefusal;
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return OperationError::Denied { code: "forbidden", message: "A live unrestricted credential is required.".into() };
+    }
+    let metadata_denied = if let Some(refusal) = error.downcast_ref::<db::labels::LabelWriteRefusal>() {
+        Some(matches!(refusal, db::labels::LabelWriteRefusal::Denied))
+    } else if let Some(refusal) = error.downcast_ref::<db::assignees::AssignmentRefusal>() {
+        Some(matches!(refusal, db::assignees::AssignmentRefusal::Denied))
+    } else if let Some(refusal) = error.downcast_ref::<db::milestones::MilestoneWriteRefusal>() {
+        Some(matches!(refusal, db::milestones::MilestoneWriteRefusal::Denied))
+    } else if let Some(refusal) = error.downcast_ref::<db::issue_attributes::Refusal>() {
+        Some(matches!(refusal, db::issue_attributes::Refusal::Denied))
+    } else { None };
+    if let Some(denied) = metadata_denied {
+        return if denied {
+            OperationError::Denied { code: "forbidden", message: "Creation metadata is no longer permitted.".into() }
+        } else {
+            OperationError::Invalid { code: "validation_error", message: "The selected creation metadata changed. Review your selections.".into() }
+        };
+    }
     if let Some(refusal) = error.downcast_ref::<db::relationships::Refusal>() {
         return match refusal {
             db::relationships::Refusal::Denied => OperationError::Denied {

@@ -77,12 +77,42 @@ pub async fn close_duplicate(
 pub async fn create_issue(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor_id: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     owner: String,
     repo: String,
     req: CreateIssueRequest,
 ) -> Result<db::models::Issue, OperationError> {
-    let user = super::actor(pool, actor_id).await?;
+    create_issue_with_metadata(pool, broadcaster, actor, owner, repo, req, db::issues::OwnedIssueMetadata::default()).await
+}
+
+pub async fn create_issue_with_metadata(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor: impl Into<db::users::accounts::AccountActor>,
+    owner: String,
+    repo: String,
+    req: CreateIssueRequest,
+    metadata: db::issues::OwnedIssueMetadata,
+) -> Result<db::models::Issue, OperationError> {
+    let (pool, broadcaster, actor) = (pool.clone(), broadcaster.clone(), actor.into());
+    tokio::spawn(async move {
+        create_issue_owned(&pool, &broadcaster, actor, owner, repo, req, metadata.borrowed()).await
+    }).await.unwrap_or_else(|_| Err(OperationError::Unavailable {
+        code: "publication_interrupted",
+        message: "Issue creation was interrupted; check the repository before retrying.".into(),
+    }))
+}
+
+async fn create_issue_owned(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor: db::users::accounts::AccountActor,
+    owner: String,
+    repo: String,
+    req: CreateIssueRequest,
+    mut metadata: db::issues::IssueMetadata<'_>,
+) -> Result<db::models::Issue, OperationError> {
+    let user = super::actor(pool, actor.user_id()).await?;
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -111,13 +141,9 @@ pub async fn create_issue(
     }
 
     let body = req.body.as_deref().unwrap_or("");
-    let issue = if let Some(parent) = req.parent_issue_id {
-        db::relationships::create_child(pool, user.id, repository.id, parent, &req.title, body)
-            .await
-    } else {
-        db::issues::create_issue(pool, repository.id, user.id, &req.title, body).await
-    }
-    .map_err(super::write_error)?;
+    metadata.parent = req.parent_issue_id.or(metadata.parent);
+    let issue = db::issues::create_issue_with_metadata(pool, repository.id, actor, &req.title, body, metadata)
+        .await.map_err(super::write_error)?;
 
     let link = format!("/{owner}/{repo}/issues/{}", issue.number);
     let notified = notify_watchers(
@@ -155,6 +181,13 @@ pub async fn create_issue(
     )
     .await;
 
+    if !metadata.assignees.is_empty() {
+        crate::backend::notifications::assignments::notify_assignees(pool, broadcaster,
+            &crate::backend::notifications::assignments::Assignment {
+                actor: &user, repository: &repository, owner: &owner, repo: &repo,
+                number: issue.number, pull_request: false, title: &issue.title, link: &link,
+            }, metadata.assignees).await;
+    }
     emit_issue_event(pool, &repository, &issue, user.id, "opened", None).await;
     Ok(issue)
 }

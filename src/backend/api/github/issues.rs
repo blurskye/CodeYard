@@ -675,6 +675,17 @@ pub(in crate::backend::api) struct Metadata {
     milestone: Option<Option<i32>>,
 }
 
+impl Metadata {
+    pub(in crate::backend::api) fn creation(&self) -> db::issues::OwnedIssueMetadata {
+        db::issues::OwnedIssueMetadata {
+            labels: self.labels.clone().unwrap_or_default(),
+            assignees: self.assignees.as_deref().unwrap_or_default().iter().map(|user| user.id).collect(),
+            milestone: self.milestone.flatten(), issue_type: self.issue_type.flatten(),
+            ..Default::default()
+        }
+    }
+}
+
 pub(in crate::backend::api) async fn metadata(
     pool: &db::DbPool,
     repo: &db::models::Repository,
@@ -955,10 +966,10 @@ async fn create(
         .transpose()?;
     let body = text(&input, "body")?;
     let metadata = metadata(&state.pool, &repo, &actor, &input).await?;
-    let issue = crate::backend::issues::mutations::create_issue(
+    let issue = crate::backend::issues::mutations::create_issue_with_metadata(
         &state.pool,
         &state.notification_broadcaster,
-        actor.id,
+        authority,
         p["owner"].clone(),
         repo.name.clone(),
         crate::backend::issues::mutations::CreateIssueRequest {
@@ -967,20 +978,11 @@ async fn create(
             repository_id: Some(repo.id),
             parent_issue_id,
         },
+        metadata.creation(),
     )
     .await
     .map_err(operation_error)?;
     let item = AssignedItem::Issue(issue.id);
-    apply_metadata(
-        &state,
-        &actor,
-        authority,
-        &repo,
-        item,
-        (&p["owner"], issue.number, &issue.title),
-        metadata,
-    )
-    .await?;
     Ok((
         StatusCode::CREATED,
         Json(document(&state.pool, &repo, &p["owner"], item).await?),
