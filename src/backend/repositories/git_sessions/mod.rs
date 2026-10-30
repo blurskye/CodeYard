@@ -128,7 +128,8 @@ impl ReceiveCredential {
             !write || !db::repository_exports::locked(pool, repo.id).await?,
             "repository is locked for migration"
         );
-        let identity = match self {
+        // A token's App or fine-grained bounds, loaded once for both checks below.
+        let (identity, bounds) = match self {
             Self::SshKey(id) => {
                 anyhow::ensure!(id > 0, "invalid key ID");
                 let identity = db::users::ssh_keys::get_user_by_ssh_key_id(pool, id)
@@ -145,20 +146,28 @@ impl ReceiveCredential {
                         == identity.key.fingerprint,
                     "stored key fingerprint mismatch"
                 );
-                identity.user
+                (identity.user, None)
             }
             Self::DeployKey(id) => return deploy_keys::authorize(pool, id, repo, write).await,
             Self::Token(id) => {
                 let public_read = !write && !repo.is_private && db::node_config::get_node_configuration(pool).await?
                     .is_some_and(|config| config.setup_completed && !config.is_private());
+                let bounds = crate::backend::identity::github_apps::authority(pool, id).await?;
                 anyhow::ensure!(
-                    crate::backend::identity::oauth_apps::allows_git(pool, id, repo.is_gist, public_read)
-                        .await?,
+                    crate::backend::identity::oauth_apps::allows_git(
+                        pool,
+                        id,
+                        bounds.as_ref(),
+                        repo.is_gist,
+                        public_read
+                    )
+                    .await?,
                     "OAuth repository access denied"
                 );
-                db::users::tokens::token_user(pool, id, write)
+                let user = db::users::tokens::token_user(pool, id, write)
                     .await?
-                    .ok_or_else(|| anyhow::anyhow!("token unavailable"))?
+                    .ok_or_else(|| anyhow::anyhow!("token unavailable"))?;
+                (user, bounds)
             }
         };
         anyhow::ensure!(
@@ -166,8 +175,7 @@ impl ReceiveCredential {
             "bot identities require a scoped token"
         );
         if let Self::Token(id) = self {
-            if let Some(bounds) = crate::backend::identity::github_apps::authority(pool, id).await?
-            {
+            if let Some(bounds) = bounds {
                 anyhow::ensure!(
                     bounds
                         .allows(pool, identity.id, repo.id, "contents", write)

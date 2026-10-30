@@ -166,17 +166,23 @@ async fn authorize_repository(
         };
     };
     let repo = found.ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
-    // Gist repositories need the gist scope; every other repository needs repo.
-    if !crate::backend::identity::oauth_apps::allows_git(&state.pool, token.id, repo.is_gist, !write && !repo.is_private && !config.is_private())
+    let bounds = crate::backend::identity::github_apps::authority(&state.pool, token.id)
         .await
-        .map_err(|_| unavailable())?
+        .map_err(|_| unavailable())?;
+    // Gist repositories need the gist scope; every other repository needs repo.
+    if !crate::backend::identity::oauth_apps::allows_git(
+        &state.pool,
+        token.id,
+        bounds.as_ref(),
+        repo.is_gist,
+        !write && !repo.is_private && !config.is_private(),
+    )
+    .await
+    .map_err(|_| unavailable())?
     {
         return Err((StatusCode::FORBIDDEN, "Resource not accessible by token").into_response());
     }
-    if let Some(bounds) = crate::backend::identity::github_apps::authority(&state.pool, token.id)
-        .await
-        .map_err(|_| unavailable())?
-    {
+    if let Some(bounds) = bounds {
         let granted = bounds
             .repository(&state.pool, user.id, repo.id)
             .await

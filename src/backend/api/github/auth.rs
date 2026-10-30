@@ -336,13 +336,13 @@ pub(super) async fn authorize_request(
             } else {
                 crate::backend::identity::oauth_apps::allows(&token.scopes, path, write)
             };
-            // Without the repo scope a token still reads public repositories, as an anonymous
-            // request does.
+            // Without the repo scope a token still reads public repositories and their
+            // networks' events, as an anonymous request does.
             if !allowed
                 && !write
                 && !crate::backend::identity::oauth_apps::has_scope(&token.scopes, "repo")
             {
-                if let ["repos", owner, name, ..] = path
+                if let ["repos" | "networks", owner, name, ..] = path
                     .trim_start_matches('/')
                     .split('/')
                     .collect::<Vec<_>>()
@@ -555,6 +555,11 @@ async fn repository_bounds(
             }
             Err(_) => false,
         },
+        // Conversation comment IDs are odd for pull requests and even for issues (see
+        // comments::find), so the ID alone names the parent kind.
+        ["repos", _, _, "issues", "comments", id, ..] => {
+            id.parse::<i64>().is_ok_and(|id| id % 2 == 1)
+        }
         _ => false,
     };
     let workflow = write
@@ -601,7 +606,7 @@ async fn personal(
     path: &str,
     write: bool,
 ) -> Result<bool> {
-    use crate::backend::identity::fine_grained::{allows, Access, Need, Owner};
+    use crate::backend::identity::fine_grained::{allows, Need, Owner};
     let denied = || {
         Error::new(
             StatusCode::FORBIDDEN,
@@ -635,10 +640,14 @@ async fn personal(
                 ["orgs", name, "repos"] => Some(Owner::Organization(organization(name).await?.id)),
                 _ => None,
             };
-            grant.active
-                && grant.access == Access::All
-                && owner == Some(grant.owner)
-                && allows(&grant.permissions, "administration", true)
+            owner.is_some_and(|owner| grant.creates_repository(owner))
+        }
+        Need::CopyRepository(key) => {
+            let params = params.ok_or_else(Error::missing)?;
+            // The source is only read; a private one outside the token reads as missing.
+            repository_bounds(state, auth, bounds, params, path, false, key)
+                .await?
+                .ok_or_else(Error::missing)?
         }
         Need::Packages => {
             let owner = match segments.as_slice() {
@@ -698,6 +707,40 @@ async fn personal(
         Ok(false)
     } else {
         Err(denied())
+    }
+}
+
+/// A fine-grained token copies a repository (a fork or a template) only into an owner it may
+/// create repositories for. The request body names that owner, so the handler calls this.
+/// App credentials cannot copy repositories.
+pub(super) async fn require_copy_owner(
+    state: &AppState,
+    auth: &Authentication,
+    target: db::repositories::creation::RepositoryTarget,
+) -> Result<()> {
+    use crate::backend::{
+        db::repositories::creation::RepositoryTarget, identity::fine_grained::Owner,
+    };
+    let Some(bounds) = crate::backend::identity::github_apps::authority(&state.pool, auth.token.id)
+        .await
+        .map_err(Error::unavailable)?
+    else {
+        return Ok(());
+    };
+    let owner = match target {
+        RepositoryTarget::Personal(id) => Owner::User(id),
+        RepositoryTarget::Organization(id) => Owner::Organization(id),
+    };
+    match bounds.personal() {
+        Some(grant) if grant.creates_repository(owner) => Ok(()),
+        Some(_) => Err(Error::new(
+            StatusCode::FORBIDDEN,
+            "Resource not accessible by personal access token",
+        )),
+        None => Err(Error::new(
+            StatusCode::FORBIDDEN,
+            "Resource not accessible by integration",
+        )),
     }
 }
 

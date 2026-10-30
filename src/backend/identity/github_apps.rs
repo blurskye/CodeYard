@@ -493,6 +493,7 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
         Some("collaborators") if !write => Some("metadata"),
         Some("collaborators" | "teams" | "invitations") => Some("administration"),
         Some("comments" | "codeowners" | "license" | "dispatches") => Some("contents"),
+        Some("traffic") if !write => Some("administration"),
         // Repository hooks need repository_hooks, not administration.
         _ => None,
     }
@@ -537,6 +538,10 @@ mod tests {
         assert_eq!(
             repository_permission("/repos/a/b/actions/runs", false),
             Some("actions")
+        );
+        assert_eq!(
+            repository_permission("/repos/a/b/traffic/clones", false),
+            Some("administration")
         );
         let pending = "/repos/a/b/actions/runs/1/pending_deployments";
         assert_eq!(repository_permission(pending, false), Some("actions"));

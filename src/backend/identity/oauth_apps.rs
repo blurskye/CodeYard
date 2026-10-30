@@ -3,9 +3,7 @@ use crate::backend::{
     db::{self, oauth_apps::Application, DbPool},
     identity::tokens::token_hash,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::RngCore;
-use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 pub const CLI_CLIENT: &str = "178c6fc778ccc68e1d6a";
@@ -155,7 +153,7 @@ pub fn verify_challenge(challenge: &str, verifier: &str) -> bool {
     {
         return false;
     }
-    let actual = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let actual = super::oauth::providers::pkce_challenge(verifier);
     bool::from(actual.as_bytes().ct_eq(challenge.as_bytes()))
 }
 
@@ -174,9 +172,10 @@ pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
         ["orgs", _, "code-security", ..] => {
             has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
         }
-        ["user", "docker", "conflicts"] | ["users" | "orgs", _, "docker", "conflicts"] => {
-            !write && has_scope(scopes, "read:packages")
-        }
+        ["user", "docker", "conflicts"]
+        | ["users" | "orgs", _, "docker", "conflicts"]
+        | ["user", "packages", ..]
+        | ["users" | "orgs", _, "packages", ..] => !write && has_scope(scopes, "read:packages"),
         ["user", "repos" | "starred" | "subscriptions", ..]
         | ["repositories", ..]
         | ["repos", ..]
@@ -192,8 +191,10 @@ pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
         }
         ["orgs", _, "rulesets", ..] => has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org")),
         ["issues"] | ["user", "issues"] | ["orgs", _, "issues"] => !write && has_scope(scopes, "repo"),
-        ["users", _, "events" | "received_events", ..] | ["orgs", _, "events", ..] => !write && has_scope(scopes, "repo"),
-        ["users"] | ["organizations", ..] | ["users", _, "orgs" | "gists" | "social_accounts"] | ["feeds"] => !write,
+        ["users", _, "events" | "received_events", ..]
+        | ["orgs", _, "events", ..]
+        | ["networks", _, _, "events"] => !write && has_scope(scopes, "repo"),
+        ["users"] | ["organizations", ..] | ["users", _, "orgs" | "gists" | "social_accounts"] | ["feeds"] | ["events"] => !write,
         ["orgs", _, "members" | "memberships" | "teams", ..]
         | ["user", "memberships", "orgs", ..] => {
             has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
@@ -223,8 +224,16 @@ pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
 }
 
 /// OAuth credentials retain anonymous-equivalent public reads; private reads and writes need scopes.
-pub async fn allows_git(pool: &DbPool, token_id: i64, gist: bool, public_read: bool) -> anyhow::Result<bool> {
-    if let Some(bounds) = super::github_apps::authority(pool, token_id).await? {
+/// `bounds` is the token's `github_apps::authority`, which the caller loads once and reuses for
+/// its repository check.
+pub async fn allows_git(
+    pool: &DbPool,
+    token_id: i64,
+    bounds: Option<&super::github_apps::Authority>,
+    gist: bool,
+    public_read: bool,
+) -> anyhow::Result<bool> {
+    if let Some(bounds) = bounds {
         // A fine-grained token's per-repository check follows, including public reads.
         if bounds.personal().is_some() {
             return Ok(true);
@@ -337,6 +346,14 @@ mod tests {
         assert_eq!(scopes("read:packages").as_deref(), Some("read:packages"));
         assert!(!write_scope("read:packages"));
         assert!(allows("read:packages", "/user/docker/conflicts", false));
+        assert!(allows("read:packages", "/user/packages", false));
+        assert!(allows(
+            "read:packages",
+            "/orgs/acme/packages/container/app/versions",
+            false
+        ));
+        assert!(!allows("read:packages", "/user/packages/container/app", true));
+        assert!(!allows("repo", "/users/alice/packages", false));
         assert!(!allows("read:packages", "/repos/alice/project", false));
         assert!(!allows(
             "read:packages",
