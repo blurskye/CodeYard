@@ -91,13 +91,7 @@ async fn render(
                     if access::can_read(&ctx.state.pool, ctx.user.as_ref(), &fork).await? {
                         db::repositories::records::repository_owner_name(&ctx.state.pool, id)
                             .await?
-                            .map(|owner| {
-                                format!(
-                                    "/{}/{}",
-                                    crate::webui::encode_component(&owner),
-                                    crate::webui::encode_component(&fork.name)
-                                )
-                            })
+                            .map(|owner| crate::webui::repository_path(&owner, &fork.name))
                     } else {
                         None
                     }

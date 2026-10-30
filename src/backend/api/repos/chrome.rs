@@ -213,11 +213,7 @@ pub(crate) async fn load_database(
                 .map_err(|_| unavailable(ctx))?
         {
             // Only the actor's own fork is disclosed.
-            chrome.fork_url = Some(format!(
-                "/{}/{}",
-                crate::webui::encode_component(&user.username),
-                crate::webui::encode_component(&fork.name)
-            ));
+            chrome.fork_url = Some(crate::webui::repository_path(&user.username, &fork.name));
         }
     }
     if let Some(parent_id) = repository.forked_from_id {
@@ -236,11 +232,8 @@ pub(crate) async fn load_database(
                     .map_err(|_| unavailable(ctx))?
                     .ok_or_else(|| unavailable(ctx))?;
                     chrome.parent_name = Some(format!("{}/{}", parent_owner, parent.name));
-                    chrome.parent_url = Some(format!(
-                        "/{}/{}",
-                        crate::webui::encode_component(&parent_owner),
-                        crate::webui::encode_component(&parent.name)
-                    ));
+                    chrome.parent_url =
+                        Some(crate::webui::repository_path(&parent_owner, &parent.name));
                 }
                 Err((StatusCode::NOT_FOUND, _)) => {} // Do not disclose inaccessible fork ancestry.
                 Err((status, _)) => return Err(api_failure(ctx, status)),

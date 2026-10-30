@@ -1298,11 +1298,7 @@ pub(super) async fn get_form(
     Path(params): Path<HashMap<String, String>>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    let base = format!(
-        "/{}/{}",
-        crate::webui::encode_component(&params["owner"]),
-        crate::webui::encode_component(&params["repo"])
-    );
+    let base = crate::webui::repository_path(&params["owner"], &params["repo"]);
     let editor = query
         .get("from")
         .and_then(|from| editor_return(from, &base));
@@ -1332,9 +1328,8 @@ pub(super) async fn post_form(
     // This URL accepts only POST, so every failure page must link its appearance switch to
     // the repository page instead. Set it before the checks that can fail.
     ctx.return_to = Some(format!(
-        "/{}/{}{}",
-        crate::webui::encode_component(owner),
-        crate::webui::encode_component(name),
+        "{}{}",
+        crate::webui::repository_path(owner, name),
         form_page_suffix(action)
     ));
     if let Err(response) = ctx.check_csrf(&form) {
