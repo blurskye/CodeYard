@@ -1043,13 +1043,15 @@ pub async fn fork_into(
             metadata: serde_json::json!({"source_owner":owner,"source_repo":source.name,"subject":format!("{owner}/{}",source.name),"fork_owner":fork_owner,"fork_repo":fork.name,"fork_repository_id":fork.id}),
         };
         let mut notified = Vec::new();
-        if crate::backend::notifications::create::create_and_broadcast_notification(
-            pool,
-            broadcaster,
-            notice.clone(),
-        )
-        .await
-        .is_ok()
+        // The source owner may not be able to read the fork's destination.
+        if super::access::check_read(pool, fork.id, Some(recipient)).await.is_ok()
+            && crate::backend::notifications::create::create_and_broadcast_notification(
+                pool,
+                broadcaster,
+                notice.clone(),
+            )
+            .await
+            .is_ok()
         {
             notified.push(recipient);
         }
