@@ -87,6 +87,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::ConfigureDependencySecurity {
+                credential: codeyard::backend::db::users::accounts::OwnedAccountCredential::Token(1),
                 feature: codeyard::backend::db::repositories::dependencies::Feature::Alerts,
                 enabled: true,
                 private_consent: false,
@@ -132,6 +133,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (Operation::Exists, false),
         (Operation::SizeBytes, false),
+        (Operation::RefreshStorageSize, false),
         (Operation::Refs, false),
         (Operation::MatchingRefs { prefix: "refs/pull/".into() }, false),
         (Operation::PrimaryRefs, false),
@@ -153,6 +155,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (Operation::GitTag { sha: sha.into() }, false),
         (Operation::GitObjectKind { sha: sha.into() }, false),
+        (Operation::IntroducedBlobs { sha: sha.into() }, false),
         (
             Operation::WriteGitObject {
                 input: codeyard::backend::git::objects::ObjectWrite::Blob,
@@ -241,6 +244,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::CommitsBetween {
                 base_ref: "main".into(),
                 head_ref: "main".into(),
+                offset: 0,
                 limit: 10,
                 offset: 0,
                 raw_json: false,
@@ -337,6 +341,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::CommitStatistics {
                 branch: "main".into(),
                 raw_json: false,
+                mode: Default::default(),
             },
             false,
         ),

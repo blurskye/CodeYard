@@ -1,11 +1,21 @@
-//! Canonical branch and tag reference names used at every publication boundary.
+//! Canonical public reference names used at publication boundaries.
 
-/// Returns whether `reference` is an exact, non-normalized branch or tag ref.
+/// libgit2's 1024-byte reference buffer also reserves a terminating NUL.
+pub(crate) const MAX_REF_BYTES: usize = 1023;
+
+pub(crate) const PUBLIC_REF_NAMESPACES: [&str; 3] = ["refs/heads/", "refs/tags/", "refs/notes/"];
+
+/// Namespace selection only; callers admitting a new name must also validate it.
+pub(crate) fn is_public_ref(reference: &str) -> bool {
+    PUBLIC_REF_NAMESPACES.iter().any(|prefix| reference.starts_with(*prefix))
+}
+
+/// Returns whether `reference` is an exact, non-normalized branch, tag or notes ref.
 /// Git's normalization can collapse empty path components, so callers reject
 /// malformed names rather than retargeting them to another ref.
 pub(crate) fn is_canonical_ref(reference: &str) -> bool {
-    (reference.starts_with("refs/heads/") || reference.starts_with("refs/tags/"))
-        && reference.len() <= 1024
+    is_public_ref(reference)
+        && reference.len() <= MAX_REF_BYTES
         && !reference.bytes().any(|byte| {
             byte <= b' '
                 || byte == 127
@@ -19,11 +29,7 @@ pub(crate) fn is_canonical_ref(reference: &str) -> bool {
         && git2::Reference::is_valid_name(reference)
 }
 
-/// Whether `text` is a full 40-digit commit ID. Either case passes; a caller that stores the
-/// ID lowercases it.
-pub(crate) fn is_full_commit_id(text: &str) -> bool {
-    text.len() == 40 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
+pub(crate) use crate::git_ids::is_full_commit_id;
 
 pub(crate) fn branch_ref(name: &str) -> Option<String> {
     let reference = format!("refs/heads/{name}");
@@ -58,6 +64,7 @@ mod tests {
             "refs/tags/v1",
             "refs/tags/版本-β",
             "refs/tags/release/stable",
+            "refs/notes/commits",
         ] {
             assert!(is_canonical_ref(reference), "{reference}");
         }

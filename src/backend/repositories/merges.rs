@@ -51,10 +51,10 @@ pub async fn merge_branch(
         return Err(RefError::Invalid("A branch name or commit SHA is required"));
     }
     if input.message.is_some_and(|message| {
-        message.is_empty() || message.len() > 65_536 || message.contains('\0')
+        message.is_empty() || message.len() > crate::git_limits::MAX_MERGE_MESSAGE_BYTES || message.contains('\0')
     }) {
         return Err(RefError::Invalid(
-            "Merge message must be nonempty, at most 65536 bytes and without NUL",
+            "Merge message must be nonempty, at most 8192 bytes and without NUL",
         ));
     }
     let store = repo_store(&repository, cluster);

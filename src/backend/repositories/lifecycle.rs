@@ -490,12 +490,7 @@ async fn provision_stored(
     }
     if source.is_some() {
         // The fork is already usable. Accounting failures must not report creation as failed.
-        let accounting = async {
-            let size = store.size_bytes().await?.min(i64::MAX as u64) as i64;
-            db::repositories::records::update_repo_size(pool, repository.id, size).await?;
-            Ok::<_, anyhow::Error>(size)
-        }
-        .await;
+        let accounting = store.refresh_storage_size_now(pool, repository.id).await;
         match accounting {
             Ok(size) => repository.size_bytes = size,
             Err(error) => {

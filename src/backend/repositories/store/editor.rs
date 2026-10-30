@@ -3,7 +3,7 @@
 //! editor started.
 use super::{ErrorKind, RepoError};
 use crate::backend::git::repository::{
-    process, CommitInfo, MAX_COMMIT_EMAIL_BYTES, MAX_COMMIT_NAME_BYTES,
+    process, CommitInfo,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -150,7 +150,7 @@ fn validate_target(branch: &str, expected_revision: &str) -> Result<(), RepoErro
         return Err(invalid("Invalid branch name."));
     }
     if expected_revision != "unborn"
-        && (expected_revision.len() != 40 || git2::Oid::from_str(expected_revision).is_err())
+        && !crate::git_ids::is_full_commit_id(expected_revision)
     {
         return Err(invalid("A complete expected branch revision is required."));
     }
@@ -379,15 +379,7 @@ async fn prepare_commit(
     if changes.is_empty() {
         return Err(invalid("A commit needs at least one file."));
     }
-    if author.is_empty()
-        || author.len() > MAX_COMMIT_NAME_BYTES
-        || email.is_empty()
-        || email.len() > MAX_COMMIT_EMAIL_BYTES
-        || author.contains(['\0', '\r', '\n', '<', '>'])
-        || email.contains(['\0', '\r', '\n', '<', '>'])
-    {
-        return Err(invalid("Invalid commit identity."));
-    }
+    crate::backend::git::objects::validate_identity(author, email)?;
     let reference =
         crate::backend::git::branch_ref(branch).ok_or_else(|| invalid("Invalid branch name."))?;
     let current = storage.direct_ref(&reference).await?;
@@ -545,15 +537,9 @@ pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<Comm
         prepared.commit.sha,
         prepared.expected.as_deref().unwrap_or(ZERO)
     );
-    let (status, _) = repo
-        .command(&["update-ref", "--stdin"], transaction.as_bytes(), None)
-        .await?;
-    if !status.success() {
-        if repo.direct_ref(&prepared.reference).await? != prepared.expected {
-            return Err(conflict());
-        }
-        return Err(unavailable());
-    }
+    crate::backend::git::repository::run_ref_transaction(
+        path, &transaction, "publish editor commit", "The branch changed since the editor started.",
+    ).await.map_err(RepoError::from)?;
     Ok(prepared.commit.clone())
 }
 

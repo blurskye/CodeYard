@@ -146,11 +146,19 @@ impl RepoStore {
                         Operation::GitTree {
                             revision: revision.into(),
                             recursive,
+                            raw_json: true,
                         },
                         b"",
                     )
                     .await
             }
+        }
+    }
+
+    pub async fn introduced_blobs(&self, sha: &str) -> Result<Vec<git::objects::TreeObjectEntry>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.introduced_blobs(sha).await,
+            Backend::Remote(remote) => remote.call(Operation::IntroducedBlobs { sha: sha.into() }, b"").await,
         }
     }
 
@@ -170,7 +178,7 @@ impl RepoStore {
             Backend::Local(local) => local.git_tag(sha).await,
             Backend::Remote(remote) => {
                 remote
-                    .call(Operation::GitTag { sha: sha.into() }, b"")
+                    .call(Operation::GitTag { sha: sha.into(), raw_json: true }, b"")
                     .await
             }
         }
@@ -475,6 +483,19 @@ impl RepoStore {
         }
     }
 
+    /// Accepted primary writes share one coalesced accounting owner with file mutations.
+    pub(crate) fn refresh_storage_size(&self, pool: db::DbPool, repo_id: i64) {
+        if let Backend::Local(store) = &self.0 { local::refresh_storage_size(pool, repo_id, store.clone()); }
+    }
+
+    /// Wait for this request's coalesced scan to be published, including on a remote primary.
+    pub(crate) async fn refresh_storage_size_now(&self, pool: &db::DbPool, repo_id: i64) -> Result<i64, RepoError> {
+        match &self.0 {
+            Backend::Local(store) => local::refresh_storage_size_now(pool.clone(), repo_id, store.clone()).await,
+            Backend::Remote(remote) => remote.call(Operation::RefreshStorageSize, b"").await,
+        }
+    }
+
     /// Bytes the repository takes on disk.
     pub async fn size_bytes(&self) -> Result<u64, RepoError> {
         match &self.0 {
@@ -690,6 +711,7 @@ impl RepoStore {
                         Operation::TemplateTexts {
                             revision: revision.into(),
                             paths: paths.to_vec(),
+                            raw_json: true,
                         },
                         b"",
                     )
@@ -741,7 +763,7 @@ impl RepoStore {
                     .bytes_with_limit(
                         Operation::BlobById { id: id.into() },
                         b"",
-                        MAX_BLOB_RESPONSE_BYTES,
+                        git::objects::MAX_BLOB_WRITE_BYTES,
                     )
                     .await
             }
@@ -837,22 +859,24 @@ impl RepoStore {
         }
     }
 
-    /// The full commit count and the first 250 commits of a pull request, oldest first.
+    /// Full count and the requested offset/limit window within the oldest 250 commits. Limit zero counts only.
     pub async fn pull_request_commits(
         &self,
         base_ref: &str,
         head_ref: &str,
+        offset: usize,
+        limit: usize,
     ) -> Result<(u64, Vec<CommitInfo>), RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.pull_request_commits(base_ref, head_ref).await,
+            Backend::Local(local) => local.pull_request_commits(base_ref, head_ref, offset, limit).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
                         Operation::CommitsBetween {
                             base_ref: base_ref.into(),
                             head_ref: head_ref.into(),
-                            limit: 250,
-                            offset: 0,
+                            offset,
+                            limit: limit.min(250),
                             raw_json: true,
                             pull_request: true,
                         },
@@ -887,6 +911,7 @@ impl RepoStore {
                         Operation::CommitsBetween {
                             base_ref: base_ref.into(),
                             head_ref: head_ref.into(),
+                            offset: 0,
                             limit,
                             offset,
                             raw_json: true,
@@ -1308,15 +1333,17 @@ impl RepoStore {
     pub async fn commit_statistics(
         &self,
         branch: &str,
+        mode: git::StatisticsMode,
     ) -> Result<git::CommitStatistics, RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.commit_statistics(branch).await,
+            Backend::Local(local) => local.commit_statistics(branch, mode).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
                         Operation::CommitStatistics {
                             branch: branch.into(),
                             raw_json: true,
+                            mode,
                         },
                         b"",
                     )
@@ -1604,6 +1631,7 @@ impl RepoStore {
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
+        credential: db::users::accounts::OwnedAccountCredential,
         feature: db::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,
@@ -1615,6 +1643,7 @@ impl RepoStore {
                         pool,
                         repo_id,
                         actor,
+                        credential,
                         feature,
                         enabled,
                         private_consent,
@@ -1626,6 +1655,7 @@ impl RepoStore {
                     .call_as(
                         actor,
                         Operation::ConfigureDependencySecurity {
+                            credential,
                             feature,
                             enabled,
                             private_consent,

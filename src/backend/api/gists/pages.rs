@@ -1,64 +1,34 @@
 use super::*;
 use anyhow::Result;
 
-pub(super) async fn card(ctx: &PageContext, id: &str) -> Result<view::Card> {
-    let loaded = domain::load(&ctx.state, id, None).await?;
-    let owner = db::users::accounts::get_user_by_id(&ctx.state.pool, loaded.gist.owner_id)
-        .await?
-        .ok_or(db::gists::GistRefusal::Missing)?;
-    Ok(view::Card {
-        id: loaded.gist.id,
-        owner: owner.username,
-        description: loaded.gist.description,
-        public: loaded.gist.is_public,
-        filenames: loaded
-            .snapshot
-            .files
-            .iter()
-            .take(5)
-            .map(|entry| entry.path.clone())
-            .collect(),
-        file_count: loaded.snapshot.files.len(),
-        files_unavailable: false,
-        comments: loaded.gist.comments,
-        updated_at: loaded.gist.updated_at.to_rfc3339(),
-    })
-}
-/// A gist deleted since the listing query is left out, and one whose files cannot be read
-/// right now shows its saved details, so one gist does not fail the whole list.
+/// Listed metadata is reused; storage still owns placement checks and pending-write recovery.
 async fn cards(ctx: &PageContext, entries: Vec<db::gists::Gist>) -> Result<Vec<view::Card>> {
-    let mut cards = Vec::new();
-    for entry in entries {
-        let failure = match card(ctx, &entry.id).await {
-            Ok(card) => {
-                cards.push(card);
-                continue;
+    use futures_util::{stream, StreamExt};
+    let owners = db::users::accounts::get_users_by_ids(&ctx.state.pool, &entries.iter().map(|gist| gist.owner_id).collect::<Vec<_>>()).await?
+        .into_iter().map(|user| (user.id, user.username)).collect::<std::collections::HashMap<_, _>>();
+    let repositories = db::repositories::records::get_repositories_by_ids(&ctx.state.pool, &entries.iter().map(|gist| gist.repo_id).collect::<Vec<_>>()).await?
+        .into_iter().map(|repo| (repo.id, repo)).collect::<std::collections::HashMap<_, _>>();
+    let (owners, repositories) = (&owners, &repositories);
+    let results = stream::iter(entries).map(|entry| async move {
+        let (Some(owner), Some(repository)) = (owners.get(&entry.owner_id), repositories.get(&entry.repo_id)) else { return Ok::<_, anyhow::Error>(None); };
+        let snapshot = repo_store(repository, ctx.state.cluster.as_ref()).gist_snapshot(&ctx.state.pool, entry.repo_id, None).await;
+        let (files, unavailable) = match snapshot {
+            Ok(snapshot) => (snapshot.files, false),
+            Err(failure) => match refusal(&failure.clone().into()).0 {
+                StatusCode::NOT_FOUND => return Ok(None),
+                StatusCode::SERVICE_UNAVAILABLE => (Vec::new(), true),
+                _ => return Err(failure.into()),
             }
-            Err(failure) => failure,
         };
-        match refusal(&failure).0 {
-            StatusCode::NOT_FOUND => {}
-            StatusCode::SERVICE_UNAVAILABLE => {
-                let Some(owner) =
-                    db::users::accounts::get_user_by_id(&ctx.state.pool, entry.owner_id).await?
-                else {
-                    continue;
-                };
-                cards.push(view::Card {
-                    id: entry.id,
-                    owner: owner.username,
-                    description: entry.description,
-                    public: entry.is_public,
-                    filenames: Vec::new(),
-                    file_count: 0,
-                    files_unavailable: true,
-                    comments: entry.comments,
-                    updated_at: entry.updated_at.to_rfc3339(),
-                });
-            }
-            _ => return Err(failure),
-        }
-    }
+        Ok(Some(view::Card {
+            id: entry.id, owner: owner.clone(), description: entry.description, public: entry.is_public,
+            filenames: files.iter().take(5).map(|entry| entry.path.clone()).collect(),
+            file_count: files.len(), files_unavailable: unavailable, comments: entry.comments,
+            updated_at: entry.updated_at.to_rfc3339(),
+        }))
+    }).buffered(4).collect::<Vec<_>>().await;
+    let mut cards = Vec::new();
+    for result in results { if let Some(card) = result? { cards.push(card); } }
     Ok(cards)
 }
 async fn list_model(ctx: &PageContext) -> Result<view::Listing> {
@@ -92,7 +62,7 @@ async fn list_model(ctx: &PageContext) -> Result<view::Listing> {
     if let db::gists::ListScope::Owner(owner, true) = scope {
         domain::recover_owned(&ctx.state, owner).await?;
     }
-    let mut entries = db::gists::list(
+    let mut entries = db::gists::list_for_session(
         &ctx.state.pool,
         &db::gists::GistList {
             scope,
@@ -100,6 +70,7 @@ async fn list_model(ctx: &PageContext) -> Result<view::Listing> {
             limit: PAGE_SIZE as i64 + 1,
             offset: ((page - 1) * PAGE_SIZE) as i64,
         },
+        &session::extract_session_id(&ctx.headers).unwrap_or_default(),
     )
     .await?;
     let more = entries.len() > PAGE_SIZE;
@@ -153,16 +124,23 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
     let mut files = Vec::new();
     let mut remaining = 256 * 1024;
     for entry in &loaded.snapshot.files {
-        let bytes = store.blob_by_id(&entry.sha).await?;
-        let content = domain::text_preview(&bytes, remaining.min(64 * 1024)).map(str::to_owned);
-        let truncated = content
-            .as_ref()
-            .is_some_and(|text| text.len() < bytes.len());
-        remaining -= content.as_ref().map_or(0, String::len);
+        let size = entry.size.unwrap_or(0);
+        let length = remaining.min(64 * 1024).min(size);
+        let mut bytes = if length == 0 { Vec::new() } else {
+            store.blob_range(&loaded.snapshot.sha, &entry.path, crate::backend::repositories::store::BlobRange::Window { offset: 0, length: length as u64 }).await?.bytes
+        };
+        remaining -= bytes.len();
+        if bytes.len() < size {
+            if let Err(error) = std::str::from_utf8(&bytes) {
+                if error.error_len().is_none() { bytes.truncate(error.valid_up_to()); }
+            }
+        }
+        let content = (length > 0 || size == 0).then(|| domain::text_preview(&bytes, length).map(str::to_owned)).flatten();
+        let truncated = content.as_ref().is_some_and(|text| text.len() < size) || (length == 0 && size > 0);
         files.push(view::File {
             filename: entry.path.clone(),
             content,
-            size: bytes.len(),
+            size,
             truncated,
             raw_url: format!(
                 "/gists/{id}/raw/{}/{}",
@@ -186,13 +164,14 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
     let history_more = history.len() > PAGE_SIZE;
     history.truncate(PAGE_SIZE);
     let mut revisions = Vec::new();
+    let authors = crate::backend::repositories::reads::commit_authors(&ctx.state.pool, &history.iter().map(|revision| revision.author_email.clone()).collect::<Vec<_>>()).await?;
     for revision in history {
-        let author = db::gists::commit_user(&ctx.state.pool, &revision.author_email).await?;
+        let author = authors.get(&revision.author_email);
         let timestamp = chrono::DateTime::from_timestamp(revision.timestamp, 0)
             .ok_or(InvalidInput("Invalid gist commit timestamp."))?;
         revisions.push(view::Revision {
             sha: revision.sha,
-            author: author.map(|user| user.username),
+            author: author.map(|user| user.username.clone()),
             committed_at: timestamp.to_rfc3339(),
             additions: revision.additions,
             deletions: revision.deletions,

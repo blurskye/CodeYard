@@ -1,6 +1,6 @@
 //! Durable OSV data and leases for lockfile snapshot scans.
 use super::DbPool;
-use crate::backend::{dependency_graph::Snapshot, vulnerabilities::Advisory};
+use crate::backend::{dependency_graph::Snapshot, vulnerabilities::PreparedAdvisory};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 #[derive(Debug, thiserror::Error)]
@@ -35,7 +35,7 @@ native_operation!(super::postgres::vulnerabilities::settings,super::sqlite::vuln
 native_operation!(super::postgres::vulnerabilities::save_settings,super::sqlite::vulnerabilities::save_settings,
     fn save_settings(pool:&DbPool,actor:i64,session:&str,settings:&Settings)->Result<()>);
 native_operation!(super::postgres::vulnerabilities::upsert,super::sqlite::vulnerabilities::upsert,
-    fn upsert(pool:&DbPool,advisory:&Advisory)->Result<bool>);
+    fn upsert(pool:&DbPool,advisory:&PreparedAdvisory)->Result<bool>);
 native_operation!(super::postgres::vulnerabilities::rescan_all,super::sqlite::vulnerabilities::rescan_all,
     fn rescan_all(pool:&DbPool)->Result<()>);
 native_operation!(super::postgres::vulnerabilities::advisories,super::sqlite::vulnerabilities::advisories,

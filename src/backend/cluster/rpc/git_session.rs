@@ -187,15 +187,10 @@ impl NodeContext {
 /// Check Git before admission, while failover can still try another node.
 async fn readable(store: &RepoStore) -> Result<(), RepoError> {
     let path = store.local_path_for_spawning_git()?.to_owned();
-    let permit = git_process::operation_slot(TIMEOUT)
-        .await
-        .map_err(RepoError::from)?;
-    let opens = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
+    let opens = git_process::blocking_until(std::time::Instant::now() + TIMEOUT, move || {
         crate::backend::git::repository::opens_as_repository(&path)
     })
     .await
-    .map_err(|_| unavailable())?
     .map_err(|_| unavailable())?;
     if opens {
         Ok(())

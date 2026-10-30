@@ -140,7 +140,7 @@ impl ReceiveCredential {
     )> {
         use crate::backend::{
             db,
-            repositories::{access, deploy_keys},
+            repositories::deploy_keys,
         };
         anyhow::ensure!(
             !(repo.is_gist && write && matches!(self, Self::DeployKey(_))),
@@ -218,7 +218,8 @@ impl ReceiveCredential {
             anyhow::ensure!(token.repo_id == repo.id, CredentialRefusal::Missing);
             anyhow::ensure!(permissions.allows("contents", write), CredentialRefusal::TokenScope);
         }
-        let level = access::user_git_access(pool, &identity, repo).await?;
+        // Read the account, gist owner and repository grants in one snapshot; refuse writes below.
+        let level = db::repositories::access::git_access(pool, identity.id, repo.id, false).await?;
         anyhow::ensure!(level.can_read(), CredentialRefusal::Missing);
         if let Self::Token(id) = self {
             anyhow::ensure!(!write || db::users::tokens::token_user(pool, id, true).await?.is_some(), CredentialRefusal::ReadOnly);

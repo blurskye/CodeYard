@@ -9,6 +9,35 @@ pub enum AccountCredential<'a> {
     Token(i64, &'a str),
 }
 
+/// An account credential retained across queues, owned tasks and authenticated RPC.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub enum OwnedAccountCredential {
+    Session(String),
+    Token(i64),
+}
+impl std::fmt::Debug for OwnedAccountCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Session(_) => f.write_str("Session(<redacted>)"),
+            Self::Token(id) => f.debug_tuple("Token").field(id).finish(),
+        }
+    }
+}
+impl OwnedAccountCredential {
+    pub(crate) fn as_credential(&self) -> AccountCredential<'_> {
+        match self {
+            Self::Session(session) => AccountCredential::Session(session),
+            Self::Token(id) => AccountCredential::Token(*id),
+        }
+    }
+}
+impl From<&str> for OwnedAccountCredential {
+    fn from(session: &str) -> Self { Self::Session(session.to_owned()) }
+}
+impl From<&String> for OwnedAccountCredential {
+    fn from(session: &String) -> Self { Self::Session(session.clone()) }
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("A live unrestricted account credential is required")]
 pub struct AccountRestricted;
@@ -68,13 +97,17 @@ native_operation!(crate::backend::db::postgres::users::accounts::get_user_by_ema
     crate::backend::db::sqlite::users::accounts::get_user_by_email,
     fn get_user_by_email(pool: &DbPool, email: &str) -> Result<Option<User>>);
 
-native_operation!(crate::backend::db::postgres::users::accounts::get_users_by_emails,
-    crate::backend::db::sqlite::users::accounts::get_users_by_emails,
-    fn get_users_by_emails(pool: &DbPool, emails: &[String]) -> Result<Vec<User>>);
+/// An input Git address and its selected account from the same statement snapshot.
+#[derive(sqlx::FromRow)]
+pub struct CommitAuthor {
+    pub address: String,
+    #[sqlx(flatten)]
+    pub user: User,
+}
 
-native_operation!(crate::backend::db::postgres::users::accounts::get_verified_email_owners,
-    crate::backend::db::sqlite::users::accounts::get_verified_email_owners,
-    fn get_verified_email_owners(pool: &DbPool, emails: &[String]) -> Result<Vec<(String, i64)>>);
+native_operation!(crate::backend::db::postgres::users::accounts::commit_authors,
+    crate::backend::db::sqlite::users::accounts::commit_authors,
+    fn commit_authors(pool: &DbPool, emails: &[String]) -> Result<Vec<CommitAuthor>>);
 
 native_operation!(crate::backend::db::postgres::users::accounts::get_users_by_usernames,
     crate::backend::db::sqlite::users::accounts::get_users_by_usernames,

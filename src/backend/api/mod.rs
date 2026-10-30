@@ -142,6 +142,16 @@ pub async fn run_web_server(
     state: AppState,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    run_web_listener(listener, state, stop).await
+}
+
+pub(crate) async fn run_web_listener(
+    listener: tokio::net::TcpListener,
+    state: AppState,
+    stop: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
+    let addr = listener.local_addr()?;
     let dependency_pool = state.pool.clone();
     let dependency_ci = state.ci_runs.clone();
     let dependency_notifications = state.notification_broadcaster.clone();
@@ -151,7 +161,6 @@ pub async fn run_web_server(
         cancel_on_shutdown,
     ));
     info!("Git HTTP server starting on http://{}", addr);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
     let mut listener_stop = stop.clone();
     let server = async move {
         axum::serve(

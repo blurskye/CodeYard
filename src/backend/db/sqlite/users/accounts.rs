@@ -1,4 +1,5 @@
 use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, AdminUser, User};
+use crate::backend::db::users::accounts::CommitAuthor;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -115,31 +116,27 @@ pub async fn get_user_by_email(pool: &SqlitePool, email: &str) -> Result<Option<
     )
 }
 
-pub async fn get_users_by_emails(pool: &SqlitePool, emails: &[String]) -> Result<Vec<User>> {
-    if emails.is_empty() {
-        return Ok(vec![]);
-    }
-    Ok(
-        sqlx::query_as("SELECT * FROM users WHERE email IN (SELECT value FROM json_each(?1))")
-            .bind(serde_json::to_string(emails)?)
-            .fetch_all(pool)
-            .await?,
-    )
-}
-
-/// The verified owner of each address, as `(address, user id)`. Primary and secondary addresses
-/// both count, and the address is returned as it was requested.
-pub async fn get_verified_email_owners(
-    pool: &SqlitePool,
-    emails: &[String],
-) -> Result<Vec<(String, i64)>> {
-    if emails.is_empty() {
-        return Ok(vec![]);
-    }
+/// Git attribution prefers the account's noreply identity, then verified addresses, with
+/// the lowest account ID resolving legacy duplicate claims. Banned accounts never attribute.
+pub async fn commit_authors(pool: &SqlitePool, emails: &[String]) -> Result<Vec<CommitAuthor>> {
+    if emails.is_empty() { return Ok(Vec::new()); }
     Ok(sqlx::query_as(
-        "SELECT a.value, u.id FROM json_each(?1) a JOIN users u ON u.email_verified AND lower(u.email)=lower(a.value)
-         UNION
-         SELECT a.value, e.user_id FROM json_each(?1) a JOIN user_emails e ON e.verified AND lower(e.email)=lower(a.value)",
+        "WITH requested AS (
+            SELECT DISTINCT value AS address, LOWER(value) AS normalized FROM json_each(?1)
+         ), candidates AS (
+            SELECT a.address, u.id, 0 AS priority FROM requested a
+                JOIN users u ON LOWER(u.username || '@users.noreply')=a.normalized
+            UNION ALL
+            SELECT a.address, u.id, 1 AS priority FROM requested a
+                JOIN users u ON u.email_verified AND LOWER(u.email)=a.normalized
+            UNION ALL
+            SELECT a.address, e.user_id AS id, 1 AS priority FROM requested a
+                JOIN user_emails e ON e.verified AND LOWER(e.email)=a.normalized
+         ), ranked AS (
+            SELECT c.address, c.id, ROW_NUMBER() OVER (PARTITION BY c.address ORDER BY c.priority,c.id) AS ordinal
+            FROM candidates c JOIN users u ON u.id=c.id WHERE NOT u.is_banned
+         )
+         SELECT ranked.address, u.* FROM ranked JOIN users u ON u.id=ranked.id WHERE ranked.ordinal=1",
     )
     .bind(serde_json::to_string(emails)?)
     .fetch_all(pool)
@@ -221,10 +218,11 @@ pub async fn set_user_avatar(
     }
     if let Some(file) = avatar_file_id {
         let usable: Option<uuid::Uuid> = sqlx::query_scalar(
-            "UPDATE files SET is_active=TRUE,upload_expires_at=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND user_id=?2 AND (is_active OR (confirmed_at IS NOT NULL AND upload_expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))) AND reason='avatar' AND content_type IN ('image/png','image/jpeg','image/gif','image/webp') RETURNING id",
+            "UPDATE files SET is_active=TRUE,upload_expires_at=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND user_id=?2 AND (is_active OR (confirmed_at IS NOT NULL AND upload_expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))) AND reason='avatar' AND content_type IN (SELECT value FROM json_each(?3)) RETURNING id",
         )
         .bind(file)
         .bind(user_id)
+        .bind(serde_json::to_string(&crate::media::AVATAR_CONTENT_TYPES)?)
         .fetch_optional(&mut *tx)
         .await?;
         if usable.is_none() {

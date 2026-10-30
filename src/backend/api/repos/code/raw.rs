@@ -8,7 +8,6 @@ use axum::extract::{OriginalUri, Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Content type for a raw blob.
@@ -233,7 +232,7 @@ pub async fn raw_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
-    Path(params): Path<HashMap<String, String>>,
+    super::GitPathParams(params): super::GitPathParams,
 ) -> Response {
     let (range, partial) = match requested_range(&headers) {
         Ok(range) => range,

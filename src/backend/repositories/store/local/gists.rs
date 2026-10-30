@@ -103,12 +103,7 @@ impl LocalStore {
         if super::repository_matches_path(&repo, self.path(), self.node_id) {
             self.recover_gist(pool, id).await?;
         }
-        let revision = revision.map(str::to_owned);
-        self.blocking(move |path| {
-            let _lock = _lock;
-            git::gists::history(path, revision.as_deref(), offset, limit)
-        })
-            .await
+        git::gists::history(self.path(), revision, offset, limit).await.map_err(RepoError::from)
     }
     pub(in crate::backend::repositories::store) async fn gist_write(
         &self,

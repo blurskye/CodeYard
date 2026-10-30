@@ -70,10 +70,13 @@ impl RateLimiter {
             });
             records.cleanup_at = now + CLEANUP_INTERVAL;
         }
-        // When the table is full, new addresses are not tracked. Active bans are kept
-        // and nobody is refused for lack of room.
+        // Admit new sources by evicting the oldest record, preferring non-banned entries.
         if records.by_ip.len() >= MAX_TRACKED_IPS && !records.by_ip.contains_key(&ip) {
-            return false;
+            let oldest = records.by_ip.iter().min_by_key(|(_, record)| (
+                record.banned_until.is_some_and(|until| until > now),
+                record.attempts.last().copied().or(record.banned_until.map(|until| until - BAN_DURATION)),
+            )).map(|(ip, _)| *ip);
+            if let Some(oldest) = oldest { records.by_ip.remove(&oldest); }
         }
         let record = records.by_ip.entry(ip).or_insert_with(|| IpRecord {
             attempts: Vec::new(),
@@ -189,12 +192,12 @@ mod tests {
         {
             let records = limiter.records.read().await;
             assert_eq!(records.by_ip.len(), MAX_TRACKED_IPS);
-            assert_eq!(records.by_ip[&ip(1)].attempts, vec![expired]);
+            assert!(!records.by_ip.contains_key(&ip(1)));
         }
-        // A full table does not refuse new addresses; it just does not track them.
+        // A full table still tracks new addresses and stays bounded.
         assert!(!limiter.is_blocked(ip(2)).await);
         assert!(!limiter.record_failure(ip(2)).await);
-        assert!(!limiter.records.read().await.by_ip.contains_key(&ip(2)));
+        assert!(limiter.records.read().await.by_ip.contains_key(&ip(2)));
         limiter.records.write().await.cleanup_at = Instant::now();
         limiter.record_failure(ip(2)).await;
         assert!(!limiter.records.read().await.by_ip.contains_key(&ip(1)));

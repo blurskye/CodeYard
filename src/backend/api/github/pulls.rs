@@ -184,7 +184,7 @@ pub(super) async fn document(
             .await
             .map_err(store_error)?;
         let (commits, _) = store
-            .pull_request_commits(pull.diff_base(), &pull.head_sha)
+            .pull_request_commits(pull.diff_base(), &pull.head_sha, 0, 0)
             .await
             .map_err(store_error)?;
         let (comments, review_comments) =
@@ -305,7 +305,7 @@ pub(super) async fn diff_response(
     let store = repo_store(repo, state.cluster.as_ref());
     if media == super::diff_media::Media::Patch {
         let (total, commits) = store
-            .pull_request_commits(pull.diff_base(), &pull.head_sha)
+            .pull_request_commits(pull.diff_base(), &pull.head_sha, 0, 250)
             .await
             .map_err(store_error)?;
         let total = usize::try_from(total).unwrap_or(usize::MAX);
@@ -348,12 +348,11 @@ async fn commits(
 ) -> Result<Response> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
     let (offset, limit) = page.window()?;
-    let (_, rows) = repo_store(&repo, state.cluster.as_ref())
-        .pull_request_commits(pull.diff_base(), &pull.head_sha)
+    let (total, rows) = repo_store(&repo, state.cluster.as_ref())
+        .pull_request_commits(pull.diff_base(), &pull.head_sha, offset, limit)
         .await
         .map_err(store_error)?;
-    let has_next = rows.len() > offset + limit;
-    let rows: Vec<_> = rows.into_iter().skip(offset).take(limit).collect();
+    let has_next = (offset as u64).saturating_add(limit as u64) < total.min(250);
     let items = super::commits::documents(&state, repo.id, &rows, &owner, &name).await?;
     page.response(&uri, items, has_next)
 }
@@ -374,7 +373,7 @@ async fn files(
     let has_next = diff.files.len().min(3000) > offset + limit;
     let items = diff.files.into_iter().take(3000).skip(offset).take(limit).map(|file| {
         let mut value = json!({
-            "sha": file.blob_sha, "filename": file.filename, "status": file.status, "additions": file.additions, "deletions": file.deletions,
+            "sha": file.blob_sha, "filename": file.filename, "status": super::commits::file_status(&file.status), "additions": file.additions, "deletions": file.deletions,
             "changes": file.additions + file.deletions, "patch": file.patch,
             "blob_url": format!("{}/{owner}/{name}/blob/{}/{}", crate::backend::api::http::config::link_origin(), pull.head_sha, path_url(&file.filename)),
             "raw_url": format!("{}/{owner}/{name}/raw/{}/{}", crate::backend::api::http::config::link_origin(), pull.head_sha, path_url(&file.filename)),

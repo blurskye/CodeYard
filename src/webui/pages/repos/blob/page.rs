@@ -99,7 +99,8 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
     let blame = file_url(&base, "blame", &page.reference, &page.path);
     let edit = file_url(&base, "edit", &page.reference, &page.path);
     let delete = file_url(&base, "delete", &page.reference, &page.path);
-    let name = page.path.rsplit('/').next().unwrap_or_default();
+    let display_name = crate::git_paths::display(page.path.rsplit('/').next().unwrap_or_default());
+    let name = display_name.as_str();
     let language = language_of_path(&page.path);
     let display = display_text(&page.content);
     let line_count = display.lines().count();

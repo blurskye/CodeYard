@@ -12,9 +12,9 @@ use std::{
 };
 
 pub const MAX_LOCK_BYTES: usize = 4 * 1024 * 1024;
-pub const MAX_PACKAGES: usize = 2000;
-const MAX_MANIFEST: usize = 256 * 1024;
-const MAX_ARCHIVE: usize = 8 * 1024 * 1024;
+pub use crate::backend::db::repositories::dependencies::MAX_PACKAGES;
+pub const MAX_MANIFEST: usize = 256 * 1024;
+pub const MAX_ARCHIVE: usize = 8 * 1024 * 1024;
 const MAX_EXPANDED: u64 = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
@@ -132,6 +132,13 @@ impl Lockfile {
                 .and_then(Value::as_object)
                 .context("Missing npm packages")?;
             ensure!(entries.len() <= MAX_PACKAGES + 1, "Too many npm packages");
+            let root = entries.get("").and_then(Value::as_object).context("Missing npm root package")?;
+            for section in ["dependencies", "devDependencies", "optionalDependencies"] {
+                let declarations = |value: Option<&Value>| -> Result<serde_json::Map<String, Value>> {
+                    match value { None => Ok(serde_json::Map::new()), Some(value) => value.as_object().cloned().context("Invalid root dependency declarations") }
+                };
+                ensure!(declarations(manifest.get(section))? == declarations(root.get(section))?, "The npm manifest and root lock declarations disagree");
+            }
             for (path, value) in entries {
                 if path.is_empty() {
                     continue;
@@ -253,6 +260,7 @@ impl Lockfile {
             .collect()
     }
     pub fn patch(mut self, path: &str, old: &Archive, new: &Archive) -> Result<Patch> {
+        ensure!(self.version >= 2, "Npm v1 updates require manual peer-constraint verification");
         ensure!(
             self.unsupported == 0
                 && self.manifest.get("workspaces").is_none()
@@ -294,18 +302,14 @@ impl Lockfile {
         // Do not silently invalidate another installed package's dependency or
         // peer constraint. Unknown/complex npm range syntax stays manual rather
         // than implementing a second package-manager resolver.
-        let fields: &[&str] = if self.version == 1 {
-            &["requires"]
-        } else {
-            &["dependencies", "optionalDependencies", "peerDependencies"]
-        };
+        let fields = ["dependencies", "optionalDependencies", "peerDependencies"];
         for installed in &self.packages {
             let mut entry = &self.document;
             for component in &installed.location {
                 entry = entry.get(component).context("Lockfile entry moved")?;
             }
             for field in fields {
-                if let Some(requirements) = entry.get(*field) {
+                if let Some(requirements) = entry.get(field) {
                     let requirements = requirements
                         .as_object()
                         .context("Invalid installed dependency requirements")?;
@@ -370,9 +374,7 @@ impl Lockfile {
         for component in &package.location {
             entry = entry.get_mut(component).context("Lockfile entry moved")?;
         }
-        if self.version == 1 {
-            legacy_graph(entry, &old.document)?;
-        } else {
+        {
             let actual = graph(entry);
             let expected = graph(&old.document);
             ensure!(

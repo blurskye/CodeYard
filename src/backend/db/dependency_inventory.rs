@@ -3,6 +3,8 @@ use anyhow::Result;
 use chrono::DateTime;
 use serde_json::Value;
 
+pub const MAX_VERSION_BYTES: usize = 256;
+
 /// Package URL components shared by validation and inventory presentation.
 pub fn package_parts(purl: &str) -> Option<(&str, &str, &str)> {
     let (ecosystem, qualified) = purl.strip_prefix("pkg:")?.split_once('/')?;
@@ -35,6 +37,9 @@ pub fn package_parts(purl: &str) -> Option<(&str, &str, &str)> {
         {
             return None;
         }
+    }
+    if crate::webui::decode_component(version).len() > MAX_VERSION_BYTES {
+        return None;
     }
     for part in [name, version] {
         if crate::webui::decode_component(part)

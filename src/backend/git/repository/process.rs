@@ -138,6 +138,7 @@ pub(crate) fn command(executable: &Path) -> Result<Command> {
     let mut command = Command::from(std_command(executable));
     // Own process group so a timeout can kill git and anything it started.
     command.process_group(0).kill_on_drop(true);
+    limit_memory(&mut command);
     Ok(command)
 }
 
@@ -174,7 +175,9 @@ pub(crate) fn limit_memory(command: &mut Command) {
             if libc::getrlimit(libc::RLIMIT_AS, &mut inherited) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            let cap = (bytes as libc::rlim_t).min(inherited.rlim_max);
+            let cap = (bytes as libc::rlim_t)
+                .min(inherited.rlim_cur)
+                .min(inherited.rlim_max);
             let limit = libc::rlimit {
                 rlim_cur: cap,
                 rlim_max: cap,
@@ -351,28 +354,21 @@ async fn stream_with_idle(
             Ok::<_, anyhow::Error>(())
         };
         tokio::pin!(inbound, outbound);
-        let wait = child.wait();
-        tokio::pin!(wait);
-        let (status, drained) = tokio::select! {
-            status = &mut wait => (status?, false),
+        tokio::select! {
             result = &mut inbound => {
-                // Git can close stdin after a rejection or a complete pack. A
-                // lost receive input becomes EOF, letting Git reject short packs.
                 if let Err(error) = result {
                     if !receive && !error.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe) {
                         return Err(error);
                     }
                 }
-                tokio::select! {
-                    status = &mut wait => (status?, false),
-                    result = &mut outbound => { result?; (wait.await?, true) }
-                }
+                outbound.await?;
             }
-            result = &mut outbound => { result?; (wait.await?, true) }
-        };
-        if !drained {
-            outbound.await?;
+            result = &mut outbound => { result?; }
         }
+        // Keep the leader unreaped until its pipes are drained: its PGID must not be
+        // reused while cancellation can still signal the group.
+        let status = child.wait().await?;
+        group.0 = None;
         Ok(status)
     };
     let result = session_timeout(work, receiver, idle).await;
@@ -389,9 +385,101 @@ pub(crate) async fn operation_slot(timeout: Duration) -> Result<OwnedSemaphorePe
         .context("Git operation limit closed")
 }
 
+/// Blocking Git work keeps its admission permit even if its caller is cancelled.
+pub(crate) async fn blocking_until<T: Send + 'static>(
+    deadline: std::time::Instant,
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
+    let permit = operation_slot(deadline.saturating_duration_since(std::time::Instant::now())).await?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        ensure!(std::time::Instant::now() < deadline, "Git operation timed out");
+        work()
+    }).await.context("Git blocking task failed")?
+}
+
+/// A parser may stop a read-only child once its requested prefix is complete.
+pub(crate) enum ReadEnd<T> { Complete(T), Prefix(T) }
+
+#[derive(Clone)]
+pub(crate) struct ReadAdmission {
+    permit: Arc<OwnedSemaphorePermit>,
+    deadline: Instant,
+}
+impl ReadAdmission {
+    /// Synchronous parsing/object metadata inherits the stream's permit across cancellation.
+    pub(crate) async fn blocking<T: Send + 'static>(&self, work: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
+        let admission = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = admission.permit;
+            ensure!(Instant::now() < admission.deadline, "git timed out");
+            work()
+        }).await.context("Git streamed reader failed")?
+    }
+}
+
+/// Admission, stdin/stderr draining, process-group lifetime and child completion share one
+/// absolute deadline. Parsers retain only their own bounded records, not all command output.
+pub(crate) async fn read_stream<T, F, Fut>(
+    command: Command, input: &[u8], timeout: Duration, read: F,
+) -> Result<(ExitStatus, T)>
+where F: FnOnce(tokio::process::ChildStdout, ReadAdmission) -> Fut,
+      Fut: std::future::Future<Output = Result<ReadEnd<T>>>,
+{
+    read_stream_group(command, input, timeout, true, read).await
+}
+
+/// Hook children remain in receive-pack's group; they must never signal that entire group.
+pub(crate) async fn read_stream_inherited<T, F, Fut>(command: Command, timeout: Duration, read: F) -> Result<(ExitStatus, T)>
+where F: FnOnce(tokio::process::ChildStdout, ReadAdmission) -> Fut,
+      Fut: std::future::Future<Output = Result<ReadEnd<T>>>,
+{
+    read_stream_group(command, b"", timeout, false, read).await
+}
+
+async fn read_stream_group<T, F, Fut>(mut command: Command, input: &[u8], timeout: Duration, own_group: bool, read: F) -> Result<(ExitStatus, T)>
+where F: FnOnce(tokio::process::ChildStdout, ReadAdmission) -> Fut,
+      Fut: std::future::Future<Output = Result<ReadEnd<T>>>,
+{
+    ensure!(input.len() <= RPC_LIMIT, "git request exceeded its limit");
+    let deadline = Instant::now() + timeout;
+    let no_match_ok = command.as_std().get_args().any(|arg| arg == "grep");
+    let permit = Arc::new(operation_slot(timeout).await?);
+    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    let mut child = command.spawn().context("start git")?;
+    let mut group = ProcessGroup(if own_group { child.id() } else { None });
+    let mut stdin = child.stdin.take().context("git stdin")?;
+    let stdout = child.stdout.take().context("git stdout")?;
+    let stderr = child.stderr.take().context("git stderr")?;
+    let pid = child.id();
+    let work = async {
+        let write = async { stdin.write_all(input).await?; drop(stdin); Ok::<_, anyhow::Error>(()) };
+        let parse = async {
+            let result = read(stdout, ReadAdmission { permit: permit.clone(), deadline }).await?;
+            if matches!(&result, ReadEnd::Prefix(_)) {
+                // Keep the leader unreaped until stderr is drained and group cleanup is done.
+                if let Some(pid) = pid { unsafe { libc::kill(if own_group { -(pid as i32) } else { pid as i32 }, libc::SIGTERM); } }
+            }
+            Ok::<_, anyhow::Error>(result)
+        };
+        let (_, result, errors) = tokio::try_join!(write, parse, read_bounded(stderr, STDERR_LIMIT))?;
+        let status = child.wait().await?;
+        group.0 = None;
+        let value = match result {
+            ReadEnd::Complete(value) => {
+                ensure!(status.success() || (no_match_ok && status.code() == Some(1)), "Git streamed read failed: {}", String::from_utf8_lossy(&errors));
+                value
+            }
+            ReadEnd::Prefix(value) => value,
+        };
+        Ok((status, value))
+    };
+    tokio::time::timeout_at(deadline, work).await.context("git timed out")?
+}
+
 /// Runs a command to completion, feeding `input` and collecting bounded output.
 pub(crate) async fn run(
-    mut command: Command,
+    command: Command,
     input: &[u8],
     output_limit: usize,
     timeout: Duration,
@@ -400,6 +488,28 @@ pub(crate) async fn run(
     let started = Instant::now();
     let _permit = operation_slot(timeout).await?;
     let remaining = timeout.saturating_sub(started.elapsed());
+    if command.as_std().get_args().any(|arg| arg == "update-ref" || arg == "--move") {
+        // A started publication owns its permit and inherited lease until Git finishes,
+        // even if the request disappears while Git holds ref lockfiles.
+        let input = input.to_vec();
+        return tokio::spawn(async move {
+            let _permit = _permit;
+            run_admitted(command, &input, output_limit, remaining).await
+        }).await.context("Git publication task failed")?;
+    }
+    run_admitted(command, input, output_limit, remaining).await
+}
+
+/// For callers already admitted to a blocking Git worker, without nested admission.
+pub(crate) fn run_in_blocking(command: Command, input: &[u8], output_limit: usize, timeout: Duration) -> Result<Output> {
+    let work = run_admitted(command, input, output_limit, timeout);
+    match tokio::runtime::Handle::try_current() {
+        Ok(runtime) => runtime.block_on(work),
+        Err(_) => tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(work),
+    }
+}
+
+async fn run_admitted(mut command: Command, input: &[u8], output_limit: usize, remaining: Duration) -> Result<Output> {
     let mut child = command.spawn().context("start git")?;
     let mut group = ProcessGroup(child.id());
     let mut stdin = child.stdin.take().context("git stdin")?;
@@ -423,9 +533,21 @@ pub(crate) async fn run(
             stderr,
         })
     };
-    let result = tokio::time::timeout(remaining, work)
-        .await
-        .context("git timed out")?;
+    let result = match tokio::time::timeout(remaining, work).await {
+        Ok(result) => result,
+        Err(_) => {
+            if let Some(pid) = child.id() {
+                // Give Git's signal handler a chance to remove its lockfiles.
+                unsafe { libc::kill(-(pid as i32), libc::SIGTERM); }
+            }
+            if tokio::time::timeout(Duration::from_secs(2), child.wait()).await.is_err() {
+                kill_group(child.id());
+                let _ = child.wait().await;
+            }
+            group.0 = None;
+            bail!("git timed out");
+        }
+    };
     if result.is_ok() {
         group.0 = None;
     }

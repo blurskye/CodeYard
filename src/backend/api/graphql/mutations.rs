@@ -345,6 +345,7 @@ pub(super) async fn resolve(
                     repository::owner(&repo, request).await?,
                     repo.name,
                     pull_requests::mutations::CreatePullRequestRequest {
+                        suppress_ci: false,
                         head_repo_id,
                         source: pull_requests::mutations::PullRequestSource::New {
                             title: text(&input, "title")?.into(),

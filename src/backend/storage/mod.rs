@@ -65,6 +65,7 @@ enum Backend {
 }
 
 pub struct ObjectStore {
+    state_dir: std::path::PathBuf,
     backend: Backend,
     io: Arc<Semaphore>,
     downloads: Arc<Semaphore>,
@@ -78,12 +79,15 @@ impl ObjectStore {
             None => Backend::Local(local::LocalStore::open(&state_dir.join("objects")).await?),
         };
         Ok(Self {
+            state_dir: std::path::absolute(state_dir)?,
             backend,
             io: Arc::new(Semaphore::new(IO_SLOTS)),
             downloads: Arc::new(Semaphore::new(DOWNLOAD_SLOTS)),
             file_locks: Default::default(),
         })
     }
+
+    pub(crate) fn state_directory(&self) -> &Path { &self.state_dir }
 
     /// Start-up check for S3: waits for the store to answer (compose starts it in parallel)
     /// and creates the bucket on first start. Local storage has nothing to prepare.
@@ -175,13 +179,13 @@ impl ObjectStore {
 
     /// Stores bytes sent to this server (local storage only), checking size,
     /// checksum and file signature on the way in.
-    pub async fn put_local(
+    pub(crate) async fn stage_local(
         &self,
         upload: &Upload<'_>,
         reader: impl AsyncRead + Unpin,
-    ) -> Result<(), StorageError> {
+    ) -> Result<local::StagedUpload, StorageError> {
         match &self.backend {
-            Backend::Local(store) => store.put(upload, reader, Arc::new(self.try_acquire_io()?)).await,
+            Backend::Local(store) => store.stage(upload, reader, Arc::new(self.try_acquire_io()?)).await,
             Backend::S3(_) => Err(StorageError::Rejected),
         }
     }

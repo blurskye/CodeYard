@@ -178,10 +178,7 @@ fn bounded(text: &str, limit: usize) -> bool {
     text.len() <= limit && !text.contains('\0')
 }
 pub fn sha(sha: &str) -> bool {
-    sha.len() == 40
-        && sha
-            .bytes()
-            .all(|c| c.is_ascii_digit() || matches!(c, b'a'..=b'f'))
+    crate::git_ids::is_full_commit_id(sha) && !sha.bytes().any(|byte| byte.is_ascii_uppercase())
 }
 impl InstalledPackage {
     pub fn validate(&self) -> Result<()> {
@@ -485,7 +482,7 @@ pub(crate) fn project(
     Ok(snapshot)
 }
 native_operation!(crate::backend::db::postgres::repositories::dependencies::state,crate::backend::db::sqlite::repositories::dependencies::state,fn state(pool:&DbPool,repo:i64)->Result<Option<State>>);
-native_operation!(crate::backend::db::postgres::repositories::dependencies::configure,crate::backend::db::sqlite::repositories::dependencies::configure,fn configure(pool:&DbPool,actor:i64,repo:i64,feature:Feature,enabled:bool,private_consent:bool)->Result<()>);
+native_operation!(crate::backend::db::postgres::repositories::dependencies::configure,crate::backend::db::sqlite::repositories::dependencies::configure,fn configure(pool:&DbPool,actor:i64,credential:&crate::backend::db::users::accounts::OwnedAccountCredential,repo:i64,feature:Feature,enabled:bool,private_consent:bool)->Result<()>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::enqueue,crate::backend::db::sqlite::repositories::dependencies::enqueue,fn enqueue(pool:&DbPool,repo:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::claim,crate::backend::db::sqlite::repositories::dependencies::claim,fn claim(pool:&DbPool,nonce:&str)->Result<Option<Job>>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::check_job,crate::backend::db::sqlite::repositories::dependencies::check_job,fn check_job(pool:&DbPool,job:&Job,feature:Feature)->Result<()>);

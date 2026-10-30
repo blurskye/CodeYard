@@ -56,6 +56,7 @@ pub enum Operation {
     },
     Exists,
     SizeBytes,
+    RefreshStorageSize,
     Refs,
     MatchingRefs { prefix: String },
     /// The same refs as `Refs`, answered only by the primary. For a caller that writes the
@@ -70,11 +71,18 @@ pub enum Operation {
     GitTree {
         revision: String,
         recursive: bool,
+        #[serde(default)]
+        raw_json: bool,
     },
     GitTag {
         sha: String,
+        #[serde(default)]
+        raw_json: bool,
     },
     GitObjectKind {
+        sha: String,
+    },
+    IntroducedBlobs {
         sha: String,
     },
     UpdateReference {
@@ -109,6 +117,8 @@ pub enum Operation {
     TemplateTexts {
         revision: String,
         paths: Vec<String>,
+        #[serde(default)]
+        raw_json: bool,
     },
     Blob {
         git_ref: String,
@@ -199,10 +209,10 @@ pub enum Operation {
     CommitsBetween {
         base_ref: String,
         head_ref: String,
-        limit: usize,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "is_zero")]
         offset: usize,
-        /// Include the full count and GitHub's first 250 commits, oldest first.
+        limit: usize,
+        /// Include the full count and the requested window of GitHub's oldest 250 commits.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         pull_request: bool,
         /// The caller can decode JSON from the raw response frame.
@@ -262,6 +272,8 @@ pub enum Operation {
         branch: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         raw_json: bool,
+        #[serde(default)]
+        mode: crate::backend::git::StatisticsMode,
     },
     CodeFrequency {
         branch: String,
@@ -308,6 +320,7 @@ pub enum Operation {
         new_owner: String,
     },
     ConfigureDependencySecurity {
+        credential: crate::backend::db::users::accounts::OwnedAccountCredential,
         feature: crate::backend::db::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,
@@ -435,6 +448,7 @@ impl Operation {
             | Self::GitTree { .. }
             | Self::GitTag { .. }
             | Self::GitObjectKind { .. }
+            | Self::IntroducedBlobs { .. }
             | Self::SidebarTrees { .. }
             | Self::TemplateTexts { .. }
             | Self::Blob { .. }

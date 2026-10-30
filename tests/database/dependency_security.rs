@@ -26,8 +26,16 @@ async fn contract(postgres: bool) {
     .await
     .unwrap()
     .unwrap();
+    let alice_session = uuid::Uuid::new_v4().to_string();
+    let bob_session = uuid::Uuid::new_v4().to_string();
+    for (actor, session) in [(alice, &alice_session), (bob, &bob_session)] {
+        db::users::sessions::create_session(f.pool(), session, actor, None, None, chrono::Utc::now() + chrono::Duration::hours(1)).await.unwrap();
+    }
+    let alice_credential = db::users::accounts::OwnedAccountCredential::from(&alice_session);
+    let bob_credential = db::users::accounts::OwnedAccountCredential::from(&bob_session);
     let configure = |actor, feature, enabled, consent| {
-        records::configure(f.pool(), actor, repo.id, feature, enabled, consent)
+        let credential = if actor == alice { &alice_credential } else { &bob_credential };
+        records::configure(f.pool(), actor, credential, repo.id, feature, enabled, consent)
     };
     let state = || records::state(f.pool(), repo.id);
     assert!(state().await.unwrap().is_none());

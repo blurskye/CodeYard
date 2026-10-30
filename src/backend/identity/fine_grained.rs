@@ -12,7 +12,7 @@ use crate::backend::db::{
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 
-pub const PREFIX: &str = "cy_fgpat_";
+pub const PREFIX: &str = super::tokens::FGPAT_PREFIX;
 /// The longest lifetime any token may have, and the default organization maximum.
 pub const MAX_DAYS: i64 = 366;
 pub const DEFAULT_DAYS: i64 = 30;

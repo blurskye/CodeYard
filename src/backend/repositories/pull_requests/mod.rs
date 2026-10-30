@@ -36,7 +36,7 @@ pub(crate) fn webhook_payload(
     let (diff, commits) = tokio::runtime::Handle::current().block_on(async {
         tokio::join!(
             store.diff_stats(base, &pull.head_sha),
-            store.pull_request_commits(base, &pull.head_sha)
+            store.pull_request_commits(base, &pull.head_sha, 0, 0)
         )
     });
     let document = &mut payload["pull_request"];

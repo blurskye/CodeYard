@@ -3,6 +3,10 @@ use crate::backend::db::models::{AccessLevel, RepoAccess, Repository, User};
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
+native_operation!(crate::backend::db::postgres::repositories::access::git_access,
+    crate::backend::db::sqlite::repositories::access::git_access,
+    fn git_access(pool: &DbPool, user_id: i64, repo_id: i64, write: bool) -> Result<AccessLevel>);
+
 pub enum CollaboratorChange {
     Applied(Box<User>),
     NotFound,

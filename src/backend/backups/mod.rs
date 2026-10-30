@@ -483,12 +483,21 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
             println!("Copied {copied} changed upload files.");
         }
     }
+    // Offline backups also migrate the legacy standalone signer before copying keys.
+    if places.repos_path.join(NODE_KEY).is_file() {
+        crate::backend::cluster::identity::release_key(places.state_dir, places.repos_path)?;
+    }
     if let Some(key) = crate::backend::cluster::load_existing(places.state_dir)? {
         let mut temporary = tempfile::NamedTempFile::new_in(dir)?;
         writeln!(temporary, "{}", key.secret_hex())?;
         temporary.as_file().sync_all()?;
         temporary.persist(dir.join(NODE_KEY)).map_err(|error| error.error)?;
         sync_dir(dir)?;
+    }
+    let signer = places.state_dir.join("release.key");
+    if signer.is_file() {
+        copy_synced(&signer, &dir.join("release.key"))?;
+        private_file(&dir.join("release.key"))?;
     }
     // Publish the new database last. Until this rename the previous backup is still complete:
     // nothing it names has been removed yet.
@@ -530,6 +539,14 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<db::DbPool> {
     let source_objects = resolved(&dir.join(UPLOADS_DIR))?;
     let target_objects = resolved(&places.state_dir.join(UPLOADS_DIR))?;
     ensure!(!source_objects.starts_with(&target_objects) && !target_objects.starts_with(&source_objects), "restore object source and destination overlap");
+    // Never silently retain an unrelated release signer from an earlier installation.
+    let saved_signer = dir.join("release.key");
+    let current_signer = places.state_dir.join("release.key");
+    if saved_signer.exists() && current_signer.exists() {
+        let saved = crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(saved_signer)?)?;
+        let current = crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(current_signer)?)?;
+        ensure!(saved.public_hex() == current.public_hex(), "restore would replace a different release signing identity");
+    }
     ensure!(
         directory_empty(places.repos_path)?,
         "restore needs an empty REPOS_PATH; {} already holds repositories",
@@ -632,6 +649,12 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<db::DbPool> {
         private_dir(key.parent().context("node key has no parent")?)?;
         copy_synced(&dir.join(NODE_KEY), &key)?;
         private_file(&key)?;
+    }
+    let signer = places.state_dir.join("release.key");
+    if dir.join("release.key").is_file() && !signer.exists() {
+        private_dir(places.state_dir)?;
+        copy_synced(&dir.join("release.key"), &signer)?;
+        private_file(&signer)?;
     }
     let problems = verify(&pool, true).await?;
     rebuild(&pool).await?;

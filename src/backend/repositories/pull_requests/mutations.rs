@@ -42,6 +42,9 @@ impl TryFrom<PullRequestSourceInput> for PullRequestSource {
 
 #[derive(Deserialize)]
 pub struct CreatePullRequestRequest {
+    /// Only server-owned proposals may suppress automatic execution; clients cannot set this.
+    #[serde(skip)]
+    pub suppress_ci: bool,
     pub head_repo_id: Option<i64>,
     #[serde(flatten)]
     pub source: PullRequestSource,
@@ -98,13 +101,14 @@ fn head_publish_error(number: i32, error: RepoError) -> OperationError {
 }
 
 /// Repair a committed creation without borrowing its historical author's credentials.
-async fn repair_open_pull(
+pub(crate) async fn repair_open_pull(
     pool: &db::DbPool,
     ci: &CiRuns,
     repository: &db::models::Repository,
     head_repository: &db::models::Repository,
     credential: crate::backend::repositories::store::PullHeadActor,
     existing: &db::models::PullRequest,
+    suppress_ci: bool,
 ) -> Result<(), OperationError> {
     let actor_id = credential.user;
     let number = existing.number;
@@ -128,7 +132,7 @@ async fn repair_open_pull(
         ci,
         actor_id,
         existing.id,
-        Some(db::models::AccessLevel::Owner),
+        (!suppress_ci).then_some(db::models::AccessLevel::Owner),
     )
     .await
     .map_err(|_| OperationError::Opened { number })?;
@@ -136,16 +140,18 @@ async fn repair_open_pull(
         .await
         .map_err(|_| OperationError::Opened { number })?
         .ok_or(OperationError::Opened { number })?;
-    let _ = queue_pull_request_ci(
-        pool,
-        ci,
-        repository,
-        &current,
-        actor_id,
-        false,
-        db::models::AccessLevel::Owner,
-    )
-    .await;
+    if !suppress_ci {
+        let _ = queue_pull_request_ci(
+            pool,
+            ci,
+            repository,
+            &current,
+            actor_id,
+            false,
+            db::models::AccessLevel::Owner,
+        )
+        .await;
+    }
     super::code_owners::request_code_owner_reviews(pool, ci, repository, &current, actor_id).await;
     Ok(())
 }
@@ -296,7 +302,7 @@ pub async fn create_pull_request(
                 db::pull_requests::records::IssueConversionRefusal::Missing.into(),
             ));
         }
-        repair_open_pull(pool, ci, &repository, &head_repository, credential, &existing).await?;
+        repair_open_pull(pool, ci, &repository, &head_repository, credential, &existing, req.suppress_ci).await?;
         return Err(OperationError::Conflict {
             code: "pull_request_exists",
             message: format!(
@@ -381,7 +387,7 @@ pub async fn create_pull_request(
                     message: "Pull request state changed; retry the request".to_owned(),
                 });
             };
-            repair_open_pull(pool, ci, &repository, &head_repository, credential, &existing).await?;
+            repair_open_pull(pool, ci, &repository, &head_repository, credential, &existing, req.suppress_ci).await?;
             return Err(OperationError::Conflict {
                 code: "pull_request_exists",
                 message: format!(
@@ -413,7 +419,7 @@ pub async fn create_pull_request(
         ci,
         user.id,
         pull_request.id,
-        Some(crate::backend::db::models::AccessLevel::Owner),
+        (!req.suppress_ci).then_some(crate::backend::db::models::AccessLevel::Owner),
     )
     .await
     .map_err(|_| OperationError::Opened {
@@ -530,16 +536,18 @@ pub async fn create_pull_request(
         },
     )
     .await;
-    super::workflows::queue_pull_request_event_ci(
-        pool,
-        ci,
-        &repository,
-        &pull_request,
-        user.id,
-        db::models::AccessLevel::Owner,
-        &payload,
-    )
-    .await;
+    if !req.suppress_ci {
+        super::workflows::queue_pull_request_event_ci(
+            pool,
+            ci,
+            &repository,
+            &pull_request,
+            user.id,
+            db::models::AccessLevel::Owner,
+            &payload,
+        )
+        .await;
+    }
 
     Ok(pull_request)
 }

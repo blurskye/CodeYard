@@ -128,8 +128,11 @@ pub async fn use_bypass(
     tx.commit().await?;
     Ok(())
 }
-pub async fn alert_bypass(pool: &SqlitePool, repo: i64, hash: &str) -> Result<Option<Bypass>> {
-    Ok(sqlx::query_as("SELECT * FROM secret_scanning_bypasses WHERE repo_id=$1 AND secret_hash=$2 AND used_at IS NOT NULL ORDER BY used_at DESC LIMIT 1").bind(repo).bind(hash).fetch_optional(pool).await?)
+pub async fn alert_bypasses(pool: &SqlitePool, keys: &[(i64, String)]) -> Result<Vec<Bypass>> {
+    ensure!(keys.len() <= 100, "Too many alert enrichments");
+    if keys.is_empty() { return Ok(Vec::new()); }
+    Ok(sqlx::query_as("SELECT ranked.* FROM (SELECT b.*,row_number() OVER (PARTITION BY repo_id,secret_hash ORDER BY used_at DESC,id DESC) AS position FROM secret_scanning_bypasses b WHERE used_at IS NOT NULL AND (repo_id,secret_hash) IN (SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each($1))) ranked WHERE position=1")
+        .bind(serde_json::to_string(keys)?).fetch_all(pool).await?)
 }
 
 pub async fn settings(pool: &SqlitePool, repo: i64) -> Result<Settings> {
@@ -442,8 +445,8 @@ pub async fn enqueue(pool: &SqlitePool, repo: i64, head: &str, actor: i64) -> Re
 pub async fn claim(pool: &SqlitePool) -> Result<Option<ScanJob>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let cutoff = chrono::Utc::now() - chrono::Duration::minutes(5);
-    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM secret_scanning_jobs WHERE status='queued' OR (status='running' AND heartbeat_at<$1) ORDER BY id LIMIT 1")
-        .bind(cutoff).fetch_optional(&mut *tx).await?;
+    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM secret_scanning_jobs WHERE (status='queued' AND (heartbeat_at IS NULL OR heartbeat_at<=$2)) OR (status='running' AND heartbeat_at<$1) ORDER BY id LIMIT 1")
+        .bind(cutoff).bind(chrono::Utc::now()).fetch_optional(&mut *tx).await?;
     let Some(id) = id else { return Ok(None) };
     let job = sqlx::query_as(
         "UPDATE secret_scanning_jobs SET status='running',attempt=attempt+1,started_at=COALESCE(started_at,$2),heartbeat_at=$2 WHERE id=$1 RETURNING *",
@@ -456,12 +459,15 @@ pub async fn claim(pool: &SqlitePool) -> Result<Option<ScanJob>> {
     Ok(Some(job))
 }
 
-pub async fn finish(pool: &SqlitePool, id: i64, attempt: i64, succeeded: bool) -> Result<()> {
-    sqlx::query("UPDATE secret_scanning_jobs SET status=$2,completed_at=$3 WHERE id=$1 AND attempt=$4 AND status='running'")
+pub async fn finish(pool: &SqlitePool, id: i64, attempt: i64, completion: ScanCompletion) -> Result<()> {
+    let retry = matches!(completion, ScanCompletion::Retry);
+    let now = chrono::Utc::now();
+    sqlx::query("UPDATE secret_scanning_jobs SET status=$2,completed_at=$3,heartbeat_at=$5 WHERE id=$1 AND attempt=$4 AND status='running'")
         .bind(id)
-        .bind(if succeeded { "completed" } else { "failed" })
-        .bind(chrono::Utc::now())
+        .bind(completion.status())
+        .bind((!retry).then_some(now))
         .bind(attempt)
+        .bind(if retry { now + chrono::Duration::seconds(60) } else { now })
         .execute(pool)
         .await?;
     Ok(())
@@ -482,7 +488,7 @@ pub async fn history(pool: &SqlitePool, actor: i64, repo: i64) -> Result<Vec<Sca
 
 pub async fn scanned(pool: &SqlitePool, repo: i64, commit: &str) -> Result<bool> {
     Ok(sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM secret_scanning_commits WHERE repo_id=$1 AND commit_sha=$2)",
+        "SELECT EXISTS(SELECT 1 FROM secret_scanning_commits WHERE repo_id=$1 AND commit_sha=$2 AND ancestry_complete)",
     )
     .bind(repo)
     .bind(commit)
@@ -498,9 +504,6 @@ pub async fn heartbeat(
     scanned: Option<&str>,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if let Some(commit) = scanned {
-        sqlx::query("INSERT INTO secret_scanning_commits(repo_id,commit_sha) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(repo).bind(commit).execute(&mut *tx).await?;
-    }
     let held = sqlx::query(
         "UPDATE secret_scanning_jobs SET heartbeat_at=$2 WHERE id=$1 AND attempt=$3 AND status='running'",
     )
@@ -511,6 +514,11 @@ pub async fn heartbeat(
     .await?
     .rows_affected()
         == 1;
+    if held {
+        if let Some(commit) = scanned {
+            sqlx::query("INSERT INTO secret_scanning_commits(repo_id,commit_sha,ancestry_complete) VALUES($1,$2,TRUE) ON CONFLICT(repo_id,commit_sha) DO UPDATE SET ancestry_complete=TRUE").bind(repo).bind(commit).execute(&mut *tx).await?;
+        }
+    }
     tx.commit().await?;
     Ok(held)
 }

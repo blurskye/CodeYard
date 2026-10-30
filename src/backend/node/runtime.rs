@@ -84,6 +84,10 @@ async fn prepare_application(
     cluster: Option<crate::backend::cluster::NodeContext>,
 ) -> Result<AppState> {
     crate::backend::api::http::config::public_url()?;
+    if cluster.is_none() {
+        let (state_dir, repos) = (state_dir.to_owned(), repos_path.clone());
+        tokio::task::spawn_blocking(move || crate::backend::repositories::releases::immutable::configure_local_identity(&state_dir, &repos)).await??;
+    }
     let secret_encryptor = SecretEncryptor::configured_from_env()?.map(Arc::new);
     validate_cluster_encryptor(cluster.is_some(), secret_encryptor.as_deref(), None)?;
     if cluster.is_some() {
@@ -199,6 +203,20 @@ async fn remove_expired_web_rows(pool: &DbPool, storage: &crate::backend::storag
         Ok(Ok(removed)) => info!(removed, "removed expired uploads"),
         Ok(Err(error)) => warn!(%error, "could not remove expired uploads"),
         Err(_) => warn!("upload cleanup budget exhausted; remaining work stays queued"),
+    }
+    // Object families have independent budgets; a slow package delete cannot cancel uploads.
+    match tokio::time::timeout(std::time::Duration::from_secs(30), crate::backend::packages::collect(pool, storage)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => warn!(%error, "package objects were not collected"),
+        Err(_) => warn!("package object collection timed out"),
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        crate::backend::db::attestations::collect(pool).await?;
+        crate::backend::db::action_objects::expire_objects(pool).await?;
+        Ok::<_, anyhow::Error>(())
+    }).await {
+        Ok(Ok(())) => {}
+        _ => warn!("attestation or Actions object collection was deferred"),
     }
     match crate::backend::db::files::remove_expired_transfer_rows(pool).await {
         Ok(0) => {}

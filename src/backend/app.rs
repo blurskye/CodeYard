@@ -41,6 +41,9 @@ impl AppState {
         ci_config: CiConfig,
         cluster: Option<crate::backend::cluster::NodeContext>,
     ) -> Self {
+        if cluster.is_none() {
+            crate::backend::repositories::releases::immutable::register_local_identity(storage.state_directory(), &repos_path);
+        }
         let notification_broadcaster = Arc::new(NotificationBroadcaster::new(&pool));
         let ci_runs = Arc::new(CiRuns::new(
             pool.clone(),

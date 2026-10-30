@@ -41,7 +41,7 @@ pub fn compare(
     let mut selectable = branches.to_vec();
     for reference in [base, head] {
         let pinned = reference.contains(':')
-            || (reference.len() == 40 && reference.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            || crate::git_ids::is_full_commit_id(reference);
         if pinned && !selectable.iter().any(|choice| choice == reference) {
             selectable.push(reference.to_owned());
         }

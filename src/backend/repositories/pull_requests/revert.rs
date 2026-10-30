@@ -124,6 +124,7 @@ pub async fn revert_pull_request(
     })?;
     mutations::create_pull_request(pool, ci, broadcaster, actor, owner, name,
         mutations::CreatePullRequestRequest {
+            suppress_ci: false,
             head_repo_id: None,
             source: mutations::PullRequestSource::New { title, body: Some(body) },
             head_branch: branch.clone(),

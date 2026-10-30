@@ -432,10 +432,7 @@ impl S3Store {
         ensure!(valid_key(key), "invalid object key");
         if let Some(kind) = inline_image {
             ensure!(
-                matches!(
-                    kind,
-                    "image/png" | "image/jpeg" | "image/gif" | "image/webp"
-                ),
+                crate::media::AVATAR_CONTENT_TYPES.contains(&kind),
                 "unsafe inline object type"
             );
         }

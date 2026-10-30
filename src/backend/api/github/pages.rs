@@ -256,11 +256,7 @@ async fn create_deployment(
     let invalid = || Error::validation("PagesDeployment", "configuration", "invalid");
     if input.oidc_token.is_empty()
         || input.oidc_token.len() > 16384
-        || input.pages_build_version.len() != 40
-        || !input
-            .pages_build_version
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit())
+        || !crate::git_ids::is_full_commit_id(&input.pages_build_version)
         || input.artifact_id.is_some_and(|id| id <= 0)
         || (input.artifact_id.is_none() && input.artifact_url.is_none())
     {

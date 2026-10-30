@@ -31,6 +31,26 @@ impl Drop for TemporaryUpload {
     }
 }
 
+/// Checked bytes waiting in the staging directory. `publish` renames them into place;
+/// dropping the upload removes them.
+pub(crate) struct StagedUpload {
+    temporary: TemporaryUpload,
+    target: PathBuf,
+}
+impl StagedUpload {
+    pub(crate) async fn publish(mut self) -> Result<(), StorageError> {
+        let target = self.target.clone();
+        let guard = self.temporary.1.clone();
+        let temporary = self.temporary.0.take().ok_or(StorageError::Unavailable)?;
+        tokio::task::spawn_blocking(move || {
+            let _guard = guard;
+            temporary.persist(&target).map_err(std::io::Error::other)?;
+            std::fs::File::open(target.parent().ok_or(std::io::ErrorKind::InvalidInput)?)?.sync_all()
+        }).await.map_err(|_| StorageError::Unavailable)??;
+        Ok(())
+    }
+}
+
 impl LocalStore {
     pub async fn open(root: &Path) -> Result<Self> {
         create_directories(root, None)
@@ -52,9 +72,18 @@ impl LocalStore {
     pub(super) async fn put(
         &self,
         upload: &Upload<'_>,
-        mut reader: impl AsyncRead + Unpin,
+        reader: impl AsyncRead + Unpin,
         guard: IoGuard,
     ) -> Result<(), StorageError> {
+        self.stage(upload, reader, guard).await?.publish().await
+    }
+
+    pub(crate) async fn stage(
+        &self,
+        upload: &Upload<'_>,
+        mut reader: impl AsyncRead + Unpin,
+        guard: IoGuard,
+    ) -> Result<StagedUpload, StorageError> {
         if !(0..=MAX_OBJECT_BYTES).contains(&upload.bytes) {
             return Err(StorageError::Invalid);
         }
@@ -65,7 +94,7 @@ impl LocalStore {
         let staging = self.root.join(STAGING_DIR);
         create_directories(&staging, Some(guard.clone())).await?;
         // tempfile is synchronous; keep a stalled disk off the async workers.
-        let (mut temporary, file) = tokio::task::spawn_blocking(move || {
+        let (temporary, file) = tokio::task::spawn_blocking(move || {
             let temporary = tempfile::Builder::new()
                 .prefix(TEMP_PREFIX)
                 .tempfile_in(staging)?;
@@ -106,15 +135,7 @@ impl LocalStore {
         }
         output.flush().await?;
         output.sync_all().await?;
-        let target = path.clone();
-        let guard = temporary.1.clone();
-        let temporary = temporary.0.take().ok_or(StorageError::Unavailable)?;
-        tokio::task::spawn_blocking(move || {
-            let _guard = guard;
-            temporary.persist(&target).map_err(std::io::Error::other)?;
-            std::fs::File::open(target.parent().ok_or(std::io::ErrorKind::InvalidInput)?)?.sync_all()
-        }).await.map_err(|_| StorageError::Unavailable)??;
-        Ok(())
+        Ok(StagedUpload { temporary, target: path })
     }
 
     /// Bytes are checked on the way in, so existence and size are enough here.

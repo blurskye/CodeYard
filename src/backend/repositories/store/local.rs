@@ -304,42 +304,60 @@ async fn record_branch_update(
 /// it may not hold yet.
 static REF_CHANGES: LazyLock<Mutex<HashMap<PathBuf, usize>>> = LazyLock::new(Default::default);
 
-static SIZE_REFRESHES: LazyLock<Mutex<HashMap<PathBuf, bool>>> = LazyLock::new(Default::default);
+type SizeResult = Option<(u64, Result<i64, RepoError>)>;
+struct SizeRefresh {
+    requested: u64,
+    completed: tokio::sync::watch::Sender<SizeResult>,
+}
+static SIZE_REFRESHES: LazyLock<Mutex<HashMap<PathBuf, SizeRefresh>>> = LazyLock::new(Default::default);
 
 /// Coalesce writes while a scan runs. Accounting never holds a publication lock or RefChange.
-fn refresh_storage_size(pool: db::DbPool, repo_id: i64, store: LocalStore) {
-    let path = store.path().to_owned();
-    {
-        let mut pending = SIZE_REFRESHES.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(dirty) = pending.get_mut(&path) {
-            *dirty = true;
-            return;
+pub(super) fn refresh_storage_size(pool: db::DbPool, repo_id: i64, store: LocalStore) {
+    request_storage_size(pool, repo_id, store);
+}
+
+pub(super) async fn refresh_storage_size_now(pool: db::DbPool, repo_id: i64, store: LocalStore) -> Result<i64, RepoError> {
+    let (ticket, mut completed) = request_storage_size(pool, repo_id, store);
+    tokio::time::timeout(process::RPC_TIMEOUT, async {
+        loop {
+            if let Some((generation, result)) = completed.borrow_and_update().clone() {
+                if generation >= ticket { return result; }
+            }
+            completed.changed().await.map_err(|_| RepoError::new(ErrorKind::Unavailable, "Repository accounting stopped"))?;
         }
-        pending.insert(path.clone(), false);
-    }
+    }).await.map_err(|_| RepoError::new(ErrorKind::Unavailable, "Repository accounting timed out"))?
+}
+
+fn request_storage_size(pool: db::DbPool, repo_id: i64, store: LocalStore) -> (u64, tokio::sync::watch::Receiver<SizeResult>) {
+    let path = store.path().to_owned();
+    let receiver = {
+        let mut pending = SIZE_REFRESHES.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(refresh) = pending.get_mut(&path) {
+            refresh.requested += 1;
+            return (refresh.requested, refresh.completed.subscribe());
+        }
+        let (completed, receiver) = tokio::sync::watch::channel(None);
+        pending.insert(path.clone(), SizeRefresh { requested: 1, completed });
+        receiver
+    };
     tokio::spawn(async move {
         loop {
-            // Wait for the publication that queued us to release its lock and ref-change guard.
+            let generation = SIZE_REFRESHES.lock().unwrap_or_else(|e| e.into_inner())[&path].requested;
+            // One owner scans and publishes in order, without retaining a publication lease.
             drop(git::locks::lock(&path).await);
             let result = async {
                 let size = store.size_bytes().await?.min(i64::MAX as u64) as i64;
-                db::repositories::records::update_repo_size(&pool, repo_id, size)
-                    .await
-                    .map_err(RepoError::from)
-            }
-            .await;
-            if let Err(error) = result {
-                tracing::warn!(repo_id, %error, "could not refresh repository storage size");
-            }
+                db::repositories::records::update_repo_size(&pool, repo_id, size).await.map_err(RepoError::from)?;
+                Ok(size)
+            }.await;
+            if let Err(error) = &result { tracing::warn!(repo_id, %error, "could not refresh repository storage size"); }
             let mut pending = SIZE_REFRESHES.lock().unwrap_or_else(|e| e.into_inner());
-            if pending.get(&path) == Some(&true) {
-                pending.insert(path.clone(), false);
-            } else {
-                pending.remove(&path);
-                break;
-            }
+            let refresh = pending.get_mut(&path).expect("owned size refresh");
+            refresh.completed.send_replace(Some((generation, result)));
+            if refresh.requested == generation { pending.remove(&path); break; }
         }
     });
+    (1, receiver)
 }
 
 fn ref_change_counts() -> MutexGuard<'static, HashMap<PathBuf, usize>> {
@@ -488,23 +506,12 @@ impl LocalStore {
         work: impl FnOnce(&Path) -> anyhow::Result<T> + Send + 'static,
     ) -> Result<T, RepoError> {
         let path: PathBuf = self.path().to_owned();
-        let permit = process::operation_slot(deadline.saturating_duration_since(Instant::now()))
-            .await
-            .map_err(|_| unavailable("Git operation timed out"))?;
-        match tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            work(&path)
-        })
-        .await
-        {
-            Ok(result) => result.map_err(RepoError::from),
-            Err(_) => Err(unavailable("Git did not finish")),
-        }
+        process::blocking_until(deadline, move || work(&path)).await.map_err(RepoError::from)
     }
 
     /// Refuses a new branch or tag once the repository is at the limit.
     async fn ensure_room_for_ref(&self, reference: &str) -> Result<(), RepoError> {
-        let held = self.blocking(git::branches_and_tags_in_use).await?;
+        let held = self.blocking(git::published_refs_in_use).await?;
         ensure_ref_room(held, &[reference])
     }
 
@@ -628,9 +635,11 @@ impl LocalStore {
         revision: &str,
         recursive: bool,
     ) -> Result<git::objects::TreeObject, RepoError> {
-        let revision = revision.to_owned();
-        self.blocking(move |path| git::objects::read_tree(path, &revision, recursive))
-            .await
+        git::objects::read_tree(self.path(), revision, recursive).await.map_err(RepoError::from)
+    }
+
+    pub(super) async fn introduced_blobs(&self, sha: &str) -> Result<Vec<git::objects::TreeObjectEntry>, RepoError> {
+        git::objects::introduced_blobs(self.path(), sha).await.map_err(RepoError::from)
     }
 
     pub(super) async fn git_object_kind(&self, sha: &str) -> Result<String, RepoError> {
@@ -764,6 +773,7 @@ impl LocalStore {
             Some(source.path()),
             default_branch,
             options.default_branch_only,
+            options.template,
         )
         .await
         .map_err(RepoError::from)?;
@@ -965,9 +975,7 @@ impl LocalStore {
         revision: &str,
         paths: &[String],
     ) -> Result<Vec<Option<(String, String)>>, RepoError> {
-        let (revision, paths) = (revision.to_owned(), paths.to_vec());
-        self.blocking(move |repo| git::repository::template_texts(repo, &revision, &paths))
-            .await
+        git::repository::template_texts(self.path(), revision, paths).await.map_err(RepoError::from)
     }
 
     async fn read_blob_object_range(
@@ -978,11 +986,6 @@ impl LocalStore {
         range: BlobRange,
     ) -> Result<BlobBytes, RepoError> {
         let (offset, length) = normalize_blob_range(range, size)?;
-        // The reader starts its own `git cat-file`, so it takes a slot like any other Git work.
-        let _permit =
-            git::repository::process::operation_slot(git::repository::process::RPC_TIMEOUT)
-                .await
-                .map_err(|_| unavailable("Git operation timed out"))?;
         let (bytes, is_binary) = git::read_blob_range(self.path(), id, size, offset, length)
             .await
             .map_err(RepoError::from)?;
@@ -1056,9 +1059,7 @@ impl LocalStore {
     }
 
     pub(super) async fn blob_by_id(&self, id: &str) -> Result<Vec<u8>, RepoError> {
-        let id = id.to_owned();
-        self.blocking(move |repo| git::get_blob_by_id(repo, &id))
-            .await
+        git::get_blob_by_id(self.path(), id).await.map_err(RepoError::from)
     }
 
     /// Like `RepoStore::commits`, but the walk gives up at `deadline`, and its Git permit with it.
@@ -1093,8 +1094,10 @@ impl LocalStore {
         &self,
         base: &str,
         head: &str,
+        offset: usize,
+        limit: usize,
     ) -> Result<(u64, Vec<CommitInfo>), RepoError> {
-        git::pull_request_commits(self.path(), base, head)
+        git::pull_request_commits(self.path(), base, head, offset, limit)
             .await
             .map_err(RepoError::from)
     }
@@ -1282,8 +1285,9 @@ impl LocalStore {
     pub(super) async fn commit_statistics(
         &self,
         branch: &str,
+        mode: git::StatisticsMode,
     ) -> Result<git::CommitStatistics, RepoError> {
-        git::get_commit_statistics(self.path(), branch)
+        git::get_commit_statistics(self.path(), branch, mode)
             .await
             .map_err(RepoError::from)
     }
@@ -1952,8 +1956,8 @@ impl LocalStore {
         let commit = publication
             .scope(editor::publish(self.path(), prepared))
             .await?;
-        for hash in bypasses {
-            db::secret_scanning::use_bypass(pool, repo_id, actor, &hash, chrono::Utc::now())
+        for bypass in bypasses {
+            db::secret_scanning::use_bypass(pool, repo_id, actor, &bypass.hash, chrono::Utc::now())
                 .await
                 .map_err(RepoError::from)?;
         }
@@ -2536,7 +2540,7 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        for restack in moves {
+        for restack in moves.iter().filter(|restack| restack.old != restack.new) {
             let write = BranchWrite {
                 branch: &restack.branch,
                 old: Some(&restack.old),
@@ -2596,6 +2600,7 @@ impl LocalStore {
         }
         let writes = moves
             .iter()
+            .filter(|restack| restack.old != restack.new)
             .map(|restack| BranchWrite {
                 branch: &restack.branch,
                 old: Some(&restack.old),
@@ -2618,6 +2623,7 @@ impl LocalStore {
             .map_err(RepoError::from)?;
         let updates = moves
             .iter()
+            .filter(|restack| restack.old != restack.new)
             .map(|restack| {
                 (
                     format!("refs/heads/{}", restack.branch),
@@ -2627,7 +2633,7 @@ impl LocalStore {
             })
             .collect::<Vec<_>>();
         let followup = self.after_ref_change(pool, repo_id, actor, &updates).await;
-        for restack in moves {
+        for restack in moves.iter().filter(|restack| restack.old != restack.new) {
             record_branch_update(
                 pool,
                 repo_id,
@@ -2909,6 +2915,7 @@ impl LocalStore {
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
+        credential: db::users::accounts::OwnedAccountCredential,
         feature: db::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,
@@ -2929,6 +2936,7 @@ impl LocalStore {
             db::repositories::dependencies::configure(
                 &pool,
                 actor,
+                &credential,
                 repo_id,
                 feature,
                 enabled,

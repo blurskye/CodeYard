@@ -54,7 +54,7 @@ fn editor(page: &Editor) -> Element {
         p {class:"text-muted-foreground","Keep 1–100 files, at most 10 MiB in total. This browser editor accepts 1 MiB of text; use Git for larger or binary files."}
         form {method:"post",action,
             {csrf(&page.csrf_token)} input {r#type:"hidden",name:"expected",value:page.expected.clone()} input {r#type:"hidden",name:"file_count",value:page.files.len().to_string()}
-            label {class:"gist-field",span {"Description"} DraftInput {name:"description",initial_value:page.description.clone(),maxlength:Some(65535),placeholder:"What is this gist about?"}}
+            label {class:"gist-field",span {"Description"} DraftTextarea {name:"description",initial_value:page.description.clone(),rows:3,maxlength:Some(65535),placeholder:"What is this gist about?"}}
             for (index,file) in page.files.iter().enumerate() {section {key:"file-{index}",class:"gist-editor-file",
                 if let Some(original)=&file.original {input {r#type:"hidden",name:"original_{index}",value:original.clone()}}
                 label {class:"gist-field",span {"Filename"} DraftInput {name:format!("name_{index}"),initial_value:file.filename.clone(),maxlength:Some(255),placeholder:"filename.txt",aria_label:Some(format!("Filename {}",index+1))}}

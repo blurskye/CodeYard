@@ -22,14 +22,14 @@ pub(crate) fn private_tempdir(prefix: &str) -> Result<tempfile::TempDir> {
     Ok(tempfile::Builder::new()
         .prefix(prefix)
         .permissions(std::fs::Permissions::from_mode(0o700))
-        .tempdir()?)
+        .tempdir_in(std::fs::canonicalize(std::env::temp_dir())?)?)
 }
 
 fn same_inode(left: &Metadata, right: &Metadata) -> bool {
     left.dev() == right.dev() && left.ino() == right.ino()
 }
 
-fn ancestors(path: &Path, uid: u32) -> Result<()> {
+pub(crate) fn ancestors(path: &Path, uid: u32) -> Result<()> {
     for ancestor in path.ancestors() {
         let meta = std::fs::symlink_metadata(ancestor)?;
         ensure!(
@@ -123,10 +123,15 @@ pub(crate) async fn bind(socket: &Path, uid: u32) -> Result<(UnixListener, Socke
     }
     match std::fs::symlink_metadata(socket) {
         Ok(_) => {
-            let before = socket_metadata(socket, uid)?;
+            let stale_metadata = || -> Result<Metadata> {
+                let meta = std::fs::symlink_metadata(socket)?;
+                ensure!(meta.file_type().is_socket() && meta.uid() == uid, "unsafe existing socket path");
+                Ok(meta)
+            };
+            let before = stale_metadata()?;
             match timeout(Duration::from_secs(2), UnixStream::connect(socket)).await {
                 Ok(Err(error)) if error.kind() == ErrorKind::ConnectionRefused => {
-                    let after = socket_metadata(socket, uid)?;
+                    let after = stale_metadata()?;
                     ensure!(
                         same_inode(&before, &after),
                         "socket changed during stale check"

@@ -118,6 +118,8 @@ pub(super) async fn read_document(
         .ok_or_else(|| Error::unavailable(()))
 }
 
+pub(super) fn file_status(status: &str) -> &str { if status == "type_changed" { "changed" } else { status } }
+
 pub(super) fn diff_files(
     files: Vec<DiffFileInfo>,
     owner: &str,
@@ -126,7 +128,7 @@ pub(super) fn diff_files(
 ) -> Vec<Value> {
     files.into_iter().map(|file| {
         let mut value = json!({
-            "sha": file.blob_sha, "filename": file.filename, "status": file.status,
+            "sha": file.blob_sha, "filename": file.filename, "status": file_status(&file.status),
             "additions": file.additions, "deletions": file.deletions, "changes": file.additions + file.deletions,
             "patch": file.patch,
             "blob_url": format!("{}/{owner}/{name}/blob/{sha}/{}", crate::backend::api::http::config::link_origin(), path_url(&file.filename)),

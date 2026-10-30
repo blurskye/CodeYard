@@ -3,7 +3,7 @@ use crate::backend::db::{
         validate_comment, Admission, Comment, Gist, GistList, GistRefusal, ListScope, NewGist,
         PendingWrite,
     },
-    models::{Repository, User},
+    models::Repository,
     users::accounts::AccountCredential,
 };
 use anyhow::Result;
@@ -62,13 +62,24 @@ pub async fn git_repository(pool: &SqlitePool, id: &str) -> Result<Option<Reposi
     )
 }
 pub async fn list(pool: &SqlitePool, input: &GistList) -> Result<Vec<Gist>> {
+    list_on(&mut *pool.acquire().await?, input).await
+}
+pub async fn list_for_session(pool: &SqlitePool, input: &GistList, session: &str) -> Result<Vec<Gist>> {
+    let actor = match input.scope { ListScope::Owner(actor, true) | ListScope::Starred(actor) => actor, _ => return list(pool, input).await };
+    let mut tx = pool.begin().await?;
+    super::users::transitions::require_account(&mut tx, actor, &AccountCredential::Session(session)).await?;
+    let entries = list_on(&mut tx, input).await?;
+    tx.commit().await?;
+    Ok(entries)
+}
+async fn list_on(connection: &mut sqlx::SqliteConnection, input: &GistList) -> Result<Vec<Gist>> {
     let (mode, id, secret) = match input.scope {
         ListScope::Public => (0, 0, false),
         ListScope::Owner(id, secret) => (1, id, secret),
         ListScope::Starred(id) => (2, id, true),
         ListScope::Forks(id) => (3, id, true),
     };
-    Ok(sqlx::query_as(&format!("SELECT {FIELDS} {FROM} WHERE g.ready AND (?1 IS NULL OR julianday(g.updated_at)>julianday(?1)) AND ((?2=0 AND g.is_public) OR (?2=1 AND r.owner_user_id=?3 AND (?4 OR g.is_public)) OR (?2=2 AND EXISTS(SELECT 1 FROM gist_stars s WHERE s.repo_id=g.repo_id AND s.user_id=?3)) OR (?2=3 AND r.forked_from_id=?3)) ORDER BY g.updated_at DESC,g.id DESC LIMIT ?5 OFFSET ?6")).bind(input.since).bind(mode).bind(id).bind(secret).bind(input.limit.clamp(0,101)).bind(input.offset.max(0)).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&format!("SELECT {FIELDS} {FROM} WHERE g.ready AND (?1 IS NULL OR julianday(g.updated_at)>julianday(?1)) AND ((?2=0 AND g.is_public) OR (?2=1 AND r.owner_user_id=?3 AND (?4 OR g.is_public)) OR (?2=2 AND EXISTS(SELECT 1 FROM gist_stars s WHERE s.repo_id=g.repo_id AND s.user_id=?3)) OR (?2=3 AND r.forked_from_id=?3)) ORDER BY g.updated_at DESC,g.id DESC LIMIT ?5 OFFSET ?6")).bind(input.since).bind(mode).bind(id).bind(secret).bind(input.limit.clamp(0,101)).bind(input.offset.max(0)).fetch_all(connection).await?)
 }
 const OWNED: &str = "WHERE g.ready AND r.owner_user_id=?1 AND (?2 OR g.is_public) AND (?3 IS NULL OR g.is_public=?3)";
 pub async fn count_owned(
@@ -360,6 +371,10 @@ pub async fn comment(pool: &SqlitePool, repo: i64, id: i64) -> Result<Option<Com
             .await?,
     )
 }
+pub async fn comment_position(pool: &SqlitePool, repo: i64, id: i64) -> Result<i64> {
+    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM gist_comments WHERE repo_id=?1 AND id<=?2").bind(repo).bind(id).fetch_one(pool).await?)
+}
+
 pub async fn create_comment(
     pool: &SqlitePool,
     actor: i64,
@@ -424,7 +439,4 @@ pub async fn change_comment(
     };
     tx.commit().await?;
     Ok(comment)
-}
-pub async fn commit_user(pool: &SqlitePool, email: &str) -> Result<Option<User>> {
-    Ok(sqlx::query_as("SELECT u.* FROM users u WHERE NOT u.is_banned AND (LOWER(u.username||'@users.noreply')=LOWER(?1) OR (u.email_verified AND LOWER(u.email)=LOWER(?1)) OR EXISTS(SELECT 1 FROM user_emails e WHERE e.user_id=u.id AND e.verified AND LOWER(e.email)=LOWER(?1))) ORDER BY (LOWER(u.username||'@users.noreply')=LOWER(?1)) DESC,u.id LIMIT 1").bind(email).fetch_optional(pool).await?)
 }

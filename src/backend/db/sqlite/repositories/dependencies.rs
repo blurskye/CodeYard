@@ -69,6 +69,7 @@ async fn save(tx: &mut Transaction<'_, Sqlite>, repo: i64, snapshot: &Snapshot) 
 pub async fn configure(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::OwnedAccountCredential,
     repo: i64,
     feature: Feature,
     enabled: bool,
@@ -76,6 +77,7 @@ pub async fn configure(
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let repository = admin(&mut tx, actor, repo, true).await?;
+    ensure!(super::super::users::transitions::live_credential(&mut tx, actor, &credential.as_credential()).await?, Refusal::Denied);
     let current = state_in(&mut tx, repo).await?;
     let Some(policy) = Policy::change(
         current.as_ref(),

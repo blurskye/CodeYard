@@ -1,5 +1,5 @@
 use crate::backend::{
-    api::http::session::get_current_user,
+    api::http::session::{extract_session_id, get_current_user},
     app::AppState,
     files::{self, LocalUploadError},
 };
@@ -58,7 +58,7 @@ pub async fn put_upload_content(
     files::put_local_upload(
         &state.pool,
         &state.storage,
-        user.id,
+        (user.id, extract_session_id(&headers).unwrap_or_default()),
         file_id,
         content_type,
         reader,

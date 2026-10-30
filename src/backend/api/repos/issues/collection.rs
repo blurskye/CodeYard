@@ -1196,6 +1196,7 @@ pub(crate) async fn native_create(
             owner,
             name,
             crate::backend::repositories::pull_requests::mutations::CreatePullRequestRequest {
+                suppress_ci: false,
                 head_repo_id: Some(head_repo.id),
                 source:
                     crate::backend::repositories::pull_requests::mutations::PullRequestSource::New {

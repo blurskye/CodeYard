@@ -112,6 +112,9 @@ fn native_file_bytes(content: String, original: &str) -> Vec<u8> {
 
 pub(crate) fn native_text(content: String, original: &str) -> String {
     let content = content.replace("\r\n", "\n").replace('\r', "\n");
+    if content == original.replace("\r\n", "\n").replace('\r', "\n") {
+        return original.to_owned();
+    }
     let newline = original.find(['\r', '\n']).map(|index| &original[index..]);
     match newline {
         Some(rest) if rest.starts_with("\r\n") => content.replace('\n', "\r\n"),

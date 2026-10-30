@@ -110,16 +110,6 @@ pub async fn scheduled_repositories(pool: &SqlitePool, after: i64) -> Result<Vec
     .await?)
 }
 
-pub async fn schedule_actor(
-    pool: &SqlitePool,
-    repo: i64,
-    reference: &str,
-    sha: &str,
-) -> Result<Option<i64>> {
-    Ok(sqlx::query_scalar("SELECT COALESCE((SELECT actor_id FROM ci_accepted_pushes WHERE repo_id=$1 AND reference=$2 AND sha=$3 ORDER BY accepted_at DESC LIMIT 1),owner_user_id) FROM repositories WHERE id=$1")
-        .bind(repo).bind(reference).bind(sha).fetch_optional(pool).await?.flatten())
-}
-
 pub async fn retained_ci_commits(pool: &SqlitePool, repo_id: i64) -> Result<Vec<String>> {
     Ok(sqlx::query_scalar(
         "SELECT DISTINCT head_sha FROM ci_runs WHERE repo_id=?1 AND head_sha IS NOT NULL",
@@ -1382,8 +1372,7 @@ pub async fn record_ci_accepted_push(
 ) -> Result<()> {
     ensure!(
         (reference.starts_with("refs/heads/") || reference.starts_with("refs/tags/"))
-            && sha.len() == 40
-            && sha.bytes().all(|b| b.is_ascii_hexdigit()),
+            && crate::git_ids::is_full_commit_id(sha),
         "invalid accepted push fact"
     );
     sqlx::query("INSERT INTO ci_accepted_pushes(repo_id,actor_id,reference,sha) VALUES (?1,?2,?3,?4) ON CONFLICT(repo_id,actor_id,reference,sha) DO UPDATE SET accepted_at=excluded.accepted_at")

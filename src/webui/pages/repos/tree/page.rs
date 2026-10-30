@@ -493,8 +493,8 @@ pub(in crate::webui::pages::repos) fn breadcrumbs(
             for (index, part) in parts.iter().enumerate() {
                 span { key: "{index}", class: "repo-breadcrumb-part",
                     span { class: "repo-path-separator", "/" }
-                    if file && index + 1 == parts.len() { span { class: "repo-path-current", "{part}" } }
-                    else { NavLink { href: file_url(&base, "tree", reference, &parts[..=index].join("/")), "{part}" } }
+                    if file && index + 1 == parts.len() { span { class: "repo-path-current", {crate::git_paths::display(part)} } }
+                    else { NavLink { href: file_url(&base, "tree", reference, &parts[..=index].join("/")), {crate::git_paths::display(part)} } }
                 }
             }
         }

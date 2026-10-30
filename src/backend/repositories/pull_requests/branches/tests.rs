@@ -122,6 +122,7 @@ async fn row(forks: &Forks, id: i64) -> PullRequest {
 /// Opens a pull request from `head_branch` on the fork into `main` of the base.
 async fn open(forks: &Forks, head_branch: &str) -> PullRequest {
     let request = mutations::CreatePullRequestRequest {
+        suppress_ci: false,
         head_repo_id: Some(forks.fork.id),
         source: mutations::PullRequestSource::New {
             title: format!("From {head_branch}"),
@@ -342,6 +343,7 @@ async fn existing_owner_requests_do_not_take_a_write_lock() {
         "alice".into(),
         "proj".into(),
         mutations::CreatePullRequestRequest {
+            suppress_ci: false,
             head_repo_id: Some(forks.base.id),
             source: mutations::PullRequestSource::New {
                 title: "Owned".into(),

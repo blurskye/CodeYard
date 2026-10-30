@@ -47,6 +47,7 @@ pub fn authorize_operation(
         Operation::FetchPullHead { .. } => ("FetchPullHead", false),
         Operation::Exists => ("Exists", false),
         Operation::SizeBytes => ("SizeBytes", false),
+        Operation::RefreshStorageSize => ("RefreshStorageSize", false),
         Operation::Refs => ("Refs", false),
         Operation::MatchingRefs { .. } => ("MatchingRefs", false),
         Operation::PrimaryRefs => ("PrimaryRefs", false),
@@ -57,6 +58,7 @@ pub fn authorize_operation(
         Operation::GitTree { .. } => ("GitTree", false),
         Operation::GitTag { .. } => ("GitTag", false),
         Operation::GitObjectKind { .. } => ("GitObjectKind", false),
+        Operation::IntroducedBlobs { .. } => ("IntroducedBlobs", false),
         Operation::WriteGitObject { .. } => ("WriteGitObject", false),
         Operation::ImportGit { .. } => ("ImportGit", false),
         Operation::CancelImport => ("CancelImport", false),
@@ -597,6 +599,7 @@ impl RpcHandler {
             }
             Operation::Exists => serde_json::json!(store.exists().await),
             Operation::SizeBytes => json!(store.size_bytes()),
+            Operation::RefreshStorageSize => json!(store.refresh_storage_size_now(pool, repo_id.ok_or_else(unavailable)?)),
             Operation::Refs | Operation::PrimaryRefs => json!(store.refs()),
             Operation::MatchingRefs { prefix } => json!(store.matching_refs(&prefix)),
             Operation::BranchPublication {
@@ -613,9 +616,11 @@ impl RpcHandler {
             Operation::GitTree {
                 revision,
                 recursive,
-            } => json!(store.git_tree(&revision, recursive)),
-            Operation::GitTag { sha } => json!(store.git_tag(&sha)),
+                raw_json,
+            } => encode_json(&store.git_tree(&revision, recursive).await?, raw_json, &mut output)?,
+            Operation::GitTag { sha, raw_json } => encode_json(&store.git_tag(&sha).await?, raw_json, &mut output)?,
             Operation::GitObjectKind { sha } => json!(store.git_object_kind(&sha)),
+            Operation::IntroducedBlobs { sha } => encode_json(&store.introduced_blobs(&sha).await?, true, &mut output)?,
             Operation::UpdateReference {
                 reference,
                 sha,
@@ -677,8 +682,8 @@ impl RpcHandler {
             Operation::SidebarTrees { git_ref, paths } => {
                 json!(store.sidebar_trees(&git_ref, &paths))
             }
-            Operation::TemplateTexts { revision, paths } => {
-                json!(store.template_texts(&revision, &paths))
+            Operation::TemplateTexts { revision, paths, raw_json } => {
+                encode_json(&store.template_texts(&revision, &paths).await?, raw_json, &mut output)?
             }
             Operation::WorkflowFiles { revision } => {
                 let files = store.workflow_files(&revision).await?;
@@ -806,13 +811,14 @@ impl RpcHandler {
             Operation::CommitsBetween {
                 base_ref,
                 head_ref,
+                offset,
                 limit,
                 offset,
                 raw_json,
                 pull_request,
             } => {
                 if pull_request {
-                    let commits = store.pull_request_commits(&base_ref, &head_ref).await?;
+                    let commits = store.pull_request_commits(&base_ref, &head_ref, offset, limit).await?;
                     encode_json(&commits, raw_json, &mut output)?
                 } else {
                     let commits = store.commits_between_page(&base_ref, &head_ref, offset, limit).await?;
@@ -909,8 +915,8 @@ impl RpcHandler {
             }
             Operation::Contributors => json!(store.contributors()),
             Operation::BranchContributors { branch } => json!(store.branch_contributors(&branch)),
-            Operation::CommitStatistics { branch, raw_json } => {
-                let statistics = store.commit_statistics(&branch).await?;
+            Operation::CommitStatistics { branch, raw_json, mode } => {
+                let statistics = store.commit_statistics(&branch, mode).await?;
                 encode_json(&statistics, raw_json, &mut output)?
             }
             Operation::CodeFrequency { branch } => json!(store.code_frequency(&branch)),
@@ -975,6 +981,7 @@ impl RpcHandler {
                 &new_owner
             )),
             Operation::ConfigureDependencySecurity {
+                credential,
                 feature,
                 enabled,
                 private_consent,
@@ -982,6 +989,7 @@ impl RpcHandler {
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                 actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                credential,
                 feature,
                 enabled,
                 private_consent

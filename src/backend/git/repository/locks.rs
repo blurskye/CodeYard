@@ -16,24 +16,38 @@ static LOCKS: LazyLock<crate::backend::locks::KeyedMutex<PathBuf>> =
 static READERS: LazyLock<crate::backend::locks::KeyedRwLock<PathBuf>> =
     LazyLock::new(Default::default);
 
-fn canonical(path: &Path) -> PathBuf {
-    // Receive sessions use canonical paths; API writes may retain a symlink alias.
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+/// Receive sessions use canonical paths; API writes may retain a symlink alias. Resolve the
+/// nearest existing ancestor, including before a destination directory exists, so creating
+/// that directory does not change the lock selected through a symlinked parent.
+async fn canonical(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() { path.to_owned() } else { std::env::current_dir().unwrap_or_default().join(path) };
+    let mut ancestor = absolute.as_path();
+    let mut tail = Vec::new();
+    loop {
+        if let Ok(mut canonical) = tokio::fs::canonicalize(ancestor).await {
+            for component in tail.iter().rev() { canonical.push(component); }
+            break canonical;
+        }
+        let Some(name) = ancestor.file_name() else { break absolute.clone(); };
+        tail.push(name.to_owned());
+        let Some(parent) = ancestor.parent() else { break absolute.clone(); };
+        ancestor = parent;
+    }
 }
 
 pub async fn lock(path: &Path) -> OwnedMutexGuard<()> {
-    LOCKS.lock(canonical(path)).await
+    LOCKS.lock(canonical(path).await).await
 }
 
 /// Held for the whole of a read, alongside other readers and writers of the directory.
 pub async fn read(path: &Path) -> OwnedRwLockReadGuard<()> {
-    READERS.read(canonical(path)).await
+    READERS.read(canonical(path).await).await
 }
 
 /// Waits for the directory's readers to finish and keeps new ones out, before it is replaced,
 /// moved or retired. Take it after `lock`.
 pub async fn exclusive(path: &Path) -> OwnedRwLockWriteGuard<()> {
-    READERS.write(canonical(path)).await
+    READERS.write(canonical(path).await).await
 }
 
 #[derive(Debug)]

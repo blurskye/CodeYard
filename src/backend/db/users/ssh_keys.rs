@@ -214,6 +214,10 @@ native_operation!(crate::backend::db::postgres::users::ssh_keys::get_user_by_key
     fingerprint: &str,
 ) -> Result<Option<UserWithKey>>);
 
+native_operation!(crate::backend::db::postgres::users::ssh_keys::touch_ssh_key,
+    crate::backend::db::sqlite::users::ssh_keys::touch_ssh_key,
+    fn touch_ssh_key(pool: &DbPool, key_id: i64) -> Result<()>);
+
 native_operation!(crate::backend::db::postgres::users::ssh_keys::get_user_by_ssh_key_id,
     crate::backend::db::sqlite::users::ssh_keys::get_user_by_ssh_key_id,
     fn get_user_by_ssh_key_id(pool: &DbPool, key_id: i64) -> Result<Option<UserWithKey>>);

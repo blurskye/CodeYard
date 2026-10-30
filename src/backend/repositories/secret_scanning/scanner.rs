@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 
 pub const MAX_BLOB_BYTES: usize = 1024 * 1024;
 pub(super) const MAX_DETECTIONS: usize = 1000;
+pub(super) const MAX_MATCHED_BYTES: usize = 4 * MAX_BLOB_BYTES;
 
 pub(super) fn compile_regex(pattern: &str) -> Result<Regex> {
     // RE2 shorthand classes are ASCII. Rust's Unicode expansion can also exhaust the NFA budget.
@@ -70,7 +71,7 @@ pub(super) fn compile_regex(pattern: &str) -> Result<Regex> {
     Ok(Regex::new(&output)?)
 }
 
-/// Values stay out of Debug output and logs. Columns count Unicode characters, not bytes.
+/// Values stay out of Debug output and logs. Columns are one-based byte positions.
 #[derive(Clone, PartialEq)]
 pub struct Detection {
     pub rule_id: String,
@@ -195,23 +196,16 @@ impl Scanner {
             toml::from_str(include_str!("../../../../spec/gitleaks/gitleaks.toml"))?;
         // Personal tokens issued before prefixes were introduced remain valid, but cannot be
         // distinguished reliably from arbitrary hexadecimal values in source code.
-        for (id, regex, keyword) in [
-            (
-                "codeyard-pat",
-                r"(?-u:\b)cy_pat_[a-f0-9]{64}(?-u:\b)",
-                "cy_pat_",
-            ),
-            (
-                "codeyard-fine-grained-pat",
-                r"(?-u:\b)cy_fgpat_[a-f0-9]{64}(?-u:\b)",
-                "cy_fgpat_",
-            ),
-            (
-                "codeyard-actions-token",
-                r"(?-u:\b)ghs_[a-f0-9]{64}(?-u:\b)",
-                "ghs_",
-            ),
+        use crate::backend::identity::tokens::{PAT_PREFIX, FGPAT_PREFIX, ACTIONS_PREFIX, INSTALLATION_PREFIX, HEX_TOKEN_CHARS, URL_TOKEN_CHARS};
+        for (id, prefix, alphabet, length) in [
+            ("codeyard-pat", PAT_PREFIX, "a-f0-9", HEX_TOKEN_CHARS),
+            ("codeyard-fine-grained-pat", FGPAT_PREFIX, "a-f0-9", HEX_TOKEN_CHARS),
+            ("codeyard-actions-token", ACTIONS_PREFIX, "A-Za-z0-9_-", URL_TOKEN_CHARS),
+            // Before the imported GitHub rule, whose shorter capture would truncate these.
+            ("github-app-token", INSTALLATION_PREFIX, "a-f0-9", HEX_TOKEN_CHARS),
         ] {
+            let regex = format!("(?:^|[^{alphabet}])({prefix}[{alphabet}]{{{length}}})(?:[^{alphabet}]|$)");
+            let keyword = prefix;
             config.rules.insert(
                 0,
                 Rule {
@@ -230,6 +224,7 @@ impl Scanner {
             .sort_by_key(|rule| rule.id == "generic-api-key");
         let mut rules = Vec::new();
         for mut input in config.rules {
+            if input.id == "airtable-personal-access-token" { input.keywords = vec!["pat".into()]; }
             let regex = input
                 .regex
                 .as_deref()
@@ -259,6 +254,7 @@ impl Scanner {
             return Ok(vec![]);
         }
         let lower = text.to_ascii_lowercase();
+        let mut matched_bytes = 0usize;
         let mut found = Vec::new();
         let mut spans = Vec::new();
         for rule in &self.rules {
@@ -275,13 +271,22 @@ impl Scanner {
                 continue;
             }
             let Some(regex) = &rule.regex else { continue };
-            for captures in regex.captures_iter(text) {
+            let mut from = 0;
+            while let Some(captures) = regex.captures_at(text, from) {
                 let matched = captures.get(0).expect("whole match");
                 let secret = match rule.input.secret_group {
                     Some(group) => captures.get(group),
                     None => (1..captures.len())
                         .find_map(|group| captures.get(group))
                         .or(Some(matched)),
+                };
+                let end = secret.map_or(matched.end(), |secret| secret.end());
+                from = if end > from {
+                    end
+                } else if let Some(character) = text[from..].chars().next() {
+                    from + character.len_utf8()
+                } else {
+                    break;
                 };
                 let Some(secret) = secret.filter(|secret| !secret.is_empty()) else {
                     continue;
@@ -313,15 +318,11 @@ impl Scanner {
                     continue;
                 }
                 let (start_line, start_column) = position(text, secret.start());
-                let last = secret.end()
-                    - secret
-                        .as_str()
-                        .chars()
-                        .last()
-                        .expect("nonempty secret")
-                        .len_utf8();
+                let last = secret.end() - 1;
                 let (end_line, end_column) = position(text, last);
                 let (secret_type, display) = identity(&rule.input.id);
+                matched_bytes = matched_bytes.saturating_add(secret.len());
+                ensure!(matched_bytes <= MAX_MATCHED_BYTES && found.len() < MAX_DETECTIONS, "Blob exceeds secret scanning detection budget");
                 spans.push((secret.start(), secret.end()));
                 found.push(Detection {
                     rule_id: rule.input.id.clone(),
@@ -344,9 +345,9 @@ impl Scanner {
 }
 
 pub(super) fn position(text: &str, offset: usize) -> (i64, i64) {
-    let prefix = &text[..offset];
-    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
-    let column = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+    let prefix = &text.as_bytes()[..offset];
+    let line = prefix.iter().filter(|byte| **byte == b'\n').count() + 1;
+    let column = prefix.iter().rposition(|byte| *byte == b'\n').map_or(offset + 1, |last| offset - last);
     (line as i64, column as i64)
 }
 
@@ -445,6 +446,11 @@ pub fn secret_types() -> Result<Vec<(String, String)>> {
     types.sort();
     types.dedup();
     Ok(types)
+}
+
+pub(super) fn cache_across_commits() -> Result<bool> {
+    let scanner = configured()?;
+    Ok(scanner.global.commits.is_empty() && scanner.rules.iter().all(|rule| rule.allowlists.iter().all(|allowlist| allowlist.commits.is_empty())))
 }
 
 /// Scans UTF-8 text blobs only. Binary and oversized blobs are deliberately skipped.

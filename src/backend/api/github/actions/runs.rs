@@ -386,7 +386,7 @@ pub(super) async fn list(
         q.check_suite = Some(check);
     }
     if !q.sha.is_empty()
-        && (q.sha.len() != 40 || !q.sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        && !crate::git_ids::is_full_commit_id(&q.sha)
     {
         return Err(Error::invalid("Invalid head SHA"));
     }

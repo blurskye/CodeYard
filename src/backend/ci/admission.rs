@@ -223,9 +223,7 @@ pub(super) async fn resolve(
     )
     .await??;
     if !enabled {
-        return Err(AdmissionError::Conflict(
-            "Actions are turned off for this repository",
-        ));
+        return Err(AdmissionError::WorkflowDisabled);
     }
     // Never trust the caller's repository name.
     request.repo_name = repo.name.clone();
@@ -531,9 +529,8 @@ pub(super) async fn resolve(
         request.environment = Some("production".to_owned());
     }
     if !pr_revision && !pr_target {
-        // A tag is stored under its full name, which can pass the column size when its short
-        // name does not.
-        if super::push::branch_name(&commit.full_ref).chars().count() > 255 {
+        // Tags retain their full names; storage accommodates every admitted public ref.
+        if commit.full_ref.len() > crate::backend::git::ref_names::MAX_REF_BYTES {
             return Err(AdmissionError::Invalid("CI ref name is too long"));
         }
         request.branch = commit.full_ref;
@@ -646,7 +643,6 @@ pub fn is_safe_ref(value: &str) -> bool {
         format!("refs/heads/{value}")
     };
     !value.starts_with('-')
-        && super::push::branch_name(&reference).chars().count() <= 255
         && crate::backend::git::ref_names::is_canonical_ref(&reference)
 }
 
@@ -699,7 +695,7 @@ mod tests {
         assert!(is_safe_ref("feature/c++"));
         assert!(is_safe_ref("refs/tags/v1.2.3+build.1"));
         assert!(is_safe_ref(&format!("refs/heads/{}", "a".repeat(255))));
-        assert!(!is_safe_ref(&format!("refs/heads/{}", "a".repeat(256))));
+        assert!(is_safe_ref(&format!("refs/heads/{}", "a".repeat(256))));
         assert!(!is_safe_ref("refs/heads/a.lock"));
         assert!(!is_safe_owner("a b"));
         assert!(!is_safe_ref("refs/heads/a b"));
