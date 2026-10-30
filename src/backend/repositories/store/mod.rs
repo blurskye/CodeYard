@@ -1238,6 +1238,15 @@ impl RepoStore {
         }
     }
 
+    /// Primary-only default-branch statistics. Remote owners also publish the cache
+    /// while holding their repository publication lease.
+    pub(crate) async fn languages_from_primary(&self, branch: &str) -> Result<Vec<LanguageStat>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.languages(branch).await,
+            Backend::Remote(remote) => remote.call(Operation::PrimaryLanguages { git_ref: branch.into() }, b"").await,
+        }
+    }
+
     /// Bytes per language at `git_ref`, from file extensions.
     pub async fn languages(&self, git_ref: &str) -> Result<Vec<LanguageStat>, RepoError> {
         match &self.0 {
