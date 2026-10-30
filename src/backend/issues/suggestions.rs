@@ -53,6 +53,7 @@ pub async fn resolve(
         .await;
     }
     if let Some(issue) = outcome.closed_issue {
+        super::mutations::notify_state_change(pool, broadcaster, actor, (repo, owner), &issue).await;
         let (author, sender) = (issue.author_id, actor.id);
         let repository = repo.clone();
         webhooks::emit(

@@ -1,5 +1,8 @@
 use super::{database_error, OperationError};
 use crate::backend::db;
+use crate::backend::notifications::create::{
+    create_and_broadcast_notification, notify_subscribers, NotificationRequest,
+};
 use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
 use crate::backend::notifications::watchers::{notify_watchers, WatchEvent, WatchedItem};
 use crate::backend::notifications::NotificationBroadcaster;
@@ -228,39 +231,12 @@ pub async fn update_issue(
             "This entry or your permission changed; reload and review your preserved submission"
                 .to_owned(),
     })?;
+    // The update matched the expected state, so that was the state it changed from.
+    let state_changed = issue.state != req.expected_state;
+    if state_changed {
+        notify_state_change(pool, broadcaster, &user, (&repository, &owner), &issue).await;
+    }
 
-    let subject = db::timeline::Subject::Issue;
-    if issue.title != existing.title {
-        db::timeline::record(
-            pool,
-            repository.id,
-            subject,
-            existing.id,
-            user.id,
-            "renamed",
-            &issue.title,
-            &existing.title,
-        )
-        .await;
-    }
-    if issue.state != existing.state {
-        let kind = if issue.state == "closed" {
-            "closed"
-        } else {
-            "reopened"
-        };
-        db::timeline::record(
-            pool,
-            repository.id,
-            subject,
-            existing.id,
-            user.id,
-            kind,
-            "",
-            "",
-        )
-        .await;
-    }
     if let Some(body) = req.body.as_deref() {
         let link = format!("/{owner}/{repo}/issues/{number}");
         notify_mentions(
@@ -296,7 +272,7 @@ pub async fn update_issue(
     if !changes.is_empty() {
         actions.push("edited");
     }
-    if issue.state != existing.state {
+    if state_changed {
         actions.push(if issue.state == "closed" { "closed" } else { "reopened" });
     }
     for action in actions {
@@ -329,6 +305,43 @@ pub async fn update_issue(
         .await;
     }
     Ok(issue)
+}
+
+/// Tells the issue's author and the people subscribed to it that the issue was closed or
+/// reopened. The actor is not told about their own change.
+pub(super) async fn notify_state_change(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor: &db::models::User,
+    (repository, owner): (&db::models::Repository, &str),
+    issue: &db::models::Issue,
+) {
+    let (kind, verb) = if issue.state == "closed" {
+        ("issue_closed", "closed")
+    } else {
+        ("issue_reopened", "reopened")
+    };
+    let title = format!("{} {verb} issue #{}", actor.username, issue.number);
+    let link = format!("/{owner}/{}/issues/{}", repository.name, issue.number);
+    let notice = NotificationRequest {
+        user_id: issue.author_id,
+        actor_id: Some(actor.id),
+        repo_id: Some(repository.id),
+        kind,
+        title: &title,
+        body: Some(&issue.title),
+        link: Some(&link),
+        metadata: serde_json::json!({"repo_owner":owner,"repo_name":repository.name,"issue_number":issue.number,"subject":issue.title}),
+    };
+    let mut notified = Vec::new();
+    if issue.author_id != actor.id
+        && create_and_broadcast_notification(pool, broadcaster, notice.clone())
+            .await
+            .is_ok()
+    {
+        notified.push(issue.author_id);
+    }
+    notify_subscribers(pool, broadcaster, notice, &notified).await;
 }
 
 /// Saves an edit from the GitHub API, which carries no form revision: the caller passes the

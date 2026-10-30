@@ -340,7 +340,24 @@ pub async fn update_issue_with_reason(
             return Ok(None);
         }
     }
+    let previous_title: Option<String> = sqlx::query_scalar("SELECT title FROM issues WHERE id = ?1")
+        .bind(issue_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let (actor, expected_state) = (edit.actor_id, edit.expected_state);
     let issue = update_issue_in_transaction(&mut tx, repo, issue_id, edit, state_reason).await?;
+    // The history commits with the change, so it cannot miss a committed edit or list
+    // concurrent transitions in a different order from the one they took.
+    if let (Some(issue), Some(previous_title)) = (&issue, previous_title) {
+        let event = (repo, issue_id, actor);
+        if issue.title != previous_title {
+            super::issue_attributes::event(&mut tx, event, "renamed", &issue.title, &previous_title).await?;
+        }
+        if issue.state != expected_state {
+            let kind = if issue.state == "closed" { "closed" } else { "reopened" };
+            super::issue_attributes::event(&mut tx, event, kind, "", "").await?;
+        }
+    }
     tx.commit().await?;
     Ok(issue)
 }
