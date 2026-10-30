@@ -119,6 +119,12 @@ pub async fn update_branch(
         )
         .await
         .map_err(storage)?;
+    // A head writer's own update is published with their authority; the wider refresh follows.
+    if let Err(error) =
+        super::branches::refresh_updated_head(pool, &base, &head, ci, actor.id, pull.id).await
+    {
+        tracing::warn!(pull_request_id = pull.id, %error, "could not refresh the updated pull request");
+    }
     super::branches_moved(pool, &base, ci, actor.id).await;
     if head.id != base.id {
         super::branches_moved(pool, &head, ci, actor.id).await;

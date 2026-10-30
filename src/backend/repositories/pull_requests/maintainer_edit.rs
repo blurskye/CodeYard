@@ -44,11 +44,12 @@ pub(crate) async fn can_update_head(
     {
         return Ok(false);
     }
-    if head.id != base.id && !publication_authorized(pool, pull.head_publisher_id, head).await? {
-        return Ok(false);
-    }
+    // A writer of the head acts on their own authority, and publishes the updated head with it.
     if access::can_write(pool, actor, head).await? {
         return Ok(true);
+    }
+    if head.id != base.id && !publication_authorized(pool, pull.head_publisher_id, head).await? {
+        return Ok(false);
     }
     // The grant covers this PR head only, including a private fork; it never
     // makes the repository generally readable or writable to the maintainer.
