@@ -34,6 +34,24 @@ pub fn links(
 
 /// Issue numbers in `body` that a closing keyword names in this repository, without a repeat.
 /// They are the numbers `links` accepts: `#N`, `owner/repo#N` and this forge's issue URLs.
+/// Qualified targets use the same native closing-keyword and forge-URL grammar.
+pub fn referenced_targets(body: &str, owner: &str, repo: &str, base: &str) -> Vec<(String, String, i32)> {
+    let prefix = format!("{}/", base.trim_end_matches('/'));
+    let mut targets: Vec<_> = REFERENCE.captures_iter(body).filter_map(|capture| {
+        let (owner, repo, number) = if let Some(url) = capture.get(3) {
+            let parts: Vec<_> = url.as_str().trim_end_matches(['.', ',', ')', ']']).strip_prefix(&prefix)?.split('/').collect();
+            if parts.len() != 4 || parts[2] != "issues" { return None; }
+            (parts[0], parts[1], parts[3].parse::<i32>().ok()?)
+        } else {
+            let (owner, repo) = capture.get(1).and_then(|scope| scope.as_str().split_once('/')).unwrap_or((owner, repo));
+            (owner, repo, capture.get(2)?.as_str().parse::<i32>().ok()?)
+        };
+        (number > 0).then(|| (owner.to_ascii_lowercase(), repo.to_ascii_lowercase(), number))
+    }).collect();
+    targets.sort_unstable(); targets.dedup();
+    targets
+}
+
 pub fn referenced_numbers(body: &str, owner: &str, repo: &str, base: &str) -> Vec<i32> {
     let scope = format!("{owner}/{repo}");
     let prefix = format!("{}/{owner}/{repo}/issues/", base.trim_end_matches('/'));

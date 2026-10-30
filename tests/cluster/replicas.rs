@@ -3645,7 +3645,7 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
         &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, repo.actor).await),
         (actor.username, repo.repository.name.clone(), pull.number),
         codeyard::backend::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
-            state:Some("commented".into()), body:Some("Old revision".into()), commit_sha:Some(head), review_id:None,
+            state:Some("commented".into()), body:Some("Old revision".into()), commit_sha:Some(head), review_id:None, token:None,
         },
     ).await.unwrap_err();
     assert!(matches!(

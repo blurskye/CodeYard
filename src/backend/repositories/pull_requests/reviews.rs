@@ -16,6 +16,13 @@ pub struct CreatePullRequestReviewRequest {
     pub commit_sha: Option<String>,
     /// Submitting a particular draft must not publish a different, concurrently created review.
     pub review_id: Option<i64>,
+    #[serde(skip)]
+    pub token: Option<i64>,
+}
+
+pub struct CreatePullRequestReviewBatchRequest {
+    pub review: CreatePullRequestReviewRequest,
+    pub comments: Vec<super::comments::CreatePullRequestCommentRequest>,
 }
 
 #[derive(Deserialize)]
@@ -135,6 +142,32 @@ pub async fn create_pull_request_review(
     repository: (String, String, i32),
     req: CreatePullRequestReviewRequest,
 ) -> Result<db::models::PullRequestReview, OperationError> {
+    create_review(pool, cluster, broadcaster, actor_id, credential, repository, req, None).await
+}
+
+pub async fn create_pull_request_review_batch(
+    pool: &db::DbPool,
+    cluster: Option<&NodeContext>,
+    broadcaster: &NotificationBroadcaster,
+    actor_id: i64,
+    credential: &db::users::accounts::AccountCredential<'_>,
+    repository: (String, String, i32),
+    batch: CreatePullRequestReviewBatchRequest,
+) -> Result<db::models::PullRequestReview, OperationError> {
+    create_review(pool, cluster, broadcaster, actor_id, credential, repository, batch.review, Some(batch.comments)).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn create_review(
+    pool: &db::DbPool,
+    cluster: Option<&NodeContext>,
+    broadcaster: &NotificationBroadcaster,
+    actor_id: i64,
+    credential: &db::users::accounts::AccountCredential<'_>,
+    repository: (String, String, i32),
+    req: CreatePullRequestReviewRequest,
+    batch: Option<Vec<super::comments::CreatePullRequestCommentRequest>>,
+) -> Result<db::models::PullRequestReview, OperationError> {
     let (owner, repo, number) = repository;
     let user = super::actor(pool, actor_id).await?;
 
@@ -182,17 +215,6 @@ pub async fn create_pull_request_review(
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: "state must be one of: approved, changes_requested, commented".to_owned(),
-        });
-    }
-    // Approvals may stand alone. Comments and change requests must say why, in the summary or in the
-    // inline comments of the pending review that this review submits.
-    if review_state != "approved"
-        && req.body.as_deref().unwrap_or("").trim().is_empty()
-        && !has_pending_comments(pool, pull_request.id, user.id).await?
-    {
-        return Err(OperationError::Invalid {
-            code: "validation_error",
-            message: "A review body is required unless the review is approved".to_owned(),
         });
     }
     check_optional_text(req.body.as_deref())?;
@@ -263,18 +285,24 @@ pub async fn create_pull_request_review(
     }
 
     }
-    let review = db::pull_requests::reviews::save_pull_request_review(
-        pool,
-        pull_request.id,
-        user.id,
-        credential,
-        &review_state,
-        req.body.as_deref(),
-        Some(commit_sha.as_str()),
-        req.review_id,
-    )
-    .await
-    .map_err(super::write_error)?;
+    let create_pending = batch.is_some();
+    let comments = batch.unwrap_or_default();
+    if comments.len() > db::pull_requests::reviews::MAX_REVIEW_COMMENTS as usize || comments.iter().any(|comment| comment.path.is_none() || comment.in_reply_to_comment_id.is_some()) {
+        return Err(OperationError::Invalid { code: "validation_error", message: "A review holds at most 200 new inline threads.".into() });
+    }
+    let mut patches = super::comments::DiffCache::new();
+    let mut prepared = Vec::with_capacity(comments.len());
+    for comment in comments {
+        prepared.push(super::comments::prepare_comment(pool, cluster, &repository, &pull_request, comment, &mut patches).await?);
+    }
+    let comments: Vec<_> = prepared.iter().map(|comment| comment.input(&pull_request, user.id)).collect();
+    let review = db::pull_requests::reviews::save_review_batch(pool, db::pull_requests::reviews::ReviewBatch {
+        pr_id: pull_request.id, author_id: user.id,
+        state: if create_pending && req.state.is_none() { None } else { Some(&review_state) },
+        body: req.body.as_deref(), commit_sha: Some(&commit_sha), expected_pending: req.review_id,
+        create_pending, comments: &comments, token: req.token, credential,
+    }).await.map_err(super::write_error)?;
+    if review.state == "pending" { return Ok(review); }
 
     // The link names the review; the pull request page finds its current page when followed.
     let base = format!("/{}/{}/pulls/{}", owner, repo, pull_request.number);
@@ -407,18 +435,6 @@ pub async fn create_pull_request_review(
     }
 
     Ok(review)
-}
-
-/// Whether the author has inline comments waiting in a pending review.
-async fn has_pending_comments(
-    pool: &db::DbPool,
-    pr_id: i64,
-    author_id: i64,
-) -> Result<bool, OperationError> {
-    db::pull_requests::reviews::list_pending_review_comments(pool, pr_id, author_id)
-        .await
-        .map(|comments| !comments.comments.is_empty())
-        .map_err(database_error)
 }
 
 pub async fn dismiss_pull_request_review(

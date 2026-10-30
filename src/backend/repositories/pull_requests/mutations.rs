@@ -103,9 +103,10 @@ async fn repair_open_pull(
     ci: &CiRuns,
     repository: &db::models::Repository,
     head_repository: &db::models::Repository,
-    actor_id: i64,
+    credential: crate::backend::repositories::store::PullHeadActor,
     existing: &db::models::PullRequest,
 ) -> Result<(), OperationError> {
+    let actor_id = credential.user;
     let number = existing.number;
     // Exact CAS repairs an absent initial ref, never a later publication.
     repo_store(repository, ci.cluster.as_ref())
@@ -113,7 +114,7 @@ async fn repair_open_pull(
             pool,
             repository.id,
             head_repository.id,
-            actor_id,
+            credential,
             &repo_store(head_repository, ci.cluster.as_ref()),
             number,
             &existing.head_sha,
@@ -153,11 +154,13 @@ pub async fn create_pull_request(
     pool: &db::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::repositories::store::PullHeadActor>,
     owner: String,
     repo: String,
     req: CreatePullRequestRequest,
 ) -> Result<db::models::PullRequest, OperationError> {
+    let credential = actor_id.into();
+    let actor_id = credential.user;
     let user = super::actor(pool, actor_id).await?;
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -293,7 +296,7 @@ pub async fn create_pull_request(
                 db::pull_requests::records::IssueConversionRefusal::Missing.into(),
             ));
         }
-        repair_open_pull(pool, ci, &repository, &head_repository, user.id, &existing).await?;
+        repair_open_pull(pool, ci, &repository, &head_repository, credential, &existing).await?;
         return Err(OperationError::Conflict {
             code: "pull_request_exists",
             message: format!(
@@ -378,7 +381,7 @@ pub async fn create_pull_request(
                     message: "Pull request state changed; retry the request".to_owned(),
                 });
             };
-            repair_open_pull(pool, ci, &repository, &head_repository, user.id, &existing).await?;
+            repair_open_pull(pool, ci, &repository, &head_repository, credential, &existing).await?;
             return Err(OperationError::Conflict {
                 code: "pull_request_exists",
                 message: format!(
@@ -394,7 +397,7 @@ pub async fn create_pull_request(
                 pool,
                 repository.id,
                 head_repository.id,
-                user.id,
+                credential,
                 &repo_store(&head_repository, ci.cluster.as_ref()),
                 pull_request.number,
                 &pull_request.head_sha,

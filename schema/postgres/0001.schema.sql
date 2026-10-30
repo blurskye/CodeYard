@@ -1008,7 +1008,7 @@ INSERT INTO file_reason_limits (reason, max_file_size_bytes, max_uploads_per_hou
 ('pr_attachment', 10485760, 20, 104857600, 100, 524288000, ARRAY['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'text/plain', 'text/markdown'], 'PR attachments'),
 ('readme_image', 5242880, 10, 52428800, 50, 262144000, ARRAY['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'], 'README and wiki images'),
 ('repo_asset', 52428800, 10, 262144000, 50, 1073741824, NULL, 'Repository assets'),
-('codeql_database', 104857600, 10, 1073741824, 40, 4294967296, '["application/zip"]', 'CodeQL databases'),
+('codeql_database', 104857600, 10, 1073741824, 40, 4294967296, ARRAY['application/zip'], 'CodeQL databases'),
 ('other', 10485760, 5, 52428800, 20, 104857600, NULL, 'Uncategorized files')
 ON CONFLICT (reason) DO NOTHING;
 

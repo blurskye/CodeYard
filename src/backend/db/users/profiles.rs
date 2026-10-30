@@ -67,7 +67,11 @@ pub struct AccountStatistics {
 
 native_operation!(crate::backend::db::postgres::users::profiles::account_statistics,
     crate::backend::db::sqlite::users::profiles::account_statistics,
-    fn account_statistics(pool: &DbPool, user: i64) -> Result<AccountStatistics>);
+    fn account_statistics(pool: &DbPool, user: i64, token: i64) -> Result<Option<AccountStatistics>>);
+
+native_operation!(crate::backend::db::postgres::users::profiles::public_email,
+    crate::backend::db::sqlite::users::profiles::public_email,
+    fn public_email(pool: &DbPool, user: i64) -> Result<Option<String>>);
 
 native_operation!(crate::backend::db::postgres::users::profiles::get_profile_settings,
     crate::backend::db::sqlite::users::profiles::get_profile_settings,

@@ -101,6 +101,40 @@ fn repository_matches_path(
     }
 }
 
+async fn live_pull_read(
+    pool: &db::DbPool,
+    repo_id: i64,
+    actor: super::PullHeadActor,
+    path: &Path,
+    node_id: Option<Option<i64>>,
+) -> Result<(), RepoError> {
+    if let Some(token) = actor.token {
+        let user = db::users::tokens::token_user(pool, token, false).await
+            .map_err(|_| RepoError::authority_unavailable())?
+            .filter(|user| user.id == actor.user)
+            .ok_or_else(|| RepoError::new(ErrorKind::Invalid, "repository read denied"))?;
+        if let Some(bounds) = crate::backend::identity::github_apps::authority(pool, token).await
+            .map_err(|_| RepoError::authority_unavailable())? {
+            if !bounds.allows(pool, user.id, repo_id, "contents", false).await
+                .map_err(|_| RepoError::authority_unavailable())? {
+                return Err(RepoError::new(ErrorKind::Invalid, "repository read denied"));
+            }
+        } else if user.username == db::ci_tokens::BOT {
+            let job = db::ci_tokens::get(pool, token).await.map_err(|_| RepoError::authority_unavailable())?
+                .ok_or_else(|| RepoError::new(ErrorKind::Invalid, "repository read denied"))?;
+            let permissions: crate::backend::ci::tokens::Permissions = serde_json::from_str(&job.permissions)
+                .map_err(|_| RepoError::authority_unavailable())?;
+            if job.repo_id != repo_id || !permissions.allows("contents", false) {
+                return Err(RepoError::new(ErrorKind::Invalid, "repository read denied"));
+            }
+        } else if db::fine_grained_tokens::classic_refused_repository(pool, token, repo_id).await
+            .map_err(|_| RepoError::authority_unavailable())? {
+            return Err(RepoError::new(ErrorKind::Invalid, "repository read denied"));
+        }
+    }
+    live_read(pool, repo_id, actor.user, path, node_id).await
+}
+
 async fn live_read(
     pool: &db::DbPool,
     repo_id: i64,
@@ -556,11 +590,15 @@ impl LocalStore {
         Ok(change)
     }
 
-    /// A token without the workflows permission may publish only updates that leave every
-    /// workflow file as it is, or as a branch already has it. Session writes pass `None`.
-    async fn check_workflow_grant(
+    /// Recheck the initiating contents credential at publication. Without workflows permission,
+    /// updates must also leave workflow files as they are or as an existing branch has them.
+    /// The contents check runs last, after the possibly slow tree inspection, so a credential
+    /// revoked meanwhile refuses the ref update that follows.
+    async fn check_publication_grant(
         &self,
         pool: &db::DbPool,
+        repo: i64,
+        actor: i64,
         token: Option<i64>,
         updates: Vec<(String, String)>,
         quarantine: Option<PathBuf>,
@@ -568,17 +606,21 @@ impl LocalStore {
         let Some(token) = token else {
             return Ok(());
         };
-        if crate::backend::identity::oauth_apps::allows_workflows(pool, token)
+        if !crate::backend::identity::oauth_apps::allows_workflows(pool, token)
             .await
             .map_err(|_| RepoError::authority_unavailable())?
         {
-            return Ok(());
+            self.blocking(move |path| {
+                git::oauth::check_workflows(path, quarantine.as_deref(), &updates)
+            })
+            .await
+            .map_err(|_| RepoError::workflow_denied())?;
         }
-        self.blocking(move |path| {
-            git::oauth::check_workflows(path, quarantine.as_deref(), &updates)
-        })
-        .await
-        .map_err(|_| RepoError::workflow_denied())
+        if !db::users::tokens::repository_write(pool, token, actor, repo, "contents").await
+            .map_err(|_| RepoError::authority_unavailable())? {
+            return Err(RepoError::write_denied());
+        }
+        Ok(())
     }
 
     pub(super) async fn git_tree(
@@ -845,6 +887,11 @@ impl LocalStore {
         self.blocking(git::list_refs).await
     }
 
+    pub(super) async fn matching_refs(&self, prefix: &str) -> Result<HashMap<String, String>, RepoError> {
+        let prefix = prefix.to_owned();
+        self.blocking(move |path| git::list_matching_refs(path, &prefix)).await
+    }
+
     /// Every ref, for a replica to copy.
     pub(super) async fn mirror_refs(&self) -> Result<HashMap<String, String>, RepoError> {
         self.blocking(git::list_mirror_refs).await
@@ -997,6 +1044,17 @@ impl LocalStore {
         self.read_blob_object_range(&id, size, mode, range).await
     }
 
+    pub(super) async fn blob_by_id_range(&self, id: &str, range: BlobRange) -> Result<BlobBytes, RepoError> {
+        let oid = id.to_owned();
+        let size = self.blocking(move |path| {
+            let repo = git2::Repository::open_bare(path)?;
+            let (size, kind) = repo.odb()?.read_header(git2::Oid::from_str(&oid)?)?;
+            anyhow::ensure!(kind == git2::ObjectType::Blob, "Not a blob");
+            Ok(size as u64)
+        }).await?;
+        self.read_blob_object_range(id, size, 0o100644, range).await
+    }
+
     pub(super) async fn blob_by_id(&self, id: &str) -> Result<Vec<u8>, RepoError> {
         let id = id.to_owned();
         self.blocking(move |repo| git::get_blob_by_id(repo, &id))
@@ -1045,9 +1103,10 @@ impl LocalStore {
         &self,
         base_ref: &str,
         head_ref: &str,
+        offset: usize,
         limit: usize,
     ) -> Result<Vec<CommitInfo>, RepoError> {
-        git::list_range_commits(self.path(), base_ref, head_ref, limit)
+        git::range_commits(self.path(), base_ref, head_ref, offset, limit)
             .await
             .map_err(RepoError::from)
     }
@@ -1210,6 +1269,10 @@ impl LocalStore {
             .map_err(RepoError::from)
     }
 
+    pub(super) async fn branch_contributors(&self, branch: &str) -> Result<Vec<ContributorInfo>, RepoError> {
+        git::get_branch_contributors(self.path(), branch).await.map_err(RepoError::from)
+    }
+
     pub(super) async fn contributors(&self) -> Result<Vec<ContributorInfo>, RepoError> {
         git::get_contributors(self.path())
             .await
@@ -1332,12 +1395,13 @@ impl LocalStore {
         pool: &db::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: i64,
+        actor: impl Into<super::PullHeadActor>,
         source: &LocalStore,
         number: i32,
         head: &str,
         expected_head: Option<&str>,
     ) -> Result<(), RepoError> {
+        let actor = actor.into();
         let current = git::repository::current_pull_head(self.path(), number)
             .await
             .map_err(RepoError::from)?;
@@ -1352,8 +1416,8 @@ impl LocalStore {
             )));
         }
 
-        live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
-        live_read(pool, repo_id, actor, self.path(), self.node_id).await?;
+        live_pull_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
+        live_pull_read(pool, repo_id, actor, self.path(), self.node_id).await?;
         let prepared = git::repository::prepare_pull_head(self.path(), source.path(), head)
             .await
             .map_err(RepoError::from)?;
@@ -1380,13 +1444,14 @@ impl LocalStore {
         pool: &db::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: i64,
+        actor: impl Into<super::PullHeadActor>,
         source: &LocalStore,
         number: i32,
         head: &str,
         expected_head: Option<&str>,
         prepared: git::repository::PreparedPullHead,
     ) -> Result<(), RepoError> {
+        let actor = actor.into();
         let _lock = git::locks::lock(self.path()).await;
         let current = git::repository::current_pull_head(self.path(), number)
             .await
@@ -1408,8 +1473,8 @@ impl LocalStore {
         // The fetch happened only in temporary storage. Recheck live authority
         // after waiting for the destination lock and immediately before
         // receive-pack can migrate objects and publish the exact CAS ref.
-        live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
-        live_read(pool, repo_id, actor, self.path(), self.node_id).await?;
+        live_pull_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
+        live_pull_read(pool, repo_id, actor, self.path(), self.node_id).await?;
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::repository::publish_pull_head(self.path(), number, head, expected_head, &prepared)
             .await
@@ -2130,8 +2195,10 @@ impl LocalStore {
         )
         .await?;
         live_read(pool, source.0, actor, source.1.path(), source.1.node_id).await?;
-        self.check_workflow_grant(
+        self.check_publication_grant(
             pool,
+            repo_id,
+            actor,
             request.token,
             vec![(request.head.clone(), prepared.head().to_owned())],
             Some(prepared.path().to_owned()),
@@ -2349,8 +2416,6 @@ impl LocalStore {
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
-        self.check_workflow_grant(pool, token, vec![(base.to_owned(), result.to_owned())], None)
-            .await?;
         if let Some(authority) = authority {
             db::users::tokens::token_user(pool, authority.token_id, true)
                 .await
@@ -2383,6 +2448,8 @@ impl LocalStore {
                 return Err(RepoError::write_denied());
             }
         }
+        self.check_publication_grant(pool, repo_id, actor, token, vec![(base.to_owned(), result.to_owned())], None)
+            .await?;
         publication
             .scope(git::publish_merge(
                 self.path(),
@@ -2901,13 +2968,13 @@ impl LocalStore {
             .await?;
             let tag = match &mutation {
                 Mutation::Create { tag, .. } => tag.clone(),
-                Mutation::Update { id, .. } => {
-                    db::releases::get_release(&pool, repo_id, *id)
+                Mutation::Update { id, changes } => {
+                    let current = db::releases::get_release(&pool, repo_id, *id)
                         .await
                         .map_err(|_| unavailable("Release storage unavailable"))?
                         .ok_or_else(|| RepoError::new(ErrorKind::NotFound, "Release not found"))?
-                        .release
-                        .tag_name
+                        .release;
+                    changes.tag.clone().unwrap_or(current.tag_name)
                 }
             };
             let mut target = String::new();

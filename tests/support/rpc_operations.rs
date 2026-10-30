@@ -26,6 +26,8 @@ fn prepared(sha: &str) -> codeyard::backend::repositories::store::PreparedFile {
             committer_email: "tester@example.invalid".into(),
             timestamp: 0,
             committer_timestamp: 0,
+            author_offset_minutes: 0,
+            committer_offset_minutes: 0,
             parents: vec![sha.into()],
             signature: None,
             signature_payload: None,
@@ -120,6 +122,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::FetchPullHead {
+                token: None,
                 source: Uuid::nil(),
                 number: 1,
                 head: "main".into(),
@@ -130,6 +133,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (Operation::Exists, false),
         (Operation::SizeBytes, false),
         (Operation::Refs, false),
+        (Operation::MatchingRefs { prefix: "refs/pull/".into() }, false),
         (Operation::PrimaryRefs, false),
         (
             Operation::BranchPublication {
@@ -200,6 +204,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             false,
         ),
         (Operation::BlobById { id: sha.into() }, true),
+        (Operation::BlobByIdRange { id: sha.into(), range: BlobRange::Window { offset: 0, length: 0 } }, false),
         (
             Operation::Commits {
                 git_ref: "main".into(),
@@ -237,6 +242,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 base_ref: "main".into(),
                 head_ref: "main".into(),
                 limit: 10,
+                offset: 0,
                 raw_json: false,
                 pull_request: false,
             },
@@ -418,6 +424,8 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                         committer_email: "tester@example.invalid".into(),
                         timestamp: 0,
                         committer_timestamp: 0,
+                        author_offset_minutes: 0,
+                        committer_offset_minutes: 0,
                         parents: vec![sha.into()],
                         signature: None,
                         signature_payload: None,

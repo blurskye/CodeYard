@@ -5,12 +5,18 @@ use crate::backend::db::models::{Issue, IssueComment};
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
+native_operation!(crate::backend::db::postgres::issues::issue_repositories,
+    crate::backend::db::sqlite::issues::issue_repositories,
+    fn issue_repositories(pool: &DbPool, ids: &[i64]) -> Result<Vec<(i64, i64)>>);
+
 /// What a new issue starts with besides its text: a parent issue, labels, assignees, a milestone
 /// and a type. The parent and labels and assignees need triage access, and the milestone and type
 /// need write access, as when they are set later. The creating transaction checks all of it, so
 /// the issue is saved with everything it asks for or not at all.
 #[derive(Clone, Copy, Default)]
 pub struct IssueMetadata<'a> {
+    /// Initiating API credential, retained until the insert and metadata commit.
+    pub token: Option<i64>,
     pub parent: Option<i64>,
     pub labels: &'a [i64],
     pub assignees: &'a [i64],
@@ -47,6 +53,10 @@ pub async fn create_issue(
     )
     .await
 }
+
+native_operation!(crate::backend::db::postgres::issues::issue_ids_by_numbers,
+    crate::backend::db::sqlite::issues::issue_ids_by_numbers,
+    fn issue_ids_by_numbers(pool: &DbPool, repo: i64, viewer: Option<i64>, numbers: &[i32]) -> Result<Vec<(i64, i32)>>);
 
 native_operation!(crate::backend::db::postgres::issues::get_issue,
     crate::backend::db::sqlite::issues::get_issue,
@@ -121,6 +131,9 @@ native_operation!(crate::backend::db::postgres::issues::add_issue_comment,
     body: &str,
 ) -> Result<IssueComment>);
 
+native_operation!(crate::backend::db::postgres::issues::list_issue_comments_ordered,
+    crate::backend::db::sqlite::issues::list_issue_comments_ordered,
+    fn list_issue_comments_ordered(pool: &DbPool, issue_id: i64, limit: i64, offset: i64, updated: bool, descending: bool) -> Result<Vec<IssueCommentEntry>>);
 native_operation!(crate::backend::db::postgres::issues::list_issue_comments,
     crate::backend::db::sqlite::issues::list_issue_comments,
     fn list_issue_comments(

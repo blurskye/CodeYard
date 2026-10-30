@@ -319,6 +319,7 @@ pub async fn branch_redirect(pool: &PgPool, repo: i64, old: &str) -> Result<Opti
 pub async fn upsert_commit_status(
     pool: &PgPool,
     input: CommitStatusUpsert<'_>,
+    token: Option<i64>,
 ) -> Result<CommitStatus> {
     anyhow::ensure!(
         !server_owned_status_context(input.context),
@@ -336,6 +337,10 @@ pub async fn upsert_commit_status(
         .await?,
         ProtectionWriteRefusal::Denied
     );
+    if let Some(token) = token {
+        anyhow::ensure!(crate::backend::db::postgres::users::tokens::repository_write_on(
+            &mut tx, token, actor_id, input.repo_id, "statuses").await?, ProtectionWriteRefusal::Denied);
+    }
     let sha = input.sha.to_ascii_lowercase();
     // GitHub compares contexts without case: a status updates the one differing only in case.
     let context: String = sqlx::query_scalar("SELECT context FROM commit_statuses WHERE repo_id=$1 AND sha=$2 AND lower(context)=lower($3) ORDER BY id LIMIT 1")
@@ -376,6 +381,31 @@ pub async fn upsert_commit_status(
     tx.commit().await?;
 
     Ok(status)
+}
+
+pub async fn commit_status_page(
+    pool: &PgPool, viewer: Option<i64>, repo: i64, sha: &str, offset: i64, limit: i64, history: bool,
+) -> Result<Option<crate::backend::db::repositories::protection::CommitStatusPage>> {
+    anyhow::ensure!((1..=100).contains(&limit) && offset >= 0, "Invalid status page");
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({})>=1))", super::access::USER_REPO_ACCESS_SQL))
+        .bind(repo).bind(viewer).fetch_one(&mut *tx).await?;
+    if !visible { return Ok(None); }
+    let counts: Vec<(String, i64)> = if history { Vec::new() } else {
+        sqlx::query_as("SELECT state,COUNT(*) FROM commit_statuses_latest WHERE repo_id=$1 AND sha=$2 GROUP BY state")
+            .bind(repo).bind(sha).fetch_all(&mut *tx).await?
+    };
+    let total = if history {
+        sqlx::query_scalar("SELECT COUNT(*) FROM commit_status_history WHERE repo_id=$1 AND sha=$2")
+            .bind(repo).bind(sha).fetch_one(&mut *tx).await?
+    } else { counts.iter().map(|(_, count)| count).sum() };
+    let table = if history { "commit_status_history" } else { "commit_statuses_latest" };
+    let updated = if history { "created_at" } else { "updated_at" };
+    let statuses = sqlx::query_as(&format!("SELECT id,repo_id,sha,context,state,substr(description,1,1024) AS description,substr(target_url,1,2048) AS target_url,creator_id,created_at,{updated} AS updated_at FROM {table} WHERE repo_id=$1 AND sha=$2 ORDER BY id DESC LIMIT $3 OFFSET $4"))
+        .bind(repo).bind(sha).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Some(crate::backend::db::repositories::protection::CommitStatusPage { total, counts, statuses }))
 }
 
 pub async fn list_commit_statuses_page(

@@ -777,7 +777,7 @@ async fn branch_rules(
     )
     .await
     .map_err(|_| unavailable(ctx))?;
-    let rules = branch_protection::rule_responses(&ctx.state.pool, rules)
+    let rules = branch_protection::rule_responses(&ctx.state.pool, rules, ctx.user.as_ref().map_or(-1, |user| user.id))
         .await
         .map_err(|_| unavailable(ctx))?;
     let mut listed = Vec::with_capacity(rules.len());

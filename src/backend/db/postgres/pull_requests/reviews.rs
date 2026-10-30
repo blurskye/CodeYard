@@ -101,6 +101,13 @@ async fn insert_comment(
             crate::backend::db::discussions::DiscussionWriteRefusal::ReviewFull
         );
     }
+    let comment = insert_comment_on(&mut tx, &input, review_id).await?;
+    touch_revision(&mut tx, input.pr_id).await?;
+    tx.commit().await?;
+    Ok(comment)
+}
+
+async fn insert_comment_on(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, input: &NewPullRequestComment<'_>, review_id: Option<i64>) -> Result<PullRequestComment> {
     let comment = sqlx::query_as::<_, PullRequestComment>(
         r#"
         INSERT INTO pr_comments (pull_request_id, author_id, body, path, line, side, commit_sha, in_reply_to_comment_id, review_id,start_line,start_side)
@@ -119,11 +126,8 @@ async fn insert_comment(
     .bind(review_id)
     .bind(input.start_line)
     .bind(input.start_side)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
-    touch_revision(&mut tx, input.pr_id).await?;
-    tx.commit().await?;
-
     Ok(comment)
 }
 
@@ -181,12 +185,17 @@ pub async fn list_pull_request_comments(
     Ok(comments)
 }
 
-pub async fn list_pull_request_conversation_comments(
-    pool: &PgPool,
-    pr_id: i64,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<PullRequestCommentEntry>> {
+pub async fn conversation_comment_position(pool: &PgPool, comment: i64) -> Result<i64> {
+    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM pr_comments i JOIN pr_comments target ON target.pull_request_id=i.pull_request_id WHERE target.id=$1 AND i.path IS NULL AND NOT EXISTS(SELECT 1 FROM pr_reviews v WHERE v.id=i.review_id AND v.state='pending') AND (i.created_at,i.id)<=(target.created_at,target.id)").bind(comment).fetch_one(pool).await?)
+}
+
+pub async fn list_pull_request_conversation_comments(pool: &PgPool, pr_id: i64, limit: i64, offset: i64) -> Result<Vec<PullRequestCommentEntry>> {
+    list_pull_request_conversation_comments_ordered(pool, pr_id, limit, offset, false, false).await
+}
+
+pub async fn list_pull_request_conversation_comments_ordered(pool: &PgPool, pr_id: i64, limit: i64, offset: i64, updated: bool, descending: bool) -> Result<Vec<PullRequestCommentEntry>> {
+    let order = if updated { "updated_at" } else { "created_at" };
+    let direction = if descending { "DESC" } else { "ASC" };
     let columns = crate::backend::db::postgres::users::accounts::AUTHOR_DISPLAY_COLUMNS;
     // A path over the budget reads as absent, so it cannot expand a discussion page.
     let max_path_bytes = crate::backend::db::pull_requests::reviews::MAX_COMMENT_PATH_BYTES;
@@ -198,7 +207,7 @@ pub async fn list_pull_request_conversation_comments(
             i.start_line,i.start_side,{columns} FROM pr_comments i JOIN users u ON u.id=i.author_id
             WHERE i.pull_request_id = $1 AND i.path IS NULL
               AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = i.review_id AND v.state = 'pending')
-            ORDER BY i.created_at, i.id LIMIT $2 OFFSET $3"),
+            ORDER BY i.{order} {direction}, i.id {direction} LIMIT $2 OFFSET $3"),
     )
     .bind(pr_id)
     .bind(limit)
@@ -610,6 +619,11 @@ pub async fn save_pull_request_review(
     commit_sha: Option<&str>,
     expected_pending: Option<i64>,
 ) -> Result<PullRequestReview> {
+    save_review_batch(pool, crate::backend::db::pull_requests::reviews::ReviewBatch { pr_id, author_id, state: Some(state), body, commit_sha, expected_pending, create_pending: false, comments: &[], token: None, credential }).await
+}
+
+pub async fn save_review_batch(pool: &PgPool, input: crate::backend::db::pull_requests::reviews::ReviewBatch<'_>) -> Result<PullRequestReview> {
+    let (pr_id, author_id, state, body, commit_sha, expected_pending) = (input.pr_id, input.author_id, input.state.unwrap_or("commented"), input.body, input.commit_sha, input.expected_pending);
     let commit_sha = commit_sha.map(str::to_ascii_lowercase);
     let mut tx = pool.begin().await?;
     // A plain comment needs read access; a vote needs write access.
@@ -619,7 +633,7 @@ pub async fn save_pull_request_review(
     } else {
         discussions::lock_pull_request_review_authority(&mut tx, author_id, pr_id).await?
     };
-    anyhow::ensure!(super::super::users::transitions::credential_live(&mut tx, author_id, credential, true).await?, crate::backend::db::discussions::DiscussionWriteRefusal::Denied);
+    anyhow::ensure!(super::super::users::transitions::credential_live(&mut tx, author_id, input.credential, true).await?, crate::backend::db::discussions::DiscussionWriteRefusal::Denied);
     let pinned: bool = if let Some(id) = expected_pending {
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews WHERE id=$1 AND pull_request_id=$2 AND author_id=$3 AND state='pending' AND commit_sha=$4)")
             .bind(id).bind(pr_id).bind(author_id).bind(commit_sha.as_deref()).fetch_one(&mut *tx).await?
@@ -652,8 +666,31 @@ pub async fn save_pull_request_review(
             );
         }
     }
-    // Without a summary, the review needs inline comments of its own. The service checked this
-    // earlier; a discard in between would leave an empty review, so the count is read here.
+    let (repo, base): (i64, String) = sqlx::query_as("SELECT repo_id,base_sha FROM pull_requests WHERE id=$1").bind(pr_id).fetch_one(&mut *tx).await?;
+    if let Some(token) = input.token {
+        anyhow::ensure!(super::super::users::tokens::repository_write_on(&mut tx, token, author_id, repo, "pull-requests").await?, crate::backend::db::discussions::DiscussionWriteRefusal::Denied);
+    }
+    if input.create_pending {
+        anyhow::ensure!(input.comments.len() <= MAX_REVIEW_COMMENTS as usize, crate::backend::db::discussions::DiscussionWriteRefusal::ReviewFull);
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews WHERE pull_request_id=$1 AND author_id=$2 AND state='pending')").bind(pr_id).bind(author_id).fetch_one(&mut *tx).await?;
+        anyhow::ensure!(!exists, crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview);
+        let draft: PullRequestReview = sqlx::query_as("INSERT INTO pr_reviews(pull_request_id,author_id,state,body,commit_sha) VALUES($1,$2,'pending',$3,$4) RETURNING *").bind(pr_id).bind(author_id).bind(body).bind(commit_sha.as_deref()).fetch_one(&mut *tx).await?;
+        for comment in input.comments {
+            anyhow::ensure!(comment.pr_id == pr_id && comment.author_id == author_id && comment.in_reply_to_comment_id.is_none() && comment.path.is_some() && comment.expected_revisions == Some((current_head.as_str(), base.as_str())), crate::backend::db::discussions::DiscussionWriteRefusal::RevisionChanged);
+            insert_comment_on(&mut tx, comment, Some(draft.id)).await?;
+        }
+        if input.state.is_none() {
+            touch_revision(&mut tx, pr_id).await?;
+            tx.commit().await?;
+            return Ok(draft);
+        }
+    } else {
+        anyhow::ensure!(input.comments.is_empty(), crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview);
+    }
+    let pending_body: Option<Option<String>> = sqlx::query_scalar("SELECT body FROM pr_reviews WHERE pull_request_id=$1 AND author_id=$2 AND state='pending' FOR UPDATE")
+        .bind(pr_id).bind(author_id).fetch_optional(&mut *tx).await?;
+    let body = body.or_else(|| pending_body.as_ref().and_then(|body| body.as_deref()));
+    // Resolve omitted text and validate the nonempty review under the same lock as submission.
     if state != "approved" && body.is_none_or(|body| body.trim().is_empty()) {
         let inline: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pr_comments c JOIN pr_reviews v ON v.id = c.review_id
@@ -1058,7 +1095,7 @@ pub async fn review_request_origins(
     pool: &PgPool,
     pull: i64,
 ) -> Result<Vec<crate::backend::db::pull_requests::reviews::ReviewRequestOrigin>> {
-    Ok(sqlx::query_as("SELECT user_id,NULL::bigint AS team_id,as_code_owner FROM pr_reviewers WHERE pull_request_id=$1 UNION ALL SELECT NULL::bigint,team_id,as_code_owner FROM pr_team_reviewers WHERE pull_request_id=$1").bind(pull).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT user_id,team_id,as_code_owner FROM (SELECT r.user_id,NULL::bigint AS team_id,r.as_code_owner,0 AS kind,u.username AS sort_name FROM pr_reviewers r JOIN users u ON u.id=r.user_id WHERE r.pull_request_id=$1 UNION ALL SELECT NULL::bigint,r.team_id,r.as_code_owner,1,t.name FROM pr_team_reviewers r JOIN teams t ON t.id=r.team_id WHERE r.pull_request_id=$1) requests ORDER BY kind,sort_name,COALESCE(user_id,team_id)").bind(pull).fetch_all(pool).await?)
 }
 
 pub async fn list_pull_request_reviewers(pool: &PgPool, pr_id: i64) -> Result<Vec<User>> {

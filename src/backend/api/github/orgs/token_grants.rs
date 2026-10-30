@@ -423,7 +423,7 @@ async fn review(
 ) -> Result<u64> {
     let (reviewer, org) = context(state, headers, name, true).await?;
     let invalid = |field: &str| Error::validation("PersonalAccessTokenRequest", field, "invalid");
-    let Json(body) = body.map_err(|_| invalid("body"))?;
+    let Json(body) = body.map_err(super::super::json_error)?;
     let status = match body.action.as_str() {
         "approve" => "approved",
         "deny" => "denied",
@@ -499,7 +499,7 @@ async fn revoke(
 ) -> Result<u64> {
     let (reviewer, org) = context(state, headers, name, true).await?;
     let invalid = |field: &str| Error::validation("PersonalAccessToken", field, "invalid");
-    let Json(body) = body.map_err(|_| invalid("body"))?;
+    let Json(body) = body.map_err(super::super::json_error)?;
     if body.action != "revoke" {
         return Err(invalid("action"));
     }

@@ -107,15 +107,17 @@ pub(crate) async fn native_change(
                     "Issue not found. Use a number or owner/repository#number.",
                 )
             })?;
-            store::close_duplicate(
+            crate::backend::issues::mutations::close_duplicate(
                 &ctx.state.pool,
+                &ctx.state.notification_broadcaster,
                 actor,
                 repo.record.id,
                 issue.id,
                 duplicate.id,
             )
             .await
-            .map(|_| ())
+            .map_err(|error| crate::backend::api::repos::discussion::api_error(&ctx, super::operation_error(error)))?;
+            Ok(())
         }
         "branch" => {
             let oid = crate::backend::repositories::store::repo_store(
@@ -192,34 +194,22 @@ pub(crate) async fn load(
             .any(|p| p.id == issue.id),
         ..Default::default()
     };
+    let mut branch_snapshots = std::collections::HashMap::new();
     for branch in store::linked_branches(pool, issue.id)
         .await
         .map_err(|_| unavailable(ctx))?
     {
-        let Some(target) = readable_target(ctx, branch.repo_id).await? else {
-            continue;
-        };
-        let refs =
-            crate::backend::repositories::store::repo_store(&target, ctx.state.cluster.as_ref())
-                .refs()
-                .await
-                .map_err(|_| unavailable(ctx))?;
-        if !refs.contains_key(&format!("refs/heads/{}", branch.name)) {
-            continue;
+        if !branch_snapshots.contains_key(&branch.repo_id) {
+            let snapshot = if let Some(target) = readable_target(ctx, branch.repo_id).await? {
+                let refs = crate::backend::repositories::store::repo_store(&target, ctx.state.cluster.as_ref()).refs().await.map_err(|_| unavailable(ctx))?;
+                let owner = db::repositories::records::repository_owner_name(pool, target.id).await.map_err(|_| unavailable(ctx))?.ok_or_else(|| unavailable(ctx))?;
+                Some((format!("/{owner}/{}", target.name), refs))
+            } else { None };
+            branch_snapshots.insert(branch.repo_id, snapshot);
         }
-        let owner = db::repositories::records::repository_owner_name(pool, target.id)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .ok_or_else(|| unavailable(ctx))?;
-        controls.branches.push((
-            branch.name.clone(),
-            crate::webui::pages::repos::ref_path::file_url(
-                &format!("/{owner}/{}", target.name),
-                "tree",
-                &branch.name,
-                "",
-            ),
-        ));
+        let Some((root, refs)) = &branch_snapshots[&branch.repo_id] else { continue; };
+        if !refs.contains_key(&format!("refs/heads/{}", branch.name)) { continue; }
+        controls.branches.push((branch.name.clone(), crate::webui::pages::repos::ref_path::file_url(root, "tree", &branch.name, "")));
     }
     for pull in crate::backend::issues::closing::references(
         pool,

@@ -2,7 +2,20 @@ use crate::backend::db::pull_requests::auto_merge::AutoMerge;
 use anyhow::Result;
 use sqlx::PgPool;
 
-pub async fn enable(pool: &PgPool, request: &AutoMerge) -> Result<()> {
+pub async fn enable(pool: &PgPool, request: &AutoMerge, expected_head: Option<&str>, token: Option<i64>) -> Result<()> {
+    use crate::backend::db::discussions::DiscussionWriteRefusal as Refusal;
+    let mut tx = pool.begin().await?;
+    let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM pull_requests WHERE id=$1").bind(request.pull_request_id).fetch_optional(&mut *tx).await?.ok_or(Refusal::Denied)?;
+    anyhow::ensure!(super::super::discussions::lock_exclusive_write_authority(&mut tx, request.enabled_by, repo).await?, Refusal::Denied);
+    if let Some(token) = token {
+        for scope in ["contents", "pull-requests"] {
+            anyhow::ensure!(super::super::users::tokens::repository_write_on(&mut tx, token, request.enabled_by, repo, scope).await?, Refusal::Denied);
+        }
+    }
+    let head: Option<String> = sqlx::query_scalar("SELECT head_sha FROM pull_requests WHERE id=$1 AND repo_id=$2 AND state='open' AND NOT merged FOR UPDATE")
+        .bind(request.pull_request_id).bind(repo).fetch_optional(&mut *tx).await?;
+    let head = head.ok_or(Refusal::Denied)?;
+    anyhow::ensure!(expected_head.is_none_or(|expected| expected.eq_ignore_ascii_case(&head)), Refusal::RevisionChanged);
     sqlx::query(
         "INSERT INTO pull_request_auto_merges(pull_request_id,enabled_by,merge_method,commit_title,commit_message,author_email,enabled_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(pull_request_id) DO UPDATE SET enabled_by=excluded.enabled_by,merge_method=excluded.merge_method,commit_title=excluded.commit_title,commit_message=excluded.commit_message,author_email=excluded.author_email,enabled_at=excluded.enabled_at",
     )
@@ -13,8 +26,9 @@ pub async fn enable(pool: &PgPool, request: &AutoMerge) -> Result<()> {
     .bind(&request.commit_message)
     .bind(&request.author_email)
     .bind(request.enabled_at)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }
 

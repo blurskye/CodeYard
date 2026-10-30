@@ -14,10 +14,13 @@ pub struct AutoMerge {
     pub enabled_at: DateTime<Utc>,
 }
 
+pub async fn enable_auto_merge(pool: &DbPool, request: &AutoMerge) -> Result<()> {
+    enable_auto_merge_at_head(pool, request, None, None).await
+}
 native_operation!(crate::backend::db::postgres::pull_requests::auto_merge::enable,
     crate::backend::db::sqlite::pull_requests::auto_merge::enable,
-    /// Saves the request, replacing an earlier one for the same pull request.
-    fn enable_auto_merge(pool: &DbPool, request: &AutoMerge) -> Result<()>);
+    /// Saves the request under live write authority and the supplied head revision.
+    fn enable_auto_merge_at_head(pool: &DbPool, request: &AutoMerge, expected_head: Option<&str>, token: Option<i64>) -> Result<()>);
 native_operation!(crate::backend::db::postgres::pull_requests::auto_merge::disable,
     crate::backend::db::sqlite::pull_requests::auto_merge::disable,
     /// Removes the request. True when there was one.

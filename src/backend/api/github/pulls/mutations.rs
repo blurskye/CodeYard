@@ -3,7 +3,6 @@ use super::{document, target};
 use crate::backend::{
     app::AppState,
     db,
-    repositories::store::repo_store,
     repositories::{
         access,
         pull_requests::{self, mutations},
@@ -21,13 +20,15 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub(super) fn operation_error(error: pull_requests::OperationError) -> Error {
+pub(in crate::backend::api::github) fn operation_error(error: pull_requests::OperationError) -> Error {
     use pull_requests::OperationError::*;
     match error {
         Missing { .. } => Error::missing(),
         Unauthenticated { .. } => auth::required(),
         Denied { message, .. } => Error::new(StatusCode::FORBIDDEN, message),
-        Invalid { message, .. } | Conflict { message, .. } => Error::invalid(message),
+        Invalid { message, .. } => Error::invalid(message),
+        Conflict { message, .. } => Error::new(StatusCode::CONFLICT, message),
+        TooLarge { message, .. } => Error::new(StatusCode::PAYLOAD_TOO_LARGE, message),
         _ => Error::unavailable(()),
     }
 }
@@ -66,7 +67,7 @@ async fn create_value(
     let viewer = viewer.ok_or_else(auth::required)?;
     let actor = viewer.user.clone();
     let input: Create =
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid pull request"))?;
+        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     let source = match input.issue {
         Some(number) => mutations::PullRequestSource::Issue {
             issue: i32::try_from(number)
@@ -86,23 +87,13 @@ async fn create_value(
         Some(nwo) => nwo.split_once('/').unwrap_or((head_owner, nwo)),
         None => (head_owner, name.as_str()),
     };
-    let mut head = db::repositories::records::get_repository(&state.pool, head_owner, head_name)
-        .await
-        .map_err(Error::unavailable)?;
-    // A fork can have a name of its own; `owner:branch` then names that owner's fork.
-    if head.is_none() && input.head_repo.is_none() {
-        use crate::backend::repositories::lifecycle;
-        match lifecycle::transfer_target(&state.pool, head_owner).await {
-            Ok((target, _)) => {
-                head = db::repositories::discovery::get_owner_fork(&state.pool, target, repo.id)
-                    .await
-                    .map_err(Error::unavailable)?;
-            }
-            Err(error) if error.kind == lifecycle::LifecycleFailure::Invalid => {}
-            Err(_) => return Err(Error::unavailable(())),
-        }
+    let head = if input.head_repo.is_some() {
+        db::repositories::records::get_repository(&state.pool, head_owner, head_name).await
+    } else {
+        pull_requests::branches::owner_head_repository(&state.pool, &repo, head_owner).await
     }
-    let head = head.ok_or_else(|| Error::invalid("Invalid head repository"))?;
+    .map_err(Error::unavailable)?
+    .ok_or_else(|| Error::invalid("Invalid head repository"))?;
     if !access::can_read(&state.pool, Some(&actor), &head)
         .await
         .map_err(Error::unavailable)?
@@ -111,33 +102,13 @@ async fn create_value(
     }
     // The head's commits become readable through this repository, so a credential bounded
     // to some repositories must reach the head repository as well.
-    if head.id != repo.id {
-        viewer
-            .repository_scope(&state.pool, head.id, "contents", false)
-            .await
-            .map_err(auth::scope_error)?;
-    }
-    let refs = repo_store(&repo, state.cluster.as_ref())
-        .refs()
-        .await
-        .map_err(super::store_error)?;
-    let head_refs = repo_store(&head, state.cluster.as_ref())
-        .refs()
-        .await
-        .map_err(super::store_error)?;
-    if let (Some(base), Some(head)) = (
-        refs.get(&format!("refs/heads/{}", input.base)),
-        head_refs.get(&format!("refs/heads/{branch}")),
-    ) {
-        if head == base {
-            return Err(Error::invalid("No commits between base and head"));
-        }
-    }
+    viewer.repository_scope(&state.pool, head.id, "contents", false)
+        .await.map_err(auth::scope_error)?;
     let pull = mutations::create_pull_request(
         &state.pool,
         &state.ci_runs,
         &state.notification_broadcaster,
-        actor.id,
+        crate::backend::repositories::store::PullHeadActor { user: actor.id, token: Some(viewer.token.id) },
         owner.clone(),
         name,
         mutations::CreatePullRequestRequest {
@@ -207,7 +178,7 @@ async fn update_value(
     let input: Update = if body.is_empty() {
         Update::default()
     } else {
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid pull request"))?
+        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
     };
     let pull = mutations::update_pull_request_latest(
         &state.pool,

@@ -218,11 +218,12 @@ async fn create(
     let new_tag_denied = !may_create_tag(&state, &auth).await?;
     let actor = auth.user;
     let latest = match input.make_latest.as_deref() {
-        Some("false") => false,
-        Some("true" | "legacy") | None => true,
+        Some("false") => releases::LatestSelection::Keep,
+        Some("legacy") => releases::LatestSelection::Legacy,
+        Some("true") | None => releases::LatestSelection::Promote,
         _ => return Err(Error::invalid("Invalid make_latest")),
     };
-    let (title, body) = if input.generate_release_notes {
+    let (title, body, target) = if input.generate_release_notes {
         let notes = releases::generate_notes(
             &state.pool,
             state.cluster.as_ref(),
@@ -240,9 +241,9 @@ async fn create(
         let body = notes
             .with_preface(input.body.as_deref())
             .map_err(release_error)?;
-        (input.name.or(Some(notes.name)), Some(body))
+        (input.name.or(Some(notes.name)), Some(body), notes.target)
     } else {
-        (input.name, input.body)
+        (input.name, input.body, input.target_commitish.unwrap_or(repo.default_branch))
     };
     let release = releases::create(
         &state.pool,
@@ -255,7 +256,7 @@ async fn create(
         &releases::ReleaseInput {
             repository_id: repo.id,
             tag: input.tag_name,
-            target: input.target_commitish.unwrap_or(repo.default_branch),
+            target,
             fields: releases::ReleaseFields {
                 name: title,
                 body,
@@ -286,6 +287,7 @@ struct Update {
     prerelease: Option<bool>,
     make_latest: Option<String>,
     tag_name: Option<String>,
+    target_commitish: Option<String>,
 }
 
 async fn update(
@@ -298,23 +300,14 @@ async fn update(
     let auth = auth.ok_or_else(auth::required)?;
     let input: Update = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid release fields"))?;
-    let current = releases::detail_by_id(&state.pool, Some(auth.user.id), &owner, &name, id)
-        .await
-        .map_err(release_error)?;
     // Publishing a draft creates its tag when the tag is missing.
     let new_tag_denied = !may_create_tag(&state, &auth).await?;
     let actor = auth.user;
-    if input
-        .tag_name
-        .as_ref()
-        .is_some_and(|tag| tag != &current.release.release.tag_name)
-    {
-        return Err(Error::invalid("A release's tag cannot be changed"));
-    }
     let latest = match input.make_latest.as_deref() {
         None => None,
-        Some("true" | "legacy") => Some(true),
-        Some("false") => Some(false),
+        Some("true") => Some(releases::LatestSelection::Promote),
+        Some("legacy") => Some(releases::LatestSelection::Legacy),
+        Some("false") => Some(releases::LatestSelection::Keep),
         _ => return Err(Error::invalid("Invalid make_latest")),
     };
     releases::update(
@@ -327,6 +320,8 @@ async fn update(
         &name,
         id,
         &releases::ReleaseChanges {
+            tag: input.tag_name,
+            target: input.target_commitish,
             name: value.get("name").map(|_| input.name),
             body: value.get("body").map(|_| input.body),
             is_draft: input.draft,
@@ -380,6 +375,7 @@ async fn upload(
     .map_err(|_| Error::invalid("Asset exceeds 100 MiB"))?
     .to_vec();
     auth.require_live(&state.pool).await?;
+    auth.repository_scope(&state.pool, repo.id, "contents", true).await.map_err(auth::scope_error)?;
     let actor = &auth.user;
     let asset = releases::upload_asset(
         &state.pool,
@@ -390,6 +386,7 @@ async fn upload(
         &name,
         id,
         releases::AssetUpload {
+            token: Some(auth.token.id),
             name: &input.name,
             label: input.label.as_deref(),
             content_type: &content_type,

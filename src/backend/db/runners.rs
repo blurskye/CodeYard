@@ -84,6 +84,15 @@ impl RunnerProjection {
     }
 }
 
+#[derive(Default)]
+pub struct RunnerFilter<'a> {
+    pub id: Option<i64>,
+    pub name: Option<&'a str>,
+    pub group: Option<i64>,
+    pub offset: i64,
+    pub limit: i64,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct GroupInput {
     pub name: Option<String>,
@@ -347,6 +356,8 @@ native_operation!(crate::backend::db::postgres::runners::group_repositories, cra
     fn group_repositories(pool:&DbPool,actor:i64,org:i64,id:i64,selection:&Selection)->Result<()>);
 native_operation!(crate::backend::db::postgres::runners::group_runners, crate::backend::db::sqlite::runners::group_runners,
     fn group_runners(pool:&DbPool,actor:i64,org:i64,id:i64,selection:&Selection)->Result<()>);
+native_operation!(crate::backend::db::postgres::runners::list_runners_page, crate::backend::db::sqlite::runners::list_runners_page,
+    fn list_runners_page(pool:&DbPool,actor:i64,scope:Scope,filter:&RunnerFilter<'_>)->Result<(i64,Vec<Runner>)>);
 native_operation!(crate::backend::db::postgres::runners::list_runners, crate::backend::db::sqlite::runners::list_runners,
     fn list_runners(pool:&DbPool,actor:i64,scope:Scope)->Result<Vec<Runner>>);
 native_operation!(crate::backend::db::postgres::runners::delete_runner, crate::backend::db::sqlite::runners::delete_runner,

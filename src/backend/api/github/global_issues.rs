@@ -157,7 +157,7 @@ async fn run(
         } else {
             AssignedItem::Issue(id)
         };
-        let mut value = issues::document(&state.pool, repo, owner, item).await?;
+        let mut value = issues::document(&state.pool, issues::Reader::Request(&state, Some(&auth)), repo, owner, item).await?;
         value["repository"] = payloads::repository(repo, owner);
         items.push(value);
     }

@@ -21,13 +21,17 @@ pub(super) async fn object(
     let owner = repository::owner(&repo, request).await?;
     Ok(
         json!({"__typename":"CommitComment","_repo":repo.id,"id":node_id::encode("CC",row.id),"databaseId":row.id,"body":row.body,"path":row.path,"position":row.position,
-        "author":match row.author_id {Some(id)=>user::actor_by_id(id,request).await?,None=>Value::Null},"createdAt":row.created_at,"updatedAt":row.updated_at,
-        "includesCreatedEdit":row.updated_at>row.created_at,"lastEditedAt":if row.updated_at>row.created_at {Some(row.updated_at)} else {None},"isMinimized":false,"minimizedReason":null,"reactionGroups":[],
+        "author":match row.author_id {Some(id)=>user::retained_author(id,request).await?,None=>Value::Null},"createdAt":row.created_at,"updatedAt":row.updated_at,
+        "includesCreatedEdit":row.updated_at>row.created_at,"lastEditedAt":if row.updated_at>row.created_at {Some(row.updated_at)} else {None},"isMinimized":false,"minimizedReason":null,
         "viewerDidAuthor":authored,"viewerCanUpdate":writable&&authored,"viewerCanDelete":writable&&(authored || access::can_maintain(&request.state.pool,&request.auth.user,&repo).await.map_err(unavailable)?),
         "repository":repository::object(&repo),"commit":{"__typename":"Commit","_repo":repo.id,"_scope":"contents","oid":row.sha},"url":url(&commit_comments::comment_link(&owner,&repo.name,row))}),
     )
 }
 pub(super) async fn field(field: &str, parent: &Value, request: &RequestContext) -> Result<Value> {
+    if field == "reactionGroups" {
+        return super::collaboration::reactions(db::reactions::Subject::CommitComment,
+            parent["databaseId"].as_i64().ok_or_else(missing)?, request).await;
+    }
     if field != "authorAssociation" {
         return Err(async_graphql::Error::new(format!(
             "Codeyard does not support CommitComment.{field} yet"
@@ -59,7 +63,7 @@ pub(super) async fn list(
     args: &Arguments,
     request: &RequestContext,
 ) -> Result<Value> {
-    repository::by_id(repo, request).await?;
+    let repository = repository::by_id(repo, request).await?;
     request.authorize(repo, "contents", false).await?;
     let total = records::count_comments(&request.state.pool, repo, oid, None)
         .await
@@ -78,9 +82,13 @@ pub(super) async fn list(
         .await
         .map_err(unavailable)?
     };
+    let details = commit_comments::comment_details(&request.state.pool, request.state.cluster.as_ref(), &repository, rows)
+        .await.map_err(unavailable)?;
     let mut nodes = vec![];
-    for row in rows {
-        nodes.push(object(&row, request).await?);
+    for row in details {
+        let mut value = object(&row.comment, request).await?;
+        value["authorAssociation"] = json!(row.association);
+        nodes.push(value);
     }
     Ok(page.finish(nodes))
 }

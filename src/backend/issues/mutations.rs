@@ -13,6 +13,8 @@ pub struct CreateIssueRequest {
     pub repository_id: Option<i64>,
     #[serde(default)]
     pub parent_issue_id: Option<i64>,
+    #[serde(skip)]
+    pub token: Option<i64>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -62,12 +64,19 @@ pub async fn create_issue(
     }
 
     let body = req.body.as_deref().unwrap_or("");
-    let issue = if let Some(parent) = req.parent_issue_id {
-        db::relationships::create_child(pool, user.id, repository.id, parent, &req.title, body)
-            .await
-    } else {
-        db::issues::create_issue(pool, repository.id, user.id, &req.title, body).await
-    }
+    let issue = db::issues::create_issue_with_metadata(
+        pool,
+        repository.id,
+        user.id,
+        &req.title,
+        body,
+        db::issues::IssueMetadata {
+            token: req.token,
+            parent: req.parent_issue_id,
+            ..Default::default()
+        },
+    )
+    .await
     .map_err(super::write_error)?;
 
     let link = format!("/{owner}/{repo}/issues/{}", issue.number);
@@ -142,8 +151,6 @@ pub async fn update_issue(
 ) -> Result<db::models::Issue, OperationError> {
     let user = super::actor(pool, actor_id).await?;
     let (repository, owner) = super::repository(pool, repository_id).await?;
-    let repo = repository.name.clone();
-
     super::require_read(pool, &user, &repository).await?;
 
     let existing = db::issues::get_issue(pool, repository.id, number)
@@ -231,7 +238,47 @@ pub async fn update_issue(
                 .to_owned(),
     })?;
 
-    if let Some(body) = req.body.as_deref() {
+    after_update(pool, broadcaster, &repository, &user, &owner, &existing, &issue).await;
+    Ok(issue)
+}
+
+pub async fn close_duplicate(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor: i64,
+    repo: i64,
+    issue: i64,
+    duplicate: i64,
+) -> Result<db::models::Issue, OperationError> {
+    let user = super::actor(pool, actor).await?;
+    let (repository, owner) = super::repository(pool, repo).await?;
+    let (previous, saved) = db::issues::management::close_duplicate_with_previous(pool, actor, repo, issue, duplicate).await.map_err(|error| {
+        use db::issues::management::Refusal;
+        match error.downcast_ref::<Refusal>() {
+            Some(Refusal::Missing) => OperationError::Missing { code: "not_found", message: error.to_string() },
+            Some(Refusal::Denied) => OperationError::Denied { code: "forbidden", message: error.to_string() },
+            Some(_) => OperationError::Invalid { code: "validation_error", message: error.to_string() },
+            None => database_error(error),
+        }
+    })?;
+    if previous.state != saved.state {
+        after_update(pool, broadcaster, &repository, &user, &owner, &previous, &saved).await;
+    }
+    Ok(saved)
+}
+
+async fn after_update(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    repository: &db::models::Repository,
+    user: &db::models::User,
+    owner: &str,
+    existing: &db::models::Issue,
+    issue: &db::models::Issue,
+) {
+    let repo = &repository.name;
+    let number = issue.number;
+    if let Some(body) = (issue.body != existing.body).then_some(issue.body.as_str()) {
         let link = format!("/{owner}/{repo}/issues/{number}");
         notify_mentions(
             pool,
@@ -293,7 +340,6 @@ pub async fn update_issue(
         },
     )
     .await;
-    Ok(issue)
 }
 
 /// Saves an edit from the GitHub API, which carries no form revision: the caller passes the

@@ -106,11 +106,12 @@ async fn restriction_document(
     state: &AppState,
     rule: &BranchProtectionRule,
     url: &str,
+    actor: i64,
 ) -> Result<Value> {
     let users = db::users::accounts::get_users_by_ids(&state.pool, &rule.push_allowances)
         .await
         .map_err(Error::unavailable)?;
-    let teams = super::push_teams::documents(state, rule).await?;
+    let teams = super::push_teams::documents(state, rule, actor).await?;
     Ok(json!({"url": format!("{url}/restrictions"),
         "users_url": format!("{url}/restrictions/users"), "teams_url": format!("{url}/restrictions/teams"), "apps_url": format!("{url}/restrictions/apps"),
         "users": users.iter().map(|user| payloads::person(&payloads::Person::of(user))).collect::<Vec<_>>(), "teams": teams, "apps": super::protection_operations::app_documents(state, &rule.github_settings.push_apps).await?}))
@@ -120,6 +121,7 @@ pub(super) async fn document(
     state: &AppState,
     rule: &BranchProtectionRule,
     url: &str,
+    actor: i64,
 ) -> Result<Value> {
     let mut value = json!({"url": url, "enforce_admins": admins(rule, url),
         "required_linear_history": {"enabled": rule.require_linear_history},
@@ -137,7 +139,7 @@ pub(super) async fn document(
         value["required_pull_request_reviews"] = review_document(rule, url);
     }
     if rule.restrict_pushes {
-        value["restrictions"] = restriction_document(state, rule, url).await?;
+        value["restrictions"] = restriction_document(state, rule, url, actor).await?;
     }
     Ok(value)
 }
@@ -171,7 +173,7 @@ async fn branch(
         }
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    Ok(Json(document(&state, &rule, &url).await?).into_response())
+    Ok(Json(document(&state, &rule, &url, actor).await?).into_response())
 }
 
 async fn admin(
@@ -235,7 +237,7 @@ async fn status_checks(
     if method == Method::PATCH {
         let Json(input) = Json::<StatusChecks>::from_request(request, &state)
             .await
-            .map_err(|error| Error::new(error.status(), "Invalid status check policy"))?;
+            .map_err(super::json_error)?;
         let mut contexts = input.contexts;
         let checks = input.checks.unwrap_or_default();
         let bindings = super::protection_operations::check_bindings(
@@ -308,7 +310,7 @@ async fn contexts(
     if !read_method(&method) {
         let Json(input) = Json::<Contexts>::from_request(request, &state)
             .await
-            .map_err(|error| Error::new(error.status(), "Invalid status check contexts"))?;
+            .map_err(super::json_error)?;
         let values = match input {
             Contexts::Array(values) | Contexts::Object { contexts: values } => values,
         };
@@ -411,7 +413,7 @@ async fn restrictions(
         .map_err(write_error)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    Ok(Json(restriction_document(&state, &rule, &url).await?).into_response())
+    Ok(Json(restriction_document(&state, &rule, &url, actor).await?).into_response())
 }
 
 #[derive(Deserialize)]
@@ -443,7 +445,7 @@ async fn users(
     if !read_method(&method) {
         let Json(input) = Json::<Users>::from_request(request, &state)
             .await
-            .map_err(|error| Error::new(error.status(), "Invalid user restrictions"))?;
+            .map_err(super::json_error)?;
         let names = match input {
             Users::Array(names) | Users::Object { users: names } => names,
         };
@@ -465,7 +467,7 @@ async fn users(
         .await
         .map_err(write_error)?;
     }
-    Ok(Json(restriction_document(&state, &rule, &url).await?["users"].clone()).into_response())
+    Ok(Json(restriction_document(&state, &rule, &url, actor).await?["users"].clone()).into_response())
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

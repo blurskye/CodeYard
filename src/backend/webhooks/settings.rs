@@ -46,6 +46,8 @@ pub struct HookPatch {
     pub payload_url: Option<String>,
     pub content_type: Option<String>,
     pub events: Option<Vec<String>>,
+    pub add_events: Vec<String>,
+    pub remove_events: Vec<String>,
     pub active: Option<bool>,
     pub ssl_verify: Option<bool>,
     pub secret: Option<String>,
@@ -237,6 +239,8 @@ pub async fn update(
             .as_ref()
             .map(|events| events::subscription(events).map_err(HookError::Invalid))
             .transpose()?,
+        add_events: patch.add_events.clone(),
+        remove_events: patch.remove_events.clone(),
         active: patch.active,
         ssl_verify: patch.ssl_verify,
         clear_secret: patch.secret.as_ref().is_some_and(String::is_empty),
@@ -249,7 +253,10 @@ pub async fn update(
         .flatten();
     match hooks::patch_webhook(pool, owner, actor.id, credential, id, &fields, secret.as_ref())
         .await
-        .map_err(unavailable)?
+        .map_err(|error| match error.downcast_ref::<hooks::InvalidEvents>() {
+            Some(invalid) => HookError::Invalid(invalid.0),
+            None => HookError::Unavailable,
+        })?
     {
         None => Err(HookError::Denied),
         Some(false) => Err(HookError::NotFound),

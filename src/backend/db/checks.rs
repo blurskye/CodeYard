@@ -319,6 +319,14 @@ native_operation!(crate::backend::db::postgres::checks::create_run, crate::backe
     fn create_run(pool: &DbPool, credential: Credential<'_>, repo: i64, sha: &str, branch: Option<&str>, input: &RunPatch) -> Result<Run>);
 native_operation!(crate::backend::db::postgres::checks::update_run, crate::backend::db::sqlite::checks::update_run,
     fn update_run(pool: &DbPool, credential: Credential<'_>, repo: i64, id: i64, input: &RunPatch) -> Result<Run>);
+// Rollups need metadata, not the potentially large check output documents.
+native_operation!(crate::backend::db::postgres::checks::rollup_runs, crate::backend::db::sqlite::checks::rollup_runs,
+    fn rollup_runs(pool: &DbPool, repo: i64, sha: &str, offset: i64, limit: i64) -> Result<Vec<Run>>);
+native_operation!(crate::backend::db::postgres::checks::rollup_counts, crate::backend::db::sqlite::checks::rollup_counts,
+    fn rollup_counts(pool: &DbPool, repo: i64, sha: &str) -> Result<Vec<(String, i64)>>);
+native_operation!(crate::backend::db::postgres::checks::workflow_metadata, crate::backend::db::sqlite::checks::workflow_metadata,
+    fn workflow_metadata(pool: &DbPool, repo: i64, suite: i64) -> Result<Option<(String, String, Option<String>)>>);
+
 native_operation!(crate::backend::db::postgres::checks::runs, crate::backend::db::sqlite::checks::runs,
     fn runs(pool: &DbPool, repo: i64, filter: &Filter, offset: i64, limit: i64) -> Result<Vec<Run>>);
 native_operation!(crate::backend::db::postgres::checks::run_count, crate::backend::db::sqlite::checks::run_count,

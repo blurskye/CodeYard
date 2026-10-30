@@ -69,13 +69,18 @@ async fn write_project(tx: &mut Transaction<'_, Postgres>, actor: i64, credentia
 }
 
 async fn readable(tx: &mut Transaction<'_, Postgres>, viewer: Option<i64>, id: i64) -> Result<()> {
+    readable_at(tx, viewer, id, false).await
+}
+
+async fn readable_at(tx: &mut Transaction<'_, Postgres>, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<()> {
     super::users::transitions::lock_membership_shared(tx).await?;
     let visible: Option<i64> = sqlx::query_scalar(&format!(
-        "SELECT p.id FROM projects p WHERE p.id=$1 AND {} FOR SHARE",
-        crate::backend::db::projects::readable_condition("$2")
+        "SELECT p.id FROM projects p WHERE p.id=$1 AND ($3 OR p.deleted_at IS NULL) AND {} FOR SHARE",
+        crate::backend::db::projects::readable_owner_condition("$2")
     ))
     .bind(id)
     .bind(viewer)
+    .bind(include_deleted)
     .fetch_optional(&mut **tx)
     .await?;
     anyhow::ensure!(visible.is_some(), Refusal::Missing);
@@ -208,8 +213,12 @@ pub async fn delete(pool: &PgPool, actor: i64, credential: &AccountCredential<'_
 }
 
 pub async fn fields(pool: &PgPool, viewer: Option<i64>, project: i64) -> Result<Vec<Field>> {
+    fields_at(pool, viewer, project, false).await
+}
+
+pub async fn fields_at(pool: &PgPool, viewer: Option<i64>, project: i64, include_deleted: bool) -> Result<Vec<Field>> {
     let mut tx = pool.begin().await?;
-    readable(&mut tx, viewer, project).await?;
+    readable_at(&mut tx, viewer, project, include_deleted).await?;
     let fields = sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1 ORDER BY id")
         .bind(project)
         .fetch_all(&mut *tx)

@@ -62,8 +62,10 @@ async fn item_document(
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
             if let Some(id) = item.issue_id {
+                let auth = auth::authenticate(state, headers, false).await?;
                 super::super::issues::document(
                     &state.pool,
+                    super::super::issues::Reader::Request(state, auth.as_ref()),
                     &repo,
                     &owner,
                     db::assignees::AssignedItem::Issue(id),
@@ -125,7 +127,7 @@ async fn add_item(
 ) -> Result<Response> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
     let Json(input) =
-        input.map_err(|_| Error::validation("ProjectV2Item", "content", "invalid"))?;
+        input.map_err(super::super::json_error)?;
     if !matches!(input.kind.as_str(), "Issue" | "PullRequest") {
         return Err(Error::validation("ProjectV2Item", "type", "invalid"));
     }
@@ -206,7 +208,7 @@ async fn draft(
     let (project, name, auth) =
         context(&state, &headers, &params, true, !params.contains_key("org")).await?;
     let Json(input) =
-        input.map_err(|_| Error::validation("DraftIssue", "title", "missing_field"))?;
+        input.map_err(super::super::json_error)?;
     let auth = auth.ok_or_else(auth::required)?;
     let actor = auth.user.id;
     let item = projects::add_item(
@@ -343,7 +345,7 @@ async fn update_item(
     input: std::result::Result<Json<Update>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
-    let Json(input) = input.map_err(|_| Error::validation("ProjectV2Item", "fields", "invalid"))?;
+    let Json(input) = input.map_err(super::super::json_error)?;
     let actor = auth.as_ref().ok_or_else(auth::required)?.user.id;
     let id: i64 = params["item_id"].parse().map_err(|_| Error::missing())?;
     let item = projects::update_item(&state.pool, actor, &auth.as_ref().ok_or_else(auth::required)?.credential(), project.id, id, &input.fields)
@@ -381,7 +383,7 @@ async fn create_view(
 ) -> Result<Response> {
     let (project, name, auth) =
         context(&state, &headers, &params, true, !params.contains_key("org")).await?;
-    let Json(input) = input.map_err(|_| Error::validation("ProjectV2View", "layout", "invalid"))?;
+    let Json(input) = input.map_err(super::super::json_error)?;
     let auth = auth.ok_or_else(auth::required)?;
     let actor = &auth.user;
     let view = projects::create_view(&state.pool, actor.id, &auth.credential(), project.id, &input)

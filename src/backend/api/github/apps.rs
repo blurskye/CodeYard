@@ -118,7 +118,7 @@ pub(super) fn client_credentials(path: &str) -> bool {
     )
 }
 
-async fn application(state: &AppState, headers: &HeaderMap, id: &str) -> Result<Application> {
+pub(super) async fn application(state: &AppState, headers: &HeaderMap, id: &str) -> Result<Application> {
     let credentials = crate::backend::api::http::credentials::basic(headers)
         .filter(|(client, _)| client == id).map(|(_, secret)| secret);
     let app = oauth::client(&state.pool, id)

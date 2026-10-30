@@ -222,7 +222,7 @@ async fn update(
     }
     let Json(value) = Json::<Value>::from_request(request, &state)
         .await
-        .map_err(|_| Error::invalid_simple("Invalid branch protection"))?;
+        .map_err(super::json_error)?;
     for field in [
         "required_status_checks",
         "enforce_admins",
@@ -300,7 +300,7 @@ async fn update(
         repo_url(&owner, &name),
         crate::webui::encode_component(&branch)
     );
-    Ok(Json(document(&state, &rule, &url).await?))
+    Ok(Json(document(&state, &rule, &url, actor.id).await?))
 }
 
 async fn reviews(
@@ -384,7 +384,7 @@ async fn apps(
     if !read_method(&method) {
         let Json(input) = Json::<Apps>::from_request(request, &state)
             .await
-            .map_err(|_| Error::invalid("Expected app slugs"))?;
+            .map_err(super::json_error)?;
         let (Apps::Array(names) | Apps::Object { apps: names }) = input;
         let ids = if method == Method::DELETE {
             valid_names(&names)?;

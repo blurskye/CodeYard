@@ -75,33 +75,38 @@ pub(super) async fn document(
     repo: &Repository,
     viewer: Option<&auth::Authentication>,
 ) -> Result<Value> {
-    let owner = records::repository_owner_name(&state.pool, repo.id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    let mut value = payloads::repository(repo, &owner);
-    let facts = db::repository_stats::repository_document_facts(&state.pool, repo.id)
-        .await
-        .map_err(Error::unavailable)?;
-    value["language"] = json!(facts.language);
-    value["open_issues_count"] = json!(facts.open_items);
-    value["pushed_at"] = json!(db::repositories::github::repository_pushed_at(
-        &state.pool,
-        repo.id
-    )
-    .await
-    .map_err(Error::unavailable)?);
-    value["topics"] = json!(topics::repository_topics(&state.pool, &[repo.id])
-        .await
-        .map_err(Error::unavailable)?
-        .remove(&repo.id)
-        .unwrap_or_default());
-    value["has_wiki"] = json!(records::repository_wiki(&state.pool, repo.id)
-        .await
-        .map_err(Error::unavailable)?);
-    value["has_discussions"] = json!(db::repository_discussions::enabled(&state.pool, repo.id)
-        .await
-        .map_err(Error::unavailable)?);
+    documents(state, std::slice::from_ref(repo), viewer).await?.pop().ok_or_else(Error::missing)
+}
+
+pub(super) async fn documents(state: &AppState, repos: &[Repository], viewer: Option<&auth::Authentication>) -> Result<Vec<Value>> {
+    let ids: Vec<_> = repos.iter().map(|repo| repo.id).collect();
+    let owners = records::repository_owner_names(&state.pool, &ids).await.map_err(Error::unavailable)?;
+    let topics = topics::repository_topics(&state.pool, &ids).await.map_err(Error::unavailable)?;
+    let mut metadata = std::collections::HashMap::new();
+    for ids in ids.chunks(100) {
+        metadata.extend(db::repository_stats::repository_document_metadata(&state.pool, ids).await.map_err(Error::unavailable)?.into_iter().map(|row| (row.repo_id, row)));
+    }
+    let mut values = Vec::with_capacity(repos.len());
+    for repo in repos {
+        let (Some(owner), Some(facts)) = (owners.get(&repo.id), metadata.get(&repo.id)) else { continue; };
+        values.push(document_with(state, repo, viewer, owner, facts, topics.get(&repo.id).map(Vec::as_slice).unwrap_or_default()).await?);
+    }
+    if let Some(viewer) = viewer {
+        let readable = auth::readable_repositories(state, Some(viewer), &ids, "metadata").await?;
+        values.retain(|value| value["id"].as_i64().is_some_and(|id| readable.contains(&id)));
+    }
+    Ok(values)
+}
+
+async fn document_with(state: &AppState, repo: &Repository, viewer: Option<&auth::Authentication>, owner: &str, facts: &db::repository_stats::RepositoryDocumentMetadata, topics: &[String]) -> Result<Value> {
+    let mut value = payloads::repository(repo, owner);
+    value["language"] = json!(facts.facts.language);
+    value["open_issues_count"] = json!(facts.facts.open_items);
+    value["open_issues"] = json!(facts.facts.open_items);
+    value["pushed_at"] = json!(facts.last_pushed_at);
+    value["topics"] = json!(topics);
+    value["has_wiki"] = json!(facts.wiki);
+    value["has_discussions"] = json!(facts.discussions);
     if repo.is_fork {
         let mut parent = repo.forked_from_id;
         let mut seen = std::collections::HashSet::from([repo.id]);
@@ -182,6 +187,9 @@ struct Create {
     is_template: Option<bool>,
     has_wiki: Option<bool>,
     has_discussions: Option<bool>,
+    allow_merge_commit: Option<bool>,
+    allow_squash_merge: Option<bool>,
+    allow_rebase_merge: Option<bool>,
     custom_properties:
         Option<HashMap<String, Option<db::organizations::properties::PropertyValue>>>,
 }
@@ -196,6 +204,10 @@ async fn create(
         .await?
         .ok_or_else(auth::required)?;
     actor.require_write()?;
+    let merge_methods = records::MergeMethodUpdate {
+        merge: input.allow_merge_commit, squash: input.allow_squash_merge, rebase: input.allow_rebase_merge,
+    };
+    merge_methods.resolve((true, true, true)).map_err(settings_error)?;
     lifecycle::validate_description(input.description.as_deref().unwrap_or(""))
         .map_err(lifecycle_error)?;
     let website = input
@@ -265,31 +277,15 @@ async fn create(
     )
     .await
     .map_err(lifecycle_error)?;
-    features(
-        &state,
-        actor.user.id,
-        &actor.credential(),
-        repo.id,
-        Some(input.has_wiki.unwrap_or(true)),
-        input.has_discussions,
-    )
-    .await?;
-    let repo = if input.is_template.is_some() || website.is_some() {
-        records::patch_repository(
-            &state.pool,
-            actor.user.id,
-            repo.id,
-            &records::RepositoryChanges {
-                is_template: input.is_template,
-                website: website.as_ref().map(|website| website.as_deref()),
-                ..Default::default()
-            },
-        )
-        .await
-        .map_err(settings_error)?
-    } else {
-        repo
-    };
+    let repo = records::patch_repository(&state.pool, actor.user.id, repo.id, &records::RepositoryChanges {
+        token: Some(actor.token.id),
+        is_template: input.is_template,
+        website: website.as_ref().map(|website| website.as_deref()),
+        wiki: Some(input.has_wiki.unwrap_or(true)),
+        discussions: input.has_discussions,
+        merge_methods,
+        ..Default::default()
+    }).await.map_err(settings_error)?;
     let value = document(&state, &repo, Some(&actor)).await?;
     Ok((
         StatusCode::CREATED,
@@ -317,43 +313,6 @@ struct Update {
     is_template: Option<bool>,
     has_wiki: Option<bool>,
     has_discussions: Option<bool>,
-}
-
-/// Wiki and discussions live outside the repository row, so both create and update set them here.
-async fn features(
-    state: &AppState,
-    actor: i64,
-    credential: &db::users::accounts::AccountCredential<'_>,
-    repo: i64,
-    wiki: Option<bool>,
-    discussions: Option<bool>,
-) -> Result<()> {
-    if let Some(enabled) = wiki {
-        records::set_repository_wiki(&state.pool, actor, repo, enabled)
-            .await
-            .map_err(settings_error)?;
-    }
-    if let Some(enabled) = discussions {
-        use db::repository_discussions::Refusal;
-        db::repository_discussions::write(
-            &state.pool,
-            actor,
-            credential,
-            repo,
-            None,
-            &db::repository_discussions::Write::Enabled(enabled),
-        )
-        .await
-        .map_err(|error| match error.downcast_ref::<Refusal>() {
-            Some(Refusal::Denied) => {
-                Error::new(StatusCode::FORBIDDEN, "Repository mutation denied")
-            }
-            Some(Refusal::Missing) => Error::missing(),
-            Some(Refusal::Invalid) => Error::invalid(error.to_string()),
-            None => Error::unavailable(error),
-        })?;
-    }
-    Ok(())
 }
 
 async fn update(
@@ -423,6 +382,7 @@ async fn update(
         }
     }
     let changes = records::RepositoryChanges {
+        token: Some(auth.token.id),
         name: input.name.as_deref(),
         description: value
             .get("description")
@@ -430,6 +390,8 @@ async fn update(
         website: value.get("homepage").map(|_| input.homepage.as_deref()),
         is_private: private,
         archived: input.archived,
+        wiki: input.has_wiki,
+        discussions: input.has_discussions,
         is_template: input.is_template,
         merge_methods: records::MergeMethodUpdate {
             merge: input.allow_merge_commit,
@@ -454,15 +416,6 @@ async fn update(
             .await
             .map_err(settings_error)?
     };
-    features(
-        &state,
-        actor.id,
-        &auth.credential(),
-        repo.id,
-        input.has_wiki,
-        input.has_discussions,
-    )
-    .await?;
     Ok(Json(document(&state, &repo, Some(&auth)).await?))
 }
 
@@ -484,6 +437,7 @@ async fn remove(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Transfer {
     new_owner: String,
 }
@@ -564,11 +518,12 @@ async fn languages(
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let store = repo_store(&repo, state.cluster.as_ref());
-    if store.refs().await.map_err(store_error)?.is_empty() {
+    let branch = format!("refs/heads/{}", repo.default_branch);
+    if !store.refs().await.map_err(store_error)?.contains_key(&branch) {
         return Ok(Json(json!({})));
     }
     let languages = store
-        .languages(&repo.default_branch)
+        .languages(&branch)
         .await
         .map_err(store_error)?;
     let mut value = json!({});
@@ -729,31 +684,33 @@ async fn list(
         per_page: if public { Some(100) } else { query.per_page },
     };
     let (offset, limit) = page.window()?;
-    let repos = github::list_repositories(
-        &state.pool,
-        RepositoryListQuery {
-            viewer,
-            list,
-            since: query.since.unwrap_or(0),
-            visibility,
-            kind,
-            sort,
-            descending,
-            limit: (limit + 1) as i64,
-            offset: offset as i64,
-        },
-    )
-    .await
-    .map_err(Error::unavailable)?;
-    let next = repos.len() > limit;
-    let ids: Vec<i64> = repos.iter().take(limit).map(|repo| repo.id).collect();
-    let readable = auth::readable_repositories(&state, auth.as_ref(), &ids, "metadata").await?;
-    let mut values = Vec::new();
-    for repo in repos.iter().take(limit) {
-        if !readable.contains(&repo.id) {
-            continue;
+    let mut repos = Vec::with_capacity(limit + 1);
+    // The query already applies anonymous visibility, so anonymous listings start at the page.
+    // Token restrictions are applied below, so authenticated listings count from the start.
+    let (mut scanned, mut accepted) = if auth.is_none() { (offset as i64, offset) } else { (0, 0) };
+    'pages: loop {
+        let rows = github::list_repositories(&state.pool, RepositoryListQuery {
+            viewer, list, since: query.since.unwrap_or(0), visibility, kind, sort, descending,
+            limit: 100, offset: scanned,
+        }).await.map_err(Error::unavailable)?;
+        scanned += rows.len() as i64;
+        let done = rows.len() < 100;
+        let ids: Vec<_> = rows.iter().map(|repo| repo.id).collect();
+        let readable = auth::readable_repositories(&state, auth.as_ref(), &ids, "metadata").await?;
+        for repo in rows {
+            if !readable.contains(&repo.id) { continue; }
+            if accepted < offset { accepted += 1; continue; }
+            repos.push(repo);
+            if repos.len() > limit { break 'pages; }
         }
-        values.push(document(&state, repo, auth.as_ref()).await?);
+        if done { break; }
+    }
+    let next = repos.len() > limit;
+    let mut values = documents(&state, &repos[..repos.len().min(limit)], auth.as_ref()).await?;
+    if auth.is_none() {
+        let ids: Vec<_> = values.iter().filter_map(|value| value["id"].as_i64()).collect();
+        let readable = auth::readable_repositories(&state, None, &ids, "metadata").await?;
+        values.retain(|value| value["id"].as_i64().is_some_and(|id| readable.contains(&id)));
     }
     if public {
         let mut headers = HeaderMap::new();
@@ -796,7 +753,7 @@ async fn dispatch(
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(auth::required)?;
     let actor = auth.workflow_actor(&state, repo.id).await?;
-    let Json(input) = input.map_err(|_| Error::invalid("Invalid repository dispatch"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     if !crate::backend::ci::events::valid_dispatch(&input.event_type, &input.client_payload) {
         return Err(Error::invalid("Invalid repository dispatch"));
     }
@@ -883,7 +840,7 @@ async fn set_property_values(
     input: std::result::Result<Json<PropertyValues>, axum::extract::rejection::JsonRejection>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let Json(input) = input.map_err(|_| Error::invalid("Invalid repository property values"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     db::organizations::properties::set_repository_values(
         &state.pool,
         auth.ok_or_else(auth::required)?.user.id,

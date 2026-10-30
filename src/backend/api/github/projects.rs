@@ -211,7 +211,7 @@ async fn add_field(
 ) -> Result<Response> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
     let Json(input) =
-        input.map_err(|_| Error::validation("ProjectV2Field", "data_type", "invalid"))?;
+        input.map_err(super::json_error)?;
     let auth = auth.ok_or_else(auth::required)?;
     let field = projects::add_field(
         &state.pool,

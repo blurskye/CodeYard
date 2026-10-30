@@ -23,6 +23,8 @@ fn storage_error<E>(_: E) -> OperationError {
 }
 
 pub struct EnableRequest {
+    pub expected_head: Option<String>,
+    pub token: Option<i64>,
     pub merge_method: MergeMethod,
     pub commit_title: Option<String>,
     pub commit_message: Option<String>,
@@ -60,7 +62,7 @@ pub async fn enable(
     request: EnableRequest,
 ) -> Result<(), OperationError> {
     writable(pool, actor_id, pull).await?;
-    db::pull_requests::auto_merge::enable_auto_merge(
+    db::pull_requests::auto_merge::enable_auto_merge_at_head(
         pool,
         &AutoMerge {
             pull_request_id: pull.id,
@@ -71,9 +73,11 @@ pub async fn enable(
             author_email: request.author_email,
             enabled_at: chrono::Utc::now(),
         },
+        request.expected_head.as_deref(),
+        request.token,
     )
     .await
-    .map_err(storage_error)
+    .map_err(super::write_error)
 }
 
 /// Turns auto-merge off for `pull`. Turning it off twice is not an error.

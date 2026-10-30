@@ -233,8 +233,10 @@ impl LocalStore {
             )
             .await?;
         self.upstream_authority(pool, repo, actor, source).await?;
-        self.check_workflow_grant(
+        self.check_publication_grant(
             pool,
+            repo,
+            actor,
             token,
             vec![(old.clone(), target.clone())],
             Some(prepared.path().to_owned()),

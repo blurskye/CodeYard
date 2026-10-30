@@ -42,12 +42,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 fn error(error: HookError) -> Error {
-    match error {
-        HookError::Denied => Error::new(StatusCode::FORBIDDEN, "Must be an organization owner"),
-        HookError::NotFound => Error::missing(),
-        HookError::Invalid(message) => Error::invalid(message),
-        HookError::Unavailable => Error::unavailable(error),
-    }
+    super::super::webhooks::owner_error(error, "Must be an organization owner")
 }
 fn id(params: &Params, name: &str) -> Result<i64> {
     params
@@ -244,7 +239,7 @@ async fn create(
     body: Body,
 ) -> Result<Response> {
     let (org, actor) = actor(&state, &headers, &name, true).await?;
-    let Json(value) = body.map_err(|_| Error::validation("Hook", "body", "invalid"))?;
+    let Json(value) = body.map_err(super::super::json_error)?;
     let object = object(&value)?;
     if text(object, "name")?.as_deref() != Some("web") {
         return Err(Error::validation("Hook", "name", "invalid"));
@@ -295,7 +290,7 @@ async fn update(
     body: Body,
 ) -> Result<Json<Value>> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    let Json(value) = body.map_err(|_| Error::validation("Hook", "body", "invalid"))?;
+    let Json(value) = body.map_err(super::super::json_error)?;
     let patch = parse_patch(&value)?;
     let id = id(&params, "hook_id")?;
     settings::update(
@@ -324,7 +319,7 @@ async fn update_config(
     body: Body,
 ) -> Result<Json<Value>> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    let Json(value) = body.map_err(|_| Error::validation("Hook", "body", "invalid"))?;
+    let Json(value) = body.map_err(super::super::json_error)?;
     let patch = config(Some(&value))?;
     let id = id(&params, "hook_id")?;
     settings::update(

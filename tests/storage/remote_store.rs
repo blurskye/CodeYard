@@ -2949,6 +2949,7 @@ async fn remote_web_contract() {
     let actorless_pull = Request {
         repository: uuid,
         operation: Operation::FetchPullHead {
+            token: None,
             source: uuid,
             number: 99,
             head: public_head.sha.clone(),

@@ -313,7 +313,7 @@ async fn contract(pg: bool) {
             body: Some("Notes".into()),
             is_draft: false,
             is_prerelease: false,
-            make_latest: true,
+            make_latest: true.into(),
         },
     )
     .await

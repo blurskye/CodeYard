@@ -50,12 +50,17 @@ async fn write_project(tx: &mut Transaction<'_, Sqlite>, actor: i64, credential:
 }
 
 async fn readable(tx: &mut Transaction<'_, Sqlite>, viewer: Option<i64>, id: i64) -> Result<()> {
+    readable_at(tx, viewer, id, false).await
+}
+
+async fn readable_at(tx: &mut Transaction<'_, Sqlite>, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<()> {
     let visible: bool = sqlx::query_scalar(&format!(
-        "SELECT EXISTS(SELECT 1 FROM projects p WHERE p.id=$1 AND {})",
-        crate::backend::db::projects::readable_condition("$2")
+        "SELECT EXISTS(SELECT 1 FROM projects p WHERE p.id=?1 AND (?3 OR p.deleted_at IS NULL) AND {})",
+        crate::backend::db::projects::readable_owner_condition("?2")
     ))
     .bind(id)
     .bind(viewer)
+    .bind(include_deleted)
     .fetch_one(&mut **tx)
     .await?;
     anyhow::ensure!(visible, Refusal::Missing);
@@ -197,8 +202,12 @@ pub async fn delete(pool: &SqlitePool, actor: i64, credential: &AccountCredentia
 }
 
 pub async fn fields(pool: &SqlitePool, viewer: Option<i64>, project: i64) -> Result<Vec<Field>> {
+    fields_at(pool, viewer, project, false).await
+}
+
+pub async fn fields_at(pool: &SqlitePool, viewer: Option<i64>, project: i64, include_deleted: bool) -> Result<Vec<Field>> {
     let mut tx = pool.begin().await?;
-    readable(&mut tx, viewer, project).await?;
+    readable_at(&mut tx, viewer, project, include_deleted).await?;
     let fields = sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1 ORDER BY id")
         .bind(project)
         .fetch_all(&mut *tx)

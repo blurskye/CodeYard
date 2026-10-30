@@ -169,12 +169,12 @@ async fn retry(
         .ok_or_else(Error::missing)?;
     let bytes = to_bytes(request.into_body(), 16 * 1024)
         .await
-        .map_err(|_| Error::invalid("Invalid import request"))?;
+        .map_err(super::json_bytes_error)?;
     let input = if bytes.is_empty() {
         Input::default()
     } else {
         serde_json::from_slice::<Option<Input>>(&bytes)
-            .map_err(|_| Error::invalid("Invalid import request"))?
+            .map_err(super::json_parse_error)?
             .unwrap_or_default()
     };
     let import = begin(state, repo, actor, input, &previous.vcs_url).await?;

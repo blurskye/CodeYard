@@ -371,6 +371,16 @@ pub(crate) fn apply_protection_update(
     Ok(())
 }
 
+pub struct CommitStatusPage {
+    pub total: i64,
+    pub counts: Vec<(String, i64)>,
+    pub statuses: Vec<CommitStatus>,
+}
+
+native_operation!(crate::backend::db::postgres::repositories::protection::commit_status_page,
+    crate::backend::db::sqlite::repositories::protection::commit_status_page,
+    fn commit_status_page(pool: &DbPool, viewer: Option<i64>, repo: i64, sha: &str, offset: i64, limit: i64, history: bool) -> Result<Option<CommitStatusPage>>);
+
 pub struct CommitStatusUpsert<'a> {
     pub repo_id: i64,
     pub sha: &'a str,
@@ -463,11 +473,16 @@ native_operation!(crate::backend::db::postgres::repositories::protection::rename
     crate::backend::db::sqlite::repositories::protection::rename_branch_settings,
     fn rename_branch_settings(pool: &DbPool, actor: i64, repo: i64, old: &str, new: &str) -> Result<()>);
 
+pub async fn upsert_commit_status(pool: &DbPool, input: CommitStatusUpsert<'_>) -> Result<CommitStatus> {
+    upsert_commit_status_with_token(pool, input, None).await
+}
+
 native_operation!(crate::backend::db::postgres::repositories::protection::upsert_commit_status,
     crate::backend::db::sqlite::repositories::protection::upsert_commit_status,
-    fn upsert_commit_status(
+    fn upsert_commit_status_with_token(
     pool: &DbPool,
     input: CommitStatusUpsert<'_>,
+    token: Option<i64>,
 ) -> Result<CommitStatus>);
 
 native_operation!(crate::backend::db::postgres::repositories::protection::list_commit_statuses,

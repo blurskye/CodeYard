@@ -113,7 +113,7 @@ async fn create(
         .await?
         .ok_or_else(auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(|_| Error::validation("Key", "key", "invalid"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     let key = keys::enroll_signing(
         &state.pool,
         actor.user.id,

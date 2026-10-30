@@ -15,6 +15,7 @@ type Params = HashMap<String, String>;
 
 async fn event_document(
     state: &AppState,
+    auth: Option<&super::auth::Authentication>,
     repo: &db::models::Repository,
     owner: &str,
     id: i64,
@@ -57,7 +58,7 @@ async fn event_document(
         _ => {}
     }
     if include_issue {
-        value["issue"] = issues::document(&state.pool, repo, owner, item).await?;
+        value["issue"] = issues::document(&state.pool, issues::Reader::Request(state, auth), repo, owner, item).await?;
     }
     Ok(value)
 }
@@ -67,10 +68,10 @@ async fn read(
     headers: HeaderMap,
     Path(p): Path<Params>,
 ) -> Result<Json<Value>> {
-    let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
+    let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let id = p["event_id"].parse().map_err(|_| Error::missing())?;
     Ok(Json(
-        event_document(&state, &repo, &p["owner"], id, true).await?,
+        event_document(&state, auth.as_ref(), &repo, &p["owner"], id, true).await?,
     ))
 }
 
@@ -115,7 +116,7 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
+    let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let item = match p.get("issue_number") {
         Some(number) => Some(labels::item(&state.pool, repo.id, number).await?),
         None => None,
@@ -137,7 +138,7 @@ async fn list(
     let mut items = Vec::new();
     for (kind, id) in rows.into_iter().take(limit) {
         let value = match kind.as_str() {
-            "event" => event_document(&state, &repo, &p["owner"], id, item.is_none()).await?,
+            "event" => event_document(&state, auth.as_ref(), &repo, &p["owner"], id, item.is_none()).await?,
             "review" => review_document(&state, &repo, &p["owner"], id).await?,
             "issue_comment" | "pr_comment" => {
                 let comment = comments::find(

@@ -216,6 +216,10 @@ pub async fn patch_webhook(
     if !may_manage_hooks(&mut tx, owner, actor_id, credential, true).await? {
         return Ok(None);
     }
+    let current: Option<String> = sqlx::query_scalar(&format!("SELECT events FROM webhooks WHERE id=$1 AND {}=$2 FOR UPDATE", owner.column()))
+        .bind(id).bind(owner.id()).fetch_optional(&mut *tx).await?;
+    let Some(current) = current else { return Ok(Some(false)); };
+    let events = fields.changed_events(&current)?;
     let sql = format!(
         "UPDATE webhooks SET payload_url = COALESCE($3,payload_url), content_type = COALESCE($4,content_type), events = COALESCE($5,events), active = COALESCE($6,active), ssl_verify = COALESCE($7,ssl_verify), \
          encrypted_secret = CASE WHEN $10 THEN NULL ELSE COALESCE($8,encrypted_secret) END, secret_nonce = CASE WHEN $10 THEN NULL ELSE COALESCE($9,secret_nonce) END, \
@@ -229,7 +233,7 @@ pub async fn patch_webhook(
         .bind(owner.id())
         .bind(&fields.payload_url)
         .bind(&fields.content_type)
-        .bind(&fields.events)
+        .bind(events)
         .bind(fields.active)
         .bind(fields.ssl_verify)
         .bind(secret.map(|s| s.ciphertext.as_slice()))

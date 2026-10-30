@@ -117,7 +117,9 @@ pub fn scopes(value: &str) -> Option<String> {
 }
 
 pub fn has_scope(scopes: &str, scope: &str) -> bool {
-    scopes.split(',').any(|s| s == scope)
+    scopes.split(',').any(|granted| granted == scope
+        || (scope == "read:org" && granted == "write:org")
+        || (matches!(scope, "read:user" | "user:email" | "user:follow") && granted == "user"))
 }
 
 pub fn write_scope(scopes: &str) -> bool {
@@ -230,6 +232,9 @@ pub async fn allows_git(pool: &DbPool, token_id: i64, gist: bool) -> anyhow::Res
 pub async fn allows_workflows(pool: &DbPool, token_id: i64) -> anyhow::Result<bool> {
     if db::ci_tokens::get(pool, token_id).await?.is_some() {
         return Ok(false);
+    }
+    if let Some(grant) = super::fine_grained::grant(pool, token_id).await? {
+        return Ok(grant.active && super::fine_grained::allows(&grant.permissions, "workflows", true));
     }
     if let Some(bounds) = super::github_apps::authority(pool, token_id).await? {
         return Ok(super::github_apps::allows(

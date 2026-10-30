@@ -504,6 +504,10 @@ pub struct CommitInfo {
     pub committer_email: String,
     pub timestamp: i64,
     pub committer_timestamp: i64,
+    #[serde(default)]
+    pub author_offset_minutes: i32,
+    #[serde(default)]
+    pub committer_offset_minutes: i32,
     pub parents: Vec<String>,
     #[serde(default)]
     pub signature: Option<String>,
@@ -707,6 +711,11 @@ fn apply_tree_history(output: &[u8], directory: &str, entries: &mut [TreeEntry])
         let committer_timestamp = fields
             .next()
             .ok_or_else(|| anyhow!("Missing commit committer timestamp"))?;
+        let author_date = fields.next().ok_or_else(|| anyhow!("Missing author timezone"))?;
+        let committer_date = fields.next().ok_or_else(|| anyhow!("Missing committer timezone"))?;
+        let offset = |date: &[u8]| -> Result<i32> {
+            Ok(chrono::DateTime::parse_from_rfc3339(std::str::from_utf8(date)?)?.offset().local_minus_utc() / 60)
+        };
         commit_count += 1;
         if commit_count > MAX_TREE_HISTORY_COMMITS {
             return Err(ObjectTooLarge.into());
@@ -777,6 +786,8 @@ fn apply_tree_history(output: &[u8], directory: &str, entries: &mut [TreeEntry])
             committer_email: String::from_utf8_lossy(committer_email).into_owned(),
             timestamp,
             committer_timestamp,
+            author_offset_minutes: offset(author_date)?,
+            committer_offset_minutes: offset(committer_date)?,
             parents: Vec::new(),
             signature: None,
             signature_payload: None,
@@ -1021,7 +1032,7 @@ pub(crate) async fn list_tree_with_history(
             .arg("--literal-pathspecs")
             .arg("log")
             .arg(format!("--max-count={}", MAX_TREE_HISTORY_COMMITS + 1))
-            .arg("--format=%x00%H%x00%T%x00%s%x00%an%x00%ae%x00%at%x00%cn%x00%ce%x00%ct")
+            .arg("--format=%x00%H%x00%T%x00%s%x00%an%x00%ae%x00%at%x00%cn%x00%ce%x00%ct%x00%aI%x00%cI")
             .arg("--name-only")
             .arg("-c")
             .arg("-z")
@@ -1276,6 +1287,11 @@ pub(crate) fn list_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
     )
 }
 
+/// REST matching refs also includes public pull refs, never retained-object or recovery refs.
+pub(crate) fn list_matching_refs(repo_path: &Path, prefix: &str) -> Result<HashMap<String, String>> {
+    collect_refs(repo_path, |name| name.starts_with(prefix) && (name.starts_with("refs/heads/") || name.starts_with("refs/tags/") || name.starts_with("refs/pull/")), MAX_MIRROR_REFS, MAX_MIRROR_REF_BYTES)
+}
+
 /// What a ref adds to the listings that pages and replicas read: its name and an object ID.
 pub(crate) fn ref_listing_bytes(name: &str) -> usize {
     name.len() + 40
@@ -1328,7 +1344,7 @@ pub(crate) fn list_mirror_refs(repo_path: &Path) -> Result<HashMap<String, Strin
 
 fn collect_refs(
     repo_path: &Path,
-    wanted: fn(&str) -> bool,
+    wanted: impl Fn(&str) -> bool,
     max_refs: usize,
     max_bytes: usize,
 ) -> Result<HashMap<String, String>> {
@@ -1617,7 +1633,7 @@ pub(crate) async fn pull_request_commits(
     Ok((total, commits))
 }
 
-async fn range_commits(
+pub(crate) async fn range_commits(
     repo_path: &Path,
     base: &str,
     head: &str,
@@ -2041,6 +2057,8 @@ pub(crate) fn commit_info(repo: &Repository, commit: &git2::Commit<'_>) -> Resul
         committer_email: String::from_utf8_lossy(committer.email_bytes()).into_owned(),
         timestamp: author.when().seconds(),
         committer_timestamp: committer.when().seconds(),
+        author_offset_minutes: author.when().offset_minutes(),
+        committer_offset_minutes: committer.when().offset_minutes(),
         parents,
         signature,
         signature_payload,

@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::fmt::Write;
 
 pub struct ReleaseNotes {
+    pub target: String,
     pub name: String,
     pub body: String,
 }
@@ -269,6 +270,7 @@ pub async fn generate_notes(
         ..Default::default()
     })?;
     Ok(ReleaseNotes {
+        target: head.sha,
         name: input.tag.to_owned(),
         body,
     })

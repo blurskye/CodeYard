@@ -192,13 +192,17 @@ pub async fn redirect(pool: &SqlitePool, repo: i64, number: i32) -> Result<Optio
     Ok(sqlx::query_as("SELECT i.* FROM issue_redirects r JOIN issues i ON i.id=r.issue_id WHERE r.repo_id=$1 AND r.number=$2").bind(repo).bind(number).fetch_optional(pool).await?)
 }
 
-pub async fn close_duplicate(
+pub async fn close_duplicate(pool: &SqlitePool, actor: i64, repo: i64, id: i64, duplicate: i64) -> Result<Issue> {
+    Ok(close_duplicate_with_previous(pool, actor, repo, id, duplicate).await?.1)
+}
+
+pub async fn close_duplicate_with_previous(
     pool: &SqlitePool,
     actor: i64,
     repo: i64,
     id: i64,
     duplicate: i64,
-) -> Result<Issue> {
+) -> Result<(Issue, Issue)> {
     ensure!(id != duplicate, Refusal::Duplicate);
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
@@ -218,7 +222,7 @@ pub async fn close_duplicate(
     sqlx::query("INSERT INTO issue_duplicates(issue_id,duplicate_id) VALUES($1,$2) ON CONFLICT(issue_id) DO UPDATE SET duplicate_id=excluded.duplicate_id").bind(id).bind(duplicate).execute(&mut *tx).await?;
     let result = sqlx::query_as("UPDATE issues SET state='closed',state_reason='duplicate',closed_by_id=$1,closed_at=COALESCE(closed_at,strftime('%Y-%m-%dT%H:%M:%f000Z','now')),updated_at=$3 WHERE id=$2 RETURNING *").bind(actor).bind(id).bind(next).fetch_one(&mut *tx).await?;
     tx.commit().await?;
-    Ok(result)
+    Ok((existing, result))
 }
 
 pub async fn linked_branches(pool: &SqlitePool, issue: i64) -> Result<Vec<LinkedBranch>> {

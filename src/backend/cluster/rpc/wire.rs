@@ -48,6 +48,7 @@ pub enum Operation {
     },
     /// Fetches a commit of another repository on this node into a pull ref.
     FetchPullHead {
+        token: Option<i64>,
         source: Uuid,
         number: i32,
         head: String,
@@ -56,6 +57,7 @@ pub enum Operation {
     Exists,
     SizeBytes,
     Refs,
+    MatchingRefs { prefix: String },
     /// The same refs as `Refs`, answered only by the primary. For a caller that writes the
     /// answer into the database.
     PrimaryRefs,
@@ -120,6 +122,10 @@ pub enum Operation {
     },
     BlobById {
         id: String,
+    },
+    BlobByIdRange {
+        id: String,
+        range: BlobRange,
     },
     Commits {
         git_ref: String,
@@ -194,6 +200,8 @@ pub enum Operation {
         base_ref: String,
         head_ref: String,
         limit: usize,
+        #[serde(default)]
+        offset: usize,
         /// Include the full count and GitHub's first 250 commits, oldest first.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         pull_request: bool,
@@ -249,6 +257,7 @@ pub enum Operation {
         path: String,
     },
     Contributors,
+    BranchContributors { branch: String },
     CommitStatistics {
         branch: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -431,6 +440,7 @@ impl Operation {
             | Self::Blob { .. }
             | Self::BlobBytes { .. }
             | Self::BlobById { .. }
+            | Self::BlobByIdRange { .. }
             | Self::Commits { .. }
             | Self::CommitPage { .. }
             | Self::SearchCode { .. }
@@ -441,6 +451,7 @@ impl Operation {
             | Self::CommitsBetween { .. }
             | Self::DiffFile { .. }
             | Self::Refs
+            | Self::MatchingRefs { .. }
             | Self::Info
             | Self::CommitCount
             | Self::Tags
@@ -449,6 +460,7 @@ impl Operation {
             | Self::FilePaths { .. }
             | Self::Blame { .. }
             | Self::Contributors
+            | Self::BranchContributors { .. }
             | Self::CommitStatistics { .. }
             | Self::CodeFrequency { .. }
             | Self::BranchStatuses { .. }

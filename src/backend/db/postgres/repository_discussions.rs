@@ -1,5 +1,5 @@
 use crate::backend::db::repository_discussions::{
-    valid_body, Category, Comment, Discussion, Filter, Refusal, Write,
+    valid_body, Category, Comment, Discussion, Filter, Refusal, Write, DEFAULT_CATEGORIES,
 };
 use anyhow::Result;
 use sqlx::PgPool;
@@ -8,11 +8,9 @@ pub async fn enabled(pool: &PgPool, repo: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT COALESCE((SELECT enabled FROM repository_discussion_settings WHERE repo_id=$1),false)").bind(repo).fetch_one(pool).await?)
 }
 pub async fn categories(pool: &PgPool, repo: i64) -> Result<Vec<Category>> {
-    use crate::backend::db::repository_discussions::DEFAULT_CATEGORIES;
-    let rows: Vec<Category> = sqlx::query_as("SELECT * FROM discussion_categories WHERE repo_id=$1 ORDER BY id")
-        .bind(repo).fetch_all(pool).await?;
-    if DEFAULT_CATEGORIES.iter().all(|(_, slug, _, _, _)| rows.iter().any(|row| row.slug == *slug)) {
-        return Ok(rows);
+    let existing: Vec<Category> = sqlx::query_as("SELECT * FROM discussion_categories WHERE repo_id=$1 ORDER BY id").bind(repo).fetch_all(pool).await?;
+    if DEFAULT_CATEGORIES.iter().all(|(_, slug, _, _, _)| existing.iter().any(|category| category.slug == *slug)) {
+        return Ok(existing);
     }
     let mut tx = pool.begin().await?;
     for &(name, slug, emoji, description, answerable) in DEFAULT_CATEGORIES {
@@ -80,6 +78,7 @@ pub async fn list(
     filter: &Filter,
     offset: i64,
     limit: i64,
+    count_total: bool,
 ) -> Result<(i64, Vec<Discussion>)> {
     let reader = crate::backend::db::repositories::credentials::Reader::authenticated(viewer, credential);
     let statement = filter.statement(true, &super::repositories::access::readable_condition(), &reader)?;
@@ -90,7 +89,7 @@ pub async fn list(
     for value in &statement.args {
         count = count.bind(value);
     }
-    let total = count.fetch_one(&mut *connection).await?;
+    let total = if count_total { count.fetch_one(&mut *connection).await? } else { 0 };
     let sql = format!(
         "SELECT i.* {} ORDER BY {} LIMIT {} OFFSET {}",
         statement.prefix,
@@ -142,7 +141,7 @@ pub async fn write(
             Refusal::Denied
         );
         credential_authority(&mut tx, actor, credential, repo, "administration").await?;
-        sqlx::query("INSERT INTO repository_discussion_settings(repo_id,enabled) VALUES ($1,$2) ON CONFLICT(repo_id) DO UPDATE SET enabled=excluded.enabled").bind(repo).bind(value).execute(&mut *tx).await?;
+        super::repositories::records::features_on(&mut tx, repo, None, Some(*value)).await?;
         tx.commit().await?;
         return Ok(repo);
     }

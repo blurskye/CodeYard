@@ -620,8 +620,8 @@ fn decode_commit(bytes: &[u8], sha: &str) -> Result<CommitInfo, RepoError> {
             parents.push(oid(value.as_bytes())?);
         }
     }
-    let (author_name, author_email, timestamp) = author.ok_or_else(unavailable)?;
-    let (committer_name, committer_email, committer_timestamp) =
+    let (author_name, author_email, timestamp, author_offset_minutes) = author.ok_or_else(unavailable)?;
+    let (committer_name, committer_email, committer_timestamp, committer_offset_minutes) =
         committer.ok_or_else(unavailable)?;
     Ok(CommitInfo {
         sha: sha.into(),
@@ -633,12 +633,14 @@ fn decode_commit(bytes: &[u8], sha: &str) -> Result<CommitInfo, RepoError> {
         committer_email,
         timestamp,
         committer_timestamp,
+        author_offset_minutes,
+        committer_offset_minutes,
         parents,
         signature: None,
         signature_payload: None,
     })
 }
-fn signature(value: &str) -> Result<(String, String, i64), RepoError> {
+fn signature(value: &str) -> Result<(String, String, i64, i32), RepoError> {
     let (identity, time) = value.rsplit_once("> ").ok_or_else(unavailable)?;
     let (name, email) = identity.rsplit_once(" <").ok_or_else(unavailable)?;
     let (seconds, zone) = time.split_once(' ').ok_or_else(unavailable)?;
@@ -648,10 +650,15 @@ fn signature(value: &str) -> Result<(String, String, i64), RepoError> {
     {
         return Err(unavailable());
     }
+    let hours: i32 = zone[1..3].parse().map_err(|_| unavailable())?;
+    let minutes: i32 = zone[3..5].parse().map_err(|_| unavailable())?;
+    if hours > 23 || minutes > 59 { return Err(unavailable()); }
+    let offset = (hours * 60 + minutes) * if zone.starts_with('-') { -1 } else { 1 };
     Ok((
         name.into(),
         email.into(),
         seconds.parse().map_err(|_| unavailable())?,
+        offset,
     ))
 }
 

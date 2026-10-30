@@ -53,7 +53,7 @@ pub(super) async fn detail(state: &AppState, loaded: &LoadedGist) -> Result<Valu
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        entries.push(json!({"id":fork.id,"url":super::super::api_url(&format!("/gists/{}",fork.id)),"user":super::super::users::document(state,&user,false).await?,"created_at":fork.created_at,"updated_at":fork.updated_at}));
+        entries.push(json!({"id":fork.id,"url":super::super::api_url(&format!("/gists/{}",fork.id)),"user":super::super::users::document(state,&user,None).await?,"created_at":fork.created_at,"updated_at":fork.updated_at}));
     }
     value["forks"] = json!(entries);
     value["fork_of"] = Value::Null;

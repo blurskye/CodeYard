@@ -3,7 +3,7 @@ use crate::backend::db::{
     organizations::{administers, OrganizationOutcome},
     runners::{
         normalize_labels, Candidate, Eligibility, Group, GroupInput, Labels, Refusal,
-        Registration, RegistrationBinding, Runner, Scope, Selection,
+        Registration, RegistrationBinding, Runner, RunnerFilter, Scope, Selection,
     },
 };
 use anyhow::Result;
@@ -321,26 +321,37 @@ pub async fn group_runners(
     tx.commit().await?;
     Ok(())
 }
-const RUNNERS:&str="SELECT a.*,false AS online,n.status AS node_status,n.last_seen AS node_last_seen,clock_timestamp() AS observed_at,EXISTS(SELECT 1 FROM ci_runs c WHERE c.status='running' AND c.worker LIKE n.public_key || '/%') AS busy,n.version FROM action_runners a LEFT JOIN nodes n ON n.id=a.node_id WHERE a.org_id IS NOT DISTINCT FROM $1 AND a.repo_id IS NOT DISTINCT FROM $2";
-async fn runner_rows(c: &mut Connection, scope: Scope) -> Result<Vec<Runner>> {
+const RUNNERS:&str="SELECT a.*,false AS online,n.status AS node_status,n.last_seen AS node_last_seen,clock_timestamp() AS observed_at,EXISTS(SELECT 1 FROM ci_runs c WHERE c.status='running' AND c.worker LIKE n.public_key || '/%') AS busy,n.version FROM action_runners a LEFT JOIN nodes n ON n.id=a.node_id";
+const RUNNER_FILTER:&str="a.org_id IS NOT DISTINCT FROM $1 AND a.repo_id IS NOT DISTINCT FROM $2 AND ($3::bigint IS NULL OR a.id=$3) AND ($4::text IS NULL OR LOWER(a.name)=LOWER($4)) AND ($5::bigint IS NULL OR a.group_id=$5)";
+async fn runner_rows(c: &mut Connection, scope: Scope, filter: &RunnerFilter<'_>) -> Result<Vec<Runner>> {
     let (org, repo) = scope.ids();
-    Ok(sqlx::query_as::<_, crate::backend::db::runners::RunnerProjection>(&format!("{RUNNERS} ORDER BY a.id"))
-        .bind(org)
-        .bind(repo)
-        .fetch_all(c)
-        .await?.into_iter().map(|row| row.into_runner()).collect())
+    Ok(sqlx::query_as::<_, crate::backend::db::runners::RunnerProjection>(&format!("{RUNNERS} WHERE {RUNNER_FILTER} ORDER BY a.id LIMIT $6 OFFSET $7"))
+        .bind(org).bind(repo).bind(filter.id).bind(filter.name).bind(filter.group).bind(filter.limit).bind(filter.offset)
+        .fetch_all(c).await?.into_iter().map(|row| row.into_runner()).collect())
+}
+pub async fn list_runners_page(pool: &Pool, actor: i64, scope: Scope, filter: &RunnerFilter<'_>) -> Result<(i64, Vec<Runner>)> {
+    ensure!((0..=100).contains(&filter.limit) && (0..=1_000_000).contains(&filter.offset), Refusal::Invalid("page"));
+    let mut tx = pool.begin().await?;
+    authorize(&mut tx, actor, scope).await?;
+    let (org, repo) = scope.ids();
+    let total = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM action_runners a WHERE {RUNNER_FILTER}"))
+        .bind(org).bind(repo).bind(filter.id).bind(filter.name).bind(filter.group).fetch_one(&mut *tx).await?;
+    let rows = if filter.limit == 0 { Vec::new() } else { runner_rows(&mut tx, scope, filter).await? };
+    tx.commit().await?;
+    Ok((total, rows))
 }
 pub async fn list_runners(pool: &Pool, actor: i64, scope: Scope) -> Result<Vec<Runner>> {
     let mut tx = pool.begin().await?;
     authorize(&mut tx, actor, scope).await?;
-    let rows = runner_rows(&mut tx, scope).await?;
+    let rows = runner_rows(&mut tx, scope, &RunnerFilter { limit: i64::MAX, ..Default::default() }).await?;
     tx.commit().await?;
     Ok(rows)
 }
 async fn runner(c: &mut Connection, scope: Scope, id: i64) -> Result<Runner> {
     let (org, repo) = scope.ids();
-    sqlx::query_as(&format!("{RUNNERS} AND a.id=$3 FOR UPDATE OF a"))
-        .bind(org).bind(repo).bind(id).fetch_optional(c).await?.ok_or_else(|| Refusal::Missing.into())
+    sqlx::query_as::<_, crate::backend::db::runners::RunnerProjection>(&format!("{RUNNERS} WHERE {RUNNER_FILTER} FOR UPDATE OF a"))
+        .bind(org).bind(repo).bind(id).bind(None::<&str>).bind(None::<i64>)
+        .fetch_optional(c).await?.map(|row| row.into_runner()).ok_or_else(|| Refusal::Missing.into())
 }
 async fn delete_in(tx: &mut Transaction<'_, Postgres>, scope: Scope, id: i64) -> Result<()> {
     let row = runner(tx, scope, id).await?;

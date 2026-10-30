@@ -72,7 +72,7 @@ async fn ref_activity(
         Ok(opened) => opened,
         Err(response) => return response,
     };
-    let page = match activity::page(&ctx.state.pool, loaded.repository.id, &input).await {
+    let page = match activity::page(&ctx.state.pool, loaded.repository.id, &input, ctx.user.as_ref().map(|user| user.id)).await {
         Ok(page) => page,
         Err(error) => {
             return match error.downcast_ref::<activity::InvalidQuery>() {

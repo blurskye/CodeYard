@@ -395,7 +395,7 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
                     body: Some("".to_owned()),
                     is_draft: false,
                     is_prerelease: false,
-                    make_latest: true,
+                    make_latest: true.into(),
                 },
             )
             .await

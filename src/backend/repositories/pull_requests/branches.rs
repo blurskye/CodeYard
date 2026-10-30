@@ -48,6 +48,22 @@ pub async fn head_repository(
     Ok(head)
 }
 
+/// A namespaced branch can live in a renamed fork. An unrelated same-named repository
+/// must not shadow that fork.
+pub async fn owner_head_repository(pool: &DbPool, base: &Repository, owner: &str) -> anyhow::Result<Option<Repository>> {
+    if let Some(head) = db::repositories::records::get_repository(pool, owner, &base.name).await? {
+        if head.id == base.id || head.forked_from_id == Some(base.id) {
+            return Ok(Some(head));
+        }
+    }
+    use crate::backend::repositories::lifecycle;
+    match lifecycle::transfer_target(pool, owner).await {
+        Ok((owner, _)) => db::repositories::discovery::get_owner_fork(pool, owner, base.id).await,
+        Err(error) if error.kind == lifecycle::LifecycleFailure::Invalid => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
 const MAX_REFRESH_ATTEMPTS: usize = 3;
 
 /// Most branch names a refresh filters pull requests on. A bigger change refreshes every

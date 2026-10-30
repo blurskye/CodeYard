@@ -7,6 +7,7 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
     (1, "schema", include_str!("../../../../schema/sqlite/0001.schema.sql")),
     (2, "admission", include_str!("../../../../schema/sqlite/0002.admission.sql")),
     (3, "registry_compatibility", include_str!("../../../../schema/sqlite/0003.registry_compatibility.sql")),
+    (4, "relationship_times", include_str!("../../../../schema/sqlite/0002.relationship_times.sql")),
 ];
 
 // Cancellation must not return a connection with foreign keys disabled to the pool.

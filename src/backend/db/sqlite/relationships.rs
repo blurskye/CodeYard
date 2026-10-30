@@ -1,22 +1,51 @@
 use crate::backend::db::{
     models::Repository,
-    relationships::{Kind, Link, Mutation, Refusal, RelationCounts},
+    relationships::{
+        related_sql, window_sql, Kind, Link, Mutation, Refusal, RelationCounts, Window,
+    },
 };
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
-pub async fn list(
+pub async fn window(pool: &SqlitePool, page: &Window<'_>) -> Result<Vec<Link>> {
+    anyhow::ensure!(page.offset >= 0 && (1..=101).contains(&page.limit), Refusal::Invalid);
+    let readable = super::repositories::access::readable_condition();
+    let sql = window_sql(
+        page,
+        &readable,
+        "$5 IS NULL OR i.repo_id IN (SELECT value FROM json_each($5))",
+    )
+    .replace('$', "?");
+    let repositories = page.repositories.map(serde_json::to_string).transpose()?;
+    Ok(sqlx::query_as(&sql)
+        .bind(page.viewer)
+        .bind(page.root)
+        .bind(page.kind.storage())
+        .bind(crate::backend::db::ci_tokens::BOT)
+        .bind(repositories)
+        .bind(page.limit)
+        .bind(page.offset)
+        .fetch_all(pool)
+        .await?)
+}
+pub async fn repository_counts(
     pool: &SqlitePool,
     viewer: Option<i64>,
     root: i64,
     kind: Kind,
-    offset: i64,
-    limit: i64,
-) -> Result<Vec<Link>> {
-    anyhow::ensure!(offset >= 0 && (1..=101).contains(&limit), Refusal::Invalid);
-    let (target, source) = kind.selection();
-    let target = target.replace('$', "?");
-    let source = source.replace('$', "?");
-    Ok(sqlx::query_as(&format!("SELECT i.id,i.repo_id,i.number,i.title,i.state,COALESCE(owners.username,orgs.name) AS owner,r.name AS repo FROM issue_relations e JOIN issues i ON i.id={target} JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=?1 LEFT JOIN users owners ON r.owner_kind='user' AND owners.id=r.owner_user_id LEFT JOIN organizations orgs ON r.owner_kind='org' AND orgs.id=r.owner_org_id WHERE {source} AND e.kind=?3 AND {} AND EXISTS(SELECT 1 FROM issues root JOIN repositories r ON r.id=root.repo_id WHERE root.id=?2 AND {}) AND (COALESCE(u.username,'')<>?6 OR i.repo_id=(SELECT repo_id FROM issues WHERE id=?2)) ORDER BY e.position,i.id LIMIT ?4 OFFSET ?5",super::repositories::access::readable_condition(),super::repositories::access::readable_condition())).bind(viewer).bind(root).bind(kind.storage()).bind(limit).bind(offset).bind(crate::backend::db::ci_tokens::BOT).fetch_all(pool).await?)
+) -> Result<Vec<(i64, i64)>> {
+    let readable = super::repositories::access::readable_condition();
+    let sql = format!(
+        "SELECT i.repo_id,COUNT(*) {} GROUP BY i.repo_id ORDER BY i.repo_id",
+        related_sql(kind, &readable, "1")
+    )
+    .replace('$', "?");
+    Ok(sqlx::query_as(&sql)
+        .bind(viewer)
+        .bind(root)
+        .bind(kind.storage())
+        .bind(crate::backend::db::ci_tokens::BOT)
+        .fetch_all(pool)
+        .await?)
 }
 pub async fn summaries(pool: &SqlitePool, roots: &[i64]) -> Result<Vec<RelationCounts>> {
     anyhow::ensure!(roots.len() <= 100, Refusal::Limit);
@@ -50,8 +79,9 @@ pub async fn change(
     repo: i64,
     root: i64,
     mutation: Mutation,
+    token: Option<i64>,
 ) -> Result<()> {
-    change_once(pool, actor, repo, root, mutation).await
+    change_once(pool, actor, repo, root, mutation, token).await
 }
 async fn change_once(
     pool: &SqlitePool,
@@ -59,10 +89,11 @@ async fn change_once(
     repo: i64,
     root: i64,
     mutation: Mutation,
+    token: Option<i64>,
 ) -> Result<()> {
     let tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let triage = matches!(mutation, Mutation::Move { .. } | Mutation::Add { kind: Kind::Children | Kind::Parent, .. } | Mutation::Remove { kind: Kind::Children | Kind::Parent, .. });
-    let tx = change_in_transaction(tx, actor, repo, root, mutation, triage).await?;
+    let tx = change_in_transaction(tx, actor, repo, root, mutation, triage, token).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -85,6 +116,7 @@ pub(crate) async fn change_in_transaction<'a>(
     root: i64,
     mutation: Mutation,
     triage: bool,
+    token: Option<i64>,
 ) -> Result<Transaction<'a, Sqlite>> {
     let other = mutation.target();
     anyhow::ensure!(other > 0 && root != other, Refusal::Invalid);
@@ -108,14 +140,20 @@ pub(crate) async fn change_in_transaction<'a>(
         .await?;
     let target_repo = target_repo.ok_or(Refusal::Missing)?;
     anyhow::ensure!(!restricted || target_repo == repo, Refusal::Missing);
+    if let Some(token) = token {
+        for affected in [repo, target_repo] {
+            anyhow::ensure!(super::users::tokens::repository_write_on(&mut tx, token, actor, affected, "issues").await?, Refusal::Denied);
+        }
+    }
     let visible:bool=sqlx::query_scalar(&format!("SELECT EXISTS (SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})",super::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
     anyhow::ensure!(visible, Refusal::Missing);
     let ids: Vec<i64> = sqlx::query_scalar(
-        "SELECT id FROM issues WHERE (id=?1 AND repo_id=?3) OR id=?2 ORDER BY id",
+        "SELECT id FROM issues WHERE (id=?1 AND repo_id=?3) OR (id=?2 AND repo_id=?4) ORDER BY id",
     )
     .bind(root)
     .bind(other)
     .bind(repo)
+    .bind(target_repo)
     .fetch_all(&mut *tx)
     .await?;
     anyhow::ensure!(ids.len() == 2, Refusal::Missing);
@@ -169,6 +207,9 @@ pub(crate) async fn change_in_transaction<'a>(
                     if let Some((old_parent, old_repo)) = old {
                         anyhow::ensure!(!restricted || old_repo == repo, Refusal::Missing);
                         anyhow::ensure!(replace, Refusal::HasParent);
+                        if let Some(token) = token {
+                            anyhow::ensure!(super::users::tokens::repository_write_on(&mut tx, token, actor, old_repo, "issues").await?, Refusal::Denied);
+                        }
                         anyhow::ensure!(
                             authority(&mut tx, actor, old_repo, triage).await?,
                             Refusal::Denied

@@ -10,6 +10,8 @@ pub struct RepositoryTeam {
     #[sqlx(flatten)]
     pub team: crate::backend::db::models::Team,
     pub permission: i16,
+    #[sqlx(skip)]
+    pub parent: Option<crate::backend::db::models::Team>,
 }
 
 native_operation!(crate::backend::db::postgres::repositories::github::repository_teams,
@@ -63,6 +65,7 @@ pub(crate) fn list_sql(query: &RepositoryListQuery<'_>, access: &str, readable: 
         "stars" => "r.stars_count",
         "watchers" => "r.watchers_count",
         "id" => "r.id",
+        "name" => "LOWER(r.name)",
         _ => "LOWER(COALESCE(owners.username, organizations.name) || '/' || r.name)",
     };
     let direction = if query.descending { "DESC" } else { "ASC" };

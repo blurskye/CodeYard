@@ -117,6 +117,10 @@ pub enum Page {
         repo: RepoChrome,
         page: super::security::Page,
     },
+    Discussions {
+        repo: RepoChrome,
+        page: super::discussions::Page,
+    },
     Dependabot {
         repo: RepoChrome,
         page: super::dependabot::Page,
@@ -181,6 +185,7 @@ impl Page {
             | Page::Insights { repo, .. }
             | Page::Security { repo, .. }
             | Page::Dependabot { repo, .. }
+            | Page::Discussions { repo, .. }
             | Page::SecretSecurity { repo, .. }
             | Page::DependencyGraph { repo, .. }
             | Page::Dependencies { repo, .. }
@@ -262,6 +267,7 @@ pub fn render(page: Page) -> Element {
         Page::Insights { repo, page } => super::insights::render(&repo, page),
         Page::Security { repo, page } => super::security::render(&repo, page),
         Page::Dependabot { repo, page } => super::dependabot::render(&repo, &page),
+        Page::Discussions { repo, page } => super::discussions::render(&repo, &page),
         Page::SecretSecurity { repo, page } => super::secret_scanning::render(&repo, page),
         Page::Dependencies { repo, page } => super::dependencies::render(&repo, &page),
         Page::DependencyGraph { repo, page } => super::dependency_graph::render(&repo, &page),

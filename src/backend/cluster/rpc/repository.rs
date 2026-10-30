@@ -48,6 +48,7 @@ pub fn authorize_operation(
         Operation::Exists => ("Exists", false),
         Operation::SizeBytes => ("SizeBytes", false),
         Operation::Refs => ("Refs", false),
+        Operation::MatchingRefs { .. } => ("MatchingRefs", false),
         Operation::PrimaryRefs => ("PrimaryRefs", false),
         Operation::BranchPublication { .. } => ("BranchPublication", false),
         Operation::Info => ("Info", false),
@@ -68,6 +69,7 @@ pub fn authorize_operation(
         Operation::Blob { .. } => ("Blob", false),
         Operation::BlobBytes { .. } => ("BlobBytes", false),
         Operation::BlobById { .. } => ("BlobById", true),
+        Operation::BlobByIdRange { .. } => ("BlobByIdRange", false),
         Operation::Commits { .. } => ("Commits", false),
         Operation::CommitPage { .. } => ("CommitPage", false),
         Operation::SearchCode { .. } => ("SearchCode", false),
@@ -88,6 +90,7 @@ pub fn authorize_operation(
         Operation::FilePaths { .. } => ("FilePaths", false),
         Operation::Blame { .. } => ("Blame", false),
         Operation::Contributors => ("Contributors", false),
+        Operation::BranchContributors { .. } => ("BranchContributors", false),
         Operation::CommitStatistics { .. } => ("CommitStatistics", false),
         Operation::CodeFrequency { .. } => ("CodeFrequency", false),
         Operation::IsAncestor { .. } => ("IsAncestor", false),
@@ -553,6 +556,7 @@ impl RpcHandler {
                 ))
             }
             Operation::FetchPullHead {
+                token,
                 source,
                 number,
                 head,
@@ -566,7 +570,10 @@ impl RpcHandler {
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                     source_repo_id,
-                    actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                    crate::backend::repositories::store::PullHeadActor {
+                        user: actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                        token,
+                    },
                     &source,
                     number,
                     &head,
@@ -591,6 +598,7 @@ impl RpcHandler {
             Operation::Exists => serde_json::json!(store.exists().await),
             Operation::SizeBytes => json!(store.size_bytes()),
             Operation::Refs | Operation::PrimaryRefs => json!(store.refs()),
+            Operation::MatchingRefs { prefix } => json!(store.matching_refs(&prefix)),
             Operation::BranchPublication {
                 repository_id,
                 reference,
@@ -718,6 +726,7 @@ impl RpcHandler {
                 output = store.blob_by_id(&id).await?;
                 Value::Null
             }
+            Operation::BlobByIdRange { id, range } => json!(store.blob_by_id_range(&id, range).await?),
             Operation::Commits {
                 git_ref,
                 limit,
@@ -798,6 +807,7 @@ impl RpcHandler {
                 base_ref,
                 head_ref,
                 limit,
+                offset,
                 raw_json,
                 pull_request,
             } => {
@@ -805,7 +815,7 @@ impl RpcHandler {
                     let commits = store.pull_request_commits(&base_ref, &head_ref).await?;
                     encode_json(&commits, raw_json, &mut output)?
                 } else {
-                    let commits = store.commits_between(&base_ref, &head_ref, limit).await?;
+                    let commits = store.commits_between_page(&base_ref, &head_ref, offset, limit).await?;
                     encode_json(&commits, raw_json, &mut output)?
                 }
             }
@@ -898,6 +908,7 @@ impl RpcHandler {
                 Value::Null
             }
             Operation::Contributors => json!(store.contributors()),
+            Operation::BranchContributors { branch } => json!(store.branch_contributors(&branch)),
             Operation::CommitStatistics { branch, raw_json } => {
                 let statistics = store.commit_statistics(&branch).await?;
                 encode_json(&statistics, raw_json, &mut output)?

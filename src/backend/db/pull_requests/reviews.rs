@@ -29,6 +29,24 @@ pub struct NewPullRequestComment<'a> {
     pub expected_revisions: Option<(&'a str, &'a str)>,
 }
 
+/// A review and its validated inline comments commit or roll back together.
+pub struct ReviewBatch<'a> {
+    pub pr_id: i64,
+    pub author_id: i64,
+    pub state: Option<&'a str>,
+    pub body: Option<&'a str>,
+    pub commit_sha: Option<&'a str>,
+    pub expected_pending: Option<i64>,
+    pub create_pending: bool,
+    pub comments: &'a [NewPullRequestComment<'a>],
+    pub token: Option<i64>,
+    /// The session or token behind the write, checked live in the write transaction.
+    pub credential: &'a crate::backend::db::users::accounts::AccountCredential<'a>,
+}
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::save_review_batch,
+    crate::backend::db::sqlite::pull_requests::reviews::save_review_batch,
+    fn save_review_batch(pool: &DbPool, input: ReviewBatch<'_>) -> Result<PullRequestReview>);
+
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull_request_comment,
     crate::backend::db::sqlite::pull_requests::reviews::add_pull_request_comment,
     fn add_pull_request_comment(
@@ -141,10 +159,16 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::pull_req
     crate::backend::db::sqlite::pull_requests::reviews::pull_request_comment_counts,
     fn pull_request_comment_counts(pool: &DbPool, pr_id: i64) -> Result<(i64, i64)>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pull_request_conversation_comments_ordered,
+    crate::backend::db::sqlite::pull_requests::reviews::list_pull_request_conversation_comments_ordered,
+    fn list_pull_request_conversation_comments_ordered(pool: &DbPool, pr_id: i64, limit: i64, offset: i64, updated: bool, descending: bool) -> Result<Vec<PullRequestCommentEntry>>);
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pull_request_conversation_comments,
     crate::backend::db::sqlite::pull_requests::reviews::list_pull_request_conversation_comments,
     fn list_pull_request_conversation_comments(pool: &DbPool, pr_id: i64, limit: i64, offset: i64) -> Result<Vec<PullRequestCommentEntry>>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::conversation_comment_position,
+    crate::backend::db::sqlite::pull_requests::reviews::conversation_comment_position,
+    fn conversation_comment_position(pool: &DbPool, comment: i64) -> Result<i64>);
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pull_request_conversation_comments,
     crate::backend::db::sqlite::pull_requests::reviews::count_pull_request_conversation_comments,
     fn count_pull_request_conversation_comments(pool: &DbPool, pr_id: i64) -> Result<i64>);

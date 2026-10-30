@@ -1,5 +1,6 @@
 use crate::backend::db::assignees::{AssignedItem, AssignmentRefusal, MAX_ASSIGNEES};
 use anyhow::Result;
+use crate::backend::db::models::User;
 use sqlx::{PgPool, Postgres, Transaction};
 
 // Public visibility alone does not make a user an assignment candidate.
@@ -235,6 +236,20 @@ pub async fn list_assignable_usernames(pool: &PgPool, repo_id: i64) -> Result<Ve
     .bind(repo_id)
     .fetch_all(pool)
     .await?)
+}
+
+fn matching_candidates() -> String {
+    format!("FROM repositories r JOIN users u ON {CANDIDATES} WHERE r.id=$1 AND ({})>=1 AND (strpos(lower(u.username),lower($2))>0 OR strpos(lower(COALESCE(u.display_name,'')),lower($2))>0)", super::repositories::access::USER_REPO_ACCESS_SQL)
+}
+
+pub async fn count_assignable_users(pool: &PgPool, repo_id: i64, query: &str) -> Result<i64> {
+    Ok(sqlx::query_scalar(&format!("SELECT COUNT(*) {}", matching_candidates()))
+        .bind(repo_id).bind(query).fetch_one(pool).await?)
+}
+
+pub async fn list_assignable_users(pool: &PgPool, repo_id: i64, query: &str, offset: i64, limit: i64) -> Result<Vec<User>> {
+    Ok(sqlx::query_as(&format!("SELECT u.* {} ORDER BY u.username,u.id LIMIT $3 OFFSET $4", matching_candidates()))
+        .bind(repo_id).bind(query).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
 /// The users among `user_ids` who may be assigned in the repository.

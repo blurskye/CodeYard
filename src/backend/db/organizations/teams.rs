@@ -6,13 +6,29 @@ use crate::backend::db::{
 };
 use anyhow::Result;
 
+/// A credential narrows, and never replaces, native team-management authority.
+#[derive(Clone, Copy)]
+pub struct TeamActor { pub user: i64, pub token: Option<i64> }
+impl From<i64> for TeamActor {
+    fn from(user: i64) -> Self { Self { user, token: None } }
+}
+
+/// A lean identity read: credential, organization policy and team visibility share one snapshot.
+pub enum TeamIdentity<'a> {
+    Id(i64),
+    Slug(i64, &'a str),
+}
+native_operation!(crate::backend::db::postgres::organizations::teams::team_identity,
+    crate::backend::db::sqlite::organizations::teams::team_identity,
+    fn team_identity(pool: &DbPool, actor: i64, token: i64, identity: TeamIdentity<'_>) -> Result<Option<Team>>);
+
 native_operation!(crate::backend::db::postgres::organizations::teams::create_organization_team, crate::backend::db::sqlite::organizations::teams::create_organization_team,
-    fn create_organization_team(pool: &DbPool, actor: i64, org: i64, input: &NewTeam) -> Result<OrganizationOutcome<Team>>);
+    fn create_organization_team(pool: &DbPool, actor: impl Into<TeamActor>, org: i64, input: &NewTeam) -> Result<OrganizationOutcome<Team>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::update_organization_team, crate::backend::db::sqlite::organizations::teams::update_organization_team,
-    fn update_organization_team(pool: &DbPool, actor: i64, org: i64, team: i64, input: &TeamProfile) -> Result<OrganizationOutcome<Team>>);
+    fn update_organization_team(pool: &DbPool, actor: impl Into<TeamActor>, org: i64, team: i64, input: &TeamProfile) -> Result<OrganizationOutcome<Team>>);
 // Deleting a team deletes its child teams with it, as on GitHub.
 native_operation!(crate::backend::db::postgres::organizations::teams::delete_organization_team, crate::backend::db::sqlite::organizations::teams::delete_organization_team,
-    fn delete_organization_team(pool: &DbPool, actor: i64, org: i64, team: i64) -> Result<OrganizationOutcome<()>>);
+    fn delete_organization_team(pool: &DbPool, actor: impl Into<TeamActor>, org: i64, team: i64) -> Result<OrganizationOutcome<()>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::list_organization_teams, crate::backend::db::sqlite::organizations::teams::list_organization_teams,
     fn list_organization_teams(pool: &DbPool, actor: i64, org: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<TeamListing>>>);
 // Teams a reader may see, counted the same way the public team list shows them.
@@ -29,13 +45,13 @@ native_operation!(crate::backend::db::postgres::organizations::teams::list_direc
 native_operation!(crate::backend::db::postgres::organizations::teams::list_direct_organization_team_repositories, crate::backend::db::sqlite::organizations::teams::list_direct_organization_team_repositories,
     fn list_direct_organization_team_repositories(pool: &DbPool, actor: i64, org: i64, team: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::add_organization_team_member, crate::backend::db::sqlite::organizations::teams::add_organization_team_member,
-    fn add_organization_team_member(pool: &DbPool, actor: i64, org: i64, team: i64, target: i64, role: TeamRole) -> Result<OrganizationOutcome<TeamMembership>>);
+    fn add_organization_team_member(pool: &DbPool, actor: impl Into<TeamActor>, org: i64, team: i64, target: i64, role: TeamRole) -> Result<OrganizationOutcome<TeamMembership>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::remove_organization_team_member, crate::backend::db::sqlite::organizations::teams::remove_organization_team_member,
-    fn remove_organization_team_member(pool: &DbPool, actor: i64, org: i64, team: i64, target: i64) -> Result<OrganizationOutcome<()>>);
+    fn remove_organization_team_member(pool: &DbPool, actor: impl Into<TeamActor>, org: i64, team: i64, target: i64) -> Result<OrganizationOutcome<()>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::grant_organization_team_repository, crate::backend::db::sqlite::organizations::teams::grant_organization_team_repository,
-    fn grant_organization_team_repository(pool: &DbPool, actor: i64, org: i64, team: i64, repo: i64, permission: TeamRepositoryPermission) -> Result<OrganizationOutcome<TeamRepoAccess>>);
+    fn grant_organization_team_repository(pool: &DbPool, actor: impl Into<TeamActor>, org: i64, team: i64, repo: i64, permission: TeamRepositoryPermission) -> Result<OrganizationOutcome<TeamRepoAccess>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::revoke_organization_team_repository, crate::backend::db::sqlite::organizations::teams::revoke_organization_team_repository,
-    fn revoke_organization_team_repository(pool: &DbPool, actor: i64, org: i64, team: i64, repo: i64) -> Result<OrganizationOutcome<()>>);
+    fn revoke_organization_team_repository(pool: &DbPool, actor: impl Into<TeamActor>, org: i64, team: i64, repo: i64) -> Result<OrganizationOutcome<()>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::list_organization_team_repositories, crate::backend::db::sqlite::organizations::teams::list_organization_team_repositories,
     fn list_organization_team_repositories(pool: &DbPool, actor: i64, org: i64, team: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>>);
 // Team pages are for active organization members only. Each read answers `None` when the viewer

@@ -13,6 +13,20 @@ native_operation!(crate::backend::db::postgres::repository_stats::repository_doc
     crate::backend::db::sqlite::repository_stats::repository_document_facts,
     fn repository_document_facts(pool: &DbPool, repo: i64) -> Result<RepositoryDocumentFacts>);
 
+#[derive(sqlx::FromRow)]
+pub struct RepositoryDocumentMetadata {
+    pub repo_id: i64,
+    #[sqlx(flatten)]
+    pub facts: RepositoryDocumentFacts,
+    pub last_pushed_at: chrono::DateTime<chrono::Utc>,
+    pub wiki: bool,
+    pub discussions: bool,
+}
+
+native_operation!(crate::backend::db::postgres::repository_stats::repository_document_metadata,
+    crate::backend::db::sqlite::repository_stats::repository_document_metadata,
+    fn repository_document_metadata(pool: &DbPool, repos: &[i64]) -> Result<Vec<RepositoryDocumentMetadata>>);
+
 #[derive(Debug, sqlx::FromRow)]
 pub struct LanguageSource {
     pub repo_id: i64,

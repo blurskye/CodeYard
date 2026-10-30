@@ -317,7 +317,7 @@ pub(super) async fn resolve(
                     request.authorize(id, "metadata", false).await?;
                     Some(id)
                 } else if let Some(owner) = head_owner {
-                    let head = db::repositories::records::get_repository(pool, owner, &repo.name)
+                    let head = pull_requests::branches::owner_head_repository(pool, &repo, owner)
                         .await
                         .map_err(unavailable)?
                         .ok_or_else(missing)?;
@@ -336,11 +336,12 @@ pub(super) async fn resolve(
                     None
                 };
                 let head = repository::by_id(head_repo_id.unwrap_or(repo.id), request).await?;
+                request.authorize(head.id, "contents", false).await?;
                 let saved = pull_requests::mutations::create_pull_request(
                     pool,
                     &request.state.ci_runs,
                     broadcaster,
-                    actor,
+                    crate::backend::repositories::store::PullHeadActor { user: actor, token: Some(request.auth.token.id) },
                     repository::owner(&repo, request).await?,
                     repo.name,
                     pull_requests::mutations::CreatePullRequestRequest {
@@ -573,6 +574,8 @@ pub(super) async fn resolve(
                     request.require_oauth_scope("workflow")?;
                     request.authorize(repo.id, "contents", true).await?;
                     let options = pull_requests::auto_merge::EnableRequest {
+                        expected_head: optional_text(&input, "expectedHeadOid"),
+                        token: Some(request.auth.token.id),
                         merge_method: merge_method(&input, &current)?,
                         commit_title: optional_text(&input, "commitHeadline"),
                         commit_message: optional_text(&input, "commitBody"),

@@ -48,6 +48,10 @@ fn denied() -> Error {
     Error::new(StatusCode::FORBIDDEN, "Team mutation denied")
 }
 
+fn writer(auth: &auth::Authentication) -> orgs::TeamActor {
+    orgs::TeamActor { user: auth.user.id, token: Some(auth.token.id) }
+}
+
 async fn actor(
     state: &AppState,
     headers: &HeaderMap,
@@ -191,13 +195,13 @@ async fn document(
 async fn input(request: Request) -> Result<Map<String, Value>> {
     let bytes = to_bytes(request.into_body(), 1024 * 1024)
         .await
-        .map_err(|_| Error::invalid("Invalid JSON body"))?;
+        .map_err(super::json_bytes_error)?;
     if bytes.is_empty() {
         return Ok(Map::new());
     }
     serde_json::from_slice::<Value>(&bytes)
-        .ok()
-        .and_then(|value| value.as_object().cloned())
+        .map_err(super::json_parse_error)?
+        .as_object().cloned()
         .ok_or_else(|| Error::invalid("Expected an object"))
 }
 
@@ -393,7 +397,7 @@ async fn create(
         .map_err(|_| Error::validation("Team", "name", "invalid"))?
         .with_members_and_repositories(maintainers, repositories);
     let team = outcome(
-        orgs::create_organization_team(&state.pool, auth.user.id, org.id, &new)
+        orgs::create_organization_team(&state.pool, writer(&auth), org.id, &new)
             .await
             .map_err(team_error)?,
     )?;
@@ -419,7 +423,7 @@ async fn team(
     let (org, mut public) = selected(&state, &auth, &params).await?;
     if method == Method::DELETE {
         outcome(
-            orgs::delete_organization_team(&state.pool, auth.user.id, org.id, public.team.id)
+            orgs::delete_organization_team(&state.pool, writer(&auth), org.id, public.team.id)
                 .await
                 .map_err(Error::unavailable)?,
         )?;
@@ -435,7 +439,7 @@ async fn team(
         let team = outcome(
             orgs::update_organization_team(
                 &state.pool,
-                auth.user.id,
+                writer(&auth),
                 org.id,
                 public.team.id,
                 &profile,
@@ -661,7 +665,7 @@ async fn team_member(
     if method == Method::DELETE {
         match orgs::remove_organization_team_member(
             &state.pool,
-            auth.user.id,
+            writer(&auth),
             org.id,
             public.team.id,
             user.id,
@@ -719,7 +723,7 @@ async fn team_member(
         let row = outcome(
             orgs::add_organization_team_member(
                 &state.pool,
-                auth.user.id,
+                writer(&auth),
                 org.id,
                 public.team.id,
                 user.id,
@@ -940,7 +944,7 @@ async fn repository(
         outcome(
             orgs::grant_organization_team_repository(
                 &state.pool,
-                auth.user.id,
+                writer(&auth),
                 org.id,
                 public.team.id,
                 repo.id,
@@ -954,7 +958,7 @@ async fn repository(
     if method == Method::DELETE {
         match orgs::revoke_organization_team_repository(
             &state.pool,
-            auth.user.id,
+            writer(&auth),
             org.id,
             public.team.id,
             repo.id,

@@ -207,6 +207,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::set_repos
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(bound(deserialize = "T: serde::Deserialize<'de>"))]
 pub struct RepositoryChanges<T> {
+    pub token: Option<i64>,
     pub name: Option<T>,
     #[serde(
         default,
@@ -224,6 +225,8 @@ pub struct RepositoryChanges<T> {
     pub visibility_expected: Option<bool>,
     pub archived: Option<bool>,
     pub is_template: Option<bool>,
+    pub wiki: Option<bool>,
+    pub discussions: Option<bool>,
     pub merge_methods: MergeMethodUpdate,
 }
 
@@ -240,9 +243,12 @@ where
 impl RepositoryChanges<&str> {
     pub fn owned(&self) -> RepositoryChanges<String> {
         RepositoryChanges {
+            token: self.token,
             name: self.name.map(str::to_owned),
             description: self.description.map(|value| value.map(str::to_owned)),
             website: self.website.map(|value| value.map(str::to_owned)),
+            wiki: self.wiki,
+            discussions: self.discussions,
             is_private: self.is_private,
             visibility_expected: self.visibility_expected,
             archived: self.archived,
@@ -254,9 +260,12 @@ impl RepositoryChanges<&str> {
 impl RepositoryChanges<String> {
     pub fn borrowed(&self) -> RepositoryChanges<&str> {
         RepositoryChanges {
+            token: self.token,
             name: self.name.as_deref(),
             description: self.description.as_ref().map(|value| value.as_deref()),
             website: self.website.as_ref().map(|value| value.as_deref()),
+            wiki: self.wiki,
+            discussions: self.discussions,
             is_private: self.is_private,
             visibility_expected: self.visibility_expected,
             archived: self.archived,
@@ -273,6 +282,8 @@ impl<T> RepositoryChanges<T> {
             || self.website.is_some()
             || self.is_private.is_some()
             || self.is_template.is_some()
+            || self.wiki.is_some()
+            || self.discussions.is_some()
             || self.merge_methods.merge.is_some()
             || self.merge_methods.squash.is_some()
             || self.merge_methods.rebase.is_some()
@@ -310,6 +321,13 @@ pub struct MergeMethodUpdate {
     pub merge: Option<bool>,
     pub squash: Option<bool>,
     pub rebase: Option<bool>,
+}
+impl MergeMethodUpdate {
+    pub fn resolve(self, current: (bool, bool, bool)) -> Result<(bool, bool, bool)> {
+        let methods = (self.merge.unwrap_or(current.0), self.squash.unwrap_or(current.1), self.rebase.unwrap_or(current.2));
+        anyhow::ensure!(methods.0 || methods.1 || methods.2, RepositorySettingsRefusal::NoMergeMethod);
+        Ok(methods)
+    }
 }
 
 native_operation!(crate::backend::db::postgres::repositories::records::set_merge_methods,

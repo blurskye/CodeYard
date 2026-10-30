@@ -4,6 +4,18 @@ use crate::backend::db::models::Repository;
 use crate::backend::git::{MAX_CI_WORKFLOW_BYTES, MAX_WORKFLOW_DIRECTORY_ENTRIES};
 use serde::{Deserialize, Serialize};
 
+/// The initiating reader of a pull head; remote publication retains token bounds.
+#[derive(Clone, Copy, Debug)]
+pub struct PullHeadActor {
+    pub user: i64,
+    pub token: Option<i64>,
+}
+impl From<i64> for PullHeadActor {
+    fn from(user: i64) -> Self {
+        Self { user, token: None }
+    }
+}
+
 /// The two Git server programs a session can run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GitService {

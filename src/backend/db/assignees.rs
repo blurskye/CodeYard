@@ -77,6 +77,13 @@ native_operation!(crate::backend::db::postgres::assignees::list_item_assignees,
     crate::backend::db::sqlite::assignees::list_item_assignees,
     fn list_item_assignees(pool: &DbPool, pull_requests: bool, item_ids: &[i64]) -> Result<Vec<(i64, String)>>);
 
+native_operation!(crate::backend::db::postgres::assignees::count_assignable_users,
+    crate::backend::db::sqlite::assignees::count_assignable_users,
+    fn count_assignable_users(pool: &DbPool, repo_id: i64, query: &str) -> Result<i64>);
+native_operation!(crate::backend::db::postgres::assignees::list_assignable_users,
+    crate::backend::db::sqlite::assignees::list_assignable_users,
+    fn list_assignable_users(pool: &DbPool, repo_id: i64, query: &str, offset: i64, limit: i64) -> Result<Vec<crate::backend::db::models::User>>);
+
 // The usernames that may be assigned in a repository: its personal owner and its collaborators.
 native_operation!(crate::backend::db::postgres::assignees::list_assignable_usernames,
     crate::backend::db::sqlite::assignees::list_assignable_usernames,

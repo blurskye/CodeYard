@@ -126,7 +126,7 @@ async fn create(
     body: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Result<Response> {
     let (org, actor) = dependabot::organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(|_| Error::invalid("Invalid registry input"))?;
+    let Json(body) = body.map_err(super::json_error)?;
     let (body, value) = input(&state, actor.user.id, org, body).await?;
     let registry = db::private_registries::save(
         &state.pool,
@@ -154,7 +154,7 @@ async fn update(
     body: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Result<StatusCode> {
     let (org, actor) = dependabot::organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(|_| Error::invalid("Invalid registry input"))?;
+    let Json(body) = body.map_err(super::json_error)?;
     let (body, value) = input(&state, actor.user.id, org, body).await?;
     db::private_registries::save(
         &state.pool,

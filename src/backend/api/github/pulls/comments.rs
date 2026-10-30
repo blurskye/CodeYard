@@ -204,6 +204,18 @@ pub(super) async fn prepare(
     input: Create,
     pending: bool,
 ) -> Result<domain::CreatePullRequestCommentRequest> {
+    prepare_with_diff(state, headers, repo, pull, input, pending, None).await
+}
+
+pub(super) async fn prepare_with_diff(
+    state: &AppState,
+    headers: &HeaderMap,
+    repo: &db::models::Repository,
+    pull: &db::models::PullRequest,
+    input: Create,
+    pending: bool,
+    cached: Option<&crate::backend::git::DiffInfo>,
+) -> Result<domain::CreatePullRequestCommentRequest> {
     let mut line = input.line;
     let mut side = input.side;
     if let Some(parent) = input.in_reply_to {
@@ -243,10 +255,11 @@ pub(super) async fn prepare(
             return Err(Error::invalid("commit_id is required"));
         }
         if let Some(position) = input.position.filter(|_| line.is_none()) {
-            let diff = repo_store(repo, state.cluster.as_ref())
-                .diff(pull.diff_base(), &pull.head_sha)
-                .await
-                .map_err(super::store_error)?;
+            let loaded;
+            let diff = if let Some(diff) = cached { diff } else {
+                loaded = repo_store(repo, state.cluster.as_ref()).diff(pull.diff_base(), &pull.head_sha).await.map_err(super::store_error)?;
+                &loaded
+            };
             let row = diff
                 .files
                 .iter()
@@ -296,7 +309,7 @@ async fn create(
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer.ok_or_else(auth::required)?.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let input = serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid comment"))?;
+    let input = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     let request = prepare(&state, &headers, &repo, &pull, input, false).await?;
     let comment = domain::create_pull_request_comment(
         &state.pool,
@@ -328,7 +341,7 @@ async fn reply(
     body: Bytes,
 ) -> Result<Response> {
     let input: Body =
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("body is required"))?;
+        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     create(
         State(state),
         headers,
@@ -359,7 +372,7 @@ async fn update(
     let actor = viewer.ok_or_else(auth::required)?.user;
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
     let input: Body =
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("body is required"))?;
+        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     let comment = domain::edit_pull_request_comment(
         &state.pool,
         &state.notification_broadcaster,

@@ -57,8 +57,13 @@ pub(super) async fn resolve(
         )),
         "isEmpty" => Ok(json!(store.refs().await.map_err(unavailable)?.is_empty())),
         "isUserConfigurationRepository" => Ok(json!(repo.name == ".github")),
-        "viewerDefaultCommitEmail" => Ok(json!(actor.commit_email())),
+        "viewerDefaultCommitEmail" => Ok(json!(if request.account_permission("email_addresses", "user:email").await? {
+            actor.commit_email()
+        } else { actor.noreply_email() })),
         "viewerPossibleCommitEmails" => {
+            if !request.account_permission("email_addresses", "user:email").await? {
+                return Ok(json!([actor.noreply_email()]));
+            }
             let mut emails: Vec<_> = db::users::emails::list_emails(pool, actor.id)
                 .await
                 .map_err(unavailable)?
@@ -134,9 +139,8 @@ pub(super) async fn resolve(
                 return Ok(json!(!files.is_empty()));
             }
             let owner = repository::owner(repo, request).await?;
-            Ok(json!(files.first().map(|(path, _)| url(&format!(
-                "/{}/{}/blob/{}/{path}",
-                owner, repo.name, repo.default_branch
+            Ok(json!(files.first().map(|(path, _)| url(&crate::webui::pages::repos::ref_path::branch_url(
+                &format!("/{}/{}", owner, repo.name), "blob", &repo.default_branch, path,
             )))))
         }
         "contactLinks" => {
@@ -179,26 +183,19 @@ pub(super) async fn resolve(
             )
             .await?;
             let owner = repository::owner(repo, request).await?;
-            Ok(files.first().map(|(path, text)| json!({"key":if text.contains("Contributor Covenant") { "contributor_covenant" } else { "other" },"name":if text.contains("Contributor Covenant") { "Contributor Covenant" } else { "Other" },"url":url(&format!("/{}/{}/blob/{}/{path}",owner,repo.name,repo.default_branch))})).unwrap_or(Value::Null))
+            Ok(files.first().map(|(path, text)| {
+                let covenant = crate::backend::repositories::community::contributor_covenant(text);
+                json!({"key":if covenant { "contributor_covenant" } else { "other" },"name":if covenant { "Contributor Covenant" } else { "Other" },"url":url(&crate::webui::pages::repos::ref_path::branch_url(&format!("/{}/{}",owner,repo.name),"blob",&repo.default_branch,path))})
+            }).unwrap_or(Value::Null))
         }
         "licenseInfo" => {
-            let files = texts(
-                &store,
-                &repo.default_branch,
-                &[
-                    "LICENSE",
-                    "LICENSE.md",
-                    "LICENSE.txt",
-                    "LICENCE",
-                    "LICENCE.md",
-                    "LICENCE.txt",
-                    "COPYING",
-                    "COPYING.md",
-                    "COPYING.txt",
-                ],
-            )
-            .await?;
-            Ok(files.first().map(|(_, text)| {
+            let refs = store.refs().await.map_err(unavailable)?;
+            let Some(revision) = refs.get(&format!("refs/heads/{}", repo.default_branch)) else { return Ok(Value::Null) };
+            let mut files = store.tree_metadata(revision, "").await.map_err(unavailable)?;
+            files.sort_by_key(|file| file.name.to_ascii_lowercase());
+            let Some(file) = files.iter().find(|file| file.entry_type == "file" && templates::is_license_file(&file.name)) else { return Ok(Value::Null) };
+            let texts = store.template_texts(revision, &[file.path.clone()]).await.map_err(unavailable)?;
+            Ok(texts.first().and_then(Option::as_ref).map(|(_, text)| {
                 templates::detect_license(text.as_bytes()).map(|template| json!({"key":template.name.to_lowercase(),"name":template.name,"nickname":Value::Null})).unwrap_or(json!({"key":"other","name":"Other","nickname":Value::Null}))
             }).unwrap_or(Value::Null))
         }
@@ -261,9 +258,7 @@ pub(super) async fn resolve(
             Ok(result)
         }
         "assignableUsers" | "mentionableUsers" => {
-            let names = db::assignees::list_assignable_usernames(pool, repo.id)
-                .await
-                .map_err(unavailable)?;
+            connection::validate(ctx)?;
             let filter = ctx
                 .args
                 .get("query")
@@ -272,18 +267,13 @@ pub(super) async fn resolve(
                 .transpose()?
                 .unwrap_or("")
                 .to_lowercase();
-            let mut nodes = Vec::new();
-            for name in names
-                .into_iter()
-                .filter(|name| name.to_lowercase().contains(&filter))
-            {
-                let account = db::users::accounts::get_user_by_username(pool, &name)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?;
-                nodes.push(user::by_id(account.id, request).await?);
-            }
-            connection::slice(ctx, nodes)
+            let total = db::assignees::count_assignable_users(pool, repo.id, &filter).await.map_err(unavailable)?;
+            let page = connection::Page::new(ctx, total)?;
+            let rows = if page.limit == 0 { Vec::new() } else {
+                db::assignees::list_assignable_users(pool, repo.id, &filter, page.offset, page.limit)
+                    .await.map_err(unavailable)?
+            };
+            Ok(page.finish(rows.iter().map(|user| user::object(user, actor.id)).collect()))
         }
         // Codeyard stores Projects v2, not retired classic projects.
         _ => Err(Error::new(format!(
@@ -297,7 +287,7 @@ async fn funding(store: &RepoStore, branch: &str) -> Result<Value> {
     let Some((_, text)) = files.first() else {
         return Ok(json!([]));
     };
-    let config = yaml(text)?;
+    let Ok(config) = yaml(text) else { return Ok(json!([])) };
     let mut links = Vec::new();
     for (key, platform, prefix) in [
         ("github", "GITHUB", "https://github.com/sponsors/"),

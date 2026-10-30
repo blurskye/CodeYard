@@ -182,7 +182,7 @@ async fn metadata(
         let mut values = Vec::new();
         for row in rows {
             let mut value =
-                issues::document(&state.pool, repo, owner, AssignedItem::Issue(row.issue.id))
+                issues::document(&state.pool, issues::Reader::Repository, repo, owner, AssignedItem::Issue(row.issue.id))
                     .await?;
             value["repository"] = repository.clone();
             values.push(value);

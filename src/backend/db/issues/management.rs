@@ -44,6 +44,9 @@ native_operation!(crate::backend::db::postgres::issues::management::transfer,
 native_operation!(crate::backend::db::postgres::issues::management::redirect,
     crate::backend::db::sqlite::issues::management::redirect,
     fn redirect(pool: &DbPool, repo: i64, number: i32) -> Result<Option<Issue>>);
+native_operation!(crate::backend::db::postgres::issues::management::close_duplicate_with_previous,
+    crate::backend::db::sqlite::issues::management::close_duplicate_with_previous,
+    fn close_duplicate_with_previous(pool: &DbPool, actor: i64, repo: i64, issue: i64, duplicate: i64) -> Result<(Issue, Issue)>);
 native_operation!(crate::backend::db::postgres::issues::management::close_duplicate,
     crate::backend::db::sqlite::issues::management::close_duplicate,
     fn close_duplicate(pool: &DbPool, actor: i64, repo: i64, issue: i64, duplicate: i64) -> Result<Issue>);

@@ -11,6 +11,11 @@ use crate::backend::db::relationships::{Kind, Mutation};
 use crate::backend::db::issues::IssueListEntry;
 use crate::backend::db::issues::{IssueRelation, ViewerIssueEntry};
 use anyhow::Result;
+
+pub async fn issue_repositories(pool: &PgPool, ids: &[i64]) -> Result<Vec<(i64, i64)>> {
+    anyhow::ensure!(ids.len() <= 101, "Issue page exceeds its limit");
+    Ok(sqlx::query_as("SELECT id,repo_id FROM issues WHERE id=ANY($1)").bind(ids).fetch_all(pool).await?)
+}
 use sqlx::{PgPool, Postgres, Transaction};
 
 pub async fn create_issue_with_metadata(
@@ -46,6 +51,12 @@ pub async fn create_issue_with_metadata(
             );
             // Type writes take the attribute guard before any issue row.
             super::issue_attributes::lock_metadata(&mut tx).await?;
+        }
+        if let Some(token) = metadata.token {
+            anyhow::ensure!(
+                super::users::tokens::repository_write_on(&mut tx, token, author_id, repo_id, "issues").await?,
+                DiscussionWriteRefusal::Denied
+            );
         }
         let issue = insert_in_transaction(&mut tx, repo_id, author_id, title, body).await?;
         if !metadata.labels.is_empty() {
@@ -104,6 +115,7 @@ pub async fn create_issue_with_metadata(
                         replace: false,
                     },
                     true,
+                    metadata.token,
                 )
                 .await?
             }
@@ -150,6 +162,11 @@ pub async fn get_issue(pool: &PgPool, repo_id: i64, number: i32) -> Result<Optio
             .await?;
 
     Ok(issue)
+}
+
+pub async fn issue_ids_by_numbers(pool: &PgPool, repo: i64, viewer: Option<i64>, numbers: &[i32]) -> Result<Vec<(i64, i32)>> {
+    anyhow::ensure!(numbers.len() <= 500, "Too many issue numbers");
+    Ok(sqlx::query_as(&format!("SELECT i.id,i.number FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$3 WHERE i.repo_id=$1 AND i.number=ANY($2) AND {} ORDER BY i.number,i.id", super::repositories::access::readable_condition())).bind(repo).bind(numbers).bind(viewer).fetch_all(pool).await?)
 }
 
 pub async fn get_issues_by_ids(pool: &PgPool, repo_id: i64, ids: &[i64]) -> Result<Vec<Issue>> {
@@ -425,15 +442,16 @@ pub async fn add_issue_comment(
     Ok(comment)
 }
 
-pub async fn list_issue_comments(
-    pool: &PgPool,
-    issue_id: i64,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<IssueCommentEntry>> {
+pub async fn list_issue_comments(pool: &PgPool, issue_id: i64, limit: i64, offset: i64) -> Result<Vec<IssueCommentEntry>> {
+    list_issue_comments_ordered(pool, issue_id, limit, offset, false, false).await
+}
+
+pub async fn list_issue_comments_ordered(pool: &PgPool, issue_id: i64, limit: i64, offset: i64, updated: bool, descending: bool) -> Result<Vec<IssueCommentEntry>> {
+    let order = if updated { "updated_at" } else { "created_at" };
+    let direction = if descending { "DESC" } else { "ASC" };
     let columns = crate::backend::db::postgres::users::accounts::AUTHOR_DISPLAY_COLUMNS;
     let comments = sqlx::query_as::<_, IssueCommentEntry>(
-        &format!("SELECT i.*, {columns} FROM issue_comments i JOIN users u ON u.id=i.author_id WHERE i.issue_id = $1 ORDER BY i.created_at, i.id LIMIT $2 OFFSET $3"),
+        &format!("SELECT i.*, {columns} FROM issue_comments i JOIN users u ON u.id=i.author_id WHERE i.issue_id = $1 ORDER BY i.{order} {direction}, i.id {direction} LIMIT $2 OFFSET $3"),
     )
     .bind(issue_id)
     .bind(limit)

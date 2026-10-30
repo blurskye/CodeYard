@@ -6,7 +6,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 pub(crate) fn readable_condition(viewer: &str) -> String {
-    format!("p.deleted_at IS NULL AND (p.owner_kind<>'org' OR COALESCE((SELECT s.has_organization_projects FROM organization_settings s WHERE s.org_id=p.owner_org_id),TRUE)) AND (p.public OR (EXISTS(SELECT 1 FROM users active WHERE active.id={viewer} AND NOT active.is_banned AND NOT active.must_change_password) AND (p.owner_user_id={viewer} OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=p.owner_org_id AND m.user_id={viewer} AND m.role IN ('owner','admin','member')))))")
+    format!("p.deleted_at IS NULL AND {}", readable_owner_condition(viewer))
+}
+
+pub(crate) fn readable_owner_condition(viewer: &str) -> String {
+    format!("(p.owner_kind<>'org' OR COALESCE((SELECT s.has_organization_projects FROM organization_settings s WHERE s.org_id=p.owner_org_id),TRUE)) AND (p.public OR (EXISTS(SELECT 1 FROM users active WHERE active.id={viewer} AND NOT active.is_banned AND NOT active.must_change_password) AND (p.owner_user_id={viewer} OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=p.owner_org_id AND m.user_id={viewer} AND m.role IN ('owner','admin','member')))))")
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -29,6 +33,30 @@ pub type ItemLink = (i64, String, String, String, i32);
 
 native_operation!(crate::backend::db::postgres::projects::item_links, crate::backend::db::sqlite::projects::item_links,
     fn item_links(pool: &DbPool, viewer: Option<i64>, project: i64, items: &[i64]) -> Result<Vec<ItemLink>>);
+
+pub struct ItemWindow {
+    pub project: i64,
+    pub include_deleted: bool,
+    pub archived: Option<bool>,
+    pub descending: bool,
+    pub offset: i64,
+    pub limit: i64,
+    pub count: bool,
+}
+native_operation!(crate::backend::db::postgres::projects::items_window, crate::backend::db::sqlite::projects::items_window,
+    fn items_window(pool: &DbPool, viewer: Option<i64>, window: &ItemWindow) -> Result<(i64, Vec<Item>)>);
+
+// Deleted payloads retain read-only access in their originating request; ordinary readers use false.
+native_operation!(crate::backend::db::postgres::projects::by_id_at, crate::backend::db::sqlite::projects::by_id_at,
+    fn by_id_at(pool: &DbPool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Project>);
+native_operation!(crate::backend::db::postgres::projects::fields_at, crate::backend::db::sqlite::projects::fields_at,
+    fn fields_at(pool: &DbPool, viewer: Option<i64>, project: i64, include_deleted: bool) -> Result<Vec<Field>>);
+native_operation!(crate::backend::db::postgres::projects::items_at, crate::backend::db::sqlite::projects::items_at,
+    fn items_at(pool: &DbPool, viewer: Option<i64>, project: i64, include_deleted: bool) -> Result<Vec<Item>>);
+native_operation!(crate::backend::db::postgres::projects::item_by_id_at, crate::backend::db::sqlite::projects::item_by_id_at,
+    fn item_by_id_at(pool: &DbPool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Item>);
+native_operation!(crate::backend::db::postgres::projects::content_items_page, crate::backend::db::sqlite::projects::content_items_page,
+    fn content_items_page(pool: &DbPool, viewer: Option<i64>, content: &Content, include_archived: bool, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Item>)>);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
@@ -192,9 +220,23 @@ pub fn valid_name(name: &str) -> bool {
     !name.trim().is_empty() && name.len() <= 255 && !name.chars().any(char::is_control)
 }
 
+#[derive(Clone, Copy)]
+pub enum BuiltInField { Assignees, Labels, LinkedPullRequests, Milestone, Repository, Reviewers }
+impl BuiltInField {
+    pub const ALL: [Self; 6] = [Self::Assignees, Self::Labels, Self::LinkedPullRequests, Self::Milestone, Self::Repository, Self::Reviewers];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Assignees => "Assignees", Self::Labels => "Labels",
+            Self::LinkedPullRequests => "Linked pull requests", Self::Milestone => "Milestone",
+            Self::Repository => "Repository", Self::Reviewers => "Reviewers",
+        }
+    }
+}
+
 impl NewField {
     pub(crate) fn configuration(&self) -> Result<String> {
-        anyhow::ensure!(valid_name(&self.name), Refusal::Invalid);
+        anyhow::ensure!(valid_name(&self.name)
+            && !BuiltInField::ALL.iter().any(|field| field.name().eq_ignore_ascii_case(self.name.trim())), Refusal::Invalid);
         let value = match self.data_type.as_str() {
             "text" | "number" | "date" => {
                 anyhow::ensure!(

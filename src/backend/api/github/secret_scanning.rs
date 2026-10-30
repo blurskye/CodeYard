@@ -98,6 +98,8 @@ struct Filters {
     state: Option<String>,
     secret_type: Option<String>,
     exclude_secret_types: Option<String>,
+    providers: Option<String>,
+    exclude_providers: Option<String>,
     resolution: Option<String>,
     validity: Option<String>,
     assignee: Option<String>,
@@ -106,8 +108,8 @@ struct Filters {
     sort: Option<String>,
     #[serde(default)]
     hide_secret: bool,
-    page: Option<usize>,
-    per_page: Option<usize>,
+    #[serde(flatten)]
+    pagination: super::pagination::CursorPagination,
 }
 impl Filters {
     fn validate(&self) -> Result<()> {
@@ -137,6 +139,8 @@ impl Filters {
                 })
             })
             || self.secret_type.is_some() && self.exclude_secret_types.is_some()
+            || self.providers.is_some() && self.exclude_providers.is_some()
+            || [&self.providers, &self.exclude_providers].iter().any(|value| value.as_deref().is_some_and(|values| values.split(',').any(|provider| provider.is_empty() || !provider.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'))))
         {
             return Err(Error::validation(
                 "SecretScanningAlert",
@@ -151,6 +155,8 @@ impl Filters {
             state: self.state.clone(),
             secret_type: self.secret_type.clone(),
             exclude_secret_types: self.exclude_secret_types.clone(),
+            providers: self.providers.clone(),
+            exclude_providers: self.exclude_providers.clone(),
             resolution: self.resolution.clone(),
             validity: self.validity.clone(),
             assignee: self.assignee.clone(),
@@ -176,10 +182,7 @@ async fn list_org(
         .ok_or_else(auth::required)?;
     let org = super::orgs::target(&state, &org).await?;
     query.validate()?;
-    let pagination = Pagination {
-        page: query.page,
-        per_page: query.per_page,
-    };
+    let pagination = &query.pagination;
     let (offset, limit) = pagination.window()?;
     let alerts = records::org_alerts(
         &state.pool,
@@ -226,10 +229,7 @@ async fn list(
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor.ok_or_else(auth::required)?;
     query.validate()?;
-    let pagination = Pagination {
-        page: query.page,
-        per_page: query.per_page,
-    };
+    let pagination = &query.pagination;
     let (offset, limit) = pagination.window()?;
     let alerts = records::alerts(
         &state.pool,
@@ -397,7 +397,7 @@ async fn history(
         .map_err(error)?;
     let scans = |kind| {
         history.iter().filter(|job| job.scan_type == kind).map(|job| {
-            let mut scan=serde_json::json!({"type": job.scan_type,"status":if job.status=="queued" {"pending"} else {&job.status},"started_at":job.started_at,"completed_at":job.completed_at});
+            let mut scan=serde_json::json!({"type": "git","status":match job.status.as_str() {"queued"=>"pending","running"=>"active","completed"=>"completed",_=>"failed"},"started_at":job.started_at,"completed_at":job.completed_at});
             if let Some(name)=&job.pattern_name {scan["pattern_name"]=serde_json::json!(name);scan["pattern_scope"]=serde_json::json!(job.pattern_scope);}
             scan
         }).collect::<Vec<_>>()
