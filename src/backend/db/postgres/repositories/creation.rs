@@ -167,9 +167,6 @@ async fn insert_kind(
     let creator = input.owner.actor_id;
     if let Some(authority) = admission.authority {
         anyhow::ensure!(authority.user_id() == creator, RepositoryStorageRefusal::Denied);
-        if let Some(credential) = authority.credential() {
-            super::super::users::transitions::require_account(&mut tx, creator, &credential).await?;
-        }
     }
     // Organizations lock in ascending id order. Otherwise a fork from A into B and one from B
     // into A each hold one organization and wait for the other.
@@ -250,7 +247,7 @@ async fn insert_kind(
     }
     let private = input.is_private || source.as_ref().is_some_and(|repo| repo.is_private);
     validate_creation_visibility(&mut tx, input.owner, private).await?;
-    // Row locks retain revocation ordering; recheck wall-clock expiry after admission waits.
+    // Retain the original credential after resource locks, checking expiry after admission waits.
     if let Some(credential) = admission.authority.and_then(|actor| actor.credential()) {
         super::super::users::transitions::require_account(&mut tx, creator, &credential).await?;
     }

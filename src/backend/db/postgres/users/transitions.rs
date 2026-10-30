@@ -84,7 +84,16 @@ pub(crate) async fn require_account(
     actor: i64,
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
-    require_account_with_mode(tx, actor, credential, true).await
+    require_account_with_mode(tx, actor, credential, true, false).await
+}
+
+/// Account-local mutations retain their original serialization and quota lock.
+pub(crate) async fn require_account_exclusive(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<()> {
+    require_account_with_mode(tx, actor, credential, true, true).await
 }
 
 pub(crate) async fn require_read_account(
@@ -92,7 +101,7 @@ pub(crate) async fn require_read_account(
     actor: i64,
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
-    require_account_with_mode(tx, actor, credential, false).await
+    require_account_with_mode(tx, actor, credential, false, false).await
 }
 
 async fn require_account_with_mode(
@@ -100,10 +109,19 @@ async fn require_account_with_mode(
     actor: i64,
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     write: bool,
+    exclusive_actor: bool,
 ) -> Result<()> {
     use crate::backend::db::users::accounts::{AccountCredential, AccountRestricted};
     lock_membership_shared(tx).await?;
-    let active: bool = sqlx::query_scalar("SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR NO KEY UPDATE")
+    // Repository/org authority already holds a shared actor lock. Upgrading it
+    // after acquiring resource locks deadlocks concurrent requests by one actor.
+    // Shared is sufficient to prevent account restrictions through commit.
+    let actor_query = if exclusive_actor {
+        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR NO KEY UPDATE"
+    } else {
+        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR SHARE"
+    };
+    let active: bool = sqlx::query_scalar(actor_query)
         .bind(actor).fetch_optional(&mut **tx).await?.unwrap_or(false);
     anyhow::ensure!(active, AccountRestricted);
     let live = match credential {

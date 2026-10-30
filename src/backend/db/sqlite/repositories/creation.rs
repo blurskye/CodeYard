@@ -155,9 +155,6 @@ async fn insert_kind(
     let creator = input.owner.actor_id;
     if let Some(authority) = admission.authority {
         anyhow::ensure!(authority.user_id() == creator, RepositoryStorageRefusal::Denied);
-        if let Some(credential) = authority.credential() {
-            super::super::users::transitions::require_account(&mut tx, creator, &credential).await?;
-        }
     }
     let admin = creation_authority(&mut tx, input.owner).await?;
     let (kind, user, org) = match input.owner.target {
@@ -219,7 +216,7 @@ async fn insert_kind(
     }
     let private = input.is_private || source.as_ref().is_some_and(|repo| repo.is_private);
     validate_creation_visibility(&mut tx, input.owner, private).await?;
-    // Row locks retain revocation ordering; recheck wall-clock expiry after admission waits.
+    // Retain the original credential after resource locks, checking expiry after admission waits.
     if let Some(credential) = admission.authority.and_then(|actor| actor.credential()) {
         super::super::users::transitions::require_account(&mut tx, creator, &credential).await?;
     }
