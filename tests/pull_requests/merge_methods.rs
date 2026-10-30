@@ -546,8 +546,6 @@ async fn prepared_merge_contract(pg: bool) {
         commit_title: None,
         commit_message: None,
         author_email: None,
-        token: None,
-        session: None,
     };
 
     // A setting that changes after the merge was prepared is the one that decides.
@@ -592,18 +590,19 @@ async fn prepared_merge_contract(pg: bool) {
     )
     .await;
     // A merge asked for from a browser session publishes only while that session is signed in.
+    let session = crate::support::live_session(f.pool(), app.merger_id).await;
     let prepared = prepare_pull_request_merge(
         f.pool(),
         &app.state.ci_runs,
-        app.merger_id,
+        codeyard::backend::db::credentials::Actor::from((app.merger_id, session.clone())),
         ("alice".to_owned(), "proj".to_owned(), number),
-        MergeRequest {
-            session: Some("0".repeat(64)),
-            ..request(head.as_str(), main1.as_str())
-        },
+        request(head.as_str(), main1.as_str()),
     )
     .await
     .unwrap();
+    codeyard::backend::db::users::sessions::delete_session(f.pool(), &session)
+        .await
+        .unwrap();
     let signed_out = publish_prepared_merge(
         f.pool(),
         &app.state.ci_runs,

@@ -2940,7 +2940,7 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         .store(PNG, "image/png", FileReason::Avatar, FileVisibility::Public)
         .await;
     assert_eq!(
-        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, &db::users::accounts::AccountCredential::Trusted, Some(old))
+        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&fixture.pool, fixture.owner).await), Some(old))
             .await
             .unwrap(),
         db::users::accounts::UserAvatarOutcome::Applied(None)
@@ -2952,7 +2952,7 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         .await
         .unwrap();
     assert!(
-        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, &db::users::accounts::AccountCredential::Trusted, Some(new))
+        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&fixture.pool, fixture.owner).await), Some(new))
             .await
             .is_err()
     );
@@ -2970,7 +2970,7 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
 
     // Otherwise the old row goes with the change, and its bytes are queued.
     assert_eq!(
-        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, &db::users::accounts::AccountCredential::Trusted, Some(new))
+        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&fixture.pool, fixture.owner).await), Some(new))
             .await
             .unwrap(),
         db::users::accounts::UserAvatarOutcome::Applied(Some(old))
@@ -2999,7 +2999,7 @@ async fn a_banned_account_keeps_its_picture() {
         .await
         .unwrap()
         .unwrap();
-    avatars::set_user_avatar(&fixture.pool, &user, &db::users::accounts::AccountCredential::Trusted, old)
+    avatars::set_user_avatar(&fixture.pool, &user, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&fixture.pool, user.id).await), old)
         .await
         .unwrap();
     sqlx::query("UPDATE users SET is_banned=TRUE WHERE id=?1")
@@ -3008,9 +3008,9 @@ async fn a_banned_account_keeps_its_picture() {
         .await
         .unwrap();
 
-    let changed = avatars::set_user_avatar(&fixture.pool, &user, &db::users::accounts::AccountCredential::Trusted, new).await;
+    let changed = avatars::set_user_avatar(&fixture.pool, &user, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&fixture.pool, user.id).await), new).await;
     assert_eq!(changed, Err(AvatarError::Denied));
-    let cleared = avatars::remove_user_avatar(&fixture.pool, &user, &db::users::accounts::AccountCredential::Trusted).await;
+    let cleared = avatars::remove_user_avatar(&fixture.pool, &user, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&fixture.pool, user.id).await)).await;
     assert_eq!(cleared, Err(AvatarError::Denied));
     let pointer: Option<uuid::Uuid> =
         sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id=?1")

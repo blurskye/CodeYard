@@ -485,7 +485,7 @@ async fn discussions(pg: bool) {
     )
     .await
     .unwrap();
-    db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, bob, "Needle comment", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
+    db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, bob, "Needle comment", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), bob).await))
         .await
         .unwrap();
     db::repositories::access::grant_repo_access(

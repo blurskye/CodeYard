@@ -132,7 +132,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 RepositoryTarget::Organization(id) => fine_grained::Owner::Organization(id),
             };
             let grant = fine_grained::grant(pool, request.auth.token.id).await.map_err(unavailable)?.ok_or_else(token_denied)?;
-            if !grant.create_repository(owner) { return Err(token_denied()); }
+            if !grant.creates_repository(owner) { return Err(token_denied()); }
         }
         if let RepositoryTarget::Organization(org) = owner {
             if db::fine_grained_tokens::classic_refused(pool, request.auth.token.id, org).await.map_err(unavailable)? {

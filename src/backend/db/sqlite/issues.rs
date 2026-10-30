@@ -444,7 +444,7 @@ pub async fn add_issue_comment(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::discussions::lock_issue_contribution(&mut tx, author_id, repo_id, issue_id).await?;
     anyhow::ensure!(
-        super::users::transitions::retain_write_credential(&mut tx, author_id, credential).await?,
+        super::users::transitions::credential_live(&mut tx, author_id, credential, true).await?,
         crate::backend::db::users::accounts::AccountRestricted
     );
     let revision: String = sqlx::query_scalar("SELECT updated_at FROM issues WHERE id=?1")
@@ -639,7 +639,7 @@ pub async fn edit_issue_comment(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? { return Ok(None); }
     anyhow::ensure!(
-        super::users::transitions::retain_write_credential(&mut tx, actor_id, credential).await?,
+        super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?,
         crate::backend::db::users::accounts::AccountRestricted
     );
     let writer = super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
@@ -692,7 +692,7 @@ pub async fn delete_issue_comment(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? { return Ok(None); }
     anyhow::ensure!(
-        super::users::transitions::retain_write_credential(&mut tx, actor_id, credential).await?,
+        super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?,
         crate::backend::db::users::accounts::AccountRestricted
     );
     let writer = super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;

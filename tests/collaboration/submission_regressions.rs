@@ -516,7 +516,7 @@ async fn later_page_edit_and_deleted_notifications(pg: bool) {
                 issue["id"].as_i64().unwrap(),
                 author.id,
                 "Existing comment",
-                &codeyard::backend::db::users::accounts::AccountCredential::Trusted,
+                &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(database.pool(), author.id).await),
             )
             .await
             .unwrap(),

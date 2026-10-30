@@ -209,7 +209,7 @@ async fn edit_and_delete_rules(pg: bool) {
         stored.issue_id,
         stored.author_id,
         "After lock",
-        &codeyard::backend::db::users::accounts::AccountCredential::Trusted
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(database.pool(), stored.author_id).await)
     )
     .await
     .is_ok());
@@ -354,7 +354,7 @@ async fn late_notifications_and_long_discussions(pg: bool) {
         .await
         .unwrap();
     assert!(
-        db::issues::delete_issue_comment(pool, alice_id, repo.id, issue_id, comment_id, &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
+        db::issues::delete_issue_comment(pool, alice_id, repo.id, issue_id, comment_id, &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, alice_id).await))
             .await
             .unwrap()
             .is_some()

@@ -407,7 +407,7 @@ async fn contract(pg: bool) {
     .unwrap_err()
     .is::<db::users::accounts::AccountRestricted>());
     assert!(
-        db::users::emails::list_account_emails(f.pool(), alice, &AccountCredential::Trusted)
+        db::users::emails::list_account_emails(f.pool(), alice, &AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await))
             .await
             .unwrap()
             .is_empty()

@@ -24,7 +24,7 @@ async fn authorize(connection: &mut Connection, actor: i64, org: i64) -> Result<
 
 async fn authorize_write(tx: &mut Transaction<'_, Sqlite>, actor: i64, credential: &AccountCredential<'_>, org: i64) -> Result<(), ValueError> {
     authorize(tx, actor, org).await?;
-    if !crate::backend::db::sqlite::users::transitions::retain_write_credential(tx, actor, credential).await.map_err(ValueError::Authority)? {
+    if !crate::backend::db::sqlite::users::transitions::credential_live(tx, actor, credential, true).await.map_err(ValueError::Authority)? {
         return Err(ValueError::Denied);
     }
     Ok(())

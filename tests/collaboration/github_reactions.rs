@@ -30,7 +30,7 @@ async fn reactions(pg: bool) {
     let another = db::issues::create_issue(f.pool(), repo.id, alice, "Another issue", "")
         .await
         .unwrap();
-    let comment = db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, alice, "A comment", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
+    let comment = db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, alice, "A comment", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await))
         .await
         .unwrap();
     let pull = db::pull_requests::records::create_pull_request(

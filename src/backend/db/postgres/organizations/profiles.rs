@@ -49,7 +49,7 @@ pub async fn update_organization_profile(
         return Ok(Denied);
     }
     // The browser session or token that sent the change must still be live when it commits.
-    if !crate::backend::db::postgres::users::transitions::retain_write_credential(&mut tx, actor, credential).await? {
+    if !crate::backend::db::postgres::users::transitions::credential_live(&mut tx, actor, credential, true).await? {
         return Ok(Denied);
     }
     // The authority check locked this row, so an omitted field keeps the value committed

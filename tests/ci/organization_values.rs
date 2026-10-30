@@ -640,7 +640,7 @@ async fn contract(pg: bool) {
             f.pool(),
             None,
             manager,
-            &db::users::accounts::AccountCredential::Trusted,
+            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), manager).await),
             org.id,
             &db::organization_values::Save {
                 kind: db::organization_values::Kind::Variable,
@@ -704,7 +704,7 @@ async fn transfer_selections(pg: bool) {
             f.pool(),
             Some(&encryptor),
             owner,
-            &db::users::accounts::AccountCredential::Trusted,
+            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), owner).await),
             organizations[0].id,
             &Save {
                 kind,
