@@ -190,6 +190,9 @@ async fn save(
         .get("hook_id")
         .map(|_| id(&params, "hook_id"))
         .transpose()?;
+    // A full-hook PATCH replaces the configuration it sends, so an omitted secret is cleared;
+    // without a `config` object it keeps the stored configuration, secret included.
+    let replaces_config = !config_only && input.config.is_some();
     let config = input.config.unwrap_or_default();
     let content_type = match config.content_type.as_deref() {
         Some("json") => Some(settings::JSON_CONTENT_TYPE.to_owned()),
@@ -243,7 +246,7 @@ async fn save(
                 remove_events: input.remove_events.unwrap_or_default(),
                 active: input.active,
                 ssl_verify,
-                secret: if config_only { config.secret } else { Some(config.secret.unwrap_or_default()) },
+                secret: if replaces_config { Some(config.secret.unwrap_or_default()) } else { config.secret },
                 ..Default::default()
             };
             settings::update(

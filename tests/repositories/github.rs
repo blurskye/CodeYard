@@ -1430,6 +1430,29 @@ async fn hooks_contract(pg: bool) {
         StatusCode::OK,
     )
     .await;
+    // A full update without `config` keeps the stored secret; one with `config` replaces the
+    // configuration, so an omitted secret is cleared.
+    for (input, path, kept) in [
+        (json!({"secret":"kept"}), &config_path, true),
+        (json!({"active":true}), &hook_path, true),
+        (json!({"config":{"url":"https://hooks.example.test/push"}}), &hook_path, false),
+    ] {
+        checked(
+            &router,
+            if path == &config_path { "repos/update-webhook-config-for-repo" } else { "repos/update-webhook" },
+            "PATCH",
+            path,
+            Some(&writer),
+            input,
+            StatusCode::OK,
+        )
+        .await;
+        let stored = db::webhooks::get_webhook(f.pool(), db::webhooks::HookOwner::Repository(repo.id), id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.encrypted_secret.is_some(), kept, "{path}");
+    }
     checked(
         &router,
         "repos/create-webhook",

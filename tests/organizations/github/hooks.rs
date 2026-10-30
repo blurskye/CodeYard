@@ -435,6 +435,19 @@ async fn contract(pg: bool) {
     assert_eq!(body["active"], false);
     assert_eq!(body["events"], json!(["issues", "push"]));
     assert_eq!(body["config"]["url"], url);
+    // A full update without `config` keeps the stored secret.
+    let stored = webhooks::get_webhook(f.pool(), HookOwner::Organization(org.id), hook)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        key.decrypt(
+            stored.encrypted_secret.as_ref().unwrap(),
+            stored.secret_nonce.as_ref().unwrap()
+        )
+        .unwrap(),
+        b"original-secret"
+    );
     let (_, body) = request(
         &router,
         "orgs/update-webhook-config-for-org",
@@ -642,6 +655,32 @@ async fn contract(pg: bool) {
         .unwrap();
     assert!(stored.encrypted_secret.is_none());
     assert!(stored.secret_nonce.is_none());
+    // A full update with `config` replaces the configuration, so an omitted secret is cleared.
+    request(
+        &router,
+        "orgs/update-webhook-config-for-org",
+        "PATCH",
+        &format!("{hook_path}/config"),
+        write,
+        json!({"secret":"temporary"}),
+        200,
+    )
+    .await;
+    request(
+        &router,
+        "orgs/update-webhook",
+        "PATCH",
+        &hook_path,
+        write,
+        json!({"config":{"url":url}}),
+        200,
+    )
+    .await;
+    let stored = webhooks::get_webhook(f.pool(), HookOwner::Organization(org.id), hook)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stored.encrypted_secret.is_none());
     request(
         &router,
         "orgs/get-webhook-delivery",

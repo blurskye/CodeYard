@@ -221,8 +221,11 @@ fn parse_patch(value: &Value) -> Result<HookPatch> {
         return Err(Error::validation("Hook", "name", "invalid"));
     }
     let mut patch = config(object.get("config"))?;
-    // A full-hook update clears an omitted secret; config-only PATCH keeps omissions.
-    patch.secret.get_or_insert_with(String::new);
+    // A full-hook update replaces the configuration it sends, so an omitted secret is cleared;
+    // without a `config` object it keeps the stored configuration, secret included.
+    if object.get("config").is_some() {
+        patch.secret.get_or_insert_with(String::new);
+    }
     patch.active = boolean(object, "active")?;
     patch.events = object
         .get("events")
