@@ -7,7 +7,6 @@ use sha2::{Digest, Sha512};
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
-    path::Component,
 };
 
 pub const MAX_LOCK_BYTES: usize = 4 * 1024 * 1024;
@@ -551,7 +550,7 @@ impl Archive {
             let mut entry = entry?;
             let path = entry.path()?.into_owned();
             ensure!(
-                path.components().all(|p| matches!(p, Component::Normal(_)))
+                crate::backend::repositories::imports::archive::safe_path(&path)
                     && path.starts_with("package"),
                 "Unsafe npm archive path"
             );

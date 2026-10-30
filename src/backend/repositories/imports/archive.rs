@@ -14,7 +14,7 @@ use std::{
 };
 
 const MAX_ARCHIVE_BYTES: usize = crate::backend::storage::MAX_OBJECT_BYTES as usize;
-const MAX_UNPACKED_BYTES: u64 = 512 * 1024 * 1024;
+pub(crate) const MAX_UNPACKED_BYTES: u64 = 512 * 1024 * 1024;
 // The export writes archives within these limits too, so every archive it reports as complete
 // can be imported.
 pub(crate) const MAX_METADATA_BYTES: usize = 64 * 1024 * 1024;
@@ -57,7 +57,8 @@ impl<'de> Deserialize<'de> for Records {
     }
 }
 
-fn safe_path(path: &Path) -> bool {
+/// A nonempty relative path of plain names, without roots or traversal.
+pub(crate) fn safe_path(path: &Path) -> bool {
     !path.as_os_str().is_empty()
         && path
             .components()
