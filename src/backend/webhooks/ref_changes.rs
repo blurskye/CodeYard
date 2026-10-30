@@ -46,6 +46,7 @@ pub async fn emit_ref_moves(
             emit_ref_change(pool, repo, events::DELETE, ref_type, name, pusher_id).await;
         }
         let repo_for_hook = repo.clone();
+        let (head_sender, head_receiver) = tokio::sync::oneshot::channel();
         emit(
             pool,
             repo,
@@ -59,6 +60,7 @@ pub async fn emit_ref_moves(
                 } else {
                     payloads::pushed_commits(&push_path, before, &new)
                 };
+                let _ = head_sender.send(commits.head.clone());
                 payloads::push(
                     &reference,
                     &old,
@@ -72,8 +74,13 @@ pub async fn emit_ref_moves(
         )
         .await;
         if let Some((branch, sha)) = check_request {
-            if let Err(error) = crate::backend::api::github::checks::requested_after_push(pool, repo, pusher_id, path, &sha, &branch).await {
-                tracing::warn!(repo_id=repo.id, ?error, "Automatic check suites could not be requested");
+            match head_receiver.await {
+                Ok(Some(head)) => {
+                    if let Err(error) = crate::backend::api::github::checks::requested_after_push(pool, repo, pusher_id, &sha, &branch, &head).await {
+                        tracing::warn!(repo_id=repo.id, ?error, "Automatic check suites could not be requested");
+                    }
+                }
+                _ => tracing::warn!(repo_id=repo.id, "Accepted push head could not be retained for automatic checks"),
             }
         }
     }

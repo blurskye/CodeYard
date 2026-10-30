@@ -7,7 +7,7 @@ use crate::backend::{
         checks::{self, Credential, Filter, Preference, Run, RunPatch, Suite, ACTIONS_APP_ID},
         models::Repository,
     },
-    repositories::store::{repo_store, RepoStore},
+    repositories::store::repo_store,
     webhooks::{self, payloads},
 };
 use axum::{
@@ -110,7 +110,7 @@ async fn suite_document(
         .commit(&suite.head_sha)
         .await
         .map_err(store_error)?;
-    suite_document_at(&state.pool, repo, owner, suite, &commit).await
+    suite_document_at(&state.pool, repo, owner, suite, &payloads::simple_commit(&commit)).await
 }
 
 async fn suite_document_at(
@@ -118,7 +118,7 @@ async fn suite_document_at(
     repo: &Repository,
     owner: &str,
     suite: &Suite,
-    commit: &crate::backend::git::CommitInfo,
+    head_commit: &Value,
 ) -> Result<Value> {
     let count = checks::run_count(
         pool,
@@ -152,36 +152,34 @@ async fn suite_document_at(
         ),
     };
     Ok(
-        json!({"id":suite.id,"node_id":super::node_id::encode("CSU",suite.id),"head_sha":suite.head_sha,"head_branch":suite.head_branch,"status":status,"conclusion":conclusion,"url":url,"before":null,"after":null,"created_at":suite.created_at,"updated_at":suite.updated_at,"repository":payloads::repository(repo,owner),"latest_check_runs_count":count,"check_runs_url":format!("{url}/check-runs"),"app":publisher,"head_commit":{"id":commit.sha,"tree_id":commit.tree_sha,"message":commit.message,"timestamp":chrono::DateTime::from_timestamp(commit.timestamp,0),"author":{"name":commit.author_name,"email":commit.author_email},"committer":{"name":commit.committer_name,"email":commit.committer_email}},"pull_requests":pulls(pool,repo,owner,&suite.head_sha).await?,"rerequestable":true,"runs_rerequestable":true}),
+        json!({"id":suite.id,"node_id":super::node_id::encode("CSU",suite.id),"head_sha":suite.head_sha,"head_branch":suite.head_branch,"status":status,"conclusion":conclusion,"url":url,"before":null,"after":null,"created_at":suite.created_at,"updated_at":suite.updated_at,"repository":payloads::repository(repo,owner),"latest_check_runs_count":count,"check_runs_url":format!("{url}/check-runs"),"app":publisher,"head_commit":head_commit,"pull_requests":pulls(pool,repo,owner,&suite.head_sha).await?,"rerequestable":true,"runs_rerequestable":true}),
     )
 }
 
-/// Runs on the store that accepted the branch publication, including RPC publications.
+/// Uses the bounded head snapshot captured on the store that accepted the publication.
 pub(crate) async fn requested_after_push(
     pool: &db::DbPool,
     repo: &Repository,
     actor: i64,
-    path: &std::path::Path,
     sha: &str,
     branch: &str,
+    head: &payloads::PushedCommit,
 ) -> Result<()> {
+    if !head.id.eq_ignore_ascii_case(sha) {
+        return Err(Error::unavailable("Accepted push did not retain the expected head"));
+    }
+    let head_commit = payloads::pushed_head(head);
     let mut after = 0;
-    let mut context = None;
+    let mut owner = None;
     loop {
         let page = checks::automatic_suites(pool, repo, sha, branch, after).await.map_err(write_error)?;
         after = page.after;
-        if !page.suites.is_empty() && context.is_none() {
-            let owner = db::repositories::records::repository_owner_name(pool, repo.id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
-            let store = match repo.storage_node_id {
-                Some(node) => RepoStore::on_node(path.to_str().ok_or_else(|| Error::unavailable("Repository path is not UTF-8"))?, node),
-                None => repo_store(repo, None),
-            };
-            let commit = store.commit(sha).await.map_err(store_error)?;
-            context = Some((owner, commit));
+        if !page.suites.is_empty() && owner.is_none() {
+            owner = Some(db::repositories::records::repository_owner_name(pool, repo.id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?);
         }
-        if let Some((owner, commit)) = &context {
+        if let Some(owner) = &owner {
             for suite in page.suites {
-                let doc = suite_document_at(pool, repo, owner, &suite, commit).await?;
+                let doc = suite_document_at(pool, repo, owner, &suite, &head_commit).await?;
                 emit_for_pool(pool, repo, actor, "check_suite", "requested", doc).await;
             }
         }

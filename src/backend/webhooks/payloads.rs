@@ -869,11 +869,26 @@ fn git_verification(signature: Option<&str>, payload: Option<&[u8]>) -> Value {
 
 /// GitHub's short commit object, as a workflow run names its head commit.
 pub fn simple_commit(commit: &CommitInfo) -> Value {
+    simple_commit_document(
+        (&commit.sha, &commit.tree_sha, &commit.message), commit.committer_timestamp,
+        (&commit.author_name, &commit.author_email), (&commit.committer_name, &commit.committer_email),
+    )
+}
+
+/// The same short commit from the bounded snapshot already captured for a push event.
+pub fn pushed_head(commit: &PushedCommit) -> Value {
+    simple_commit_document(
+        (&commit.id, &commit.tree_id, &commit.message), commit.committer_time,
+        (&commit.author_name, &commit.author_email), (&commit.committer_name, &commit.committer_email),
+    )
+}
+
+fn simple_commit_document((id, tree_id, message): (&str, &str, &str), timestamp: i64, (author, author_email): (&str, &str), (committer, committer_email): (&str, &str)) -> Value {
     json!({
-        "id": commit.sha, "tree_id": commit.tree_sha, "message": commit.message,
-        "timestamp": chrono::DateTime::from_timestamp(commit.committer_timestamp, 0).map(time),
-        "author": {"name": commit.author_name, "email": commit.author_email},
-        "committer": {"name": commit.committer_name, "email": commit.committer_email},
+        "id": id, "tree_id": tree_id, "message": message,
+        "timestamp": chrono::DateTime::from_timestamp(timestamp, 0).map(time),
+        "author": {"name": author, "email": author_email},
+        "committer": {"name": committer, "email": committer_email},
     })
 }
 
