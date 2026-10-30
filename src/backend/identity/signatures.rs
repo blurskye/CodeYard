@@ -1,7 +1,12 @@
 //! Commit and tag signatures are checked against the signer's registered GPG and SSH signing
 //! keys, and the committer address must be a verified address of the key's owner. The reasons
 //! are GitHub's verification reasons.
-use crate::backend::db::{self, models::User, DbPool};
+use crate::backend::db::{
+    self,
+    models::User,
+    users::{gpg_keys::GpgKey, signing_keys::SigningKeyOwner},
+    DbPool,
+};
 use anyhow::Result;
 use base64::Engine;
 use pgp::{
@@ -10,9 +15,77 @@ use pgp::{
     packet::{Packet, PacketParser, SignatureType},
 };
 use serde_json::{json, Value};
+use std::{collections::HashMap, hash::Hash, sync::Arc};
 
 /// Armored signatures larger than this are not parsed.
 const MAX_SIGNATURE: usize = 64 * 1024;
+
+/// Distinct signers one batch remembers; lookups for further signers are not kept.
+const MAX_REMEMBERED_SIGNERS: usize = 64;
+
+/// Signer lookups shared by one batch of verifications, such as a commit list or a protected
+/// push, so commits signed by one key load that key, its primary key and its owner's
+/// addresses once. Keep one value per request; it does not see key changes made meanwhile.
+#[derive(Default)]
+pub struct Signers {
+    gpg: HashMap<String, Arc<[Arc<GpgKey>]>>,
+    primaries: HashMap<(i64, i64), Option<Arc<GpgKey>>>,
+    ssh: HashMap<String, Option<SigningKeyOwner>>,
+    owners: HashMap<i64, Option<Arc<[(String, bool)]>>>,
+}
+
+fn remember<K: Eq + Hash, V>(map: &mut HashMap<K, V>, key: K, value: V) {
+    if map.len() < MAX_REMEMBERED_SIGNERS {
+        map.insert(key, value);
+    }
+}
+
+impl Signers {
+    async fn gpg_keys(&mut self, pool: &DbPool, issuer: &str) -> Result<Arc<[Arc<GpgKey>]>> {
+        if let Some(keys) = self.gpg.get(issuer) {
+            return Ok(keys.clone());
+        }
+        let keys: Arc<[Arc<GpgKey>]> = db::users::gpg_keys::find_signing_keys(pool, issuer)
+            .await?
+            .into_iter()
+            .map(Arc::new)
+            .collect();
+        remember(&mut self.gpg, issuer.to_owned(), keys.clone());
+        Ok(keys)
+    }
+
+    async fn primary(&mut self, pool: &DbPool, user: i64, id: i64) -> Result<Option<Arc<GpgKey>>> {
+        if let Some(key) = self.primaries.get(&(user, id)) {
+            return Ok(key.clone());
+        }
+        let key = db::users::gpg_keys::get_gpg_key(pool, user, id).await?.map(Arc::new);
+        remember(&mut self.primaries, (user, id), key.clone());
+        Ok(key)
+    }
+
+    async fn ssh_key(&mut self, pool: &DbPool, fingerprint: &str) -> Result<Option<SigningKeyOwner>> {
+        if let Some(key) = self.ssh.get(fingerprint) {
+            return Ok(key.clone());
+        }
+        let key = db::users::signing_keys::find_signing_key(pool, fingerprint).await?;
+        remember(&mut self.ssh, fingerprint.to_owned(), key.clone());
+        Ok(key)
+    }
+
+    /// The owner's addresses, or None when the account no longer exists.
+    async fn owner_addresses(&mut self, pool: &DbPool, owner: i64) -> Result<Option<Arc<[(String, bool)]>>> {
+        if let Some(addresses) = self.owners.get(&owner) {
+            return Ok(addresses.clone());
+        }
+        let found: Option<Arc<[(String, bool)]>> =
+            match db::users::accounts::get_user_by_id(pool, owner).await? {
+                Some(user) => Some(addresses(pool, &user).await?.into()),
+                None => None,
+            };
+        remember(&mut self.owners, owner, found.clone());
+        Ok(found)
+    }
+}
 
 /// A signed Git object: its signature, the bytes the signature covers, and the committer's or
 /// tagger's address.
@@ -24,8 +97,8 @@ pub struct Signed<'a> {
 }
 
 /// The `verification` object of commit and tag documents.
-pub async fn verification(pool: &DbPool, signed: Signed<'_>) -> Result<Value> {
-    let (reason, verified_at) = recorded_check(pool, signed).await?;
+pub async fn verification(pool: &DbPool, signers: &mut Signers, signed: Signed<'_>) -> Result<Value> {
+    let (reason, verified_at) = recorded_check(pool, signers, signed).await?;
     let verified = reason == "valid";
     Ok(json!({
         "verified": verified, "reason": reason,
@@ -35,8 +108,8 @@ pub async fn verification(pool: &DbPool, signed: Signed<'_>) -> Result<Value> {
 }
 
 /// GitHub's verification reason; `valid` is the only verified one.
-pub async fn check(pool: &DbPool, signed: Signed<'_>) -> Result<&'static str> {
-    Ok(recorded_check(pool, signed).await?.0)
+pub async fn check(pool: &DbPool, signers: &mut Signers, signed: Signed<'_>) -> Result<&'static str> {
+    Ok(recorded_check(pool, signers, signed).await?.0)
 }
 
 fn input_hash(signed: Signed<'_>) -> Option<String> {
@@ -54,14 +127,14 @@ fn input_hash(signed: Signed<'_>) -> Option<String> {
     Some(hex::encode(hash.finalize()))
 }
 
-async fn recorded_check(pool: &DbPool, signed: Signed<'_>) -> Result<(&'static str, Option<chrono::DateTime<chrono::Utc>>)> {
+async fn recorded_check(pool: &DbPool, signers: &mut Signers, signed: Signed<'_>) -> Result<(&'static str, Option<chrono::DateTime<chrono::Utc>>)> {
     let input = input_hash(signed);
     if let Some(input) = &input {
         if let Some(at) = db::signature_verifications::verified_at(pool, input).await? {
             return Ok(("valid", Some(at)));
         }
     }
-    let reason = check_current(pool, signed).await?;
+    let reason = check_current(pool, signers, signed).await?;
     let at = match (reason, input) {
         ("valid", Some(input)) => Some(db::signature_verifications::record_verified(pool, &input).await?),
         _ => None,
@@ -69,7 +142,7 @@ async fn recorded_check(pool: &DbPool, signed: Signed<'_>) -> Result<(&'static s
     Ok((reason, at))
 }
 
-async fn check_current(pool: &DbPool, signed: Signed<'_>) -> Result<&'static str> {
+async fn check_current(pool: &DbPool, signers: &mut Signers, signed: Signed<'_>) -> Result<&'static str> {
     let Some(signature) = signed.signature else {
         return Ok("unsigned");
     };
@@ -82,9 +155,9 @@ async fn check_current(pool: &DbPool, signed: Signed<'_>) -> Result<&'static str
     let email = signed.email.unwrap_or_default();
     let armored = signature.trim();
     if armored.starts_with("-----BEGIN PGP SIGNATURE-----") {
-        gpg(pool, armored, payload, email).await
+        gpg(pool, signers, armored, payload, email).await
     } else if armored.starts_with("-----BEGIN SSH SIGNATURE-----") {
-        ssh(pool, armored, payload, email).await
+        ssh(pool, signers, armored, payload, email).await
     } else if armored.starts_with("-----BEGIN SIGNED MESSAGE-----") {
         Ok("unknown_signature_type")
     } else {
@@ -110,16 +183,15 @@ pub async fn addresses(pool: &DbPool, user: &User) -> Result<Vec<(String, bool)>
     Ok(addresses)
 }
 
-async fn owner_address(pool: &DbPool, owner: i64, email: &str) -> Result<&'static str> {
-    let Some(user) = db::users::accounts::get_user_by_id(pool, owner).await? else {
+async fn owner_address(pool: &DbPool, signers: &mut Signers, owner: i64, email: &str) -> Result<&'static str> {
+    let Some(addresses) = signers.owner_addresses(pool, owner).await? else {
         return Ok("no_user");
     };
-    let matches: Vec<bool> = addresses(pool, &user)
-        .await?
-        .into_iter()
+    let matches: Vec<bool> = addresses
+        .iter()
         // Generated addresses name a username, which account lookup matches exactly.
         .filter(|(address, _)| super::credentials::email_matches(address, email))
-        .map(|(_, verified)| verified)
+        .map(|(_, verified)| *verified)
         .collect();
     // A verified match wins even when an unverified entry with the same text comes first.
     Ok(if matches.iter().any(|verified| *verified) {
@@ -142,7 +214,7 @@ fn pgp_verifies(signature: &DetachedSignature, public_key: &str, payload: &[u8])
     }
 }
 
-async fn gpg(pool: &DbPool, armored: &str, payload: &[u8], email: &str) -> Result<&'static str> {
+async fn gpg(pool: &DbPool, signers: &mut Signers, armored: &str, payload: &[u8], email: &str) -> Result<&'static str> {
     let armored = armored.to_owned();
     let Some(signature) = super::gpg::crypto(move || DetachedSignature::from_string(&armored).ok().map(|(signature, _)| signature)).await? else {
         return Ok("malformed_signature");
@@ -163,20 +235,22 @@ async fn gpg(pool: &DbPool, armored: &str, payload: &[u8], email: &str) -> Resul
             None => return Ok("malformed_signature"),
         },
     };
-    let keys = db::users::gpg_keys::find_signing_keys(pool, &issuer).await?;
+    let keys = signers.gpg_keys(pool, &issuer).await?;
     if keys.is_empty() {
         return Ok("unknown_key");
     }
     let signed_at = signature.signature.created().map(|created| i64::from(created.as_secs()));
     let payload = payload.to_owned();
-    let Some(key) = super::gpg::crypto(move || keys.into_iter()
-        .find(|key| pgp_verifies(&signature, &key.material.public_key, &payload))).await?
+    let candidates = keys.clone();
+    let Some(index) = super::gpg::crypto(move || candidates.iter()
+        .position(|key| pgp_verifies(&signature, &key.material.public_key, &payload))).await?
     else {
         return Ok("invalid");
     };
+    let key = keys[index].clone();
     // Identities and revocation of the whole certificate live on the primary key.
     let primary = match key.primary_key_id {
-        Some(id) => match db::users::gpg_keys::get_gpg_key(pool, key.user_id, id).await? {
+        Some(id) => match signers.primary(pool, key.user_id, id).await? {
             Some(primary) => primary,
             None => return Ok("unknown_key"),
         },
@@ -194,15 +268,16 @@ async fn gpg(pool: &DbPool, armored: &str, payload: &[u8], email: &str) -> Resul
     if expired(key.material.expires_at) || expired(primary.material.expires_at) {
         return Ok("expired_key");
     }
-    let Some((raw, at)) = primary.material.raw_key.zip(signed_at) else { return Ok("bad_email") };
+    let Some(at) = signed_at.filter(|_| primary.material.raw_key.is_some()) else { return Ok("bad_email") };
     let identity = email.to_owned();
-    if !super::gpg::crypto(move || super::gpg::certifies_email(&raw, &identity, at)).await? {
+    if !super::gpg::crypto(move || primary.material.raw_key.as_deref()
+        .is_some_and(|raw| super::gpg::certifies_email(raw, &identity, at))).await? {
         return Ok("bad_email");
     }
-    owner_address(pool, key.user_id, email).await
+    owner_address(pool, signers, key.user_id, email).await
 }
 
-async fn ssh(pool: &DbPool, armored: &str, payload: &[u8], email: &str) -> Result<&'static str> {
+async fn ssh(pool: &DbPool, signers: &mut Signers, armored: &str, payload: &[u8], email: &str) -> Result<&'static str> {
     let armored = armored.to_owned();
     let Some(signature) = super::gpg::crypto(move || ssh_key::SshSig::from_pem(&armored).ok()).await? else {
         return Ok("malformed_signature");
@@ -215,7 +290,7 @@ async fn ssh(pool: &DbPool, armored: &str, payload: &[u8], email: &str) -> Resul
         .public_key()
         .fingerprint(ssh_key::HashAlg::Sha256)
         .to_string();
-    let Some(key) = db::users::signing_keys::find_signing_key(pool, &fingerprint).await? else {
+    let Some(key) = signers.ssh_key(pool, &fingerprint).await? else {
         return Ok("unknown_key");
     };
     let public = key.key.clone();
@@ -224,5 +299,5 @@ async fn ssh(pool: &DbPool, armored: &str, payload: &[u8], email: &str) -> Resul
         .is_ok_and(|public_key| public_key.verify("git", &payload, &signature).is_ok())).await? {
         return Ok("invalid");
     }
-    owner_address(pool, key.user_id, email).await
+    owner_address(pool, signers, key.user_id, email).await
 }

@@ -24,6 +24,7 @@ use std::{collections::HashMap, sync::Arc};
 /// The Git commit document, with its signature checked against the signer's keys.
 pub(super) async fn git_document(
     state: &AppState,
+    signers: &mut crate::backend::identity::signatures::Signers,
     commit: &CommitInfo,
     owner: &str,
     name: &str,
@@ -31,6 +32,7 @@ pub(super) async fn git_document(
     let mut value = commit_json(commit, owner, name);
     value["verification"] = crate::backend::identity::signatures::verification(
         &state.pool,
+        signers,
         crate::backend::identity::signatures::Signed {
             signature: commit.signature.as_deref(),
             payload: commit.signature_payload.as_deref(),
@@ -92,10 +94,11 @@ pub(super) async fn documents(
         .map(|(email, user)| (email, Person::of(&user)))
         .collect();
     let mut values = Vec::with_capacity(commits.len());
+    let mut signers = crate::backend::identity::signatures::Signers::default();
     for commit in commits {
         values.push(document(
             commit,
-            git_document(state, commit, owner, name).await?,
+            git_document(state, &mut signers, commit, owner, name).await?,
             owner,
             name,
             counts.get(&commit.sha).copied().unwrap_or(0),
@@ -151,7 +154,7 @@ async fn read(
     let store = repo_store(&repo, state.cluster.as_ref());
     let commit = store.commit(reference).await.map_err(store_error)?;
     if route.as_str().contains("/git/commits/") {
-        return Ok(Json(git_document(&state, &commit, owner, name).await?).into_response());
+        return Ok(Json(git_document(&state, &mut Default::default(), &commit, owner, name).await?).into_response());
     }
     let diff = store.commit_diff(&commit.sha).await.map_err(store_error)?;
     if let Some(media) = super::diff_media::requested(&headers) {

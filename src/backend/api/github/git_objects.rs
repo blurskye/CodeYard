@@ -40,6 +40,7 @@ async fn tag_document(state: &AppState, tag: TagObject, owner: &str, name: &str)
     let url = repo_url(owner, name);
     let verification = crate::backend::identity::signatures::verification(
         &state.pool,
+        &mut Default::default(),
         crate::backend::identity::signatures::Signed {
             signature: tag.signature.as_deref(),
             payload: tag.signature_payload.as_deref(),
@@ -236,7 +237,7 @@ async fn create_commit(
     let commit = store.commit(&sha).await.map_err(store_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(super::commits::git_document(&state, &commit, &owner, &name).await?),
+        Json(super::commits::git_document(&state, &mut Default::default(), &commit, &owner, &name).await?),
     )
         .into_response())
 }
