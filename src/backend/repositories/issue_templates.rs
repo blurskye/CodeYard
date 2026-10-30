@@ -173,7 +173,7 @@ fn is_template_name(name: &str) -> bool {
         || ((name.ends_with(".yml") || name.ends_with(".yaml")) && !name.starts_with("config."))
 }
 
-fn template_paths(entries: Vec<super::store::TreeEntry>) -> Vec<String> {
+pub(super) fn template_paths(entries: Vec<super::store::TreeEntry>) -> Vec<String> {
     let mut paths: Vec<String> = entries
         .into_iter()
         .filter(|entry| entry.entry_type == "file" && is_template_name(&entry.name))

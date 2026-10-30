@@ -230,7 +230,12 @@ async fn discover(
                     profile.pull_request_template = Some(candidate)
                 }
                 ("issuetemplate", "dir") if profile.issue_templates.is_none() => {
-                    profile.issue_templates = Some(candidate)
+                    // Only a directory with a template the issue form offers counts; a lone
+                    // config.yml offers none.
+                    let entries = store.tree_metadata(reference, &entry.path).await?;
+                    if !super::issue_templates::template_paths(entries).is_empty() {
+                        profile.issue_templates = Some(candidate)
+                    }
                 }
                 ("pullrequesttemplate", "dir") if profile.pull_request_templates.is_none() => {
                     profile.pull_request_templates = Some(candidate)
