@@ -9,8 +9,9 @@ pub async fn issue_token(pool: &PgPool, run_id: i64, hash: &str, backend_id: &st
     Ok(())
 }
 
+// Default and base branches use the scope that a push of that branch stores (ci::push::branch_name).
 pub async fn authenticate(pool: &PgPool, hash: &str) -> Result<Option<RuntimeRun>> {
-    Ok(sqlx::query_as("SELECT r.id,r.repo_id,t.backend_id,CASE WHEN r.event='pull_request' THEN 'refs/pull/' || COALESCE(CAST(pr.number AS TEXT),CAST(r.id AS TEXT)) || '/merge' ELSE r.branch END AS branch,CASE WHEN r.event='pull_request' THEN COALESCE(r.pull_request_event->>'base_ref',pr.base_branch) END AS base_branch,p.default_branch,r.is_fork FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id JOIN repositories p ON p.id=r.repo_id LEFT JOIN pull_requests pr ON pr.id=r.pull_request_id WHERE t.token_hash=$1 AND (r.status='running' OR r.completed_at > NOW() - INTERVAL '5 minutes')")
+    Ok(sqlx::query_as("SELECT r.id,r.repo_id,t.backend_id,CASE WHEN r.event='pull_request' THEN 'refs/pull/' || COALESCE(CAST(pr.number AS TEXT),CAST(r.id AS TEXT)) || '/merge' ELSE r.branch END AS branch,CASE WHEN r.event='pull_request' THEN (SELECT CASE WHEN substr(b.name,1,5)='refs/' THEN 'refs/heads/' || b.name ELSE b.name END FROM (SELECT COALESCE(r.pull_request_event->>'base_ref',pr.base_branch) AS name) b) END AS base_branch,CASE WHEN substr(p.default_branch,1,5)='refs/' THEN 'refs/heads/' || p.default_branch ELSE p.default_branch END AS default_branch,r.is_fork FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id JOIN repositories p ON p.id=r.repo_id LEFT JOIN pull_requests pr ON pr.id=r.pull_request_id WHERE t.token_hash=$1 AND (r.status='running' OR r.completed_at > NOW() - INTERVAL '5 minutes')")
         .bind(hash).fetch_optional(pool).await?)
 }
 
