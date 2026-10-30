@@ -139,8 +139,8 @@ pub async fn issue(
     let workflow_ref = format!("{repository}/{root_path}@{reference}");
     let workflow_sha = run.workflow_sha.as_ref().or(run.head_sha.as_ref());
     // A called job names the workflow it calls. Its repository, path, ref and commit come from the
-    // snapshot admission stored for that file.
-    let called_workflow = match run
+    // snapshot admission stored for that file. Any other job names its own root file, as on GitHub.
+    let (job_workflow_ref, job_workflow_sha) = match run
         .workflow_blobs
         .get(job.workflow.as_str())
         .filter(|snapshot| snapshot.is_object() && job.workflow != root_path)
@@ -162,12 +162,12 @@ pub async fn issue(
                 .as_str()
                 .or(snapshot["ref"].as_str())
                 .unwrap_or(reference.as_str());
-            Some((
+            (
                 format!("{source_owner}/{}/{path}@{called_ref}", source.name),
                 snapshot["sha"].as_str().map(str::to_owned),
-            ))
+            )
         }
-        None => None,
+        None => (workflow_ref.clone(), workflow_sha.cloned()),
     };
     let mut claims = json!({
         "iss":issuer,"sub":format!("repo:{}:{context}",escape(&repository)),
@@ -177,16 +177,13 @@ pub async fn issue(
         "repository_owner":owner,"repository_id":repo.id.to_string(),"repository_owner_id":owner_identifier(&repo.owner_kind, repo.owner_id()),
         "actor":actor.username,"actor_id":actor.id.to_string(),"workflow":job.workflow_name,
         "workflow_ref":workflow_ref,"workflow_sha":workflow_sha,
+        "job_workflow_ref":job_workflow_ref,"job_workflow_sha":job_workflow_sha,
         "event_name":run.event,"ref_type":if reference.starts_with("refs/tags/") {"tag"} else {"branch"},
         "run_id":run.workflow_run_id.unwrap_or(run.id).to_string(),
         "run_number":run.workflow_run_number.unwrap_or(run.id).to_string(),
         "run_attempt":run.workflow_run_attempt.unwrap_or(run.attempt).to_string(),
         "runner_environment":"self-hosted","repository_visibility":if repo.is_private {"private"} else {"public"}
     });
-    if let Some((reference, sha)) = called_workflow {
-        claims["job_workflow_ref"] = json!(reference);
-        claims["job_workflow_sha"] = json!(sha);
-    }
     if let Some(environment) = job.environment {
         claims["environment"] = json!(environment);
     }

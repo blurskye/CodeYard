@@ -140,8 +140,9 @@ async fn contract(pg: bool) {
     assert_eq!(claims["sha"], sha);
     assert_eq!(claims["workflow"], "Identity");
     assert_eq!(claims["workflow_sha"], sha);
-    assert!(claims.get("job_workflow_sha").is_none());
-    assert!(claims.get("job_workflow_ref").is_none());
+    // An ordinary job names its own workflow file, as GitHub does.
+    assert_eq!(claims["job_workflow_sha"], sha);
+    assert_eq!(claims["job_workflow_ref"], claims["workflow_ref"]);
     assert_eq!(claims["ref_type"], "branch");
     assert_eq!(
         claims["run_id"],
