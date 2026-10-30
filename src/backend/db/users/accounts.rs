@@ -101,6 +101,18 @@ native_operation!(crate::backend::db::postgres::users::accounts::get_users_by_em
     crate::backend::db::sqlite::users::accounts::get_users_by_emails,
     fn get_users_by_emails(pool: &DbPool, emails: &[String]) -> Result<Vec<User>>);
 
+/// An input Git address and its selected account from the same statement snapshot.
+#[derive(sqlx::FromRow)]
+pub struct CommitAuthor {
+    pub address: String,
+    #[sqlx(flatten)]
+    pub user: User,
+}
+
+native_operation!(crate::backend::db::postgres::users::accounts::commit_authors,
+    crate::backend::db::sqlite::users::accounts::commit_authors,
+    fn commit_authors(pool: &DbPool, emails: &[String]) -> Result<Vec<CommitAuthor>>);
+
 native_operation!(crate::backend::db::postgres::users::accounts::get_verified_email_owners,
     crate::backend::db::sqlite::users::accounts::get_verified_email_owners,
     fn get_verified_email_owners(pool: &DbPool, emails: &[String]) -> Result<Vec<(String, i64)>>);

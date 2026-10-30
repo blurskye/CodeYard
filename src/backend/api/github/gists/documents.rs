@@ -86,13 +86,14 @@ pub(super) async fn history(
         )
         .await
         .map_err(failure_store)?;
+    let emails = revisions.iter().map(|revision| revision.author_email.clone()).collect::<Vec<_>>();
+    let authors = crate::backend::repositories::reads::commit_authors(&state.pool, &emails)
+        .await
+        .map_err(Error::unavailable)?;
     let mut entries = Vec::new();
     for revision in revisions {
-        let author = db::gists::commit_user(&state.pool, &revision.author_email)
-            .await
-            .map_err(Error::unavailable)?;
         entries.push(
-            payloads::gist_revision(&loaded.gist.id, &revision, author.as_ref())
+            payloads::gist_revision(&loaded.gist.id, &revision, authors.get(&revision.author_email))
                 .map_err(failure_store)?,
         );
     }

@@ -3,7 +3,7 @@ use crate::backend::db::{
         validate_comment, Admission, Comment, Gist, GistList, GistRefusal, ListScope, NewGist,
         PendingWrite,
     },
-    models::{Repository, User},
+    models::Repository,
     users::accounts::AccountCredential,
 };
 use anyhow::Result;
@@ -431,7 +431,4 @@ pub async fn change_comment(
     };
     tx.commit().await?;
     Ok(comment)
-}
-pub async fn commit_user(pool: &SqlitePool, email: &str) -> Result<Option<User>> {
-    Ok(sqlx::query_as("SELECT u.* FROM users u WHERE NOT u.is_banned AND (LOWER(u.username||'@users.noreply')=LOWER(?1) OR (u.email_verified AND LOWER(u.email)=LOWER(?1)) OR EXISTS(SELECT 1 FROM user_emails e WHERE e.user_id=u.id AND e.verified AND LOWER(e.email)=LOWER(?1))) ORDER BY (LOWER(u.username||'@users.noreply')=LOWER(?1)) DESC,u.id LIMIT 1").bind(email).fetch_optional(pool).await?)
 }

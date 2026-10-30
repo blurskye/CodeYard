@@ -1,4 +1,5 @@
 use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, AdminUser, User};
+use crate::backend::db::users::accounts::CommitAuthor;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -125,6 +126,33 @@ pub async fn get_users_by_emails(pool: &SqlitePool, emails: &[String]) -> Result
             .fetch_all(pool)
             .await?,
     )
+}
+
+/// Git attribution prefers the account's noreply identity, then verified addresses, with
+/// the lowest account ID resolving legacy duplicate claims. Banned accounts never attribute.
+pub async fn commit_authors(pool: &SqlitePool, emails: &[String]) -> Result<Vec<CommitAuthor>> {
+    if emails.is_empty() { return Ok(Vec::new()); }
+    Ok(sqlx::query_as(
+        "WITH requested AS (
+            SELECT DISTINCT value AS address, LOWER(value) AS normalized FROM json_each(?1)
+         ), candidates AS (
+            SELECT a.address, u.id, 0 AS priority FROM requested a
+                JOIN users u ON LOWER(u.username || '@users.noreply')=a.normalized
+            UNION ALL
+            SELECT a.address, u.id, 1 AS priority FROM requested a
+                JOIN users u ON u.email_verified AND LOWER(u.email)=a.normalized
+            UNION ALL
+            SELECT a.address, e.user_id AS id, 1 AS priority FROM requested a
+                JOIN user_emails e ON e.verified AND LOWER(e.email)=a.normalized
+         ), ranked AS (
+            SELECT c.address, c.id, ROW_NUMBER() OVER (PARTITION BY c.address ORDER BY c.priority,c.id) AS ordinal
+            FROM candidates c JOIN users u ON u.id=c.id WHERE NOT u.is_banned
+         )
+         SELECT ranked.address, u.* FROM ranked JOIN users u ON u.id=ranked.id WHERE ranked.ordinal=1",
+    )
+    .bind(serde_json::to_string(emails)?)
+    .fetch_all(pool)
+    .await?)
 }
 
 /// The verified owner of each address, as `(address, user id)`. Primary and secondary addresses

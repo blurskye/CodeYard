@@ -1,6 +1,6 @@
 //! Gist metadata, live account authority and durable Git-publication admission.
 use super::{
-    models::{Repository, User},
+    models::Repository,
     users::accounts::AccountCredential,
     DbPool,
 };
@@ -118,8 +118,6 @@ native_operation!(crate::backend::db::postgres::gists::create_comment,crate::bac
     fn create_comment(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,repo:i64,body:&str) -> Result<Comment>);
 native_operation!(crate::backend::db::postgres::gists::change_comment,crate::backend::db::sqlite::gists::change_comment,
     fn change_comment(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,repo:i64,id:i64,body:Option<&str>) -> Result<Comment>);
-native_operation!(crate::backend::db::postgres::gists::commit_user,crate::backend::db::sqlite::gists::commit_user,
-    fn commit_user(pool:&DbPool,email:&str) -> Result<Option<User>>);
 
 native_operation!(crate::backend::db::postgres::gists::comment_position,crate::backend::db::sqlite::gists::comment_position,
     fn comment_position(pool:&DbPool,repo:i64,id:i64) -> Result<i64>);
