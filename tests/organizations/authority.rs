@@ -3036,7 +3036,7 @@ async fn postgres_account_transition_includes_a_concurrent_owner_promotion() {
 // first, the acknowledged removal must leave no membership behind.
 async fn removal_and_acceptance_race_leaves_no_member(database: &Database) {
     let owner = database.actor("race_owner").await;
-    let org = database.org(owner, "race_org").await;
+    let org = database.org(owner, "removal_race_org").await;
     for round in 0..8 {
         let invitee = database.actor(&format!("race_invitee_{round}")).await;
         applied(
