@@ -6,7 +6,18 @@ use crate::backend::{
     },
 };
 use serde_json::Value;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
+
+async fn authorized(pool: &PgPool, actor: crate::backend::db::users::tokens::Actor, org: i64) -> Result<Transaction<'_, Postgres>, RegistryError> {
+    let mut tx = super::dependabot::authorized(pool, actor.user_id, org).await?;
+    if let Some(token) = actor.token_id {
+        if !super::users::tokens::permits_write(&mut tx, actor.user_id, token, None, Some(org), "organization_administration")
+            .await.map_err(SecretsError::Authority)? {
+            return Err(SecretsError::Denied.into());
+        }
+    }
+    Ok(tx)
+}
 
 pub async fn list(pool: &PgPool, actor: i64, org: i64) -> Result<Vec<Registry>, RegistryError> {
     let mut tx = super::dependabot::authorized(pool, actor, org).await?;
@@ -28,13 +39,13 @@ pub async fn list(pool: &PgPool, actor: i64, org: i64) -> Result<Vec<Registry>, 
 pub async fn save(
     pool: &PgPool,
     encryptor: Option<&SecretEncryptor>,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     name: Option<&str>,
     input: &Value,
     value: Option<&str>,
 ) -> Result<Registry, RegistryError> {
-    let mut tx = super::dependabot::authorized(pool, actor, org).await?;
+    let mut tx = authorized(pool, actor.into(), org).await?;
     let stored: Option<String> = match name {
         Some(name) => Some(
             sqlx::query_scalar(
@@ -90,8 +101,8 @@ pub async fn save(
     Ok(registry)
 }
 
-pub async fn delete(pool: &PgPool, actor: i64, org: i64, name: &str) -> Result<(), RegistryError> {
-    let mut tx = super::dependabot::authorized(pool, actor, org).await?;
+pub async fn delete(pool: &PgPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, name: &str) -> Result<(), RegistryError> {
+    let mut tx = authorized(pool, actor.into(), org).await?;
     let deleted = sqlx::query("DELETE FROM org_private_registries WHERE org_id=$1 AND name=$2")
         .bind(org)
         .bind(name)
