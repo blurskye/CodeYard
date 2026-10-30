@@ -46,7 +46,7 @@ async fn check_refused(pool: &DbPool, change: &str, message: &str) {
 
 const WRONG_CHECKSUM: &str = "UPDATE {ledger} SET sha256='wrong' WHERE version=1";
 const NEWER_VERSION: &str =
-    "INSERT INTO {ledger}(version,name,sha256) VALUES (3,'later','unknown')";
+    "INSERT INTO {ledger}(version,name,sha256) VALUES (2,'later','unknown')";
 
 #[tokio::test]
 async fn sqlite_wrong_checksum_is_refused_without_changes() {
