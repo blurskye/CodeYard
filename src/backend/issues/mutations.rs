@@ -161,17 +161,6 @@ pub async fn update_issue(
         super::require_write(pool, &user, &repository).await?;
     }
 
-    if req.state_reason.as_deref().is_some_and(|reason| {
-        !matches!(
-            reason,
-            "completed" | "not_planned" | "reopened" | "duplicate"
-        )
-    }) {
-        return Err(OperationError::Invalid {
-            code: "validation_error",
-            message: "Invalid state reason".into(),
-        });
-    }
     let requested_state = match req.state.as_deref() {
         Some("open") | Some("closed") => req.state.as_deref(),
         Some(_) => {
@@ -182,6 +171,12 @@ pub async fn update_issue(
         }
         None => None,
     };
+    if !db::issues::valid_state_reason(requested_state.unwrap_or(&existing.state), req.state_reason.as_deref()) {
+        return Err(OperationError::Invalid {
+            code: "validation_error",
+            message: "Invalid state reason".into(),
+        });
+    }
 
     let expected_updated = req
         .expected_updated
