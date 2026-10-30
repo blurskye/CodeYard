@@ -417,15 +417,15 @@ pub fn validate_branch_pattern(pattern: &str) -> Result<(), ProtectionWriteRefus
     Ok(())
 }
 
-/// Whether `pattern` names `branch`. A pattern without `*` or `?` is a plain name and is only
-/// compared. A wildcard pattern is matched within `budget`, and running out of it is an error,
+/// Whether `pattern` names `branch`. A pattern without `*`, `?` or `[` is a plain name and is only
+/// compared (Git ref names cannot contain those characters). A wildcard pattern is matched within `budget`, and running out of it is an error,
 /// never a non-match.
 pub(crate) fn branch_pattern_matches(
     pattern: &str,
     branch: &str,
     budget: &mut WorkflowMatchBudget,
 ) -> std::result::Result<bool, WorkflowMatchLimit> {
-    if !pattern.contains(['*', '?']) {
+    if !pattern.contains(['*', '?', '[']) {
         return Ok(pattern == branch);
     }
     github_glob_matches_bounded(pattern, branch, budget)

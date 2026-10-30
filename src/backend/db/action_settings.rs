@@ -36,6 +36,10 @@ pub enum Refusal {
 }
 
 impl Setting {
+    pub(crate) fn organization_permission(self) -> &'static str {
+        if matches!(self, Self::Runners) { "organization_self_hosted_runners" } else { "organization_administration" }
+    }
+
     pub fn key(self) -> &'static str {
         match self {
             Self::Allowed => "selected-actions",
@@ -101,11 +105,7 @@ impl Setting {
                     .is_some_and(|days| (1..=maximum).contains(&days)),
                 (Self::ContributorApproval, "approval_policy") => enumeration(
                     value,
-                    &[
-                        "first_time_contributors_new_to_github",
-                        "first_time_contributors",
-                        "all_external_contributors",
-                    ],
+                    &["all_external_contributors"],
                 ),
                 (Self::Workflow, "default_workflow_permissions") => {
                     enumeration(value, &["read", "write"])
@@ -143,7 +143,7 @@ impl Setting {
         let mut value = stored
             .get(self.key())
             .cloned()
-            .unwrap_or_else(|| self.defaults());
+            .unwrap_or_else(|| if matches!(self, Self::Workflow) { json!({}) } else { self.defaults() });
         for (key, field) in fields {
             value[key] = field.clone();
         }
@@ -230,15 +230,37 @@ pub fn retention(repo: &Value, org: &Value, site: Option<i32>, private: bool) ->
         .min(if private { 365 } else { 90 }) as i32
 }
 
+/// Response defaults must not become persisted overrides of inherited settings.
+pub(crate) fn resolved(mut stored: Value, parent: &Value, site: &super::actions::ActionsSettings, private: bool, maximum: i64) -> Value {
+    let days = retention(&stored, parent, site.artifact_retention_days, private);
+    let write = workflow_write(&stored, parent, site.default_workflow_permissions == "permissive");
+    let approve = can_approve_reviews(&stored, parent);
+    stored[Setting::Retention.key()] = json!({"days":days,"maximum_allowed_days":maximum});
+    if stored.get(Setting::Workflow.key()).is_none() { stored[Setting::Workflow.key()] = json!({}); }
+    stored[Setting::Workflow.key()]["default_workflow_permissions"] = json!(if write { "write" } else { "read" });
+    stored[Setting::Workflow.key()]["can_approve_pull_request_reviews"] = json!(approve);
+    // Older unsupported contributor policies have always executed conservatively. Report
+    // that actual behavior, and reject new attempts to select an unenforced policy.
+    if stored[Setting::ContributorApproval.key()]["approval_policy"].as_str().is_some_and(|policy| policy != "all_external_contributors") {
+        stored[Setting::ContributorApproval.key()] = Setting::ContributorApproval.defaults();
+    }
+    stored
+}
+
 native_operation!(crate::backend::db::postgres::action_settings::settings,
     crate::backend::db::sqlite::action_settings::settings,
-    fn settings(pool: &DbPool, actor: i64, scope: &Scope, update: Option<(Setting, &Value)>) -> Result<Value>);
+    fn settings(pool: &DbPool, actor: impl Into<super::credentials::Actor>, scope: &Scope, setting: Setting, update: Option<&Value>) -> Result<Value>);
 native_operation!(crate::backend::db::postgres::action_settings::effective,
     crate::backend::db::sqlite::action_settings::effective,
     fn effective(pool: &DbPool, repo: i64) -> Result<(Value, Value)>);
 native_operation!(crate::backend::db::postgres::action_settings::policies,
     crate::backend::db::sqlite::action_settings::policies,
-    fn policies(pool: &DbPool, actor: i64, scope: &Scope, id: Option<i64>, change: Option<Option<&Value>>) -> Result<Vec<Policy>>);
+    fn policies(pool: &DbPool, actor: impl Into<super::credentials::Actor>, scope: &Scope, id: Option<i64>, change: Option<Option<&Value>>, offset: i64, limit: i64) -> Result<PolicyPage>);
+
+pub struct PolicyPage {
+    pub total: i64,
+    pub rows: Vec<Policy>,
+}
 
 #[derive(sqlx::FromRow)]
 pub struct Policy {

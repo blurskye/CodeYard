@@ -25,11 +25,18 @@ pub struct Hit {
     pub repository_id: Option<i64>,
     pub score: i64,
 }
+/// Search must exclude refused repository scopes before matching, counting or pagination.
+pub(crate) fn credential_readable(base: &str, token: Option<i64>) -> String {
+    let Some(token) = token else { return base.to_owned(); };
+    format!("({base}) AND NOT (EXISTS(SELECT 1 FROM organization_token_policies policy WHERE policy.org_id=r.owner_org_id AND NOT policy.classic_allowed) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id={token}))")
+}
+
 pub struct Results {
     pub total: i64,
     pub items: Vec<Hit>,
 }
 pub struct Options {
+    pub token: Option<i64>,
     pub repository: Option<i64>,
     pub sort: Option<String>,
     pub ascending: bool,
@@ -386,7 +393,11 @@ pub(crate) fn extract_fields(
 ) -> Result<(), &'static str> {
     match expr {
         Expr::Term(k, v) if k == "in" => {
-            fields.extend(v.split(',').map(str::to_owned));
+            for field in v.split(',') {
+                if !fields.iter().any(|known| known == field) {
+                    fields.push(field.to_owned());
+                }
+            }
             *expr = Expr::And(Vec::new());
         }
         Expr::And(v) => {
@@ -411,4 +422,4 @@ pub(crate) fn extract_fields(
 native_operation!(crate::backend::db::postgres::catalog_search::search,crate::backend::db::sqlite::catalog_search::search,
     fn search(pool:&DbPool,viewer:Option<i64>,query:&Search,options:&Options)->anyhow::Result<Results>);
 native_operation!(crate::backend::db::postgres::catalog_search::topic,crate::backend::db::sqlite::catalog_search::topic,
-    fn topic(pool:&DbPool,viewer:Option<i64>,name:&str)->anyhow::Result<Option<Topic>>);
+    fn topic(pool:&DbPool,viewer:Option<i64>,token:Option<i64>,name:&str)->anyhow::Result<Option<Topic>>);

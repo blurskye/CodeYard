@@ -72,6 +72,10 @@ pub enum ValueError {
     SecretsSize,
 }
 
+/// Whether organization value `v` reaches repository `r`. Listing the inherited values and
+/// delivering them to a workflow both use it, so what settings show is what a run receives.
+pub(crate) const REACHES_REPOSITORY: &str = "(v.visibility='all' OR (v.visibility='private' AND r.is_private) OR (v.visibility='selected' AND EXISTS(SELECT 1 FROM org_actions_value_repositories s WHERE s.org_id=v.org_id AND s.kind=v.kind AND s.name=v.name AND s.repo_id=r.id)))";
+
 pub fn validate(name: &str, value: &str) -> Result<(), ValueError> {
     use codeyard_actions::values::InvalidValue;
     codeyard_actions::values::validate(name, value).map_err(|error| match error {

@@ -86,7 +86,7 @@ impl PreparedBundle {
 
     pub fn new(bundle: &Value) -> Result<Self, AttestationError> {
         let text = bundle.to_string();
-        if text.len() > 1024 * 1024 {
+        if text.len() > super::attestations::MAX_BUNDLE_BYTES {
             return Err(AttestationError::Size);
         }
         let invalid = || AttestationError::InvalidBundle;
@@ -167,12 +167,16 @@ impl PreparedBundle {
             .ok_or_else(invalid)?;
         let mut digests = std::collections::BTreeSet::new();
         for subject in subjects {
-            let hex = subject
-                .get("digest")
-                .and_then(|value| value.get("sha256"))
-                .and_then(Value::as_str)
-                .ok_or_else(invalid)?;
-            digests.insert(subject_digest(&format!("sha256:{hex}")).map_err(|_| invalid())?);
+            let digest = subject.get("digest").and_then(Value::as_object).ok_or_else(invalid)?;
+            let mut recognized = false;
+            for algorithm in ["sha256", "sha512"] {
+                if let Some(hex) = digest.get(algorithm) {
+                    let hex = hex.as_str().ok_or_else(invalid)?;
+                    digests.insert(subject_digest(&format!("{algorithm}:{hex}")).map_err(|_| invalid())?);
+                    recognized = true;
+                }
+            }
+            if !recognized { return Err(invalid()); }
         }
         Ok(Self {
             bundle: text,
@@ -213,18 +217,19 @@ pub struct Attestation {
 
 pub async fn create(
     pool: &DbPool,
-    actor: i64,
+    actor: impl Into<super::credentials::Actor>,
     repo: i64,
     bundle: &PreparedBundle,
 ) -> Result<i64, AttestationError> {
     use sha2::{Digest, Sha256};
+    let actor = actor.into();
     let bundle = super::attestations::Bundle {
         hash: format!("{:x}", Sha256::digest(bundle.bundle.as_bytes())),
         json: bundle.bundle.clone(),
         predicate: bundle.predicate_type.clone(),
         subjects: bundle.subjects.iter().cloned().collect(),
     };
-    let user = super::users::accounts::get_user_by_id(pool, actor)
+    let user = super::users::accounts::get_user_by_id(pool, actor.user_id)
         .await
         .map_err(AttestationError::Authority)?
         .ok_or(AttestationError::Denied)?;

@@ -29,14 +29,16 @@ pub async fn integrations(pool: &SqlitePool, repo: i64) -> Result<Vec<App>> {
 
 pub async fn create(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     environment: i64,
     app: i64,
 ) -> Result<Rule> {
+    let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo).await?
+            && super::credentials::repository(&mut tx, &actor, repo, "administration", true).await?,
         Refusal::Denied
     );
     let exists: bool = sqlx::query_scalar(
@@ -72,14 +74,16 @@ pub async fn create(
 
 pub async fn disable(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     environment: i64,
     rule: i64,
 ) -> Result<()> {
+    let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo).await?
+            && super::credentials::repository(&mut tx, &actor, repo, "administration", true).await?,
         Refusal::Denied
     );
     let changed = sqlx::query("UPDATE deployment_protection_rules SET enabled=FALSE WHERE id=?1 AND environment_id=?2 AND EXISTS(SELECT 1 FROM deployment_environments WHERE id=?2 AND repo_id=?3)")
@@ -140,24 +144,30 @@ async fn native_state(tx: &mut SqliteConnection, run: &CiRun) -> Result<Option<S
     let Some(environment) = environment else {
         return Ok(None);
     };
-    let rules: Option<(i64, String, String, Option<String>, bool)> = sqlx::query_as(
-        "SELECT e.id, d.status, e.reviewers, e.branch_policy,
-                e.wait_timer > 0 AND strftime('%Y-%m-%dT%H:%M:%f000Z', d.created_at, '+' || e.wait_timer || ' minutes') > strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')
-           FROM ci_deployments d
-           JOIN deployment_environments e ON e.repo_id = d.repo_id AND e.name_key = ?2
-          WHERE d.run_id = ?1",
+    let pending = crate::backend::db::deployment_protection::native_pending_sql(false);
+    let rules: Option<(i64, String, Option<String>, bool)> = sqlx::query_as(
+        &format!("SELECT e.id,d.status,e.branch_policy,{pending} FROM ci_deployments d JOIN deployment_environments e ON e.repo_id=d.repo_id AND e.name_key=?2 WHERE d.run_id=?1"),
     )
     .bind(run.id)
     .bind(environment.to_lowercase())
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((environment_id, status, reviewers, branch_policy, timer_running)) = rules else {
+    let Some((environment_id, status, branch_policy, pending)) = rules else {
         return Ok(None);
     };
     if status == "rejected" {
         return Ok(Some("rejected".to_owned()));
     }
-    let (kind, name) = deployment_ref(&run.branch);
+    let pull: Option<i64> = if run.event == "pull_request" {
+        sqlx::query_scalar("SELECT number FROM pull_requests WHERE id=?1 AND repo_id=?2")
+            .bind(run.pull_request_id).bind(run.repo_id).fetch_optional(&mut *tx).await?
+    } else { None };
+    let reference = match run.workflow_reference(pull) {
+        Some(reference) => reference,
+        None if branch_policy.is_none() => String::new(),
+        None => return Ok(Some("rejected".to_owned())),
+    };
+    let (kind, name) = deployment_ref(&reference);
     let branch_allowed = match branch_policy.as_deref() {
         None => true,
         Some("custom") => {
@@ -179,7 +189,7 @@ async fn native_state(tx: &mut SqliteConnection, run: &CiRun) -> Result<Option<S
                     .bind(run.repo_id)
                     .fetch_all(&mut *tx)
                     .await?;
-            patterns
+            patterns.is_empty() || patterns
                 .iter()
                 .any(|pattern| github_glob_matches(pattern, name))
         }
@@ -188,7 +198,7 @@ async fn native_state(tx: &mut SqliteConnection, run: &CiRun) -> Result<Option<S
     if !branch_allowed {
         return Ok(Some("rejected".to_owned()));
     }
-    if timer_running || (status == "pending" && reviewers != "[]") {
+    if pending {
         return Ok(Some("pending".to_owned()));
     }
     Ok(None)

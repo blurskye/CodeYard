@@ -182,13 +182,11 @@ pub async fn reorder_item(
         .transpose()?
         .unwrap_or(0);
     ids.insert(at, item);
-    for (position, id) in ids.iter().enumerate() {
-        sqlx::query("UPDATE project_items SET position=$2 WHERE id=$1")
-            .bind(id)
-            .bind(position as i64)
-            .execute(&mut *tx)
-            .await?;
-    }
+    sqlx::query("UPDATE project_items SET position=e.key FROM json_each($2) AS e WHERE project_items.id=e.value AND project_items.project_id=$1 AND project_items.position<>e.key")
+        .bind(project)
+        .bind(serde_json::to_string(&ids)?)
+        .execute(&mut *tx)
+        .await?;
     let result = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
         .bind(item)
         .fetch_one(&mut *tx)

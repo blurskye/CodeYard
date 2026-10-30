@@ -76,7 +76,7 @@ async fn settings(
 ) -> Result<Response> {
     let write = !auth::read_method(request.method());
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
-    let actor = auth.user.id;
+    let actor = auth.database_actor(&headers)?;
     let setting = match uri.path().rsplit('/').next() {
         Some("selected-actions") => Setting::Allowed,
         Some("artifact-and-log-retention") => Setting::Retention,
@@ -95,7 +95,8 @@ async fn settings(
         &state.pool,
         actor,
         &scope,
-        body.as_ref().map(|body| (setting, body)),
+        setting,
+        body.as_ref(),
     )
     .await
     .map_err(failure)?;
@@ -148,7 +149,7 @@ async fn organization_switch(
 ) -> Result<Response> {
     let write = !auth::read_method(request.method());
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
-    let actor = auth.user.id;
+    let actor = auth.database_actor(&headers)?;
     let setting = switch(&uri);
     if write {
         let body = input(request).await?;
@@ -162,12 +163,12 @@ async fn organization_switch(
                 "invalid",
             ));
         }
-        db::action_settings::settings(&state.pool, actor, &scope, Some((setting, &body)))
+        db::action_settings::settings(&state.pool, actor, &scope, setting, Some(&body))
             .await
             .map_err(failure)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let stored = db::action_settings::settings(&state.pool, actor, &scope, None)
+    let stored = db::action_settings::settings(&state.pool, actor, &scope, setting, None)
         .await
         .map_err(failure)?;
     let mut value = setting.defaults();
@@ -200,9 +201,9 @@ async fn organization_repositories(
     let method = request.method().clone();
     let write = !auth::read_method(&method);
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
-    let actor = auth.user.id;
+    let actor = auth.database_actor(&headers)?;
     let setting = switch(&uri);
-    let stored = db::action_settings::settings(&state.pool, actor, &scope, None)
+    let stored = db::action_settings::settings(&state.pool, actor.clone(), &scope, setting, None)
         .await
         .map_err(failure)?;
     let org = db::organizations::get_public_organization(&state.pool, &params["org"])
@@ -276,7 +277,8 @@ async fn organization_repositories(
         &state.pool,
         actor,
         &scope,
-        Some((setting, &json!({"selected_repository_ids":ids}))),
+        setting,
+        Some(&json!({"selected_repository_ids":ids})),
     )
     .await
     .map_err(failure)?;
@@ -328,7 +330,7 @@ async fn policies(
     let method = request.method().clone();
     let write = !auth::read_method(&method);
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
-    let actor = auth.user.id;
+    let actor = auth.database_actor(&headers)?;
     let id = params
         .get("policy_id")
         .map(|_| super::id(&params, "policy_id"))
@@ -339,9 +341,11 @@ async fn policies(
         None
     };
     let change = if write { Some(body.as_ref()) } else { None };
-    let rows = db::action_settings::policies(&state.pool, actor, &scope, id, change)
+    let (offset, limit) = if write || id.is_some() { (0, 1) } else { page.window()? };
+    let result = db::action_settings::policies(&state.pool, actor, &scope, id, change, offset as i64, limit as i64)
         .await
         .map_err(failure)?;
+    let rows = result.rows;
     if method == axum::http::Method::DELETE {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
@@ -357,16 +361,13 @@ async fn policies(
         )
             .into_response());
     }
-    let (offset, limit) = page.window()?;
-    let total = rows.len();
+    let total = result.total;
     let values: Vec<_> = rows
         .iter()
-        .skip(offset)
-        .take(limit)
         .map(|row| document(row, &params))
         .collect::<Result<_>>()?;
     Ok((
-        page.headers(&uri, offset.saturating_add(limit) < total)?,
+        page.headers(&uri, (offset as i64).saturating_add(limit as i64) < total)?,
         Json(json!({"total_count":total,"policies":values})),
     )
         .into_response())

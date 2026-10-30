@@ -49,31 +49,27 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> usize
                 break;
             }
         };
-        // A recipient who lost access to a notification's repository does not get its email.
-        if let Some(notification) = message.notification_id {
-            let outcome =
-                match db::notifications::records::notification_email_allowed(pool, notification)
-                    .await
-                {
-                    Ok(true) => None,
-                    Ok(false) => Some(db::email::withdraw_email(pool, message.id).await),
-                    Err(error) => Some(
-                        db::email::mark_email_failed(
-                            pool,
-                            message.id,
-                            &format!("access check failed: {error}"),
-                            retry_delay(message.attempts),
-                            MAX_ATTEMPTS,
-                        )
-                        .await,
-                    ),
-                };
-            if let Some(outcome) = outcome {
-                if let Err(error) = outcome {
-                    warn!(%error, id = message.id, "could not record the email result");
-                }
-                continue;
+        // Claims can outlive a link rotation or a notification's repository grant.
+        let allowed = match db::email::delivery_allowed(pool, message.id).await {
+            Ok(true) => match message.notification_id {
+                Some(notification) => db::notifications::records::notification_email_allowed(pool, notification).await,
+                None => Ok(true),
+            },
+            outcome => outcome,
+        };
+        let refusal = match allowed {
+            Ok(true) => None,
+            Ok(false) => Some(db::email::withdraw_email(pool, message.id).await),
+            Err(error) => Some(db::email::mark_email_failed(
+                pool, message.id, &format!("delivery check failed: {error}"),
+                retry_delay(message.attempts), MAX_ATTEMPTS,
+            ).await),
+        };
+        if let Some(outcome) = refusal {
+            if let Err(error) = outcome {
+                warn!(%error, id = message.id, "could not record the email result");
             }
+            continue;
         }
         let outcome = match send::send(
             &config,

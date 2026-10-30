@@ -103,7 +103,8 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
                     AND EXISTS(SELECT 1 FROM org_memberships member WHERE member.org_id=a.org_id
                         AND member.user_id=u.id AND member.role IN ('owner','admin','member'))
                     AND ((a.user_id=u.id AND a.team_id IS NULL) OR (a.user_id IS NULL AND EXISTS(
-                        SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id
+                        SELECT 1 FROM teams t JOIN team_ancestors lineage ON lineage.ancestor_id=t.id
+                        JOIN team_memberships tm ON tm.team_id=lineage.team_id
                         WHERE t.id=a.team_id AND t.org_id=a.org_id AND t.privacy IN ('visible','secret')
                             AND tm.user_id=u.id AND tm.role IN ('member','maintainer'))))),0),
             COALESCE((
@@ -111,7 +112,8 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
                     WHEN 'member' THEN COALESCE((
                         SELECT MAX(a.permission) FROM team_repo_access a
                         JOIN teams t ON t.id = a.team_id AND t.org_id = m.org_id
-                        JOIN effective_team_memberships tm ON tm.team_id = t.id
+                        JOIN team_ancestors lineage ON lineage.ancestor_id=t.id
+                        JOIN team_memberships tm ON tm.team_id=lineage.team_id
                             AND tm.user_id = u.id AND tm.role IN ('member','maintainer')
                         WHERE a.repo_id = r.id AND a.permission BETWEEN 1 AND 5
                             AND t.privacy IN ('visible','secret')
@@ -130,6 +132,16 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
         ELSE 0 END)
     "#;
 
+const PUBLIC_READ_BASELINE: &str = "CASE WHEN NOT r.is_private THEN 1 ELSE 0 END";
+
+/// The access projection without the read that every visitor has on a public repository: what
+/// the user's own grants, organization settings and team memberships give. A collaborator is
+/// someone with such a grant, not everyone who can read.
+pub(crate) fn user_repo_grant_sql() -> String {
+    debug_assert!(USER_REPO_ACCESS_SQL.contains(PUBLIC_READ_BASELINE));
+    USER_REPO_ACCESS_SQL.replacen(PUBLIC_READ_BASELINE, "0", 1)
+}
+
 /// Whether repository `r` is readable by the viewer, whom the query joins as `u` (NULL for an
 /// anonymous visitor). It follows `repositories::access::can_read`: public repositories, the
 /// personal repositories of a site admin, and the access projection for everything else.
@@ -137,6 +149,15 @@ pub(crate) fn readable_condition() -> String {
     format!(
         "(NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL}) >= 1))"
     )
+}
+
+/// Read-only callers retain one snapshot; effectful callers reserve BEGIN IMMEDIATE first.
+/// Archival and interaction restrictions do not remove repository read access.
+pub(crate) async fn lock_readable_repository_in_transaction(
+    connection: &mut sqlx::SqliteConnection, user_id: i64, repo_id: i64,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND NOT u.is_banned AND NOT u.must_change_password AND {})", readable_condition()))
+        .bind(user_id).bind(repo_id).fetch_one(connection).await?)
 }
 
 /// Current visibility and metadata in one snapshot for a bounded run list.

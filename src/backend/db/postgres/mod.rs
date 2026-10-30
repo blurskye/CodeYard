@@ -20,6 +20,7 @@ pub(crate) mod catalog_search;
 pub(crate) mod checks;
 pub(crate) mod ci;
 pub(crate) mod ci_tokens;
+pub(crate) mod credentials;
 pub(crate) mod cluster;
 pub(crate) mod code_scanning;
 pub(crate) mod code_security;

@@ -271,6 +271,11 @@ async fn remove_member(
         sqlx::query("DELETE FROM repo_access WHERE user_id=$1 AND repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$2)")
             .bind(target).bind(org).execute(&mut *tx).await?;
     }
+    sqlx::query("UPDATE repository_invitations SET state='cancelled' WHERE invitee_id=$1 AND state='pending' AND repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$2)")
+        .bind(target).bind(org).execute(&mut *tx).await?;
+    let recipient = super::invitations::RECIPIENT;
+    sqlx::query(&format!("DELETE FROM organization_invitations AS i WHERE {recipient} AND i.org_id=$2"))
+        .bind(target).bind(org).execute(&mut *tx).await?;
     cancel_actor(&mut tx, org, target).await?;
     sqlx::query("DELETE FROM org_memberships WHERE org_id=$1 AND user_id=$2")
         .bind(org)

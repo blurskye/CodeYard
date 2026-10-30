@@ -62,6 +62,11 @@ impl Authentication {
         db::users::accounts::AccountCredential::Token(self.token.id, &self.token.token_hash)
     }
 
+    pub fn database_actor(&self, headers: &HeaderMap) -> Result<db::credentials::Actor> {
+        Ok(db::credentials::Actor::token(self.user.id, self.token.id,
+            token_hash(credential(headers).ok_or_else(required)?)))
+    }
+
     pub fn is_job(&self) -> bool {
         self.user.username == db::ci_tokens::BOT
     }

@@ -26,7 +26,7 @@ async fn pending(
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let run = super::run(&state, repo.id, id).await?;
     if write {
-        let actor = auth.ok_or_else(auth::required)?.user.id;
+        let actor = auth.ok_or_else(auth::required)?.database_actor(&headers)?;
         let Json(input) = Json::<deployment_reviews::Input>::from_request(request, &state)
             .await
             .map_err(|_| Error::validation("DeploymentReview", "configuration", "invalid"))?;
@@ -65,8 +65,7 @@ async fn history(
     headers: HeaderMap,
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
-    let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let viewer = auth.map(|auth| auth.user.id);
+    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let run = super::run(&state, repo.id, id).await?;
     let rows = deployment_reviews::history(&state.pool, repo.id, run.id)
         .await
@@ -88,8 +87,12 @@ async fn history(
                 site_admin: false,
             })
         });
-        let environment =
-            environments::document(&state, viewer, &row.environment, &owner, &name).await?;
+        let encoded = crate::webui::encode_component(&row.environment_name);
+        let environment = json!({"id":row.environment_id,
+            "node_id":crate::backend::api::github::node_id::encode("EN", row.environment_id),
+            "name":row.environment_name,
+            "url":format!("{}/environments/{encoded}", crate::backend::api::github::repo_url(&owner, &name)),
+            "html_url":format!("{}/{}/{}/deployments/activity_log?environments_filter={encoded}", crate::backend::api::http::config::link_origin(), crate::webui::encode_component(&owner), crate::webui::encode_component(&name))});
         values.push(json!({"environments":[environment],"state":row.state,"user":user,"comment":row.comment}));
     }
     Ok(Json(json!(values)))

@@ -1,32 +1,41 @@
-use crate::backend::db::{code_scanning::Refusal, codeql::*};
+use crate::backend::db::{code_scanning::Refusal, codeql::*, credentials::Actor};
 use anyhow::{ensure, Result};
 use sqlx::PgPool;
 
-pub async fn list(pool: &PgPool, repo: i64) -> Result<Vec<Database>> {
-    Ok(
-        sqlx::query_as("SELECT * FROM codeql_databases WHERE repo_id=$1 ORDER BY language")
-            .bind(repo)
-            .fetch_all(pool)
-            .await?,
-    )
+async fn authorized(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, actor: &Actor, repo: i64, write: bool) -> Result<()> {
+    let allowed = if write {
+        super::discussions::lock_write_authority(tx, actor.user_id, repo).await?
+    } else {
+        super::repositories::access::lock_readable_repository_in_transaction(tx, actor.user_id, repo, super::repositories::access::RepositoryRowLock::Shared).await?
+    };
+    ensure!(allowed && super::credentials::repository(tx, actor, repo, "security_events", write).await?, Refusal::Denied);
+    Ok(())
 }
 
-pub async fn get(pool: &PgPool, repo: i64, language: &str) -> Result<Option<Database>> {
-    Ok(
-        sqlx::query_as("SELECT * FROM codeql_databases WHERE repo_id=$1 AND language=$2")
-            .bind(repo)
-            .bind(language)
-            .fetch_optional(pool)
-            .await?,
-    )
-}
-
-pub async fn stage(pool: &PgPool, actor: i64, repo: i64, key: &str) -> Result<()> {
+pub async fn list(pool: &PgPool, actor: impl Into<Actor>, repo: i64) -> Result<Vec<Database>> {
+    let actor = actor.into();
     let mut tx = pool.begin().await?;
-    ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
-        Refusal::Denied
-    );
+    authorized(&mut tx, &actor, repo, false).await?;
+    let rows = sqlx::query_as("SELECT * FROM codeql_databases WHERE repo_id=$1 ORDER BY language")
+        .bind(repo).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(rows)
+}
+
+pub async fn get(pool: &PgPool, actor: impl Into<Actor>, repo: i64, language: &str) -> Result<Option<Database>> {
+    let actor = actor.into();
+    let mut tx = pool.begin().await?;
+    authorized(&mut tx, &actor, repo, false).await?;
+    let row = sqlx::query_as("SELECT * FROM codeql_databases WHERE repo_id=$1 AND language=$2")
+        .bind(repo).bind(language).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(row)
+}
+
+pub async fn stage(pool: &PgPool, actor: impl Into<Actor>, repo: i64, key: &str) -> Result<()> {
+    let actor = actor.into();
+    let mut tx = pool.begin().await?;
+    authorized(&mut tx, &actor, repo, true).await?;
     // A crashed or refused upload is reclaimed by the existing object sweep.
     sqlx::query("INSERT INTO pending_object_deletions(object_key,delete_after) VALUES($1,$2)")
         .bind(key)
@@ -39,10 +48,7 @@ pub async fn stage(pool: &PgPool, actor: i64, repo: i64, key: &str) -> Result<()
 
 pub async fn publish(pool: &PgPool, input: &NewDatabase<'_>) -> Result<Database> {
     let mut tx = pool.begin().await?;
-    ensure!(
-        super::discussions::lock_write_authority(&mut tx, input.actor, input.repo).await?,
-        Refusal::Denied
-    );
+    authorized(&mut tx, &input.actor, input.repo, true).await?;
     let pending =
         sqlx::query("DELETE FROM pending_object_deletions WHERE object_key=$1 AND delete_after>$2")
             .bind(input.key)
@@ -51,17 +57,15 @@ pub async fn publish(pool: &PgPool, input: &NewDatabase<'_>) -> Result<Database>
             .await?;
     ensure!(pending.rows_affected() == 1, Refusal::Missing);
     let row = sqlx::query_as("INSERT INTO codeql_databases(repo_id,language,name,uploader_id,object_key,size,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$7) ON CONFLICT(repo_id,language) DO UPDATE SET name=excluded.name,uploader_id=excluded.uploader_id,object_key=excluded.object_key,size=excluded.size,updated_at=excluded.updated_at RETURNING *")
-        .bind(input.repo).bind(input.language).bind(input.name).bind(input.actor).bind(input.key).bind(input.size).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
+        .bind(input.repo).bind(input.language).bind(input.name).bind(input.actor.user_id).bind(input.key).bind(input.size).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(row)
 }
 
-pub async fn delete(pool: &PgPool, actor: i64, repo: i64, language: &str) -> Result<()> {
+pub async fn delete(pool: &PgPool, actor: impl Into<Actor>, repo: i64, language: &str) -> Result<()> {
+    let actor = actor.into();
     let mut tx = pool.begin().await?;
-    ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
-        Refusal::Denied
-    );
+    authorized(&mut tx, &actor, repo, true).await?;
     let removed = sqlx::query("DELETE FROM codeql_databases WHERE repo_id=$1 AND language=$2")
         .bind(repo)
         .bind(language)

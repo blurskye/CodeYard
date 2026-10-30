@@ -69,7 +69,7 @@ async fn grants(
     let mut grants = Vec::new();
     for token in rows {
         let repositories = if token.repository_access == "selected" {
-            db::fine_grained_tokens::repositories(pool, token.token_id)
+            db::fine_grained_tokens::repositories(pool, token.token_id, ctx.user.as_ref().map(|user| user.id))
                 .await?
                 .into_iter()
                 .map(|(_, name)| name)
@@ -151,6 +151,7 @@ fn policy(form: &Fields) -> Result<Policy, &'static str> {
 }
 
 async fn apply(ctx: &PageContext, actor: i64, org: i64, form: &Fields) -> anyhow::Result<Outcome> {
+    let actor = db::credentials::Actor::from((actor, crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()));
     let pool = &ctx.state.pool;
     let token = organization::field(form, "token_id").parse::<i64>().ok();
     let changed = |done: bool| {

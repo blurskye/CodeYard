@@ -6,13 +6,15 @@ use crate::backend::db::{
 use anyhow::{ensure, Result};
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
-async fn write(pool: &PgPool, actor: i64, org: i64) -> Result<Transaction<'_, Postgres>> {
+async fn write(pool: &PgPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64) -> Result<Transaction<'_, Postgres>> {
+    let actor = actor.into();
     let mut tx = pool.begin().await?;
-    match super::organizations::authority::authority(&mut tx, actor, org).await? {
+    match super::organizations::authority::authority(&mut tx, actor.user_id, org).await? {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
     }
+    ensure!(super::credentials::organization(&mut tx, &actor, org, "organization_administration", true).await?, Refusal::Denied);
     Ok(tx)
 }
 async fn readable(connection: &mut PgConnection, actor: i64, org: i64) -> Result<()> {
@@ -60,7 +62,7 @@ async fn apply_repository(
             connection,
             actor,
             repo,
-            &scanning_settings(&settings, previous.unwrap_or_default())?,
+            &scanning_settings(&apply(None, &config.settings)?, previous.unwrap_or_default())?,
         )
         .await?;
         // Private vulnerability reporting lives in its own table and is offered on public
@@ -99,11 +101,13 @@ pub async fn list(pool: &PgPool, actor: i64, org: i64) -> Result<Vec<Configurati
 }
 pub async fn save(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     id: Option<i64>,
     patch: &serde_json::Value,
 ) -> Result<Configuration> {
+    let actor = actor.into();
+    let actor_id = actor.user_id;
     let mut tx = write(pool, actor, org).await?;
     let current = match id {
         Some(id) => Some(configuration(&mut tx, org, id).await?),
@@ -121,12 +125,12 @@ pub async fn save(
     };
     let repos:Vec<i64>=sqlx::query_scalar("SELECT r.id FROM repositories r JOIN repository_security_settings s ON s.repo_id=r.id WHERE r.owner_org_id=$1 AND s.configuration_id=$2 ORDER BY r.id FOR UPDATE OF r").bind(org).bind(row.id).fetch_all(&mut *tx).await?;
     for repo in repos {
-        apply_repository(&mut tx, repo, Some(actor), Some(&row)).await?;
+        apply_repository(&mut tx, repo, Some(actor_id), Some(&row)).await?;
     }
     tx.commit().await?;
     Ok(row)
 }
-pub async fn delete(pool: &PgPool, actor: i64, org: i64, id: i64) -> Result<()> {
+pub async fn delete(pool: &PgPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, id: i64) -> Result<()> {
     let mut tx = write(pool, actor, org).await?;
     configuration(&mut tx, org, id).await?;
     sqlx::query("DELETE FROM code_security_configurations WHERE org_id=$1 AND id=$2")
@@ -139,7 +143,7 @@ pub async fn delete(pool: &PgPool, actor: i64, org: i64, id: i64) -> Result<()> 
 }
 pub async fn set_default(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     id: i64,
     scope: &str,
@@ -181,7 +185,7 @@ pub async fn set_default(
 }
 pub async fn attach(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     id: Option<i64>,
     scope: &str,
@@ -206,25 +210,18 @@ pub async fn attach(
         },
         Refusal::Invalid
     );
+    let actor = actor.into();
+    let actor_id = actor.user_id;
     let mut tx = write(pool, actor, org).await?;
     let config = match id {
         Some(id) => Some(configuration(&mut tx, org, id).await?),
         None => None,
     };
-    let rows: Vec<Repository> =
-        sqlx::query_as("SELECT * FROM repositories WHERE owner_org_id=$1 ORDER BY id FOR UPDATE")
-            .bind(org)
-            .fetch_all(&mut *tx)
-            .await?;
-    ensure!(
-        selected.iter().all(|id| rows.iter().any(|r| r.id == *id)),
-        Refusal::Missing
-    );
+    let rows: Vec<i64> = sqlx::query_scalar("SELECT r.id FROM repositories r WHERE r.owner_org_id=$1 AND ($2='all' OR ($2='selected' AND r.id=ANY($3)) OR ($2='public' AND NOT r.is_private) OR ($2='private_or_internal' AND r.is_private) OR ($2='all_without_configurations' AND NOT EXISTS(SELECT 1 FROM repository_security_settings s WHERE s.repo_id=r.id AND s.configuration_id IS NOT NULL))) ORDER BY r.id FOR UPDATE OF r")
+        .bind(org).bind(scope).bind(selected).fetch_all(&mut *tx).await?;
+    ensure!(selected.iter().all(|id| rows.contains(id)), Refusal::Missing);
     for repo in rows {
-        let chosen=match scope {"selected"=>selected.contains(&repo.id),"public"=>!repo.is_private,"private_or_internal"=>repo.is_private,"all_without_configurations"=>!sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM repository_security_settings WHERE repo_id=$1 AND configuration_id IS NOT NULL)").bind(repo.id).fetch_one(&mut *tx).await?,_=>true};
-        if chosen {
-            apply_repository(&mut tx, repo.id, Some(actor), config.as_ref()).await?;
-        }
+        apply_repository(&mut tx, repo, Some(actor_id), config.as_ref()).await?;
     }
     tx.commit().await?;
     Ok(())

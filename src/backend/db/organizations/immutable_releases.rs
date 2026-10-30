@@ -5,6 +5,8 @@ use anyhow::Result;
 
 pub struct Settings {
     pub enforced_repositories: String,
+    /// Selected repositories in total, and the requested window of them.
+    pub total: i64,
     pub repositories: Vec<Repository>,
 }
 
@@ -16,7 +18,7 @@ pub enum Change {
 
 native_operation!(crate::backend::db::postgres::organizations::immutable_releases::get,
     crate::backend::db::sqlite::organizations::immutable_releases::get,
-    fn get(pool: &DbPool, actor: i64, org: i64) -> Result<OrganizationOutcome<Settings>>);
+    fn get(pool: &DbPool, actor: i64, org: i64, offset: i64, limit: i64) -> Result<OrganizationOutcome<Settings>>);
 native_operation!(crate::backend::db::postgres::organizations::immutable_releases::change,
     crate::backend::db::sqlite::organizations::immutable_releases::change,
     fn change(pool: &DbPool, actor: i64, org: i64, change: &Change) -> Result<OrganizationOutcome<()>>);

@@ -51,6 +51,7 @@ type Result<T> = async_graphql::Result<T>;
 struct RequestContext {
     state: Arc<AppState>,
     auth: auth::Authentication,
+    actor: db::credentials::Actor,
     /// Scopes granted to an OAuth token; other credentials have none.
     oauth_scopes: Option<String>,
     /// Admission distinguishes personal tokens from integrations, which GraphQL does not accept.
@@ -473,9 +474,14 @@ async fn execute(
                 .into_response()
         }
     };
+    let actor = match authentication.database_actor(&headers) {
+        Ok(actor) => actor,
+        Err(error) => return error.into_response(),
+    };
     let request = body.data(RequestContext {
         state,
         auth: authentication,
+        actor,
         oauth_scopes: oauth_scopes.clone(),
         personal,
         nodes: AtomicUsize::new(0),

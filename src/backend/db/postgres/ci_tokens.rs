@@ -10,7 +10,11 @@ pub async fn issue(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_membership_shared(&mut tx).await?;
-    let (repo, fork): (i64, bool) = sqlx::query_as("SELECT repo_id,is_fork FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running' FOR UPDATE")
+    let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM ci_runs WHERE id=$1")
+        .bind(run_id).fetch_one(&mut *tx).await?;
+    sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR SHARE")
+        .bind(repo).fetch_one(&mut *tx).await?;
+    let (repo, fork): (i64, bool) = sqlx::query_as("SELECT repo_id,is_fork FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running' AND NOT cancel_requested FOR UPDATE")
         .bind(run_id).bind(worker).fetch_one(&mut *tx).await?;
     ensure!(
         !fork || tokens.iter().all(|token| !token.write),
@@ -39,11 +43,11 @@ pub async fn get(pool: &PgPool, token_id: i64) -> Result<Option<JobToken>> {
     get_in_connection(&mut connection, token_id).await
 }
 
-async fn get_in_connection(
+pub(crate) async fn get_in_connection(
     connection: &mut sqlx::PgConnection,
     token_id: i64,
 ) -> Result<Option<JobToken>> {
-    Ok(sqlx::query_as("SELECT r.id AS run_id,r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=$1 AND (t.revoked_at IS NULL OR t.revoked_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint-60) AND (r.status='running' OR r.completed_at>clock_timestamp()-INTERVAL '1 minute')")
+    Ok(sqlx::query_as("SELECT r.id AS run_id,r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=$1 AND NOT r.cancel_requested AND (t.revoked_at IS NULL OR t.revoked_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint-60) AND (r.status='running' OR r.completed_at>clock_timestamp()-INTERVAL '1 minute')")
         .bind(token_id).fetch_optional(connection).await?)
 }
 

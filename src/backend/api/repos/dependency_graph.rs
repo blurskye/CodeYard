@@ -45,8 +45,9 @@ async fn respond(
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
+    let reader = crate::backend::db::dependency_graph::Reader::Viewer(ctx.user.as_ref().map(|user| ctx.database_actor(user.id)));
     let (sha, packages) =
-        match graph::inventory(&ctx.state, &loaded.repository, &loaded.default_branch).await {
+        match graph::inventory(&ctx.state, &reader, &loaded.repository, &loaded.default_branch).await {
             Ok(inventory) => inventory,
             Err(error) => return chrome::store_error(&ctx, Some(&loaded.chrome), error),
         };

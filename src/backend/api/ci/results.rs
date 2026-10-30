@@ -112,13 +112,17 @@ fn valid_name(name: &str) -> bool {
     !name.is_empty() && name.len() <= 512 && !name.chars().any(char::is_control)
 }
 
-async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<RuntimeRun, Error> {
+fn credential_hash(headers: &HeaderMap) -> Result<String, Error> {
     let token = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or_else(denied)?;
-    objects::authenticate(&state.pool, &runtime::token_hash(token))
+    Ok(runtime::token_hash(token))
+}
+
+async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<RuntimeRun, Error> {
+    objects::authenticate(&state.pool, &credential_hash(headers)?)
         .await?
         .ok_or_else(denied)
 }
@@ -250,7 +254,7 @@ async fn twirp(
             } else {
                 &request.size_bytes
             })?;
-            if !objects::finalize_object(&state.pool, run.id, object.id, size, cache_limit).await? {
+            if !objects::finalize_object(&state.pool, run.id, &credential_hash(&headers)?, object.id, size, cache_limit).await? {
                 return Err(invalid());
             }
             if artifact {

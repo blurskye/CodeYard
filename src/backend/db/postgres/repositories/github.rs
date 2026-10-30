@@ -1,6 +1,6 @@
 use crate::backend::db::{
     models::Repository,
-    repositories::github::{list_sql, RepositoryListQuery},
+    repositories::github::{count_sql, list_sql, RepositoryListQuery},
 };
 use anyhow::Result;
 use sqlx::PgPool;
@@ -20,8 +20,9 @@ pub async fn repository_teams(
         (1..=101).contains(&limit) && offset >= 0,
         "Invalid team page"
     );
-    let mut tx = pool.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+    // Repository access, organization role and team rows come from one snapshot.
+    let mut tx =
+        crate::backend::db::postgres::organizations::authority::begin_read(pool).await?;
     // Anyone who can read the repository may list the teams of its organization they can see.
     if !super::access::user_repo_access_in_transaction(&mut tx, actor, repo_id)
         .await?
@@ -92,20 +93,17 @@ pub async fn list_repositories(
 }
 
 pub async fn count_repositories(pool: &PgPool, query: RepositoryListQuery<'_>) -> Result<i64> {
-    let sql = list_sql(
+    let sql = count_sql(
         &query,
         super::access::USER_REPO_ACCESS_SQL,
         &super::access::readable_condition(),
     );
-    let sql = format!("SELECT COUNT(*) FROM ({sql}) readable_repositories");
     Ok(sqlx::query_scalar(&sql)
         .bind(query.viewer)
         .bind(query.target_id())
         .bind(query.since)
         .bind(query.visibility)
         .bind(query.kind)
-        .bind(i64::MAX)
-        .bind(0_i64)
         .fetch_one(pool)
         .await?)
 }

@@ -735,25 +735,32 @@ pub async fn reset_password_with_link(
     replacement: &str,
 ) -> Result<Option<i64>> {
     let mut tx = pool.begin().await?;
-    // The membership lock comes before the link row, as in the other account changes.
+    // Retain the owning organizations and account before the issuance, as in account changes.
     lock_membership(&mut tx).await?;
-    sqlx::query("SELECT user_id FROM email_tokens WHERE purpose='reset' AND token_hash=$1 FOR UPDATE")
-        .bind(token_hash).execute(&mut *tx).await?;
+    let user: Option<i64> = sqlx::query_scalar("SELECT user_id FROM email_tokens WHERE purpose='reset' AND token_hash=$1")
+        .bind(token_hash).fetch_optional(&mut *tx).await?;
+    let Some(user) = user else { return Ok(None) };
+    owned_organizations_for_account_change(&mut tx, user).await?;
+    if sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
+        .bind(user).fetch_optional(&mut *tx).await?.is_none()
+    {
+        return Ok(None);
+    }
     let taken: Option<i64> = sqlx::query_scalar(
         "DELETE FROM email_tokens
-         WHERE purpose = 'reset' AND token_hash = $1 AND expires_at > clock_timestamp()
+         WHERE purpose = 'reset' AND token_hash = $1 AND user_id=$2 AND expires_at > clock_timestamp()
            AND EXISTS (SELECT 1 FROM users u
                        WHERE u.id = email_tokens.user_id AND u.email = email_tokens.email
                          AND NOT u.is_banned)
          RETURNING user_id",
     )
     .bind(token_hash)
+    .bind(user)
     .fetch_optional(&mut *tx)
     .await?;
     let Some(user_id) = taken else {
         return Ok(None);
     };
-    owned_organizations_for_account_change(&mut tx, user_id).await?;
     let changed = sqlx::query(
         "UPDATE users SET password_hash=$2,must_change_password=FALSE,updated_at=NOW()
          WHERE id=$1 AND password_hash IS NOT NULL AND NOT is_banned",

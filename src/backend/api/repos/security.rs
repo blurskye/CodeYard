@@ -315,7 +315,7 @@ async fn dismiss(
     let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else { return ctx.error(StatusCode::FORBIDDEN, "Sign in again to change this alert."); };
     match code_scanning::dismiss(
         &ctx.state.pool,
-        ctx.user.as_ref().expect("authorized user").id,
+        ctx.database_actor(ctx.user.as_ref().expect("authorized user").id),
         loaded.repository.id,
         number,
         &input,

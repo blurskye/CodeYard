@@ -637,7 +637,13 @@ async fn list(
         }
     };
     let forks = matches!(list, RepositoryList::Forks(_));
-    let kind = query.kind.as_deref().unwrap_or("all");
+    // A user's profile lists what the user owns unless asked for more, as GitHub does.
+    let default_kind = if matches!(list, RepositoryList::User(_)) {
+        "owner"
+    } else {
+        "all"
+    };
+    let kind = query.kind.as_deref().unwrap_or(default_kind);
     if !matches!(
         kind,
         "all" | "owner" | "public" | "private" | "member" | "forks" | "sources"

@@ -9,8 +9,8 @@ pub async fn list_connections(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<crate::backend::db::models::User>> {
-    Ok(sqlx::query_as("SELECT u.* FROM users u JOIN follows f ON u.id=CASE WHEN ?2 THEN f.follower_id ELSE f.following_id END WHERE CASE WHEN ?2 THEN f.following_id ELSE f.follower_id END=?1 ORDER BY u.id LIMIT ?3 OFFSET ?4")
-        .bind(user_id).bind(followers).bind(limit).bind(offset).fetch_all(pool).await?)
+    Ok(sqlx::query_as(crate::backend::db::following::connections_sql(followers))
+        .bind(user_id).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
 pub async fn follow_user(pool: &SqlitePool, follower_id: i64, following_id: i64) -> Result<bool> {

@@ -388,8 +388,9 @@ pub async fn findings(pool: &db::DbPool, package: &Package) -> Result<Vec<Adviso
         .collect()
 }
 pub async fn scan(state: &AppState, repo: &db::models::Repository, generation: i64) -> Result<()> {
+    let reader = db::dependency_graph::Reader::Scan(generation);
     let reference = format!("refs/heads/{}", repo.default_branch);
-    let (sha, packages) = match dependency_graph::native_inventory(state, repo, &reference).await {
+    let (sha, packages) = match dependency_graph::native_inventory(state, &reader, repo, &reference).await {
         Ok(result) => result,
         Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
             return Ok(())

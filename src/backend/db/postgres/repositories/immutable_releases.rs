@@ -97,8 +97,8 @@ pub(crate) async fn freeze(
     }
     let publication = publication.ok_or(ReleaseRefusal::Conflict)?;
     // Serialize the first permanent alias with owner rename and its capture trigger.
-    let name: String = sqlx::query_scalar("SELECT name FROM repositories WHERE id=$1 FOR SHARE").bind(release.repo_id).fetch_one(&mut **tx).await?;
     let owner:String=sqlx::query_scalar("SELECT COALESCE((SELECT username FROM users WHERE id=(SELECT owner_user_id FROM repositories WHERE id=$1) FOR SHARE),(SELECT name FROM organizations WHERE id=(SELECT owner_org_id FROM repositories WHERE id=$1) FOR SHARE))").bind(release.repo_id).fetch_one(&mut **tx).await?;
+    let name:String=sqlx::query_scalar("SELECT name FROM repositories WHERE id=$1 FOR SHARE").bind(release.repo_id).fetch_one(&mut **tx).await?;
     // Generic file deletion has a separate lock. The referenced-asset guard
     // protects linked files after publication.
     let _:Vec<Uuid>=sqlx::query_scalar("SELECT f.id FROM files f JOIN release_assets a ON a.file_id=f.id WHERE a.release_id=$1 ORDER BY f.id LIMIT 1001 FOR UPDATE OF f").bind(release.id).fetch_all(&mut **tx).await?;

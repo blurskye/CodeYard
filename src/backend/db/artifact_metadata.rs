@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Copy, Debug, thiserror::Error)]
 pub enum Refusal {
     #[error("Artifact metadata write denied")]
     Denied,
@@ -196,7 +196,7 @@ impl StorageInput {
             self.artifact.digest,
             self.registry_url,
             self.repository.as_deref().unwrap_or(""),
-            self.path.as_deref().unwrap_or("")
+            self.path.as_deref().or(self.artifact_url.as_deref()).unwrap_or("")
         ]);
         hex::encode(Sha256::digest(value.to_string().as_bytes()))
     }
@@ -236,6 +236,10 @@ impl StorageInput {
     }
 }
 
+pub(crate) const JOB_HISTORY_LIMIT: i64 = 100;
+pub(crate) const JOB_HISTORY_SECONDS: i64 = 7 * 24 * 60 * 60;
+pub(crate) const JOB_GC_BATCH: i64 = 100;
+
 #[derive(Serialize, Deserialize)]
 pub(crate) struct JobInput {
     pub input: ClusterInput,
@@ -247,6 +251,31 @@ pub struct Actor {
     pub token: i64,
     /// A job token never borrows its bot account's grants on other repositories.
     pub repo: Option<i64>,
+}
+
+/// These verdicts are valid only in the transaction that retains their authority locks.
+pub(crate) struct Admission {
+    pub actor: Actor,
+    pub repositories: BTreeMap<(i64, i64), std::result::Result<(), Refusal>>,
+    pub targets: BTreeMap<(i64, String, Option<String>, usize), std::result::Result<Vec<(i64, Option<i64>)>, Refusal>>,
+}
+impl Admission {
+    pub fn new(actor: Actor) -> Self {
+        Self { actor, repositories: BTreeMap::new(), targets: BTreeMap::new() }
+    }
+}
+
+/// Database failures are not stable authorization verdicts.
+pub(crate) fn cacheable<T: Clone>(result: &Result<T>) -> Option<std::result::Result<T, Refusal>> {
+    match result {
+        Ok(value) => Some(Ok(value.clone())),
+        Err(error) => error.downcast_ref::<Refusal>().copied().map(Err),
+    }
+}
+
+pub(crate) fn target_candidates_sql(pg: bool, access: &str) -> String {
+    let sql = format!("SELECT a.repo_id,MAX(a.id) FROM artifact_attestations a JOIN attestation_subjects s ON s.attestation_id=a.id JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=$3 WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND s.digest=$2 AND a.predicate_type IN ('https://slsa.dev/provenance/v1','https://slsa.dev/provenance/v0.2') AND (CAST($4 AS BIGINT) IS NULL OR r.id=$4) AND NOT r.is_archived AND ({access})>=3 GROUP BY a.repo_id ORDER BY MAX(a.id) DESC,a.repo_id LIMIT $5");
+    if pg { sql } else { sql.replace('$', "?") }
 }
 
 #[derive(sqlx::FromRow)]

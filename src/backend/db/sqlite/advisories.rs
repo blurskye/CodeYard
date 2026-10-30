@@ -5,8 +5,14 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 fn visibility() -> String {
     let level = super::repositories::access::USER_REPO_ACCESS_SQL;
-    format!("(NOT r.is_private OR (NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND (r.owner_user_id=u.id OR u.is_admin)) OR ({level})>=1))) AND (a.state='published' OR (NOT u.is_banned AND NOT u.must_change_password AND (a.author_id=u.id OR (r.owner_kind='user' AND u.is_admin) OR ({level})>=5)))")
+    let manager = crate::backend::db::organizations::roles::security_manager_condition("u.id", "r.owner_org_id");
+    format!("(NOT r.is_private OR (NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND (r.owner_user_id=u.id OR u.is_admin)) OR ({level})>=1))) AND (a.state='published' OR (NOT u.is_banned AND NOT u.must_change_password AND (a.author_id=u.id OR (r.owner_kind='user' AND u.is_admin) OR ({level})>=5 OR ({manager}))))")
 }
+pub async fn can_administer(pool: &SqlitePool, actor: i64, repo: i64) -> Result<bool> {
+    let sql = crate::backend::db::advisories::administration_sql(super::repositories::access::USER_REPO_ACCESS_SQL);
+    Ok(sqlx::query_scalar(&sql).bind(actor).bind(repo).fetch_one(pool).await?)
+}
+
 pub async fn list(
     pool: &SqlitePool,
     actor: Option<i64>,
@@ -59,7 +65,7 @@ pub async fn create(
 ) -> Result<Advisory> {
     anyhow::ensure!(value.get("state").is_none(), Refusal::Invalid);
     if let Some(fork) = value.get("start_private_fork") {
-        anyhow::ensure!(!report && fork.is_boolean(), Refusal::Invalid);
+        anyhow::ensure!(fork.is_boolean(), Refusal::Invalid);
     }
     let data = Data::parse(value, None, report)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -71,7 +77,7 @@ pub async fn create(
         Some(super::repositories::security::create_report_in(&mut tx, actor, repo, &input).await?)
     } else {
         anyhow::ensure!(
-            super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+            super::discussions::lock_security_authority(&mut tx, actor, repo, true).await?,
             Refusal::Denied
         );
         None
@@ -87,7 +93,7 @@ async fn administration(
     ghsa: &str,
 ) -> Result<Advisory> {
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(tx, actor, repo).await?,
+        super::discussions::lock_security_authority(tx, actor, repo, true).await?,
         Refusal::Denied
     );
     Ok(
@@ -156,8 +162,11 @@ pub async fn update(
     } else {
         None
     };
-    let updated=sqlx::query_as("UPDATE repository_advisories SET document=?3,state=?4,updated_at=?5,published_at=?6,publisher_id=?7,closed_at=?8,report_accepted=?9 WHERE repo_id=?1 AND ghsa_id=?2 RETURNING *").bind(repo).bind(ghsa).bind(serde_json::to_string(&data)?).bind(state).bind(now).bind(published_at).bind(publisher).bind(closed_at).bind(row.report_accepted||(row.state=="triage"&&state=="draft")).fetch_one(&mut *tx).await?;
-    if let Some(report) = row.report_id {
+    let updated: Advisory=sqlx::query_as("UPDATE repository_advisories SET document=?3,state=?4,updated_at=?5,published_at=?6,publisher_id=?7,closed_at=?8,report_accepted=?9 WHERE repo_id=?1 AND ghsa_id=?2 RETURNING *").bind(repo).bind(ghsa).bind(serde_json::to_string(&data)?).bind(state).bind(now).bind(published_at).bind(publisher).bind(closed_at).bind(row.report_accepted||(row.report_id.is_some()&&state=="draft")).fetch_one(&mut *tx).await?;
+    if state == "published" {
+        super::super::dependabot_alerts::published(updated.clone())?;
+    }
+    if let Some(report) = row.report_id.filter(|_| state != row.state) {
         sqlx::query("UPDATE repository_security_reports SET state=?2,updated_at=?3 WHERE id=?1 AND repo_id=?4").bind(report).bind(if state=="closed" {"closed"} else {"open"}).bind(now).bind(repo).execute(&mut *tx).await?;
     }
     tx.commit().await?;
@@ -166,6 +175,8 @@ pub async fn update(
 pub async fn request_cve(pool: &SqlitePool, actor: i64, repo: i64, ghsa: &str) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
+    let private: bool = sqlx::query_scalar("SELECT is_private FROM repositories WHERE id=$1").bind(repo).fetch_one(&mut *tx).await?;
+    anyhow::ensure!(!private, Refusal::Conflict);
     anyhow::ensure!(
         row.state == "draft"
             && row.cve_requested_at.is_none()
@@ -186,15 +197,12 @@ pub async fn attach_fork(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
     anyhow::ensure!(
-        row.state == "draft" && row.private_fork_id.is_none(),
+        matches!(row.state.as_str(), "draft" | "triage") && row.private_fork_id.is_none(),
         Refusal::Conflict
     );
-    let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=?1 AND is_private AND owner_kind='user' AND owner_user_id=?2 AND forked_from_id=?3)").bind(fork).bind(actor).bind(repo).fetch_one(&mut *tx).await?;
-    anyhow::ensure!(valid, Refusal::Denied);
-    sqlx::query("UPDATE repositories SET visibility_locked=true WHERE id=?1")
-        .bind(fork)
-        .execute(&mut *tx)
-        .await?;
+    let changed = sqlx::query("UPDATE repositories SET visibility_locked=true WHERE id=?1 AND is_private AND owner_kind='user' AND owner_user_id=?2 AND forked_from_id=?3")
+        .bind(fork).bind(actor).bind(repo).execute(&mut *tx).await?.rows_affected();
+    anyhow::ensure!(changed == 1, Refusal::Denied);
     sqlx::query("UPDATE repository_advisories SET private_fork_id=?3,updated_at=?4 WHERE repo_id=?1 AND ghsa_id=?2").bind(repo).bind(ghsa).bind(fork).bind(Utc::now()).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())

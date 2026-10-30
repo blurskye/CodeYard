@@ -69,7 +69,7 @@ pub async fn insert_delivery(
 }
 pub async fn deliveries(pool: &SqlitePool, app: i64) -> Result<Vec<Delivery>> {
     Ok(sqlx::query_as(
-        "SELECT id,webhook_id,guid,event,action,status_code,duration_ms,error,'' AS request_headers,'' AS request_body,NULL AS response_headers,NULL AS response_body,redelivery,installation_id,repository_id,url,delivered_at FROM github_app_deliveries WHERE webhook_id=$1 ORDER BY id DESC LIMIT 100",
+        "SELECT id,webhook_id,guid,event,action,status_code,duration_ms,error,'' AS request_headers,'' AS request_body,NULL AS response_headers,NULL AS response_body,redelivery,installation_id,repository_id,url,delivered_at FROM github_app_deliveries d WHERE webhook_id=$1 AND EXISTS(SELECT 1 FROM github_apps a JOIN users owner ON owner.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE a.id=d.webhook_id AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password) ORDER BY id DESC LIMIT 100",
     )
     .bind(app)
     .fetch_all(pool)
@@ -77,7 +77,7 @@ pub async fn deliveries(pool: &SqlitePool, app: i64) -> Result<Vec<Delivery>> {
 }
 pub async fn delivery(pool: &SqlitePool, app: i64, id: i64) -> Result<Option<Delivery>> {
     Ok(
-        sqlx::query_as("SELECT * FROM github_app_deliveries WHERE webhook_id=$1 AND id=$2")
+        sqlx::query_as("SELECT * FROM github_app_deliveries d WHERE webhook_id=$1 AND id=$2 AND EXISTS(SELECT 1 FROM github_apps a JOIN users owner ON owner.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE a.id=d.webhook_id AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password)")
             .bind(app)
             .bind(id)
             .fetch_optional(pool)

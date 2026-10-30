@@ -614,7 +614,7 @@ pub async fn edit_issue_comment(
         return Ok(None);
     }
     let comment = sqlx::query_as::<_, IssueComment>(
-        "UPDATE issue_comments SET body = $2, updated_at = clock_timestamp()
+        "UPDATE issue_comments SET body = $2, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond')
          WHERE id = $1 AND body = $3 RETURNING *",
     )
     .bind(comment_id)
@@ -622,6 +622,9 @@ pub async fn edit_issue_comment(
     .bind(expected_body)
     .fetch_optional(&mut *tx)
     .await?;
+    if comment.is_some() {
+        super::issue_attributes::touch(&mut tx, issue_id).await?;
+    }
     tx.commit().await?;
     Ok(comment)
 }
@@ -674,6 +677,9 @@ pub async fn delete_issue_comment(
         .bind(comment_id)
         .execute(&mut *tx)
         .await?;
+    if removed.rows_affected() == 1 {
+        super::issue_attributes::touch(&mut tx, issue_id).await?;
+    }
     tx.commit().await?;
     Ok(removed.rows_affected() == 1)
 }

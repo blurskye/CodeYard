@@ -14,7 +14,7 @@ pub async fn search(
     let statement = query
         .statement(
             true,
-            &super::repositories::access::readable_condition(),
+            &crate::backend::db::catalog_search::credential_readable(&super::repositories::access::readable_condition(), options.token),
             options.repository,
         )
         .map_err(anyhow::Error::msg)?;
@@ -44,9 +44,9 @@ pub async fn search(
     tx.commit().await?;
     Ok(Results { total, items })
 }
-pub async fn topic(pool: &PgPool, viewer: Option<i64>, name: &str) -> Result<Option<Topic>> {
+pub async fn topic(pool: &PgPool, viewer: Option<i64>, token: Option<i64>, name: &str) -> Result<Option<Topic>> {
     let mut tx = super::repositories::discovery::search_connection(pool).await?;
-    let sql=format!("SELECT t.*,COUNT(*) AS repository_count FROM topics t JOIN repository_topics rt ON rt.topic=t.name JOIN repositories r ON r.id=rt.repo_id LEFT JOIN users u ON u.id=$1 WHERE t.name=$2 AND ({}) GROUP BY t.name",super::repositories::access::readable_condition());
+    let sql=format!("SELECT t.*,COUNT(*) AS repository_count FROM topics t JOIN repository_topics rt ON rt.topic=t.name JOIN repositories r ON r.id=rt.repo_id LEFT JOIN users u ON u.id=$1 WHERE t.name=$2 AND ({}) GROUP BY t.name",crate::backend::db::catalog_search::credential_readable(&super::repositories::access::readable_condition(), token));
     let topic = sqlx::query_as(&sql)
         .bind(viewer)
         .bind(name)

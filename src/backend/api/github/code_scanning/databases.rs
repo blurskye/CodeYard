@@ -61,10 +61,10 @@ async fn document(
     )
 }
 
-async fn readable(state: &AppState, headers: &HeaderMap, owner: &str, name: &str) -> Result<i64> {
+async fn readable(state: &AppState, headers: &HeaderMap, owner: &str, name: &str) -> Result<(i64, db::credentials::Actor)> {
     let (repo, auth) = repository(state, headers, owner, name, false).await?;
-    auth.ok_or_else(auth::required)?;
-    Ok(repo.id)
+    let auth = auth.ok_or_else(auth::required)?;
+    Ok((repo.id, auth.database_actor(headers)?))
 }
 
 pub(super) async fn list(
@@ -72,8 +72,8 @@ pub(super) async fn list(
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<axum::Json<Value>> {
-    let repo = readable(&state, &headers, &owner, &name).await?;
-    let rows = codeql::list(&state.pool, repo).await.map_err(failure)?;
+    let (repo, actor) = readable(&state, &headers, &owner, &name).await?;
+    let rows = codeql::list(&state.pool, actor, repo).await.map_err(failure)?;
     let mut values = Vec::new();
     for row in rows {
         values.push(document(&state, &row, &owner, &name).await?);
@@ -86,8 +86,8 @@ pub(super) async fn get(
     headers: HeaderMap,
     Path((owner, name, language)): Path<(String, String, String)>,
 ) -> Result<Response> {
-    let repo = readable(&state, &headers, &owner, &name).await?;
-    let row = codeql::get(&state.pool, repo, &language)
+    let (repo, actor) = readable(&state, &headers, &owner, &name).await?;
+    let row = codeql::get(&state.pool, actor, repo, &language)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -221,6 +221,7 @@ pub(in crate::backend::api::github) async fn upload(
     .map_err(Error::unavailable)?
     .map_err(|_| Error::validation("CodeqlDatabase", "file", "invalid"))?;
     auth.require_live(&state.pool).await?;
+    let actor = auth.database_actor(&headers)?;
     let size = bytes.len() as i64;
     // Every upload counts, including one that replaces an earlier database.
     db::files::charge_upload(&state.pool, auth.user.id, UPLOAD_QUOTA, size)
@@ -236,7 +237,7 @@ pub(in crate::backend::api::github) async fn upload(
         })?;
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     let key = format!("codeql/{}", uuid::Uuid::new_v4());
-    codeql::stage(&state.pool, auth.user.id, repo.id, &key)
+    codeql::stage(&state.pool, actor.clone(), repo.id, &key)
         .await
         .map_err(failure)?;
     state
@@ -256,7 +257,7 @@ pub(in crate::backend::api::github) async fn upload(
         &state.pool,
         &codeql::NewDatabase {
             repo: repo.id,
-            actor: auth.user.id,
+            actor,
             language: &language,
             name: &filename,
             key: &key,
@@ -278,7 +279,7 @@ pub(super) async fn delete(
     Path((owner, name, language)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = scope(&state, &headers, &owner, &name, true, false).await?;
-    codeql::delete(&state.pool, auth.user.id, repo.id, &language)
+    codeql::delete(&state.pool, auth.database_actor(&headers)?, repo.id, &language)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)

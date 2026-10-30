@@ -84,7 +84,8 @@ pub async fn set_restriction(
     .bind(scope.id())
     .execute(&mut *tx)
     .await?;
-    match scope {
+    if input.is_some() {
+        match scope {
         InteractionScope::User(user) => {
             sqlx::query("DELETE FROM interaction_limits WHERE repo_id IN (SELECT id FROM repositories WHERE owner_kind='user' AND owner_user_id=?1 AND NOT is_private)").bind(user).execute(&mut *tx).await?;
         }
@@ -92,6 +93,7 @@ pub async fn set_restriction(
             sqlx::query("DELETE FROM interaction_limits WHERE repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?1 AND NOT is_private)").bind(org).execute(&mut *tx).await?;
         }
         InteractionScope::Repository(_) => (),
+        }
     }
     if let Some(input) = input {
         sqlx::query(&format!("INSERT INTO interaction_limits({},restriction,expires_at) VALUES(?1,?2,strftime('%Y-%m-%dT%H:%M:%f000Z','now',?3))",scope.column())).bind(scope.id()).bind(input.limit.as_str()).bind(format!("+{} seconds",input.expiry.seconds())).execute(&mut *tx).await?;

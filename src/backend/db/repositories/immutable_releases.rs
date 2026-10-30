@@ -28,6 +28,8 @@ impl Publication {
             signer_key: trusted_key.into(),
         })
     }
+    /// The signed statement still names this release: same repository, tag and assets, and the
+    /// repository URL is the live owner and name, so a rename since signing is refused.
     pub(crate) fn matches(&self, repo: i64, tag: &str, assets: &[Artifact], namespace: &str) -> Result<()> {
         let predicate = &self.statement.predicate;
         ensure!(

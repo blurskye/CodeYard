@@ -46,7 +46,7 @@ pub(crate) fn may_cancel_run(
     personal_admin: bool,
     access: super::models::AccessLevel,
 ) -> bool {
-    triggered_by_id == Some(actor_id) || personal_admin || access.can_admin()
+    triggered_by_id == Some(actor_id) || personal_admin || access.can_write()
 }
 
 pub struct NewCiRun<'a> {

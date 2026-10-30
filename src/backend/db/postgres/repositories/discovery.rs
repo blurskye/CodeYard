@@ -109,6 +109,8 @@ pub async fn search_repositories(
 ) -> Result<Vec<Repository>> {
     anyhow::ensure!(offset >= 0, "Result offset must be nonnegative");
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     let search = RepositorySearch::parse(query);
     // The paging placeholders follow the match's binds: one for text, two for an owned search.
     let (limit_at, offset_at) = match &search {
@@ -137,6 +139,8 @@ pub async fn count_repositories(
     query: &str,
     cap: i64,
 ) -> Result<i64> {
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     let search = RepositorySearch::parse(query);
     // The cap follows the match's binds: one for text, two for an owned search.
     let cap_at = match &search {
@@ -282,6 +286,8 @@ pub async fn search_users(
 ) -> Result<Vec<User>> {
     anyhow::ensure!(offset >= 0, "Result offset must be nonnegative");
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     Ok(sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE username ILIKE $1 OR display_name ILIKE $1 \
          ORDER BY username, id LIMIT $2 OFFSET $3",
@@ -294,6 +300,8 @@ pub async fn search_users(
 }
 
 pub async fn count_users(pool: &PgPool, query: &str, cap: i64) -> Result<i64> {
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     Ok(sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM (SELECT 1 FROM users WHERE username ILIKE $1 OR display_name ILIKE $1 LIMIT $2) AS matches",
     )

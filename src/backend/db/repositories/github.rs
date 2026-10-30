@@ -2,8 +2,10 @@
 use crate::backend::db::{models::Repository, DbPool};
 use anyhow::Result;
 
-/// Teams with an explicit grant, each reporting the permission it also inherits from parents.
-pub(crate) const REPOSITORY_TEAMS_SQL:&str="SELECT t.*,e.permission FROM team_repo_access a JOIN effective_team_repo_access e ON e.team_id=a.team_id AND e.repo_id=a.repo_id JOIN teams t ON t.id=a.team_id WHERE a.repo_id=$1 AND t.org_id=$2 AND a.permission BETWEEN 1 AND 5 AND (t.privacy='visible' OR (t.privacy='secret' AND ($3 OR EXISTS(SELECT 1 FROM team_memberships m WHERE m.team_id=t.id AND m.user_id=$4 AND m.role IN ('member','maintainer'))))) ORDER BY t.id LIMIT $5 OFFSET $6";
+/// Teams that reach the repository, each with the permission it holds including what it inherits
+/// from parents. A public repository lists only teams with an explicit grant, as GitHub does;
+/// a private one also lists child teams that hold access only through a parent.
+pub(crate) const REPOSITORY_TEAMS_SQL:&str="SELECT t.*,e.permission FROM effective_team_repo_access e JOIN teams t ON t.id=e.team_id JOIN repositories r ON r.id=e.repo_id WHERE e.repo_id=$1 AND t.org_id=$2 AND (r.is_private OR EXISTS(SELECT 1 FROM team_repo_access a WHERE a.team_id=e.team_id AND a.repo_id=e.repo_id AND a.permission BETWEEN 1 AND 5)) AND (t.privacy='visible' OR (t.privacy='secret' AND ($3 OR EXISTS(SELECT 1 FROM team_memberships m WHERE m.team_id=t.id AND m.user_id=$4 AND m.role IN ('member','maintainer'))))) ORDER BY t.id LIMIT $5 OFFSET $6";
 
 #[derive(sqlx::FromRow)]
 pub struct RepositoryTeam {
@@ -45,11 +47,23 @@ pub struct RepositoryListQuery<'a> {
     pub offset: i64,
 }
 
-pub(crate) fn list_sql(query: &RepositoryListQuery<'_>, access: &str, readable: &str) -> String {
+/// The repositories the viewer may see that match `query`, as the part of a statement after
+/// `FROM repositories r LEFT JOIN users u ON u.id=$1`. It binds $1..$5 only, so a count can
+/// reuse it without the ordering and paging parameters.
+fn conditions(query: &RepositoryListQuery<'_>, access: &str, readable: &str) -> String {
     let scope = match query.list {
         RepositoryList::Public => "NOT r.is_private AND r.id > $3 AND CAST($2 AS BIGINT) IS NULL".to_owned(),
         // GitHub's user profile endpoint only lists public repositories, even for the owner.
-        RepositoryList::User(_) => "r.owner_kind='user' AND r.owner_user_id=$2 AND NOT r.is_private".to_owned(),
+        // The profile's own repositories are the owner type; its collaborations are the member
+        // type, which type=all adds.
+        RepositoryList::User(_) => {
+            let collaborations = if matches!(query.kind, "member" | "all") {
+                " OR EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=$2 AND a.access_level BETWEEN 1 AND 5)"
+            } else {
+                ""
+            };
+            format!("NOT r.is_private AND ((r.owner_kind='user' AND r.owner_user_id=$2){collaborations})")
+        }
         RepositoryList::OwnedUser(_) => "r.owner_kind='user' AND r.owner_user_id=$2".to_owned(),
         RepositoryList::Organization(_) => "r.owner_kind='org' AND r.owner_org_id=$2".to_owned(),
         RepositoryList::Forks(_) => "r.forked_from_id=$2".to_owned(),
@@ -58,6 +72,24 @@ pub(crate) fn list_sql(query: &RepositoryListQuery<'_>, access: &str, readable: 
              ({collaborator} AND EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id AND a.access_level BETWEEN 1 AND 5) AND ({access})>=1) OR \
              ({organization} AND r.owner_kind='org' AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id) AND ({access})>=1))"),
     };
+    // Whose repository "owner" means: the profile's user, otherwise the viewer.
+    let owned = if matches!(query.list, RepositoryList::User(_)) {
+        "(r.owner_kind='user' AND r.owner_user_id=$2)"
+    } else {
+        "(r.owner_kind='user' AND r.owner_user_id=u.id)"
+    };
+    format!(
+        "{readable} AND ({scope}) AND CAST($3 AS BIGINT) >= 0 \
+        AND ($4='all' OR ($4='public' AND NOT r.is_private) OR ($4='private' AND r.is_private)) \
+        AND ($5='all' OR ($5='forks' AND r.is_fork) OR ($5='sources' AND NOT r.is_fork) \
+            OR ($5='member' AND NOT {owned}) \
+            OR ($5='owner' AND {owned}) \
+            OR ($5='public' AND NOT r.is_private) OR ($5='private' AND r.is_private))"
+    )
+}
+
+/// One ordered page: binds $1..$5 as `conditions` does, then the limit $6 and offset $7.
+pub(crate) fn list_sql(query: &RepositoryListQuery<'_>, access: &str, readable: &str) -> String {
     let order = match query.sort {
         "created" => "r.created_at",
         "updated" => "r.updated_at",
@@ -69,23 +101,21 @@ pub(crate) fn list_sql(query: &RepositoryListQuery<'_>, access: &str, readable: 
         _ => "LOWER(COALESCE(owners.username, organizations.name) || '/' || r.name)",
     };
     let direction = if query.descending { "DESC" } else { "ASC" };
-    let owner_type = if matches!(query.list, RepositoryList::User(_)) {
-        "($5='owner') OR"
-    } else {
-        ""
-    };
+    let conditions = conditions(query, access, readable);
     format!(
         "SELECT r.* FROM repositories r LEFT JOIN users u ON u.id=$1 \
         LEFT JOIN users owners ON r.owner_kind='user' AND owners.id=r.owner_user_id \
         LEFT JOIN organizations ON r.owner_kind='org' AND organizations.id=r.owner_org_id \
-        WHERE {readable} AND ({scope}) AND CAST($3 AS BIGINT) >= 0 \
-        AND ($4='all' OR ($4='public' AND NOT r.is_private) OR ($4='private' AND r.is_private)) \
-        AND ({owner_type} $5='all' OR ($5='forks' AND r.is_fork) OR ($5='sources' AND NOT r.is_fork) \
-            OR ($5='member' AND NOT (r.owner_kind='user' AND r.owner_user_id=u.id)) \
-            OR ($5='owner' AND r.owner_kind='user' AND r.owner_user_id=u.id) \
-            OR ($5='public' AND NOT r.is_private) OR ($5='private' AND r.is_private)) \
+        WHERE {conditions} \
         ORDER BY {order} {direction}, r.id {direction} LIMIT $6 OFFSET $7"
     )
+}
+
+/// The number of matches, without the page's projection, ordering or its parameters: binds
+/// $1..$5 only.
+pub(crate) fn count_sql(query: &RepositoryListQuery<'_>, access: &str, readable: &str) -> String {
+    let conditions = conditions(query, access, readable);
+    format!("SELECT COUNT(*) FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE {conditions}")
 }
 
 impl RepositoryListQuery<'_> {

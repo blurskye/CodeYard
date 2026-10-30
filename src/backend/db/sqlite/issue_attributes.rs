@@ -86,6 +86,15 @@ pub async fn values(
     viewer: Option<i64>,
 ) -> Result<Vec<FieldValue>> {
     let mut tx = pool.begin().await?;
+    // Repository privacy can change after the caller's access check; read it in this snapshot.
+    let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?2 WHERE r.id=?1 AND {})", super::repositories::access::readable_condition()))
+        .bind(repo)
+        .bind(viewer)
+        .fetch_one(&mut *tx)
+        .await?;
+    if !readable {
+        return Ok(Vec::new());
+    }
     let rows:Vec<(i64,i64,String)>=sqlx::query_as("SELECT v.id,v.attribute_id,v.value_json FROM issue_field_values v JOIN issues i ON i.id=v.issue_id WHERE i.id=?1 AND i.repo_id=?2 ORDER BY v.attribute_id").bind(issue).bind(repo).fetch_all(&mut *tx).await?;
     let catalog = if rows.is_empty() {
         Vec::new()
@@ -256,12 +265,20 @@ async fn configure_owner(
             Some("single_select" | "multi_select")
         )
     {
-        let rows: Vec<(i64, String)> =
-            sqlx::query_as("SELECT id,value_json FROM issue_field_values WHERE attribute_id=?1")
+        // Bounded batches keep memory flat however many issues use the field.
+        let mut after = 0_i64;
+        loop {
+        let rows: Vec<(i64, i64, String)> =
+            sqlx::query_as("SELECT id,issue_id,value_json FROM issue_field_values WHERE attribute_id=?1 AND id>?2 ORDER BY id LIMIT 500")
                 .bind(id)
+                .bind(after)
                 .fetch_all(&mut *tx)
                 .await?;
-        for (value_id, text) in rows {
+        let Some(last) = rows.last().map(|row| row.0) else {
+            break;
+        };
+        after = last;
+        for (value_id, issue, text) in rows {
             let value: Value = serde_json::from_str(&text)?;
             let next = if d.data_type.as_deref() == Some("single_select") {
                 value
@@ -297,6 +314,8 @@ async fn configure_owner(
                     .execute(&mut *tx)
                     .await?;
             }
+            touch(&mut tx, issue).await?;
+        }
         }
     }
     let attribute = catalog_owner(&mut tx, user, org, Some(actor), &d.kind)
@@ -379,6 +398,18 @@ pub async fn patch_organization_field(
     definition.validate()?;
     configure_owner(tx, actor, (None, Some(org)), &definition).await
 }
+/// Deleting an attribute removes its type or values from every issue that uses it, so those
+/// issues need a new revision for incremental readers.
+async fn touch_users(tx: &mut Transaction<'_, Sqlite>, attribute: i64) -> Result<()> {
+    let issues: Vec<i64> = sqlx::query_scalar("SELECT issue_id FROM issue_field_values WHERE attribute_id=?1 UNION SELECT issue_id FROM issue_type_assignments WHERE attribute_id=?1")
+        .bind(attribute)
+        .fetch_all(&mut **tx)
+        .await?;
+    for issue in issues {
+        touch(tx, issue).await?;
+    }
+    Ok(())
+}
 pub async fn delete_organization_definition(
     pool: &SqlitePool,
     org: i64,
@@ -387,6 +418,7 @@ pub async fn delete_organization_definition(
     kind: &str,
 ) -> Result<()> {
     let mut tx = begin_organization_write(pool, org, actor).await?;
+    touch_users(&mut tx, id).await?;
     let deleted =
         sqlx::query("DELETE FROM issue_attributes WHERE id=?1 AND owner_org_id=?2 AND kind=?3")
             .bind(id)
@@ -402,6 +434,7 @@ pub async fn delete_definition(pool: &SqlitePool, repo: i64, actor: i64, id: i64
     let mut tx = begin_write(pool, repo, actor, None, true).await?;
     let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM issue_attributes a JOIN repositories r ON r.id=?2 WHERE a.id=?1 AND (a.owner_user_id=r.owner_user_id OR a.owner_org_id=r.owner_org_id))").bind(id).bind(repo).fetch_one(&mut *tx).await?;
     anyhow::ensure!(exists, Refusal::Missing);
+    touch_users(&mut tx, id).await?;
     sqlx::query("DELETE FROM issue_attributes WHERE id=?1")
         .bind(id)
         .execute(&mut *tx)
@@ -525,6 +558,13 @@ pub(crate) async fn type_in_transaction(
 ) -> Result<Option<i64>> {
     let old = assigned_connection(tx, repo, issue).await?;
     if old.as_ref().map(|a| a.id) == kind {
+        if kind.is_none() {
+            // A type left over from a previous owner is hidden but still stored; clearing removes it.
+            sqlx::query("DELETE FROM issue_type_assignments WHERE issue_id=?1")
+                .bind(issue)
+                .execute(&mut **tx)
+                .await?;
+        }
         return Ok(None);
     }
     let next = if let Some(id) = kind {

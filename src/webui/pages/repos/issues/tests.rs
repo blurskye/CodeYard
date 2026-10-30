@@ -224,6 +224,7 @@ fn repository() -> Repository {
         name: "repo".into(),
         signed_in: true,
         can_write: true,
+        can_triage: false,
         can_admin: true,
         csrf: "csrf-sentinel".into(),
         viewer: String::new(),

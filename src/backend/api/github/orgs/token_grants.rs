@@ -8,7 +8,7 @@ use crate::backend::{
     db::{
         self,
         fine_grained_tokens::Token,
-        models::{OrgRole, Organization, User},
+        models::{OrgRole, Organization},
         organizations::{self, OrganizationPage},
     },
     identity::fine_grained::{catalog, Access, Group},
@@ -48,7 +48,7 @@ async fn context(
     headers: &HeaderMap,
     name: &str,
     write: bool,
-) -> Result<(User, Organization)> {
+) -> Result<(auth::Authentication, Organization)> {
     let actor = auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(auth::required)?;
@@ -77,7 +77,7 @@ async fn context(
             "Must be an organization owner",
         ));
     }
-    Ok((actor.user, org))
+    Ok((actor, org))
 }
 
 #[derive(Default)]
@@ -319,7 +319,7 @@ async fn repositories(
     uri: &Uri,
     status: &str,
 ) -> Result<Response> {
-    let (_, org) = context(state, headers, name, false).await?;
+    let (viewer, org) = context(state, headers, name, false).await?;
     let token = db::fine_grained_tokens::get(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
@@ -330,7 +330,7 @@ async fn repositories(
     let mut more = false;
     match Access::parse(&token.repository_access) {
         Some(Access::Selected) => {
-            for (repo, _) in db::fine_grained_tokens::repositories(&state.pool, token.token_id)
+            for (repo, _) in db::fine_grained_tokens::repositories(&state.pool, token.token_id, Some(viewer.user.id))
                 .await
                 .map_err(Error::unavailable)?
             {
@@ -455,7 +455,7 @@ async fn review(
     db::fine_grained_tokens::review(
         &state.pool,
         org.id,
-        reviewer.id,
+        reviewer.database_actor(headers)?,
         &ids,
         "pending",
         status,
@@ -513,7 +513,7 @@ async fn revoke(
     db::fine_grained_tokens::review(
         &state.pool,
         org.id,
-        reviewer.id,
+        reviewer.database_actor(headers)?,
         &ids,
         "approved",
         "revoked",

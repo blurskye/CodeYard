@@ -96,9 +96,11 @@ pub fn merge(current: Option<&str>, patch: &Value) -> Result<Value> {
     ensure!(settings["name"].is_string(), Refusal::Invalid);
     // A stored configuration must not claim that Codeyard runs the CodeQL service.
     ensure!(
-        settings["code_scanning_default_setup"] != "enabled",
+        settings["code_scanning_default_setup"] != "enabled"
+            && settings["dependabot_security_updates"] != "enabled",
         Refusal::Invalid
     );
+    ensure!(settings["secret_scanning"] != "disabled" || settings["secret_scanning_push_protection"] != "enabled", Refusal::Invalid);
     // Nor that reviewers approve push protection bypasses: every writer may still bypass.
     ensure!(
         settings["secret_scanning_delegated_bypass"] != "enabled"
@@ -165,6 +167,7 @@ pub(crate) fn apply(current: Option<&str>, settings: &str) -> Result<String> {
     let settings: Value = serde_json::from_str(settings)?;
     for key in TOGGLES.iter().copied().chain(["advanced_security"]) {
         if let Some(status) = settings[key].as_str().filter(|s| *s != "not_set") {
+            let status = if key == "advanced_security" && matches!(status, "code_security" | "secret_protection") { "enabled" } else { status };
             value[key] = json!({"status":status});
         }
     }
@@ -203,10 +206,10 @@ pub(crate) fn scanning_settings(
     let enabled = value["secret_scanning"]["status"]
         .as_str()
         .map_or(previous.enabled, |s| s == "enabled");
-    let push_protection = enabled
-        && value["secret_scanning_push_protection"]["status"]
-            .as_str()
-            .map_or(previous.push_protection, |s| s == "enabled");
+    let push_protection = value["secret_scanning_push_protection"]["status"]
+        .as_str()
+        .map_or(previous.push_protection, |s| s == "enabled");
+    ensure!(enabled || !push_protection, Refusal::Invalid);
     Ok(super::secret_scanning::Settings {
         enabled,
         push_protection,
@@ -216,13 +219,13 @@ pub(crate) fn scanning_settings(
 native_operation!(super::postgres::code_security::list,super::sqlite::code_security::list,
     fn list(pool:&DbPool,actor:i64,org:i64) -> Result<Vec<Configuration>>);
 native_operation!(super::postgres::code_security::save,super::sqlite::code_security::save,
-    fn save(pool:&DbPool,actor:i64,org:i64,id:Option<i64>,patch:&Value) -> Result<Configuration>);
+    fn save(pool:&DbPool,actor:impl Into<super::credentials::Actor>,org:i64,id:Option<i64>,patch:&Value) -> Result<Configuration>);
 native_operation!(super::postgres::code_security::delete,super::sqlite::code_security::delete,
-    fn delete(pool:&DbPool,actor:i64,org:i64,id:i64) -> Result<()>);
+    fn delete(pool:&DbPool,actor:impl Into<super::credentials::Actor>,org:i64,id:i64) -> Result<()>);
 native_operation!(super::postgres::code_security::set_default,super::sqlite::code_security::set_default,
-    fn set_default(pool:&DbPool,actor:i64,org:i64,id:i64,scope:&str) -> Result<Configuration>);
+    fn set_default(pool:&DbPool,actor:impl Into<super::credentials::Actor>,org:i64,id:i64,scope:&str) -> Result<Configuration>);
 native_operation!(super::postgres::code_security::attach,super::sqlite::code_security::attach,
-    fn attach(pool:&DbPool,actor:i64,org:i64,id:Option<i64>,scope:&str,selected:&[i64]) -> Result<()>);
+    fn attach(pool:&DbPool,actor:impl Into<super::credentials::Actor>,org:i64,id:Option<i64>,scope:&str,selected:&[i64]) -> Result<()>);
 native_operation!(super::postgres::code_security::repositories,super::sqlite::code_security::repositories,
     fn repositories(pool:&DbPool,actor:i64,org:i64,id:i64) -> Result<Vec<Repository>>);
 native_operation!(super::postgres::code_security::repository_settings,super::sqlite::code_security::repository_settings,

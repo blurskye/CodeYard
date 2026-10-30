@@ -27,6 +27,9 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 pub(super) fn failure(error: anyhow::Error) -> Error {
+    if let Some(graph @ (db::dependency_graph::GraphError::Limit | db::dependency_graph::GraphError::Disabled)) = error.downcast_ref::<db::dependency_graph::GraphError>() {
+        return Error::new(StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
+    }
     match error.downcast_ref::<advisories::Refusal>() {
         Some(advisories::Refusal::Denied) => {
             return Error::new(StatusCode::FORBIDDEN, "Advisory administration denied")
@@ -320,13 +323,22 @@ async fn create(
         .await
         .map_err(failure)?;
     if value["start_private_fork"] == true {
-        workflow::private_fork(&state, actor.user.id, &repo, &row.ghsa_id)
-            .await
-            .map_err(failure)?;
-        row = advisories::get(&state.pool, Some(actor.user.id), repo.id, &row.ghsa_id)
-            .await
-            .map_err(failure)?
-            .ok_or_else(Error::missing)?;
+        match workflow::private_fork(&state, actor.user.id, &repo, &row.ghsa_id).await {
+            Ok(_) => {
+                if let Some(fresh) = advisories::get(&state.pool, Some(actor.user.id), repo.id, &row.ghsa_id).await.map_err(failure)? {
+                    row = fresh;
+                } else if !report {
+                    return Err(Error::missing());
+                }
+            }
+            Err(error) if report => {
+                // The report is already committed; optional remediation cannot reject it.
+                let denied = matches!(error.downcast_ref::<advisories::Refusal>(), Some(advisories::Refusal::Denied))
+                    || error.downcast_ref::<StorageError>().is_some_and(|error| matches!(error.kind, LifecycleFailure::Denied));
+                if !denied { tracing::warn!(ghsa_id=%row.ghsa_id,%error,"Optional vulnerability-report fork was not created"); }
+            }
+            Err(error) => return Err(failure(error)),
+        }
     }
     Ok((
         StatusCode::CREATED,

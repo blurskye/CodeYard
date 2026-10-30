@@ -1,4 +1,4 @@
-use crate::backend::db::{models::OrgRole, organizations::*};
+use crate::backend::db::{credentials::Actor, models::OrgRole, organizations::*};
 use anyhow::Result;
 use sqlx::{SqliteConnection, SqlitePool};
 use OrganizationOutcome::{Applied, Conflict, Denied};
@@ -7,14 +7,15 @@ use super::authority::*;
 
 pub async fn delete_organization(
     pool: &SqlitePool,
-    actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    actor: impl Into<Actor>,
     org: i64,
 ) -> Result<OrganizationOutcome<()>> {
+    let owner = actor.into();
+    let actor = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential).await?;
+    super::super::credentials::require_account(&mut tx, &owner).await?;
     let role = require_org!(tx, actor, org);
-    if role != OrgRole::Owner {
+    if role != OrgRole::Owner || !super::super::credentials::organization(&mut tx, &owner, org, "organization_administration", true).await? {
         return Ok(Denied);
     }
     if repository_count(&mut tx, org).await? > 0 {
@@ -55,13 +56,14 @@ pub async fn count_organization_repositories(
 /// Capture the initial repository set so concurrent creations survive the deletion.
 pub async fn list_organization_deletion_repositories(
     pool: &SqlitePool,
-    actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    actor: impl Into<Actor>,
     org: i64,
 ) -> Result<OrganizationOutcome<Vec<i64>>> {
+    let owner = actor.into();
+    let actor = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner {
+    super::super::credentials::require_account(&mut tx, &owner).await?;
+    if require_org!(tx, actor, org) != OrgRole::Owner || !super::super::credentials::organization(&mut tx, &owner, org, "organization_administration", true).await? {
         return Ok(Denied);
     }
     let repository = sqlx::query_scalar(
@@ -77,18 +79,21 @@ pub async fn list_organization_deletion_repositories(
 /// An owner may delete even archived repositories, but only while they belong to this organization.
 pub async fn delete_organization_repository(
     pool: &SqlitePool,
-    actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    actor: impl Into<Actor>,
     org: i64,
     repo: i64,
 ) -> Result<OrganizationOutcome<crate::backend::db::models::Repository>> {
+    let owner = actor.into();
+    let actor = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner {
+    super::super::credentials::require_account(&mut tx, &owner).await?;
+    if require_org!(tx, actor, org) != OrgRole::Owner || !super::super::credentials::organization(&mut tx, &owner, org, "organization_administration", true).await? {
         return Ok(Denied);
     }
     let files: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT DISTINCT a.file_id FROM release_assets a JOIN releases r ON r.id=a.release_id WHERE r.repo_id=?1 ORDER BY a.file_id")
         .bind(repo).fetch_all(&mut *tx).await?;
+    sqlx::query("UPDATE packages SET visibility='private' WHERE repo_id=?1 AND EXISTS(SELECT 1 FROM repositories WHERE id=?1 AND owner_kind='org' AND owner_org_id=?2 AND is_private)")
+        .bind(repo).bind(org).execute(&mut *tx).await?;
     let deleted = sqlx::query_as("DELETE FROM repositories WHERE id=?1 AND owner_kind='org' AND owner_org_id=?2 AND owner_user_id IS NULL RETURNING *")
         .bind(repo).bind(org).fetch_optional(&mut *tx).await?;
     let Some(deleted) = deleted else {

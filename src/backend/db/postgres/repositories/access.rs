@@ -95,7 +95,8 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
                     AND EXISTS(SELECT 1 FROM org_memberships member WHERE member.org_id=a.org_id
                         AND member.user_id=u.id AND member.role IN ('owner','admin','member'))
                     AND ((a.user_id=u.id AND a.team_id IS NULL) OR (a.user_id IS NULL AND EXISTS(
-                        SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id
+                        SELECT 1 FROM teams t JOIN team_ancestors lineage ON lineage.ancestor_id=t.id
+                        JOIN team_memberships tm ON tm.team_id=lineage.team_id
                         WHERE t.id=a.team_id AND t.org_id=a.org_id AND t.privacy IN ('visible','secret')
                             AND tm.user_id=u.id AND tm.role IN ('member','maintainer'))))),0),
             COALESCE((
@@ -103,7 +104,8 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
                     WHEN 'member' THEN COALESCE((
                         SELECT MAX(a.permission) FROM team_repo_access a
                         JOIN teams t ON t.id = a.team_id AND t.org_id = m.org_id
-                        JOIN effective_team_memberships tm ON tm.team_id = t.id
+                        JOIN team_ancestors lineage ON lineage.ancestor_id=t.id
+                        JOIN team_memberships tm ON tm.team_id=lineage.team_id
                             AND tm.user_id = u.id AND tm.role IN ('member','maintainer')
                         WHERE a.repo_id = r.id AND a.permission BETWEEN 1 AND 5
                             AND t.privacy IN ('visible','secret')
@@ -122,6 +124,16 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
         ELSE 0 END)::smallint
     "#;
 
+const PUBLIC_READ_BASELINE: &str = "CASE WHEN NOT r.is_private THEN 1 ELSE 0 END";
+
+/// The access projection without the read that every visitor has on a public repository: what
+/// the user's own grants, organization settings and team memberships give. A collaborator is
+/// someone with such a grant, not everyone who can read.
+pub(crate) fn user_repo_grant_sql() -> String {
+    debug_assert!(USER_REPO_ACCESS_SQL.contains(PUBLIC_READ_BASELINE));
+    USER_REPO_ACCESS_SQL.replacen(PUBLIC_READ_BASELINE, "0", 1)
+}
+
 /// Whether repository `r` is readable by the viewer, whom the query joins as `u` (NULL for an
 /// anonymous visitor). It follows `repositories::access::can_read`: public repositories, the
 /// personal repositories of a site admin, and the access projection for everything else.
@@ -129,6 +141,18 @@ pub(crate) fn readable_condition() -> String {
     format!(
         "(NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL}) >= 1))"
     )
+}
+
+/// Read authority includes archived repositories and does not require interaction privileges.
+/// Keep the supplying authority locks until the caller has loaded its protected payload.
+pub(crate) async fn lock_readable_repository_in_transaction(
+    connection: &mut PgConnection, user_id: i64, repo_id: i64, repository_lock: RepositoryRowLock,
+) -> Result<bool> {
+    if lock_user_repo_access_in_transaction(connection, user_id, repo_id, repository_lock, true).await?.is_none() {
+        return Ok(false);
+    }
+    Ok(sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})", readable_condition()))
+        .bind(user_id).bind(repo_id).fetch_one(connection).await?)
 }
 
 /// Current visibility and metadata in one snapshot for a bounded run list.
@@ -190,6 +214,9 @@ pub(crate) async fn lock_user_repo_access_in_transaction(
     if archived && !include_archived {
         return Ok(None);
     }
+    // Transfers lock the owning and ancestor organizations as one ordered set.
+    let _: Vec<i64> = sqlx::query_scalar("WITH RECURSIVE family AS (SELECT id,owner_org_id,forked_from_id FROM repositories WHERE id=$1 UNION SELECT r.id,r.owner_org_id,r.forked_from_id FROM repositories r JOIN family f ON r.id=f.forked_from_id) SELECT id FROM organizations WHERE id IN (SELECT owner_org_id FROM family) ORDER BY id FOR SHARE")
+        .bind(repo_id).fetch_all(&mut *connection).await?;
     let organization = match (owner_kind.as_str(), owner_user_id, owner_org_id) {
         ("user", Some(_), None) => false,
         ("org", None, Some(org_id)) => {
@@ -322,6 +349,11 @@ pub(crate) async fn lock_user_repo_access_in_transaction(
     .fetch_optional(&mut *connection)
     .await?;
 
+    // Retain the installation supplying App-derived authority until the effect commits.
+    // Recheck its bounds in the subsequent projection after any revocation lock wait.
+    let _: Vec<i64> = sqlx::query_scalar("SELECT i.id FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id WHERE a.bot_id=$1 AND (i.user_id=$2 OR i.org_id=$3) ORDER BY i.id FOR SHARE OF i")
+        .bind(user_id).bind(owner_user_id).bind(owner_org_id)
+        .fetch_all(&mut *connection).await?;
     let access = user_repo_access_in_transaction(connection, user_id, repo_id).await?;
     Ok(Some(LockedRepositoryAccess {
         access,

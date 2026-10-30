@@ -1837,7 +1837,7 @@ async fn mutate(
                     site.job_memory_gib,
                 )?,
             };
-            db::actions::save_repo_actions_settings(pool, actor.id, repository.id, &settings)
+            db::actions::save_repo_actions_settings(pool, ctx.database_actor(actor.id), repository.id, &settings)
                 .await
                 .map_err(repository_settings_error)?;
             Ok(settings_section_url(&base, action))

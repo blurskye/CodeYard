@@ -57,7 +57,8 @@ async fn require_admin(
         && access.is_some_and(|access| {
             access.access.can_admin() || (!access.organization && access.is_admin)
         });
-    let live = super::users::transitions::credential_live(tx, actor, &credential.as_credential(), true).await?;
+    // Fine-grained, app, CI and OAuth tokens each need repository administration.
+    let live = super::credentials::repository(tx, &(actor, &credential).into(), repo, "administration", true).await?;
     anyhow::ensure!(
         allowed && live,
         crate::backend::repositories::deploy_keys::DeployKeyError::Denied

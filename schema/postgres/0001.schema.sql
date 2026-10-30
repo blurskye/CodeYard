@@ -351,7 +351,7 @@ CREATE INDEX IF NOT EXISTS idx_repositories_is_private ON repositories(is_privat
 CREATE INDEX IF NOT EXISTS idx_repositories_forked_from_id ON repositories(forked_from_id);
 CREATE INDEX IF NOT EXISTS idx_repositories_created_at ON repositories(created_at);
 CREATE INDEX IF NOT EXISTS idx_repositories_updated_at ON repositories(updated_at);
-CREATE INDEX IF NOT EXISTS idx_repositories_created_by ON repositories(created_by_id);
+CREATE INDEX IF NOT EXISTS idx_repositories_created_by ON repositories(created_by_id,created_at DESC,id DESC);
 CREATE INDEX IF NOT EXISTS idx_repositories_public_stars
     ON repositories(stars_count DESC, created_at DESC, id DESC) WHERE is_private = false;
 CREATE INDEX IF NOT EXISTS idx_repositories_search_order
@@ -440,7 +440,7 @@ CREATE TABLE IF NOT EXISTS repository_pushes (
     commit_count INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_repository_pushes_actor ON repository_pushes(actor_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_repository_pushes_actor ON repository_pushes(actor_id,created_at DESC,id DESC);
 
 --------------------------------------------------------------------------------
 -- PART 10: BRANCH PROTECTION
@@ -541,7 +541,7 @@ CREATE TABLE IF NOT EXISTS issues (
     closed_at TIMESTAMPTZ,
     UNIQUE(repo_id, number)
 );
-CREATE INDEX IF NOT EXISTS idx_issues_author_id ON issues(author_id);
+CREATE INDEX IF NOT EXISTS idx_issues_author_id ON issues(author_id,created_at DESC,id DESC);
 CREATE INDEX IF NOT EXISTS idx_issues_state ON issues(state);
 CREATE INDEX IF NOT EXISTS idx_issues_repo_state ON issues(repo_id, state);
 CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at);
@@ -616,7 +616,7 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     head_publisher_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     UNIQUE(repo_id, number)
 );
-CREATE INDEX IF NOT EXISTS idx_pull_requests_author_id ON pull_requests(author_id);
+CREATE INDEX IF NOT EXISTS idx_pull_requests_author_id ON pull_requests(author_id,created_at DESC,id DESC);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_state ON pull_requests(state);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_repo_state ON pull_requests(repo_id, state);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_head_repo_state ON pull_requests(head_repo_id, state);
@@ -800,7 +800,7 @@ CREATE TABLE IF NOT EXISTS follows (
     PRIMARY KEY (follower_id, following_id),
     CHECK (follower_id != following_id)
 );
-CREATE INDEX IF NOT EXISTS idx_follows_following_id ON follows(following_id);
+CREATE INDEX IF NOT EXISTS idx_follows_following_id ON follows(following_id,follower_id);
 
 --------------------------------------------------------------------------------
 -- PART 17: SECRETS (encrypted)
@@ -1058,6 +1058,7 @@ CREATE TABLE IF NOT EXISTS ci_runs (
     workflow_run_id BIGINT REFERENCES ci_runs(id) ON DELETE CASCADE,
     workflow_run_attempt INTEGER,
     log_version BIGINT NOT NULL DEFAULT 0,
+    log_expires_at BIGINT CHECK (log_expires_at IS NULL OR completed_at IS NOT NULL),
     runner_labels TEXT NOT NULL DEFAULT '[]',
     runner_group TEXT,
     approval_required BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1068,6 +1069,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_runs_pull_revision ON ci_runs(pull_requ
     WHERE event = 'pull_request' AND pull_request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ci_runs_queue ON ci_runs(status, id) WHERE status IN ('queued', 'running');
 CREATE INDEX IF NOT EXISTS idx_ci_runs_repo_created_at ON ci_runs(repo_id, created_at DESC);
+CREATE INDEX ci_runs_log_expiry ON ci_runs(log_expires_at,id) WHERE log_expires_at IS NOT NULL AND log_lines>0;
 CREATE INDEX IF NOT EXISTS idx_ci_runs_user_created_at ON ci_runs(triggered_by_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ci_runs_status ON ci_runs(status);
 CREATE INDEX IF NOT EXISTS idx_ci_runs_push_user_created_at ON ci_runs(triggered_by_id, created_at DESC)
@@ -1112,6 +1114,7 @@ CREATE TABLE IF NOT EXISTS ci_deployments (
     run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     environment VARCHAR(255) NOT NULL,
+    environment_key TEXT NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending, approved, in_progress, success, failed, cancelled
     approved_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     approved_at TIMESTAMPTZ,
@@ -1122,6 +1125,7 @@ CREATE TABLE IF NOT EXISTS ci_deployments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ci_deployments_repo_env ON ci_deployments(repo_id, environment, created_at DESC);
+CREATE INDEX ci_deployments_environment_waiting ON ci_deployments(repo_id,environment_key,status,run_id) WHERE status IN ('pending','approved');
 
 -- commit_statuses is created before ci_runs, so its link to ci_runs is added here.
 ALTER TABLE commit_statuses ADD FOREIGN KEY (ci_run_id) REFERENCES ci_runs(id) ON DELETE SET NULL;
@@ -1223,7 +1227,9 @@ CREATE TRIGGER repository_visibility_floor BEFORE INSERT OR UPDATE OF is_private
 
 CREATE OR REPLACE FUNCTION narrow_descendant_fork_visibility() RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.is_private AND NOT OLD.is_private THEN
+    IF NEW.is_private AND NOT OLD.is_private AND EXISTS (
+        SELECT 1 FROM repositories WHERE forked_from_id=NEW.id AND (NOT is_private OR NOT visibility_locked)
+    ) THEN
         WITH RECURSIVE descendants(id) AS (
             SELECT id FROM repositories WHERE forked_from_id = NEW.id
             UNION
@@ -1311,8 +1317,13 @@ CREATE TABLE IF NOT EXISTS email_outbox (
     sent_at TIMESTAMPTZ,
     organization_invitation_id BIGINT REFERENCES organization_invitations(id) ON DELETE SET NULL,
     -- A notification email is sent only while its recipient can still read the notification.
-    notification_id BIGINT REFERENCES notifications(id) ON DELETE CASCADE
+    notification_id BIGINT REFERENCES notifications(id) ON DELETE CASCADE,
+    link_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+    link_purpose VARCHAR(10) CHECK (link_purpose IN ('verify','reset','secondary')),
+    link_token_hash TEXT CHECK (char_length(link_token_hash)=64),
+    CHECK ((link_user_id IS NULL)=(link_purpose IS NULL) AND (link_user_id IS NULL)=(link_token_hash IS NULL))
 );
+CREATE INDEX email_outbox_link ON email_outbox(link_user_id,link_purpose,sent_at) WHERE link_user_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS email_tokens (
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1391,7 +1402,7 @@ CREATE INDEX IF NOT EXISTS idx_repository_pushes_created_at ON repository_pushes
 
 CREATE INDEX IF NOT EXISTS idx_issue_assignees_user ON issue_assignees(user_id);
 
-CREATE INDEX IF NOT EXISTS idx_pull_requests_merged_by ON pull_requests(merged_by_id, merged_at) WHERE merged_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_pull_requests_merged_by ON pull_requests(merged_by_id,merged_at DESC,id DESC) WHERE merged_at IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_issue_labels_label ON issue_labels(label_id);
 
@@ -1488,7 +1499,8 @@ CREATE UNIQUE INDEX idx_user_emails_address ON user_emails(lower(email));
 CREATE FUNCTION guard_primary_email() RETURNS TRIGGER AS $$
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtext(current_schema()),37004);
-    IF EXISTS (SELECT 1 FROM user_emails WHERE lower(email)=lower(NEW.email) AND user_id<>NEW.id) THEN
+    IF EXISTS (SELECT 1 FROM user_emails WHERE lower(email)=lower(NEW.email) AND user_id<>NEW.id)
+        OR EXISTS (SELECT 1 FROM users WHERE lower(email)=lower(NEW.email) AND id<>NEW.id) THEN
         RAISE EXCEPTION 'Email address is already registered' USING ERRCODE='23505';
     END IF;
     RETURN NEW;
@@ -1835,7 +1847,7 @@ CREATE TABLE IF NOT EXISTS actions_blob_parts (
 CREATE OR REPLACE FUNCTION actions_blob_delete() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     INSERT INTO pending_object_deletions(object_key,delete_after)
-    VALUES(OLD.object_key,NOW()+INTERVAL '1 hour') ON CONFLICT(object_key) DO NOTHING;
+    VALUES(OLD.object_key,clock_timestamp()+INTERVAL '7 days') ON CONFLICT(object_key) DO NOTHING;
     RETURN OLD;
 END;
 $$;
@@ -1916,6 +1928,7 @@ CREATE TABLE graphql_rate_limits (
     reset_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX ci_runs_workflow_run ON ci_runs(workflow_run_id,workflow_run_attempt);
+CREATE INDEX ci_runs_logical_latest ON ci_runs(repo_id,(COALESCE(workflow_run_id,id)) DESC,id DESC);
 
 CREATE TABLE actions_run_metadata (
     run_id BIGINT PRIMARY KEY REFERENCES ci_runs(id) ON DELETE CASCADE,
@@ -2052,14 +2065,37 @@ CREATE TABLE team_invitations (
 CREATE INDEX team_invitations_invitation ON team_invitations(invitation_id);
 CREATE INDEX teams_parent ON teams(parent_team_id,id);
 
-CREATE VIEW team_ancestors AS
-WITH RECURSIVE ancestors(team_id,ancestor_id) AS (
-    SELECT id,id FROM teams WHERE privacy IN ('visible','secret')
-    UNION
-    SELECT a.team_id,p.id FROM ancestors a JOIN teams t ON t.id=a.ancestor_id
-    JOIN teams p ON p.id=t.parent_team_id AND p.org_id=t.org_id
-    WHERE t.privacy='visible' AND p.privacy='visible'
-) SELECT team_id,ancestor_id FROM ancestors;
+-- Reads must never expand unrelated tenants' hierarchies. Maintain the indexed closure
+-- on hierarchy writes, which already serialize through organization authority.
+CREATE TABLE team_ancestors (
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    ancestor_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    PRIMARY KEY(team_id,ancestor_id)
+);
+CREATE INDEX team_ancestors_ancestor ON team_ancestors(ancestor_id,team_id);
+CREATE FUNCTION refresh_team_ancestors() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM team_ancestors WHERE team_id IN (
+        WITH RECURSIVE subtree(id) AS (
+            SELECT NEW.id UNION SELECT t.id FROM teams t JOIN subtree s ON t.parent_team_id=s.id
+        ) SELECT id FROM subtree
+    );
+    INSERT INTO team_ancestors(team_id,ancestor_id)
+    WITH RECURSIVE subtree(id) AS (
+        SELECT NEW.id UNION SELECT t.id FROM teams t JOIN subtree s ON t.parent_team_id=s.id
+    ), paths(team_id,ancestor_id) AS (
+        SELECT t.id,t.id FROM teams t JOIN subtree s ON s.id=t.id WHERE t.privacy IN ('visible','secret')
+        UNION
+        SELECT a.team_id,p.id FROM paths a JOIN teams t ON t.id=a.ancestor_id
+        JOIN teams p ON p.id=t.parent_team_id AND p.org_id=t.org_id
+        WHERE t.privacy='visible' AND p.privacy='visible'
+    ) SELECT team_id,ancestor_id FROM paths;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER team_ancestors_insert AFTER INSERT ON teams FOR EACH ROW EXECUTE FUNCTION refresh_team_ancestors();
+CREATE TRIGGER team_ancestors_update AFTER UPDATE OF parent_team_id,privacy,org_id ON teams
+    FOR EACH ROW WHEN (OLD.parent_team_id IS DISTINCT FROM NEW.parent_team_id OR OLD.privacy IS DISTINCT FROM NEW.privacy OR OLD.org_id IS DISTINCT FROM NEW.org_id)
+    EXECUTE FUNCTION refresh_team_ancestors();
 
 CREATE VIEW effective_team_memberships AS
 SELECT MIN(tm.id) AS id,a.ancestor_id AS team_id,tm.user_id,
@@ -2391,6 +2427,7 @@ CREATE TABLE repository_deployments (
     payload TEXT NOT NULL DEFAULT '{}',
     original_environment TEXT NOT NULL,
     environment TEXT NOT NULL,
+    environment_key TEXT NOT NULL,
     description TEXT,
     transient_environment BOOLEAN NOT NULL DEFAULT false,
     production_environment BOOLEAN NOT NULL DEFAULT false,
@@ -2398,6 +2435,7 @@ CREATE TABLE repository_deployments (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 CREATE INDEX repository_deployments_repo ON repository_deployments(repo_id,id);
+CREATE INDEX repository_deployments_inactivation ON repository_deployments(repo_id,environment_key,id) WHERE NOT transient_environment AND NOT production_environment;
 
 CREATE TABLE deployment_statuses (
     id BIGSERIAL PRIMARY KEY,
@@ -2678,6 +2716,7 @@ CREATE TABLE dependency_snapshots (
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 CREATE INDEX dependency_snapshots_reference ON dependency_snapshots(repo_id,reference,detector,correlator,scanned DESC,id DESC);
+CREATE INDEX dependency_snapshots_head ON dependency_snapshots(repo_id,reference,id DESC,sha);
 CREATE INDEX dependency_snapshots_sha ON dependency_snapshots(repo_id,sha,detector,correlator,scanned DESC,id DESC);
 
 CREATE TABLE dependency_sbom_reports (
@@ -2799,11 +2838,16 @@ CREATE TABLE artifact_metadata_jobs (
     input TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('pending','processing','completed','failed')),
     started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
     total_count BIGINT,
-    errors TEXT NOT NULL DEFAULT '[]'
+    errors TEXT NOT NULL DEFAULT '[]',
+    CHECK ((status IN ('completed','failed')) = (completed_at IS NOT NULL)),
+    CHECK (status NOT IN ('completed','failed') OR input='')
 );
 CREATE UNIQUE INDEX artifact_metadata_active_job ON artifact_metadata_jobs(org_id,cluster) WHERE status IN ('pending','processing');
 CREATE INDEX artifact_metadata_pending_jobs ON artifact_metadata_jobs(id) WHERE status='pending';
+CREATE INDEX artifact_metadata_job_expiry ON artifact_metadata_jobs(completed_at,id) WHERE status IN ('completed','failed');
+CREATE INDEX artifact_metadata_job_history ON artifact_metadata_jobs(actor_id,org_id,scoped_repo,id) WHERE status IN ('completed','failed');
 
 -- code-scanning
 CREATE TABLE code_scanning_uploads (
@@ -3355,7 +3399,8 @@ CREATE TABLE organization_external_property_installations (
     org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     display_name TEXT NOT NULL,
     installation_id BIGINT,
-    UNIQUE (org_id, display_name)
+    UNIQUE (org_id, display_name),
+    UNIQUE (org_id, installation_id)
 );
 
 CREATE TABLE organization_external_property_values (
@@ -3371,9 +3416,10 @@ CREATE TABLE repository_import_authors (
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     author_name TEXT NOT NULL,
     author_email TEXT NOT NULL,
+    identity_hash TEXT NOT NULL CHECK(length(identity_hash)=64),
     mapped_name TEXT,
     mapped_email TEXT,
-    UNIQUE (repo_id, author_name, author_email)
+    UNIQUE (repo_id, identity_hash)
 );
 
 CREATE TABLE project_teams (
@@ -3413,6 +3459,7 @@ CREATE TABLE check_runs (
 );
 CREATE INDEX check_runs_latest ON check_runs(suite_id,name,id);
 CREATE INDEX check_runs_repo ON check_runs(repo_id,id);
+CREATE INDEX check_runs_publisher_latest ON check_runs(repo_id,name,id);
 
 CREATE TABLE check_annotations (
     id BIGSERIAL PRIMARY KEY,
@@ -3423,7 +3470,7 @@ CREATE INDEX check_annotations_run ON check_annotations(run_id,id);
 
 CREATE TABLE check_suite_preferences (
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    app_id BIGINT NOT NULL REFERENCES oauth_applications(id) ON DELETE CASCADE,
+    app_id BIGINT NOT NULL REFERENCES github_apps(id) ON DELETE CASCADE,
     setting BOOLEAN NOT NULL,
     PRIMARY KEY(repo_id,app_id)
 );
@@ -3443,7 +3490,9 @@ CREATE INDEX actions_policies_org ON actions_policies(org_id);
 CREATE TABLE actions_deployment_reviews (
     id BIGSERIAL PRIMARY KEY,
     run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
-    environment_id BIGINT NOT NULL REFERENCES deployment_environments(id) ON DELETE CASCADE,
+    -- Historical identity: deleting the live environment must not delete an approval.
+    environment_id BIGINT NOT NULL,
+    environment_name TEXT NOT NULL,
     actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     state TEXT NOT NULL CHECK (state IN ('approved','rejected')),
     comment TEXT NOT NULL,
@@ -3675,6 +3724,7 @@ CREATE TABLE dependabot_alerts (
     number BIGINT NOT NULL,
     ghsa_id TEXT NOT NULL,
     manifest TEXT NOT NULL,
+    manifest_hash TEXT NOT NULL CHECK(length(manifest_hash)=64),
     ecosystem TEXT NOT NULL,
     package TEXT NOT NULL,
     version TEXT NOT NULL,
@@ -3690,7 +3740,7 @@ CREATE TABLE dependabot_alerts (
     dismissed_reason TEXT,
     dismissed_comment TEXT,
     PRIMARY KEY(repo_id,number),
-    UNIQUE(repo_id,ghsa_id,manifest,ecosystem,package)
+    UNIQUE(repo_id,ghsa_id,manifest_hash,ecosystem,package)
 );
 
 -- Actions concurrency groups
@@ -3699,6 +3749,7 @@ CREATE TABLE actions_concurrency_groups (
     name_key TEXT NOT NULL,
     name TEXT NOT NULL,
     last_acquired_at TIMESTAMPTZ,
+    next_request BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY(repo_id, name_key)
 );
 
@@ -3707,6 +3758,7 @@ CREATE TABLE actions_run_concurrency (
     repo_id BIGINT NOT NULL,
     name_key TEXT NOT NULL,
     holding BOOLEAN NOT NULL DEFAULT FALSE,
+    request_order BIGINT NOT NULL DEFAULT 0,
     cancel_in_progress BOOLEAN NOT NULL DEFAULT FALSE,
     FOREIGN KEY(repo_id, name_key) REFERENCES actions_concurrency_groups(repo_id, name_key) ON DELETE CASCADE
 );
@@ -3738,7 +3790,7 @@ CREATE INDEX repository_ruleset_versions_rule ON repository_ruleset_versions(rul
 
 CREATE TABLE repository_rule_suites (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT REFERENCES organizations(id) ON DELETE SET NULL,
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     repository_name TEXT NOT NULL CHECK(length(repository_name)<=255),
     actor_id BIGINT CHECK(actor_id IS NULL OR actor_id>0),
@@ -3873,7 +3925,38 @@ CREATE TABLE actions_job_concurrency (
     repo_id BIGINT NOT NULL,
     name_key TEXT NOT NULL,
     holding BOOLEAN NOT NULL DEFAULT FALSE,
+    request_order BIGINT NOT NULL DEFAULT 0,
     cancelled BOOLEAN NOT NULL DEFAULT FALSE,
     FOREIGN KEY(repo_id, name_key) REFERENCES actions_concurrency_groups(repo_id, name_key) ON DELETE CASCADE
 );
 CREATE INDEX actions_job_concurrency_group ON actions_job_concurrency(repo_id, name_key);
+
+-- Reverse references and ordered collection lookups.
+CREATE INDEX notification_threads_subject ON notification_threads(scope_repository_id,subject_type,subject_key,user_id);
+CREATE INDEX actions_blob_grants_object ON actions_blob_grants(object_id);
+CREATE INDEX actions_blob_grants_run ON actions_blob_grants(run_id);
+CREATE INDEX actions_artifacts_repository ON actions_objects(repo_id,kind,finalized,created_at,id);
+CREATE INDEX package_blob_grants_digest ON package_blob_grants(digest);
+CREATE INDEX package_blob_grants_expiry ON package_blob_grants(expires_at);
+CREATE INDEX vulnerability_jobs_due ON vulnerability_jobs(next_scan,repo_id);
+CREATE INDEX global_advisories_osv ON global_advisories(osv_id);
+CREATE INDEX project_items_issue ON project_items(issue_id,project_id);
+CREATE INDEX project_items_pull ON project_items(pull_request_id,project_id);
+CREATE INDEX project_items_repository ON project_items(repo_id);
+CREATE INDEX project_repositories_repository ON project_repositories(repo_id,project_id);
+CREATE INDEX discussion_comments_reply ON discussion_comments(reply_to_id);
+CREATE INDEX discussions_answer ON discussions(answer_id);
+CREATE INDEX issue_field_values_attribute ON issue_field_values(attribute_id);
+CREATE INDEX issue_type_assignments_attribute ON issue_type_assignments(attribute_id);
+CREATE INDEX ci_accepted_pushes_history ON ci_accepted_pushes(repo_id,reference,sha,accepted_at DESC);
+CREATE INDEX stars_roster ON stars(repo_id,created_at DESC,user_id DESC);
+CREATE INDEX watches_roster ON watches(repo_id,created_at DESC,user_id DESC) WHERE level IN ('watching','custom');
+CREATE INDEX pull_requests_merged_commit ON pull_requests(repo_id,merge_commit_sha) WHERE merged;
+CREATE INDEX issue_comments_author_activity ON issue_comments(author_id,created_at DESC,id DESC);
+CREATE INDEX pr_comments_author_activity ON pr_comments(author_id,created_at DESC,id DESC);
+CREATE INDEX packages_deleted ON packages(deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX package_versions_deleted ON package_versions(deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX package_blobs_expiry ON package_blobs(expires_at);
+CREATE INDEX package_blobs_deleting ON package_blobs(digest) WHERE deleting;
+CREATE INDEX package_registry_tokens_expiry ON package_registry_tokens(expires_at);
+CREATE INDEX package_uploads_expiry ON package_uploads(expires_at);

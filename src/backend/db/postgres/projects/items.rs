@@ -119,6 +119,11 @@ pub async fn delete_field(pool: &PgPool, actor: i64, credential: &AccountCredent
     .await?
     .rows_affected();
     anyhow::ensure!(count == 1, Refusal::Invalid);
+    sqlx::query("UPDATE project_items SET field_values=(field_values::jsonb - $2::text)::text WHERE project_id=$1 AND jsonb_exists(field_values::jsonb, $2::text)")
+        .bind(project)
+        .bind(field.to_string())
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -138,6 +143,15 @@ pub async fn add_item(pool: &PgPool, actor: i64, credential: &AccountCredential<
                 .await?
                 .ok_or(Refusal::Missing)?;
             repository_read(&mut tx, actor, repo).await?;
+            // A transfer may have moved the item before the repository lock was taken.
+            let same: bool = sqlx::query_scalar(&format!(
+                "SELECT EXISTS(SELECT 1 FROM {table} WHERE id=$1 AND repo_id=$2)"
+            ))
+            .bind(id)
+            .bind(repo)
+            .fetch_one(&mut *tx)
+            .await?;
+            anyhow::ensure!(same, Refusal::Missing);
             (
                 matches!(content, Content::Issue(_)).then_some(*id),
                 matches!(content, Content::PullRequest(_)).then_some(*id),
@@ -264,12 +278,14 @@ pub async fn update_item(
 
 pub async fn delete_item(pool: &PgPool, actor: i64, credential: &AccountCredential<'_>, project: i64, item: i64) -> Result<()> {
     let mut tx = pool.begin().await?;
-    writable_item(&mut tx, actor, credential, project, item).await?;
-    sqlx::query("DELETE FROM project_items WHERE id=$1 AND project_id=$2")
+    // The project's writer may remove an item even after losing access to its repository.
+    write_project(&mut tx, actor, credential, project).await?;
+    let removed = sqlx::query("DELETE FROM project_items WHERE id=$1 AND project_id=$2")
         .bind(item)
         .bind(project)
         .execute(&mut *tx)
         .await?;
+    anyhow::ensure!(removed.rows_affected() == 1, Refusal::Missing);
     tx.commit().await?;
     Ok(())
 }

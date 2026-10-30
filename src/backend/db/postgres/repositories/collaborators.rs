@@ -24,6 +24,7 @@ pub async fn add(
     admin(&mut tx, actor, repo_id).await?;
     anyhow::ensure!((1..=5).contains(&(permission as i16)), Refusal::Denied);
     let user=sqlx::query_as::<_,User>("SELECT * FROM users WHERE username=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE").bind(username).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
+    anyhow::ensure!(!super::super::users::blocks::repository_interaction_blocked(&mut tx, user.id, repo_id).await?, Refusal::Denied);
     let owner: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND owner_kind='user' AND owner_user_id=$2)").bind(repo_id).bind(user.id).fetch_one(&mut *tx).await?;
     anyhow::ensure!(!owner, Refusal::Owner);
     let existing: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repo_access WHERE repo_id=$1 AND user_id=$2) OR EXISTS(SELECT 1 FROM repositories r JOIN org_memberships m ON m.org_id=r.owner_org_id WHERE r.id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin','member'))").bind(repo_id).bind(user.id).fetch_one(&mut *tx).await?;
@@ -73,7 +74,7 @@ pub async fn list(
     repo_id: i64,
     query: &CollaboratorQuery<'_>,
 ) -> Result<Vec<Collaborator>> {
-    let projection = super::access::USER_REPO_ACCESS_SQL;
+    let projection = super::access::user_repo_grant_sql();
     Ok(sqlx::query_as(&format!("WITH candidates AS (SELECT owner_user_id AS id FROM repositories WHERE id=$1 AND owner_kind='user' UNION SELECT user_id FROM repo_access WHERE repo_id=$1 UNION SELECT m.user_id FROM org_memberships m JOIN repositories r ON r.owner_org_id=m.org_id WHERE r.id=$1 AND m.role IN ('owner','admin','member'))
         SELECT * FROM (SELECT u.*, ({projection}) AS permission,
         EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id) AS direct,
@@ -104,7 +105,7 @@ pub async fn update_invitation(
 ) -> Result<Invitation> {
     let mut tx = pool.begin().await?;
     admin(&mut tx, actor, repo_id).await?;
-    let invitation=sqlx::query_as::<_,Invitation>("UPDATE repository_invitations SET permission=COALESCE($3,permission),state=CASE WHEN $3 IS NULL THEN 'cancelled' ELSE 'pending' END WHERE id=$1 AND repo_id=$2 AND state='pending' AND created_at>NOW()-INTERVAL '7 days' RETURNING *").bind(id).bind(repo_id).bind(permission.map(|level|level as i16)).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
+    let invitation=sqlx::query_as::<_,Invitation>("UPDATE repository_invitations SET permission=COALESCE($3,permission),inviter_id=$4,state=CASE WHEN $3 IS NULL THEN 'cancelled' ELSE 'pending' END WHERE id=$1 AND repo_id=$2 AND state='pending' AND created_at>NOW()-INTERVAL '7 days' RETURNING *").bind(id).bind(repo_id).bind(permission.map(|level|level as i16)).bind(actor).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
     tx.commit().await?;
     Ok(invitation)
 }
@@ -116,9 +117,11 @@ pub async fn respond(pool: &PgPool, actor: i64, id: i64, accept: bool) -> Result
     if accept {
         admin(&mut tx, invitation.inviter_id, invitation.repo_id).await?;
     }
+    let authorized_inviter = invitation.inviter_id;
     let live: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut *tx).await?;
     anyhow::ensure!(live, Refusal::Denied);
     let invitation=sqlx::query_as::<_,Invitation>("SELECT * FROM repository_invitations WHERE id=$1 AND invitee_id=$2 AND state='pending' AND created_at>NOW()-INTERVAL '7 days' FOR UPDATE").bind(id).bind(actor).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
+    anyhow::ensure!(!accept || invitation.inviter_id == authorized_inviter, Refusal::Denied);
     if accept {
         let current: i16=sqlx::query_scalar("SELECT COALESCE((SELECT access_level FROM repo_access WHERE repo_id=$1 AND user_id=$2),0)::smallint").bind(invitation.repo_id).bind(actor).fetch_one(&mut *tx).await?;
         super::access::grant_repo_access_in_transaction(

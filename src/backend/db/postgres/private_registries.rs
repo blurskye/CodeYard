@@ -23,7 +23,7 @@ async fn prune(c: &mut sqlx::PgConnection, org: i64, configurations: &mut [Confi
 
 pub async fn list(pool: &PgPool, actor: i64, org: i64, name: Option<&str>, offset: i64, limit: i64) -> Result<(i64, Vec<Registry>), RegistryError> {
     if offset < 0 || !(1..=101).contains(&limit) { return Err(RegistryError::Invalid("page")); }
-    let mut tx = super::dependabot::authorized(pool, actor, org).await?;
+    let mut tx = super::dependabot::authorized(pool, actor, org, false).await?;
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM org_private_registries WHERE org_id=$1 AND ($2::text IS NULL OR lower(name)=lower($2))")
         .bind(org).bind(name).fetch_one(&mut *tx).await?;
     let mut registries: Vec<Registry> = sqlx::query_as("SELECT name,configuration,created_at,updated_at FROM org_private_registries WHERE org_id=$1 AND ($2::text IS NULL OR lower(name)=lower($2)) ORDER BY name LIMIT $3 OFFSET $4")
@@ -45,12 +45,7 @@ pub async fn save(
     input: &Value,
     value: Option<&str>,
 ) -> Result<Registry, RegistryError> {
-    let mut tx = super::dependabot::authorized(pool, actor, org).await?;
-    if !super::users::transitions::credential_live(&mut tx, actor, credential, true)
-        .await.map_err(SecretsError::authority)?
-    {
-        return Err(SecretsError::Denied.into());
-    }
+    let mut tx = super::dependabot::authorized(pool, (actor, credential), org, true).await?;
     let mut stored: Option<String> = match name {
         Some(name) => Some(
             sqlx::query_scalar(
@@ -114,12 +109,7 @@ pub async fn save(
 }
 
 pub async fn delete(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, org: i64, name: &str) -> Result<(), RegistryError> {
-    let mut tx = super::dependabot::authorized(pool, actor, org).await?;
-    if !super::users::transitions::credential_live(&mut tx, actor, credential, true)
-        .await.map_err(SecretsError::authority)?
-    {
-        return Err(SecretsError::Denied.into());
-    }
+    let mut tx = super::dependabot::authorized(pool, (actor, credential), org, true).await?;
     let deleted = sqlx::query("DELETE FROM org_private_registries WHERE org_id=$1 AND name=$2")
         .bind(org)
         .bind(name)

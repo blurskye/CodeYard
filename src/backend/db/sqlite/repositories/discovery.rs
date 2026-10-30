@@ -96,6 +96,8 @@ pub async fn search_repositories(
 ) -> Result<Vec<Repository>> {
     ensure!(offset >= 0, "Result offset must be nonnegative");
     ensure!(limit >= 0, "Result limit must be nonnegative");
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     let search = RepositorySearch::parse(query);
     // The paging placeholders follow the match's binds: one for text, two for an owned search.
     let (limit_at, offset_at) = match &search {
@@ -113,7 +115,9 @@ pub async fn search_repositories(
         RepositorySearch::Text(text) => statement.bind(contains(text)),
         RepositorySearch::Owned { owner, name } => statement.bind(owner).bind(contains(name)),
     };
-    Ok(statement.bind(limit).bind(offset).fetch_all(pool).await?)
+    let result = statement.bind(limit).bind(offset).fetch_all(pool).await;
+    connection.finish().await?;
+    Ok(result?)
 }
 
 pub async fn count_repositories(
@@ -122,6 +126,8 @@ pub async fn count_repositories(
     query: &str,
     cap: i64,
 ) -> Result<i64> {
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     let search = RepositorySearch::parse(query);
     // The cap follows the match's binds: one for text, two for an owned search.
     let cap_at = match &search {
@@ -138,7 +144,9 @@ pub async fn count_repositories(
         RepositorySearch::Text(text) => statement.bind(contains(text)),
         RepositorySearch::Owned { owner, name } => statement.bind(owner).bind(contains(name)),
     };
-    Ok(statement.bind(cap).fetch_one(pool).await?)
+    let result = statement.bind(cap).fetch_one(pool).await;
+    connection.finish().await?;
+    Ok(result?)
 }
 
 pub(crate) struct SearchConnection(Option<sqlx::pool::PoolConnection<sqlx::Sqlite>>);
@@ -296,25 +304,24 @@ pub async fn search_users(
 ) -> Result<Vec<User>> {
     ensure!(offset >= 0, "Result offset must be nonnegative");
     ensure!(limit >= 0, "Result limit must be nonnegative");
-    Ok(sqlx::query_as::<_, User>(
+    let mut connection = search_connection(pool).await?;
+    let result = sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE username REGEXP ?1 OR display_name REGEXP ?1 \
          ORDER BY username, id LIMIT ?2 OFFSET ?3",
     )
-    .bind(contains(query))
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?)
+    .bind(contains(query)).bind(limit).bind(offset).fetch_all(&mut *connection).await;
+    connection.finish().await?;
+    Ok(result?)
 }
 
 pub async fn count_users(pool: &SqlitePool, query: &str, cap: i64) -> Result<i64> {
-    Ok(sqlx::query_scalar::<_, i64>(
+    let mut connection = search_connection(pool).await?;
+    let result = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM (SELECT 1 FROM users WHERE username REGEXP ?1 OR display_name REGEXP ?1 LIMIT ?2) AS matches",
     )
-    .bind(contains(query))
-    .bind(cap)
-    .fetch_one(pool)
-    .await?)
+    .bind(contains(query)).bind(cap).fetch_one(&mut *connection).await;
+    connection.finish().await?;
+    Ok(result?)
 }
 
 #[cfg(test)]

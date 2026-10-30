@@ -10,7 +10,13 @@ use anyhow::Result;
 use sqlx::PgPool;
 use OrganizationOutcome::{Applied, Conflict, Denied};
 
-pub async fn get(pool: &PgPool, actor: i64, org: i64) -> Result<OrganizationOutcome<Settings>> {
+pub async fn get(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    offset: i64,
+    limit: i64,
+) -> Result<OrganizationOutcome<Settings>> {
     let mut tx = begin_read(pool).await?;
     if require_read_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
@@ -22,10 +28,16 @@ pub async fn get(pool: &PgPool, actor: i64, org: i64) -> Result<OrganizationOutc
     .fetch_optional(&mut *tx)
     .await?
     .unwrap_or_else(|| "none".to_owned());
-    let repositories = sqlx::query_as("SELECT r.* FROM organization_immutable_release_repositories s JOIN repositories r ON r.id=s.repo_id WHERE s.org_id=$1 AND r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL ORDER BY r.id").bind(org).fetch_all(&mut *tx).await?;
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM organization_immutable_release_repositories s JOIN repositories r ON r.id=s.repo_id WHERE s.org_id=$1 AND r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL").bind(org).fetch_one(&mut *tx).await?;
+    let repositories = if limit > 0 {
+        sqlx::query_as("SELECT r.* FROM organization_immutable_release_repositories s JOIN repositories r ON r.id=s.repo_id WHERE s.org_id=$1 AND r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL ORDER BY r.id LIMIT $2 OFFSET $3").bind(org).bind(limit).bind(offset).fetch_all(&mut *tx).await?
+    } else {
+        Vec::new()
+    };
     tx.commit().await?;
     Ok(Applied(Settings {
         enforced_repositories,
+        total,
         repositories,
     }))
 }
@@ -40,9 +52,13 @@ pub async fn change(
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
+    // A selection only means something in selected mode, so it is changed only there (or
+    // together with switching to it); like GitHub, other modes refuse selected_repository_ids.
     let ids = match change {
         Change::Enforcement(mode, ids) => {
-            if !matches!(mode.as_str(), "all" | "selected" | "none") {
+            if !matches!(mode.as_str(), "all" | "selected" | "none")
+                || (ids.is_some() && mode != "selected")
+            {
                 return Ok(Conflict);
             }
             ids.as_deref().unwrap_or(&[])
@@ -50,10 +66,19 @@ pub async fn change(
         Change::Repositories(ids) => ids.as_slice(),
         Change::Repository(id, _) => std::slice::from_ref(id),
     };
-    for id in ids {
-        if !scoped_repo(&mut tx, org, *id).await? {
+    if !matches!(change, Change::Enforcement(..)) {
+        let mode: Option<String> = sqlx::query_scalar(
+            "SELECT enforced_repositories FROM organization_immutable_releases WHERE org_id=$1",
+        )
+        .bind(org)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if mode.as_deref() != Some("selected") {
             return Ok(Conflict);
         }
+    }
+    if !scoped_repos(&mut tx, org, ids).await? {
+        return Ok(Conflict);
     }
     if let Change::Enforcement(mode, _) = change {
         sqlx::query("INSERT INTO organization_immutable_releases(org_id,enforced_repositories) VALUES($1,$2) ON CONFLICT(org_id) DO UPDATE SET enforced_repositories=excluded.enforced_repositories").bind(org).bind(mode).execute(&mut *tx).await?;
@@ -71,9 +96,8 @@ pub async fn change(
         _ => {}
     }
     if !matches!(change, Change::Repository(_, false)) {
-        for id in ids {
-            sqlx::query("INSERT INTO organization_immutable_release_repositories(org_id,repo_id) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(org).bind(id).execute(&mut *tx).await?;
-        }
+        sqlx::query("INSERT INTO organization_immutable_release_repositories(org_id,repo_id) SELECT $1,id FROM UNNEST($2::bigint[]) AS selected(id) ON CONFLICT DO NOTHING")
+            .bind(org).bind(ids).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(Applied(()))

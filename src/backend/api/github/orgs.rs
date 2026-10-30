@@ -187,7 +187,7 @@ async fn delete_org(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let result = crate::backend::organizations::delete(&state, actor.user.id, &actor.credential(), org.id)
+    let result = crate::backend::organizations::delete(&state, actor.database_actor(&headers)?, org.id)
         .await
         .map_err(|error| {
             if let Some(error) =

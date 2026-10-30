@@ -1745,6 +1745,7 @@ fn label_colours_reach_a_style_only_when_they_are_valid_hex() {
         name: "project".into(),
         signed_in: true,
         can_write: true,
+        can_triage: false,
         can_admin: true,
         csrf: "csrf-fixture".into(),
         viewer: "alice".into(),

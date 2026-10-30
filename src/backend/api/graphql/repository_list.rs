@@ -204,6 +204,7 @@ pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<
             pool,
             request.state.cluster.as_ref(),
             viewer,
+            Some(request.auth.token.id),
             search,
         )
         .await
@@ -212,6 +213,7 @@ pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<
         (search, false)
     };
     let options = |offset, limit| db::catalog_search::Options {
+        token: Some(request.auth.token.id),
         repository: None,
         sort: sort.clone(),
         ascending,

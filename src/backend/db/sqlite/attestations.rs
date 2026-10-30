@@ -12,14 +12,17 @@ pub async fn collect(pool: &SqlitePool) -> Result<u64> {
 
 pub async fn create(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     bundle: &Bundle,
     initiator: &str,
 ) -> Result<i64> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_write_authority(&mut tx, actor, repo).await?
+            && super::credentials::repository(&mut tx, &credential, repo, "attestations", true).await?,
         Refusal::Denied
     );
     sqlx::query(
@@ -31,8 +34,12 @@ pub async fn create(
     .await?;
     let id = sqlx::query_scalar("INSERT INTO artifact_attestations(repo_id,bundle_hash,predicate_type,initiator,created_at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(repo_id,bundle_hash) DO UPDATE SET bundle_hash=excluded.bundle_hash RETURNING id")
         .bind(repo).bind(&bundle.hash).bind(&bundle.predicate).bind(initiator).bind(super::time::encode(super::time::now())).fetch_one(&mut *tx).await?;
-    for digest in &bundle.subjects {
-        sqlx::query("INSERT INTO attestation_subjects(attestation_id,digest) VALUES(?1,?2) ON CONFLICT DO NOTHING").bind(id).bind(digest).execute(&mut *tx).await?;
+    let subjects: Vec<_> = bundle.subjects.iter().collect();
+    for subjects in subjects.chunks(400) {
+        let mut insert = sqlx::QueryBuilder::<sqlx::Sqlite>::new("INSERT INTO attestation_subjects(attestation_id,digest) ");
+        insert.push_values(subjects, |mut row, digest| { row.push_bind(id).push_bind(*digest); });
+        insert.push(" ON CONFLICT DO NOTHING");
+        insert.build().execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(id)
@@ -43,8 +50,16 @@ fn condition() -> String {
 }
 
 pub async fn list(pool: &SqlitePool, filter: &Filter<'_>) -> Result<Vec<Attestation>> {
-    Ok(sqlx::query_as(&format!("SELECT a.id,a.repo_id,(SELECT b.bundle FROM attestation_bundles b WHERE b.hash=a.bundle_hash) AS bundle,a.predicate_type,a.initiator {} AND a.id>?6 AND a.id<?7 ORDER BY a.id {} LIMIT ?8", condition(), if filter.before < i64::MAX { "DESC" } else { "ASC" }))
-        .bind(filter.actor).bind(filter.owner.and_then(Owner::org)).bind(filter.repo).bind(filter.digests.map(serde_json::to_string).transpose()?).bind(filter.predicate).bind(filter.after).bind(filter.before).bind(filter.limit).bind(filter.owner.and_then(Owner::user)).bind(filter.session).fetch_all(pool).await?)
+    use futures_util::TryStreamExt;
+    let sql = format!("SELECT a.id,a.repo_id,(SELECT b.bundle FROM attestation_bundles b WHERE b.hash=a.bundle_hash) AS bundle,a.predicate_type,a.initiator {} AND a.id>?6 AND a.id<?7 ORDER BY a.id {} LIMIT ?8", condition(), if filter.before < i64::MAX { "DESC" } else { "ASC" });
+    let mut stream = sqlx::query_as::<_, Attestation>(&sql)
+        .bind(filter.actor).bind(filter.owner.and_then(Owner::org)).bind(filter.repo).bind(filter.digests.map(serde_json::to_string).transpose()?).bind(filter.predicate).bind(filter.after).bind(filter.before).bind(filter.limit).bind(filter.owner.and_then(Owner::user)).bind(filter.session).fetch(pool);
+    let mut rows = Vec::new();
+    let mut bytes = 0;
+    while let Some(row) = stream.try_next().await? {
+        if !crate::backend::db::attestations::append_page(&mut rows, &mut bytes, row) { break; }
+    }
+    Ok(rows)
 }
 
 pub async fn summaries(pool: &SqlitePool, filter: &Filter<'_>) -> Result<Vec<Summary>> {
@@ -78,20 +93,22 @@ pub async fn repositories(pool: &SqlitePool, filter: &Filter<'_>) -> Result<Vec<
 
 pub async fn delete(
     pool: &SqlitePool,
-    actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     owner: Owner,
     ids: &[i64],
     digests: &[String],
 ) -> Result<u64> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::users::transitions::require_account(&mut tx, actor, credential).await
+    super::credentials::require_account(&mut tx, &credential).await
         .map_err(|error| if error.is::<crate::backend::db::users::accounts::AccountRestricted>() { anyhow::Error::new(Refusal::Denied) } else { error })?;
     let rows: Vec<(i64,i64)> = sqlx::query_as(&format!("SELECT DISTINCT a.id,a.repo_id FROM artifact_attestations a JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=?4 WHERE ((?1 IS NOT NULL AND r.owner_org_id=?1) OR (?5 IS NOT NULL AND r.owner_user_id=?5)) AND (a.id IN (SELECT value FROM json_each(?2)) OR EXISTS(SELECT 1 FROM attestation_subjects s WHERE s.attestation_id=a.id AND s.digest IN (SELECT value FROM json_each(?3)))) AND {} ORDER BY a.repo_id,a.id",super::repositories::access::readable_condition()))
         .bind(owner.org()).bind(serde_json::to_string(ids)?).bind(serde_json::to_string(digests)?).bind(actor).bind(owner.user()).fetch_all(&mut *tx).await?;
     for (_, repo) in &rows {
         anyhow::ensure!(
-            super::discussions::lock_write_authority(&mut tx, actor, *repo).await?,
+            super::discussions::lock_write_authority(&mut tx, actor, *repo).await?
+                && super::credentials::repository(&mut tx, &credential, *repo, "attestations", true).await?,
             Refusal::Denied
         );
     }

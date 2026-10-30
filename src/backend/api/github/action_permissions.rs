@@ -60,7 +60,7 @@ async fn put_repository(
             "Configure an available action execution policy",
         ));
     }
-    db::actions::set_repo_enabled(&state.pool, actor.user.id, repo.id, input.enabled)
+    db::actions::set_repo_enabled(&state.pool, actor.database_actor(&headers)?, repo.id, input.enabled)
         .await
         .map_err(repos::settings_error)?;
     Ok(StatusCode::NO_CONTENT)

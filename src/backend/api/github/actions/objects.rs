@@ -241,7 +241,7 @@ async fn download_artifact(
     Path((owner, name, id, format)): Path<(String, String, i64, String)>,
 ) -> Result<Response> {
     let (object, auth) = artifact(&state, &headers, &owner, &name, id, false).await?;
-    let actor = auth.ok_or_else(auth::required)?.user.id;
+    let actor = auth.ok_or_else(auth::required)?.database_actor(&headers)?;
     if format != "zip" {
         return Err(Error::invalid("archive_format must be zip"));
     }

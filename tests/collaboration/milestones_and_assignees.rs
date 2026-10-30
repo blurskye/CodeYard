@@ -456,7 +456,7 @@ async fn contract(pg: bool) {
     );
 
     assert_eq!(
-        db::discussions::list_repo_authors(pool, repo)
+        db::discussions::list_repo_authors(pool, repo, None)
             .await
             .unwrap(),
         vec!["alice"]

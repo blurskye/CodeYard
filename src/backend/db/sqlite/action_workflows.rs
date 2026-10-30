@@ -66,5 +66,5 @@ pub async fn latest_workflow_run(
     branch: Option<&str>,
     event: Option<&str>,
 ) -> Result<Option<CiRun>> {
-    Ok(sqlx::query_as("SELECT * FROM ci_runs WHERE repo_id=$1 AND instr(','||workflow_path||',',','||$2||',')>0 AND ($3 IS NULL OR branch=$3) AND ($4 IS NULL OR event=$4) ORDER BY id DESC LIMIT 1").bind(repo).bind(path).bind(branch).bind(event).fetch_optional(pool).await?)
+    Ok(sqlx::query_as("SELECT * FROM ci_runs WHERE repo_id=$1 AND instr(','||workflow_path||',',','||$2||',')>0 AND ($3 IS NULL OR branch=$3) AND ($4 IS NULL OR event=$4) ORDER BY COALESCE(workflow_run_id,id) DESC,id DESC LIMIT 1").bind(repo).bind(path).bind(branch).bind(event).fetch_optional(pool).await?)
 }

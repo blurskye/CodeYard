@@ -315,8 +315,7 @@ async fn remove(
             return ctx.error(StatusCode::NOT_FOUND, "Repository owner not found.");
         }
     };
-    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else { return ctx.error(StatusCode::FORBIDDEN, "Sign in again to delete attestations."); };
-    match attestations::delete(&ctx.state.pool, actor, &db::users::accounts::AccountCredential::Session(&session), org, &[id], &[]).await {
+    match attestations::delete(&ctx.state.pool, ctx.database_actor(actor), org, &[id], &[]).await {
         Ok(0) => ctx.error(StatusCode::NOT_FOUND, "Attestation not found."),
         Ok(_) => ctx.redirect(&ctx.location),
         Err(error) => failure(&ctx, error),

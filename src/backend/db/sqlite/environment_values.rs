@@ -6,16 +6,14 @@ use sqlx::{SqliteConnection as Connection, SqlitePool as Pool};
 
 async fn authorize(
     connection: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
-    admin: bool,
+    permission: &str,
 ) -> Result<(), ValueError> {
-    let allowed = if admin {
-        super::discussions::lock_admin_authority(connection, actor, repo).await
-    } else {
-        super::discussions::lock_contribution_authority(connection, actor, repo).await
-    }
-    .map_err(ValueError::Authority)?;
+    let actor = actor.into();
+    let allowed = super::discussions::lock_admin_authority(connection, actor.user_id, repo).await
+        .map_err(ValueError::Authority)?
+        && super::credentials::repository(connection, &actor, repo, permission, true).await.map_err(ValueError::Authority)?;
     if allowed {
         Ok(())
     } else {
@@ -59,10 +57,10 @@ async fn require_environment(
     }
 }
 
-pub async fn create(pool: &Pool, actor: i64, repo: i64, name: &str) -> Result<(), ValueError> {
+pub async fn create(pool: &Pool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, name: &str) -> Result<(), ValueError> {
     let key = environment_values::environment_key(name)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, repo, true).await?;
+    authorize(&mut tx, actor, repo, "administration").await?;
     sqlx::query("INSERT INTO deployment_environments(repo_id,name_key,name) VALUES($1,$2,$3) ON CONFLICT(repo_id,name_key) DO NOTHING").bind(repo).bind(key).bind(name).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
@@ -100,7 +98,7 @@ pub async fn list(
 pub async fn save(
     pool: &Pool,
     encryptor: Option<&SecretEncryptor>,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     environment: &str,
     input: &Save<'_>,
@@ -110,7 +108,7 @@ pub async fn save(
     let name = input.name.to_ascii_uppercase();
     let previous = input.previous.unwrap_or(input.name).to_ascii_uppercase();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, repo, true).await?;
+    authorize(&mut tx, actor, repo, "environments").await?;
     require_environment(&mut tx, repo, &key).await?;
     let old: Option<String> = sqlx::query_scalar("SELECT value FROM repo_environment_values WHERE repo_id=$1 AND environment=$2 AND kind=$3 AND name=$4").bind(repo).bind(&key).bind(input.kind.as_str()).bind(&previous).fetch_optional(&mut *tx).await?;
     if input.kind == Kind::Variable {
@@ -162,7 +160,7 @@ pub async fn save(
 
 pub async fn delete(
     pool: &Pool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     environment: &str,
     kind: Kind,
@@ -170,7 +168,7 @@ pub async fn delete(
 ) -> Result<(), ValueError> {
     let key = environment_values::environment_key(environment)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, repo, true).await?;
+    authorize(&mut tx, actor, repo, "environments").await?;
     require_environment(&mut tx, repo, &key).await?;
     let result = sqlx::query("DELETE FROM repo_environment_values WHERE repo_id=$1 AND environment=$2 AND kind=$3 AND name=$4").bind(repo).bind(key).bind(kind.as_str()).bind(name.to_ascii_uppercase()).execute(&mut *tx).await?;
     if result.rows_affected() == 0 {

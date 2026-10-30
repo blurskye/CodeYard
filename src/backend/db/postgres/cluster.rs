@@ -130,7 +130,7 @@ pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<
     // cannot both succeed with a one-time token.
     let token = sqlx::query_as::<_, (Vec<String>, bool)>(
         "UPDATE join_tokens SET uses = uses + 1
-         WHERE token_hash = $1 AND expires_at > NOW() AND (reusable OR uses = 0)
+         WHERE token_hash = $1 AND expires_at > clock_timestamp() AND (reusable OR uses = 0)
          RETURNING roles, requires_approval",
     )
     .bind(request.token_hash)
@@ -213,6 +213,19 @@ pub async fn upsert_declared_nodes(
 ) -> Result<Vec<ClusterNode>> {
     // Every early return drops the transaction, which rolls back the entries before it.
     let mut tx = pool.begin().await?;
+    // Names are unique and checked at once, so a swap of two names would fail on the first
+    // update. Every renamed node first moves to a name of its own, and the entries below then
+    // take their final names.
+    for node in nodes {
+        sqlx::query(
+            "UPDATE nodes SET name = 'swap.' || substr(public_key, 1, 40)
+             WHERE public_key = $1 AND name <> $2",
+        )
+        .bind(node.public_key.as_str())
+        .bind(node.name.as_str())
+        .execute(&mut *tx)
+        .await?;
+    }
     let mut rows = Vec::with_capacity(nodes.len());
     for node in nodes {
         let row = sqlx::query_as::<_, ClusterNode>(
@@ -707,10 +720,11 @@ pub async fn replica_counts(pool: &PgPool) -> Result<Vec<NodeReplicaCounts>> {
 }
 
 /// The node as the database sees it now, with its heartbeat read against the database clock,
-/// which is the clock that records it.
+/// which is the clock that records it. The row stays locked against revocation and role
+/// changes until the transaction ends.
 async fn node_at_db_time(conn: &mut PgConnection, node: i64) -> Result<Option<ClusterNode>> {
     Ok(sqlx::query_as::<_, ClusterNode>(
-        "SELECT *, clock_timestamp() AS observed_at FROM nodes WHERE id = $1",
+        "SELECT *, clock_timestamp() AS observed_at FROM nodes WHERE id = $1 FOR SHARE",
     )
     .bind(node)
     .fetch_optional(&mut *conn)

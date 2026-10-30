@@ -48,7 +48,7 @@ pub(super) async fn post(
             "dependabot-default" => {
                 db::dependabot::set_repository_access_default(
                     &ctx.state.pool,
-                    actor,
+                    ctx.database_actor(actor),
                     org,
                     organization::field(&form, "default_level"),
                 )
@@ -65,7 +65,7 @@ pub(super) async fn post(
                         };
                         db::dependabot::update_repository_access(
                             &ctx.state.pool,
-                            actor,
+                            ctx.database_actor(actor),
                             org,
                             add,
                             remove,

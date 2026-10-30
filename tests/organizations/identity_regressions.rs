@@ -208,7 +208,7 @@ async fn discovery_and_deletion(pg: bool) {
     let deletion_session = db::users::sessions::create_session(f.pool(), &uuid::Uuid::new_v4().simple().to_string().repeat(2), owner, None, None, chrono::Utc::now() + chrono::Duration::hours(1)).await.unwrap();
     let credential = db::users::accounts::AccountCredential::Session(&deletion_session.id);
     let initial = applied(
-        list_organization_deletion_repositories(f.pool(), owner, &credential, first_org)
+        list_organization_deletion_repositories(f.pool(), (owner, &credential), first_org)
             .await
             .unwrap(),
     );

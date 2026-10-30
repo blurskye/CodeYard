@@ -166,7 +166,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             None => None,
             _ => return Err(missing()),
         };
-        db::discussions::set_lock(pool, actor, repo.id, item, field == "lockLockable", reason)
+        db::discussions::set_lock(pool, request.actor.clone(), repo.id, item, field == "lockLockable", reason)
             .await
             .map_err(|e| github::locking::error(e).graphql())?;
     } else {

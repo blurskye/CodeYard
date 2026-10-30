@@ -117,10 +117,10 @@ pub(crate) fn milestone_order(sort: &str) -> &'static str {
         "due-on-desc" => "due_on IS NULL, due_on DESC, number",
         "furthest-due" => "due_date IS NULL, due_date DESC, number",
         "most-complete" => {
-            "COALESCE(100 * closed_items / NULLIF(open_items + closed_items, 0), 0) DESC, number"
+            "COALESCE(100.0 * closed_items / NULLIF(open_items + closed_items, 0), 0) DESC, number"
         }
         "least-complete" => {
-            "COALESCE(100 * closed_items / NULLIF(open_items + closed_items, 0), 0), number"
+            "COALESCE(100.0 * closed_items / NULLIF(open_items + closed_items, 0), 0), number"
         }
         "most-issues" => "open_items + closed_items DESC, number",
         "least-issues" => "open_items + closed_items, number",

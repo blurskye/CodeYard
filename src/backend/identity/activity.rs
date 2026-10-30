@@ -1,11 +1,10 @@
 //! A user's public activity, filtered to the repositories the viewer may read.
-use crate::backend::db::{self, activity::ActivityRow, models::User, DbPool};
+use crate::backend::db::{self, activity::{ActivityRow, SCAN_ROWS}, models::User, DbPool};
 use anyhow::Result;
 
 pub const PAGE_SIZE: usize = 30;
 /// Later pages are not served, so one request reads a bounded number of rows.
 pub const MAX_PAGE: i64 = 100;
-const SCAN_ROWS: i64 = 100;
 /// Most rows one request reads while it looks for items the viewer can read. A page the scan does
 /// not fill is served short, with no next page, so a long private history is not read in full.
 pub const MAX_SCAN_ROWS: i64 = 1_000;

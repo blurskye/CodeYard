@@ -49,6 +49,10 @@ impl OrganizationPage {
         Ok(Self { after, limit })
     }
 }
+/// The most repositories one organization selection (secret visibility, immutable releases)
+/// may name, so validating it stays one bounded query.
+pub(crate) const MAX_SCOPED_REPOSITORIES: usize = 1000;
+
 pub(crate) fn administers(role: OrgRole) -> bool {
     matches!(role, OrgRole::Owner | OrgRole::Admin)
 }

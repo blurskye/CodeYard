@@ -33,14 +33,21 @@ pub(crate) async fn creation_authority(
             )
             .await?
             {
-                OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => Ok(false),
+                OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
                 OrganizationOutcome::Applied(OrgRole::Member) => {
-                    let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organization_settings WHERE org_id=?1 AND (members_can_create_public_repositories OR members_can_create_private_repositories))").bind(org).fetch_one(connection).await?;
+                    let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organization_settings WHERE org_id=?1 AND (members_can_create_public_repositories OR members_can_create_private_repositories))").bind(org).fetch_one(&mut *connection).await?;
                     anyhow::ensure!(allowed, RepositoryStorageRefusal::Denied);
-                    Ok(false)
                 }
-                _ => Err(RepositoryStorageRefusal::Denied.into()),
+                _ => return Err(RepositoryStorageRefusal::Denied.into()),
             }
+            // The destination does not change whether the actor is a site admin.
+            Ok(sqlx::query_scalar::<_, bool>(
+                "SELECT is_admin FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password",
+            )
+            .bind(owner.actor_id)
+            .fetch_optional(&mut *connection)
+            .await?
+            .unwrap_or(false))
         }
         _ => Err(RepositoryStorageRefusal::Denied.into()),
     }

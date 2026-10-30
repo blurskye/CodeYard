@@ -91,11 +91,13 @@ impl Snapshot {
             && (1..=255).contains(&self.job.correlator.len())
             && (1..=255).contains(&self.detector.name.len())
             && valid_metadata(&self.metadata)
-            && self.manifests.values().all(|manifest| {
-                !manifest.name.is_empty()
+            && self.manifests.iter().all(|(name, manifest)| {
+                !name.chars().any(char::is_control)
+                    && !manifest.name.is_empty()
                     && manifest.name.len() <= 2048
+                    && !manifest.name.chars().any(char::is_control)
                     && manifest.file.as_ref().and_then(|file| file.source_location.as_deref())
-                        .is_none_or(|path| !path.is_empty() && path.len() <= 2048)
+                        .is_none_or(|path| !path.is_empty() && path.len() <= 2048 && !path.chars().any(char::is_control))
                     && valid_metadata(&manifest.metadata)
                     && manifest.resolved.values().all(|dependency| {
                         dependency.package_url.as_deref().is_none_or(|p| {

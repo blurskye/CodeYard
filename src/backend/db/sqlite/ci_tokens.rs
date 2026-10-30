@@ -10,7 +10,7 @@ pub async fn issue(
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let (repo, fork): (i64, bool) = sqlx::query_as(
-        "SELECT repo_id,is_fork FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running'",
+        "SELECT repo_id,is_fork FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running' AND NOT cancel_requested",
     )
     .bind(run_id)
     .bind(worker)
@@ -44,11 +44,11 @@ pub async fn get(pool: &SqlitePool, token_id: i64) -> Result<Option<JobToken>> {
     get_in_connection(&mut connection, token_id).await
 }
 
-async fn get_in_connection(
+pub(crate) async fn get_in_connection(
     connection: &mut sqlx::SqliteConnection,
     token_id: i64,
 ) -> Result<Option<JobToken>> {
-    Ok(sqlx::query_as("SELECT r.id AS run_id,r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=$1 AND (t.revoked_at IS NULL OR t.revoked_at>CAST(strftime('%s','now') AS INTEGER)-60) AND (r.status='running' OR r.completed_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 minute'))")
+    Ok(sqlx::query_as("SELECT r.id AS run_id,r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=$1 AND NOT r.cancel_requested AND (t.revoked_at IS NULL OR t.revoked_at>CAST(strftime('%s','now') AS INTEGER)-60) AND (r.status='running' OR r.completed_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 minute'))")
         .bind(token_id).fetch_optional(connection).await?)
 }
 

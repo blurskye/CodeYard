@@ -432,16 +432,16 @@ impl Search {
             r"WITH items AS (
             SELECT id,repo_id,number,author_id,title,body,state,locked,milestone_id,created_at,updated_at,closed_at,NULL AS merged_at,false AS draft,false AS merged,false AS pull_request,NULL AS base_branch,NULL AS head_branch FROM issues
             UNION ALL SELECT id,repo_id,number,author_id,title,body,CASE WHEN state='open' THEN 'open' ELSE 'closed' END,locked,milestone_id,created_at,updated_at,closed_at,merged_at,is_draft,state='merged',true,base_branch,head_branch FROM pull_requests
-        ), assignments AS (
+        ), assignments AS NOT MATERIALIZED (
             SELECT issue_id AS item_id,user_id,false AS pull_request FROM issue_assignees UNION ALL SELECT pull_request_id,user_id,true FROM pr_assignees
-        ), item_labels AS (
+        ), item_labels AS NOT MATERIALIZED (
             SELECT issue_id AS item_id,label_id,false AS pull_request FROM issue_labels UNION ALL SELECT pull_request_id,label_id,true FROM pr_labels
-        ), discussion_comments AS (
+        ), discussion_comments AS NOT MATERIALIZED (
             SELECT issue_id AS item_id,author_id,body,false AS pull_request,true AS conversation FROM issue_comments
             UNION ALL SELECT c.pull_request_id,c.author_id,c.body,true,(c.path IS NULL AND c.review_id IS NULL) FROM pr_comments c LEFT JOIN pr_reviews v ON v.id=c.review_id WHERE c.review_id IS NULL OR v.state<>'pending'
             UNION ALL SELECT pull_request_id,author_id,body,true,false FROM pr_reviews WHERE state<>'pending'
         ), stats AS (
-            SELECT i.*,(SELECT COUNT(*) FROM discussion_comments c WHERE c.item_id=i.id AND c.pull_request=i.pull_request AND c.conversation) AS comments,
+            SELECT i.*,CASE WHEN i.pull_request THEN (SELECT COUNT(*) FROM pr_comments c WHERE c.pull_request_id=i.id AND c.path IS NULL AND c.review_id IS NULL) ELSE (SELECT COUNT(*) FROM issue_comments c WHERE c.issue_id=i.id) END AS comments,
             (SELECT COUNT(*) FROM reactions x WHERE x.subject_id=i.id AND x.subject_kind=CASE WHEN i.pull_request THEN 'pull_request' ELSE 'issue' END) AS reactions FROM items i
         ), matched AS (
             SELECT i.*,({score}) AS score FROM stats i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id={viewer}
@@ -538,6 +538,7 @@ impl Statement {
                 "author"=>if let Some(app)=value.strip_prefix("app/") {let p=self.bind(app);format!("i.author_id IN (SELECT bot_id FROM github_apps WHERE lower(slug)=lower({p}))")} else {self.person("i.author_id",value)},
                 "exact-base"|"exact-head"=>{let column=if key=="exact-base"{"base_branch"}else{"head_branch"};let p=self.bind(value);format!("i.pull_request AND EXISTS(SELECT 1 FROM pull_requests pr WHERE pr.id=i.id AND pr.{column}={p})")},
                 "base"=>{let p=self.bind(value);format!("i.pull_request AND EXISTS(SELECT 1 FROM pull_requests pr WHERE pr.id=i.id AND lower(pr.base_branch)=lower({p}))")},
+                "exact-head"|"exact-base"=>{let p=self.bind(value);let column=if key=="exact-head"{"head_branch"}else{"base_branch"};format!("i.pull_request AND i.{column}={p}")},
                 // As on GitHub, head matches the branches whose names begin with the value.
                 "head"=>{let p=self.bind(value);format!("i.pull_request AND EXISTS(SELECT 1 FROM pull_requests pr WHERE pr.id=i.id AND lower(substr(pr.head_branch,1,length({p})))=lower({p}))")},
                 "language"=>{let p=self.bind(value);format!("EXISTS(SELECT 1 FROM repo_languages l WHERE l.repo_id=r.id AND lower(l.language)=lower({p}))")},
@@ -548,7 +549,14 @@ impl Statement {
                 "status"=>self.status(value)?,
                 "project"=>self.project(Some(value))?,
                 "assignee"=>{let who=self.person("a.user_id",value);format!("EXISTS (SELECT 1 FROM assignments a WHERE a.item_id=i.id AND a.pull_request=i.pull_request AND {who})")},
-                "review-requested"=>{let who=self.person("v.user_id",value);format!("i.pull_request AND EXISTS (SELECT 1 FROM pr_reviewers v WHERE v.pull_request_id=i.id AND {who})")},
+                "review-requested"=>{
+                    let who=self.person("v.user_id",value);
+                    let direct=format!("EXISTS(SELECT 1 FROM pr_reviewers v WHERE v.pull_request_id=i.id AND {who})");
+                    let requested=if value=="@me" {
+                        format!("({direct} OR (i.author_id<>u.id AND EXISTS(SELECT 1 FROM pr_team_reviewers q JOIN teams t ON t.id=q.team_id JOIN effective_team_memberships m ON m.team_id=t.id JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id WHERE q.pull_request_id=i.id AND m.user_id=u.id AND a.permission BETWEEN 3 AND 5 AND r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL)))")
+                    } else { direct };
+                    format!("i.pull_request AND {requested}")
+                },
                 "commenter"=>{let who=self.person("c.author_id",value);format!("EXISTS (SELECT 1 FROM discussion_comments c WHERE c.item_id=i.id AND c.pull_request=i.pull_request AND {who})")},
                 "mentions"=>self.mentions(value),
                 "milestone-number"=>{let p=self.bind(value);format!("EXISTS (SELECT 1 FROM milestones m WHERE m.id=i.milestone_id AND CAST(m.number AS TEXT)={p})")},
@@ -559,7 +567,8 @@ impl Statement {
                 "orgs"=>"r.owner_kind='org' AND EXISTS (SELECT 1 FROM org_memberships a WHERE a.org_id=r.owner_org_id AND a.user_id=u.id)".into(),
                 "subscribed"=>{
                     let participation=self.expr(&Expr::Term("involves".into(),value.clone()),fields)?;
-                    format!("NOT EXISTS (SELECT 1 FROM watches w WHERE w.repo_id=r.id AND w.user_id=u.id AND w.level='ignoring') AND ({participation} OR EXISTS (SELECT 1 FROM watches w WHERE w.repo_id=r.id AND w.user_id=u.id AND (w.level='watching' OR (w.level='custom' AND (','||w.events||',') LIKE CASE WHEN i.pull_request THEN '%,pulls,%' ELSE '%,issues,%' END))))")
+                    let thread="notification_threads t JOIN notification_thread_subscriptions s ON s.thread_id=t.id WHERE t.user_id=u.id AND t.scope_repository_id=r.id AND t.subject_type='Discussion' AND t.subject_key=CAST(i.number AS TEXT)";
+                    format!("NOT EXISTS(SELECT 1 FROM watches w WHERE w.repo_id=r.id AND w.user_id=u.id AND w.level='ignoring') AND NOT EXISTS(SELECT 1 FROM {thread} AND (s.ignored OR (s.is_explicit AND NOT s.subscribed))) AND (EXISTS(SELECT 1 FROM {thread} AND s.is_explicit AND s.subscribed AND NOT s.ignored) OR {participation} OR EXISTS(SELECT 1 FROM watches w WHERE w.repo_id=r.id AND w.user_id=u.id AND (w.level='watching' OR (w.level='custom' AND (','||w.events||',') LIKE CASE WHEN i.pull_request THEN '%,pulls,%' ELSE '%,issues,%' END))))")
                 },
                 "exact-label"=>{let p=self.bind(value);format!("EXISTS (SELECT 1 FROM item_labels a JOIN labels l ON l.id=a.label_id WHERE a.item_id=i.id AND a.pull_request=i.pull_request AND lower(l.name)=lower({p}))")},
                 "label"=>{let mut labels=Vec::new();for value in value.split(','){let p=self.bind(value);labels.push(format!("lower(l.name)=lower({p})"));}format!("EXISTS (SELECT 1 FROM item_labels a JOIN labels l ON l.id=a.label_id WHERE a.item_id=i.id AND a.pull_request=i.pull_request AND ({}))",labels.join(" OR "))},
@@ -614,17 +623,14 @@ impl Statement {
         Ok(format!("i.pull_request AND ({predicate})"))
     }
     fn status(&self, value: &str) -> Result<String, &'static str> {
-        let source = "commit_statuses s JOIN pull_requests pr ON pr.repo_id=s.repo_id AND pr.head_sha=s.sha WHERE pr.id=i.id";
-        let failure = format!("EXISTS(SELECT 1 FROM {source} AND s.state IN ('error','failure'))");
-        let pending = format!("EXISTS(SELECT 1 FROM {source} AND s.state='pending')");
+        let source = "SELECT s.state FROM commit_statuses_latest s JOIN pull_requests pr ON pr.repo_id=s.repo_id AND pr.head_sha=s.sha WHERE pr.id=i.id UNION ALL SELECT CASE WHEN c.status<>'completed' OR c.conclusion IS NULL THEN 'pending' WHEN c.conclusion IN ('success','neutral','skipped') THEN 'success' ELSE 'failure' END AS state FROM check_runs c JOIN check_suites suite ON suite.id=c.suite_id JOIN pull_requests pr ON pr.repo_id=c.repo_id AND pr.head_sha=suite.head_sha WHERE pr.id=i.id AND NOT EXISTS(SELECT 1 FROM check_runs newer JOIN check_suites ns ON ns.id=newer.suite_id WHERE newer.repo_id=c.repo_id AND newer.name=c.name AND ns.head_sha=suite.head_sha AND (ns.app_id=suite.app_id OR (ns.app_id IS NULL AND suite.app_id IS NULL)) AND newer.id>c.id)";
+        let failure = format!("EXISTS(SELECT 1 FROM ({source}) outcomes WHERE outcomes.state IN ('error','failure'))");
+        let pending = format!("EXISTS(SELECT 1 FROM ({source}) outcomes WHERE outcomes.state='pending')");
+        let exists = format!("EXISTS(SELECT 1 FROM ({source}) outcomes)");
         let predicate = match value {
             "failure" => failure,
-            "pending" => {
-                format!("NOT ({failure}) AND ({pending} OR NOT EXISTS(SELECT 1 FROM {source}))")
-            }
-            "success" => {
-                format!("EXISTS(SELECT 1 FROM {source}) AND NOT ({failure}) AND NOT ({pending})")
-            }
+            "pending" => format!("NOT ({failure}) AND ({pending} OR NOT ({exists}))"),
+            "success" => format!("{exists} AND NOT ({failure}) AND NOT ({pending})"),
             _ => return Err("Invalid status qualifier"),
         };
         Ok(format!("i.pull_request AND ({predicate})"))
@@ -719,7 +725,8 @@ impl Statement {
         if self.postgres {
             format!("{column}{op}CAST({p} AS TIMESTAMPTZ)")
         } else {
-            format!("julianday({column}){op}julianday({p})")
+            // Stored UTC values and the bound value both use fixed microsecond RFC3339.
+            format!("{column}{op}{p}")
         }
     }
 }

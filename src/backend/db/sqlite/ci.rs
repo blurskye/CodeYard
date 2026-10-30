@@ -41,6 +41,16 @@ async fn ci_actor_has_permission(
     if repo.is_archived {
         return Ok(false);
     }
+    // A repository being migrated runs no workflows, as on PostgreSQL.
+    let migrating: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=?1)",
+    )
+    .bind(repo_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if migrating {
+        return Ok(false);
+    }
     let enabled: bool = sqlx::query_scalar("SELECT COALESCE((SELECT enabled FROM actions_settings WHERE id=1),TRUE) AND COALESCE((SELECT enabled FROM repo_actions_settings WHERE repo_id=?1),TRUE)")
         .bind(repo_id).fetch_one(&mut **tx).await?;
     if !enabled {
@@ -216,7 +226,7 @@ async fn enqueue_ci_run_inner(
         .and(event_payload.and_then(|payload| payload["scheduled_minute"].as_i64()))
         .unwrap_or_else(|| chrono::Utc::now().timestamp().div_euclid(60));
     if let Some(cron) = scheduled {
-        let queued: Option<Option<i64>> = sqlx::query_scalar("SELECT run_id FROM ci_schedule_runs WHERE repo_id=$1 AND workflow_path=$2 AND cron=$3 AND minute=$4")
+        let queued: Option<Option<i64>> = sqlx::query_scalar("SELECT run_id FROM ci_schedule_runs WHERE repo_id=$1 AND workflow_path=$2 AND cron=$3 AND minute>=$4")
             .bind(input.repo_id).bind(input.workflow_path).bind(cron).bind(minute).fetch_optional(&mut *tx).await?;
         if let Some(run_id) = queued {
             // The occurrence stays queued even after its run was deleted.
@@ -239,7 +249,7 @@ async fn enqueue_ci_run_inner(
         if let Some(token) = request.credential {
             let owns:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR julianday(expires_at)>julianday('now')))").bind(token).bind(input.triggered_by_id).fetch_one(&mut *tx).await?;
             ensure!(
-                owns,
+                owns && super::fine_grained_tokens::repository_permission(&mut tx, token, input.triggered_by_id, input.repo_id, "actions", true).await?,
                 CiAdmissionRefusal::Denied("CI credential is no longer authorized")
             );
         }
@@ -393,7 +403,7 @@ async fn enqueue_ci_run_inner(
     .fetch_one(&mut *tx)
     .await?;
     if let Some(cron) = scheduled {
-        sqlx::query("INSERT INTO ci_schedule_runs(repo_id,workflow_path,cron,minute,run_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(repo_id,workflow_path,cron) DO UPDATE SET minute=excluded.minute,run_id=excluded.run_id")
+        sqlx::query("INSERT INTO ci_schedule_runs(repo_id,workflow_path,cron,minute,run_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(repo_id,workflow_path,cron) DO UPDATE SET minute=excluded.minute,run_id=excluded.run_id WHERE ci_schedule_runs.minute<excluded.minute")
             .bind(input.repo_id).bind(input.workflow_path).bind(cron).bind(minute).bind(run.id).execute(&mut *tx).await?;
     }
     let run: CiRun =
@@ -402,7 +412,7 @@ async fn enqueue_ci_run_inner(
             .bind(awaiting_approval)
             .fetch_one(&mut *tx)
             .await?;
-    let run = super::action_runs::record(&mut tx, &run, parent_run).await?;
+    let mut run = super::action_runs::record(&mut tx, &run, parent_run).await?;
     super::checks::insert_workflow_suite(&mut tx, &run).await?;
     if let Some(request) = &requested_attempt {
         sqlx::query("INSERT INTO actions_replays(run_id,source_id,data,debug) VALUES($1,$2,$3,$4)")
@@ -414,14 +424,18 @@ async fn enqueue_ci_run_inner(
             .await?;
     }
     if cd {
-        sqlx::query("INSERT INTO ci_deployments(run_id, repo_id, environment) VALUES (?1,?2,?3)")
+        sqlx::query("INSERT INTO ci_deployments(run_id, repo_id, environment,environment_key) VALUES (?1,?2,?3,?4)")
             .bind(run.id)
             .bind(run.repo_id)
             .bind(run.environment.as_deref().unwrap_or("production"))
+            .bind(run.environment.as_deref().unwrap_or("production").to_lowercase())
             .execute(&mut *tx)
             .await?;
     }
     super::deployment_protection::snapshot(&mut tx, &run).await?;
+    let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "r");
+    run.deployment_waiting = sqlx::query_scalar(&format!("SELECT {waiting} FROM ci_runs r WHERE r.id=?1"))
+        .bind(run.id).fetch_one(&mut *tx).await?;
     // Adding retained input changes what a current replica must contain.
     sqlx::query("UPDATE repositories SET write_version=write_version+1 WHERE id=?1 AND storage_node_id IS NOT NULL")
         .bind(run.repo_id).execute(&mut *tx).await?;
@@ -639,11 +653,12 @@ async fn claim_queued_run(
         .fetch_one(&mut *tx)
         .await?;
         if is_deployment(&run) {
-            sqlx::query("UPDATE ci_deployments SET status = 'in_progress', started_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE run_id = ?1 AND status = 'pending'")
+            sqlx::query("UPDATE ci_deployments SET status = 'in_progress', started_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE run_id = ?1 AND status IN ('pending','approved')")
                 .bind(run.id)
                 .execute(&mut *tx)
                 .await?;
         }
+        super::deployment_reviews::sync_execution(&mut tx, run.id, "running").await?;
         ci_commit_status(&mut tx, &run, "pending", "CI run in progress").await?;
         tx.commit().await?;
         return Ok(Some(run));
@@ -688,7 +703,7 @@ pub async fn heartbeat_ci_run(pool: &SqlitePool, id: i64, worker: &str) -> Resul
 /// run, its deployment, the commit status and, for a failed run, the starter's
 /// notification, all in the caller's transaction. A run that is already finished
 /// stays as it is and the result is `None`: the first final state wins.
-async fn finish_in_tx(
+pub(super) async fn finish_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
     run: &CiRun,
     status: &str,
@@ -710,6 +725,7 @@ async fn finish_in_tx(
     let Some(finished) = finished else {
         return Ok(None);
     };
+    super::action_logs::retain_completed(tx, run.repo_id, run.id).await?;
     super::action_jobs::close_active(tx, run.id).await?;
     super::runners::retire(tx, run.worker.as_deref()).await?;
     if is_deployment(run) {
@@ -719,6 +735,7 @@ async fn finish_in_tx(
             .execute(&mut **tx)
             .await?;
     }
+    super::deployment_reviews::sync_execution(tx, run.id, status).await?;
     let state = if status == "success" {
         "success"
     } else {
@@ -835,8 +852,11 @@ pub(crate) async fn stop_ci_runs(tx: &mut Transaction<'_, Sqlite>, run_ids: &[i6
     for run in &queued {
         finish_in_tx(tx, run, "cancelled", Some(ACCESS_LOST_MESSAGE)).await?;
     }
-    // Runtime tokens and blob grants end with the access of these runs. Results
-    // authentication and downloads check them.
+    // Revoke job PATs as well as runtime capabilities in this authority transition.
+    sqlx::query("DELETE FROM personal_access_tokens WHERE id IN (SELECT token_id FROM actions_github_tokens WHERE run_id IN (SELECT value FROM json_each(?1)))")
+        .bind(&ids)
+        .execute(&mut **tx)
+        .await?;
     sqlx::query(
         "DELETE FROM actions_runtime_tokens WHERE run_id IN (SELECT value FROM json_each(?1))",
     )
@@ -952,9 +972,15 @@ async fn request_cancellation(
             .await?;
     let personal_admin = user.is_admin && repo.owner_kind == "user" && repo.owner_org_id.is_none();
     let workflow_authorized = match token_id {
-        Some(token) => super::ci_tokens::may_cancel(&mut tx, actor_id, run.repo_id, token).await?,
+        Some(token) => {
+            let live: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))")
+                .bind(token).bind(actor_id).fetch_one(&mut *tx).await?;
+            ensure!(live && super::fine_grained_tokens::repository_permission(&mut tx, token, actor_id, run.repo_id, "actions", true).await?, CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
+            super::ci_tokens::may_cancel(&mut tx, actor_id, run.repo_id, token).await?
+        }
         None => false,
     };
+    ensure!(user.username != crate::backend::db::ci_tokens::BOT || workflow_authorized, CiAdmissionRefusal::Denied("CI cancellation permission denied"));
     ensure!(
         workflow_authorized
             || crate::backend::db::ci::may_cancel_run(
@@ -1004,14 +1030,14 @@ pub async fn delete_ci_run_data(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         CiAdmissionRefusal::Denied("CI run deletion permission denied")
     );
-    let statuses:Vec<String>=sqlx::query_scalar("SELECT status FROM ci_runs WHERE repo_id=$1 AND COALESCE(workflow_run_id,id)=$2 ORDER BY id").bind(repo).bind(id).fetch_all(&mut *tx).await?;
+    let statuses: Vec<(i64, String)> = sqlx::query_as("SELECT id,status FROM ci_runs WHERE repo_id=$1 AND COALESCE(workflow_run_id,id)=$2 ORDER BY id").bind(repo).bind(id).fetch_all(&mut *tx).await?;
     if statuses.is_empty() {
         return Ok(false);
     }
     ensure!(
         statuses
             .iter()
-            .all(|status| !matches!(status.as_str(), "queued" | "running")),
+            .all(|(_, status)| !matches!(status.as_str(), "queued" | "running")),
         CiAdmissionRefusal::Conflict("Cannot delete an active workflow run or its logs")
     );
     let operation = match kind {
@@ -1023,16 +1049,8 @@ pub async fn delete_ci_run_data(
             "delete"
         }
         CiRunDeletion::Logs => {
-            sqlx::query("DELETE FROM ci_logs WHERE run_id IN (SELECT id FROM ci_runs WHERE COALESCE(workflow_run_id,id)=$1)")
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query(
-                "UPDATE ci_runs SET log_lines=0,log_bytes=0,log_version=log_version+1 WHERE COALESCE(workflow_run_id,id)=$1",
-            )
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+            let runs: Vec<i64> = statuses.iter().map(|(id, _)| *id).collect();
+            super::action_logs::clear(&mut tx, &runs).await?;
             "delete_logs"
         }
     };
@@ -1042,8 +1060,9 @@ pub async fn delete_ci_run_data(
 }
 
 pub async fn get_ci_run_by_id(pool: &SqlitePool, repo_id: i64, id: i64) -> Result<Option<CiRun>> {
+    let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "r");
     Ok(
-        sqlx::query_as("SELECT * FROM ci_runs WHERE repo_id=$1 AND id=$2")
+        sqlx::query_as(&format!("SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.repo_id=$1 AND r.id=$2"))
             .bind(repo_id)
             .bind(id)
             .fetch_optional(pool)
@@ -1053,14 +1072,16 @@ pub async fn get_ci_run_by_id(pool: &SqlitePool, repo_id: i64, id: i64) -> Resul
 
 /// For callers that hold a run's own id but not its repository, such as a worker's report.
 pub async fn get_ci_run(pool: &SqlitePool, id: i64) -> Result<Option<CiRun>> {
-    Ok(sqlx::query_as("SELECT * FROM ci_runs WHERE id=$1")
+    let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "r");
+    Ok(sqlx::query_as(&format!("SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.id=$1"))
         .bind(id)
         .fetch_optional(pool)
         .await?)
 }
 
 pub async fn get_ci_run_by_run_id(pool: &SqlitePool, run_id: uuid::Uuid) -> Result<Option<CiRun>> {
-    let run = sqlx::query_as::<_, CiRun>("SELECT * FROM ci_runs WHERE run_id = ?1")
+    let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "r");
+    let run = sqlx::query_as::<_, CiRun>(&format!("SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.run_id=?1"))
         .bind(run_id)
         .fetch_optional(pool)
         .await?;
@@ -1346,7 +1367,7 @@ pub async fn append_ci_logs(
 pub async fn list_ci_logs(pool: &SqlitePool, run_id: i64, limit: i64) -> Result<Vec<CiLogLine>> {
     ensure!(limit >= 0, "Result limit must be nonnegative");
     let rows = sqlx::query_as::<_, CiLogLine>(
-        "SELECT * FROM ci_logs WHERE run_id = ?1 ORDER BY id DESC LIMIT ?2",
+        "SELECT l.* FROM ci_logs l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=?1 AND (r.log_expires_at IS NULL OR r.log_expires_at>CAST(strftime('%s','now') AS INTEGER)) ORDER BY l.id DESC LIMIT ?2",
     )
     .bind(run_id)
     .bind(limit)
@@ -1400,7 +1421,7 @@ pub async fn list_ci_log_history(
         "invalid CI history cursor/window"
     );
     Ok(sqlx::query_as::<_, CiLogLine>(
-        "SELECT * FROM ci_logs WHERE run_id = ?1 AND id > ?2 ORDER BY id LIMIT ?3",
+        "SELECT l.* FROM ci_logs l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=?1 AND l.id>?2 AND (r.log_expires_at IS NULL OR r.log_expires_at>CAST(strftime('%s','now') AS INTEGER)) ORDER BY l.id LIMIT ?3",
     )
     .bind(run_id)
     .bind(after)

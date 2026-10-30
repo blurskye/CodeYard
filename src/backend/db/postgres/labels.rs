@@ -247,6 +247,14 @@ pub async fn delete_label(
     label_id: i64,
 ) -> Result<bool> {
     let mut tx = begin_label_write(pool, actor_id, repo_id).await?;
+    // Deleting a label removes it from its issues and pull requests, so they get a new revision.
+    for (table, links, column) in [("issues", "issue_labels", "issue_id"), ("pull_requests", "pr_labels", "pull_request_id")] {
+        sqlx::query(&format!("UPDATE {table} SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id IN (SELECT x.{column} FROM {links} x JOIN labels l ON l.id=x.label_id WHERE l.id=$1 AND l.repo_id=$2)"))
+            .bind(label_id)
+            .bind(repo_id)
+            .execute(&mut *tx)
+            .await?;
+    }
     let result = sqlx::query("DELETE FROM labels WHERE id = $1 AND repo_id = $2")
         .bind(label_id)
         .bind(repo_id)

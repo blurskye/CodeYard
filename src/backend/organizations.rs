@@ -25,12 +25,12 @@ pub async fn convert_to_outside(
 /// repositories and organization available for a retry; concurrent creation refuses the final delete.
 pub async fn delete(
     state: &AppState,
-    actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
+    let actor = actor.into();
     let repositories =
-        match organizations::list_organization_deletion_repositories(&state.pool, actor, credential, org)
+        match organizations::list_organization_deletion_repositories(&state.pool, actor.clone(), org)
             .await?
         {
             Applied(repositories) => repositories,
@@ -39,8 +39,7 @@ pub async fn delete(
     for repository in repositories {
         let deleted = match organizations::delete_organization_repository(
             &state.pool,
-            actor,
-            credential,
+            actor.clone(),
             org,
             repository,
         )
@@ -51,5 +50,5 @@ pub async fn delete(
         };
         lifecycle::remove_deleted_repository(state.cluster.as_ref(), &deleted).await?;
     }
-    organizations::delete_organization(&state.pool, actor, credential, org).await
+    organizations::delete_organization(&state.pool, actor, org).await
 }

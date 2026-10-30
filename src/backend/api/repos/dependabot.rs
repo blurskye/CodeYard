@@ -44,13 +44,16 @@ async fn open(
 ) -> Result<(PageContext, Loaded), Response> {
     let ctx = PageContext::load(state, headers, uri).await?;
     let loaded = chrome::load_database(&ctx, owner, name).await?;
-    if ctx.user.is_none() || !loaded.chrome.can_admin {
+    if ctx.user.is_none() {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Dependabot alerts not found."));
     }
     Ok((ctx, loaded))
 }
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
     use db::advisories::Refusal;
+    if let Some(graph @ (db::dependency_graph::GraphError::Limit | db::dependency_graph::GraphError::Disabled)) = error.downcast_ref::<db::dependency_graph::GraphError>() {
+        return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &graph.to_string());
+    }
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => {
             ctx.error(StatusCode::FORBIDDEN, "Dependabot administration denied.")
@@ -87,7 +90,7 @@ async fn list(
     }
     let rows = match store::alerts(
         &ctx.state.pool,
-        ctx.user.as_ref().unwrap().id,
+        ctx.database_actor(ctx.user.as_ref().unwrap().id),
         loaded.repository.id,
     )
     .await
@@ -170,7 +173,7 @@ async fn mutate(
             dismissed_reason: values.get("dismissed_reason").cloned(),
             dismissed_comment: values.get("dismissed_comment").cloned(),
         };
-        store::update(&ctx.state.pool, actor, loaded.repository.id, number, &input)
+        store::update(&ctx.state.pool, ctx.database_actor(actor), loaded.repository.id, number, &input)
             .await
             .map(|_| ())
     } else {

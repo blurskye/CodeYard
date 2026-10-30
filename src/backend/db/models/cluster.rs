@@ -34,6 +34,8 @@ impl ClusterNode {
         nodes
     }
 
+    /// Online, reporting its free space and holding the `storage` role, which a repository
+    /// needs of its primary.
     pub fn is_serving_storage(&self) -> bool {
         self.is_online() && self.disk_free.is_some() && self.roles.iter().any(|role| role == "storage")
     }

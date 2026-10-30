@@ -41,6 +41,7 @@ pub mod ci_tokens;
 pub mod cluster;
 pub mod code_scanning;
 pub mod code_security;
+pub mod credentials;
 pub mod codeql;
 mod connection;
 pub mod copy;

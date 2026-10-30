@@ -305,8 +305,8 @@ async fn list_members(pool: &PgPool, actor: i64, org: i64, team: i64, page: Orga
     if !team_visible(&mut tx, actor, role, &team).await? {
         return Ok(Denied);
     }
-    let sql = if direct { TEAM_MEMBERS_PAGE.replace("effective_team_memberships", "team_memberships") } else { TEAM_MEMBERS_PAGE.to_owned() };
-    let members = sqlx::query_as(&sql)
+    // Archives preserve dormant direct grants; display and effective-access filters do not apply.
+    let members = sqlx::query_as(if direct { "SELECT tm.* FROM team_memberships tm JOIN teams t ON t.id=tm.team_id WHERE t.org_id=$1 AND tm.team_id=$2 AND tm.id>$3 ORDER BY tm.id LIMIT $4" } else { TEAM_MEMBERS_PAGE })
         .bind(org).bind(team.id).bind(page.after).bind(page.limit)
         .fetch_all(&mut *tx).await?;
     tx.commit().await?;

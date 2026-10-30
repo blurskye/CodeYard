@@ -525,14 +525,10 @@ async fn contract(pg: bool) {
     db::environments::delete(f.pool(), alice, repo.id, "production")
         .await
         .unwrap();
-    assert_eq!(
-        db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-            .await
-            .unwrap()
-            .unwrap()
-            .id,
-        unavailable.id
-    );
+    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
+        .await
+        .unwrap()
+        .is_none());
     f.finish().await;
 }
 

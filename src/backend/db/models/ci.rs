@@ -44,6 +44,10 @@ pub struct CiRun {
     #[serde(default)]
     #[sqlx(default)]
     pub approval_required: bool,
+    /// Read projection only: pending deployment reviewers, timers or App decisions.
+    #[serde(default)]
+    #[sqlx(default)]
+    pub deployment_waiting: bool,
     pub branch: String,
     pub head_sha: Option<String>,
     pub workflow_path: String,
@@ -86,6 +90,21 @@ impl CiRun {
             .as_ref()
             .and_then(|event| event["head_ref"].as_str())
             .unwrap_or_else(|| workflow_branch(&self.branch))
+    }
+
+    /// The executing ref, not a pull request's stored base branch. A missing PR identity
+    /// cannot be treated as an ordinary branch when evaluating deployment protections.
+    pub(crate) fn workflow_reference(&self, pull_number: Option<i64>) -> Option<String> {
+        if self.event == "pull_request" {
+            let number = self.pull_request_event.as_ref().and_then(|event| event["number"].as_i64())
+                .or(pull_number).filter(|number| *number > 0)?;
+            Some(format!("refs/pull/{number}/merge"))
+        } else {
+            let branch = if self.event == "pull_request_target" {
+                self.pull_request_event.as_ref().and_then(|event| event["base_ref"].as_str()).unwrap_or(&self.branch)
+            } else { &self.branch };
+            Some(if branch.starts_with("refs/") { branch.to_owned() } else { format!("refs/heads/{branch}") })
+        }
     }
 
     pub fn commit_status_context(&self) -> String {

@@ -224,7 +224,7 @@ async fn contract(pg: bool) {
     assert_github_schema("code-scanning/get-codeql-database", 200, &uploaded);
     assert_eq!(uploaded["uploader"]["id"], alice);
     assert_eq!(uploaded["size"], first.len());
-    let old = db::codeql::get(f.pool(), repo.id, "python")
+    let old = db::codeql::get(f.pool(), alice, repo.id, "python")
         .await
         .unwrap()
         .unwrap();
@@ -322,7 +322,7 @@ async fn contract(pg: bool) {
     assert_eq!(replaced["id"], uploaded["id"]);
     assert_eq!(replaced["created_at"], uploaded["created_at"]);
     assert_eq!(replaced["name"], "replaced.zip");
-    let current = db::codeql::get(f.pool(), repo.id, "python")
+    let current = db::codeql::get(f.pool(), alice, repo.id, "python")
         .await
         .unwrap()
         .unwrap();
@@ -401,7 +401,7 @@ async fn contract(pg: bool) {
         String::from_utf8_lossy(&body)
     );
     assert_eq!(
-        db::codeql::get(f.pool(), repo.id, "python")
+        db::codeql::get(f.pool(), alice, repo.id, "python")
             .await
             .unwrap()
             .unwrap()
@@ -439,7 +439,7 @@ async fn contract(pg: bool) {
         404,
     )
     .await;
-    let java = db::codeql::get(f.pool(), repo.id, "java")
+    let java = db::codeql::get(f.pool(), alice, repo.id, "java")
         .await
         .unwrap()
         .unwrap();

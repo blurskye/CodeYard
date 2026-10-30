@@ -46,18 +46,13 @@ async fn document(tx: &mut Transaction<'_, Postgres>, repo: i64) -> Result<Snaps
             .bind(repo)
             .fetch_optional(&mut **tx)
             .await?;
-    crate::backend::db::postgres::dependabot_alerts::refresh(tx, repo).await?;
-    let rows = sqlx::query_as("SELECT * FROM dependabot_alerts WHERE repo_id=$1 ORDER BY number")
-        .bind(repo)
-        .fetch_all(&mut **tx)
-        .await?;
-    let inventory: Option<String> = sqlx::query_scalar("SELECT s.body FROM dependency_snapshots s JOIN repositories r ON r.id=s.repo_id WHERE s.repo_id=$1 AND s.reference='refs/heads/'||r.default_branch AND s.detector='Codeyard' AND s.correlator='lockfiles' ORDER BY s.scanned DESC,s.id DESC LIMIT 1")
+    let inventory: Option<String> = sqlx::query_scalar(&format!("SELECT s.body FROM dependency_snapshots s JOIN repositories r ON r.id=s.repo_id WHERE s.repo_id=$1 AND s.reference='refs/heads/'||r.default_branch AND s.detector='Codeyard' AND s.correlator='lockfiles' AND s.sha={} ORDER BY s.scanned DESC,s.id DESC LIMIT 1", crate::backend::db::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL))
         .bind(repo).fetch_optional(&mut **tx).await?;
-    records::project(
-        rows,
-        inventory.map(|s| serde_json::from_str(&s)).transpose()?,
-        raw.as_deref().unwrap_or("{}"),
-    )
+    let inventory: Option<crate::backend::dependency_graph::Snapshot> = inventory.map(|s| serde_json::from_str(&s)).transpose()?;
+    crate::backend::db::postgres::dependabot_alerts::refresh(tx, repo, inventory.as_ref().map(|s| s.sha.as_str())).await?;
+    let rows = sqlx::query_as("SELECT * FROM dependabot_alerts WHERE repo_id=$1 ORDER BY number")
+        .bind(repo).fetch_all(&mut **tx).await?;
+    records::project(rows, inventory, raw.as_deref().unwrap_or("{}"))
 }
 async fn save(tx: &mut Transaction<'_, Postgres>, repo: i64, snapshot: &Snapshot) -> Result<()> {
     sqlx::query("UPDATE repository_dependency_security SET snapshot=$2 WHERE repo_id=$1")
@@ -209,7 +204,7 @@ pub async fn complete_scan(pool: &PgPool, job: &Job, sha: &str) -> Result<()> {
     ensure!(records::sha(sha), Refusal::Stale);
     let mut tx = pool.begin().await?;
     active(&mut tx, job, Feature::Alerts).await?;
-    let current: Option<String> = sqlx::query_scalar("SELECT s.sha FROM dependency_snapshots s JOIN repositories r ON r.id=s.repo_id WHERE s.repo_id=$1 AND s.reference='refs/heads/'||r.default_branch AND s.detector='Codeyard' AND s.correlator='lockfiles' ORDER BY s.scanned DESC,s.id DESC LIMIT 1")
+    let current: Option<String> = sqlx::query_scalar(&format!("SELECT s.sha FROM dependency_snapshots s JOIN repositories r ON r.id=s.repo_id WHERE s.repo_id=$1 AND s.reference='refs/heads/'||r.default_branch AND s.detector='Codeyard' AND s.correlator='lockfiles' AND s.sha={} ORDER BY s.scanned DESC,s.id DESC LIMIT 1", crate::backend::db::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL))
         .bind(job.repo_id).fetch_optional(&mut *tx).await?;
     ensure!(current.as_deref() == Some(sha), Refusal::Stale);
     sqlx::query("UPDATE repository_dependency_security SET last_scan_sha=$2,last_scan_at=NOW(),last_status='complete',last_error=NULL WHERE repo_id=$1").bind(job.repo_id).bind(sha).execute(&mut *tx).await?;

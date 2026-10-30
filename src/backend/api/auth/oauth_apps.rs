@@ -520,16 +520,23 @@ async fn applications(
     if let Some(response) = login(&ctx) {
         return response;
     }
-    match db::oauth_apps::applications(&ctx.state.pool, ctx.user.as_ref().unwrap().id).await {
-        Ok(apps) => ctx.page_model(
-            "OAuth applications",
-            Page::Identity(account::Page::OAuthApplications {
-                applications: apps
-                    .into_iter()
-                    .map(|app| (app.name, app.client_id, app.redirect_uri))
-                    .collect(),
-            }),
-        ),
+    let page = ctx.query.get("page").and_then(|value| value.parse::<i64>().ok()).unwrap_or(1).max(1);
+    let size = db::oauth_apps::APPLICATION_PAGE_SIZE;
+    let actor = ctx.database_actor(ctx.user.as_ref().unwrap().id);
+    match db::oauth_apps::applications(&ctx.state.pool, actor, page.saturating_sub(1).saturating_mul(size), size + 1).await {
+        Ok(Some(mut apps)) => {
+            let more = apps.len() > size as usize;
+            apps.truncate(size as usize);
+            ctx.page_model(
+                "OAuth applications",
+                Page::Identity(account::Page::OAuthApplications {
+                    applications: apps.into_iter().map(|app| (app.name, app.client_id, app.redirect_uri)).collect(),
+                    previous: (page > 1).then(|| format!("/settings/applications?page={}", page - 1)),
+                    next: more.then(|| format!("/settings/applications?page={}", page.saturating_add(1))),
+                }),
+            )
+        }
+        Ok(None) => ctx.error(StatusCode::UNAUTHORIZED, "Sign in again"),
         Err(_) => ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Applications unavailable"),
     }
 }

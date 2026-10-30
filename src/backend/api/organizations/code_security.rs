@@ -124,6 +124,7 @@ async fn post(
         Ok(user) => user.id,
         Err(response) => return response,
     };
+    let actor = ctx.database_actor(actor);
     let id = values
         .get("configuration_id")
         .map(|id| id.parse::<i64>())

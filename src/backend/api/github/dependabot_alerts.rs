@@ -55,13 +55,28 @@ async fn global(
 ) -> Result<Response> {
     auth::authenticate(&state, &headers, false).await?;
     validate(&query, true)?;
-    let rows = store::global(&state.pool)
-        .await
-        .map_err(failure)?
-        .into_iter()
-        .filter(|a| global_matches(a, &query))
-        .collect();
-    page(rows, &query, &uri, true)
+    let sort = query.get("sort").map_or("published", String::as_str);
+    let ascending = query.get("direction").is_some_and(|v| v == "asc");
+    let limit = query.get("per_page").map(|v| v.parse::<usize>()).transpose()
+        .map_err(|_| Error::invalid("Invalid page size"))?.unwrap_or(30).clamp(1, 100);
+    let cursor = if let Some(cursor) = query.get("after").or(query.get("before")) {
+        if cursor.len() > 2048 { return Err(Error::invalid("Invalid cursor")); }
+        let bytes = URL_SAFE_NO_PAD.decode(cursor).map_err(|_| Error::invalid("Invalid cursor"))?;
+        let (field, direction, key): (String, bool, (String, String)) = serde_json::from_slice(&bytes).map_err(|_| Error::invalid("Invalid cursor"))?;
+        if field != sort || direction != ascending { return Err(Error::invalid("Invalid cursor")); }
+        Some(key)
+    } else { None };
+    let offset = if cursor.is_some() { 0 } else {
+        let page = query.get("page").map(|v| v.parse::<usize>()).transpose()
+            .map_err(|_| Error::invalid("Invalid page"))?.unwrap_or(1);
+        if !(1..=10000).contains(&page) { return Err(Error::invalid("Invalid page")); }
+        (page - 1) * limit
+    };
+    let selected = store::global_page(&state.pool, &store::CatalogueQuery {
+        filters: query.clone(), sort: sort.to_owned(), ascending, cursor,
+        before: query.contains_key("before"), offset, limit,
+    }).await.map_err(failure)?;
+    page_response(selected.documents, &query, &uri, true, selected.previous, selected.next)
 }
 async fn global_detail(
     State(state): State<Arc<AppState>>,
@@ -79,74 +94,6 @@ fn csv(query: &Params, key: &str, value: &str) -> bool {
     query
         .get(key)
         .is_none_or(|s| s.split(',').any(|s| s == value))
-}
-fn global_matches(a: &Value, q: &Params) -> bool {
-    for key in ["ghsa_id", "cve_id", "severity"] {
-        if !csv(q, key, a[key].as_str().unwrap_or("")) {
-            return false;
-        }
-    }
-    if a["type"] != q.get("type").map_or("reviewed", String::as_str) {
-        return false;
-    }
-    if q.get("is_withdrawn")
-        .is_some_and(|v| (v == "true") == a["withdrawn_at"].is_null())
-    {
-        return false;
-    }
-    if let Some(ecosystem) = q.get("ecosystem") {
-        if !a["vulnerabilities"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|v| v["package"]["ecosystem"] == *ecosystem)
-        {
-            return false;
-        }
-    }
-    if let Some(affects) = q.get("affects") {
-        if !affects.split(',').any(|p| {
-            let (name, version) = p
-                .rsplit_once('@')
-                .filter(|(n, _)| !n.is_empty())
-                .map_or((p, None), |(n, v)| (n, Some(v)));
-            a["vulnerabilities"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|v| {
-                    v["package"]["name"] == name
-                        && version.is_none_or(|version| {
-                            store::affected(
-                                version,
-                                v["vulnerable_version_range"].as_str().unwrap_or(""),
-                            )
-                        })
-                })
-        }) {
-            return false;
-        }
-    }
-    if let Some(cwes) = q.get("cwes") {
-        if !a["cwes"].as_array().into_iter().flatten().any(|v| {
-            cwes.split(',')
-                .any(|c| v["cwe_id"] == format!("CWE-{}", c.trim_start_matches("CWE-")))
-        }) {
-            return false;
-        }
-    }
-    for (key, field) in [
-        ("published", "published_at"),
-        ("updated", "updated_at"),
-        ("modified", "updated_at"),
-    ] {
-        if let Some(range) = q.get(key) {
-            if !date_matches(a[field].as_str().unwrap_or(""), range) {
-                return false;
-            }
-        }
-    }
-    true
 }
 fn date_matches(value: &str, range: &str) -> bool {
     let Some(date) = value.get(..10) else {
@@ -312,14 +259,19 @@ fn page(mut rows: Vec<Value>, q: &Params, uri: &Uri, global: bool) -> Result<Res
     };
     let more = offset.saturating_add(limit) < rows.len();
     let selected: Vec<_> = rows.into_iter().skip(offset).take(limit).collect();
+    page_response(selected, q, uri, global, offset > 0 || q.contains_key("after"), more || q.contains_key("before"))
+}
+fn page_response(selected: Vec<Value>, q: &Params, uri: &Uri, global: bool, previous: bool, next: bool) -> Result<Response> {
+    let sort = q.get("sort").map_or(if global { "published" } else { "created" }, String::as_str);
+    let ascending = q.get("direction").is_some_and(|s| s == "asc");
     let mut links = Vec::new();
     for (rel, row, include) in [
         (
             "prev",
             selected.first(),
-            offset > 0 || q.contains_key("after"),
+            previous,
         ),
-        ("next", selected.last(), more || q.contains_key("before")),
+        ("next", selected.last(), next),
     ] {
         if !include {
             continue;
@@ -434,9 +386,10 @@ async fn list(
             repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
         (vec![repo.id], actor.ok_or_else(auth::required)?)
     };
+    let database_actor = actor.database_actor(&headers)?;
     let mut documents = Vec::new();
     for id in ids {
-        let rows = match store::alerts(&state.pool, actor.user.id, id).await {
+        let rows = match store::alerts(&state.pool, database_actor.clone(), id).await {
             Ok(rows) => rows,
             // A repository with alerts disabled is left out of an organization listing.
             Err(error)
@@ -478,7 +431,7 @@ async fn detail(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let row = store::alerts(&state.pool, actor.user.id, repo.id)
+    let row = store::alerts(&state.pool, actor.database_actor(&headers)?, repo.id)
         .await
         .map_err(failure)?
         .into_iter()
@@ -494,7 +447,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let row = store::update(&state.pool, actor.user.id, repo.id, number, &input)
+    let row = store::update(&state.pool, actor.database_actor(&headers)?, repo.id, number, &input)
         .await
         .map_err(failure)?;
     Ok(Json(document(&state, &row, &owner, &name).await?))

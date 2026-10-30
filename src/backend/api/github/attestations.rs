@@ -4,7 +4,7 @@ use crate::backend::{
     app::AppState,
     db::{
         attestation_validation::PreparedBundle,
-        attestations::{self, Attestation, Filter, Owner, Refusal},
+        attestations::{self, Attestation, Filter, Owner, Refusal, MAX_RESPONSE_BUNDLE_BYTES},
     },
 };
 use axum::{
@@ -52,7 +52,6 @@ fn document(row: &Attestation) -> Result<Value> {
     Ok(json!({"id":row.id,"repository_id":row.repo_id,"bundle":bundle,"initiator":row.initiator}))
 }
 
-const MAX_RESPONSE_BUNDLE_BYTES: usize = 16 * 1024 * 1024;
 fn trim_bundles(
     page: &Cursor,
     rows: &mut Vec<Attestation>,
@@ -349,7 +348,7 @@ async fn remove(
         }
         (vec![], vec![digest.clone()])
     };
-    let count = attestations::delete(&state.pool, actor.user.id, &actor.credential(), owner, &ids, &digests)
+    let count = attestations::delete(&state.pool, actor.database_actor(&headers)?, owner, &ids, &digests)
         .await
         .map_err(failure)?;
     if count == 0 {

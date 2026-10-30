@@ -87,10 +87,11 @@ async fn list(
     Query(filter): Query<Filter>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
+    let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let (offset, limit) = page.window()?;
     let rows = deployments::list(
         &state.pool,
+        auth.as_ref().map(|actor| actor.user.id),
         repo.id,
         &filter,
         offset as i64,
@@ -157,7 +158,7 @@ async fn create(
     let payload = input.payload.unwrap_or_else(|| json!({}));
     let environment = input.environment.as_deref().unwrap_or("production");
     let new = NewDeployment {
-        actor: actor.id,
+        actor: auth.database_actor(&headers)?,
         repo: repo.id,
         sha: &sha,
         reference: &input.reference,
@@ -168,7 +169,7 @@ async fn create(
         transient: input.transient_environment.unwrap_or(false),
         production: input
             .production_environment
-            .unwrap_or(environment == "production"),
+            .unwrap_or(environment.eq_ignore_ascii_case("production")),
         required_contexts: input.required_contexts.as_deref(),
     };
     new.validate().map_err(write_error)?;
@@ -244,7 +245,7 @@ async fn deployment(
     if write {
         deployments::delete(
             &state.pool,
-            auth.ok_or_else(auth::required)?.user.id,
+            auth.ok_or_else(auth::required)?.database_actor(&headers)?,
             repo.id,
             id,
         )
@@ -252,7 +253,7 @@ async fn deployment(
         .map_err(write_error)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let saved = deployments::get(&state.pool, repo.id, id)
+    let saved = deployments::get(&state.pool, auth.as_ref().map(|actor| actor.user.id), repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -270,10 +271,11 @@ async fn statuses(
     let read = auth::read_method(request.method());
     let (owner, name) = (&params["owner"], &params["repo"]);
     let (repo, auth) = repository(&state, &headers, owner, name, !read).await?;
+    let viewer = auth.as_ref().map(|actor| actor.user.id);
     let id = params["deployment_id"]
         .parse()
         .map_err(|_| Error::missing())?;
-    let saved = deployments::get(&state.pool, repo.id, id)
+    let saved = deployments::get(&state.pool, viewer, repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -281,6 +283,7 @@ async fn statuses(
         if let Some(status) = params.get("status_id") {
             let row = deployments::get_status(
                 &state.pool,
+                viewer,
                 id,
                 status.parse().map_err(|_| Error::missing())?,
             )
@@ -290,7 +293,7 @@ async fn statuses(
             return Ok(Json(status_document(&state, &row, owner, name).await?).into_response());
         }
         let (offset, limit) = page.window()?;
-        let rows = deployments::statuses(&state.pool, id, offset as i64, (limit + 1) as i64)
+        let rows = deployments::statuses(&state.pool, viewer, id, offset as i64, (limit + 1) as i64)
             .await
             .map_err(Error::unavailable)?;
         let has_next = rows.len() > limit;
@@ -300,12 +303,14 @@ async fn statuses(
         }
         return page.response(&uri, values, has_next);
     }
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let authentication = auth.ok_or_else(auth::required)?;
+    let credential = authentication.database_actor(&headers)?;
+    let actor = authentication.user;
     let Json(input) = Json::<NewStatus>::from_request(request, &state)
         .await
         .map_err(|_| Error::validation("DeploymentStatus", "state", "invalid"))?;
     let (_, statuses) =
-        deployments::create_status(&state.pool, actor.id, repo.id, saved.id, &input)
+        deployments::create_status(&state.pool, credential, repo.id, saved.id, &input)
             .await
             .map_err(write_error)?;
     let mut result = None;
@@ -314,7 +319,7 @@ async fn statuses(
         if status.deployment_id == saved.id {
             result = Some(value.clone());
         }
-        let deployment = deployments::get(&state.pool, repo.id, status.deployment_id)
+        let deployment = deployments::get(&state.pool, viewer, repo.id, status.deployment_id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;

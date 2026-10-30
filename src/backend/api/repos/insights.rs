@@ -145,9 +145,11 @@ async fn dependencies(
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
+    let reader = db::dependency_graph::Reader::Viewer(ctx.user.as_ref().map(|user| ctx.database_actor(user.id)));
     let reference = format!("refs/heads/{}", loaded.default_branch);
     let snapshots = match db::dependency_graph::snapshots(
         &ctx.state.pool,
+        &reader,
         loaded.repository.id,
         Some(&reference),
         None,

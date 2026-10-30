@@ -760,7 +760,7 @@ async fn eviction(pg: bool) {
     f.execute("UPDATE actions_objects SET accessed_at=accessed_at-10,expires_at=expires_at-10 WHERE id=$1", &[b]).await;
     assert_eq!(restore(&router, &token.token, "a", &[]).await["ok"], true);
     // Exercise the same finalization transaction with a byte-sized quota, avoiding GiB fixtures.
-    assert!(objects::finalize_object(f.pool(), run.id, b, 4, 6)
+    assert!(objects::finalize_object(f.pool(), run.id, &codeyard::backend::ci::runtime::token_hash(&token.token), b, 4, 6)
         .await
         .unwrap());
     assert_eq!(restore(&router, &token.token, "a", &[]).await["ok"], true);
@@ -770,7 +770,7 @@ async fn eviction(pg: bool) {
             .await,
         1
     );
-    assert!(!objects::finalize_object(f.pool(), run.id, a, 4, 3)
+    assert!(!objects::finalize_object(f.pool(), run.id, &codeyard::backend::ci::runtime::token_hash(&token.token), a, 4, 3)
         .await
         .unwrap());
     f.finish().await;

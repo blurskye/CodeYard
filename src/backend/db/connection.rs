@@ -95,7 +95,8 @@ fn secure_sqlite_files(path: &Path, create_main: bool) -> std::io::Result<()> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
     match std::fs::metadata(path) {
-        Ok(_) => std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?,
+        Ok(metadata) if metadata.is_file() => std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?,
+        Ok(_) => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "SQLite target is not a regular file")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && create_main => {
             std::fs::OpenOptions::new()
                 .write(true)
@@ -110,8 +111,9 @@ fn secure_sqlite_files(path: &Path, create_main: bool) -> std::io::Result<()> {
         let mut name = path.as_os_str().to_owned();
         name.push(suffix);
         let sidecar = std::path::PathBuf::from(name);
-        match std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o600)) {
-            Ok(()) => {}
+        match std::fs::metadata(&sidecar) {
+            Ok(metadata) if metadata.is_file() => std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o600))?,
+            Ok(_) => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "SQLite sidecar is not a regular file")),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }

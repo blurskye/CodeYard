@@ -154,7 +154,7 @@ async fn upload(
     {
         return Err(Error::validation("Sarif", "commit_sha", "invalid"));
     }
-    if input.ref_name.len() > 4096
+    if input.ref_name.len() > code_scanning::MAX_REFERENCE_BYTES
         || !["refs/heads/", "refs/tags/", "refs/pull/"]
             .iter()
             .any(|p| input.ref_name.starts_with(p))
@@ -191,7 +191,7 @@ async fn upload(
     let upload = records::enqueue(
         &state.pool,
         &records::NewUpload {
-            actor: auth.user.id,
+            actor: auth.database_actor(&headers)?,
             repo: repo.id,
             ref_name: &input.ref_name,
             commit_sha: &commit.sha,
@@ -440,7 +440,7 @@ async fn delete_analysis(
     let (repo, auth) = scope(&state, &headers, &owner, &name, true, true).await?;
     let next = records::delete_analysis(
         &state.pool,
-        auth.user.id,
+        auth.database_actor(&headers)?,
         repo.id,
         id,
         query.confirm_delete.as_deref() == Some("true"),
@@ -600,7 +600,7 @@ async fn update_alert(
     input
         .validate()
         .map_err(|e| Error::invalid(e.to_string()))?;
-    let row = code_scanning::dismiss(&state.pool, auth.user.id, repo.id, number, &input, &auth.credential())
+    let row = code_scanning::dismiss(&state.pool, auth.database_actor(&headers)?, repo.id, number, &input)
         .await
         .map_err(failure)?;
     Ok(Json(

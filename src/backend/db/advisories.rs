@@ -70,7 +70,9 @@ impl Data {
         };
         if map.get("severity").is_some_and(|v| !v.is_null()) {
             anyhow::ensure!(
-                map.get("cvss_vector_string").is_none_or(Value::is_null),
+                map.get("cvss_vector_string").is_none_or(Value::is_null)
+                    && (previous.is_none_or(|data| data.cvss_vector_string.is_none())
+                        || map.get("cvss_vector_string").is_some_and(Value::is_null)),
                 Refusal::Invalid
             );
             full.insert("cvss_vector_string".into(), Value::Null);
@@ -321,6 +323,14 @@ pub fn identifier() -> String {
     value
 }
 
+/// A UI/preflight projection, never a mutation permit.
+pub(crate) fn administration_sql(level: &str) -> String {
+    let manager = super::organizations::roles::security_manager_condition("u.id", "r.owner_org_id");
+    format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND NOT r.is_gist AND NOT r.is_archived AND NOT u.is_banned AND NOT u.must_change_password AND NOT EXISTS(SELECT 1 FROM repository_migration_locks l WHERE l.repo_id=r.id) AND ((r.owner_kind='user' AND (r.owner_user_id=u.id OR u.is_admin)) OR ({level})>=5 OR (r.owner_kind='org' AND {manager})))")
+}
+
+native_operation!(crate::backend::db::postgres::advisories::can_administer,crate::backend::db::sqlite::advisories::can_administer,
+    fn can_administer(pool:&DbPool,actor:i64,repo:i64)->Result<bool>);
 native_operation!(crate::backend::db::postgres::advisories::list,crate::backend::db::sqlite::advisories::list,
     fn list(pool:&DbPool,actor:Option<i64>,scope:Scope,options:&Listing<'_>)->Result<Vec<Advisory>>);
 native_operation!(crate::backend::db::postgres::advisories::get,crate::backend::db::sqlite::advisories::get,

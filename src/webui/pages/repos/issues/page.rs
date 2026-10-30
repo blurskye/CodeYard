@@ -52,6 +52,8 @@ pub struct Repository {
     pub name: String,
     pub signed_in: bool,
     pub can_write: bool,
+    #[serde(default)]
+    pub can_triage: bool,
     pub can_admin: bool,
     pub csrf: String,
     /// The signed-in viewer's username; empty when nobody is signed in.

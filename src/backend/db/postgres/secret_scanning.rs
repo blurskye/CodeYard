@@ -198,15 +198,8 @@ pub async fn save_settings(
         .fetch_optional(&mut *tx)
         .await?;
     if let Some(configured) = configured {
-        let current: Settings = sqlx::query_as(
-            "SELECT enabled,push_protection FROM secret_scanning_settings WHERE repo_id=$1",
-        )
-        .bind(repo)
-        .fetch_optional(&mut *tx)
-        .await?
-        .unwrap_or_default();
         if let Some(fixed) =
-            crate::backend::db::code_security::enforced_scanning(&configured, current)?
+            crate::backend::db::code_security::enforced_scanning(&configured, (*settings).clone())?
         {
             ensure!(
                 fixed.enabled == settings.enabled

@@ -18,7 +18,8 @@ pub async fn can_manage_security(pool: &PgPool, actor: i64, org: i64) -> Result<
 }
 /// Whether `actor` holds the organization's security-manager role, directly or through a team.
 pub(crate) async fn manages_security(c: &mut PgConnection, actor: i64, org: i64) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organizations o JOIN org_memberships m ON m.org_id=o.id JOIN users u ON u.id=m.user_id WHERE o.id=$2 AND u.id=$1 AND m.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password AND NOT EXISTS(SELECT 1 FROM organization_blocks b WHERE b.org_id=o.id AND b.user_id=u.id) AND EXISTS(SELECT 1 FROM org_memberships owner JOIN users active ON active.id=owner.user_id WHERE owner.org_id=o.id AND owner.role='owner' AND NOT active.is_banned AND NOT active.must_change_password) AND (m.role='owner' OR EXISTS(SELECT 1 FROM organization_role_assignments a JOIN organization_roles role ON role.id=a.role_id AND role.base_level=1 WHERE a.org_id=o.id AND a.role_id=$3 AND ((a.user_id=u.id AND a.team_id IS NULL) OR (a.user_id IS NULL AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id WHERE t.id=a.team_id AND t.org_id=a.org_id AND t.privacy IN ('visible','secret') AND tm.user_id=u.id AND tm.role IN ('member','maintainer')))))))").bind(actor).bind(org).bind(crate::backend::db::organizations::roles::SECURITY_MANAGER_ROLE_ID).fetch_one(c).await?)
+    let condition = crate::backend::db::organizations::roles::security_manager_condition("$1", "$2");
+    Ok(sqlx::query_scalar(&format!("SELECT {condition}")).bind(actor).bind(org).fetch_one(c).await?)
 }
 pub async fn catalog(
     pool: &PgPool,

@@ -15,10 +15,15 @@ native_operation!(crate::backend::db::postgres::discussions::last_discussion_num
     crate::backend::db::sqlite::discussions::last_discussion_numbers,
     fn last_discussion_numbers(pool: &DbPool, repo_ids: &[i64]) -> Result<Vec<(i64, i64)>>);
 
-// The usernames of everyone who opened an issue or pull request in a repository, in name order.
+pub(crate) fn author_choices_sql(pg: bool) -> String {
+    let (repo, selected) = if pg { ("$1", "$2") } else { ("?1", "?2") };
+    format!("WITH catalogue AS (SELECT username FROM users WHERE id IN (SELECT author_id FROM issues WHERE repo_id={repo} UNION SELECT author_id FROM pull_requests WHERE repo_id={repo}) ORDER BY username LIMIT 100) SELECT username FROM catalogue UNION SELECT username FROM users WHERE id={selected} ORDER BY username")
+}
+
 native_operation!(crate::backend::db::postgres::discussions::list_repo_authors,
     crate::backend::db::sqlite::discussions::list_repo_authors,
-    fn list_repo_authors(pool: &DbPool, repo_id: i64) -> Result<Vec<String>>);
+    /// At most 100 author choices plus the independently resolved selected user.
+    fn list_repo_authors(pool: &DbPool, repo_id: i64, selected: Option<i64>) -> Result<Vec<String>>);
 
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 pub enum DiscussionWriteRefusal {
@@ -50,7 +55,7 @@ pub(crate) fn valid_lock_reason(reason: Option<&str>) -> bool {
 
 native_operation!(crate::backend::db::postgres::discussions::set_lock,
     crate::backend::db::sqlite::discussions::set_lock,
-    fn set_lock(pool: &DbPool, actor_id: i64, repo_id: i64, item: super::assignees::AssignedItem, locked: bool, reason: Option<&str>) -> Result<()>);
+    fn set_lock(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo_id: i64, item: super::assignees::AssignedItem, locked: bool, reason: Option<&str>) -> Result<()>);
 
 pub struct DiscussionEdit<'a> {
     pub actor_id: i64,

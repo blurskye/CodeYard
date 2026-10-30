@@ -25,6 +25,38 @@ pub struct Package {
     pub deleted_at: Option<i64>,
 }
 
+pub(crate) struct Actor {
+    pub id: Option<i64>,
+    pub repo: Option<i64>,
+    pub owner: Option<(&'static str, i64)>,
+    pub selected: Option<i64>,
+    pub classic: bool,
+}
+
+impl Actor {
+    pub const ANONYMOUS: Self = Self { id: None, repo: None, owner: None, selected: None, classic: false };
+
+    pub fn for_owner(self, kind: &str, id: Option<i64>) -> Self {
+        match self.owner {
+            Some((owner_kind, owner)) if owner_kind != kind || Some(owner) != id => Self::ANONYMOUS,
+            _ => self,
+        }
+    }
+
+    /// Scope applies to grants, not the anonymous public-read baseline.
+    pub fn scope_condition(&self) -> String {
+        let selection = self.selected.map_or_else(|| "TRUE".to_owned(), |token| format!("EXISTS(SELECT 1 FROM fine_grained_token_repositories s WHERE s.token_id={token} AND s.repo_id=p.repo_id)"));
+        let policy = if self.classic { "NOT EXISTS(SELECT 1 FROM organization_token_policies policy WHERE policy.org_id=p.owner_org_id AND NOT policy.classic_allowed)" } else { "TRUE" };
+        format!("({selection} AND {policy})")
+    }
+}
+
+pub(crate) fn read_condition(actor: &Actor, repository_access: &str) -> String {
+    let access = repository_access.replace("CASE WHEN NOT r.is_private THEN 1 ELSE 0 END", "0");
+    let scope = actor.scope_condition();
+    format!("((p.visibility='public' AND (p.repo_id IS NULL OR NOT r.is_private)) OR ({scope} AND (p.owner_user_id=u.id OR (p.owner_kind='user' AND u.is_admin) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=p.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin')) OR (p.repo_id IS NOT NULL AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id) AND ({access})>=1))))")
+}
+
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Version {
     pub id: i64,
