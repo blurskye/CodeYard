@@ -440,7 +440,11 @@ async fn create(
                     message,
                 )
             }
-            Err(_) => ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Your token was created, but its page could not be loaded. If its value was not shown, delete it and create another."),
+            Err(_) => respond(&ctx, StatusCode::OK, View::Revealed { id: created.id, value: created.value }, Some(if created.status == "pending" {
+                "Token created. Organization approval is required for private resources. Details could not be loaded; copy the token now."
+            } else {
+                "Token created. Details could not be loaded; copy the token before leaving this page."
+            })),
         },
         Err(error) => {
             let (status, message) = refusal(error);
