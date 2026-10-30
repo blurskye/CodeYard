@@ -125,6 +125,11 @@ pub async fn delete_field(pool: &SqlitePool, actor: i64, project: i64, field: i6
     .await?
     .rows_affected();
     anyhow::ensure!(count == 1, Refusal::Invalid);
+    sqlx::query("UPDATE project_items SET field_values=json_remove(field_values, '$.'||json_quote(?2)) WHERE project_id=?1 AND json_type(field_values, '$.'||json_quote(?2)) IS NOT NULL")
+        .bind(project)
+        .bind(field.to_string())
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -246,12 +251,14 @@ pub async fn update_item(
 
 pub async fn delete_item(pool: &SqlitePool, actor: i64, project: i64, item: i64) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    writable_item(&mut tx, actor, project, item).await?;
-    sqlx::query("DELETE FROM project_items WHERE id=$1 AND project_id=$2")
+    // The project's writer may remove an item even after losing access to its repository.
+    write_project(&mut tx, actor, project).await?;
+    let removed = sqlx::query("DELETE FROM project_items WHERE id=$1 AND project_id=$2")
         .bind(item)
         .bind(project)
         .execute(&mut *tx)
         .await?;
+    anyhow::ensure!(removed.rows_affected() == 1, Refusal::Missing);
     tx.commit().await?;
     Ok(())
 }
