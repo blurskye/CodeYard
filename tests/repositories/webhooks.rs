@@ -645,8 +645,25 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
     )
     .unwrap();
     assert_eq!(push["head_commit"]["id"], base);
+    assert_eq!(push["head_commit"]["distinct"], true);
+    assert_eq!(push["head_commit"]["added"], json!(["README.md"]));
     alice.branch("topic", &base).await;
-    deliveries(&database, hook, 4).await;
+    let rows = deliveries(&database, hook, 4).await;
+    let topic: Value = serde_json::from_str(
+        &rows
+            .iter()
+            .find(|row| row.event == "push" && row.request_body.contains("refs/heads/topic"))
+            .unwrap()
+            .request_body,
+    )
+    .unwrap();
+    // The new branch brings no commit that main did not already have.
+    assert_eq!(topic["commits"], json!([]));
+    assert_eq!(topic["head_commit"]["distinct"], false);
+    assert!(topic["compare"]
+        .as_str()
+        .unwrap()
+        .ends_with(&format!("/commit/{base}")));
     alice
         .expect(
             "DELETE",

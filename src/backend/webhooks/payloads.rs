@@ -413,6 +413,7 @@ pub fn deployment_status(
 pub fn team_organization(
     org: &crate::backend::db::models::Organization,
     public_repos: i64,
+    has_organization_projects: bool,
 ) -> Value {
     let slug = crate::webui::encode_component(&org.name);
     let url = crate::backend::api::github::api_url(&format!("/orgs/{slug}"));
@@ -422,7 +423,7 @@ pub fn team_organization(
         "repos_url":format!("{url}/repos"),"events_url":format!("{url}/events"),
         "hooks_url":format!("{url}/hooks"),"issues_url":format!("{url}/issues"),
         "members_url":format!("{url}/members{{/member}}"),"public_members_url":format!("{url}/public_members{{/member}}"),
-        "has_organization_projects":true,"has_repository_projects":false,"public_repos":public_repos,
+        "has_organization_projects":has_organization_projects,"has_repository_projects":false,"public_repos":public_repos,
         "public_gists":0,"followers":0,"following":0,"type":"Organization",
         "created_at":time(org.created_at),"updated_at":time(org.updated_at),"archived_at":null})
 }
@@ -1284,6 +1285,19 @@ pub fn pull_request_json(
     value
 }
 
+/// GitHub's `auto_merge` object for a pull request's saved auto-merge request.
+pub fn auto_merge(
+    request: &crate::backend::db::pull_requests::auto_merge::AutoMergeRequest,
+    enabled_by: Option<&User>,
+) -> Value {
+    json!({
+        "enabled_by": enabled_by.map_or(Value::Null, user),
+        "merge_method": request.merge_method.to_ascii_lowercase(),
+        "commit_title": request.commit_title.as_deref().unwrap_or(""),
+        "commit_message": request.commit_message.as_deref().unwrap_or(""),
+    })
+}
+
 pub fn pull_request_review_json(
     review: &PullRequestReview,
     reviewer: &Person,
@@ -1494,6 +1508,24 @@ pub fn release_json(
     value
 }
 
+/// GitHub's `changes` of an `edited` release event: the previous value of each changed field.
+pub fn release_changes(before: &Release, after: &Release) -> Value {
+    let mut changes = json!({});
+    if before.name != after.name {
+        changes["name"] = json!({"from": before.name.as_deref().unwrap_or("")});
+    }
+    if before.body != after.body {
+        changes["body"] = json!({"from": before.body.as_deref().unwrap_or("")});
+    }
+    if before.tag_name != after.tag_name {
+        changes["tag_name"] = json!({"from": before.tag_name});
+    }
+    if before.is_latest != after.is_latest {
+        changes["make_latest"] = json!({"to": after.is_latest});
+    }
+    changes
+}
+
 pub fn release(action: &str, release: &Release, author: &Person, scope: Scope) -> Value {
     let Scope {
         repo,
@@ -1616,7 +1648,35 @@ pub struct PushedCommit {
     pub committer_name: String,
     pub committer_email: String,
     pub committer_time: i64,
+    /// No ref held the commit before this push.
+    pub distinct: bool,
+    /// The paths the commit changed against its first parent; `None` when they were not read.
+    pub files: Option<ChangedFiles>,
 }
+
+/// GitHub's `added`, `removed` and `modified` path lists of one pushed commit.
+#[derive(Debug, Default, Clone)]
+pub struct ChangedFiles {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub modified: Vec<String>,
+}
+
+impl ChangedFiles {
+    pub fn bytes(&self) -> usize {
+        self.added
+            .iter()
+            .chain(&self.removed)
+            .chain(&self.modified)
+            .map(|path| std::mem::size_of::<String>() + path.len())
+            .sum()
+    }
+}
+
+/// Paths listed for one pushed commit; a larger commit lists only its first paths.
+const MAX_PUSHED_COMMIT_FILES: usize = 3000;
+/// Wall-clock budget for reading the changed paths of one push's commits.
+const PUSHED_FILES_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[derive(Debug, Default, Clone)]
 pub struct PushedCommits {
@@ -1634,12 +1694,22 @@ pub(crate) fn bounded_text(text: &str, limit: usize) -> String {
     text[..end].to_owned()
 }
 
-fn pushed_commit(repository: &git2::Repository, revision: &str) -> Option<PushedCommit> {
+fn pushed_commit(
+    repository: &git2::Repository,
+    revision: &str,
+    distinct: &dyn Fn(&str) -> bool,
+    files_until: std::time::Instant,
+) -> Option<PushedCommit> {
     let commit =
         crate::backend::git::repository::peel_to_commit_checked(repository, revision).ok()?;
     let (author, committer) = (commit.author(), commit.committer());
+    let id = commit.id().to_string();
+    let files = (std::time::Instant::now() < files_until)
+        .then(|| changed_files(repository, &commit))
+        .flatten();
     Some(PushedCommit {
-        id: commit.id().to_string(),
+        distinct: distinct(&id),
+        files,
         tree_id: commit.tree_id().to_string(),
         message: bounded_text(commit.message().unwrap_or(""), 4096),
         time: author.when().seconds(),
@@ -1648,29 +1718,107 @@ fn pushed_commit(repository: &git2::Repository, revision: &str) -> Option<Pushed
         committer_name: bounded_text(committer.name().unwrap_or(""), 256),
         committer_email: bounded_text(committer.email().unwrap_or(""), 256),
         committer_time: committer.when().seconds(),
+        id,
     })
 }
 
-/// At most 2048 introduced commits, with a separate new head even for a rewind. Git's bounded
-/// subprocess avoids libgit2's eager hidden-range walk. Called only on a blocking thread.
-pub fn pushed_commits(path: &Path, before: Option<&str>, after: &str) -> anyhow::Result<PushedCommits> {
+/// The paths a commit changed against its first parent, or against nothing for a root
+/// commit, like the commit page shows them. Renames are listed as a removal and an addition.
+fn changed_files(repository: &git2::Repository, commit: &git2::Commit<'_>) -> Option<ChangedFiles> {
+    fn path(file: git2::DiffFile<'_>) -> Option<String> {
+        file.path_bytes()
+            .map(|path| String::from_utf8_lossy(path).into_owned())
+    }
+    let tree = commit.tree().ok()?;
+    let parent = match commit.parent_count() {
+        0 => None,
+        _ => Some(commit.parent(0).ok()?.tree().ok()?),
+    };
+    let mut options = git2::DiffOptions::new();
+    options.skip_binary_check(true);
+    let diff = repository
+        .diff_tree_to_tree(parent.as_ref(), Some(&tree), Some(&mut options))
+        .ok()?;
+    let mut files = ChangedFiles::default();
+    for delta in diff.deltas().take(MAX_PUSHED_COMMIT_FILES) {
+        match delta.status() {
+            git2::Delta::Added => files.added.extend(path(delta.new_file())),
+            git2::Delta::Deleted => files.removed.extend(path(delta.old_file())),
+            git2::Delta::Modified | git2::Delta::Typechange => {
+                files.modified.extend(path(delta.new_file()))
+            }
+            _ => {}
+        }
+    }
+    Some(files)
+}
+
+/// The newest 2048 commits reachable from `after` and from none of `excluded`, oldest first
+/// when `reverse` is set. Git's bounded subprocess avoids libgit2's eager hidden-range walk.
+async fn rev_list<'a>(
+    path: &Path,
+    after: &str,
+    excluded: impl Iterator<Item = &'a str>,
+    reverse: bool,
+) -> anyhow::Result<Vec<String>> {
+    use crate::backend::git::repository::process;
+    let mut command = process::git_command()?;
+    command
+        .current_dir(path)
+        .args(["rev-list", "--max-count=2048", "--stdin"]);
+    if reverse {
+        command.arg("--reverse");
+    }
+    let mut input = format!("{after}\n");
+    for id in excluded {
+        input.push('^');
+        input.push_str(id);
+        input.push('\n');
+    }
+    process::limit_memory(&mut command);
+    let (status, output) = process::buffered(
+        command,
+        input.as_bytes(),
+        2048 * 65,
+        std::time::Duration::from_secs(2),
+    )
+    .await?;
+    anyhow::ensure!(status.success(), "Webhook commit listing failed");
+    Ok(String::from_utf8_lossy(&output)
+        .lines()
+        .take(2048)
+        .map(str::to_owned)
+        .collect())
+}
+
+/// At most 2048 introduced commits, with a separate new head even for a rewind. `previous`
+/// holds the tips every ref had before the push: a new ref lists only commits none of them
+/// reached, and a listed commit is distinct when none of them reached it. Without it, a new
+/// ref lists its history and every listed commit counts as distinct. Called only on a
+/// blocking thread.
+pub fn pushed_commits(
+    path: &Path,
+    before: Option<&str>,
+    after: &str,
+    previous: Option<&[String]>,
+) -> anyhow::Result<PushedCommits> {
     use crate::backend::git::repository::process;
     let repository = git2::Repository::open_bare(path)?;
-    let head = pushed_commit(&repository, after);
+    let previous_tips = || previous.into_iter().flatten().map(String::as_str);
     let collect = async {
-        let mut command = process::git_command()?;
-        command
-            .current_dir(path)
-            .args(["rev-list", "--reverse", "--max-count=2048", after]);
-        if let Some(before) = before {
-            command.args(["--not", before]);
+        match before {
+            Some(before) => rev_list(path, after, std::iter::once(before), true).await,
+            None => rev_list(path, after, previous_tips(), true).await,
         }
-        command.arg("--");
-        process::limit_memory(&mut command);
-        let (status, output) =
-            process::buffered(command, b"", 2048 * 65, std::time::Duration::from_secs(2)).await?;
-        anyhow::ensure!(status.success(), "Webhook commit listing failed");
-        Ok::<_, anyhow::Error>(output)
+    };
+    // For a moved ref, its own range may hold commits another ref already had.
+    let distinct = async {
+        match (before, previous) {
+            (Some(_), Some(_)) => rev_list(path, after, previous_tips(), false)
+                .await
+                .map(|ids| Some(ids.into_iter().collect::<std::collections::HashSet<_>>())),
+            _ => Ok(None),
+        }
     };
     // `merge-base --is-ancestor` exits 1 when the old tip is not in the new history.
     let forced = async {
@@ -1690,13 +1838,17 @@ pub fn pushed_commits(path: &Path, before: Option<&str>, after: &str) -> anyhow:
             _ => anyhow::bail!("Webhook ancestry lookup failed"),
         }
     };
-    let (output, forced) = tokio::runtime::Handle::current().block_on(async {
-        Ok::<_, anyhow::Error>((collect.await?, forced.await?))
+    let (listed, distinct, forced) = tokio::runtime::Handle::current().block_on(async {
+        Ok::<_, anyhow::Error>((collect.await?, distinct.await?, forced.await?))
     })?;
-    let commits = String::from_utf8_lossy(&output)
-        .lines()
-        .take(2048)
-        .map(|oid| pushed_commit(&repository, oid).ok_or_else(|| anyhow::anyhow!("Webhook commit lookup failed")))
+    let files_until = std::time::Instant::now() + PUSHED_FILES_BUDGET;
+    // Without a separate walk every listed commit is new; the head is new only when listed.
+    let distinct = distinct.unwrap_or_else(|| listed.iter().cloned().collect());
+    let is_distinct = |id: &str| distinct.contains(id);
+    let head = pushed_commit(&repository, after, &is_distinct, files_until);
+    let commits = listed
+        .iter()
+        .map(|oid| pushed_commit(&repository, oid, &is_distinct, files_until).ok_or_else(|| anyhow::anyhow!("Webhook commit lookup failed")))
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(PushedCommits {
         commits,
@@ -1705,24 +1857,24 @@ pub fn pushed_commits(path: &Path, before: Option<&str>, after: &str) -> anyhow:
     })
 }
 
-/// `distinct` is false for a commit the ref already reached before this push.
-fn pushed_commit_json(
-    commit: &PushedCommit,
-    distinct: bool,
-    repo: &Repository,
-    owner: &str,
-) -> Value {
+fn pushed_commit_json(commit: &PushedCommit, repo: &Repository, owner: &str) -> Value {
     let date = |seconds| chrono::DateTime::from_timestamp(seconds, 0).map(time);
-    json!({
+    let mut value = json!({
         "id": commit.id,
         "tree_id": commit.tree_id,
-        "distinct": distinct,
+        "distinct": commit.distinct,
         "message": commit.message,
         "timestamp": date(commit.time),
         "url": format!("{}/commit/{}", repository_url(owner, &repo.name), commit.id),
         "author": { "name": commit.author_name, "email": commit.author_email, "date": date(commit.time) },
         "committer": { "name": commit.committer_name, "email": commit.committer_email, "date": date(commit.committer_time) },
-    })
+    });
+    if let Some(files) = &commit.files {
+        value["added"] = json!(files.added);
+        value["removed"] = json!(files.removed);
+        value["modified"] = json!(files.modified);
+    }
+    value
 }
 
 /// A branch or tag push. `before` is absent for a new ref; the caller sends `create` and
@@ -1739,22 +1891,34 @@ pub fn push(
     let commit_values: Vec<Value> = commits
         .commits
         .iter()
-        .map(|commit| pushed_commit_json(commit, true, repo, owner))
+        .map(|commit| pushed_commit_json(commit, repo, owner))
         .collect();
-    let head = commits.head.as_ref().map(|head| {
-        let distinct = commits.commits.iter().any(|commit| commit.id == head.id);
-        pushed_commit_json(head, distinct, repo, owner)
-    });
+    let head = commits
+        .head
+        .as_ref()
+        .map(|head| pushed_commit_json(head, repo, owner));
+    let created = before.chars().all(|c| c == '0');
+    let deleted = after.chars().all(|c| c == '0');
+    let html = repository_url(owner, &repo.name);
+    // A zero revision is not a commit the comparison page can open, so a created or deleted
+    // ref links to the one commit that exists.
+    let compare = if created {
+        format!("{html}/commit/{after}")
+    } else if deleted {
+        format!("{html}/commit/{before}")
+    } else {
+        format!("{html}/compare/{before}...{after}")
+    };
     json!({
         "ref": reference,
         "before": before,
         "after": after,
-        "created": before.chars().all(|c| c == '0'),
-        "deleted": after.chars().all(|c| c == '0'),
+        "created": created,
+        "deleted": deleted,
         "forced": commits.forced,
         // GitHub names a branch here only for a tag pushed at a branch tip.
         "base_ref": null,
-        "compare": format!("{}/compare/{before}...{after}", repository_url(owner, &repo.name)),
+        "compare": compare,
         "commits": commit_values,
         "head_commit": head,
         "repository": repository(repo, owner),
@@ -1958,17 +2122,39 @@ mod tests {
             let second = repo
                 .commit(None, &signature, &signature, "second", &tree, &[&parent])
                 .unwrap();
-            let rewound =
-                pushed_commits(root.path(), Some(&second.to_string()), &first.to_string()).unwrap();
+            let rewound = pushed_commits(
+                root.path(),
+                Some(&second.to_string()),
+                &first.to_string(),
+                None,
+            )
+            .unwrap();
             assert!(rewound.commits.is_empty());
             let head = rewound.head.unwrap();
             assert_eq!(head.id, first.to_string());
+            assert!(!head.distinct);
             assert_eq!(head.message.len(), 4096);
             assert!(head.message.is_char_boundary(head.message.len()));
-            let forward =
-                pushed_commits(root.path(), Some(&first.to_string()), &second.to_string()).unwrap();
+            let forward = pushed_commits(
+                root.path(),
+                Some(&first.to_string()),
+                &second.to_string(),
+                None,
+            )
+            .unwrap();
             assert_eq!(forward.commits.len(), 1);
+            assert!(forward.commits[0].distinct);
             assert_eq!(forward.head.unwrap().id, second.to_string());
+            // A new ref at a commit another ref already held lists nothing new.
+            let branch = pushed_commits(
+                root.path(),
+                None,
+                &second.to_string(),
+                Some(&[second.to_string()]),
+            )
+            .unwrap();
+            assert!(branch.commits.is_empty());
+            assert!(!branch.head.unwrap().distinct);
             assert_eq!(bounded_text("aé", 2), "a");
         })
         .await

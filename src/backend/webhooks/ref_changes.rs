@@ -23,6 +23,40 @@ fn ref_kind(reference: &str) -> Option<(&'static str, &str)> {
     }
 }
 
+/// The tips the refs had before the push: the refs now, with each moved ref put back. `None`
+/// when the refs cannot be listed within their limits.
+fn previous_tips(path: &Path, moves: &[RefMove]) -> Option<Vec<String>> {
+    let mut refs = match crate::backend::git::list_mirror_refs(path) {
+        Ok(refs) => refs,
+        Err(error) => {
+            tracing::warn!(%error, "could not list refs for push webhook history");
+            return None;
+        }
+    };
+    // Internal refs hold server bookkeeping, not commits anyone pushed.
+    refs.retain(|name, _| !name.starts_with("refs/codeyard/"));
+    for (reference, old, _) in moves {
+        if is_zero(old) {
+            refs.remove(reference);
+        } else {
+            refs.insert(reference.clone(), old.clone());
+        }
+    }
+    let mut tips: Vec<String> = refs.into_values().collect();
+    tips.sort_unstable();
+    tips.dedup();
+    Some(tips)
+}
+
+/// Pushed-commit listings shared by the ref moves of one push.
+#[derive(Default)]
+struct History {
+    bytes: usize,
+    listed: std::collections::HashMap<(String, String), payloads::PushedCommits>,
+    /// Read once, on the first listing; the outer `None` means not read yet.
+    previous: Option<Option<Vec<String>>>,
+}
+
 /// Sends the events for the accepted ref moves of one push, after Git has updated the refs.
 pub async fn emit_ref_moves(
     pool: &DbPool,
@@ -31,7 +65,8 @@ pub async fn emit_ref_moves(
     path: &Path,
     moves: &[RefMove],
 ) {
-    let history = std::sync::Arc::new(std::sync::Mutex::new((0usize, std::collections::HashMap::<(String, String), payloads::PushedCommits>::new())));
+    let history = std::sync::Arc::new(std::sync::Mutex::new(History::default()));
+    let all_moves: std::sync::Arc<[RefMove]> = moves.into();
     for (reference, old, new) in moves {
         let Some((ref_type, name)) = ref_kind(reference) else {
             continue;
@@ -46,6 +81,7 @@ pub async fn emit_ref_moves(
         }
         let repo_for_hook = repo.clone();
         let history = history.clone();
+        let all_moves = all_moves.clone();
         emit(
             pool,
             repo,
@@ -56,12 +92,17 @@ pub async fn emit_ref_moves(
                 let before = (!is_zero(&old)).then_some(old.as_str());
                 let key = (old.clone(), new.clone());
                 let mut history = history.lock().unwrap_or_else(|error| error.into_inner());
+                let history = &mut *history;
                 let commits = if is_zero(&new) {
                     payloads::PushedCommits::default()
-                } else if let Some(commits) = history.1.get(&key) {
+                } else if let Some(commits) = history.listed.get(&key) {
                     commits.clone()
                 } else {
-                    let commits = match payloads::pushed_commits(&path, before, &new) {
+                    let previous = history
+                        .previous
+                        .get_or_insert_with(|| previous_tips(&path, &all_moves))
+                        .as_deref();
+                    let commits = match payloads::pushed_commits(&path, before, &new, previous) {
                         Ok(commits) => commits,
                         Err(error) => {
                             tracing::warn!(%error, "could not read push webhook history");
@@ -72,10 +113,11 @@ pub async fn emit_ref_moves(
                         std::mem::size_of::<payloads::PushedCommit>() + commit.id.len() + commit.tree_id.len()
                             + commit.message.len() + commit.author_name.len() + commit.author_email.len()
                             + commit.committer_name.len() + commit.committer_email.len()
+                            + commit.files.as_ref().map_or(0, payloads::ChangedFiles::bytes)
                     }).sum();
-                    if history.0.saturating_add(bytes) <= 16 * 1024 * 1024 {
-                        history.0 += bytes;
-                        history.1.insert(key, commits.clone());
+                    if history.bytes.saturating_add(bytes) <= 16 * 1024 * 1024 {
+                        history.bytes += bytes;
+                        history.listed.insert(key, commits.clone());
                     }
                     commits
                 };

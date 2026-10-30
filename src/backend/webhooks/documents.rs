@@ -247,6 +247,7 @@ async fn pull_request(
         db::pull_requests::reviews::pull_request_comment_counts(pool, pull.id).await?;
     document["comments"] = json!(comments);
     document["review_comments"] = json!(review_comments);
+    document["auto_merge"] = auto_merge(pool, pull.id).await?;
     document["merged_by"] = match pull.merged_by_id {
         Some(id) => db::users::accounts::get_user_by_id(pool, id)
             .await?
@@ -255,6 +256,16 @@ async fn pull_request(
         None => Value::Null,
     };
     Ok(())
+}
+
+/// A pull request's `auto_merge` object, or null when auto-merge is not enabled.
+pub(crate) async fn auto_merge(pool: &DbPool, pull_request_id: i64) -> anyhow::Result<Value> {
+    let Some(entry) = db::pull_requests::auto_merge::get_auto_merge(pool, pull_request_id).await?
+    else {
+        return Ok(Value::Null);
+    };
+    let enabled_by = db::users::accounts::get_user_by_id(pool, entry.request.enabled_by).await?;
+    Ok(payloads::auto_merge(&entry.request, enabled_by.as_ref()))
 }
 
 /// The documents of a release's assets whose stored files remain.

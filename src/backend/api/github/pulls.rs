@@ -166,6 +166,9 @@ pub(super) async fn document(
         requested.push(person(state, user.id).await?);
     }
     value["requested_reviewers"] = json!(requested);
+    value["auto_merge"] = crate::backend::webhooks::documents::auto_merge(&state.pool, pull.id)
+        .await
+        .map_err(Error::unavailable)?;
     let viewer = super::auth::authenticate(state, headers, false).await?;
     value["requested_teams"] = json!(
         team_reviewers::documents(
