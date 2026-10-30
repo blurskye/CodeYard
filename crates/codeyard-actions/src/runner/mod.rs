@@ -1311,6 +1311,8 @@ struct Job {
     active_files: PathBuf,
     posts: Vec<actions::Post>,
     matchers: matchers::Matchers,
+    summaries: BTreeMap<u32, String>,
+    summary_bytes: usize,
 }
 
 async fn run_job(
@@ -1376,6 +1378,8 @@ async fn run_job(
             active_files: PathBuf::new(),
             posts: Vec::new(),
             matchers: matchers::Matchers::default(),
+            summaries: BTreeMap::new(),
+            summary_bytes: 0,
         };
         let mut cancellation = job.cancel.clone();
         let result = tokio::select! {
@@ -2056,8 +2060,18 @@ impl Job {
                 self.log.line("Error: Step summary exceeds the maximum allowed size of 1024k.");
                 write_command_file(&summary, "")?;
             } else {
-                let contents = read_command_file(&summary)?;
-                write_command_file(&summary, &self.log.masker.mask(&contents))?;
+                let contents = self.log.masker.mask(&read_command_file(&summary)?).replace('\0', "");
+                write_command_file(&summary, &contents)?;
+                if !contents.is_empty() {
+                    let stored = self.summaries.entry(self.public_step).or_default();
+                    let remaining = crate::progress::MAX_STEP_SUMMARY_BYTES.saturating_sub(stored.len())
+                        .min(crate::progress::MAX_RUN_SUMMARY_BYTES.saturating_sub(self.summary_bytes));
+                    if contents.len() > remaining { self.log.line("Warning: Persisted summaries reached their delivery budget."); }
+                    let piece = commands::bounded(&contents, remaining);
+                    self.summary_bytes += piece.len();
+                    stored.push_str(&piece);
+                    if !stored.is_empty() { self.log.emit(Update::Summary { number: self.public_step, markdown: stored.clone() }); }
+                }
             }
         }
         for path in read_command_file(&files.join("PATH"))?

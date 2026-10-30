@@ -256,6 +256,12 @@ Hydrated Actions refreshes the authorized page model every two seconds while the
 selected run is queued/running; no-JS users have a Refresh link. This is not CI
 WebSocket streaming. The inbox separately polls its page model every 15 seconds.
 
+Native steps publish masked `GITHUB_STEP_SUMMARY` Markdown to the run's Summary
+view. Persistence is best effort, capped at 64 KiB per step and 256 KiB per attempt;
+the page projects the first 128 summaries in execution order. Truncation is logged.
+The Markdown uses the normal sanitized renderer and remains available after runner
+temporary files are removed.
+
 Worker completion and queued cancellation announce notification IDs after commit;
 database-free worker finish goes through core queue RPC. PostgreSQL propagates
 hints to other nodes, and socket delivery rereads live authority/content. Hints

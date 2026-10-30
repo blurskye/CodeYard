@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 /// Leave room for the authenticated operation envelope inside the 8 MiB queue RPC frame.
 pub const MAX_STATE_BYTES: usize = 7 * 1024 * 1024;
 pub const MAX_STEP_NUMBER: u32 = 10_000;
+pub const MAX_EVENT_BYTES: usize = 512 * 1024;
+pub const MAX_STEP_SUMMARY_BYTES: usize = 64 * 1024;
+pub const MAX_RUN_SUMMARY_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -55,6 +58,10 @@ pub enum Update {
     },
     Annotation {
         annotation: Annotation,
+    },
+    Summary {
+        number: u32,
+        markdown: String,
     },
 }
 #[derive(Clone, Serialize, Deserialize)]

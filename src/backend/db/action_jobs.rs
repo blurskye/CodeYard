@@ -35,6 +35,12 @@ pub struct Step {
     pub duration_ms: Option<i64>,
 }
 #[derive(FromRow)]
+pub struct Summary {
+    pub job: String,
+    pub number: i32,
+    pub markdown: String,
+}
+#[derive(FromRow)]
 pub struct Usage {
     pub id: i64,
     pub run_id: i64,
@@ -90,6 +96,8 @@ native_operation!(crate::backend::db::postgres::action_jobs::list,crate::backend
     fn list(pool:&DbPool,repo:i64,run:i64,all:bool,offset:i64,limit:i64)->Result<Page>);
 native_operation!(crate::backend::db::postgres::action_jobs::steps,crate::backend::db::sqlite::action_jobs::steps,
     fn steps(pool:&DbPool,repo:i64,job:i64)->Result<Vec<Step>>);
+native_operation!(crate::backend::db::postgres::action_jobs::summaries,crate::backend::db::sqlite::action_jobs::summaries,
+    fn summaries(pool:&DbPool,repo:i64,run:i64)->Result<Vec<Summary>>);
 native_operation!(crate::backend::db::postgres::action_jobs::annotations,crate::backend::db::sqlite::action_jobs::annotations,
     fn annotations(pool:&DbPool,repo:i64,job:i64)->Result<Vec<Json<Annotation>>>);
 native_operation!(crate::backend::db::postgres::action_jobs::observed,crate::backend::db::sqlite::action_jobs::observed,

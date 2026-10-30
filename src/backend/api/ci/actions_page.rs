@@ -514,6 +514,12 @@ async fn actions(
         } else {
             None
         };
+        let summaries = match db::action_jobs::summaries(&ctx.state.pool, run.repo_id, run.id).await {
+            Ok(summaries) => summaries.into_iter().map(|summary| view_actions::Summary {
+                job: summary.job, number: summary.number, markdown: summary.markdown,
+            }).collect(),
+            Err(_) => return unavailable(&ctx),
+        };
         let mut run_view = map_run(run, &run_repository);
         run_view.approval_pull = approval_pull;
         run_view.concurrency_groups = groups.into_iter().map(|group| group.name).collect();
@@ -521,6 +527,7 @@ async fn actions(
         run_view.artifacts = artifacts;
         Some(view_actions::SelectedRun {
             run: run_view,
+            summaries,
             logs,
             deployment,
             fetched_lines,

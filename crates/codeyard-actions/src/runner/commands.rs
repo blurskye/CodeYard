@@ -164,7 +164,7 @@ impl Progress {
                 .as_millis(),
         )
         .expect("system clock is out of range");
-        let essential = !matches!(update, Update::Log { .. });
+        let essential = !matches!(update, Update::Log { .. } | Update::Summary { .. });
         let event = Event {
             job: self.job.clone(),
             variant: self.variant,

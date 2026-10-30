@@ -664,7 +664,7 @@ impl RunQueue {
         event: &codeyard_actions::progress::Event,
     ) -> Result<i64> {
         ensure!(
-            serde_json::to_vec(event)?.len() <= 16 * 1024,
+            serde_json::to_vec(event)?.len() <= codeyard_actions::progress::MAX_EVENT_BYTES,
             "progress exceeds native limits"
         );
         match self {

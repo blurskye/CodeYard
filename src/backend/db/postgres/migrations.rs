@@ -9,6 +9,10 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[(
     1,
     "schema",
     include_str!("../../../../schema/postgres/0001.schema.sql"),
+), (
+    2,
+    "action summaries",
+    include_str!("../../../../schema/postgres/0002.action-summaries.sql"),
 )];
 
 static MIGRATION_TURNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

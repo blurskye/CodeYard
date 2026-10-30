@@ -168,6 +168,7 @@ mod tests {
         let mut model = super::super::tests::model();
         let run = model.runs[0].clone();
         model.selected = Some(super::super::SelectedRun {
+            summaries: Vec::new(),
             run,
             logs: vec![],
             deployment: None,
