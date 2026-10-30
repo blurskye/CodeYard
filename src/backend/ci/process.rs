@@ -71,18 +71,20 @@ where
     F: Fn(String, bool) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    run_with_grace(command, timeout, TERM_GRACE, None, cancel, on_line).await
+    let (_tx, force) = watch::channel(false);
+    run_with_grace(command, timeout, TERM_GRACE, None, force, cancel, on_line).await
 }
 
 pub(super) async fn run_with_grace<F, Fut>(
     mut command: Command, timeout: Duration, grace: Duration,
-    scope: Option<&codeyard_actions::process::Cgroup>, cancel: watch::Receiver<bool>, on_line: F,
+    scope: Option<&codeyard_actions::process::Cgroup>, force: watch::Receiver<bool>,
+    cancel: watch::Receiver<bool>, on_line: F,
 ) -> Result<ExitStatus>
 where
     F: Fn(String, bool) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    if *cancel.borrow() {
+    if *cancel.borrow() || *force.borrow() {
         return Err(Stopped::Cancelled.into());
     }
     if timeout.is_zero() {
@@ -134,11 +136,23 @@ where
             Err(_) => Err(Stopped::TimedOut.into()),
         },
         _ = cancelled(cancel) => Err(Stopped::Cancelled.into()),
+        _ = cancelled(force.clone()) => Err(Stopped::Cancelled.into()),
         Some(error) = error_rx.recv() => Err(error),
     };
     let stopping = async {
-        if let Some(scope) = scope { scope.stop(&mut child, &mut group, grace).await }
-        else { group.stop(&mut child).await.map_err(anyhow::Error::from) }
+        let graceful = async {
+            if let Some(scope) = scope { scope.stop(&mut child, &mut group, grace).await }
+            else { group.stop(&mut child).await.map_err(anyhow::Error::from) }
+        };
+        tokio::select! {
+            result = graceful => return result,
+            _ = cancelled(force) => {}
+        }
+        if let Some(scope) = scope { group.disarm(); scope.kill()?; }
+        else if child.id().is_some() { group.kill(); }
+        else { group.disarm(); }
+        tokio::time::timeout(codeyard_actions::process::KILL_GRACE, child.wait()).await??;
+        Ok(())
     };
     tokio::pin!(stopping);
     loop {

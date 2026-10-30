@@ -271,6 +271,9 @@ async fn execute(
     };
     // A run handed back by a retried claim may have been cancelled since the first claim.
     let (cancel_tx, cancel) = watch::channel(run.cancel_requested || *stop.borrow());
+    let (force_tx, force) = watch::channel(false);
+    let (ready_tx, mut ready) = watch::channel(false);
+    let mut fencing_signal = force.clone();
     let mut heartbeat_stop = stop.clone();
     // Set when the core stopped acknowledging heartbeats, so the run ends as failed, not cancelled.
     let lost = AtomicBool::new(false);
@@ -293,13 +296,15 @@ async fn execute(
                 }
                 _ = lease, if !lost.load(Ordering::Relaxed) => {
                     lost.store(true, Ordering::Relaxed);
-                    warn!("CI heartbeat unacknowledged; cancelling the run");
+                    warn!("CI heartbeat unacknowledged; fencing the run");
+                    let _ = force_tx.send(true);
                     let _ = cancel_tx.send(true);
                     continue;
                 }
             }
             wait = HEARTBEAT;
             let lease = tokio::time::sleep_until((last_ack + LOST_HEARTBEAT_CANCEL).into());
+            let request_started = Instant::now();
             let reply = tokio::select! {
                 reply = service.queue.heartbeat(worker, run.id) => reply,
                 _ = heartbeat_stop.changed(), if !shutdown => {
@@ -309,27 +314,56 @@ async fn execute(
                 }
                 _ = lease, if !lost.load(Ordering::Relaxed) => {
                     lost.store(true, Ordering::Relaxed);
-                    warn!("CI heartbeat unacknowledged; cancelling the run");
+                    warn!("CI heartbeat unacknowledged; fencing the run");
+                    let _ = force_tx.send(true);
                     let _ = cancel_tx.send(true);
                     continue;
                 }
             };
             match reply {
-                Ok(Some(false)) => last_ack = Instant::now(),
+                Ok(Some(false)) => {
+                    last_ack = request_started;
+                    let _ = ready_tx.send(true);
+                }
                 Ok(Some(true)) => {
-                    last_ack = Instant::now();
+                    last_ack = request_started;
                     let _ = cancel_tx.send(true);
                 }
-                Ok(None) => { let _ = cancel_tx.send(true); }
-                Err(error) => warn!(%error, "CI heartbeat failed"),
+                Ok(None) => { let _ = force_tx.send(true); let _ = cancel_tx.send(true); }
+                Err(error) => {
+                    if error.to_string().contains("not an active runner") {
+                        let _ = force_tx.send(true);
+                        let _ = cancel_tx.send(true);
+                        service.request_stop();
+                    }
+                    warn!(%error, "CI heartbeat failed");
+                }
             }
+        }
+    };
+    let fencing = async {
+        let _ = fencing_signal.wait_for(|fenced| *fenced).await;
+        loop {
+            match tokio::time::timeout(CLEANUP_RETRY_TIMEOUT, ownership.fence()).await {
+                Ok(Ok(())) => {}
+                _ => warn!(run = %run.run_id, "CI execution fencing will retry"),
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     };
     let work = async {
         let (cleaned, cleanup) = oneshot::channel();
         let mut names = Vec::new();
         let mut workspace = None;
-        let result = run_workflows(service, worker, &claim, cancel, cleaned, &mut names, &mut workspace, ownership.group.as_ref()).await;
+        let result = async {
+            // A delayed claim must renew its live authority before any workflow process starts.
+            tokio::select! {
+                biased;
+                _ = process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
+                _ = ready.wait_for(|ready| *ready) => {}
+            }
+            run_workflows(service, worker, &claim, cancel, force, cleaned, &mut names, &mut workspace, ownership.group.as_ref()).await
+        }.await;
         let shutting_down = *stop.borrow();
         let (status, message) = match &result {
             Ok(true) => ("success", None),
@@ -407,6 +441,7 @@ async fn execute(
     tokio::select! {
         reuse_slot = work => reuse_slot,
         _ = heartbeat => unreachable!("heartbeat loop never ends"),
+        _ = fencing => unreachable!("fencing loop never ends"),
     }
 }
 
@@ -468,6 +503,7 @@ async fn run_workflows(
     worker: &str,
     claim: &ClaimedRun,
     cancel: watch::Receiver<bool>,
+    force: watch::Receiver<bool>,
     cleaned: oneshot::Sender<()>,
     names: &mut Vec<WorkflowName>,
     workspace_owner: &mut Option<Workspace>,
@@ -645,7 +681,7 @@ async fn run_workflows(
                 }
             };
             let grace = if native { codeyard_actions::runner::SHUTDOWN_GRACE } else { Duration::from_secs(3) };
-            let output = process::run_with_grace(command, remaining, grace, scope, cancel.clone(), |line, stderr| {
+            let output = process::run_with_grace(command, remaining, grace, scope, force.clone(), cancel.clone(), |line, stderr| {
                 let completed = if native && !claim.github_tokens.completion_secret.is_empty() {
                     line.strip_prefix(&completion_prefix)
                         .map(|job| format!("{workflow}:{job}"))
@@ -1229,7 +1265,13 @@ impl ContainerOwnership {
     }
 
     async fn remove_containers(&self) -> Result<()> {
+        self.fence().await?;
         if let Some(group) = &self.group { group.cleanup(Duration::from_secs(30)).await?; }
+        Ok(())
+    }
+
+    async fn fence(&self) -> Result<()> {
+        if let Some(group) = &self.group { group.kill()?; }
         if !self.record.socket.is_empty() {
             remove_run_containers(
                 &self.record.socket,
