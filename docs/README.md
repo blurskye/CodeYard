@@ -5,6 +5,7 @@ Start with the [README](../README.md) for setup.
 ## Reference
 
 - [Architecture](ARCHITECTURE.md): the high-level code map, request flows, data layout and how clustering works.
+- [Crate split plan](CRATE_SPLIT_PLAN.md): how the root package is to be split into workspace crates, move only.
 - [HTTP API](API.md): the JSON endpoints, account rules, errors and limits.
 - [Gists](GISTS.md): native snippets, Git transport, secret links, limits and recovery.
 - [Running a cluster](CLUSTER.md): roles, pairing nodes, storage nodes, CI workers and limits.
