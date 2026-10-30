@@ -214,6 +214,9 @@ pub(crate) fn scanning_settings(
 
 native_operation!(super::postgres::code_security::list,super::sqlite::code_security::list,
     fn list(pool:&DbPool,actor:i64,org:i64) -> Result<Vec<Configuration>>);
+native_operation!(super::postgres::code_security::list_window,super::sqlite::code_security::list_window,
+    /// One keyset window of the organization's configurations by id: those after `after` and before `before`, oldest first, or newest first when `before` is bounded.
+    fn list_window(pool:&DbPool,actor:i64,org:i64,after:i64,before:i64,limit:i64) -> Result<Vec<Configuration>>);
 native_operation!(super::postgres::code_security::save,super::sqlite::code_security::save,
     fn save(pool:&DbPool,actor:impl Into<super::users::tokens::Actor>,org:i64,id:Option<i64>,patch:&Value) -> Result<Configuration>);
 native_operation!(super::postgres::code_security::delete,super::sqlite::code_security::delete,
@@ -223,7 +226,8 @@ native_operation!(super::postgres::code_security::set_default,super::sqlite::cod
 native_operation!(super::postgres::code_security::attach,super::sqlite::code_security::attach,
     fn attach(pool:&DbPool,actor:impl Into<super::users::tokens::Actor>,org:i64,id:Option<i64>,scope:&str,selected:&[i64]) -> Result<()>);
 native_operation!(super::postgres::code_security::repositories,super::sqlite::code_security::repositories,
-    fn repositories(pool:&DbPool,actor:i64,org:i64,id:i64) -> Result<Vec<Repository>>);
+    /// One keyset window of the repositories attached to configuration `id`, ordered as `list_window`.
+    fn repositories(pool:&DbPool,actor:i64,org:i64,id:i64,after:i64,before:i64,limit:i64) -> Result<Vec<Repository>>);
 native_operation!(super::postgres::code_security::repository_settings,super::sqlite::code_security::repository_settings,
     fn repository_settings(pool:&DbPool,repo:i64) -> Result<Option<RepositorySettings>>);
 native_operation!(super::postgres::code_security::repository_configuration,super::sqlite::code_security::repository_configuration,

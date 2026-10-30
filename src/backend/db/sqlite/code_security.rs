@@ -104,6 +104,30 @@ pub async fn list(pool: &SqlitePool, actor: i64, org: i64) -> Result<Vec<Configu
     tx.commit().await?;
     Ok(rows)
 }
+pub async fn list_window(
+    pool: &SqlitePool,
+    actor: i64,
+    org: i64,
+    after: i64,
+    before: i64,
+    limit: i64,
+) -> Result<Vec<Configuration>> {
+    ensure!(after >= 0 && (1..=101).contains(&limit), Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, actor, org).await?;
+    let direction = if before < i64::MAX { "DESC" } else { "ASC" };
+    let rows = sqlx::query_as(&format!(
+        "SELECT * FROM code_security_configurations WHERE org_id=$1 AND id>$2 AND id<$3 ORDER BY id {direction} LIMIT $4"
+    ))
+    .bind(org)
+    .bind(after)
+    .bind(before)
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(rows)
+}
 pub async fn save(
     pool: &SqlitePool,
     actor: impl Into<crate::backend::db::users::tokens::Actor>,
@@ -247,11 +271,25 @@ pub async fn repositories(
     actor: i64,
     org: i64,
     id: i64,
+    after: i64,
+    before: i64,
+    limit: i64,
 ) -> Result<Vec<Repository>> {
+    ensure!(after >= 0 && (1..=101).contains(&limit), Refusal::Invalid);
     let mut tx = pool.begin().await?;
     readable(&mut tx, actor, org).await?;
     configuration(&mut tx, org, id).await?;
-    let rows=sqlx::query_as("SELECT r.* FROM repositories r JOIN repository_security_settings s ON s.repo_id=r.id WHERE r.owner_org_id=$1 AND s.configuration_id=$2 ORDER BY r.id").bind(org).bind(id).fetch_all(&mut *tx).await?;
+    let direction = if before < i64::MAX { "DESC" } else { "ASC" };
+    let rows = sqlx::query_as(&format!(
+        "SELECT r.* FROM repositories r JOIN repository_security_settings s ON s.repo_id=r.id WHERE r.owner_org_id=$1 AND s.configuration_id=$2 AND r.id>$3 AND r.id<$4 ORDER BY r.id {direction} LIMIT $5"
+    ))
+    .bind(org)
+    .bind(id)
+    .bind(after)
+    .bind(before)
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(rows)
 }

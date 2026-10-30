@@ -3,7 +3,8 @@ use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::db::postgres::discussions::lock_policy_authority;
 use crate::backend::db::postgres::organizations::authority::authority;
 use crate::backend::db::webhooks::{
-    HookOwner, NewDelivery, SealedSecret, WebhookFields, WebhookPatch,
+    DeliveryWindow, HookOwner, NewDelivery, SealedSecret, WebhookFields,
+    WebhookPatch,
 };
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -18,7 +19,7 @@ pub async fn read_settings(
     hook: Option<i64>,
     delivery: Option<i64>,
     after: i64,
-    full_deliveries: bool,
+    deliveries: DeliveryWindow,
 ) -> Result<Option<crate::backend::db::webhooks::HookSettings>> {
     let mut tx = pool.begin().await?;
     if !may_manage_hooks(&mut tx, owner, actor_id).await? {
@@ -33,11 +34,7 @@ pub async fn read_settings(
     if let Some(id) = hook {
         settings.hook = get_webhook(&mut *tx, owner, id).await?;
         if let Some(row) = &settings.hook {
-            settings.deliveries = if full_deliveries {
-                list_deliveries(&mut *tx, row.id).await?
-            } else {
-                list_delivery_summaries(&mut *tx, row.id).await?
-            };
+            settings.deliveries = list_delivery_window(&mut *tx, row.id, &deliveries).await?;
             if let Some(id) = delivery {
                 settings.delivery = get_delivery(&mut *tx, row.id, id).await?;
             }
@@ -314,11 +311,32 @@ pub async fn list_deliveries<'e>(
     pool: impl sqlx::Executor<'e, Database = Postgres>,
     webhook_id: i64,
 ) -> Result<Vec<WebhookDelivery>> {
+    let window = DeliveryWindow {
+        bodies: true,
+        ..DeliveryWindow::default()
+    };
+    list_delivery_window(pool, webhook_id, &window).await
+}
+
+/// The deliveries of one hook that `window` keeps, newest first.
+pub async fn list_delivery_window<'e>(
+    pool: impl sqlx::Executor<'e, Database = Postgres>,
+    webhook_id: i64,
+    window: &DeliveryWindow,
+) -> Result<Vec<WebhookDelivery>> {
+    let columns = if window.bodies {
+        DELIVERY_COLUMNS
+    } else {
+        "id, webhook_id, guid, event, action, status_code, duration_ms, error, '' AS request_headers, '' AS request_body, NULL::text AS response_headers, NULL::text AS response_body, delivered_at, redelivery"
+    };
+    let outcome = window.outcome_sql();
     let sql = format!(
-        "SELECT {DELIVERY_COLUMNS} FROM webhook_deliveries WHERE webhook_id = $1 ORDER BY id DESC LIMIT 100"
+        "SELECT {columns} FROM webhook_deliveries WHERE webhook_id = $1 AND ($2::bigint IS NULL OR id < $2){outcome} ORDER BY id DESC LIMIT $3"
     );
     Ok(sqlx::query_as(&sql)
         .bind(webhook_id)
+        .bind(window.before)
+        .bind(window.limit.clamp(1, 101))
         .fetch_all(pool)
         .await?)
 }
@@ -339,11 +357,7 @@ pub async fn list_delivery_summaries<'e>(
     pool: impl sqlx::Executor<'e, Database = Postgres>,
     webhook_id: i64,
 ) -> Result<Vec<WebhookDelivery>> {
-    Ok(sqlx::query_as(
-        "SELECT id,webhook_id,guid,event,action,status_code,duration_ms,error,
-         '' AS request_headers,'' AS request_body,NULL::text AS response_headers,NULL::text AS response_body,delivered_at,redelivery
-         FROM webhook_deliveries WHERE webhook_id=$1 ORDER BY id DESC LIMIT 100",
-    ).bind(webhook_id).fetch_all(pool).await?)
+    list_delivery_window(pool, webhook_id, &DeliveryWindow::default()).await
 }
 
 pub async fn get_delivery<'e>(

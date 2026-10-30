@@ -55,9 +55,24 @@ async fn global(
 ) -> Result<Response> {
     auth::authenticate(&state, &headers, false).await?;
     validate(&query, true)?;
-    let rows = store::global(&state.pool)
-        .await
-        .map_err(failure)?
+    let catalogue = match query.get("ghsa_id") {
+        // Named advisories come from the key index; only an unfiltered list reads the catalogue.
+        Some(ids) => {
+            let mut ids: Vec<&str> = ids.split(',').collect();
+            ids.sort_unstable();
+            ids.dedup();
+            if ids.len() > 100 {
+                return Err(Error::invalid("Too many advisory IDs"));
+            }
+            let mut found = Vec::new();
+            for id in ids {
+                found.extend(store::global_one(&state.pool, id).await.map_err(failure)?);
+            }
+            found
+        }
+        None => store::global(&state.pool).await.map_err(failure)?,
+    };
+    let rows = catalogue
         .into_iter()
         .filter(|a| global_matches(a, &query))
         .collect();

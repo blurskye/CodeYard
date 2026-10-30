@@ -5,7 +5,7 @@ use crate::backend::{
     db::{
         self,
         models::{User, Webhook, WebhookDelivery},
-        webhooks::{HookOwner, HookSettings},
+        webhooks::{DeliveryOutcome, DeliveryWindow, HookOwner, HookSettings},
     },
     webhooks::{
         payloads,
@@ -66,9 +66,10 @@ async fn snapshot(
     actor: &User,
     hook: i64,
     delivery: Option<i64>,
+    history: DeliveryWindow,
 ) -> Result<(Webhook, HookSettings)> {
     let mut settings =
-        db::webhooks::read_settings(&state.pool, owner, actor.id, Some(hook), delivery, 0, false)
+        db::webhooks::read_settings(&state.pool, owner, actor.id, Some(hook), delivery, 0, history)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(|| {
@@ -85,7 +86,7 @@ async fn read_hook(
     actor: &User,
     hook: i64,
 ) -> Result<Value> {
-    let (hook, settings) = snapshot(state, owner, actor, hook, None).await?;
+    let (hook, settings) = snapshot(state, owner, actor, hook, None, DeliveryWindow::default()).await?;
     Ok(document(params, &hook, settings.deliveries.first()))
 }
 
@@ -242,7 +243,7 @@ async fn save(
             let events = if input.add_events.is_some() || input.remove_events.is_some() {
                 let mut events = match input.events {
                     Some(events) => events,
-                    None => snapshot(&state, owner, &actor, id, None)
+                    None => snapshot(&state, owner, &actor, id, None, DeliveryWindow::default())
                         .await?
                         .0
                         .events
@@ -344,45 +345,43 @@ pub(super) struct Deliveries {
     status: Option<String>,
 }
 
-/// GitHub pages delivery history newest first by cursor, optionally keeping only successes
-/// or only failures.
+impl Deliveries {
+    /// The history GitHub pages newest first by cursor, optionally keeping only successes or
+    /// only failures: one row beyond the page tells whether another follows.
+    pub(super) fn window(&self, bodies: bool) -> Result<DeliveryWindow> {
+        let before = self
+            .cursor
+            .as_ref()
+            .map(|cursor| {
+                cursor
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| Error::validation("Hook", "cursor", "invalid"))
+            })
+            .transpose()?;
+        let outcome = match self.status.as_deref() {
+            None => None,
+            Some("success") => Some(DeliveryOutcome::Success),
+            Some("failure") => Some(DeliveryOutcome::Failure),
+            Some(_) => return Err(Error::validation("Hook", "status", "invalid")),
+        };
+        Ok(DeliveryWindow {
+            bodies,
+            before,
+            outcome,
+            limit: super::pagination::page_size(self.per_page) as i64 + 1,
+        })
+    }
+}
+
+/// The page and its next link from the rows `Deliveries::window` selected.
 pub(super) fn delivery_page(
-    rows: Vec<WebhookDelivery>,
+    mut rows: Vec<WebhookDelivery>,
     query: Deliveries,
     uri: &Uri,
 ) -> Result<(HeaderMap, Vec<WebhookDelivery>)> {
-    let cursor = query
-        .cursor
-        .as_ref()
-        .map(|cursor| {
-            cursor
-                .parse::<i64>()
-                .ok()
-                .filter(|id| *id > 0)
-                .ok_or_else(|| Error::validation("Hook", "cursor", "invalid"))
-        })
-        .transpose()?;
-    if query
-        .status
-        .as_deref()
-        .is_some_and(|status| !matches!(status, "success" | "failure"))
-    {
-        return Err(Error::validation("Hook", "status", "invalid"));
-    }
     let limit = super::pagination::page_size(query.per_page);
-    let mut rows = rows
-        .into_iter()
-        .filter(|row| cursor.is_none_or(|cursor| row.id < cursor))
-        .filter(|row| match query.status.as_deref() {
-            Some("success") => row
-                .status_code
-                .is_some_and(|code| (200..400).contains(&code)),
-            Some("failure") => row
-                .status_code
-                .is_some_and(|code| (400..600).contains(&code)),
-            _ => true,
-        })
-        .collect::<Vec<_>>();
     let next = rows.len() > limit;
     rows.truncate(limit);
     let mut headers = HeaderMap::new();
@@ -425,7 +424,8 @@ async fn deliveries(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (owner, actor) = scope(&state, &headers, &params, false).await?;
-    let (hook, settings) = snapshot(&state, owner, &actor, id(&params, "hook_id")?, None).await?;
+    let window = query.window(false)?;
+    let (hook, settings) = snapshot(&state, owner, &actor, id(&params, "hook_id")?, None, window).await?;
     let (headers, rows) = delivery_page(settings.deliveries, query, &uri)?;
     let rows = rows
         .iter()
@@ -446,6 +446,7 @@ async fn delivery(
         &actor,
         id(&params, "hook_id")?,
         Some(id(&params, "delivery_id")?),
+        DeliveryWindow::default(),
     )
     .await?;
     let row = settings.delivery.ok_or_else(Error::missing)?;

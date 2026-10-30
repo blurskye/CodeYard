@@ -1,5 +1,5 @@
 //! Organization security configurations share the repository security settings store.
-use super::{api_url, auth, orgs, pagination::Pagination, repository, Error, Result};
+use super::{api_url, auth, orgs, pagination::Cursor, repository, Error, Result};
 use crate::backend::{
     app::AppState, db::code_security as records, repositories::access, webhooks::payloads,
 };
@@ -88,30 +88,32 @@ fn document(row: &records::Configuration, org: &str) -> Result<Value> {
     value["updated_at"] = json!(row.updated_at);
     Ok(value)
 }
-fn page(page: &Pagination, uri: &Uri, values: Vec<Value>) -> Result<Response> {
-    let (offset, limit) = page.window()?;
-    let values: Vec<_> = values.into_iter().skip(offset).take(limit + 1).collect();
-    let next = values.len() > limit;
-    page.response(uri, values, next)
+/// One cursor page of `rows`, which were read with one extra row to tell whether more follow.
+fn page<T>(
+    cursor: &Cursor,
+    uri: &Uri,
+    mut rows: Vec<T>,
+    id: impl Fn(&T) -> i64,
+    document: impl Fn(&T) -> Result<Value>,
+) -> Result<Response> {
+    let more = cursor.trim(&mut rows)?;
+    let (headers, _) = cursor.links(uri, rows.first().map(&id), rows.last().map(&id), more)?;
+    let values = rows.iter().map(document).collect::<Result<Vec<_>>>()?;
+    Ok((headers, Json(values)).into_response())
 }
 async fn list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(org): Path<String>,
-    Query(query): Query<Pagination>,
+    Query(query): Query<Cursor>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (actor, id) = scope(&state, &headers, &org, false).await?;
-    let rows = records::list(&state.pool, actor.user.id, id)
+    let (after, before, limit) = query.window()?;
+    let rows = records::list_window(&state.pool, actor.user.id, id, after, before, limit as i64 + 1)
         .await
         .map_err(failure)?;
-    page(
-        &query,
-        &uri,
-        rows.iter()
-            .map(|row| document(row, &org))
-            .collect::<Result<Vec<_>>>()?,
-    )
+    page(&query, &uri, rows, |row| row.id, |row| document(row, &org))
 }
 async fn get_configuration(
     State(state): State<Arc<AppState>>,
@@ -254,19 +256,20 @@ async fn repositories(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((org, id)): Path<(String, i64)>,
-    Query(query): Query<Pagination>,
+    Query(query): Query<Cursor>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
-    let rows = records::repositories(&state.pool, actor.user.id, owner, id)
+    let (after, before, limit) = query.window()?;
+    let rows = records::repositories(&state.pool, actor.user.id, owner, id, after, before, limit as i64 + 1)
         .await
         .map_err(failure)?;
     page(
         &query,
         &uri,
-        rows.iter()
-            .map(|repo| json!({"status":"attached","repository":payloads::repository(repo,&org)}))
-            .collect(),
+        rows,
+        |repo| repo.id,
+        |repo| Ok(json!({"status":"attached","repository":payloads::repository(repo,&org)})),
     )
 }
 async fn repository_configuration(

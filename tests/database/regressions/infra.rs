@@ -306,7 +306,7 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
             .unwrap();
             let id = webhooks::list_deliveries(f.pool(), hook).await.unwrap()[0].id;
             let snapshot =
-                webhooks::read_settings(f.pool(), scope, admin, Some(hook), Some(id), 0, false)
+                webhooks::read_settings(f.pool(), scope, admin, Some(hook), Some(id), 0, Default::default())
                     .await
                     .unwrap()
                     .unwrap();
@@ -339,7 +339,7 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                 Some(hook),
                 Some(id),
                 0,
-                false
+                Default::default()
             )
             .await
             .unwrap()
