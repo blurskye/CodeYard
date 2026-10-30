@@ -116,7 +116,7 @@ pub async fn create_issue_comment(
             message: "The comment target changed. Reload before submitting.".into(),
         });
     }
-    let comment = db::issues::add_issue_comment(pool, issue.id, user.id, &req.body)
+    let comment = db::issues::add_issue_comment(pool, repository.id, issue.id, user.id, &req.body)
         .await
         .map_err(super::write_error)?;
 
