@@ -35,19 +35,41 @@ pub async fn create_notification(
                 NotificationSuppressed
             );
         }
-        // A recipient who lost Read after the event must not get its text or email.
-        let readable: bool = sqlx::query_scalar(&format!(
-            "SELECT EXISTS(
-                SELECT 1 FROM repositories r
-                JOIN users u ON u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password
-                WHERE r.id=?2 AND {})",
-            scope_readable_condition()
-        ))
+        // A recipient who lost Read after the event must not get its text or email. A fork
+        // notice also names the fork, so the recipient must be able to read that too.
+        let fork = match input.kind {
+            "repository_forked" => Some(
+                input
+                    .metadata
+                    .get("fork_repository_id")
+                    .and_then(serde_json::Value::as_i64)
+                    .ok_or(NotificationSuppressed)?,
+            ),
+            _ => None,
+        };
+        for scope in [Some(repo), fork].into_iter().flatten() {
+            let readable: bool = sqlx::query_scalar(&format!(
+                "SELECT EXISTS(
+                    SELECT 1 FROM repositories r
+                    JOIN users u ON u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password
+                    WHERE r.id=?2 AND {})",
+                scope_readable_condition()
+            ))
+            .bind(input.user_id)
+            .bind(scope)
+            .fetch_one(&mut *tx)
+            .await?;
+            anyhow::ensure!(readable, NotificationSuppressed);
+        }
+        // An ignore saved after the caller looked is honoured here, under the write lock.
+        let ignoring: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM watches WHERE user_id=?1 AND repo_id=?2 AND level='ignoring')",
+        )
         .bind(input.user_id)
         .bind(repo)
         .fetch_one(&mut *tx)
         .await?;
-        anyhow::ensure!(readable, NotificationSuppressed);
+        anyhow::ensure!(!ignoring, NotificationSuppressed);
     }
     if input.kind == "repository_forked" {
         let fork = input.metadata["fork_repository_id"].as_i64().ok_or(NotificationSuppressed)?;
@@ -196,6 +218,7 @@ async fn decide_scopes(
         classic_token: false,
         high_water: notification_high_water(connection, user_id).await?,
         readable: decided.into_iter().collect(),
+        classic_token: false,
     })
 }
 
@@ -530,6 +553,20 @@ pub(super) async fn refresh_links(
         }
     }
     Ok(())
+}
+
+pub async fn get_notification(
+    pool: &SqlitePool,
+    user_id: i64,
+    notification_id: i64,
+) -> Result<Option<Notification>> {
+    Ok(
+        sqlx::query_as("SELECT * FROM notifications WHERE id=?1 AND user_id=?2")
+            .bind(notification_id)
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
 
 pub async fn notification_email_allowed(pool: &SqlitePool, notification_id: i64) -> Result<bool> {

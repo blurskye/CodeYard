@@ -93,9 +93,11 @@ impl History<'_> {
                 git::repository::introduced_signatures(repository, None, old, new).await?
             }
         };
+        let mut signers = crate::backend::identity::signatures::Signers::default();
         for commit in &commits {
             let reason = crate::backend::identity::signatures::check(
                 pool,
+                &mut signers,
                 crate::backend::identity::signatures::Signed {
                     signature: commit.signature.as_deref(),
                     payload: commit.payload.as_deref(),

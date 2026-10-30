@@ -150,11 +150,11 @@ pub async fn charge_upload(
     user: i64,
     reason: &str,
     size: i64,
-) -> Result<(), AdmissionError> {
+) -> Result<Uuid, AdmissionError> {
     let mut tx = pool.begin().await?;
-    charge_upload_in_transaction(&mut tx, user, reason, size, None).await?;
+    let id = charge_upload_in_transaction(&mut tx, user, reason, size, None).await?;
     tx.commit().await?;
-    Ok(())
+    Ok(id)
 }
 
 /// Charges an upload of `size` bytes and returns the charge. An upload sent in parts passes the

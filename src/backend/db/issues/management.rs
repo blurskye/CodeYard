@@ -18,7 +18,7 @@ pub enum Refusal {
 
 native_operation!(crate::backend::db::postgres::issues::management::closing_candidates,
     crate::backend::db::sqlite::issues::management::closing_candidates,
-    fn closing_candidates(pool: &DbPool, viewer: Option<i64>, repo: i64, scope: &str, number: i32) -> Result<Vec<crate::backend::db::models::PullRequest>>);
+    fn closing_candidates(pool: &DbPool, viewer: Option<i64>, repo: i64, scope: &str, number: i32, before: i64) -> Result<Vec<crate::backend::db::models::PullRequest>>);
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct LinkedBranch {

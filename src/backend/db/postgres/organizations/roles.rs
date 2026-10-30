@@ -16,7 +16,13 @@ async fn role_exists(c: &mut PgConnection, id: i64) -> Result<bool> {
 pub async fn can_manage_security(pool: &PgPool, actor: i64, org: i64) -> Result<bool> {
     manages_security(&mut *pool.acquire().await?, actor, org).await
 }
-/// Whether `actor` holds the organization's security-manager role, directly or through a team.
+/// Role membership remains meaningful for reads when organization writes are suspended.
+pub(crate) async fn holds_security_role(c: &mut PgConnection, actor: i64, org: i64) -> Result<bool> {
+    let condition = crate::backend::db::organizations::roles::security_role_condition("$1", "$2");
+    Ok(sqlx::query_scalar(&format!("SELECT {condition}")).bind(actor).bind(org).fetch_one(c).await?)
+}
+
+/// Writes additionally require an operational organization.
 pub(crate) async fn manages_security(c: &mut PgConnection, actor: i64, org: i64) -> Result<bool> {
     let condition = crate::backend::db::organizations::roles::security_manager_condition("$1", "$2");
     Ok(sqlx::query_scalar(&format!("SELECT {condition}")).bind(actor).bind(org).fetch_one(c).await?)
@@ -119,12 +125,18 @@ pub async fn change(
             }
             (id, None)
         }
-        RoleTarget::Team(slug) => {
+        RoleTarget::Team(_) | RoleTarget::TeamId(_) => {
+            let (slug, id) = match target {
+                RoleTarget::Team(slug) => (Some(slug.as_str()), None),
+                RoleTarget::TeamId(id) => (None, Some(*id)),
+                RoleTarget::User(_) => (None, None),
+            };
             let team: Option<(i64, String)> = sqlx::query_as(
-                "SELECT id,privacy FROM teams WHERE org_id=$1 AND slug=$2 FOR SHARE",
+                "SELECT id,privacy FROM teams WHERE org_id=$1 AND (slug=$2 OR id=$3) FOR SHARE",
             )
             .bind(org)
             .bind(slug)
+            .bind(id)
             .fetch_optional(&mut *tx)
             .await?;
             if assigned
@@ -140,6 +152,10 @@ pub async fn change(
     if user.is_none() && team.is_none() {
         if assigned {
             return Ok(Missing);
+        }
+        // The team the revoke form showed is gone: report the stale form instead of success.
+        if matches!(target, RoleTarget::TeamId(_)) {
+            return Ok(Conflict);
         }
         tx.commit().await?;
         return Ok(Applied(()));

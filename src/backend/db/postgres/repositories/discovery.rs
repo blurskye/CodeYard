@@ -170,6 +170,36 @@ pub async fn search_repositories(
     Ok(statement.bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
+pub async fn search_repository_ids(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<i64>> {
+    anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
+    let search = RepositorySearch::parse(query);
+    // The limit follows the match's binds: one for text, two for an owned search.
+    let limit_at = match &search {
+        RepositorySearch::Text(_) => 3,
+        RepositorySearch::Owned { .. } => 4,
+    };
+    let sql = format!(
+        "SELECT r.id FROM repositories r {OWNER_JOINS} WHERE {} AND {} ORDER BY {} LIMIT ${limit_at}",
+        readable_condition(),
+        repository_match(&search),
+        repository_order_by(RepositorySort::Updated)
+    );
+    let mut connection = search_connection(pool).await?;
+    let statement = sqlx::query_scalar::<_, i64>(&sql).bind(viewer);
+    let statement = match search {
+        RepositorySearch::Text(text) => statement.bind(contains_pattern(text)),
+        RepositorySearch::Owned { owner, name } => {
+            statement.bind(owner).bind(contains_pattern(name))
+        }
+    };
+    Ok(statement.bind(limit).fetch_all(&mut *connection).await?)
+}
+
 pub async fn count_repositories(
     pool: &PgPool,
     viewer: Option<i64>,

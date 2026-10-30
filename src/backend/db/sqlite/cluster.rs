@@ -261,6 +261,15 @@ pub async fn get_node_by_name(pool: &SqlitePool, name: &str) -> Result<Option<Cl
     .await?)
 }
 
+pub async fn admin_node_page(pool: &SqlitePool, administrator: &crate::backend::db::users::transitions::AdministratorActor, after: &str) -> Result<Vec<ClusterNode>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    anyhow::ensure!(super::users::transitions::active_admin_session(&mut tx, administrator).await?, crate::backend::db::users::accounts::AccountRestricted);
+    let rows = sqlx::query_as(&format!("SELECT *,{NOW} AS observed_at FROM nodes WHERE name>?1 ORDER BY name LIMIT 101"))
+        .bind(after).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(rows)
+}
+
 pub async fn list_nodes(pool: &SqlitePool) -> Result<Vec<ClusterNode>> {
     Ok(sqlx::query_as::<_, ClusterNode>(&format!(
         "SELECT *, {NOW} AS observed_at FROM nodes ORDER BY name"

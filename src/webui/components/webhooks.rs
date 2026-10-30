@@ -92,7 +92,7 @@ pub struct DeliveryDetail {
 
 /// Every event a hook can subscribe to, with its label, in display order. Subscriptions are
 /// checked against this list, so the form always shows each stored event.
-pub const EVENT_OPTIONS: [(&str, &str); 24] = [
+pub const EVENT_OPTIONS: [(&str, &str); 25] = [
     ("repository", "Repository changes"),
     ("push", "Pushes"),
     ("create", "Branch or tag created"),
@@ -120,6 +120,7 @@ pub const EVENT_OPTIONS: [(&str, &str); 24] = [
     ),
     ("check_run", "Check runs"),
     ("check_suite", "Check suites"),
+    ("status", "Commit statuses"),
     ("repository_dispatch", "Repository dispatches"),
     ("workflow_run", "Workflow runs"),
     ("workflow_job", "Workflow jobs"),

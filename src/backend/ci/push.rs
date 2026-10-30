@@ -62,10 +62,16 @@ pub(crate) async fn push_document(
         committer_name: payloads::bounded_text(&commit.committer_name, 256),
         committer_email: payloads::bounded_text(&commit.committer_email, 256),
         committer_time: commit.committer_timestamp,
+        distinct: true,
+        files: None,
+    };
+    let head_commit = payloads::PushedCommit {
+        distinct: commits.iter().any(|commit| commit.sha == head.sha),
+        ..pushed(&head)
     };
     let commits = payloads::PushedCommits {
         commits: commits.iter().map(pushed).collect(),
-        head: Some(pushed(&head)),
+        head: Some(head_commit),
         forced,
     };
     let old = update.old.clone().unwrap_or_else(|| ZERO_OID.to_owned());

@@ -517,6 +517,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (
             Operation::PublishAsyncMerge {
                 request: codeyard::backend::repositories::store::AsyncMergePublication {
+                    policy: None,
                     uuid: uuid::Uuid::nil().to_string(),
                     token_id: 1,
                     pull_request_id: 1,
@@ -537,7 +538,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 base: sha.into(),
                 result: sha.into(),
                 method: MergeMethod::Merge,
-                token: None,
+                authorization: Default::default(),
             },
             false,
         ),
@@ -560,7 +561,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 base_branch: "main".into(),
                 base: sha.into(),
                 result: sha.into(),
-                token: None,
+                authorization: Default::default(),
             },
             false,
         ),

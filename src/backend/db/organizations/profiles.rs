@@ -8,7 +8,7 @@ use uuid::Uuid;
 native_operation!(crate::backend::db::postgres::organizations::profiles::create_organization, crate::backend::db::sqlite::organizations::profiles::create_organization,
     fn create_organization(pool: &DbPool, actor: i64, input: &NewOrganization) -> Result<OrganizationOutcome<OrganizationMetadata>>);
 native_operation!(crate::backend::db::postgres::organizations::profiles::update_organization_profile, crate::backend::db::sqlite::organizations::profiles::update_organization_profile,
-    fn update_organization_profile(pool: &DbPool, actor: i64, org: i64, input: &OrganizationProfile) -> Result<OrganizationOutcome<OrganizationMetadata>>);
+    fn update_organization_profile(pool: &DbPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, org: i64, input: &OrganizationProfile) -> Result<OrganizationOutcome<OrganizationMetadata>>);
 // The picture is a file id. Setting one needs an owner or admin, and the file has to
 // be the actor's own confirmed `org_avatar` upload (`Conflict` otherwise); `None`
 // removes the picture. The answer is the picture it replaced, if any.
@@ -122,4 +122,5 @@ pub struct OrganizationMetadata {
     pub is_verified: bool,
     /// Derived from usable persisted owners; bans/reset restrictions are not exempted.
     pub governance_suspended: bool,
+    pub avatar_file_id: Option<Uuid>,
 }

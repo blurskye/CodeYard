@@ -162,8 +162,11 @@ pub fn NavLink(
     }
 }
 
+/// The longest local page target accepted for navigation and redirects.
+pub const MAX_TARGET_BYTES: usize = 8192;
+
 pub fn safe_page_target(target: &str) -> bool {
-    if target.len() > 8192 || !target.starts_with('/') || target.starts_with("//")
+    if target.len() > MAX_TARGET_BYTES || !target.starts_with('/') || target.starts_with("//")
         || target.chars().any(|character| character.is_control() || character == '\\') { return false; }
     // Encoded delimiters in the path affect routing; a query or fragment is data.
     let lower = target.split(['?', '#']).next().unwrap_or_default().to_ascii_lowercase();

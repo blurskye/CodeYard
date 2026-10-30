@@ -132,7 +132,31 @@ async fn move_head(
     actor_id: i64,
     ci_access: Option<db::models::AccessLevel>,
 ) -> Result<bool, RefreshError> {
-    let moved = db::pull_requests::records::move_open_pull_request_head(pool, pull_id, from, to, head_repo, head_branch)
+    // GitHub keeps auto-merge only when the recorded pusher of this head may write the base.
+    let pusher = match head_repo {
+        Some(id) => match db::repositories::records::get_repository_by_id(pool, id)
+            .await
+            .map_err(|_| RefreshError::Database)?
+        {
+            Some(head) => repo_store(&head, ci.cluster.as_ref())
+                .branch_publication(head.id, &format!("refs/heads/{head_branch}"))
+                .await
+                .map_err(|_| RefreshError::Storage)?
+                .filter(|record| record.publication.new == to)
+                .and_then(|record| record.publication.actor.user_id()),
+            None => None,
+        },
+        None => None,
+    };
+    let moved = db::pull_requests::records::move_open_pull_request_head(
+        pool,
+        pull_id,
+        from,
+        to,
+        head_repo,
+        head_branch,
+        pusher,
+    )
         .await
         .map_err(|_| RefreshError::Database)?;
     if !moved {
@@ -190,6 +214,12 @@ async fn move_head(
     Ok(true)
 }
 
+/// `head_writer` is a writer of a fork head who asked for this refresh, as by updating the branch.
+/// That writer publishes the head with their own authority instead of the recorded publisher's.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Refresh carries the shared ref listings, an optional CI access cap and an optional head writer."
+)]
 async fn refresh_one(
     pool: &DbPool,
     moved_repo: &Repository,
@@ -198,6 +228,7 @@ async fn refresh_one(
     listed: &mut ListedRefs,
     mut pull: db::pull_requests::records::PullRequestRevisions,
     ci_access: Option<db::models::AccessLevel>,
+    head_writer: Option<i64>,
 ) -> Result<bool, RefreshError> {
     let context = ci.cluster.as_ref();
     let mut changed = false;
@@ -313,7 +344,7 @@ async fn refresh_one(
             let publisher = if head.id == base.id {
                 Some(actor_id)
             } else {
-                pull.head_publisher_id
+                head_writer.or(pull.head_publisher_id)
             };
             let publication = match publisher {
                 Some(publisher) => {
@@ -376,6 +407,9 @@ async fn refresh_one(
             return Err(RefreshError::Storage);
         }
         if !retry {
+            if changed {
+                drop_obsolete_fork(pool, &base_store, pull.id).await;
+            }
             return Ok(changed);
         }
         if attempt + 1 < MAX_REFRESH_ATTEMPTS {
@@ -383,6 +417,43 @@ async fn refresh_one(
         }
     }
     Err(RefreshError::Conflict)
+}
+
+/// A fork point keeps the base a stacked layer was built on while its head lacks the current base.
+/// Once the head contains that base again, as after a restack, the old fork point would show the
+/// rewritten layers below as this layer's own changes, so it is dropped. A failure only leaves the
+/// fork point for the next refresh.
+async fn drop_obsolete_fork(pool: &DbPool, store: &RepoStore, pull_id: i64) {
+    let pull = match db::pull_requests::records::get_pull_request_by_id(pool, pull_id).await {
+        Ok(Some(pull)) if pull.state == "open" => pull,
+        Ok(_) => return,
+        Err(error) => {
+            tracing::warn!(pull_request_id = pull_id, %error, "could not read the fork point");
+            return;
+        }
+    };
+    let Some(fork) = pull.fork_sha.as_deref() else {
+        return;
+    };
+    match store.is_ancestor(&pull.base_sha, &pull.head_sha).await {
+        Ok(true) => {
+            if let Err(error) = db::pull_requests::records::clear_fork_point(
+                pool,
+                pull.id,
+                fork,
+                &pull.base_sha,
+                &pull.head_sha,
+            )
+            .await
+            {
+                tracing::warn!(pull_request_id = pull_id, %error, "could not drop the fork point");
+            }
+        }
+        Ok(false) => {}
+        Err(error) => {
+            tracing::warn!(pull_request_id = pull_id, %error, "could not check the fork point")
+        }
+    }
 }
 
 /// Refreshes one pull request against its base repository. Operations on one PR
@@ -406,7 +477,52 @@ pub async fn refresh_open_pull_request(
         return Err(RefreshError::MissingBase);
     }
     let mut listed = ListedRefs::new();
-    refresh_one(pool, repository, ci, actor_id, &mut listed, pull, ci_access).await
+    refresh_one(pool, repository, ci, actor_id, &mut listed, pull, ci_access, None).await
+}
+
+/// Refreshes a pull request after `actor_id` updated its head branch. When the actor can write the
+/// head repository, the new head is published with the actor's own authority, so a contributor's
+/// lapsed publication grant does not hold back the head writer's explicit update.
+pub async fn refresh_updated_head(
+    pool: &DbPool,
+    repository: &Repository,
+    head: &Repository,
+    ci: &CiRuns,
+    actor_id: i64,
+    pull_request_id: i64,
+) -> Result<bool, RefreshError> {
+    let Some(pull) = db::pull_requests::records::get_pull_request_by_id(pool, pull_request_id)
+        .await
+        .map_err(|_| RefreshError::Database)?
+        .and_then(revisions)
+    else {
+        return Ok(false);
+    };
+    if pull.repo_id != repository.id || pull.head_repo_id != Some(head.id) {
+        return Err(RefreshError::MissingBase);
+    }
+    let actor = db::users::accounts::get_user_by_id(pool, actor_id)
+        .await
+        .map_err(|_| RefreshError::Database)?;
+    let writer = match actor {
+        Some(actor) => crate::backend::repositories::access::can_write(pool, &actor, head)
+            .await
+            .map_err(|_| RefreshError::Database)?,
+        None => false,
+    };
+    let head_writer = (writer && head.id != repository.id).then_some(actor_id);
+    let mut listed = ListedRefs::new();
+    refresh_one(
+        pool,
+        repository,
+        ci,
+        actor_id,
+        &mut listed,
+        pull,
+        Some(db::models::AccessLevel::Owner),
+        head_writer,
+    )
+    .await
 }
 
 /// Refreshes the open pull requests that use one of `branches` in this repository, as
@@ -440,7 +556,7 @@ pub async fn refresh_open_pull_requests(
     let mut first_error = None;
     for pull in open {
         let pull_id = pull.id;
-        match refresh_one(pool, repo, ci, actor_id, &mut listed, pull, (ci_access != db::models::AccessLevel::None).then_some(ci_access)).await {
+        match refresh_one(pool, repo, ci, actor_id, &mut listed, pull, (ci_access != db::models::AccessLevel::None).then_some(ci_access), None).await {
             Ok(true) => changed += 1,
             Ok(false) => {}
             Err(error) => {

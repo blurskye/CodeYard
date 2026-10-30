@@ -356,13 +356,10 @@ pub async fn set_lock(
 pub(crate) async fn lock_issue_contribution(
     tx: &mut Transaction<'_, Postgres>,
     actor_id: i64,
+    repo: i64,
     issue_id: i64,
 ) -> Result<()> {
-    let repo: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM issues WHERE id=$1")
-        .bind(issue_id)
-        .fetch_optional(&mut **tx)
-        .await?;
-    let repo = repo.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
+    // The caller's authorized repository is the subject, not the issue's later location.
     require_contribution_authority(tx, actor_id, repo).await?;
     let locked: Option<bool> =
         sqlx::query_scalar("SELECT locked FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE")
@@ -372,7 +369,7 @@ pub(crate) async fn lock_issue_contribution(
             .await?;
     anyhow::ensure!(locked.is_some(), AUTHORITY_DENIED);
     anyhow::ensure!(
-        locked == Some(false),
+        locked == Some(false) || lock_write_authority(tx, actor_id, repo).await?,
         crate::backend::db::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())
@@ -398,7 +395,7 @@ pub(crate) async fn lock_pull_request_contribution(
     .await?;
     anyhow::ensure!(locked.is_some(), AUTHORITY_DENIED);
     anyhow::ensure!(
-        locked == Some(false),
+        locked == Some(false) || lock_write_authority(tx, actor_id, repo).await?,
         crate::backend::db::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())

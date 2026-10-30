@@ -3,7 +3,7 @@ use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, AdminU
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
-/// A settings mutation retains the live credential while it changes account data.
+/// A settings operation retains its originating credential alongside account data.
 pub enum AccountCredential<'a> {
     Session(&'a str),
     Token(i64, &'a str),
@@ -42,6 +42,16 @@ impl From<&String> for OwnedAccountCredential {
 #[derive(Debug, thiserror::Error)]
 #[error("A live unrestricted account credential is required")]
 pub struct AccountRestricted;
+
+pub struct AdminUserPage {
+    pub counts: (i64, i64, i64),
+    pub page: usize,
+    pub users: Vec<AdminUser>,
+}
+
+native_operation!(crate::backend::db::postgres::users::accounts::admin_users_page,
+    crate::backend::db::sqlite::users::accounts::admin_users_page,
+    fn admin_users_page(pool: &DbPool, administrator: &crate::backend::db::users::transitions::AdministratorActor, text: &str, role: &str, limit: i64, page: usize) -> Result<AdminUserPage>);
 
 native_operation!(crate::backend::db::postgres::users::accounts::create_user,
     crate::backend::db::sqlite::users::accounts::create_user,
@@ -142,15 +152,15 @@ native_operation!(crate::backend::db::postgres::users::accounts::create_user_fro
 pub enum UserAvatarOutcome {
     Applied(Option<uuid::Uuid>),
     NotUsable,
-    /// The account was banned after the request authenticated.
-    Banned,
 }
 
 native_operation!(crate::backend::db::postgres::users::accounts::set_user_avatar,
     crate::backend::db::sqlite::users::accounts::set_user_avatar,
+    /// Fails with `AccountRestricted` when the account or `credential` is no longer live.
     fn set_user_avatar(
     pool: &DbPool,
     user_id: i64,
+    credential: &AccountCredential<'_>,
     avatar_file_id: Option<uuid::Uuid>,
 ) -> Result<UserAvatarOutcome>);
 

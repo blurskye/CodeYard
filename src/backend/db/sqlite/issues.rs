@@ -116,6 +116,10 @@ pub async fn create_issue_with_metadata(
         }
         None => tx,
     };
+    if let (Some(parent), Some(expected)) = (metadata.parent, metadata.parent_repository) {
+        let current: i64 = sqlx::query_scalar("SELECT repo_id FROM issues WHERE id=?1").bind(parent).fetch_one(&mut *tx).await?;
+        anyhow::ensure!(current == expected, crate::backend::db::relationships::Refusal::Missing);
+    }
     let issue = sqlx::query_as("SELECT * FROM issues WHERE id=?1")
         .bind(issue.id)
         .fetch_one(&mut *tx)
@@ -340,13 +344,6 @@ pub async fn update_issue_with_reason(
     edit: crate::backend::db::discussions::DiscussionEdit<'_>,
     state_reason: Option<&str>,
 ) -> Result<Option<Issue>> {
-    anyhow::ensure!(
-        state_reason.is_none_or(|reason| matches!(
-            reason,
-            "completed" | "not_planned" | "reopened" | "duplicate"
-        )),
-        "Invalid state reason"
-    );
     if !edit.has_exact_revision() {
         return Ok(None);
     }
@@ -371,7 +368,24 @@ pub async fn update_issue_with_reason(
             return Ok(None);
         }
     }
+    let previous_title: Option<String> = sqlx::query_scalar("SELECT title FROM issues WHERE id = ?1")
+        .bind(issue_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let (actor, expected_state) = (edit.actor_id, edit.expected_state);
     let issue = update_issue_in_transaction(&mut tx, repo, issue_id, edit, state_reason).await?;
+    // The history commits with the change, so it cannot miss a committed edit or list
+    // concurrent transitions in a different order from the one they took.
+    if let (Some(issue), Some(previous_title)) = (&issue, previous_title) {
+        let event = (repo, issue_id, actor);
+        if issue.title != previous_title {
+            super::issue_attributes::event(&mut tx, event, "renamed", &issue.title, &previous_title).await?;
+        }
+        if issue.state != expected_state {
+            let kind = if issue.state == "closed" { "closed" } else { "reopened" };
+            super::issue_attributes::event(&mut tx, event, kind, "", "").await?;
+        }
+    }
     tx.commit().await?;
     Ok(issue)
 }
@@ -396,6 +410,7 @@ pub(crate) async fn update_issue_in_transaction(
         return Ok(None);
     }
     let next = super::time::next_revision(previous)?;
+    anyhow::ensure!(crate::backend::db::issues::valid_state_reason(edit.state.unwrap_or(edit.expected_state), state_reason), "Invalid state reason");
     let issue = sqlx::query_as::<_, Issue>(
         r#"UPDATE issues SET
             title = COALESCE(?2, title), body = COALESCE(?3, body),
@@ -420,12 +435,18 @@ pub(crate) async fn update_issue_in_transaction(
 
 pub async fn add_issue_comment(
     pool: &SqlitePool,
+    repo_id: i64,
     issue_id: i64,
     author_id: i64,
     body: &str,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<IssueComment> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::discussions::lock_issue_contribution(&mut tx, author_id, issue_id).await?;
+    super::discussions::lock_issue_contribution(&mut tx, author_id, repo_id, issue_id).await?;
+    anyhow::ensure!(
+        super::users::transitions::retain_write_credential(&mut tx, author_id, credential).await?,
+        crate::backend::db::users::accounts::AccountRestricted
+    );
     let revision: String = sqlx::query_scalar("SELECT updated_at FROM issues WHERE id=?1")
         .bind(issue_id)
         .fetch_one(&mut *tx)
@@ -521,11 +542,16 @@ pub async fn list_viewer_issues(
     open: bool,
     limit: i64,
 ) -> Result<Vec<ViewerIssueEntry>> {
-    anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
+    anyhow::ensure!((0..=500).contains(&limit), "Result limit must be between 0 and 500");
     let access = super::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_issue_sql(relation);
-    let issues = sqlx::query_as::<_, ViewerIssueEntry>(&format!(
-        r"SELECT i.*, r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
+    // One snapshot for the rows, their comment counts and their labels: an issue transferred
+    // between the reads cannot bring its new repository's labels or comments to this list.
+    let mut tx = pool.begin().await?;
+    let mut issues = sqlx::query_as::<_, ViewerIssueEntry>(&format!(
+        r"SELECT i.id, i.number, i.title, i.state, i.created_at,
+            (SELECT COUNT(*) FROM issue_comments c WHERE c.issue_id = i.id) AS comments,
+            r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
         FROM issues i
         JOIN repositories r ON r.id = i.repo_id
         LEFT JOIN users ou ON ou.id = r.owner_user_id
@@ -539,8 +565,22 @@ pub async fn list_viewer_issues(
     .bind(viewer_id)
     .bind(open)
     .bind(limit)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await?;
+    let ids = issues.iter().map(|issue| issue.id).collect::<Vec<_>>();
+    if !ids.is_empty() {
+        let mut labels = std::collections::BTreeMap::<i64, Vec<super::models::Label>>::new();
+        for row in
+            crate::backend::db::sqlite::labels::get_items_labels(&mut tx, LabelTarget::Issue, &ids)
+                .await?
+        {
+            labels.entry(row.item_id).or_default().push(row.label);
+        }
+        for issue in &mut issues {
+            issue.labels = labels.remove(&issue.id).unwrap_or_default();
+        }
+    }
+    tx.commit().await?;
     Ok(issues)
 }
 
@@ -567,17 +607,6 @@ pub async fn count_viewer_issues(
     Ok(StateCounts::from_rows(rows))
 }
 
-impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for ViewerIssueEntry {
-    fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
-        use sqlx::Row;
-        Ok(Self {
-            issue: Issue::from_row(row)?,
-            repo_owner: row.try_get("repo_owner")?,
-            repo_name: row.try_get("repo_name")?,
-        })
-    }
-}
-
 impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for IssueListEntry {
     fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
         Ok(Self {
@@ -596,8 +625,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for IssueCommentEntry {
     }
 }
 
-/// Changes the body of a comment the actor wrote. Refused (None) when the actor is not the author,
-/// the thread is locked, or the actor no longer may take part in the repository.
+/// The author or a live repository writer may edit. Only writers may change locked threads.
 pub async fn edit_issue_comment(
     pool: &SqlitePool,
     actor_id: i64,
@@ -606,20 +634,26 @@ pub async fn edit_issue_comment(
     comment_id: i64,
     body: &str,
     expected_body: &str,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? { return Ok(None); }
+    anyhow::ensure!(
+        super::users::transitions::retain_write_credential(&mut tx, actor_id, credential).await?,
+        crate::backend::db::users::accounts::AccountRestricted
+    );
+    let writer = super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
     let author: Option<i64> = sqlx::query_scalar(
         "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
-         WHERE c.id = ?1 AND c.issue_id = ?2 AND i.repo_id = ?3 AND NOT i.locked",
+         WHERE c.id = ?1 AND c.issue_id = ?2 AND i.repo_id = ?3 AND (NOT i.locked OR ?4)",
     )
     .bind(comment_id)
     .bind(issue_id)
     .bind(repo_id)
+    .bind(writer)
     .fetch_optional(&mut *tx)
     .await?;
-    if author != Some(actor_id)
-        || !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
-    {
+    if author.is_none() || (author != Some(actor_id) && !writer) {
         return Ok(None);
     }
     let previous: chrono::DateTime<chrono::Utc> =
@@ -645,34 +679,38 @@ pub async fn edit_issue_comment(
 }
 
 /// Deletes a comment with the notifications that link to it. The author may delete their own
-/// comment; a repository maintainer may delete anyone's. Returns false when the delete is refused.
+/// comment; a repository writer may delete anyone's. Returns the deleted comment, or None when
+/// the delete is refused.
 pub async fn delete_issue_comment(
     pool: &SqlitePool,
     actor_id: i64,
     repo_id: i64,
     issue_id: i64,
     comment_id: i64,
-) -> Result<bool> {
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? { return Ok(None); }
+    anyhow::ensure!(
+        super::users::transitions::retain_write_credential(&mut tx, actor_id, credential).await?,
+        crate::backend::db::users::accounts::AccountRestricted
+    );
+    let writer = super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
     let author: Option<i64> = sqlx::query_scalar(
         "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
-         WHERE c.id = ?1 AND c.issue_id = ?2 AND i.repo_id = ?3 AND NOT i.locked",
+         WHERE c.id = ?1 AND c.issue_id = ?2 AND i.repo_id = ?3 AND (NOT i.locked OR ?4)",
     )
     .bind(comment_id)
     .bind(issue_id)
     .bind(repo_id)
+    .bind(writer)
     .fetch_optional(&mut *tx)
     .await?;
     let Some(author) = author else {
-        return Ok(false);
+        return Ok(None);
     };
-    let allowed = if author == actor_id {
-        super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
-    } else {
-        super::discussions::lock_maintain_authority(&mut tx, actor_id, repo_id).await?
-    };
-    if !allowed {
-        return Ok(false);
+    if author != actor_id && !writer {
+        return Ok(None);
     }
     sqlx::query(
         "DELETE FROM notifications WHERE repo_id = ?1 AND kind IN ('issue_comment', 'mention')
@@ -686,15 +724,15 @@ pub async fn delete_issue_comment(
         .bind(comment_id)
         .execute(&mut *tx)
         .await?;
-    let removed = sqlx::query("DELETE FROM issue_comments WHERE id = ?1")
+    let removed = sqlx::query_as::<_, IssueComment>("DELETE FROM issue_comments WHERE id = ?1 RETURNING *")
         .bind(comment_id)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
     if removed.rows_affected() == 1 {
         super::issue_attributes::touch(&mut tx, issue_id).await?;
     }
     tx.commit().await?;
-    Ok(removed.rows_affected() == 1)
+    Ok(removed)
 }
 
 pub async fn list_repository_comments(

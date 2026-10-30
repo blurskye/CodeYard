@@ -303,7 +303,7 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
         tasks.spawn(async move {
             admission::admit_password_attempt(&pool, None, "user:42")
                 .await
-                .unwrap()
+                .unwrap().is_some()
         });
     }
     let mut admitted = 0;
@@ -313,13 +313,13 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
     assert_eq!(admitted, 10);
     assert!(!admission::admit_password_attempt(&other, None, "user:42")
         .await
-        .unwrap());
+        .unwrap().is_some());
     // A refusal by the account still spent the client's budget: 29 attempts remain.
     let client = Some("ip:198.51.100.1");
     assert!(
         !admission::admit_password_attempt(&fixture.pool, client, "user:42")
             .await
-            .unwrap()
+            .unwrap().is_some()
     );
     for index in 0..29 {
         assert!(admission::admit_password_attempt(
@@ -328,12 +328,12 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
             &format!("unknown:{index}")
         )
         .await
-        .unwrap());
+        .unwrap().is_some());
     }
     assert!(
         !admission::admit_password_attempt(&other, client, "unknown:denied")
             .await
-            .unwrap()
+            .unwrap().is_some()
     );
     let allocated: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM auth_login_limits WHERE account_key='unknown:denied'",
@@ -349,14 +349,13 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
     assert!(
         admission::admit_password_attempt(&other, Some("ip:198.51.100.2"), "unknown:denied")
             .await
-            .unwrap()
+            .unwrap().is_some()
     );
     // A right password gives its attempt back, from the client and the account alike.
     let third = Some("ip:198.51.100.3");
-    assert!(admission::admit_password_attempt(&other, third, "user:7")
-        .await
-        .unwrap());
-    admission::forgive_password_attempt(&fixture.pool, third, "user:7")
+    let receipt = admission::admit_password_attempt(&other, third, "user:7")
+        .await.unwrap().unwrap();
+    admission::forgive_password_attempt(&fixture.pool, &receipt)
         .await
         .unwrap();
     let spent: i64 = sqlx::query_scalar(
@@ -826,9 +825,11 @@ async fn issue_pr_numbers_rollback_and_exact_future_microsecond_revision_cas() {
         .is_none());
     db::issues::add_issue_comment(
         &fixture.pool,
+        issue.repo_id,
         issue.id,
         user.id,
         "comment bumps revision monotonically",
+        &codeyard::backend::db::users::accounts::AccountCredential::Trusted,
     )
     .await
     .unwrap();
@@ -1537,7 +1538,7 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
         let issue = db::issues::create_issue(pool, repo.id, owner.id, "Issue", "")
             .await
             .unwrap();
-        let comment = db::issues::add_issue_comment(pool, issue.id, owner.id, "first")
+        let comment = db::issues::add_issue_comment(pool, issue.repo_id, issue.id, owner.id, "first", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
             .await
             .unwrap();
         let pr = new_pr(pool, repo.id, owner.id, &format!("comments{round}")).await;
@@ -1569,7 +1570,8 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
                         issue.id,
                         comment.id,
                         "second",
-                        &comment.body
+                        &comment.body,
+                        &codeyard::backend::db::users::accounts::AccountCredential::Trusted
                     ),
                     db::pull_requests::reviews::delete_pull_request_comment(
                         pool,
@@ -2438,7 +2440,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
     .await
     .unwrap()
     .unwrap();
-    db::issues::add_issue_comment(pool, issue.id, reader.id, "comment")
+    db::issues::add_issue_comment(pool, issue.repo_id, issue.id, reader.id, "comment", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap();
     db::pull_requests::reviews::add_pull_request_review(
@@ -2495,10 +2497,10 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
     db::repositories::engagement::watch_repo(pool, reader.id, repo.id)
         .await
         .unwrap();
-    db::following::follow_user(pool, reader.id, owner.id)
+    db::following::follow_user(pool, reader.id, owner.id, &db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap();
-    assert!(db::following::follow_user(pool, reader.id, reader.id)
+    assert!(db::following::follow_user(pool, reader.id, reader.id, &db::users::accounts::AccountCredential::Trusted)
         .await
         .is_err());
     let rule = db::repositories::protection::upsert_branch_protection_rule(
@@ -2573,7 +2575,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
         .await
         .unwrap());
     assert!(matches!(
-        db::users::accounts::set_user_avatar(pool, owner.id, Some(avatar.id))
+        db::users::accounts::set_user_avatar(pool, owner.id, &db::users::accounts::AccountCredential::Trusted, Some(avatar.id))
             .await
             .unwrap(),
         db::users::accounts::UserAvatarOutcome::Applied(None)
@@ -2916,7 +2918,7 @@ async fn check_list_display_projections(pool: &db::DbPool) {
         .await
         .unwrap()
         .is_empty());
-    let issue_comment = issues::add_issue_comment(pool, newer.id, owner.id, "Discussion")
+    let issue_comment = issues::add_issue_comment(pool, newer.repo_id, newer.id, owner.id, "Discussion", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap();
     let comments = issues::list_issue_comments(pool, newer.id, 100, 0)
@@ -2925,10 +2927,10 @@ async fn check_list_display_projections(pool: &db::DbPool) {
     assert_eq!(comments.len(), 1);
     assert_eq!(comments[0].comment.id, issue_comment.id);
     assert_eq!(comments[0].author.username, owner.username);
-    let second_issue_comment = issues::add_issue_comment(pool, newer.id, owner.id, "Second")
+    let second_issue_comment = issues::add_issue_comment(pool, newer.repo_id, newer.id, owner.id, "Second", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap();
-    let third_issue_comment = issues::add_issue_comment(pool, newer.id, owner.id, "Third")
+    let third_issue_comment = issues::add_issue_comment(pool, newer.repo_id, newer.id, owner.id, "Third", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap();
     let issue_comment_ids = |entries: &[issues::IssueCommentEntry]| {
@@ -3355,7 +3357,7 @@ async fn postgres_list_projections_and_owned_notification_listener() {
         .unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            if listener.recv().await.unwrap() == payload {
+            if listener.recv().await.unwrap().as_deref() == Some(payload.as_str()) {
                 break;
             }
         }
@@ -3414,11 +3416,16 @@ async fn insert_transfer_rows(
             "upload_rate_limit",
             "uploaded_at",
             uploaded_at,
-            ", file_size",
+            ", file_size, confirmed_at",
         ),
         ("download_rate_limit", "downloaded_at", downloaded_at, ""),
     ] {
-        let bytes = if size.is_empty() { "" } else { ", 10" };
+        let bytes = if size.is_empty() { "" } else {
+            match pool {
+                db::DbPool::Postgres(_) => ", 10, $3::timestamptz",
+                db::DbPool::Sqlite(_) => ", 10, ?3",
+            }
+        };
         match pool {
             db::DbPool::Postgres(raw) => {
                 sqlx::query(&format!(
@@ -4170,7 +4177,7 @@ async fn profile_after_update(
     organization: i64,
     profile: db::organizations::OrganizationProfile,
 ) -> (Option<String>, Option<String>) {
-    match db::organizations::update_organization_profile(pool, actor, organization, &profile)
+    match db::organizations::update_organization_profile(pool, actor, &db::users::accounts::AccountCredential::Trusted, organization, &profile)
         .await
         .unwrap()
     {

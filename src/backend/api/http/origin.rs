@@ -47,6 +47,8 @@ fn same_origin_with_public_url(headers: &HeaderMap, public_url: Option<&str>) ->
     })
 }
 
+pub(crate) const MAX_REDIRECT_BYTES: usize = crate::webui::navigation::MAX_TARGET_BYTES;
+
 /// Restrict redirects to local absolute paths. Encoded delimiters are refused in the path;
 /// the query and fragment are data and pass through unchanged. The bound leaves room for a
 /// 200-character search, which percent-encoding can grow to 2,400 bytes, plus its cursor.

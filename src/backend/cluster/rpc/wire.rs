@@ -473,6 +473,9 @@ pub enum Operation {
         method: MergeMethod,
         #[serde(default)]
         token: Option<PublicationCredential>,
+        /// The merge policy revision the merge was checked against; the publish refuses a newer one.
+        #[serde(default)]
+        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
     },
     /// Publishes a stacked merge commit. Each head is `(head branch or pull ref, commit)`.
     PublishStackedMerge {
@@ -482,6 +485,9 @@ pub enum Operation {
         result: String,
         #[serde(default)]
         token: Option<PublicationCredential>,
+        /// The merge policy revision the merge was checked against; the publish refuses a newer one.
+        #[serde(default)]
+        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
     },
     /// Builds the commits of a restack: `from..head` replayed onto `onto`.
     PrepareRestack {

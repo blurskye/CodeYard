@@ -300,17 +300,15 @@ pub async fn set_lock(
 pub(crate) async fn lock_issue_contribution(
     tx: &mut Transaction<'_, Sqlite>,
     actor_id: i64,
+    repo: i64,
     issue_id: i64,
 ) -> Result<()> {
-    let issue: Option<(i64, bool)> =
-        sqlx::query_as("SELECT repo_id, locked FROM issues WHERE id=?1")
-            .bind(issue_id)
-            .fetch_optional(&mut **tx)
-            .await?;
-    let (repo, locked) = issue.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     require_contribution_authority(tx, actor_id, repo).await?;
+    let locked: bool = sqlx::query_scalar("SELECT locked FROM issues WHERE id=?1 AND repo_id=?2")
+        .bind(issue_id).bind(repo).fetch_optional(&mut **tx).await?
+        .ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     anyhow::ensure!(
-        !locked,
+        !locked || lock_write_authority(tx, actor_id, repo).await?,
         crate::backend::db::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())
@@ -329,7 +327,7 @@ pub(crate) async fn lock_pull_request_contribution(
     let (repo, locked) = scope.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     require_contribution_authority(tx, actor_id, repo).await?;
     anyhow::ensure!(
-        !locked,
+        !locked || lock_write_authority(tx, actor_id, repo).await?,
         crate::backend::db::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())

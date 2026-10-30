@@ -19,8 +19,9 @@ pub async fn save_settings(
     session: &str,
     settings: &Settings,
 ) -> Result<()> {
-    settings.validate()?;
+    let settings = settings.normalized()?;
     let mut tx = pool.begin().await?;
+    super::users::transitions::lock_membership_shared(&mut tx).await?;
     ensure!(
         super::users::transitions::active_admin(&mut tx, actor).await?
             && super::users::transitions::live_session(&mut tx, actor, session).await?,
@@ -34,6 +35,8 @@ pub async fn save_settings(
     .bind(chrono::Utc::now())
     .execute(&mut *tx)
     .await?;
+    sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES($1,'node.vulnerability_sources','vulnerability_settings',1,$2)")
+        .bind(actor).bind(serde_json::to_value(&settings)?).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }

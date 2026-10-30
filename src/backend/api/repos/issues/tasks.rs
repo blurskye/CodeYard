@@ -187,6 +187,10 @@ async fn save_comment_text(
                 pool,
                 broadcaster,
                 actor_id,
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                        .unwrap_or_default(),
+                ),
                 target,
                 CreateCommentRequest {
                     body,

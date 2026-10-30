@@ -6,9 +6,22 @@ use crate::backend::db::users::{
 use anyhow::Result;
 use sqlx::PgPool;
 
+const LIST_EMAILS: &str = "SELECT e.email,e.verified FROM user_emails e JOIN users u ON u.id=e.user_id WHERE e.user_id=$1 AND lower(e.email)<>lower(COALESCE(u.email,'')) ORDER BY e.email";
+
 pub async fn list_emails(pool: &PgPool, user: i64) -> Result<Vec<EmailAddress>> {
-    Ok(sqlx::query_as("SELECT e.email,e.verified FROM user_emails e JOIN users u ON u.id=e.user_id WHERE e.user_id=$1 AND lower(e.email)<>lower(COALESCE(u.email,'')) ORDER BY e.email")
-        .bind(user).fetch_all(pool).await?)
+    Ok(sqlx::query_as(LIST_EMAILS).bind(user).fetch_all(pool).await?)
+}
+
+pub async fn list_account_emails(
+    pool: &PgPool,
+    user: i64,
+    credential: &AccountCredential<'_>,
+) -> Result<Vec<EmailAddress>> {
+    let mut tx = pool.begin().await?;
+    super::transitions::require_account(&mut tx, user, credential).await?;
+    let emails = sqlx::query_as(LIST_EMAILS).bind(user).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(emails)
 }
 
 pub async fn change_emails(

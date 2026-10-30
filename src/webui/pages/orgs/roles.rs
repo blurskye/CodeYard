@@ -84,7 +84,7 @@ pub(super) fn panel(page: &Page) -> Element {
                     }
                     if !org.suspended {div {class:"org-row-actions",
                         for all in [false,true] {form {class:"org-form",method:"post",action:target.clone(),key:"{all}",
-                            input {r#type:"hidden",name:"team_slug",value:team.slug.clone()}
+                            input {r#type:"hidden",name:"team_id",value:team.id.to_string()}
                             if !all {input {r#type:"hidden",name:"role_id",value:selected.id.to_string()}}
                             {fields::hidden_controls(page,if all {"revoke-all-team-roles"}else{"revoke-team-role"})}
                             label {input {r#type:"checkbox",name:"confirm",value:"true",required:true} if all {" Remove all team role assignments"}else{" Remove this team role assignment"}}

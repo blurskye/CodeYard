@@ -94,8 +94,12 @@ pub(crate) async fn credential_live(
     use crate::backend::db::users::accounts::AccountCredential;
     Ok(match credential {
         AccountCredential::Session(session) => live_session(tx, actor, session).await?,
-        AccountCredential::Token(id, hash) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=?1 AND user_id=?2 AND (NOT ?4 OR scope='write') AND token_hash=?3 AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))")
-            .bind(id).bind(actor).bind(hash).bind(write).fetch_one(&mut **tx).await?,
+        AccountCredential::Token(id, hash) => {
+            // A token issued to an OAuth app ends with that app's availability.
+            let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "?5");
+            sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM personal_access_tokens t WHERE t.id=?1 AND t.user_id=?2 AND (NOT ?4 OR t.scope='write') AND t.token_hash=?3 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND {issuer})"))
+                .bind(id).bind(actor).bind(hash).bind(write).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_one(&mut **tx).await?
+        }
     })
 }
 
@@ -609,13 +613,19 @@ async fn revoke_credentials(tx: &mut Transaction<'_, Sqlite>, user_id: i64) -> R
     Ok(())
 }
 
-/// Uses a reset link and sets the password it was sent for. The link is used, the hash replaced
-/// and the credentials revoked in one transaction. Returns the account, or None when the link is
-/// no longer usable.
+/// Account facts to pin password verification outside the consuming transaction.
+pub async fn password_reset_account(pool: &SqlitePool, token_hash: &str) -> Result<Option<User>> {
+    Ok(sqlx::query_as("SELECT u.* FROM users u JOIN email_tokens t ON t.user_id=u.id WHERE t.purpose='reset' AND t.token_hash=?1 AND t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND u.email=t.email AND u.password_hash IS NOT NULL AND NOT u.is_banned")
+        .bind(token_hash).fetch_optional(pool).await?)
+}
+
+/// Consumes the link, compares the verified password state and revokes credentials atomically.
 pub async fn reset_password_with_link(
     pool: &SqlitePool,
     token_hash: &str,
     replacement: &str,
+    expected_hash: &str,
+    expected_temporary: bool,
 ) -> Result<Option<i64>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let taken: Option<i64> = sqlx::query_scalar(
@@ -635,10 +645,12 @@ pub async fn reset_password_with_link(
     };
     let changed = sqlx::query(
         "UPDATE users SET password_hash=?2,must_change_password=FALSE,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')
-         WHERE id=?1 AND password_hash IS NOT NULL AND NOT is_banned",
+         WHERE id=?1 AND password_hash=?3 AND must_change_password=?4 AND NOT is_banned",
     )
     .bind(user_id)
     .bind(replacement)
+    .bind(expected_hash)
+    .bind(expected_temporary)
     .execute(&mut *tx)
     .await?
     .rows_affected()

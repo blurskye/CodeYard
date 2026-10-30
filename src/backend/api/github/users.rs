@@ -71,7 +71,7 @@ pub(super) async fn target(state: &AppState, username: &str) -> Result<User> {
 }
 
 pub(super) async fn document(state: &AppState, user: &User, token: Option<i64>) -> Result<Value> {
-    let repos = db::repositories::count_user_repositories(&state.pool, user.id, false)
+    let repos = db::repositories::count_user_repositories(&state.pool, user.id, None)
         .await
         .map_err(Error::unavailable)?;
     let status = following::status(&state.pool, user.id, None)
@@ -426,6 +426,7 @@ async fn change_follow(
         &state.pool,
         &state.notification_broadcaster,
         actor.user.id,
+        &db::users::accounts::AccountCredential::Token(actor.token.id),
         username,
         follow,
     )

@@ -186,7 +186,12 @@ async fn document(
     let public_repos = orgs::count_organization_profile_repositories(&state.pool, org.id, None)
         .await
         .map_err(Error::unavailable)?;
-    value["organization"] = payloads::team_organization(org, public_repos);
+    let has_organization_projects = orgs::settings::get(&state.pool, org.id)
+        .await
+        .map_err(Error::unavailable)?
+        .is_none_or(|settings| settings.has_organization_projects);
+    value["organization"] =
+        payloads::team_organization(org, public_repos, has_organization_projects);
     Ok(value)
 }
 

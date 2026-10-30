@@ -188,6 +188,7 @@ async fn tokens(
         last_used_before: filters.last_used_before,
         last_used_after: filters.last_used_after,
         ascending: filters.ascending,
+        before: None,
     };
     let rows = db::fine_grained_tokens::organization_tokens(
         &state.pool,
@@ -322,7 +323,7 @@ async fn repositories(
     let mut more = false;
     match Access::parse(&token.repository_access) {
         Some(Access::Selected) => {
-            for (repo, _) in db::fine_grained_tokens::repositories(&state.pool, token.token_id, Some(actor.user.id))
+            for (repo, _) in db::fine_grained_tokens::repositories(&state.pool, token.token_id, actor.user.id, &actor.credential())
                 .await
                 .map_err(Error::unavailable)?
             {

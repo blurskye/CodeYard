@@ -228,28 +228,42 @@ pub(crate) fn invalid_query(message: &str) -> (StatusCode, Json<ApiError>) {
     )
 }
 
+/// Runs one inbox action for a JSON request: the signed-in user first, then the request's own
+/// input through `action`, then the action under the session the request came with.
+pub(crate) async fn json_action(
+    state: &AppState,
+    headers: &HeaderMap,
+    action: impl FnOnce() -> Result<NotificationInboxAction, (StatusCode, Json<ApiError>)>,
+) -> Result<NotificationInbox, (StatusCode, Json<ApiError>)> {
+    let user = get_current_user(&state.pool, headers).await?;
+    let action = action()?;
+    let session_id = extract_session_id(headers).ok_or_else(notification_session_denied)?;
+    crate::backend::notifications::inbox::inbox(
+        &state.pool,
+        &state.notification_broadcaster,
+        &session_id,
+        user.id,
+        action,
+    )
+    .await
+    .map_err(inbox_error)
+}
+
 pub async fn list_notifications(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     Query(fields): Query<HashMap<String, String>>,
 ) -> Result<Json<NotificationsListResponse>, (StatusCode, Json<ApiError>)> {
-    let user = get_current_user(&state.pool, &headers).await?;
-    let params = ListParams::parse(&fields).map_err(invalid_query)?;
-    let limit = limit_field(&fields).map_err(invalid_query)?;
-    let session_id = extract_session_id(&headers).ok_or_else(notification_session_denied)?;
-    let inbox = crate::backend::notifications::inbox::inbox(
-        &state.pool,
-        &state.notification_broadcaster,
-        &session_id,
-        user.id,
-        NotificationInboxAction::List {
+    let inbox = json_action(&state, &headers, || {
+        let params = ListParams::parse(&fields).map_err(invalid_query)?;
+        let limit = limit_field(&fields).map_err(invalid_query)?;
+        Ok(NotificationInboxAction::List {
             filter: params.filter(),
             limit,
-            before: params.before.clone(),
-        },
-    )
-    .await
-    .map_err(inbox_error)?;
+            before: params.before,
+        })
+    })
+    .await?;
     let NotificationInbox {
         notifications,
         next_cursor,

@@ -80,38 +80,42 @@ pub async fn prepare_rebase(
             message: "Archived repositories cannot be restacked.".into(),
         });
     }
-    let pull = db::pull_requests::records::get_pull_request(pool, repository.id, number)
+    let target = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".into(),
         })?;
-    if pull.state != "open" {
-        return Err(OperationError::Invalid {
-            code: "invalid_state",
-            message: "Pull request is not open".into(),
-        });
-    }
-    let Some(stack_id) = pull.stack_id else {
-        return Err(OperationError::Conflict {
-            code: "not_stacked",
-            message: "This pull request is not in a stack.".into(),
-        });
+    check_stacked(&target)?;
+    let Some(stack_id) = target.stack_id else {
+        return Err(not_stacked());
     };
     // The versions are read before the layers, so a change between the two reads shows up when
     // the rebase is published.
     let versions = db::pull_requests::records::list_stack_versions(pool, repository.id, stack_id)
         .await
         .map_err(database_error)?;
-    // A closed or cyclic layer below refuses the rebase, as it refuses a merge.
-    open_chain(pool, &pull).await?;
     let members = db::pull_requests::records::list_stack_members(pool, repository.id, stack_id)
         .await
         .map_err(database_error)?;
+    // The target is taken from the layers read after the versions, so a close or unstack before
+    // the versions were read refuses the rebase here instead of passing publication.
+    let pull = members
+        .iter()
+        .find(|member| member.id == target.id)
+        .cloned()
+        .ok_or_else(not_stacked)?;
+    check_stacked(&pull)?;
+    // A closed or cyclic layer below refuses the rebase, as it refuses a merge.
+    open_chain(pool, &pull).await?;
     let store = repo_store(&repository, ci.cluster.as_ref());
-    let refs = store.refs().await.map_err(git_unavailable)?;
-    let moving = layers_to_move(&store, &refs, &pull, &members).await?;
+    // Every Git read below shares the one deadline, not only the replays.
+    let refs = before_deadline(deadline, async {
+        store.refs().await.map_err(git_unavailable)
+    })
+    .await?;
+    let moving = before_deadline(deadline, layers_to_move(&store, &refs, &pull, &members)).await?;
     let Some(first) = moving.first() else {
         return Ok(None);
     };
@@ -134,17 +138,21 @@ pub async fn prepare_rebase(
         let head = tip_of(&refs, &layer.head_branch)
             .ok_or_else(|| head_branch_missing(layer.number))?
             .clone();
-        let new_head = if is_ancestor(&store, &onto, &head).await? {
+        let new_head = if before_deadline(deadline, is_ancestor(&store, &onto, &head)).await? {
             head.clone()
         } else {
-            let from = own_commits_base(&store, layer, &members, &head).await?;
-            let replay = store.prepare_restack(&from, &head, &onto, &user.username, &email);
-            match tokio::time::timeout_at(deadline, replay).await {
-                Ok(prepared) => prepared.map_err(|error| rebase_failure(layer.number, error))?,
-                Err(_) => return Err(prepare_timeout()),
-            }
+            let from =
+                before_deadline(deadline, own_commits_base(&store, layer, &members, &head)).await?;
+            before_deadline(deadline, async {
+                store
+                    .prepare_restack(&from, &head, &onto, &user.username, &email)
+                    .await
+                    .map_err(|error| rebase_failure(layer.number, error))
+            })
+            .await?
         };
-        // Unchanged dependency heads still participate in the final CAS transaction.
+        // A layer that does not move is still listed, with its commit unchanged, because a layer
+        // above it was replayed onto that commit: publication verifies it has not moved since.
         moves.push(RestackMove {
             branch: layer.head_branch.clone(),
             old: head,
@@ -290,7 +298,8 @@ fn bottom_of(pull: &PullRequest, members: &[PullRequest]) -> Result<PullRequest,
 }
 
 /// The layers a rebase moves: the open line of `pull`, from its first layer that is not on top of its
-/// base branch up to the top. Empty when every layer of the line is on top of its base.
+/// base branch up to the top. Empty when every layer of the line is on top of its base. A layer of
+/// the line whose base or head branch is missing refuses it.
 async fn layers_to_move(
     store: &RepoStore,
     refs: &HashMap<String, String>,
@@ -298,6 +307,15 @@ async fn layers_to_move(
     members: &[PullRequest],
 ) -> Result<Vec<PullRequest>, OperationError> {
     let line = open_line(&bottom_of(pull, members)?, members)?;
+    // A missing branch is refused here, before any decision that nothing needs to move.
+    for layer in &line {
+        if tip_of(refs, &layer.base_branch).is_none() {
+            return Err(base_branch_missing());
+        }
+        if layer.head_repo_id == Some(layer.repo_id) && tip_of(refs, &layer.head_branch).is_none() {
+            return Err(head_branch_missing(layer.number));
+        }
+    }
     for (index, layer) in line.iter().enumerate() {
         if is_stale(store, refs, layer).await? {
             return Ok(line[index..].to_vec());
@@ -320,6 +338,37 @@ async fn is_stale(
         return Ok(false);
     };
     Ok(!is_ancestor(store, base, head).await?)
+}
+
+/// Refuses a target that is not an open stack layer.
+fn check_stacked(pull: &PullRequest) -> Result<(), OperationError> {
+    if pull.state != "open" {
+        return Err(OperationError::Invalid {
+            code: "invalid_state",
+            message: "Pull request is not open".into(),
+        });
+    }
+    if pull.stack_id.is_none() {
+        return Err(not_stacked());
+    }
+    Ok(())
+}
+
+fn not_stacked() -> OperationError {
+    OperationError::Conflict {
+        code: "not_stacked",
+        message: "This pull request is not in a stack.".into(),
+    }
+}
+
+/// Runs one step of a rebase's preparation within what is left of its deadline.
+async fn before_deadline<T>(
+    deadline: tokio::time::Instant,
+    step: impl std::future::Future<Output = Result<T, OperationError>>,
+) -> Result<T, OperationError> {
+    tokio::time::timeout_at(deadline, step)
+        .await
+        .unwrap_or_else(|_| Err(prepare_timeout()))
 }
 
 fn stack_broken() -> OperationError {

@@ -1,6 +1,6 @@
 //! Mail waits in the `email_outbox` table until a node sends it. Several nodes may run the
 //! sender at once: each claims its own rows. A failed send is tried again later, a few times.
-use super::{config, messages::Mail, send};
+use super::{config, send};
 use crate::backend::crypto::SecretEncryptor;
 use crate::backend::db::{self, DbPool};
 use std::time::Duration;
@@ -15,7 +15,7 @@ const KEEP_DAYS: i64 = 14;
 /// The most messages one pass sends, so a large backlog cannot starve the stop signal.
 const PER_PASS: usize = 50;
 const PASS_INTERVAL: Duration = Duration::from_secs(10);
-/// One pass in this many also deletes old messages: about once an hour.
+/// One pass in this many also deletes old messages.
 const PRUNE_EVERY: u32 = 360;
 
 /// Seconds to wait after attempt number `attempts` failed: 1, 4, 16 and 64 minutes.
@@ -23,23 +23,18 @@ pub fn retry_delay(attempts: i32) -> i64 {
     60 * 4_i64.pow(u32::try_from(attempts - 1).unwrap_or(0).min(6))
 }
 
-pub async fn enqueue(pool: &DbPool, to: &str, mail: Mail) {
-    if let Err(error) = db::email::enqueue_email(pool, to, &mail.subject, &mail.body).await {
-        warn!(%error, "could not queue an email");
-    }
-}
-
-/// Sends the messages that are due, one at a time. Returns how many were sent.
-pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> usize {
+/// Sends a bounded batch, returning the sent and processed counts separately.
+pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> (usize, usize) {
     let config = match config::load(pool, secrets).await {
         Ok(Some((config, _))) => config,
-        Ok(None) => return 0,
+        Ok(None) => return (0, 0),
         Err(message) => {
             warn!(%message, "email is not sent");
-            return 0;
+            return (0, 0);
         }
     };
     let mut sent = 0;
+    let mut processed = 0;
     for _ in 0..PER_PASS {
         let message = match db::email::claim_due_email(pool, MAX_ATTEMPTS, CLAIM_SECONDS).await {
             Ok(Some(message)) => message,
@@ -49,8 +44,9 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> usize
                 break;
             }
         };
+        processed += 1;
         // Claims can outlive a link rotation or a notification's repository grant.
-        let allowed = match db::email::delivery_allowed(pool, message.id).await {
+        let allowed = match db::email::delivery_allowed(pool, message.id, message.attempts).await {
             Ok(true) => match message.notification_id {
                 Some(notification) => db::notifications::records::notification_email_allowed(pool, notification).await,
                 None => Ok(true),
@@ -59,9 +55,9 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> usize
         };
         let refusal = match allowed {
             Ok(true) => None,
-            Ok(false) => Some(db::email::withdraw_email(pool, message.id).await),
+            Ok(false) => Some(db::email::withdraw_email(pool, message.id, message.attempts).await),
             Err(error) => Some(db::email::mark_email_failed(
-                pool, message.id, &format!("delivery check failed: {error}"),
+                pool, message.id, message.attempts, &format!("delivery check failed: {error}"),
                 retry_delay(message.attempts), MAX_ATTEMPTS,
             ).await),
         };
@@ -81,13 +77,14 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> usize
         {
             Ok(()) => {
                 sent += 1;
-                db::email::mark_email_sent(pool, message.id).await
+                db::email::mark_email_sent(pool, message.id, message.attempts).await
             }
             Err(error) => {
                 warn!(%error, id = message.id, attempts = message.attempts, "email send failed");
                 db::email::mark_email_failed(
                     pool,
                     message.id,
+                    message.attempts,
                     &error,
                     retry_delay(message.attempts),
                     MAX_ATTEMPTS,
@@ -99,7 +96,7 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> usize
             warn!(%error, id = message.id, "could not record the email result");
         }
     }
-    sent
+    (sent, processed)
 }
 
 /// Runs on every web node until `stop` changes.
@@ -110,7 +107,10 @@ pub async fn run(
 ) {
     let mut pass: u32 = 0;
     loop {
-        let sent = send_due(&pool, secrets.as_deref()).await;
+        if *stop.borrow() {
+            break;
+        }
+        let (sent, processed) = send_due(&pool, secrets.as_deref()).await;
         if sent > 0 {
             info!(sent, "sent queued email");
         }
@@ -122,6 +122,9 @@ pub async fn run(
             }
         }
         pass = pass.wrapping_add(1);
+        if processed == PER_PASS {
+            continue;
+        }
         tokio::select! {
             _ = stop.changed() => break,
             _ = tokio::time::sleep(PASS_INTERVAL) => {}

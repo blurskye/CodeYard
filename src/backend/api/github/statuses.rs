@@ -4,7 +4,7 @@ use crate::backend::{
     app::AppState,
     db::{self, models::CommitStatus, repositories::protection},
     repositories::store::repo_store,
-    webhooks::payloads,
+    webhooks::{self, payloads},
 };
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -65,7 +65,8 @@ async fn create(
         ));
     }
     let sha = sha.to_ascii_lowercase();
-    let commit = repo_store(&repo, state.cluster.as_ref()).commit(&sha).await.map_err(store_error)?;
+    let store = repo_store(&repo, state.cluster.as_ref());
+    let commit = store.commit(&sha).await.map_err(store_error)?;
     if commit.sha != sha { return Err(Error::invalid("sha must name an existing commit object")); }
     let saved = protection::upsert_commit_status_with_token(
         &state.pool,
@@ -90,6 +91,7 @@ async fn create(
             None => Error::unavailable(()),
         },
     )?;
+    webhooks::statuses::emit_status(&state.pool, &store, &repo, &saved, &commit, actor).await;
     Ok((
         StatusCode::CREATED,
         Json(documents(&state, &owner, &name, vec![saved]).await?.remove(0)),

@@ -43,11 +43,35 @@ pub async fn create_notification(
                 NotificationSuppressed
             );
         }
-        // A recipient who lost Read after the event must not get its text or email.
-        anyhow::ensure!(
-            lock_notification_scope_readable(&mut tx, input.user_id, repo).await?,
-            NotificationSuppressed
-        );
+        // A recipient who lost Read after the event must not get its text or email. A fork
+        // notice also names the fork, so the recipient must be able to read that too. The
+        // source is locked before its fork, the order fork authority checks use.
+        let fork = match input.kind {
+            "repository_forked" => Some(
+                input
+                    .metadata
+                    .get("fork_repository_id")
+                    .and_then(serde_json::Value::as_i64)
+                    .ok_or(NotificationSuppressed)?,
+            ),
+            _ => None,
+        };
+        for scope in [Some(repo), fork].into_iter().flatten() {
+            anyhow::ensure!(
+                lock_notification_scope_readable(&mut tx, input.user_id, scope).await?,
+                NotificationSuppressed
+            );
+        }
+        // Watch changes lock the repository row for update, so the shared lock taken above
+        // makes an ignore either visible here or wait for this insert.
+        let ignoring: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM watches WHERE user_id=$1 AND repo_id=$2 AND level::text='ignoring')",
+        )
+        .bind(input.user_id)
+        .bind(repo)
+        .fetch_one(&mut *tx)
+        .await?;
+        anyhow::ensure!(!ignoring, NotificationSuppressed);
     }
     if matches!(input.kind, "user_followed" | "repository_starred" | "repository_watched") {
         let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=$1 AND actor_id=$2 AND kind=$3 AND ($3='user_followed' OR repo_id=$4) AND created_at>clock_timestamp()-INTERVAL '1 day')")
@@ -204,6 +228,7 @@ async fn notification_scopes(
         classic_token: false,
         high_water: notification_high_water(connection, user_id).await?,
         readable: std::collections::BTreeMap::new(),
+        classic_token: false,
     })
 }
 
@@ -641,6 +666,20 @@ pub(super) async fn refresh_links(
         }
     }
     Ok(())
+}
+
+pub async fn get_notification(
+    pool: &PgPool,
+    user_id: i64,
+    notification_id: i64,
+) -> Result<Option<Notification>> {
+    Ok(
+        sqlx::query_as("SELECT * FROM notifications WHERE id=$1 AND user_id=$2")
+            .bind(notification_id)
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
 
 pub async fn notification_email_allowed(pool: &PgPool, notification_id: i64) -> Result<bool> {

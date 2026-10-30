@@ -556,7 +556,7 @@ impl CommitFilter {
             if !self
                 .author_emails
                 .iter()
-                .any(|address| address.eq_ignore_ascii_case(&email))
+                .any(|address| crate::backend::identity::credentials::email_matches(address, &email))
             {
                 return false;
             }

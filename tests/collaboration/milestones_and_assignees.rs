@@ -371,10 +371,10 @@ async fn contract(pg: bool) {
         .await,
         Vec::<i32>::new()
     );
-    db::issues::add_issue_comment(pool, second.id, owner, "one")
+    db::issues::add_issue_comment(pool, second.repo_id, second.id, owner, "one", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap();
-    db::issues::add_issue_comment(pool, second.id, owner, "two")
+    db::issues::add_issue_comment(pool, second.repo_id, second.id, owner, "two", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap();
     assert_eq!(

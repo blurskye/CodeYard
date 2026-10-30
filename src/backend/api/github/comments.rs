@@ -3,6 +3,7 @@ use crate::backend::{
     app::AppState,
     db,
     db::assignees::AssignedItem,
+    db::users::accounts::AccountCredential,
     issues::comments::{CommentTarget, CreateCommentRequest},
     repositories::pull_requests::comments::{self, CreatePullRequestCommentRequest},
     webhooks::payloads,
@@ -214,7 +215,8 @@ async fn create(
     Json(input): Json<Body>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let auth = auth.ok_or_else(auth::required)?;
+    let (actor, credential) = (auth.user, AccountCredential::Token(auth.token.id));
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
     let number = p["issue_number"].parse().map_err(|_| Error::missing())?;
     let (id, pull) = match item {
@@ -223,6 +225,7 @@ async fn create(
                 &state.pool,
                 &state.notification_broadcaster,
                 actor.id,
+                &credential,
                 p["owner"].clone(),
                 repo.name.clone(),
                 number,
@@ -284,7 +287,8 @@ async fn update(
     Json(input): Json<Body>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let auth = auth.ok_or_else(auth::required)?;
+    let (actor, credential) = (auth.user, AccountCredential::Token(auth.token.id));
     let api_id = p["comment_id"].parse().map_err(|_| Error::missing())?;
     let comment = find(&state.pool, repo.id, api_id).await?;
     let target = CommentTarget {
@@ -299,6 +303,7 @@ async fn update(
                 &state.pool,
                 &state.notification_broadcaster,
                 actor.id,
+                &credential,
                 target,
                 CreateCommentRequest {
                     body: input.body,
@@ -335,7 +340,8 @@ async fn remove(
     Path(p): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let auth = auth.ok_or_else(auth::required)?;
+    let (actor, credential) = (auth.user, AccountCredential::Token(auth.token.id));
     let comment = find(
         &state.pool,
         repo.id,
@@ -350,7 +356,12 @@ async fn remove(
     };
     match comment.item {
         AssignedItem::Issue(_) => {
-            crate::backend::issues::comments::delete_issue_comment(&state.pool, actor.id, target)
+            crate::backend::issues::comments::delete_issue_comment(
+                &state.pool,
+                actor.id,
+                &credential,
+                target,
+            )
                 .await
                 .map_err(issues::operation_error)?
         }

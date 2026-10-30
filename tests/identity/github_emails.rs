@@ -397,6 +397,21 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .is_empty());
+    // The settings listing rechecks the requesting session in its own read.
+    assert!(db::users::emails::list_account_emails(
+        f.pool(),
+        alice,
+        &AccountCredential::Session("ended")
+    )
+    .await
+    .unwrap_err()
+    .is::<db::users::accounts::AccountRestricted>());
+    assert!(
+        db::users::emails::list_account_emails(f.pool(), alice, &AccountCredential::Trusted)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

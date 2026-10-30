@@ -164,6 +164,7 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
                             sha,
                             pull.head_repo_id,
                             &pull.head_branch,
+                            None,
                         )
                         .await?
                         {

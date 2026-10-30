@@ -16,14 +16,14 @@ pub async fn add_pull_request_comment(
     pool: &PgPool,
     input: NewPullRequestComment<'_>,
 ) -> Result<PullRequestComment> {
-    insert_comment(pool, input, false, None).await
+    insert_comment(pool, input, false, None).await.map(|(comment, _)| comment)
 }
 
 pub async fn add_pending_pull_request_comment(
     pool: &PgPool,
     input: NewPullRequestComment<'_>,
 ) -> Result<PullRequestComment> {
-    insert_comment(pool, input, true, None).await
+    insert_comment(pool, input, true, None).await.map(|(comment, _)| comment)
 }
 
 pub async fn add_comment_to_pending_review(
@@ -31,16 +31,16 @@ pub async fn add_comment_to_pending_review(
     input: NewPullRequestComment<'_>,
     review_id: i64,
 ) -> Result<PullRequestComment> {
-    insert_comment(pool, input, true, Some(review_id)).await
+    insert_comment(pool, input, true, Some(review_id)).await.map(|(comment, _)| comment)
 }
 
 /// A reply joins the review of the thread it answers, so `pending` only applies to a new thread.
-async fn insert_comment(
+pub async fn insert_comment(
     pool: &PgPool,
     input: NewPullRequestComment<'_>,
     pending: bool,
     expected_review: Option<i64>,
-) -> Result<PullRequestComment> {
+) -> Result<(PullRequestComment, bool)> {
     let mut tx = pool.begin().await?;
     discussions::lock_pull_request_contribution(&mut tx, input.author_id, input.pr_id).await?;
     if let Some((head, base)) = input.expected_revisions {
@@ -102,9 +102,11 @@ async fn insert_comment(
         );
     }
     let comment = insert_comment_on(&mut tx, &input, review_id).await?;
+    let deferred: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews WHERE id=$1 AND state='pending')")
+        .bind(review_id).fetch_one(&mut *tx).await?;
     touch_revision(&mut tx, input.pr_id).await?;
     tx.commit().await?;
-    Ok(comment)
+    Ok((comment, deferred))
 }
 
 async fn insert_comment_on(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, input: &NewPullRequestComment<'_>, review_id: Option<i64>) -> Result<PullRequestComment> {
@@ -619,10 +621,10 @@ pub async fn save_pull_request_review(
     commit_sha: Option<&str>,
     expected_pending: Option<Option<i64>>,
 ) -> Result<PullRequestReview> {
-    save_review_batch(pool, crate::backend::db::pull_requests::reviews::ReviewBatch { pr_id, author_id, state: Some(state), body, commit_sha, expected_pending, create_pending: false, comments: &[], token: None, credential }).await
+    save_review_batch(pool, crate::backend::db::pull_requests::reviews::ReviewBatch { pr_id, author_id, state: Some(state), body, commit_sha, expected_pending, create_pending: false, comments: &[], token: None, credential }).await.map(|(review, _)| review)
 }
 
-pub async fn save_review_batch(pool: &PgPool, input: crate::backend::db::pull_requests::reviews::ReviewBatch<'_>) -> Result<PullRequestReview> {
+pub async fn save_review_batch(pool: &PgPool, input: crate::backend::db::pull_requests::reviews::ReviewBatch<'_>) -> Result<(PullRequestReview, Vec<i64>)> {
     let (pr_id, author_id, state, body, commit_sha, expected_pending) = (input.pr_id, input.author_id, input.state.unwrap_or("commented"), input.body, input.commit_sha, input.expected_pending);
     let commit_sha = commit_sha.map(str::to_ascii_lowercase);
     let mut tx = pool.begin().await?;
@@ -688,7 +690,7 @@ pub async fn save_review_batch(pool: &PgPool, input: crate::backend::db::pull_re
         if input.state.is_none() {
             touch_revision(&mut tx, pr_id).await?;
             tx.commit().await?;
-            return Ok(draft);
+            return Ok((draft, Vec::new()));
         }
     } else {
         anyhow::ensure!(input.comments.is_empty(), crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview);
@@ -755,9 +757,15 @@ pub async fn save_review_batch(pool: &PgPool, input: crate::backend::db::pull_re
         .bind(author_id)
         .execute(&mut *tx)
         .await?;
+    let published: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM pr_comments WHERE review_id=$1 ORDER BY id",
+    )
+    .bind(review.id)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
 
-    Ok(review)
+    Ok((review, published))
 }
 
 pub async fn create_pending_review(
@@ -1073,8 +1081,8 @@ pub async fn request_code_owner_reviews(
     }) else {
         return Ok(Vec::new());
     };
-    let added = sqlx::query_as::<_, User>("WITH inserted AS (INSERT INTO pr_reviewers (pull_request_id, user_id, as_code_owner) SELECT $1, owner, TRUE FROM unnest($2::bigint[]) owner WHERE NOT EXISTS (SELECT 1 FROM pr_reviews WHERE pull_request_id = $1 AND author_id = owner AND state <> 'pending') ON CONFLICT DO NOTHING RETURNING user_id) SELECT u.* FROM users u JOIN inserted i ON i.user_id = u.id")
-        .bind(pull.id).bind(&eligible).fetch_all(&mut *tx).await?;
+    let added = sqlx::query_as::<_, User>("WITH inserted AS (INSERT INTO pr_reviewers (pull_request_id, user_id, as_code_owner) SELECT $1, owner, TRUE FROM unnest($2::bigint[]) owner WHERE NOT COALESCE((SELECT state IN ('approved','changes_requested') AND commit_sha=$3 FROM pr_reviews WHERE pull_request_id=$1 AND author_id=owner AND state NOT IN ('commented','pending') ORDER BY created_at DESC,id DESC LIMIT 1),FALSE) ON CONFLICT DO NOTHING RETURNING user_id) SELECT u.* FROM users u JOIN inserted i ON i.user_id = u.id")
+        .bind(pull.id).bind(&eligible).bind(&pull.head_sha).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(added)
 }
@@ -1152,13 +1160,18 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for PullRequestReviewEntry {
     }
 }
 
-/// The author's conversation comment on the pull request, as the author and repository still allow
-/// it. Comments filed in a review are not conversation comments and are not changed here.
-async fn conversation_comment_author(
+async fn private_pending_comment(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, comment: i64, actor: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_comments c JOIN pr_reviews v ON v.id=c.review_id WHERE c.id=$1 AND v.state='pending' AND v.author_id<>$2)")
+        .bind(comment).bind(actor).fetch_one(&mut **tx).await?)
+}
+
+/// The scoped comment author; review privacy is checked separately before mutation.
+async fn scoped_comment_author(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     repo_id: i64,
     pr_id: i64,
     comment_id: i64,
+    writer: bool,
 ) -> Result<Option<i64>> {
     let locked: Option<bool> =
         sqlx::query_scalar("SELECT locked FROM pull_requests WHERE id=$1 AND repo_id=$2 FOR SHARE")
@@ -1166,7 +1179,7 @@ async fn conversation_comment_author(
             .bind(repo_id)
             .fetch_optional(&mut **tx)
             .await?;
-    if locked != Some(false) {
+    if locked.is_none() || (locked == Some(true) && !writer) {
         return Ok(None);
     }
     Ok(sqlx::query_scalar(
@@ -1181,7 +1194,7 @@ async fn conversation_comment_author(
     .await?)
 }
 
-/// Changes the body of a conversation comment the actor wrote. None when the change is refused.
+/// The author or a live repository writer may edit a visible comment.
 pub async fn edit_pull_request_comment(
     pool: &PgPool,
     actor_id: i64,
@@ -1196,8 +1209,10 @@ pub async fn edit_pull_request_comment(
     if !discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
         return Ok(None);
     }
-    let author = conversation_comment_author(&mut tx, repo_id, pr_id, comment_id).await?;
-    if author != Some(actor_id) {
+    let writer = discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
+    let author = scoped_comment_author(&mut tx, repo_id, pr_id, comment_id, writer).await?;
+    if author.is_none() || (author != Some(actor_id) && !writer)
+        || private_pending_comment(&mut tx, comment_id, actor_id).await? {
         return Ok(None);
     }
     let comment = sqlx::query_as::<_, PullRequestComment>(
@@ -1214,7 +1229,7 @@ pub async fn edit_pull_request_comment(
 }
 
 /// Deletes a conversation comment with the notifications that link to it. The author may delete
-/// their own comment; a repository maintainer may delete anyone's.
+/// their own comment; a repository writer may delete anyone's visible comment.
 pub async fn delete_pull_request_comment(
     pool: &PgPool,
     actor_id: i64,
@@ -1227,19 +1242,12 @@ pub async fn delete_pull_request_comment(
     if !discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
         return Ok(false);
     }
-    let Some(author) = conversation_comment_author(&mut tx, repo_id, pr_id, comment_id).await?
+    let writer = discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
+    let Some(author) = scoped_comment_author(&mut tx, repo_id, pr_id, comment_id, writer).await?
     else {
         return Ok(false);
     };
-    let private: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_comments c JOIN pr_reviews v ON v.id=c.review_id WHERE c.id=$1 AND v.state='pending' AND v.author_id<>$2)")
-        .bind(comment_id).bind(actor_id).fetch_one(&mut *tx).await?;
-    if private {
-        return Ok(false);
-    }
-    // Anyone else needs maintainer authority, which also implies the contribution check.
-    if author != actor_id
-        && !discussions::lock_maintain_authority(&mut tx, actor_id, repo_id).await?
-    {
+    if (author != actor_id && !writer) || private_pending_comment(&mut tx, comment_id, actor_id).await? {
         return Ok(false);
     }
     // Replies are removed with their parent, so a comment with replies stays.

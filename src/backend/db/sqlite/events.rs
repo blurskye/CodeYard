@@ -1,4 +1,4 @@
-use crate::backend::db::events::{EventEntry, EventScope};
+use crate::backend::db::events::{EventEntry, EventScope, EventViewer};
 use anyhow::Result;
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -40,15 +40,23 @@ pub async fn push_actor(
 }
 pub async fn list_events(
     pool: &SqlitePool,
-    viewer: Option<i64>,
+    viewer: Option<EventViewer<'_>>,
     scope: EventScope,
     public_only: bool,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<EventEntry>> {
     let (kind, id) = scope.parts();
+    let (viewer, token, feed) = match viewer {
+        Some(viewer) => {
+            let (user, token, feed) = viewer.parts();
+            (Some(user), Some(token), feed)
+        }
+        None => (None, None, None),
+    };
     let offset = offset.max(0);
     let readable = super::repositories::access::readable_condition();
+    let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "?9");
     Ok(sqlx::query_as(&format!("WITH RECURSIVE ancestors(id,parent) AS (
         SELECT id,forked_from_id FROM repositories WHERE ?2='network' AND id=?3
         UNION SELECT r.id,r.forked_from_id FROM repositories r JOIN ancestors a ON r.id=a.parent
@@ -60,6 +68,10 @@ pub async fn list_events(
     LEFT JOIN repositories fk ON e.kind='ForkEvent' AND fk.id=CAST(json_extract(e.payload,'$.forkee.id') AS INTEGER)
     WHERE e.created_at>=strftime('%Y-%m-%dT%H:%M:%f000Z','now','-90 days') AND {readable}
       AND ((r.owner_kind='user' AND owner_u.id IS NOT NULL AND r.owner_org_id IS NULL) OR (r.owner_kind='org' AND owner_o.id IS NOT NULL AND r.owner_user_id IS NULL))
+      AND (?7 IS NULL OR EXISTS(SELECT 1 FROM personal_access_tokens t
+           WHERE t.id=?7 AND t.user_id=?1 AND t.scope IN ('read','write') AND (t.expires_at IS NULL OR julianday(t.expires_at)>julianday('now'))
+           AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}
+           AND (?8 IS NULL OR EXISTS(SELECT 1 FROM activity_feed_tokens f WHERE f.api_token_id=t.id AND f.value=?8))))
       AND (NOT ?4 OR (e.is_public AND NOT r.is_private))
       AND (e.is_public OR (u.id IS NOT NULL AND NOT u.is_banned AND NOT u.must_change_password))
       AND (e.kind<>'ForkEvent' OR EXISTS(SELECT 1 FROM repositories r WHERE r.id=CAST(json_extract(e.payload,'$.forkee.id') AS INTEGER) AND (NOT ?4 OR NOT r.is_private) AND {readable}))
@@ -68,14 +80,15 @@ pub async fn list_events(
            OR (?2='received' AND (EXISTS(SELECT 1 FROM follows f WHERE f.follower_id=?3 AND f.following_id=e.actor_id)
                  OR EXISTS(SELECT 1 FROM watches w WHERE w.user_id=?3 AND w.repo_id=r.id AND w.level IN ('watching','custom')))))
     ORDER BY e.created_at DESC,e.id DESC LIMIT ?5 OFFSET ?6"))
-        .bind(viewer).bind(kind).bind(id).bind(public_only).bind(limit.clamp(1,101).min((300-offset).max(0))).bind(offset.max(0)).fetch_all(pool).await?)
+        .bind(viewer).bind(kind).bind(id).bind(public_only).bind(limit.clamp(1,101).min((300-offset).max(0))).bind(offset.max(0)).bind(token).bind(feed).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_all(pool).await?)
 }
 pub async fn activity_feed_token(
     pool: &SqlitePool,
     token_id: i64,
     value: &str,
 ) -> Result<Option<String>> {
-    Ok(sqlx::query_scalar("INSERT INTO activity_feed_tokens(api_token_id,value) SELECT t.id,?2 FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=?1 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR julianday(t.expires_at)>julianday('now')) ON CONFLICT(api_token_id) DO UPDATE SET api_token_id=excluded.api_token_id RETURNING value").bind(token_id).bind(value).fetch_optional(pool).await?)
+    let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "?3");
+    Ok(sqlx::query_scalar(&format!("INSERT INTO activity_feed_tokens(api_token_id,value) SELECT t.id,?2 FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=?1 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR julianday(t.expires_at)>julianday('now')) AND {issuer} ON CONFLICT(api_token_id) DO UPDATE SET api_token_id=excluded.api_token_id RETURNING value")).bind(token_id).bind(value).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(pool).await?)
 }
 pub async fn activity_feed_token_id(pool: &SqlitePool, value: &str) -> Result<Option<i64>> {
     Ok(

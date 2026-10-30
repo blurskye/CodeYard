@@ -243,7 +243,7 @@ async fn save(
                 remove_events: input.remove_events.unwrap_or_default(),
                 active: input.active,
                 ssl_verify,
-                secret: config.secret,
+                secret: if config_only { config.secret } else { Some(config.secret.unwrap_or_default()) },
                 ..Default::default()
             };
             settings::update(
@@ -457,7 +457,7 @@ async fn trigger(
         return Ok((StatusCode::ACCEPTED, Json(json!({}))).into_response());
     }
     if uri.path().ends_with("/tests") {
-        settings::test_push(&state.pool, state.cluster.as_ref(), owner, &actor.user, &actor.credential(), hook)
+        settings::test_push(&state.pool, owner, &actor.user, &actor.credential(), hook)
             .await
             .map_err(hook_error)?;
     } else {

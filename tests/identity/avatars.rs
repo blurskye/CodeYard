@@ -85,7 +85,7 @@ async fn set_avatar(
     user: &db::models::User,
     file_id: &str,
 ) -> Result<(), avatars::AvatarError> {
-    avatars::set_user_avatar(pool, user, file_id.parse().unwrap()).await
+    avatars::set_user_avatar(pool, user, &db::users::accounts::AccountCredential::Trusted, file_id.parse().unwrap()).await
 }
 
 async fn avatar_url(client: &Client) -> Option<String> {
@@ -451,7 +451,7 @@ async fn contract(pg: bool) {
         let storage = storage.clone();
         let user = request_user.clone();
         tokio::spawn(async move {
-            avatars::upload_user_avatar(&pool, &storage, &user, PNG.to_vec()).await
+            avatars::upload_user_avatar(&pool, &storage, &user, &db::users::accounts::AccountCredential::Trusted, PNG.to_vec()).await
         })
     };
     let upload_two = {
@@ -460,7 +460,7 @@ async fn contract(pg: bool) {
         let user = request_user.clone();
         let bytes = changed_png.clone();
         tokio::spawn(
-            async move { avatars::upload_user_avatar(&pool, &storage, &user, bytes).await },
+            async move { avatars::upload_user_avatar(&pool, &storage, &user, &db::users::accounts::AccountCredential::Trusted, bytes).await },
         )
     };
     upload_one.await.unwrap().unwrap();
@@ -936,7 +936,7 @@ async fn pending_picture_contract(pg: bool) {
         let pool = f.pool();
         let assign = |id| async move {
             if reason == FileReason::Avatar {
-                db::users::accounts::set_user_avatar(pool, actor, Some(id))
+                db::users::accounts::set_user_avatar(pool, actor, &db::users::accounts::AccountCredential::Trusted, Some(id))
                     .await
                     .map(|outcome| {
                         assert_eq!(
@@ -992,7 +992,7 @@ async fn pending_picture_contract(pg: bool) {
         .await;
         if reason == FileReason::Avatar {
             assert_eq!(
-                db::users::accounts::set_user_avatar(f.pool(), actor, Some(interrupted))
+                db::users::accounts::set_user_avatar(f.pool(), actor, &db::users::accounts::AccountCredential::Trusted, Some(interrupted))
                     .await
                     .unwrap(),
                 db::users::accounts::UserAvatarOutcome::NotUsable

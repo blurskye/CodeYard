@@ -24,6 +24,11 @@ pub struct CreatedToken {
     pub value: String,
 }
 
+pub struct ActivityFeedUser {
+    pub user: crate::backend::db::models::User,
+    pub token: i64,
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum TokenError {
     #[error("Use a name of 1-100 characters, scope read or write, and a future expiry")]
@@ -75,7 +80,7 @@ pub async fn activity_feed_token(pool: &DbPool, token_id: i64) -> Result<String,
 pub async fn activity_feed_user(
     pool: &DbPool,
     value: &str,
-) -> Result<crate::backend::db::models::User, TokenError> {
+) -> Result<ActivityFeedUser, TokenError> {
     if value.len() != 69 || !value.starts_with("feed_") {
         return Err(TokenError::Denied);
     }
@@ -94,18 +99,47 @@ pub async fn activity_feed_user(
     {
         return Err(TokenError::Denied);
     }
-    Ok(user)
+    Ok(ActivityFeedUser { user, token: id })
+}
+
+/// Recheck a retained token's account, organization policy and effective repository grant.
+pub(crate) async fn repository_scope(pool: &DbPool, token: i64, actor: i64, repo: i64, permission: &str, write: bool) -> anyhow::Result<bool> {
+    if !tokens::token_user(pool, token, write).await?.is_some_and(|user| user.id == actor)
+        || crate::backend::db::fine_grained_tokens::classic_refused_repository(pool, token, repo).await? {
+        return Ok(false);
+    }
+    if let Some(authority) = super::github_apps::authority(pool, token).await? {
+        return authority.allows(pool, actor, repo, permission, write).await;
+    }
+    if let Some(job) = crate::backend::db::ci_tokens::get(pool, token).await? {
+        return Ok(job.repo_id == repo && super::github_apps::allows(&serde_json::from_str(&job.permissions)?, permission, write));
+    }
+    if let Some(oauth) = crate::backend::db::oauth_apps::token(pool, token).await? {
+        if super::oauth_apps::client(pool, &oauth.client_id).await?.is_none() {
+            return Ok(false);
+        }
+        return Ok(super::oauth_apps::has_scope(&oauth.scopes, "repo") || (!write
+            && crate::backend::db::repositories::records::get_repository_by_id(pool, repo).await?.is_some_and(|repo| !repo.is_private)));
+    }
+    Ok(true)
 }
 
 pub fn token_hash(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
+/// The stored form of a personal access token name, classic or fine-grained: trimmed,
+/// 1-100 characters and without control characters.
+pub fn valid_name(name: &str) -> Option<&str> {
+    let name = name.trim();
+    (!name.is_empty() && name.chars().count() <= 100 && !name.chars().any(char::is_control))
+        .then_some(name)
+}
+
 pub fn validate(input: &TokenInput<'_>, now: DateTime<Utc>) -> Result<(), TokenError> {
-    if input.name.trim().is_empty()
-        || input.name.trim().len() > 100
-        || input.name.contains('\0')
+    if valid_name(input.name).is_none()
         || !matches!(input.scope, "read" | "write")
+        || !tokens::supported_expiry(input.expires_at)
         || input.expires_at.is_some_and(|expiry| expiry <= now)
     {
         return Err(TokenError::Invalid);

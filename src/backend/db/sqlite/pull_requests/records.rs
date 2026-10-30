@@ -101,6 +101,15 @@ pub async fn merged_above(
         .bind(repo_id).bind(merge_sha).bind(head_branch).fetch_one(pool).await?)
 }
 
+pub async fn merged_trunk(
+    pool: &SqlitePool,
+    repo_id: i64,
+    merge_sha: &str,
+) -> Result<Option<(String, String)>> {
+    Ok(sqlx::query_as("SELECT base_branch, base_sha FROM pull_requests p WHERE repo_id=?1 AND state='merged' AND merged AND merge_commit_sha=?2 AND NOT EXISTS(SELECT 1 FROM pull_requests q WHERE q.repo_id=?1 AND q.state='merged' AND q.merged AND q.merge_commit_sha=?2 AND q.id<>p.id AND q.head_repo_id=?1 AND q.head_branch=p.base_branch) ORDER BY id LIMIT 1")
+        .bind(repo_id).bind(merge_sha).fetch_optional(pool).await?)
+}
+
 /// Records a new head commit only while the open pull request still has the
 /// expected head. Base movement is independent, so one side cannot starve the other.
 pub async fn move_open_pull_request_head(
@@ -110,6 +119,7 @@ pub async fn move_open_pull_request_head(
     new_head: &str,
     head_repo: Option<i64>,
     head_branch: &str,
+    pusher: Option<i64>,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let stored: Option<String> = sqlx::query_scalar(
@@ -138,9 +148,9 @@ pub async fn move_open_pull_request_head(
     .await?
     .rows_affected();
     if changed == 1 && old_head != new_head {
-        // Refresh callers do not attest the actual pusher's base write authority.
-        sqlx::query("DELETE FROM pull_request_auto_merges WHERE pull_request_id=?1")
-            .bind(pull_request_id).execute(&mut *tx).await?;
+        let access = super::super::repositories::access::USER_REPO_ACCESS_SQL;
+        sqlx::query(&format!("DELETE FROM pull_request_auto_merges WHERE pull_request_id=?1 AND NOT EXISTS(SELECT 1 FROM pull_requests p JOIN repositories r ON r.id=p.repo_id JOIN users u ON u.id=?2 WHERE p.id=?1 AND ({access})>=3)"))
+            .bind(pull_request_id).bind(pusher).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(changed == 1)
@@ -178,6 +188,44 @@ pub async fn move_open_pull_request_base(
     .bind(old_base)
     .bind(base_branch)
     .bind(fork)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    tx.commit().await?;
+    Ok(changed == 1)
+}
+
+pub async fn clear_fork_point(
+    pool: &SqlitePool,
+    pull_request_id: i64,
+    fork: &str,
+    base: &str,
+    head: &str,
+) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let stored: Option<String> = sqlx::query_scalar(
+        "SELECT updated_at FROM pull_requests WHERE id = ?1 AND state = 'open' AND fork_sha = ?2 AND base_sha = ?3 AND head_sha = ?4",
+    )
+    .bind(pull_request_id)
+    .bind(fork)
+    .bind(base)
+    .bind(head)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(stored) = stored else {
+        return Ok(false);
+    };
+    let next = crate::backend::db::sqlite::time::next_revision(
+        crate::backend::db::sqlite::time::decode(&stored)?,
+    )?;
+    let changed = sqlx::query(
+        "UPDATE pull_requests SET fork_sha = NULL, updated_at = ?2 WHERE id = ?1 AND state = 'open' AND fork_sha = ?3 AND base_sha = ?4 AND head_sha = ?5",
+    )
+    .bind(pull_request_id)
+    .bind(next)
+    .bind(fork)
+    .bind(base)
+    .bind(head)
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -544,7 +592,8 @@ pub async fn list_viewer_pull_requests(
     let access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_pull_request_sql(relation);
     let prs = sqlx::query_as::<_, ViewerPullRequestEntry>(&format!(
-        r"SELECT p.*, r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
+        r"SELECT p.number, p.title, p.state, p.created_at,
+            r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
         FROM pull_requests p
         JOIN repositories r ON r.id = p.repo_id
         LEFT JOIN users ou ON ou.id = r.owner_user_id
@@ -681,11 +730,6 @@ pub async fn update_pull_request(
     } else {
         None
     };
-    let policy_only = maintainer_can_modify.is_some()
-        && edit.title.is_none()
-        && edit.body.is_none()
-        && edit.state.is_none()
-        && base.is_none();
     let head_owner = head
         .as_ref()
         .is_some_and(|head| head.is_personal_owner(edit.actor_id));
@@ -698,9 +742,15 @@ pub async fn update_pull_request(
         if crate::backend::db::pull_requests::records::reopened_stack_base(&current, &members).as_deref() != Some(base.branch) { return Ok(None); }
         true
     } else { false };
-    let author_edit = author == edit.actor_id && (base.is_none() || automatic_reopen) && maintainer_can_modify.is_none();
+    let explicit_base = base.is_some() && !automatic_reopen;
+    let ordinary = edit.title.is_some() || edit.body.is_some() || edit.state.is_some();
+    // Without write access the author keeps ordinary edits, close and reopen, and the
+    // maintainer policy; the personal fork owner keeps the policy; only writers move the base.
+    let contributor_edit = !explicit_base
+        && (author == edit.actor_id
+            || (head_owner && !ordinary && maintainer_can_modify.is_some()));
     if !writer
-        && (!((policy_only && (author == edit.actor_id || head_owner)) || author_edit)
+        && (!contributor_edit
             || !crate::backend::db::sqlite::discussions::lock_contribution_authority(
                 &mut tx,
                 edit.actor_id,
@@ -717,12 +767,12 @@ pub async fn update_pull_request(
     {
         return Ok(None);
     }
-    let stored: Option<(String, String, String)> =
-        sqlx::query_as("SELECT state,updated_at,title FROM pull_requests WHERE id=?1")
+    let stored: Option<(String, String, String, String)> =
+        sqlx::query_as("SELECT state,updated_at,title,base_branch FROM pull_requests WHERE id=?1")
             .bind(pr_id)
             .fetch_optional(&mut *tx)
             .await?;
-    let Some((state, stored_revision, old_title)) = stored else {
+    let Some((state, stored_revision, old_title, old_branch)) = stored else {
         return Ok(None);
     };
     let previous = crate::backend::db::sqlite::time::decode(&stored_revision)?;
@@ -774,6 +824,12 @@ pub async fn update_pull_request(
     if let Some(pr) = pr.as_ref() {
         for (kind, detail, previous) in crate::backend::db::timeline::edit_events(&old_title, &state, &pr.title, &pr.state) {
             super::super::timeline::append(&mut tx, repo, "pull_request", pr_id, edit.actor_id, kind, detail, previous).await?;
+        }
+    }
+    if let (Some(pr), Some(base)) = (&pr, base.as_ref().filter(|base| base.branch != old_branch)) {
+        let patterns: Vec<String> = sqlx::query_scalar("SELECT pattern FROM branch_protection_rules WHERE repo_id=?1 AND dismiss_stale_reviews").bind(repo).fetch_all(&mut *tx).await?;
+        if crate::backend::db::pull_requests::records::retarget_dismisses_reviews(&patterns, base.branch)? {
+            sqlx::query("UPDATE pr_reviews SET state='dismissed',dismissed_by_id=?2,dismissed_reason='Base branch changed',dismissed_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE pull_request_id=?1 AND state='approved'").bind(pr.id).bind(edit.actor_id).execute(&mut *tx).await?;
         }
     }
     tx.commit().await?;
@@ -1158,17 +1214,6 @@ pub async fn list_stack_versions(
     .fetch_all(pool)
     .await?;
     Ok(rows)
-}
-
-impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for ViewerPullRequestEntry {
-    fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
-        use sqlx::Row;
-        Ok(Self {
-            pull_request: PullRequest::from_row(row)?,
-            repo_owner: row.try_get("repo_owner")?,
-            repo_name: row.try_get("repo_name")?,
-        })
-    }
 }
 
 impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for PullRequestListEntry {

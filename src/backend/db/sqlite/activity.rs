@@ -1,4 +1,4 @@
-use crate::backend::db::activity::{self, ActivityBatch, ScannedActivity};
+use crate::backend::db::activity::{self, ActivityBatch, ActivityViewer, ScannedActivity};
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -21,18 +21,21 @@ pub async fn record_repository_push(
     Ok(())
 }
 
-/// One bounded scan of activity, authorized in the same statement as its content.
+/// One bounded scan of activity, authorized in the same statement as its content. Each
+/// source reads only its newest `limit + offset` rows through its actor-and-time index, so
+/// the scan does not sort the account's whole history.
 pub async fn list_user_activity(
     pool: &SqlitePool,
     user_id: i64,
-    viewer: Option<i64>,
+    viewer: Option<ActivityViewer<'_>>,
     limit: i64,
     offset: i64,
 ) -> Result<ActivityBatch> {
     let (limit, offset, prefix) = activity::scan_window(limit, offset);
     let readable = super::repositories::access::readable_condition();
-    let rows = sqlx::query_as::<_, ScannedActivity>(&activity::activity_sql(&readable))
-        .bind(user_id).bind(limit).bind(offset).bind(viewer).bind(prefix)
+    let rows = sqlx::query_as::<_, ScannedActivity>(&activity::activity_sql(&readable, "julianday(s.expires_at)>julianday('now')"))
+        .bind(user_id).bind(limit).bind(offset).bind(viewer.map(|viewer| viewer.user)).bind(prefix)
+        .bind(viewer.map(|viewer| viewer.session))
         .fetch_all(pool).await?;
     Ok(ActivityBatch::from_scan(rows))
 }

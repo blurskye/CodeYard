@@ -203,11 +203,13 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     credential: &request.auth.credential(),
                 })
                 .await
+                .map(|(review, _)| review)
                 .map_err(|e| pull_error(pull_requests::write_error(e)))?
             }
         }
         "updatePullRequestReview" => reviews::edit_review(
             pool,
+            &request.state.notification_broadcaster,
             actor,
             &repo,
             &pull,

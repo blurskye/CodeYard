@@ -1,6 +1,6 @@
 use crate::backend::db::users::{
     accounts::AccountCredential,
-    gpg_keys::{GpgKey, GpgKeyRefusal, NewGpgKey, StoredGpgKey},
+    gpg_keys::{GpgKey, GpgKeyRefusal, GpgKeySummary, NewGpgKey, StoredGpgKey, StoredGpgKeySummary},
 };
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -12,6 +12,18 @@ pub async fn list_gpg_keys(
     offset: i64,
 ) -> Result<Vec<GpgKey>> {
     sqlx::query_as::<_,StoredGpgKey>("SELECT * FROM gpg_keys WHERE user_id=$1 AND primary_key_id IS NULL ORDER BY id LIMIT $2 OFFSET $3").bind(user).bind(limit).bind(offset).fetch_all(pool).await?.into_iter().map(StoredGpgKey::decode).collect()
+}
+pub async fn list_gpg_key_summaries(
+    pool: &PgPool,
+    user: i64,
+    credential: &AccountCredential<'_>,
+) -> Result<Vec<GpgKeySummary>> {
+    let mut tx = pool.begin().await?;
+    super::transitions::require_account(&mut tx, user, credential).await?;
+    let keys = sqlx::query_as::<_, StoredGpgKeySummary>("SELECT id,name,fingerprint,key_id,material->>'created_at' AS created_at,material->>'expires_at' AS expires_at,(material->>'revoked')::boolean AS revoked FROM (SELECT id,name,fingerprint,key_id,key_data::jsonb AS material FROM gpg_keys WHERE user_id=$1 AND primary_key_id IS NULL ORDER BY id LIMIT 100) k ORDER BY id")
+        .bind(user).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    keys.into_iter().map(StoredGpgKeySummary::decode).collect()
 }
 pub async fn get_gpg_key(pool: &PgPool, user: i64, id: i64) -> Result<Option<GpgKey>> {
     sqlx::query_as::<_, StoredGpgKey>(

@@ -69,6 +69,11 @@ pub struct NotificationDelivery {
     pub unread_count: i64,
 }
 
+native_operation!(crate::backend::db::postgres::notifications::records::get_notification,
+    crate::backend::db::sqlite::notifications::records::get_notification,
+    /// One stored notification of `user_id`, for delivering a row another transaction wrote.
+    fn get_notification(pool: &DbPool, user_id: i64, notification_id: i64) -> Result<Option<Notification>>);
+
 native_operation!(crate::backend::db::postgres::notifications::records::notification_email_allowed,
     crate::backend::db::sqlite::notifications::records::notification_email_allowed,
     /// Whether a queued email for this notification may still go out: the recipient is active
@@ -93,6 +98,7 @@ pub(crate) struct NotificationScopes {
     pub classic_token: bool,
     pub high_water: i64,
     pub readable: std::collections::BTreeMap<i64, bool>,
+    pub classic_token: bool,
 }
 
 impl NotificationScopes {

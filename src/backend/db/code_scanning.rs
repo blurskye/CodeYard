@@ -218,6 +218,8 @@ pub struct AlertSelection<'a> {
     pub repo: i64,
     pub number: Option<i64>,
     pub filters: &'a AlertFilters<'a>,
+    /// Only instances from this analysis category, when set.
+    pub category: Option<&'a str>,
     pub offset: i64,
     pub limit: i64,
 }

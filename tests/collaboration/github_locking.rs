@@ -164,11 +164,11 @@ async fn locking(pg: bool) {
                     "POST",
                     &format!("{path}/comments"),
                     Some(token),
-                    json!({"body":"Not allowed"})
+                    json!({"body":"Lock response"})
                 )
                 .await
                 .status(),
-                StatusCode::FORBIDDEN
+                if token == write { StatusCode::CREATED } else { StatusCode::FORBIDDEN }
             );
         }
         for method in ["PATCH", "DELETE"] {
@@ -178,16 +178,16 @@ async fn locking(pg: bool) {
                     method,
                     &comment,
                     Some(write),
-                    json!({"body":"Not allowed"})
+                    json!({"body":"Moderated while locked"})
                 )
                 .await
                 .status(),
-                StatusCode::FORBIDDEN
+                if method == "PATCH" { StatusCode::OK } else { StatusCode::NO_CONTENT }
             );
         }
         let page = format!("/alice/proj/{family}/{number}");
         let html = browser.page_ok(&page).await;
-        assert!(html.contains("This conversation is locked."));
+        assert!(html.contains(&format!("action=\"{page}/comments\"")));
         assert!(html.contains("Unlock conversation"));
         assert!(html.contains(&format!("action=\"{page}/lock\"")));
         assert!(html.contains("name=\"csrf_token\""));

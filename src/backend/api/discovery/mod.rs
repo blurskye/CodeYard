@@ -96,9 +96,13 @@ fn repository_card(
     }
 }
 
-/// The cards of a list, with the owner, topics and primary language of each repository.
+/// The cards of a list, with the owner, topics and primary language of each repository. The
+/// metadata is read after the list, so the repositories are checked against what `viewer` can
+/// read once it is loaded, and one that is no longer readable is left out with its metadata.
+/// Lists hold at most 100 repositories.
 pub(crate) async fn repository_cards(
     state: &AppState,
+    viewer: Option<i64>,
     repos: Vec<db::models::Repository>,
 ) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
@@ -125,6 +129,15 @@ pub(crate) async fn repository_cards(
             )
         })
         .collect::<HashMap<_, _>>();
+    let readable = db::repositories::access::readable_repository_ids(&state.pool, viewer, &ids)
+        .await
+        .map_err(|_| DiscoveryReadError::Unavailable)?
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    let repos = repos
+        .into_iter()
+        .filter(|repo| readable.contains(&repo.id))
+        .collect();
     card_list(repos, &owners, topics, languages, forks)
 }
 

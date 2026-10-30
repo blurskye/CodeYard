@@ -16,20 +16,29 @@ pub struct Settings {
     pub ecosystems: String,
 }
 impl Settings {
-    pub(crate) fn validate(&self) -> Result<()> {
-        let url = url::Url::parse(&self.base_url).map_err(|_| Refusal::Invalid)?;
-        anyhow::ensure!(
-            matches!(url.scheme(), "http" | "https") && url.host_str().is_some()
-                && url.username().is_empty() && url.password().is_none()
-                && url.query().is_none() && url.fragment().is_none(),
-            Refusal::Invalid
-        );
+    pub(crate) fn normalized(&self) -> std::result::Result<Self, Refusal> {
+        let url = url::Url::parse(self.base_url.trim()).map_err(|_| Refusal::Invalid)?;
+        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none()
+            || !url.username().is_empty() || url.password().is_some()
+            || url.query().is_some() || url.fragment().is_some() {
+            return Err(Refusal::Invalid);
+        }
         let ecosystems: Vec<String> = serde_json::from_str(&self.ecosystems).map_err(|_| Refusal::Invalid)?;
-        anyhow::ensure!(ecosystems.len() <= 10 && ecosystems.iter().all(|e| crate::backend::vulnerabilities::ECOSYSTEMS.contains(&e.as_str())), Refusal::Invalid);
-        Ok(())
+        let mut unique = Vec::new();
+        for ecosystem in ecosystems {
+            if !crate::backend::vulnerabilities::ECOSYSTEMS.contains(&ecosystem.as_str()) {
+                return Err(Refusal::Invalid);
+            }
+            if !unique.contains(&ecosystem) {
+                unique.push(ecosystem);
+            }
+        }
+        if unique.len() > 10 {
+            return Err(Refusal::Invalid);
+        }
+        Ok(Self { base_url: url.into(), ecosystems: serde_json::json!(unique).to_string() })
     }
 }
-
 native_operation!(super::postgres::vulnerabilities::settings,super::sqlite::vulnerabilities::settings,
     fn settings(pool:&DbPool)->Result<Settings>);
 native_operation!(super::postgres::vulnerabilities::save_settings,super::sqlite::vulnerabilities::save_settings,

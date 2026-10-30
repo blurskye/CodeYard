@@ -4,8 +4,8 @@
 //! browser can carry it but cannot read or change it.
 
 use super::{
-    admission::{self, AdmissionError},
-    passwords::{self, PasswordError},
+    admission::AdmissionError,
+    passwords::{self, CurrentPasswordError, PasswordError},
     sessions::{self, AccountAuthorityError},
 };
 use crate::backend::crypto::SecretEncryptor;
@@ -83,7 +83,7 @@ pub fn totp_code(secret: &[u8], step: u64) -> u32 {
 /// The time step a code belongs to, when it is valid one step either side of `now`.
 pub fn matching_step(secret: &[u8], code: &str, now: u64) -> Option<i64> {
     let current = (now / STEP_SECONDS) as i64;
-    (current - 1..=current + 1).find(|step| {
+    (current - 1..=current + 1).rev().find(|step| {
         format!(
             "{:0width$}",
             totp_code(secret, *step as u64),
@@ -215,24 +215,15 @@ pub fn open_pending_login(
     Some((fields[2].parse::<i64>().ok()?, fields.get(4)?.clone()))
 }
 
-/// Every change to the second factor needs the current password, and a wrong one counts against
-/// the same account budget as a wrong sign-in password.
-async fn verify_current_password(
-    pool: &DbPool,
-    user: &User,
-    password: &str,
-) -> Result<(), TwoFactorError> {
-    let attempt = admission::admit_login(pool, None, Some(user.id), &user.username)
-        .await
-        .map_err(TwoFactorError::Admission)?;
-    let verified = passwords::verify_password(password, user.password_hash.as_deref())
-        .await
-        .map_err(TwoFactorError::Password)?;
-    if !verified.valid {
-        return Err(TwoFactorError::InvalidPassword);
+/// Every change to the second factor needs the current password.
+impl From<CurrentPasswordError> for TwoFactorError {
+    fn from(error: CurrentPasswordError) -> Self {
+        match error {
+            CurrentPasswordError::Admission(error) => Self::Admission(error),
+            CurrentPasswordError::Password(error) => Self::Password(error),
+            CurrentPasswordError::Invalid => Self::InvalidPassword,
+        }
     }
-    admission::forgive_login(pool, &attempt).await;
-    Ok(())
 }
 
 fn otpauth_uri(username: &str, secret: &str) -> String {
@@ -253,7 +244,7 @@ pub async fn begin_setup(
     if user.password_hash.is_none() {
         return Err(TwoFactorError::PasswordRequired);
     }
-    verify_current_password(pool, user, password).await?;
+    passwords::verify_current_password(pool, user, password).await?;
     if db::users::two_factor::get_two_factor(pool, user.id)
         .await
         .map_err(|_| TwoFactorError::Unavailable)?
@@ -321,7 +312,7 @@ pub async fn confirm_setup(
     if user.password_hash.is_none() {
         return Err(TwoFactorError::PasswordRequired);
     }
-    verify_current_password(pool, user, password).await?;
+    passwords::verify_current_password(pool, user, password).await?;
     let now = now_unix();
     let setup = open_setup(encryptor, user, session, token, now)?;
     let secret = BASE32_NOPAD
@@ -381,7 +372,7 @@ pub async fn regenerate_recovery_codes(
     session: &str,
     password: &str,
 ) -> Result<Vec<String>, TwoFactorError> {
-    verify_current_password(pool, user, password).await?;
+    passwords::verify_current_password(pool, user, password).await?;
     let codes = new_recovery_codes();
     let hashes: Vec<String> = codes.iter().map(|code| recovery_code_hash(code)).collect();
     if !db::users::two_factor::replace_recovery_codes(
@@ -405,7 +396,7 @@ pub async fn disable(
     session: &str,
     password: &str,
 ) -> Result<(), TwoFactorError> {
-    verify_current_password(pool, user, password).await?;
+    passwords::verify_current_password(pool, user, password).await?;
     turn_off(pool, user.id, password_authority(user, session)?).await
 }
 

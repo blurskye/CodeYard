@@ -130,15 +130,44 @@ async fn may_manage_hooks(
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     write: bool,
 ) -> Result<bool> {
-    let allowed = match owner {
+    Ok(account_manages_hooks(tx, owner, actor_id).await?
+        && super::users::transitions::credential_live(tx, actor_id, credential, write).await?)
+}
+
+/// The account half of `may_manage_hooks`, for a queued send that kept only its actor.
+async fn account_manages_hooks(tx: &mut Transaction<'_, Postgres>, owner: HookOwner, actor_id: i64) -> Result<bool> {
+    Ok(match owner {
         // Hooks stay manageable on archived repositories, like other settings.
         HookOwner::Repository(repo_id) => lock_policy_authority(tx, actor_id, repo_id, false).await?,
         HookOwner::Organization(org) => matches!(
             authority(tx, actor_id, org).await?,
             OrganizationOutcome::Applied(OrgRole::Owner)
         ),
-    };
-    Ok(allowed && super::users::transitions::credential_live(tx, actor_id, credential, write).await?)
+    })
+}
+
+pub async fn managed_webhook(pool: &PgPool, owner: HookOwner, actor: i64, id: i64) -> Result<Option<Webhook>> {
+    let mut tx = pool.begin().await?;
+    if !account_manages_hooks(&mut tx, owner, actor).await? { return Ok(None); }
+    let hook = get_webhook(&mut *tx, owner, id).await?;
+    tx.commit().await?;
+    Ok(hook)
+}
+
+pub async fn latest_push_for_hook(
+    pool: &PgPool,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    repo: i64,
+    hook: i64,
+    max_bytes: i64,
+) -> Result<Option<String>> {
+    let mut tx = pool.begin().await?;
+    anyhow::ensure!(may_manage_hooks(&mut tx, HookOwner::Repository(repo), actor, credential, false).await?, crate::backend::db::webhooks::HookAuthorityDenied);
+    let payload: Option<String> = sqlx::query_scalar::<_, Option<String>>("SELECT CASE WHEN octet_length(payload::text)<=$3 THEN payload::text END FROM events WHERE repo_id=$1 AND kind='PushEvent' AND EXISTS(SELECT 1 FROM webhooks WHERE id=$2 AND repo_id=$1) ORDER BY id DESC LIMIT 1")
+        .bind(repo).bind(hook).bind(max_bytes).fetch_optional(&mut *tx).await?.flatten();
+    tx.commit().await?;
+    Ok(payload)
 }
 
 /// Inserts a hook. `None` means the actor may not manage the owner's hooks.
@@ -154,6 +183,12 @@ pub async fn insert_webhook(
     if !may_manage_hooks(&mut tx, owner, actor_id, credential, true).await? {
         return Ok(None);
     }
+    // Serialize only hook creation for this owner; authorization's shared locks stay held.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(format!("webhooks:{}:{}", owner.column(), owner.id())).execute(&mut *tx).await?;
+    let hooks = list_webhooks(&mut *tx, owner).await?;
+    anyhow::ensure!(hooks.len() < crate::backend::db::webhooks::MAX_HOOKS_PER_OWNER, crate::backend::db::webhooks::HookLimit);
+    crate::backend::db::webhooks::ensure_distinct(&hooks, None, &fields.payload_url, &fields.content_type, fields.ssl_verify, &fields.events)?;
     let sql = format!(
         "INSERT INTO webhooks ({}, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, username, encrypted_password, password_nonce) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
         owner.column()
@@ -213,10 +248,16 @@ pub async fn patch_webhook(
     if !may_manage_hooks(&mut tx, owner, actor_id, credential, true).await? {
         return Ok(None);
     }
+    // The same lock as hook creation, so two writes cannot both pass the duplicate check.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(format!("webhooks:{}:{}", owner.column(), owner.id())).execute(&mut *tx).await?;
     let current: Option<String> = sqlx::query_scalar(&format!("SELECT events FROM webhooks WHERE id=$1 AND {}=$2 FOR UPDATE", owner.column()))
         .bind(id).bind(owner.id()).fetch_optional(&mut *tx).await?;
     let Some(current) = current else { return Ok(Some(false)); };
     let events = fields.changed_events(&current)?;
+    if !fields.check_distinct(&list_webhooks(&mut *tx, owner).await?, id, events.as_deref())? {
+        return Ok(Some(false));
+    }
     let sql = format!(
         "UPDATE webhooks SET payload_url = COALESCE($3,payload_url), content_type = COALESCE($4,content_type), events = COALESCE($5,events), active = COALESCE($6,active), ssl_verify = COALESCE($7,ssl_verify), \
          encrypted_secret = CASE WHEN $10 THEN NULL ELSE COALESCE($8,encrypted_secret) END, secret_nonce = CASE WHEN $10 THEN NULL ELSE COALESCE($9,secret_nonce) END, \

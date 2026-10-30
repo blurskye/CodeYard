@@ -245,6 +245,7 @@ async fn save_secret(
         &state.pool,
         Some(encryptor),
         auth.user.id,
+        &db::users::accounts::AccountCredential::Token(auth.token.id),
         org,
         &Save {
             kind: Kind::Secret,
@@ -283,6 +284,7 @@ async fn create_variable(
         &state.pool,
         None,
         auth.user.id,
+        &db::users::accounts::AccountCredential::Token(auth.token.id),
         org,
         &Save {
             kind: Kind::Variable,
@@ -329,6 +331,7 @@ async fn update_variable(
         &state.pool,
         None,
         auth.user.id,
+        &db::users::accounts::AccountCredential::Token(auth.token.id),
         org,
         &Save {
             kind: Kind::Variable,
@@ -353,6 +356,7 @@ async fn remove(
     values::delete(
         &state.pool,
         auth.user.id,
+        &db::users::accounts::AccountCredential::Token(auth.token.id),
         org,
         kind(&route),
         &name(&params)?,
@@ -396,6 +400,7 @@ async fn set_repositories(
     values::select(
         &state.pool,
         auth.user.id,
+        &db::users::accounts::AccountCredential::Token(auth.token.id),
         org,
         kind(&route),
         &name(&params)?,
@@ -419,6 +424,7 @@ async fn select_repository(
     values::select(
         &state.pool,
         auth.user.id,
+        &db::users::accounts::AccountCredential::Token(auth.token.id),
         org,
         kind,
         &name(params)?,

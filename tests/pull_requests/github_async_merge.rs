@@ -229,6 +229,16 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(again["status"], "merged");
+    // A request left pending after its merge was recorded is reported as that merge on recovery.
+    let completed = uuid::Uuid::new_v4().to_string();
+    assert!(db::pull_requests::async_merge::insert(f.pool(),db::pull_requests::async_merge::NewAsyncMerge{uuid:&completed,repo_id:repo.id,pull_request_id:id,token_id:write.token.id,worker_node_id:None,owner:"alice",name:"proj",number:number as i32,request:&json!({"expected_head":head,"expected_base":base,"expected_base_branch":"main"}),details:&details}).await.unwrap());
+    assert_eq!(async_merge::recover(f.pool(), None).await.unwrap(), 1);
+    let settled = db::pull_requests::async_merge::get(f.pool(), repo.id, id, &completed)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(settled.status, "merged");
+    assert_eq!(settled.details["sha"], result["details"]["sha"]);
     f.execute(
         "UPDATE pull_request_async_merges SET expires_at='2000-01-01T00:00:00.000000Z'",
         &[],
@@ -248,7 +258,7 @@ async fn contract(pg: bool) {
         db::pull_requests::async_merge::prune(f.pool())
             .await
             .unwrap(),
-        2
+        3
     );
     f.finish().await;
 }

@@ -146,7 +146,8 @@ impl ReceiveCredential {
             !(repo.is_gist && write && matches!(self, Self::DeployKey(_))),
             CredentialRefusal::Denied
         );
-        let identity = match self {
+        // A token's App or fine-grained bounds, loaded once for both checks below.
+        let (identity, bounds) = match self {
             Self::SshKey(id) => {
                 anyhow::ensure!(id > 0, CredentialRefusal::Credential);
                 let identity = db::users::ssh_keys::get_user_by_ssh_key_id(pool, id)
@@ -163,7 +164,7 @@ impl ReceiveCredential {
                         == identity.key.fingerprint,
                     CredentialRefusal::Credential
                 );
-                identity.user
+                (identity.user, None)
             }
             Self::DeployKey(id) => {
                 let admitted = deploy_keys::authorize(pool, id, repo, write).await?;
@@ -171,14 +172,23 @@ impl ReceiveCredential {
                 return Ok(admitted);
             }
             Self::Token(id) => {
+                let public_read = !write && !repo.is_private && db::node_config::get_node_configuration(pool).await?
+                    .is_some_and(|config| config.setup_completed && !config.is_private());
+                let bounds = crate::backend::identity::github_apps::authority(pool, id).await?;
                 anyhow::ensure!(
-                    crate::backend::identity::oauth_apps::allows_git(pool, id, repo.is_gist)
-                        .await?,
+                    crate::backend::identity::oauth_apps::allows_git(
+                        pool,
+                        id,
+                        bounds.as_ref(),
+                        repo.is_gist,
+                        public_read
+                    )
+                    .await?,
                     CredentialRefusal::TokenScope
                 );
                 let user = db::users::tokens::token_user(pool, id, false).await?
                     .ok_or(CredentialRefusal::Credential)?;
-                user
+                (user, bounds)
             }
         };
         anyhow::ensure!(
@@ -186,8 +196,7 @@ impl ReceiveCredential {
             CredentialRefusal::Denied
         );
         if let Self::Token(id) = self {
-            if let Some(bounds) = crate::backend::identity::github_apps::authority(pool, id).await?
-            {
+            if let Some(bounds) = bounds {
                 let granted = bounds.repository(pool, identity.id, repo.id).await?;
                 if !granted.as_ref().is_some_and(|granted| crate::backend::identity::github_apps::allows(granted, "contents", write)) {
                     if bounds.personal().is_some() && (granted.is_none() || !db::repositories::access::git_access(pool, identity.id, repo.id, false).await?.can_read()) {

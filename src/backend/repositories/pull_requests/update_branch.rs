@@ -100,7 +100,8 @@ pub async fn update_branch(
         .await
         .map_err(storage)?
         .sha;
-    let sha = target
+    let head_ref = format!("refs/heads/{}", pull.head_branch);
+    let updated = target
         .update_pull_branch_as(
             pool,
             head.id,
@@ -117,11 +118,48 @@ pub async fn update_branch(
                 token,
             },
         )
-        .await
-        .map_err(storage)?;
+        .await;
+    // When only the repository metadata failed, the branch already moved: the pull request
+    // and its workflows still follow the published tip, and the failure is reported after.
+    let (sha, followup_failed) = match updated {
+        Ok(sha) => (Some(sha), false),
+        Err(error) if error.is_applied_followup_failed() => (
+            target
+                .commit_from_primary(&head_ref)
+                .await
+                .ok()
+                .map(|commit| commit.sha),
+            true,
+        ),
+        Err(error) => return Err(storage(error)),
+    };
+    // A head writer's own update is published with their authority; the wider refresh follows.
+    if let Err(error) =
+        super::branches::refresh_updated_head(pool, &base, &head, ci, actor.id, pull.id).await
+    {
+        tracing::warn!(pull_request_id = pull.id, %error, "could not refresh the updated pull request");
+    }
     super::branches_moved(pool, &base, ci, actor.id).await;
     if head.id != base.id {
         super::branches_moved(pool, &head, ci, actor.id).await;
+    }
+    let finish = |sha: String| {
+        if followup_failed {
+            Err(OperationError::Unavailable {
+                code: "update_followup_failed",
+                message: "The head branch was updated, but repository metadata could not be saved."
+                    .into(),
+            })
+        } else {
+            Ok(sha)
+        }
+    };
+    let Some(sha) = sha else {
+        return finish(String::new());
+    };
+    // Keep metadata repair above, but an unchanged ref is not a push event.
+    if sha.eq_ignore_ascii_case(&head_sha) {
+        return finish(sha);
     }
     // The head moved, so its push workflows run as they do after any other push.
     let head_owner = db::repositories::records::repository_owner_name(pool, head.id)
@@ -133,12 +171,12 @@ pub async fn update_branch(
         &head_owner,
         actor.id,
         RefUpdate {
-            reference: format!("refs/heads/{}", pull.head_branch),
+            reference: head_ref,
             old: Some(head_sha),
             new: sha.clone(),
             changed_paths: None,
         },
     )
     .await;
-    Ok(sha)
+    finish(sha)
 }

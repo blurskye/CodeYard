@@ -28,21 +28,16 @@ pub(super) async fn build(
     actor: i64,
     org: i64,
 ) -> Result<view::Panel, ValueError> {
-    // One page of values keeps the settings page small even with large variables.
-    const PAGE: usize = 30;
     let page = ctx
         .query
         .get("values_page")
         .and_then(|page| page.parse::<usize>().ok())
         .filter(|page| (1..=1000).contains(page))
         .unwrap_or(1);
-    let mut rows = Vec::new();
-    for kind in [Kind::Secret, Kind::Variable] {
-        for row in values::list(&ctx.state.pool, actor, org, kind).await? {
-            rows.push((kind, row));
-        }
-    }
-    let more = rows.len() > page * PAGE;
+    let listed = values::settings_page(
+        &ctx.state.pool, actor, ctx.session_id.as_deref().ok_or(ValueError::Denied)?, org, page as i64,
+    ).await?;
+    let more = listed.more;
     let link = |page: usize| {
         let mut query: Vec<(String, String)> = ctx
             .query
@@ -53,35 +48,21 @@ pub(super) async fn build(
         query.push(("values_page".into(), page.to_string()));
         query.sort();
         format!(
-            "{}?{}",
-            ctx.path,
+            "/settings/organizations/{org}?{}",
             url::form_urlencoded::Serializer::new(String::new())
                 .extend_pairs(query)
                 .finish()
         )
     };
     let mut items = Vec::new();
-    for (kind, row) in rows.into_iter().skip((page - 1) * PAGE).take(PAGE) {
-        let repositories = if row.visibility == "selected" {
-            let mut ids = Vec::new();
-            let mut offset = 0;
-            loop {
-                let (_, rows) = values::repositories(&ctx.state.pool, actor, org, kind, &row.name, offset, 100).await?;
-                let count = rows.len();
-                ids.extend(rows.into_iter().map(|repo| repo.repository.id.to_string()));
-                if count < 100 { break; }
-                offset += 100;
-            }
-            ids.join(", ")
-        } else {
-            String::new()
-        };
+    for entry in listed.values {
+        let row = entry.value;
         items.push(view::Value {
             name: row.name,
             value: row.value,
-            secret: kind == Kind::Secret,
+            secret: row.kind == Kind::Secret.as_str(),
             visibility: row.visibility,
-            repositories,
+            repositories: entry.repository_ids,
         });
     }
     let oidc = db::oidc::settings(&ctx.state.pool, actor, db::oidc::Scope::Organization(org))
@@ -118,6 +99,25 @@ fn repositories(form: &HashMap<String, String>) -> Result<Option<Vec<i64>>, Valu
         .collect::<Result<Vec<_>, _>>()
         .map(Some)
 }
+/// The rejected variable form, so its input comes back. Secret forms are never drafted.
+fn variable_draft(action: &str, form: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut draft: HashMap<String, String> = [
+        ("name", 1024),
+        ("previous", 1024),
+        ("value", 49_152),
+        ("visibility", 32),
+        ("repositories", 8192),
+    ]
+    .into_iter()
+    .filter_map(|(key, limit)| {
+        form.get(key)
+            .filter(|value| value.len() <= limit)
+            .map(|value| (key.to_owned(), value.clone()))
+    })
+    .collect();
+    draft.insert("action".to_owned(), action.to_owned());
+    draft
+}
 async fn change(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -143,6 +143,7 @@ async fn change(
             "Organization does not match this form.",
         );
     }
+    let credential = db::users::accounts::AccountCredential::Session(ctx.session_id.as_deref().unwrap_or(""));
     if action.starts_with("oidc-") {
         let result = match action.as_str() {
             "oidc-save" => {
@@ -154,6 +155,7 @@ async fn change(
                 db::oidc::save_settings(
                     &ctx.state.pool,
                     actor,
+                    &credential,
                     db::oidc::Scope::Organization(org),
                     &settings,
                 )
@@ -163,6 +165,7 @@ async fn change(
                 db::oidc::change_inclusion(
                     &ctx.state.pool,
                     actor,
+                    &credential,
                     org,
                     field(&form, "custom_property_name"),
                     action == "oidc-property-delete",
@@ -215,7 +218,7 @@ async fn change(
         Some(crate::backend::repositories::files::native_text(field(&form, "value").to_owned(), &original))
     };
     let result = if action.ends_with("-delete") {
-        values::delete(&ctx.state.pool, actor, org, kind, &name).await
+        values::delete(&ctx.state.pool, actor, &credential, org, kind, &name).await
     } else {
         match repositories(&form) {
             Err(error) => Err(error),
@@ -223,6 +226,7 @@ async fn change(
                 &ctx.state.pool,
                 ctx.state.secret_encryptor.as_deref(),
                 actor,
+                &credential,
                 org,
                 &Save {
                     kind,
@@ -249,7 +253,12 @@ async fn change(
                 _ => (StatusCode::UNPROCESSABLE_ENTITY, error.to_string()),
             };
             // Never echo a secret into a refusal page or hydration payload.
-            organization::respond(&ctx, Some(org), status, Some(message), Default::default()).await
+            let draft = if matches!(action.as_str(), "variable-create" | "variable-save") {
+                variable_draft(&action, &form)
+            } else {
+                HashMap::new()
+            };
+            organization::respond(&ctx, Some(org), status, Some(message), draft).await
         }
     }
 }

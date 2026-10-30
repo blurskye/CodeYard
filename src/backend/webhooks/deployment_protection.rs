@@ -31,6 +31,25 @@ pub async fn requested(pool: &DbPool, run: &CiRun) -> anyhow::Result<()> {
     } else {
         Value::Null
     };
+    // The run's pull request, when it belongs to this repository. A fork's head repository is
+    // left out of the document, as in every pull request payload.
+    let mut pull_requests = Vec::new();
+    if let Some(id) = run.pull_request_id {
+        if let Some(pull) = db::pull_requests::records::get_pull_request_by_id(pool, id)
+            .await?
+            .filter(|pull| pull.repo_id == repo.id)
+        {
+            let author = db::users::accounts::get_user_by_id(pool, pull.author_id)
+                .await?
+                .map(|user| payloads::Person::of(&user))
+                .unwrap_or(payloads::Person {
+                    login: String::new(),
+                    id: pull.author_id,
+                    site_admin: false,
+                });
+            pull_requests.push(payloads::pull_request_json(&pull, &author, &repo, &owner));
+        }
+    }
     let base = repo_url(&owner, &repo.name);
     let callback = format!(
         "{base}/actions/runs/{}/deployment_protection_rule",
@@ -54,7 +73,7 @@ pub async fn requested(pool: &DbPool, run: &CiRun) -> anyhow::Result<()> {
             "action":"requested", "environment":deployment.environment, "event":run.event,
             "deployment_callback_url":callback, "run_id":run.id,
             "deployment":null, "sha":run.head_sha, "ref":run.branch,
-            "pull_requests":[], "repository":payloads::repository(&repo,&owner), "sender":sender,
+            "pull_requests":pull_requests, "repository":payloads::repository(&repo,&owner), "sender":sender,
             "installation":{"id":subscription.installation_id}
         });
         let outgoing = outgoing(

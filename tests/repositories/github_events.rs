@@ -154,7 +154,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::following::follow_user(f.pool(), bob_id, alice_id)
+    db::following::follow_user(f.pool(), bob_id, alice_id, &db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap();
     let org = db::organizations::profiles::create_organization(

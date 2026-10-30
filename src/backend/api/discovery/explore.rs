@@ -112,7 +112,7 @@ pub(super) async fn explore_page(
     };
     let has_older = repos.len() > EXPLORE_PAGE_SIZE;
     repos.truncate(EXPLORE_PAGE_SIZE);
-    let repositories = match repository_cards(&ctx.state, repos).await {
+    let repositories = match repository_cards(&ctx.state, ctx.user.as_ref().map(|user| user.id), repos).await {
         Ok(cards) => cards,
         Err(_) => return unavailable(&ctx, "explore_owners"),
     };

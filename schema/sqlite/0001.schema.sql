@@ -112,7 +112,8 @@ CREATE TABLE oauth_accounts (
 );
 
 CREATE TABLE sessions (
-    id TEXT NOT NULL PRIMARY KEY CHECK (length(id)<=64),
+    ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE CHECK (length(id)<=64),
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (user_id IS NULL OR typeof(user_id)='integer'),
     user_agent TEXT,
     ip_address TEXT,
@@ -166,6 +167,12 @@ CREATE TABLE ssh_keys (
     last_used_at TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     CONSTRAINT ssh_keys_fingerprint_unique UNIQUE (fingerprint)
+);
+
+-- Successful signed-byte verifications survive enrollment/key deletion. No signed content is stored.
+CREATE TABLE signature_verifications (
+    input_hash TEXT PRIMARY KEY NOT NULL CHECK (length(input_hash) = 64),
+    verified_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 
 CREATE TABLE gpg_keys (
@@ -716,8 +723,16 @@ CREATE TABLE upload_rate_limit (
     file_size INTEGER NOT NULL CHECK (file_size IS NULL OR typeof(file_size)='integer'),
     reason TEXT CHECK (length(reason)<=50),
     ip_address TEXT,
+    confirmed_at TEXT,
     uploaded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
+
+CREATE INDEX idx_upload_rate_limit_confirmed ON upload_rate_limit(confirmed_at) WHERE confirmed_at IS NOT NULL;
+CREATE TRIGGER record_upload_confirmation AFTER UPDATE OF confirmed_at ON files
+WHEN OLD.confirmed_at IS NULL AND NEW.confirmed_at IS NOT NULL
+BEGIN
+    UPDATE upload_rate_limit SET confirmed_at=NEW.confirmed_at WHERE file_id=NEW.id AND confirmed_at IS NULL;
+END;
 
 CREATE TABLE download_rate_limit (
     id BLOB NOT NULL PRIMARY KEY DEFAULT (randomblob(16)) CHECK (id IS NULL OR (typeof(id)='blob' AND length(id)=16)),
@@ -923,6 +938,7 @@ ON signup_requests (status, created_at DESC, id DESC);
 CREATE INDEX idx_oauth_accounts_user_id ON oauth_accounts(user_id);
 
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX idx_sessions_user_ordinal ON sessions(user_id,ordinal DESC);
 
 CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
 
@@ -980,7 +996,7 @@ CREATE INDEX idx_issues_milestone_id ON issues(milestone_id);
 
 CREATE INDEX idx_issue_comments_issue_id ON issue_comments(issue_id);
 
-CREATE INDEX idx_issue_comments_author_id ON issue_comments(author_id);
+CREATE INDEX idx_issue_comments_author_id ON issue_comments(author_id, created_at);
 
 CREATE INDEX idx_issue_comments_created_at ON issue_comments(created_at);
 
@@ -999,7 +1015,7 @@ CREATE INDEX idx_pull_requests_milestone_id ON pull_requests(milestone_id);
 
 CREATE INDEX idx_pr_comments_pr_id ON pr_comments(pull_request_id);
 
-CREATE INDEX idx_pr_comments_author_id ON pr_comments(author_id);
+CREATE INDEX idx_pr_comments_author_id ON pr_comments(author_id, created_at);
 
 CREATE INDEX idx_pr_comments_created_at ON pr_comments(created_at);
 
@@ -1648,6 +1664,7 @@ CREATE TABLE notification_threads (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     UNIQUE(user_id,scope_repository_id,subject_type,subject_key)
 );
+CREATE INDEX notification_threads_subject ON notification_threads(scope_repository_id,subject_type,subject_key,user_id);
 
 CREATE TABLE notification_thread_subscriptions (
     thread_id INTEGER PRIMARY KEY REFERENCES notification_threads(id) ON DELETE CASCADE,
@@ -2797,6 +2814,8 @@ CREATE TABLE code_security_configurations (
     UNIQUE(org_id,name)
 );
 
+CREATE INDEX code_security_configurations_page ON code_security_configurations(org_id,id DESC);
+
 CREATE TABLE repository_security_settings (
     repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
     configuration_id BIGINT REFERENCES code_security_configurations(id) ON DELETE SET NULL,
@@ -2973,7 +2992,9 @@ CREATE TABLE project_items (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     archived BOOLEAN NOT NULL DEFAULT false,
+    archived_at TEXT,
     position INTEGER NOT NULL DEFAULT 0,
+    CHECK (archived = (archived_at IS NOT NULL)),
     CHECK ((issue_id IS NOT NULL AND pull_request_id IS NULL AND draft_title IS NULL AND repo_id IS NOT NULL)
         OR (pull_request_id IS NOT NULL AND issue_id IS NULL AND draft_title IS NULL AND repo_id IS NOT NULL)
         OR (draft_title IS NOT NULL AND issue_id IS NULL AND pull_request_id IS NULL AND repo_id IS NULL)),
@@ -3761,10 +3782,12 @@ CREATE TABLE branch_redirects (
 CREATE TABLE pull_request_auto_merges (
     pull_request_id INTEGER PRIMARY KEY REFERENCES pull_requests(id) ON DELETE CASCADE,
     enabled_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_id INTEGER REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
     merge_method TEXT NOT NULL CHECK(merge_method IN ('merge','squash','rebase')),
     commit_title TEXT,
     commit_message TEXT,
     author_email TEXT,
+    generation TEXT NOT NULL DEFAULT(lower(hex(randomblob(16)))),
     enabled_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 
@@ -3781,13 +3804,11 @@ CREATE TABLE actions_job_concurrency (
 CREATE INDEX actions_job_concurrency_group ON actions_job_concurrency(repo_id, name_key);
 
 -- Reverse references and ordered collection lookups.
-CREATE INDEX notification_threads_subject ON notification_threads(scope_repository_id,subject_type,subject_key,user_id);
 CREATE INDEX actions_blob_grants_object ON actions_blob_grants(object_id);
 CREATE INDEX actions_blob_grants_run ON actions_blob_grants(run_id);
 CREATE INDEX actions_artifacts_repository ON actions_objects(repo_id,kind,finalized,created_at,id);
 CREATE INDEX package_blob_grants_digest ON package_blob_grants(digest);
 CREATE INDEX package_blob_grants_expiry ON package_blob_grants(expires_at);
-CREATE INDEX vulnerability_jobs_due ON vulnerability_jobs(next_scan,repo_id);
 CREATE INDEX global_advisories_osv ON global_advisories(osv_id);
 CREATE INDEX project_items_issue ON project_items(issue_id,project_id);
 CREATE INDEX project_items_pull ON project_items(pull_request_id,project_id);
@@ -3809,3 +3830,84 @@ CREATE INDEX package_blobs_expiry ON package_blobs(expires_at);
 CREATE INDEX package_blobs_deleting ON package_blobs(digest) WHERE deleting;
 CREATE INDEX package_registry_tokens_expiry ON package_registry_tokens(expires_at);
 CREATE INDEX package_uploads_expiry ON package_uploads(expires_at);
+
+-- A publication retains a write transaction after checking the evaluated policy revision.
+CREATE TABLE repository_merge_epochs (
+    repo_id INTEGER PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL DEFAULT 0 CHECK(version>=0)
+);
+CREATE TRIGGER merge_policy_repository AFTER UPDATE OF is_archived,is_private,allow_merge_commit,allow_squash_merge,allow_rebase_merge,owner_kind,owner_user_id,owner_org_id,storage_node_id,default_branch ON repositories BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_rules_insert AFTER INSERT ON branch_protection_rules BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_rules_update AFTER UPDATE ON branch_protection_rules BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (OLD.repo_id,NEW.repo_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_rules_delete AFTER DELETE ON branch_protection_rules BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=OLD.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_pulls_insert AFTER INSERT ON pull_requests BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_pulls_update AFTER UPDATE ON pull_requests BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (OLD.repo_id,NEW.repo_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_pulls_delete AFTER DELETE ON pull_requests BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=OLD.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_reviews_insert AFTER INSERT ON pr_reviews BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=(SELECT repo_id FROM pull_requests WHERE id=NEW.pull_request_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_reviews_update AFTER UPDATE ON pr_reviews BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (SELECT repo_id FROM pull_requests WHERE id IN (OLD.pull_request_id,NEW.pull_request_id)) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_reviews_delete AFTER DELETE ON pr_reviews BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=(SELECT repo_id FROM pull_requests WHERE id=OLD.pull_request_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_threads_insert AFTER INSERT ON pr_comments BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=(SELECT repo_id FROM pull_requests WHERE id=NEW.pull_request_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_threads_update AFTER UPDATE ON pr_comments BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (SELECT repo_id FROM pull_requests WHERE id IN (OLD.pull_request_id,NEW.pull_request_id)) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_threads_delete AFTER DELETE ON pr_comments BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=(SELECT repo_id FROM pull_requests WHERE id=OLD.pull_request_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_statuses_insert AFTER INSERT ON commit_statuses BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_statuses_update AFTER UPDATE ON commit_statuses BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (OLD.repo_id,NEW.repo_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_statuses_delete AFTER DELETE ON commit_statuses BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=OLD.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_checks_insert AFTER INSERT ON check_runs BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_checks_update AFTER UPDATE ON check_runs BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (OLD.repo_id,NEW.repo_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_checks_delete AFTER DELETE ON check_runs BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=OLD.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_suites_insert AFTER INSERT ON check_suites BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_suites_update AFTER UPDATE ON check_suites BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (OLD.repo_id,NEW.repo_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_suites_delete AFTER DELETE ON check_suites BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=OLD.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_ci_insert AFTER INSERT ON ci_runs BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=NEW.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_ci_update AFTER UPDATE OF repo_id,head_sha,workflow_path,status,attempt,created_at ON ci_runs BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id IN (OLD.repo_id,NEW.repo_id) ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER merge_policy_ci_delete AFTER DELETE ON ci_runs BEGIN
+    INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=OLD.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
+END;

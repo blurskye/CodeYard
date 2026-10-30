@@ -374,6 +374,7 @@ fn oauth_only_accounts_have_no_password_mutation_form() {
                 emails: vec![],
                 tokens: vec![],
                 sessions: vec![],
+                session_pagination: Default::default(),
                 new_token: None,
                 password_supported: false,
                 email_notifications: true,
@@ -468,6 +469,7 @@ fn the_code_step_takes_the_address_code_and_new_password_in_one_form() {
     let page = html(reset_code_page(
         "code-csrf",
         "kate@example.test",
+        "/",
         Some("Check your inbox."),
         false,
     ));

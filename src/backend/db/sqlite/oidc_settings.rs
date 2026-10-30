@@ -28,6 +28,14 @@ async fn authorize(tx: &mut Transaction<'_, Sqlite>, actor: impl Into<crate::bac
     Ok(())
 }
 
+/// `authorize`, then the actor's original credential must still be live for writing.
+async fn authorize_write(tx: &mut Transaction<'_, Sqlite>, actor: impl Into<crate::backend::db::credentials::Actor>, scope: Scope) -> Result<()> {
+    let actor = actor.into();
+    authorize(tx, actor.clone(), scope).await?;
+    ensure!(super::credentials::live(tx, &actor, true).await?, Refusal::Denied);
+    Ok(())
+}
+
 async fn read_on(tx: &mut Transaction<'_, Sqlite>, scope: Scope) -> Result<Settings> {
     let (table, column, id) = scope.storage();
     let row: Option<(bool, Option<String>)> = sqlx::query_as(&format!(
@@ -54,7 +62,7 @@ pub async fn get(pool: &SqlitePool, actor: i64, scope: Scope) -> Result<Settings
 pub async fn save(pool: &SqlitePool, actor: impl Into<crate::backend::db::credentials::Actor>, scope: Scope, settings: &Settings) -> Result<()> {
     settings.validate()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, scope).await?;
+    authorize_write(&mut tx, actor, scope).await?;
     let (table, column, id) = scope.storage();
     let keys = if settings.use_default {
         None
@@ -94,7 +102,7 @@ pub async fn change_inclusion(
     remove: bool,
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, Scope::Organization(org)).await?;
+    authorize_write(&mut tx, actor, Scope::Organization(org)).await?;
     let id: Option<i64> = sqlx::query_scalar(crate::backend::db::oidc::INCLUSION_PROPERTY_SQL)
         .bind(org).bind(name).bind(remove).fetch_optional(&mut *tx).await?;
     let id = id.ok_or(if remove {

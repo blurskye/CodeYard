@@ -98,9 +98,10 @@ async fn model(
     let actor = ctx.user.as_ref().ok_or(db::code_scanning::Refusal::Denied)?;
     let session = crate::backend::api::http::session::extract_session_id(&ctx.headers)
         .ok_or(db::code_scanning::Refusal::Denied)?;
+    let category = ctx.query.get("category").map(String::as_str);
     let snapshot = db::code_scanning::read_alert_snapshot(&ctx.state.pool, actor.id, &session,
         &db::code_scanning::AlertSelection {
-            repo: loaded.repository.id, number, filters: &filters,
+            repo: loaded.repository.id, number, filters: &filters, category,
             offset: offset as i64, limit: (limit+1) as i64,
         },
     ).await?;

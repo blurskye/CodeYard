@@ -23,10 +23,35 @@ pub fn gist(gist: &Gist, owner: &User, files: Value) -> Value {
     );
     json!({"id":gist.id,"node_id":node_id::git("GIST",&gist.id),"url":url,"forks_url":format!("{url}/forks"),"commits_url":format!("{url}/commits"),"comments_url":format!("{url}/comments"),"html_url":format!("{}/gists/{}",link_origin(),gist.id),"git_pull_url":git,"git_push_url":git,"files":files,"public":gist.is_public,"description":gist.description,"comments":gist.comments,"comments_enabled":true,"owner":user(owner),"user":null,"created_at":time(gist.created_at),"updated_at":time(gist.updated_at),"truncated":false})
 }
+/// The MIME type a gist file's metadata names. Raw responses send the downgraded
+/// `raw_content_type` instead, so that no file runs as script or markup on this origin.
+fn file_type(path: &str, binary: bool) -> &'static str {
+    let extension = std::path::Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        _ if binary => crate::backend::api::repos::code::raw::raw_content_type(path, binary),
+        "rb" => "application/x-ruby",
+        "py" => "application/x-python",
+        "js" | "mjs" => "application/javascript",
+        "json" => "application/json",
+        "sh" => "application/x-sh",
+        "xml" => "application/xml",
+        "svg" => "image/svg+xml",
+        "html" | "htm" => "text/html",
+        "css" => "text/css",
+        "csv" => "text/csv",
+        "md" | "markdown" => "text/markdown",
+        _ => crate::backend::api::repos::code::raw::raw_content_type(path, binary),
+    }
+}
+
 pub fn gist_file(id: &str, sha: &str, entry: &TreeObjectEntry, content: Option<&[u8]>) -> Value {
     let binary =
         content.is_some_and(|bytes| bytes.contains(&0) || std::str::from_utf8(bytes).is_err());
-    let mime = crate::backend::api::repos::code::raw::raw_content_type(&entry.path, binary)
+    let mime = file_type(&entry.path, binary)
         .split(';')
         .next()
         .unwrap_or("application/octet-stream");

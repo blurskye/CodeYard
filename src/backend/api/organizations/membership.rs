@@ -41,8 +41,11 @@ pub(super) async fn project_invitations(
     ctx: &PageContext,
     invitations: Vec<db::models::OrgInvitation>,
 ) -> Result<Vec<view::PendingInvitation>, Response> {
+    // An email-addressed invitation is accepted by whoever currently owns the address, so
+    // the account resolved when it was sent is not its recipient.
     let identities = invitations
         .iter()
+        .filter(|invite| invite.email.is_none())
         .filter_map(|invite| invite.user_id.map(|user| (user, invite.role.clone())))
         .collect();
     let users: HashMap<_, _> = project(ctx, identities)
@@ -53,11 +56,13 @@ pub(super) async fn project_invitations(
     invitations
         .into_iter()
         .map(|invite| {
-            let username = invite
-                .user_id
-                .and_then(|id| users.get(&id).cloned())
-                .or(invite.email)
-                .ok_or_else(|| unavailable(ctx))?;
+            let username = match invite.email {
+                Some(email) => email,
+                None => invite
+                    .user_id
+                    .and_then(|id| users.get(&id).cloned())
+                    .ok_or_else(|| unavailable(ctx))?,
+            };
             Ok(view::PendingInvitation {
                 id: invite.id,
                 user_id: invite.user_id,

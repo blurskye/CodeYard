@@ -75,6 +75,7 @@ async fn fork(
         Some(slug) => organization_owner(&state, actor.id, slug).await?,
         None => RepositoryCreationOwner::personal(actor.id),
     };
+    auth::require_copy_owner(&state, &auth, target.target).await?;
     let repo = lifecycle::fork_into(
         &state.pool,
         state.cluster.as_ref(),
@@ -118,6 +119,7 @@ async fn generate(
         repository(&state, &headers, &template_owner, &template_name, true).await?;
     let auth = actor.ok_or_else(auth::required)?;
     let target = owner(&state, &auth.user, input.owner.as_deref()).await?;
+    auth::require_copy_owner(&state, &auth, target.target).await?;
     let repo = lifecycle::generate(
         (&state.pool, state.cluster.as_ref()),
         &state.repos_path,

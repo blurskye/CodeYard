@@ -70,7 +70,7 @@ async fn search(pg: bool) {
     )
     .await
     .unwrap();
-    db::issues::add_issue_comment(f.pool(), second.id, bob, "Discussion café search")
+    db::issues::add_issue_comment(f.pool(), second.repo_id, second.id, bob, "Discussion café search", &codeyard::backend::db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap();
     db::pull_requests::reviews::add_pull_request_review(

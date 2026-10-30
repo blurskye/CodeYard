@@ -191,6 +191,7 @@ async fn refresh_leaves_a_closed_pull_request_alone_and_still_follows_an_open_on
         &mut ListedRefs::new(),
         captured,
         Some(crate::backend::db::models::AccessLevel::Owner),
+        None,
     )
     .await
     .unwrap();
@@ -215,6 +216,7 @@ async fn refresh_leaves_a_closed_pull_request_alone_and_still_follows_an_open_on
         &mut ListedRefs::new(),
         captured,
         Some(crate::backend::db::models::AccessLevel::Owner),
+        None,
     )
     .await
     .unwrap();
@@ -263,7 +265,8 @@ async fn refresh_recovers_a_published_head_after_the_fork_is_deleted() {
         forks.alice,
         &mut ListedRefs::new(),
         captured,
-        Some(crate::backend::db::models::AccessLevel::Owner)
+        Some(crate::backend::db::models::AccessLevel::Owner),
+        None
     )
     .await
     .unwrap());
@@ -418,6 +421,7 @@ async fn refresh_records_a_published_head_before_publishing_a_newer_one() {
         &mut ListedRefs::new(),
         captured,
         Some(crate::backend::db::models::AccessLevel::Owner),
+        None,
     )
     .await
     .unwrap();

@@ -74,8 +74,13 @@ pub fn page(token: &str, model: Model) -> Element {
         } else {
             a { href: "/settings/apps/new", "Register GitHub App" }
             a { href: "/settings/apps/installations", "Installed GitHub Apps" }
+            p { "Lost credentials can be regenerated. This replaces the app's private key and OAuth client secret." }
             for (id,name,slug) in model.registered {
                 article { h2 { "{name}" } a { href: format!("/apps/{slug}/installations/new"), "Install" }
+                    form { method: "post", action: format!("/settings/apps/{slug}/regenerate"),
+                        {csrf(token)}
+                        button { r#type: "submit", class: SUBMIT, "Regenerate credentials" }
+                    }
                     form { method: "post", action: format!("/settings/apps/{id}/delete"),
                         {csrf(token)}
                         p { "Deleting the app revokes its signing key, installations and derived credentials." }

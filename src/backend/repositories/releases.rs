@@ -470,7 +470,7 @@ pub async fn create(
     } else {
         "published"
     };
-    emit_release(pool, &repository, &release, actor, action, None).await;
+    emit_release(pool, &repository, &release, actor, action, None, None).await;
 
     Ok(release)
 }
@@ -487,7 +487,8 @@ fn target_revision(refs: &HashMap<String, String>, target: &str) -> String {
     }
 }
 
-/// Tells the repository's release webhooks what `actor` did to `release`.
+/// Tells the repository's release webhooks what `actor` did to `release`. `changes` holds the
+/// previous values of an edit.
 async fn emit_release(
     pool: &db::DbPool,
     repository: &Repository,
@@ -495,6 +496,7 @@ async fn emit_release(
     actor: i64,
     action: &'static str,
     assets: Option<Vec<serde_json::Value>>,
+    changes: Option<serde_json::Value>,
 ) {
     let (release, repository_for_hook) = (release.clone(), repository.clone());
     let author_id = release.author_id;
@@ -517,6 +519,9 @@ async fn emit_release(
             );
             if let Some(assets) = assets {
                 payload["release"]["assets"] = assets.into();
+            }
+            if let Some(changes) = changes {
+                payload["changes"] = changes;
             }
             payload
         },
@@ -641,7 +646,9 @@ pub async fn update(
     } else {
         "edited"
     };
-    emit_release(pool, &repository, &release, actor, action, None).await;
+    // Only an edit carries the earlier values, as on GitHub.
+    let changes = (action == "edited").then(|| payloads::release_changes(&current, &release));
+    emit_release(pool, &repository, &release, actor, action, None, changes).await;
 
     Ok(release)
 }
@@ -676,6 +683,7 @@ pub async fn delete(
         actor,
         "deleted",
         assets,
+        None,
     )
     .await;
     Ok(())

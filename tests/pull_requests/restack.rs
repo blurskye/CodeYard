@@ -563,7 +563,7 @@ async fn stack_changed_contract(pg: bool) {
         .await;
     join(&app.alice, 2).await;
     join(&app.alice, 3).await;
-    let refused = restack::publish_rebase(f.pool(), &app.state.ci_runs, prepared).await;
+    let refused = restack::publish_rebase(f.pool(), &app.state.ci_runs, prepared, None).await;
     assert!(
         matches!(
             refused,
@@ -1211,6 +1211,13 @@ async fn nearer_fork_beats_older_merged_ancestor(pg: bool) {
         !has_file(path, &head, "obsolete.txt"),
         "older merged ancestor replayed superseded B changes"
     );
+    // The rebased head contains its base, so the old fork point no longer bounds its diff.
+    let child = db::pull_requests::records::get_pull_request(f.pool(), app.repository.id, 3)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(child.head_sha, head);
+    assert_eq!(child.fork_sha, None);
     f.finish().await;
 }
 

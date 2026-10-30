@@ -1,6 +1,6 @@
 //! Native runner settings and credential redemption; the REST adapter shares the same DAOs.
 use crate::backend::{
-    api::http::context::PageContext,
+    api::{http::context::PageContext, user::responses::field},
     app::AppState,
     ci::runner_credentials as credentials,
     db::{
@@ -259,9 +259,6 @@ fn destination(scope: Scope) -> String {
         Scope::Organization(id) => format!("/settings/actions/runners?org={id}"),
         Scope::Repository(id) => format!("/settings/actions/runners?repo={id}"),
     }
-}
-fn field<'a>(form: &'a Fields, key: &str) -> &'a str {
-    form.get(key).map(String::as_str).unwrap_or("")
 }
 fn id(form: &Fields, key: &str) -> anyhow::Result<i64> {
     field(form, key)

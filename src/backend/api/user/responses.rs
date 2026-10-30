@@ -79,14 +79,15 @@ pub(crate) fn within_bounds(form: &Fields) -> bool {
                         // A sign-in name may be an email address or a long Unicode username.
                         // Identity checks the real limits.
                         "username" => 1024,
-                        "display_name" => 100,
+                        "display_name" => 400,
                         // Titles hold 100 characters, up to four bytes each.
                         "name" => 400,
                         "email" => 320,
-                        "location" => 200,
-                        "website" | "redirect" => 2048,
+                        "location" => 800,
+                        "website" => 2048,
+                        "redirect" => crate::backend::api::http::origin::MAX_REDIRECT_BYTES,
                         "public_key" => 16384,
-                        "bio" => 4000,
+                        "bio" => 16000,
                         _ => 4096,
                     }
         })
@@ -162,6 +163,7 @@ pub(crate) fn public_api_message(error: &ApiError) -> &'static str {
             "two_factor_unavailable" => "Two-factor authentication is unavailable on this node.",
             "invalid_session_cookie" => "Clear malformed or duplicate session cookies before signing in.",
             "password_change_required" => "Change your temporary password before continuing.",
+            "unchanged_password" => "Choose a password different from your temporary password.",
             "database_error" | "session_error" => "The account service is unavailable. The action may be incomplete; check its state before retrying.",
             "setup_required" => "Complete node setup before signing in or creating accounts.",
             "unauthorized" => "Sign in to perform this action.",

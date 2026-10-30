@@ -430,7 +430,7 @@ async fn namespace(pg: bool) {
         .unwrap()
         .unwrap();
     assert!(
-        codeyard::backend::webhooks::payloads::team_organization(&org, 1)["html_url"]
+        codeyard::backend::webhooks::payloads::team_organization(&org, 1, true)["html_url"]
             .as_str()
             .unwrap()
             .ends_with("/gists/@users/gists")

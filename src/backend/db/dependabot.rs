@@ -44,9 +44,10 @@ pub(crate) fn validate_repository_access(add: &[i64], remove: &[i64]) -> Result<
     Ok(())
 }
 
+// `window` is (offset, limit); callers ask for one extra row to learn whether a next page exists.
 native_operation!(super::postgres::dependabot::repository_access,
     super::sqlite::dependabot::repository_access,
-    fn repository_access(pool: &DbPool, actor: impl Into<super::credentials::Actor>, org: i64)
+    fn repository_access(pool: &DbPool, actor: impl Into<super::credentials::Actor>, org: i64, window: (i64, i64))
     -> Result<(String, Vec<Repository>), SecretsError>);
 
 native_operation!(super::postgres::dependabot::update_repository_access,

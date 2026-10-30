@@ -14,8 +14,7 @@ pub enum AdmissionError {
 /// The budgets one admitted attempt was counted against, so a right password can give it back.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Attempt {
-    client: Option<String>,
-    account: String,
+    receipt: db::users::admission::Receipt,
 }
 
 /// Counts an attempt before its credentials are checked, against `client` (the request's address,
@@ -40,27 +39,26 @@ fn account_key(user_id: Option<i64>, identity: &str) -> String {
     }
 }
 
-/// Counts an OAuth sign-in start per client address. Each start stores state for ten minutes,
-/// so abandoned starts count; a completed sign-in gives its start back.
-pub async fn admit_oauth_start(pool: &DbPool, client: Option<&str>) -> Result<(), AdmissionError> {
-    let identity = format!("oauth-start:{}", client.unwrap_or_default());
-    admit(pool, None, account_key(None, &identity))
-        .await
-        .map(drop)
+/// An isolated budget for a non-password operation. Purpose names are server-owned constants.
+pub async fn admit_operation(
+    pool: &DbPool,
+    client: Option<&str>,
+    purpose: &str,
+    identity: &str,
+) -> Result<(), AdmissionError> {
+    let account = format!("{purpose}:{}", hex::encode(Sha256::digest(identity.as_bytes())));
+    admit(pool, client.map(|client| format!("{purpose}-ip:{client}")), account).await.map(drop)
 }
 
+/// Sign-in pages mint a session row for a cookieless visitor; this bounds those per client.
 pub async fn admit_anonymous_session(pool: &DbPool, client: Option<&str>) -> Result<(), AdmissionError> {
-    let identity = format!("anonymous-session:{}", client.unwrap_or_default());
-    admit(pool, None, account_key(None, &identity)).await.map(drop)
+    admit_operation(pool, None, "anonymous-session", client.unwrap_or_default()).await
 }
 
-pub async fn forgive_oauth_start(pool: &DbPool, client: Option<&str>) {
-    let identity = format!("oauth-start:{}", client.unwrap_or_default());
-    let attempt = Attempt {
-        client: None,
-        account: account_key(None, &identity),
-    };
-    forgive_login(pool, &attempt).await
+/// Every OAuth start counts, including completed flows: callbacks may change client address
+/// and outlive the charged window, so they must not refund an unrelated budget.
+pub async fn admit_oauth_start(pool: &DbPool, client: Option<&str>) -> Result<(), AdmissionError> {
+    admit_operation(pool, None, "oauth-start", client.unwrap_or_default()).await
 }
 
 /// Counts a request for a mailed link against `client` and `key` (a user, or the hash of an
@@ -88,8 +86,8 @@ async fn admit(
     .await
     .map_err(|_| AdmissionError::Unavailable)?
     .map_err(|_| AdmissionError::Unavailable)?;
-    if admitted {
-        Ok(Attempt { client, account })
+    if let Some(receipt) = admitted {
+        Ok(Attempt { receipt })
     } else {
         Err(AdmissionError::Limited)
     }
@@ -100,11 +98,7 @@ async fn admit(
 pub async fn forgive_login(pool: &DbPool, attempt: &Attempt) {
     let forgiven = tokio::time::timeout(
         Duration::from_secs(5),
-        db::users::admission::forgive_password_attempt(
-            pool,
-            attempt.client.as_deref(),
-            &attempt.account,
-        ),
+        db::users::admission::forgive_password_attempt(pool, &attempt.receipt),
     )
     .await;
     if !matches!(forgiven, Ok(Ok(()))) {

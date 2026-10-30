@@ -251,6 +251,14 @@ async fn live_pull_head_write(
     {
         return Err(RepoError::write_denied());
     }
+    if let Some(token) = request.token {
+        for (repo, write) in [(base_id, false), (head_id, true)] {
+            if !crate::backend::identity::tokens::repository_scope(pool, token, actor, repo, "contents", write).await
+                .map_err(|_| RepoError::authority_unavailable())? {
+                return Err(RepoError::write_denied());
+            }
+        }
+    }
     checked_branch_write(pool, &head, &user, branch, history).await?;
     Ok(head)
 }
@@ -1509,6 +1517,14 @@ impl LocalStore {
         // receive-pack can migrate objects and publish the exact CAS ref.
         live_pull_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
         live_pull_read(pool, repo_id, actor, self.path(), self.node_id).await?;
+        // An export locks the repository under this same lock before it copies the Git data, so
+        // a head published into a locked repository would be missing from the archive.
+        if db::repository_exports::locked(pool, repo_id)
+            .await
+            .map_err(|_| RepoError::authority_unavailable())?
+        {
+            return Err(RepoError::write_denied());
+        }
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::repository::publish_pull_head(self.path(), number, head, expected_head, &prepared)
             .await
@@ -2445,6 +2461,7 @@ impl LocalStore {
         via: WriteVia,
         token: Option<i64>,
         credential: Option<&db::credentials::Actor>,
+        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
     ) -> Result<(), RepoError> {
         self.publish_merge_authorized(
             pool,
@@ -2459,6 +2476,7 @@ impl LocalStore {
             token,
             None,
             credential,
+            policy,
         )
         .await
     }
@@ -2487,6 +2505,7 @@ impl LocalStore {
             Some(request.token_id),
             Some(request),
             None,
+            request.policy.clone(),
         )
         .await
     }
@@ -2508,6 +2527,7 @@ impl LocalStore {
         token: Option<i64>,
         authority: Option<&AsyncMergePublication>,
         credential: Option<&db::credentials::Actor>,
+        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
     ) -> Result<(), RepoError> {
         let publication = git::locks::publication(self.path())
             .await
@@ -2579,6 +2599,16 @@ impl LocalStore {
             if credential.user_id != actor { return Err(RepoError::write_denied()); }
             crate::backend::repositories::access::check_publication_actor(pool, credential, &repository).await?;
         }
+        // No pool reads while this transaction is retained: in-memory SQLite has one connection.
+        let policy_lease = if let Some(expected) = &policy {
+            Some(db::pull_requests::merge_policy::retain(pool, repo_id, expected).await.map_err(|error| {
+                if error.is::<db::pull_requests::merge_policy::Changed>() {
+                    RepoError::new(ErrorKind::Conflict, error.to_string())
+                } else {
+                    RepoError::authority_unavailable()
+                }
+            })?)
+        } else { None };
         publication
             .scope(git::publish_merge(
                 self.path(),
@@ -2589,6 +2619,9 @@ impl LocalStore {
             ))
             .await
             .map_err(RepoError::from)?;
+        if let Some(lease) = policy_lease {
+            lease.release().await.map_err(|_| RepoError::applied_followup_failed())?;
+        }
         let followup = self
             .after_ref_change(
                 pool,

@@ -11,7 +11,7 @@ pub fn social_account(
     input: &str,
 ) -> Result<crate::backend::db::users::social_accounts::SocialAccount, ProfileError> {
     let url = crate::website::parse(input.trim()).ok_or(ProfileError::Website)?;
-    if input.len() > 255 || input.contains(['\0', '\r', '\n']) {
+    if url.as_str().len() > 255 || input.contains(['\0', '\r', '\n']) {
         return Err(ProfileError::Website);
     }
     let host = url.host_str().unwrap().trim_start_matches("www.");
@@ -53,6 +53,16 @@ pub enum ProfileError {
     Unavailable,
 }
 
+fn website(input: &str) -> Result<Option<String>, ProfileError> {
+    let input = input.trim();
+    let text = if matches!(url::Url::parse(input), Err(url::ParseError::RelativeUrlWithoutBase)) && !input.is_empty() {
+        format!("https://{input}")
+    } else {
+        input.to_owned()
+    };
+    crate::backend::db::repositories::topics::parse_website(&text).map_err(|_| ProfileError::Website)
+}
+
 pub fn validate(input: &ProfileUpdate<'_>) -> Result<(), ProfileError> {
     for (value, bound) in [
         (input.display_name, 100),
@@ -63,16 +73,12 @@ pub fn validate(input: &ProfileUpdate<'_>) -> Result<(), ProfileError> {
         if value.is_some_and(|value| value.contains('\0')) {
             return Err(ProfileError::Nul);
         }
-        if value.is_some_and(|value| value.len() > bound) {
+        if value.is_some_and(|value| value.chars().count() > bound) {
             return Err(ProfileError::Invalid);
         }
     }
-    if let Some(website) = input.website {
-        if !website.trim().is_empty()
-            && crate::website::parse(website.trim()).is_none_or(|url| url.as_str().len() > 255)
-        {
-            return Err(ProfileError::Website);
-        }
+    if let Some(value) = input.website {
+        website(value)?;
     }
     Ok(())
 }
@@ -89,7 +95,7 @@ pub enum ProfileReadError {
 pub async fn repositories_on_profile(
     pool: &DbPool,
     username: &str,
-    viewer: Option<i64>,
+    owner_session: Option<&str>,
     text: &str,
     page: usize,
 ) -> Result<(User, Vec<Repository>, usize), ProfileReadError> {
@@ -97,10 +103,9 @@ pub async fn repositories_on_profile(
         .await
         .map_err(|_| ProfileReadError::UserUnavailable)?
         .ok_or(ProfileReadError::Missing)?;
-    let own = viewer == Some(user.id);
     let offset = i64::try_from(page.saturating_sub(1).saturating_mul(30)).unwrap_or(i64::MAX);
     let (repositories, count) =
-        repositories::records::list_user_repository_page(pool, user.id, own, text, 30, offset)
+        repositories::records::list_user_repository_page(pool, user.id, owner_session, text, true, 30, offset)
             .await
             .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
     Ok((
@@ -115,14 +120,13 @@ pub async fn repositories_on_profile(
 pub async fn repository_count_on_profile(
     pool: &DbPool,
     username: &str,
-    viewer: Option<i64>,
+    owner_session: Option<&str>,
 ) -> Result<(User, usize), ProfileReadError> {
     let user = accounts::get_user_by_username(pool, username)
         .await
         .map_err(|_| ProfileReadError::UserUnavailable)?
         .ok_or(ProfileReadError::Missing)?;
-    let own = viewer == Some(user.id);
-    let count = repositories::count_user_repositories(pool, user.id, own)
+    let count = repositories::count_user_repositories(pool, user.id, owner_session)
         .await
         .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
     Ok((user, usize::try_from(count).unwrap_or(usize::MAX)))
@@ -157,7 +161,12 @@ pub async fn save(
     {
         return Err(ProfileError::Invalid);
     }
-    crate::backend::db::users::profiles::save_profile(pool, actor, credential, input)
+    let normalized = input.website.map(website).transpose()?.flatten();
+    let patch = crate::backend::db::users::profiles::ProfilePatch {
+        website: input.website.map(|_| normalized.as_deref().unwrap_or("")),
+        ..*input
+    };
+    crate::backend::db::users::profiles::save_profile(pool, actor, credential, &patch)
         .await
         .map_err(|error| {
             if error.is::<accounts::AccountRestricted>() {
@@ -177,6 +186,7 @@ pub async fn update(
     input: ProfileUpdate<'_>,
 ) -> Result<User, ProfileError> {
     validate(&input)?;
+    let normalized = input.website.map(website).transpose()?.flatten();
     accounts::update_user_profile(
         pool,
         actor,
@@ -184,7 +194,7 @@ pub async fn update(
         input.display_name,
         input.bio,
         input.location,
-        input.website,
+        input.website.map(|_| normalized.as_deref().unwrap_or("")),
     )
     .await
     .map_err(|_| ProfileError::Unavailable)?

@@ -36,12 +36,12 @@ pub async fn read_alert_snapshot(pool: &SqlitePool, actor: i64, session: &str, s
             .bind(selection.repo).fetch_optional(&mut *tx).await?,
     };
     let mut instances: Vec<Instance> = if ids.is_empty() { Vec::new() } else {
-        sqlx::query_as("SELECT * FROM (SELECT i.*,ROW_NUMBER() OVER(PARTITION BY alert_id ORDER BY CASE WHEN state='open' THEN 0 ELSE 1 END,upload_sequence DESC,ref_name,category) AS newest FROM code_scanning_instances i WHERE alert_id IN (SELECT value FROM json_each($1)) AND (CAST($2 AS TEXT) IS NULL OR ref_name=$2)) page WHERE newest=1")
-            .bind(serde_json::to_string(&ids)?).bind(reference).fetch_all(&mut *tx).await?
+        sqlx::query_as("SELECT * FROM (SELECT i.*,ROW_NUMBER() OVER(PARTITION BY alert_id ORDER BY CASE WHEN state='open' THEN 0 ELSE 1 END,upload_sequence DESC,ref_name,category) AS newest FROM code_scanning_instances i WHERE alert_id IN (SELECT value FROM json_each($1)) AND (CAST($2 AS TEXT) IS NULL OR ref_name=$2) AND (CAST($3 AS TEXT) IS NULL OR category=$3)) page WHERE newest=1")
+            .bind(serde_json::to_string(&ids)?).bind(reference).bind(selection.category).fetch_all(&mut *tx).await?
     };
     if instances.is_empty() && selection.number.is_some() && selection.filters.reference.is_none() && !ids.is_empty() {
-        instances = sqlx::query_as("SELECT * FROM code_scanning_instances WHERE alert_id=$1 ORDER BY CASE WHEN state='open' THEN 0 ELSE 1 END,upload_sequence DESC,ref_name,category LIMIT 1")
-            .bind(ids[0]).fetch_all(&mut *tx).await?;
+        instances = sqlx::query_as("SELECT * FROM code_scanning_instances WHERE alert_id=$1 AND (CAST($2 AS TEXT) IS NULL OR category=$2) ORDER BY CASE WHEN state='open' THEN 0 ELSE 1 END,upload_sequence DESC,ref_name,category LIMIT 1")
+            .bind(ids[0]).bind(selection.category).fetch_all(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(AlertSnapshot { rows, instances: instances.into_iter().map(|instance| (instance.alert_id, instance)).collect() })

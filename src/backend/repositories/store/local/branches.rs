@@ -157,6 +157,13 @@ impl LocalStore {
             .map_err(|_| RepoError::authority_unavailable())?
             .is_empty();
         }
+        // Renaming a protected or default branch needs a token's administration permission.
+        if let Some(token) = authority.token_id() {
+            if !crate::backend::identity::tokens::repository_scope(pool, token, actor, repo, if protected { "administration" } else { "contents" }, true).await
+                .map_err(|_| RepoError::authority_unavailable())? {
+                return Err(RepoError::write_denied());
+            }
+        }
         if protected
             && !access::can_admin(pool, &user, &repository)
                 .await

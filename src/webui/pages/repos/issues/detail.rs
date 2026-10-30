@@ -1085,10 +1085,10 @@ pub fn detail(
             )
             .any(|comment| comment.id == id && comment.can_edit)
     });
-    // A locked or archived conversation shows no composer, so a refused comment is shown here.
+    // When the viewer has no composer, show a refused comment outside it.
     let unposted_comment = draft.editing.is_none()
         && !draft.comment.is_empty()
-        && (comments.locked || repo.chrome.is_archived);
+        && ((comments.locked && !repo.can_write) || repo.chrome.is_archived);
     repos::chrome::chrome(
         &repo.chrome,
         rsx! {
@@ -1245,7 +1245,7 @@ pub fn detail(
                                     {merge_box(repo, &url, item, compare, draft, reviewers, &comments.events)}
                                 }
                             }
-                            if comments.locked {
+                            if comments.locked && !repo.can_write {
                                 p { class: "collaboration-panel collaboration-form-fields", role: "note",
                                     "This conversation is locked."
                                     if let Some(reason) = &comments.lock_reason { span { "Reason: {reason}" } }

@@ -24,6 +24,7 @@ pub const PULL_REQUEST_REVIEW: &str = "pull_request_review";
 pub const PULL_REQUEST_REVIEW_COMMENT: &str = "pull_request_review_comment";
 pub const CHECK_RUN: &str = "check_run";
 pub const CHECK_SUITE: &str = "check_suite";
+pub const STATUS: &str = "status";
 pub const REPOSITORY_DISPATCH: &str = "repository_dispatch";
 pub const WORKFLOW_RUN: &str = "workflow_run";
 pub const WORKFLOW_JOB: &str = "workflow_job";
@@ -57,6 +58,11 @@ pub fn subscription(chosen: &[String]) -> Result<String, &'static str> {
 /// Whether a stored subscription delivers `event`.
 pub fn subscribes(stored: &str, event: &str) -> bool {
     stored == EVERYTHING || stored.split(',').any(|name| name == event)
+}
+
+/// Whether two stored subscriptions share an event.
+pub fn overlap(first: &str, second: &str) -> bool {
+    second == EVERYTHING || second.split(',').any(|event| subscribes(first, event))
 }
 
 #[cfg(test)]
@@ -105,6 +111,7 @@ mod tests {
             PULL_REQUEST_REVIEW_COMMENT,
             CHECK_RUN,
             CHECK_SUITE,
+            STATUS,
             REPOSITORY_DISPATCH,
             WORKFLOW_RUN,
             WORKFLOW_JOB,

@@ -311,13 +311,19 @@ async fn repository_access(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (org, actor) = organization(&state, &headers, &name, false).await?;
-    let (level, repositories) = db::dependabot::repository_access(&state.pool, actor.database_actor(), org)
-        .await
-        .map_err(error)?;
     let (offset, limit) = page.window()?;
-    let has_more = offset.saturating_add(limit) < repositories.len();
+    let (level, mut repositories) = db::dependabot::repository_access(
+        &state.pool,
+        actor.database_actor(),
+        org,
+        (offset as i64, limit as i64 + 1),
+    )
+    .await
+    .map_err(error)?;
+    let has_more = repositories.len() > limit;
+    repositories.truncate(limit);
     let mut documents = Vec::new();
-    for repository in repositories.into_iter().skip(offset).take(limit) {
+    for repository in repositories {
         documents.push(repos::document(&state, &repository, Some(&actor)).await?);
     }
     Ok((

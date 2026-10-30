@@ -3,7 +3,12 @@ use crate::backend::db::{
     DbPool,
 };
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
+
+/// Token timestamps must round-trip through SQLite's four-digit calendar representation.
+pub(crate) fn supported_expiry(expiry: Option<DateTime<Utc>>) -> bool {
+    expiry.is_none_or(|expiry| (1..=9999).contains(&expiry.year()))
+}
 
 native_operation!(crate::backend::db::postgres::users::tokens::create_token,
     crate::backend::db::sqlite::users::tokens::create_token,
@@ -19,6 +24,10 @@ native_operation!(crate::backend::db::postgres::users::tokens::delete_token,
 native_operation!(crate::backend::db::postgres::users::tokens::find_token,
     crate::backend::db::sqlite::users::tokens::find_token,
     fn find_token(pool: &DbPool, hash: &str) -> Result<Option<PersonalAccessToken>>);
+native_operation!(crate::backend::db::postgres::users::tokens::token_hash,
+    crate::backend::db::sqlite::users::tokens::token_hash,
+    /// The stored hash of `user_id`'s token, so a background job can act with the credential it was given.
+    fn token_hash(pool: &DbPool, token_id: i64, user_id: i64) -> Result<Option<String>>);
 native_operation!(crate::backend::db::postgres::users::tokens::token_user,
     crate::backend::db::sqlite::users::tokens::token_user,
     fn token_user(pool: &DbPool, token_id: i64, write: bool) -> Result<Option<User>>);

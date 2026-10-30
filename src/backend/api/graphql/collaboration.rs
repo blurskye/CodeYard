@@ -100,6 +100,8 @@ pub(super) async fn resolve(
             if args.args.try_get("userLinkedOnly")?.deserialize::<bool>()? { return connection::slice(args, Vec::new()); }
             let pull = db::pull_requests::records::get_pull_request_by_id(pool, id).await.map_err(unavailable)?.ok_or_else(missing)?;
             request.authorize(pull.repo_id, "pull-requests", false).await?;
+            // As on GitHub, keywords close issues only when the pull request targets the default branch.
+            if pull.base_branch != repo.default_branch { return connection::slice(args, Vec::new()); }
             request.charge(pull.body.len() + pull.title.len())?;
             let owner = repository::owner(repo, request).await?;
             let mut groups = std::collections::BTreeMap::<(String, String), Vec<i32>>::new();

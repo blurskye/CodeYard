@@ -332,6 +332,16 @@ impl DefinitionRow {
         })
     }
 }
+/// The catalog columns an overview shows, without the allowed values and default.
+#[derive(Clone, Debug, sqlx::FromRow)]
+pub struct DefinitionSummary {
+    pub id: i64,
+    pub property_name: String,
+    pub value_type: String,
+    pub description: Option<String>,
+    pub required: bool,
+    pub require_explicit_values: bool,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ValueInput {
     pub property_name: String,
@@ -458,10 +468,14 @@ pub struct RepositoryMetadata {
 
 native_operation!(crate::backend::db::postgres::organizations::properties::catalog,crate::backend::db::sqlite::organizations::properties::catalog,
     fn catalog(pool:&DbPool,actor:i64,org:i64)->Result<OrganizationOutcome<Vec<Definition>>>);
+native_operation!(crate::backend::db::postgres::organizations::properties::summaries,crate::backend::db::sqlite::organizations::properties::summaries,
+    fn summaries(pool:&DbPool,actor:i64,org:i64)->Result<OrganizationOutcome<Vec<DefinitionSummary>>>);
+native_operation!(crate::backend::db::postgres::organizations::properties::definition,crate::backend::db::sqlite::organizations::properties::definition,
+    fn definition(pool:&DbPool,actor:i64,org:i64,name:&str)->Result<OrganizationOutcome<Option<Definition>>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::define,crate::backend::db::sqlite::organizations::properties::define,
     fn define(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,org:i64,inputs:&[DefinitionInput])->Result<OrganizationOutcome<Vec<Definition>>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::remove,crate::backend::db::sqlite::organizations::properties::remove,
-    fn remove(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,org:i64,name:&str)->Result<OrganizationOutcome<()>>);
+    fn remove(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,org:i64,name:&str,definition:Option<i64>)->Result<OrganizationOutcome<()>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::list_values,crate::backend::db::sqlite::organizations::properties::list_values,
     fn list_values(pool:&DbPool,actor:i64,org:i64,query:&query::RepositoryQuery,window:(i64,i64))->Result<OrganizationOutcome<Vec<RepositoryValues>>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::set_values,crate::backend::db::sqlite::organizations::properties::set_values,

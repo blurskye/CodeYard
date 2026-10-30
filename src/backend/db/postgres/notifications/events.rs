@@ -13,8 +13,13 @@ impl NotificationListener {
         Ok(Self { connection })
     }
 
-    pub(crate) async fn recv(&mut self) -> Result<String, sqlx::Error> {
-        Ok(self.connection.recv().await?.payload().to_owned())
+    /// `None` when the connection was lost. Hints sent until it is back are gone.
+    pub(crate) async fn recv(&mut self) -> Result<Option<String>, sqlx::Error> {
+        Ok(self
+            .connection
+            .try_recv()
+            .await?
+            .map(|notification| notification.payload().to_owned()))
     }
 }
 

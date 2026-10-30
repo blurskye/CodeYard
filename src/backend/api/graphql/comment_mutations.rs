@@ -29,6 +29,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     };
     let pool = &request.state.pool;
     let actor = request.auth.user.id;
+    let credential = crate::backend::db::users::accounts::AccountCredential::Token(request.auth.token.id);
     let mut payload = json!({"clientMutationId":input["clientMutationId"]});
     if field == "deleteIssueComment" {
         if pull {
@@ -36,7 +37,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 .await
                 .map_err(pull_error)?;
         } else {
-            comments::delete_issue_comment(pool, actor, target)
+            comments::delete_issue_comment(pool, actor, &credential, target)
                 .await
                 .map_err(issue_error)?;
         }
@@ -59,6 +60,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 pool,
                 &request.state.notification_broadcaster,
                 actor,
+                &credential,
                 target,
                 CreateCommentRequest {
                     body,

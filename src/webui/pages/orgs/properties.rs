@@ -22,6 +22,7 @@ pub struct PropertySummary {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PropertyDefinition {
+    pub id: i64,
     pub name: String,
     pub value_type: String,
     pub description: String,
@@ -162,7 +163,7 @@ pub(super) fn panel(page: &Page) -> Element {
                     section {class:"org-panel org-danger",header {class:"org-panel-header",h3 {"Delete property"}}
                         div {class:"org-panel-body",p {"Deleting a definition also removes its explicit values from every repository."}
                             form {key:"delete-{name}",method:"post",action:target.clone(),class:"org-form",
-                                {csrf(&page.csrf_token)} {hidden("action","delete-property")} {hidden("property_name",&property.name)}
+                                {csrf(&page.csrf_token)} {hidden("action","delete-property")} {hidden("property_name",&property.name)} {hidden("definition_id",&property.id.to_string())}
                                 label {r#for:"delete-property-confirm","Type the property name to confirm"}
                                 DraftInput {id:Some("delete-property-confirm".into()),name:"confirm",initial_value:value(page,"delete-property","confirm",""),required:true}
                                 button {r#type:"submit",class:"btn btn-danger","Delete property"}

@@ -1,7 +1,7 @@
 //! Admin email settings and test-mail forms.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::session;
-use crate::backend::api::user::responses::{field, mutation_guard, Fields};
+use crate::backend::api::user::responses::{field, mutation_guard, require_account, Fields};
 use crate::backend::app::AppState;
 use crate::backend::db::{self, email::NewEmailSettings};
 use crate::backend::email::{
@@ -60,16 +60,19 @@ async fn save(
             "The password is too long.".to_owned(),
         ));
     }
-    // The first save from the environment's settings keeps the environment's password.
+    // Inherit credentials only for an authenticated relay and only from valid environment
+    // settings. An invalid old environment must not prevent saving its replacement.
     if password.is_empty() && !server.username.is_empty() {
-        let source = config::describe(&state.pool).await.map_err(|_| {
+        let saved = db::email::get_email_settings(&state.pool).await.map_err(|_| {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Unable to read the current mail settings.".to_owned(),
             )
         })?;
-        if let Some((env, Source::Environment, _)) = source {
-            password = env.password.unwrap_or_default();
+        if saved.is_none() {
+            if let Ok(Some(env)) = config::from_env() {
+                password = env.password.unwrap_or_default();
+            }
         }
     }
     let sealed = if password.is_empty() {
@@ -171,18 +174,6 @@ fn empty_settings() -> view::Settings {
     }
 }
 
-/// Sends the test message to the administrator's own address and returns that address.
-async fn send_test_mail(state: &AppState, admin: &db::models::User) -> Result<String, String> {
-    let to = admin
-        .email
-        .as_deref()
-        .map(str::trim)
-        .filter(|email| !email.is_empty())
-        .ok_or("Your account has no email address. Add one in Settings under Email address.")?;
-    email::send_test(&state.pool, state.secret_encryptor.as_deref(), to).await?;
-    Ok(to.to_owned())
-}
-
 async fn render(
     ctx: &PageContext,
     status: StatusCode,
@@ -210,8 +201,8 @@ async fn show(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    if ctx.administrator().is_none() {
-        return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
+    if let Err(response) = require_account(&ctx, true) {
+        return response;
     }
     let saved = ctx
         .query
@@ -256,8 +247,8 @@ async fn test_form(
     }
     // The result page's own forms, such as the theme, return to the page and not the POST URL.
     ctx.return_to = Some("/admin/email".into());
-    let admin = ctx.user.as_ref().expect("admin guard");
-    match send_test_mail(&ctx.state, admin).await {
+    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
+    match email::send_test(&ctx.state.pool, ctx.state.secret_encryptor.as_deref(), &session).await {
         Ok(to) => {
             render(
                 &ctx,
@@ -267,9 +258,14 @@ async fn test_form(
             )
             .await
         }
-        Err(message) => {
-            let message = format!("The test email failed: {message}");
-            render(&ctx, StatusCode::BAD_GATEWAY, Some(message), None).await
+        Err(error) => {
+            let status = match &error {
+                email::TestMailError::Authority(crate::backend::identity::sessions::AccountAuthorityError::SessionUnavailable) => StatusCode::SERVICE_UNAVAILABLE,
+                email::TestMailError::Authority(_) => StatusCode::FORBIDDEN,
+                email::TestMailError::NoAddress => StatusCode::BAD_REQUEST,
+                email::TestMailError::Delivery(_) => StatusCode::BAD_GATEWAY,
+            };
+            render(&ctx, status, Some(format!("The test email failed: {error}")), None).await
         }
     }
 }

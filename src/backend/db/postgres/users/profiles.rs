@@ -40,7 +40,7 @@ pub async fn public_email(pool: &PgPool, user: i64) -> Result<Option<String>> {
 }
 
 pub async fn get_profile_settings(pool: &PgPool, user: i64) -> Result<ProfileSettings> {
-    Ok(sqlx::query_as("SELECT p.company,p.twitter_username,p.hireable,p.public_email,p.primary_visibility,EXISTS(SELECT 1 FROM user_emails e WHERE e.user_id=p.user_id AND lower(e.email)=lower(p.public_email) AND e.verified) AS secondary_email_verified FROM user_profile_settings p WHERE p.user_id=$1")
+    Ok(sqlx::query_as("SELECT p.company,p.twitter_username,p.hireable,p.public_email,COALESCE(p.primary_visibility,'private') AS primary_visibility,u.email AS primary_email,u.email_verified AS primary_email_verified,EXISTS(SELECT 1 FROM user_emails e WHERE e.user_id=u.id AND lower(e.email)=lower(p.public_email) AND e.verified) AS secondary_email_verified FROM users u LEFT JOIN user_profile_settings p ON p.user_id=u.id WHERE u.id=$1")
         .bind(user).fetch_optional(pool).await?.unwrap_or_else(||ProfileSettings {primary_visibility:"private".into(), ..ProfileSettings::default()}))
 }
 

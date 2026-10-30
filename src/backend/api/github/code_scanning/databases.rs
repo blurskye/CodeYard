@@ -24,7 +24,6 @@ use tokio_util::io::ReaderStream;
 const MAX_DATABASE_ENTRIES: usize = 200_000;
 
 /// The upload quota (`file_reason_limits.reason`) that CodeQL database uploads count against.
-const UPLOAD_QUOTA: &str = "codeql_database";
 
 pub(crate) const UPLOAD_ROUTE: &str =
     "/api/uploads/repos/:owner/:repo/code-scanning/codeql/databases/:language";
@@ -224,7 +223,7 @@ pub(in crate::backend::api::github) async fn upload(
     let actor = auth.database_actor();
     let size = bytes.len() as i64;
     // Every upload counts, including one that replaces an earlier database.
-    db::files::charge_upload(&state.pool, auth.user.id, UPLOAD_QUOTA, size)
+    let charge = db::files::charge_upload(&state.pool, auth.user.id, codeql::UPLOAD_QUOTA, size)
         .await
         .map_err(|error| match error {
             db::files::AdmissionError::Quota => {
@@ -256,6 +255,7 @@ pub(in crate::backend::api::github) async fn upload(
     let row = codeql::publish(
         &state.pool,
         &codeql::NewDatabase {
+            charge,
             repo: repo.id,
             actor,
             language: &language,

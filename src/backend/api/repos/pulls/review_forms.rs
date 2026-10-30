@@ -893,7 +893,7 @@ pub(crate) async fn native_set_viewed(
     // shows, which a retargeted stack layer compares against its fork point.
     let blob_sha = if field(&form, "viewed") == "yes" {
         let diff = repo_store(&repo.record, ctx.state.cluster.as_ref())
-            .diff_stats(pull.diff_base(), &pull.head_sha)
+            .diff_file(pull.diff_base(), &pull.head_sha, &path)
             .await
             .map_err(|error| crate::backend::api::repos::chrome::store_error(&ctx, None, error))?;
         let file = diff

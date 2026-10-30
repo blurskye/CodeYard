@@ -867,6 +867,13 @@ async fn create(
                 .ok_or_else(|| Error::invalid("parent_issue_id must be a positive integer"))
         })
         .transpose()?;
+    let parent_repository_id = if let Some(parent) = parent_issue_id {
+        let parent = db::issues::get_issue_by_id(&state.pool, parent).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+        authentication.repository_scope(&state.pool, parent.repo_id, "issues", true).await.map_err(super::auth::scope_error)?;
+        Some(parent.repo_id)
+    } else {
+        None
+    };
     let body = text(&input, "body")?;
     let metadata = metadata(&state.pool, &repo, &actor, &input).await?;
     let issue = crate::backend::issues::mutations::create_issue_with_metadata(
@@ -880,6 +887,7 @@ async fn create(
             body,
             repository_id: Some(repo.id),
             parent_issue_id,
+            parent_repository_id,
         },
         metadata.creation(),
     )

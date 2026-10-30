@@ -39,10 +39,17 @@ async fn actor<'a>(
     let row: Option<(i64, String, String)> = sqlx::query_as("SELECT u.id,u.username,t.scope FROM users u JOIN personal_access_tokens t ON t.user_id=u.id WHERE t.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))")
         .bind(token).fetch_optional(&mut **tx).await?;
     let (id, name, scope) = row.ok_or(Refusal::Unauthorized)?;
-    // These credentials have no package grant; do not collapse them into account-wide identity.
-    let integration:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id=$1) OR EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1)").bind(token).fetch_one(&mut **tx).await?;
-    ensure!(!integration, Refusal::Forbidden);
     let write = !matches!(permission, Permission::Read);
+    // App credentials have no package grant, and an OAuth token only reads packages with the
+    // read:packages scope; neither collapses into account-wide identity otherwise.
+    let app: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) OR EXISTS(SELECT 1 FROM oauth_app_tokens o JOIN github_apps a ON a.client_id=o.client_id WHERE o.token_id=$1)").bind(token).fetch_one(&mut **tx).await?;
+    ensure!(!app, Refusal::Forbidden);
+    let oauth: Option<String> = sqlx::query_scalar("SELECT scopes FROM oauth_app_tokens WHERE token_id=$1").bind(token).fetch_optional(&mut **tx).await?;
+    ensure!(
+        oauth.is_none_or(|scopes| !write
+            && crate::backend::identity::oauth_apps::has_scope(&scopes, "read:packages")),
+        Refusal::Forbidden
+    );
     ensure!(!write || scope == "write", Refusal::Forbidden);
     let mut owner = None;
     let mut selected = None;

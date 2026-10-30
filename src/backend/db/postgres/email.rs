@@ -1,7 +1,7 @@
 use super::models::{EmailSettings, OutboxMessage};
 use crate::backend::db::email::{delivery_allowed_sql, primary_link_condition, EmailLink, NewEmailSettings, RESEND_SECONDS};
 use anyhow::Result;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 pub async fn get_email_settings(pool: &PgPool) -> Result<Option<EmailSettings>> {
     Ok(sqlx::query_as(
@@ -98,30 +98,39 @@ pub async fn enqueue_notification_email(
     Ok(())
 }
 
-pub async fn withdraw_email(pool: &PgPool, id: i64) -> Result<()> {
-    sqlx::query("DELETE FROM email_outbox WHERE id=$1 AND sent_at IS NULL")
+pub async fn withdraw_email(pool: &PgPool, id: i64, attempt: i32) -> Result<()> {
+    sqlx::query("DELETE FROM email_outbox WHERE id=$1 AND sent_at IS NULL AND attempts=$2")
         .bind(id)
+        .bind(attempt)
         .execute(pool)
         .await?;
     Ok(())
 }
 
-pub async fn enqueue_invitation_email(
-    pool: &PgPool,
-    invitation: i64,
-    to: &str,
+/// Queues a message in the caller's transaction, so it commits or rolls back with the change it
+/// reports. Nothing is queued while the site has no mail server, as the outbox would never send
+/// it. `invitation` links an organization invitation's offer to its message; the caller has
+/// already written that invitation row, which keeps the invitation-before-outbox lock order.
+pub(in crate::backend::db) async fn queue_email(
+    connection: &mut PgConnection,
+    to_address: &str,
     subject: &str,
-    body: &str,
+    body_text: &str,
+    invitation: Option<i64>,
 ) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    // Use the invitation-before-outbox order shared with acceptance, cancellation and resend.
-    sqlx::query("SELECT id FROM organization_invitations WHERE id=$1 FOR UPDATE")
-        .bind(invitation)
-        .execute(&mut *tx)
+    let saved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM email_settings WHERE id=1)")
+        .fetch_one(&mut *connection)
         .await?;
-    sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text,organization_invitation_id) SELECT $2,$3,$4,id FROM organization_invitations WHERE id=$1 AND failed_at IS NULL AND expires_at>NOW() AND NOT EXISTS(SELECT 1 FROM email_outbox WHERE organization_invitation_id=$1)")
-        .bind(invitation).bind(to).bind(subject).bind(body).execute(&mut *tx).await?;
-    tx.commit().await?;
+    if !saved && !crate::backend::email::config::environment_configured() {
+        return Ok(());
+    }
+    sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text,organization_invitation_id) VALUES ($1,$2,$3,$4)")
+        .bind(to_address)
+        .bind(subject)
+        .bind(body_text)
+        .bind(invitation)
+        .execute(connection)
+        .await?;
     Ok(())
 }
 
@@ -160,15 +169,16 @@ pub async fn claim_due_email(
     Ok(message)
 }
 
-pub async fn delivery_allowed(pool: &PgPool, id: i64) -> Result<bool> {
-    Ok(sqlx::query_scalar(&delivery_allowed_sql(true)).bind(id).fetch_one(pool).await?)
+pub async fn delivery_allowed(pool: &PgPool, id: i64, attempt: i32) -> Result<bool> {
+    Ok(sqlx::query_scalar(&delivery_allowed_sql(true)).bind(id).bind(attempt).fetch_one(pool).await?)
 }
 
-pub async fn mark_email_sent(pool: &PgPool, id: i64) -> Result<()> {
+pub async fn mark_email_sent(pool: &PgPool, id: i64, attempt: i32) -> Result<()> {
     sqlx::query(
-        "UPDATE email_outbox SET sent_at = NOW(), last_error = NULL, body_text = '' WHERE id = $1",
+        "UPDATE email_outbox SET sent_at = NOW(), last_error = NULL, body_text = '' WHERE id = $1 AND sent_at IS NULL AND attempts=$2",
     )
     .bind(id)
+    .bind(attempt)
     .execute(pool)
     .await?;
     Ok(())
@@ -177,21 +187,23 @@ pub async fn mark_email_sent(pool: &PgPool, id: i64) -> Result<()> {
 pub async fn mark_email_failed(
     pool: &PgPool,
     id: i64,
+    attempt: i32,
     error: &str,
     retry_seconds: i64,
     max_attempts: i32,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT id FROM organization_invitations WHERE id=(SELECT organization_invitation_id FROM email_outbox WHERE id=$1) FOR UPDATE").bind(id).execute(&mut *tx).await?;
-    sqlx::query("UPDATE email_outbox SET last_error = $2, next_attempt_at = NOW() + $3::float8 * INTERVAL '1 second', body_text = CASE WHEN attempts >= $4 THEN '' ELSE body_text END WHERE id = $1")
+    sqlx::query("UPDATE email_outbox SET last_error = $2, next_attempt_at = NOW() + $3::float8 * INTERVAL '1 second', body_text = CASE WHEN attempts >= $4 THEN '' ELSE body_text END WHERE id = $1 AND sent_at IS NULL AND attempts=$5")
         .bind(id)
         .bind(error)
         .bind(retry_seconds as f64)
         .bind(max_attempts)
+        .bind(attempt)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE organization_invitations SET failed_at=NOW(),failed_reason='Invitation email could not be delivered' WHERE failed_at IS NULL AND id IN (SELECT organization_invitation_id FROM email_outbox WHERE id=$1 AND attempts>=$2 AND sent_at IS NULL)")
-        .bind(id).bind(max_attempts).execute(&mut *tx).await?;
+    sqlx::query("UPDATE organization_invitations SET failed_at=NOW(),failed_reason='Invitation email could not be delivered' WHERE failed_at IS NULL AND id IN (SELECT organization_invitation_id FROM email_outbox WHERE id=$1 AND attempts>=$2 AND attempts=$3 AND sent_at IS NULL)")
+        .bind(id).bind(max_attempts).bind(attempt).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -209,33 +221,46 @@ pub async fn remove_old_email(pool: &PgPool, max_attempts: i32, days: i64) -> Re
     .rows_affected())
 }
 
-pub async fn get_email_notifications(pool: &PgPool, user_id: i64) -> Result<bool> {
-    Ok(
-        sqlx::query_scalar("SELECT email_notifications FROM users WHERE id = $1")
-            .bind(user_id)
-            .fetch_optional(pool)
-            .await?
-            .unwrap_or(true),
-    )
+pub async fn get_email_notifications(pool: &PgPool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    super::users::transitions::require_account(&mut tx, user_id, credential).await?;
+    let enabled: bool = sqlx::query_scalar("SELECT email_notifications FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(enabled)
 }
 
-pub async fn set_email_notifications(pool: &PgPool, user_id: i64, enabled: bool) -> Result<()> {
+pub async fn set_email_notifications(pool: &PgPool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, enabled: bool) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    super::users::transitions::require_account(&mut tx, user_id, credential).await?;
     sqlx::query("UPDATE users SET email_notifications = $2 WHERE id = $1")
         .bind(user_id)
         .bind(enabled)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(())
 }
 
 pub async fn notification_email_address(pool: &PgPool, user_id: i64) -> Result<Option<String>> {
+    let mut connection = pool.acquire().await?;
+    notification_address(&mut connection, user_id).await
+}
+
+/// `notification_email_address` inside the caller's transaction.
+pub(in crate::backend::db) async fn notification_address(
+    connection: &mut PgConnection,
+    user_id: i64,
+) -> Result<Option<String>> {
     Ok(sqlx::query_scalar(
         "SELECT email FROM users
          WHERE id = $1 AND email_verified AND email_notifications AND NOT is_banned
            AND email IS NOT NULL AND email <> ''",
     )
     .bind(user_id)
-    .fetch_optional(pool)
+    .fetch_optional(connection)
     .await?)
 }
 
@@ -248,7 +273,14 @@ pub(super) async fn lock_link_recipient(tx: &mut sqlx::Transaction<'_, sqlx::Pos
 
 pub async fn save_email_token(pool: &PgPool, link: &EmailLink<'_>) -> Result<bool> {
     let mut tx = pool.begin().await?;
+    super::users::transitions::lock_membership_shared(&mut tx).await?;
     if !lock_link_recipient(&mut tx, link.user_id).await? {
+        return Ok(false);
+    }
+    // A link goes only to the account's current address, and never to a banned account.
+    let current: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND email=$2 AND NOT is_banned)")
+        .bind(link.user_id).bind(link.email).fetch_one(&mut *tx).await?;
+    if !current {
         return Ok(false);
     }
     // A link issued less than RESEND_SECONDS ago expires later than now + ttl - RESEND_SECONDS.
@@ -298,6 +330,7 @@ pub async fn email_token_is_valid(pool: &PgPool, purpose: &str, token_hash: &str
 
 pub async fn verify_email_token(pool: &PgPool, token_hash: &str) -> Result<Option<bool>> {
     let mut tx = pool.begin().await?;
+    super::users::transitions::lock_membership(&mut tx).await?;
     let user: Option<i64> = sqlx::query_scalar("SELECT user_id FROM email_tokens WHERE purpose='verify' AND token_hash=$1")
         .bind(token_hash).fetch_optional(&mut *tx).await?;
     let Some(user) = user else { return Ok(None) };

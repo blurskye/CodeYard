@@ -95,15 +95,13 @@ async fn document_cached(
     );
     value["user"] = payloads::user(&user);
     value["author_association"] = json!(association(&state.pool, repo, user.id).await?);
-    let key = (
-        comment.diff_base_sha.as_deref().unwrap_or_else(|| pull.diff_base()).to_owned(),
-        comment
-            .commit_sha
-            .as_deref()
-            .unwrap_or(&pull.head_sha)
-            .to_owned(),
-        comment.path.clone().unwrap_or_default(),
-    );
+    let reactions =
+        crate::backend::webhooks::documents::review_comment_reactions(&state.pool, &value)
+            .await
+            .map_err(Error::unavailable)?;
+    value["reactions"] = reactions;
+    let (base, head) = payloads::review_comment_revisions(comment, pull);
+    let key = (base.to_owned(), head.to_owned(), comment.path.clone().unwrap_or_default());
     if !diffs.contains_key(&key) {
         if diffs.len() >= MAX_CACHED_DIFFS {
             diffs.clear();
@@ -114,73 +112,8 @@ async fn document_cached(
             .map_err(super::store_error)?;
         diffs.insert(key.clone(), diff.files);
     }
-    if let Some(file) = diffs[&key]
-        .iter()
-        .find(|f| Some(f.filename.as_str()) == comment.path.as_deref())
-    {
-        value["diff_hunk"] = json!(file.patch);
-        if let Some(line) = comment.line {
-            if let Some((position, _, _)) =
-                positions(&file.patch).into_iter().find(|(_, left, right)| {
-                    if comment.side.as_deref() == Some("LEFT") {
-                        *left == Some(line)
-                    } else {
-                        *right == Some(line)
-                    }
-                })
-            {
-                value["position"] = json!(position);
-                value["original_position"] = json!(position);
-            }
-        }
-    }
+    payloads::review_comment_diff(&mut value, comment, pull, &diffs[&key]);
     Ok(value)
-}
-
-// Positions count diff rows, not file lines; later hunk headers count too.
-fn positions(patch: &str) -> Vec<(i32, Option<i32>, Option<i32>)> {
-    let (mut old, mut new, mut pos, mut begun) = (0, 0, 0, false);
-    let mut rows = Vec::new();
-    for row in patch.lines() {
-        if row.starts_with("@@ ") {
-            let mut fields = row.split_whitespace();
-            fields.next();
-            old = fields
-                .next()
-                .and_then(|s| s.trim_start_matches('-').split(',').next()?.parse().ok())
-                .unwrap_or(0);
-            new = fields
-                .next()
-                .and_then(|s| s.trim_start_matches('+').split(',').next()?.parse().ok())
-                .unwrap_or(0);
-            if begun {
-                pos += 1;
-            }
-            begun = true;
-            continue;
-        }
-        if !begun {
-            continue;
-        }
-        pos += 1;
-        match row.as_bytes().first() {
-            Some(b'+') => {
-                rows.push((pos, None, Some(new)));
-                new += 1;
-            }
-            Some(b'-') => {
-                rows.push((pos, Some(old), None));
-                old += 1;
-            }
-            Some(b' ') => {
-                rows.push((pos, Some(old), Some(new)));
-                old += 1;
-                new += 1;
-            }
-            _ => {}
-        }
-    }
-    rows
 }
 
 #[derive(Default, Deserialize)]
@@ -268,7 +201,11 @@ pub(super) async fn prepare_with_diff(
                 .files
                 .iter()
                 .find(|f| f.filename == path)
-                .and_then(|f| positions(&f.patch).into_iter().find(|r| r.0 == position))
+                .and_then(|f| {
+                    payloads::diff_positions(&f.patch)
+                        .into_iter()
+                        .find(|r| r.0 == position)
+                })
                 .ok_or_else(|| Error::invalid("position is not in the diff"))?;
             if let Some(right) = row.2 {
                 line = Some(right);

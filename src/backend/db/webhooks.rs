@@ -4,6 +4,44 @@ use crate::backend::db::models::{Webhook, WebhookDelivery};
 use crate::backend::db::{users::accounts::AccountCredential, DbPool};
 use anyhow::Result;
 
+/// The supported fan-out of one owner's isolated event must fit its delivery queue.
+pub const MAX_HOOKS_PER_OWNER: usize = 16;
+
+#[derive(Debug, thiserror::Error)]
+#[error("The owner's webhook limit has been reached")]
+pub struct HookLimit;
+
+#[derive(Debug, thiserror::Error)]
+#[error("Webhook administration is required")]
+pub struct HookAuthorityDenied;
+
+/// Another of the owner's hooks already sends one of the events to the same configuration.
+#[derive(Debug, thiserror::Error)]
+#[error("An equivalent webhook already exists")]
+pub struct HookExists;
+
+/// Refuses, with `HookExists`, a hook that would send an event another of the owner's `hooks`
+/// already sends to the same URL, content type and TLS setting, as GitHub does. Sealed secrets
+/// are not compared. `id` is the hook being changed, if any.
+pub(crate) fn ensure_distinct(
+    hooks: &[Webhook],
+    id: Option<i64>,
+    payload_url: &str,
+    content_type: &str,
+    ssl_verify: bool,
+    events: &str,
+) -> Result<()> {
+    let duplicate = hooks.iter().any(|hook| {
+        Some(hook.id) != id
+            && hook.payload_url == payload_url
+            && hook.content_type == content_type
+            && hook.ssl_verify == ssl_verify
+            && crate::backend::webhooks::events::overlap(&hook.events, events)
+    });
+    anyhow::ensure!(!duplicate, HookExists);
+    Ok(())
+}
+
 /// The repository or organization a webhook belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HookOwner {
@@ -104,6 +142,24 @@ impl WebhookPatch {
         selected.retain(|event| !self.remove_events.contains(event));
         events::subscription(&selected).map(Some).map_err(InvalidEvents)
     }
+
+    /// Refuses the patch with `HookExists` when hook `id` would then duplicate another of the
+    /// owner's `hooks`. `Ok(false)` means `hooks` has no hook `id`.
+    /// `events` is the subscription the patch resolves to, or `None` to keep the current one.
+    pub(crate) fn check_distinct(&self, hooks: &[Webhook], id: i64, events: Option<&str>) -> Result<bool> {
+        let Some(current) = hooks.iter().find(|hook| hook.id == id) else {
+            return Ok(false);
+        };
+        ensure_distinct(
+            hooks,
+            Some(id),
+            self.payload_url.as_deref().unwrap_or(&current.payload_url),
+            self.content_type.as_deref().unwrap_or(&current.content_type),
+            self.ssl_verify.unwrap_or(current.ssl_verify),
+            events.unwrap_or(&current.events),
+        )?;
+        Ok(true)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -188,6 +244,11 @@ native_operation!(crate::backend::db::postgres::webhooks::patch_webhook, crate::
 
 native_operation!(crate::backend::db::postgres::webhooks::list_webhooks, crate::backend::db::sqlite::webhooks::list_webhooks,
     fn list_webhooks(pool: &DbPool, owner: HookOwner) -> Result<Vec<Webhook>>);
+
+native_operation!(crate::backend::db::postgres::webhooks::managed_webhook, crate::backend::db::sqlite::webhooks::managed_webhook,
+    fn managed_webhook(pool: &DbPool, owner: HookOwner, actor: i64, id: i64) -> Result<Option<Webhook>>);
+native_operation!(crate::backend::db::postgres::webhooks::latest_push_for_hook, crate::backend::db::sqlite::webhooks::latest_push_for_hook,
+    fn latest_push_for_hook(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, repo: i64, hook: i64, max_bytes: i64) -> Result<Option<String>>);
 
 native_operation!(crate::backend::db::postgres::webhooks::get_webhook, crate::backend::db::sqlite::webhooks::get_webhook,
     fn get_webhook(pool: &DbPool, owner: HookOwner, id: i64) -> Result<Option<Webhook>>);

@@ -96,6 +96,7 @@ async fn prepare_application(
     ))
 }
 
+
 async fn shutdown_signal() -> Result<()> {
     #[cfg(unix)]
     {

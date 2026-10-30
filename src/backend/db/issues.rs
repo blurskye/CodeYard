@@ -9,6 +9,15 @@ native_operation!(crate::backend::db::postgres::issues::issue_repositories,
     crate::backend::db::sqlite::issues::issue_repositories,
     fn issue_repositories(pool: &DbPool, ids: &[i64]) -> Result<Vec<(i64, i64)>>);
 
+/// Reopening normalizes its reason in storage; a closed issue cannot be `reopened`.
+pub(crate) fn valid_state_reason(state: &str, reason: Option<&str>) -> bool {
+    match reason {
+        None | Some("completed" | "not_planned" | "duplicate") => true,
+        Some("reopened") => state == "open",
+        _ => false,
+    }
+}
+
 /// What a new issue starts with besides its text: a parent issue, labels, assignees, a milestone
 /// and a type. The parent and labels and assignees need triage access, and the milestone and type
 /// need write access, as when they are set later. The creating transaction checks all of it, so
@@ -16,6 +25,7 @@ native_operation!(crate::backend::db::postgres::issues::issue_repositories,
 #[derive(Clone, Copy, Default)]
 pub struct IssueMetadata<'a> {
     pub parent: Option<i64>,
+    pub parent_repository: Option<i64>,
     pub labels: &'a [i64],
     pub assignees: &'a [i64],
     pub milestone: Option<i32>,
@@ -47,7 +57,7 @@ pub struct OwnedIssueMetadata {
 impl OwnedIssueMetadata {
     pub fn borrowed(&self) -> IssueMetadata<'_> {
         IssueMetadata {
-            parent: self.parent, labels: &self.labels, assignees: &self.assignees,
+            parent: self.parent, parent_repository: None, labels: &self.labels, assignees: &self.assignees,
             milestone: self.milestone, issue_type: self.issue_type,
         }
     }
@@ -155,9 +165,11 @@ native_operation!(crate::backend::db::postgres::issues::add_issue_comment,
     crate::backend::db::sqlite::issues::add_issue_comment,
     fn add_issue_comment(
     pool: &DbPool,
+    repo_id: i64,
     issue_id: i64,
     author_id: i64,
     body: &str,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<IssueComment>);
 
 native_operation!(crate::backend::db::postgres::issues::list_issue_comments_ordered,
@@ -200,7 +212,8 @@ native_operation!(crate::backend::db::postgres::issues::get_issue_comment,
     crate::backend::db::sqlite::issues::get_issue_comment,
     fn get_issue_comment(pool: &DbPool, comment_id: i64) -> Result<Option<IssueComment>>);
 
-// Changes the body of the author's comment on the issue. None when the change is refused.
+// The author or a current repository writer may edit, with a live credential. None when the
+// change is refused.
 native_operation!(crate::backend::db::postgres::issues::edit_issue_comment,
     crate::backend::db::sqlite::issues::edit_issue_comment,
     fn edit_issue_comment(
@@ -211,9 +224,11 @@ native_operation!(crate::backend::db::postgres::issues::edit_issue_comment,
     comment_id: i64,
     body: &str,
     expected_body: &str,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<Option<IssueComment>>);
 
-// Deletes a comment on the issue: its author, or a maintainer. False when refused.
+// Deletes a comment on the issue: its author or a current repository writer. Returns the deleted
+// comment, or None when refused.
 native_operation!(crate::backend::db::postgres::issues::delete_issue_comment,
     crate::backend::db::sqlite::issues::delete_issue_comment,
     fn delete_issue_comment(
@@ -222,7 +237,8 @@ native_operation!(crate::backend::db::postgres::issues::delete_issue_comment,
     repo_id: i64,
     issue_id: i64,
     comment_id: i64,
-) -> Result<bool>);
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<Option<IssueComment>>);
 
 native_operation!(crate::backend::db::postgres::issues::issue_comment_position,
     crate::backend::db::sqlite::issues::issue_comment_position,
@@ -266,10 +282,19 @@ pub struct IssueCommentEntry {
     pub author: crate::backend::db::users::accounts::AuthorDisplay,
 }
 
-/// An issue with the owner and name of its repository, for a link to it.
-#[derive(Debug, Clone)]
+/// An issue on the signed-in user's dashboard: what its row shows, and the owner and name of its
+/// repository for a link to it. The comment count and labels are read in the same snapshot as
+/// the row, so they belong to the repository the row was authorized in.
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ViewerIssueEntry {
-    pub issue: Issue,
+    pub id: i64,
+    pub number: i32,
+    pub title: String,
+    pub state: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
     pub repo_owner: String,
     pub repo_name: String,
+    pub comments: i64,
+    #[sqlx(skip)]
+    pub labels: Vec<crate::backend::db::models::Label>,
 }

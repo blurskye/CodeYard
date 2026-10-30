@@ -362,6 +362,7 @@ pub struct Item {
     #[sqlx(skip)]
     pub parsed_values: std::sync::OnceLock<std::result::Result<Value, String>>,
     pub archived: bool,
+    pub archived_at: Option<DateTime<Utc>>,
     pub position: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

@@ -304,6 +304,7 @@ pub(super) async fn resolve(
             else {
                 return Ok(Value::Null);
             };
+            let entry = entry.request;
             Ok(
                 json!({"__typename":"AutoMergeRequest","_repo":pull.repo_id,"_scope":"pull-requests",
                 "authorEmail":entry.author_email,"commitBody":entry.commit_message,

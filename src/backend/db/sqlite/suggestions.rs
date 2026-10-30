@@ -212,7 +212,7 @@ pub async fn propose(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::discussions::require_contribution_authority(&mut tx, actor, repo).await?;
     super::issue_attributes::lock_metadata(&mut tx).await?;
-    super::discussions::lock_issue_contribution(&mut tx, actor, issue).await?;
+    super::discussions::lock_issue_contribution(&mut tx, actor, repo, issue).await?;
     anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
     issue_scope(&mut tx, repo, issue).await?;
     if let Some(expected) = target_repository {

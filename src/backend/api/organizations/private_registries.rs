@@ -22,6 +22,10 @@ use axum::{
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
 
+/// Decoded fields are bounded below; URL encoding may triple them, so this route needs more
+/// room than the shared organization form limit.
+pub(super) const BODY_LIMIT: usize = 512 * 1024;
+
 pub(super) fn project(
     registry: db::private_registries::Registry,
 ) -> Result<view::Registry, RegistryError> {
@@ -142,7 +146,7 @@ pub(super) async fn post(
                     | "value"
                     | "replaces_base"
             ) || view::OIDC_FIELDS.iter().any(|(key, _)| name == key);
-            known && value.len() <= if name == "value" { 16384 } else { 4096 }
+            known && value.len() <= if name == "value" { 16384 } else { view::field_max(name) }
         });
     let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let credential = db::users::accounts::AccountCredential::Session(&session);
@@ -197,7 +201,7 @@ pub(super) async fn post(
     let draft = form
         .into_iter()
         .filter(|(key, value)| {
-            !matches!(key.as_str(), "value" | "csrf_token") && value.len() <= 4096
+            !matches!(key.as_str(), "value" | "csrf_token") && value.len() <= view::field_max(key)
         })
         .collect();
     organization::respond(&ctx, Some(org), status, Some("Check the registry URL, authentication fields and repository selection. Re-enter the credential if needed.".into()), draft).await

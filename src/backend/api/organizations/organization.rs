@@ -38,9 +38,7 @@ pub(super) enum Command {
     Delete,
 }
 
-pub(super) fn field<'a>(form: &'a Fields, key: &str) -> &'a str {
-    form.get(key).map(String::as_str).unwrap_or("")
-}
+pub(super) use crate::backend::api::user::responses::field;
 pub(super) fn optional<'a>(form: &'a Fields, key: &str) -> Option<&'a str> {
     let value = field(form, key);
     (!value.is_empty()).then_some(value)
@@ -76,9 +74,9 @@ fn keys(action: &str) -> &'static [&'static str] {
         "assign-user-role" => &["username", "role_id"],
         "assign-team-role" => &["team_slug", "role_id"],
         "revoke-user-role" => &["username", "role_id", "confirm"],
-        "revoke-team-role" => &["team_slug", "role_id", "confirm"],
+        "revoke-team-role" => &["team_id", "role_id", "confirm"],
         "revoke-all-user-roles" => &["username", "confirm"],
-        "revoke-all-team-roles" => &["team_slug", "confirm"],
+        "revoke-all-team-roles" => &["team_id", "confirm"],
         "recover-owner" => &["org_id", "username", "confirm"],
         "delete-organization" => &["confirm"],
         "team" => &["slug", "name", "description", "privacy", "parent_team_id"],
@@ -261,7 +259,9 @@ fn metadata(org: OrganizationMetadata) -> view::Organization {
         display_name: org.display_name,
         description: org.description.unwrap_or_default(),
         suspended: org.governance_suspended,
-        avatar_url: None,
+        avatar_url: org
+            .avatar_file_id
+            .map(|id| format!("/api/files/{id}/download")),
     }
 }
 
@@ -335,17 +335,10 @@ pub(super) async fn respond_with_hook_draft(
     // Establish visibility before rejecting query values, so missing and
     // unrelated organizations retain the same refusal even with bad cursors.
     let current = if let Some(org) = org {
-        let mut value = match selected(ctx, actor, org).await {
-            Ok(value) => metadata(value),
+        match selected(ctx, actor, org).await {
+            Ok(value) => Some(metadata(value)),
             Err(response) => return response,
-        };
-        value.avatar_url =
-            match organizations::get_organization_avatar(&ctx.state.pool, actor, org).await {
-                Ok(Applied(avatar)) => avatar.map(|id| format!("/api/files/{id}/download")),
-                Ok(_) => return not_found(ctx),
-                Err(_) => return unavailable(ctx),
-            };
-        Some(value)
+        }
     } else {
         None
     };
@@ -451,7 +444,9 @@ pub(super) async fn respond_with_hook_draft(
         vec![]
     };
     let interactions = if can_manage && tab == "overview" {
-        if let Some(org) = &current {
+        // Interaction limits need working governance; a suspended organization shows its
+        // suspension notice instead.
+        if let Some(org) = current.as_ref().filter(|org| !org.suspended) {
             match crate::backend::api::user::interactions::panel(
                 &ctx.state.pool,
                 actor,
@@ -608,9 +603,20 @@ pub(super) async fn respond_with_hook_draft(
             model.more_repositories = more_repositories;
         }
         if model.tab == "dependabot" {
-            let (default_level, repositories) =
-                match crate::backend::db::dependabot::repository_access(&ctx.state.pool, ctx.database_actor(actor), org)
-                    .await
+            let page = ctx
+                .query
+                .get("page")
+                .and_then(|p| p.parse::<i64>().ok())
+                .unwrap_or(1)
+                .clamp(1, 10_000);
+            let (default_level, mut repositories) =
+                match crate::backend::db::dependabot::repository_access(
+                    &ctx.state.pool,
+                    ctx.database_actor(actor),
+                    org,
+                    ((page - 1) * 30, 31),
+                )
+                .await
                 {
                     Ok(access) => access,
                     Err(
@@ -619,22 +625,14 @@ pub(super) async fn respond_with_hook_draft(
                     ) => return not_found(ctx),
                     Err(_) => return unavailable(ctx),
                 };
-            let page = ctx
-                .query
-                .get("page")
-                .and_then(|p| p.parse::<i64>().ok())
-                .unwrap_or(1)
-                .clamp(1, 10_000);
-            let offset = (page as usize - 1) * 30;
-            let has_more = offset + 30 < repositories.len();
+            let has_more = repositories.len() > 30;
+            repositories.truncate(30);
             model.dependabot = Some(Box::new(view::dependabot::RepositoryAccess {
                 default_level,
                 page,
                 has_more,
                 repositories: repositories
                     .into_iter()
-                    .skip(offset)
-                    .take(30)
                     .map(|repo| view::dependabot::Repository {
                         id: repo.id,
                         name: repo.name,
@@ -713,7 +711,7 @@ pub(super) async fn respond_with_hook_draft(
             };
         }
         if model.tab == "personal-access-tokens" {
-            model.tokens = match super::tokens::panel(ctx, org).await {
+            model.tokens = match super::tokens::panel(ctx, actor, org).await {
                 Ok(panel) => Some(Box::new(panel)),
                 Err(response) => return response,
             };
@@ -1059,7 +1057,10 @@ async fn apply(
         Command::Create(_) => return Err(invalid(ctx)),
         Command::Delete => return delete_with_repositories(ctx, actor, org).await,
         Command::Profile(profile) => {
-            organizations::update_organization_profile(pool, actor, org, &profile)
+            let credential = crate::backend::db::users::accounts::AccountCredential::Session(
+                ctx.session_id.as_deref().unwrap_or(""),
+            );
+            organizations::update_organization_profile(pool, actor, &credential, org, &profile)
                 .await
                 .map(unit)
         }

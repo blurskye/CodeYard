@@ -211,7 +211,6 @@ pub async fn oauth_callback(
     .await
     {
         Ok((authenticated, return_to)) => {
-            admission::forgive_oauth_start(&state.pool, session::client_address(&headers)).await;
             (
                 StatusCode::FOUND,
                 [

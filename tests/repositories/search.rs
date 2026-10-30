@@ -99,9 +99,16 @@ async fn router(f: &Database, root: &Path) -> axum::Router {
     create_router(state(f, root).await)
 }
 
-/// The address of a code hit in `owner/name`'s `notes.txt` on `main`.
-fn code_hit(owner: &str, name: &str) -> String {
-    format!("/{owner}/{name}/blob/refs/heads/main/notes.txt?view=code&#38;line=1#L1")
+/// Whether `html` links a code hit on line 1 of `owner/name`'s `notes.txt`. The link names the
+/// commit that was searched.
+fn has_code_hit(html: &str, owner: &str, name: &str) -> bool {
+    let prefix = format!("/{owner}/{name}/blob/");
+    html.match_indices(&prefix).any(|(at, _)| {
+        let rest = &html[at + prefix.len()..];
+        rest.len() > 40
+            && rest.as_bytes()[..40].iter().all(u8::is_ascii_hexdigit)
+            && rest[40..].starts_with("/notes.txt?view=code&#38;line=1#L1")
+    })
 }
 
 async fn visibility_contract(pg: bool) {
@@ -174,14 +181,18 @@ async fn visibility_contract(pg: bool) {
         ("owner", &alice_client, true, true, true),
     ];
     for (who, client, vault, org, open) in cases {
-        for (query, path, visible) in [
-            ("vault-token", code_hit("search_alice", "secret"), vault),
-            ("org-token", code_hit("acme", "internal"), org),
-            ("open-token", code_hit("search_alice", "open"), open),
+        for (query, (owner, name), visible) in [
+            ("vault-token", ("search_alice", "secret"), vault),
+            ("org-token", ("acme", "internal"), org),
+            ("open-token", ("search_alice", "open"), open),
         ] {
             let (status, html) = client.page(&format!("/search?q={query}&type=code")).await;
             assert_eq!(status, StatusCode::OK, "{who} {query}: {html}");
-            assert_eq!(html.contains(&path), visible, "{who} sees {path}: {html}");
+            assert_eq!(
+                has_code_hit(&html, owner, name),
+                visible,
+                "{who} sees {owner}/{name}: {html}"
+            );
         }
         // The commit tab reads the same repositories.
         let (status, html) = client.page("/search?q=notes.txt&type=commits").await;
@@ -266,7 +277,7 @@ async fn paging_contract(pg: bool) {
     let hits = |html: &str| {
         (0..35)
             .filter(|number| {
-                html.contains(&code_hit("search_pager", &format!("pager-{number:02}")))
+                has_code_hit(html, "search_pager", &format!("pager-{number:02}"))
             })
             .count()
     };
@@ -320,11 +331,11 @@ async fn budget_contract(pg: bool) {
     let (status, html) = anonymous.page("/search?q=budget-token&type=code").await;
     assert_eq!(status, StatusCode::OK, "{html}");
     assert!(
-        html.contains(&code_hit("search_budget", "budget-a")),
+        has_code_hit(&html, "search_budget", "budget-a"),
         "{html}"
     );
     assert!(
-        !html.contains(&code_hit("search_budget", "budget-b")),
+        !has_code_hit(&html, "search_budget", "budget-b"),
         "{html}"
     );
     assert!(
@@ -337,7 +348,7 @@ async fn budget_contract(pg: bool) {
         .await;
     assert_eq!(status, StatusCode::OK, "{html}");
     assert!(
-        html.contains(&code_hit("search_budget", "budget-b")),
+        has_code_hit(&html, "search_budget", "budget-b"),
         "{html}"
     );
     assert!(!html.contains("Searched "), "{html}");
@@ -576,11 +587,11 @@ async fn unreadable_repository_contract(pg: bool) {
     let (status, html) = anonymous.page("/search?q=walk-token&type=code").await;
     assert_eq!(status, StatusCode::OK, "{html}");
     assert!(
-        html.contains(&code_hit("search_unreadable", "walk-ok")),
+        has_code_hit(&html, "search_unreadable", "walk-ok"),
         "{html}"
     );
     assert!(
-        !html.contains(&code_hit("search_unreadable", "walk-broken")),
+        !has_code_hit(&html, "search_unreadable", "walk-broken"),
         "{html}"
     );
     assert!(
@@ -640,7 +651,7 @@ async fn empty_repository_contract(pg: bool) {
     }
     let (_, html) = anonymous.page("/search?q=walk-token&type=code").await;
     assert!(
-        html.contains(&code_hit("search_empty", "walk-full")),
+        has_code_hit(&html, "search_empty", "walk-full"),
         "{html}"
     );
     f.finish().await;
@@ -694,15 +705,15 @@ async fn budget_cuts_the_least_recent_repository_contract(pg: bool) {
     let (status, html) = anonymous.page("/search?q=recent-token&type=code").await;
     assert_eq!(status, StatusCode::OK, "{html}");
     assert!(
-        html.contains(&code_hit("search_recent", "recent-new")),
+        has_code_hit(&html, "search_recent", "recent-new"),
         "{html}"
     );
     assert!(
-        html.contains(&code_hit("search_recent", "recent-mid")),
+        has_code_hit(&html, "search_recent", "recent-mid"),
         "{html}"
     );
     assert!(
-        !html.contains(&code_hit("search_recent", "recent-old")),
+        !has_code_hit(&html, "search_recent", "recent-old"),
         "{html}"
     );
     assert!(
@@ -782,7 +793,7 @@ async fn exact_repository_scope_contract(pg: bool) {
         .page("/search?q=scope-token%20repo:search_scope/app&type=code")
         .await;
     assert_eq!(status, StatusCode::OK, "{html}");
-    assert!(html.contains(&code_hit("search_scope", "app")), "{html}");
+    assert!(has_code_hit(&html, "search_scope", "app"), "{html}");
     assert!(!html.contains("/search_scope/app2/"), "{html}");
     f.finish().await;
 }
@@ -833,7 +844,7 @@ async fn repository_scope_paging_contract(pg: bool) {
         .await;
     assert_eq!(status, StatusCode::OK, "{second}");
     let hits = |html: &str| {
-        html.matches("/search_pages/paged/blob/refs/heads/main/")
+        html.matches("/search_pages/paged/blob/")
             .count()
     };
     assert_eq!(hits(&first), 30, "{first}");
@@ -906,7 +917,7 @@ async fn one_file_and_unrelated_tables_contract(pg: bool) {
             .await;
         assert_eq!(status, StatusCode::OK, "{html}");
         assert_eq!(
-            html.matches("/one_file/many/blob/refs/heads/main/notes.txt?view=code&#38;line=")
+            html.matches("/notes.txt?view=code&#38;line=")
                 .count(),
             count
         );
@@ -956,7 +967,7 @@ async fn truncation_contract(pg: bool) {
     let (status, html) = anonymous.page("/search?q=trunc-token&type=code").await;
     assert_eq!(status, StatusCode::OK, "{html}");
     assert_eq!(
-        html.matches("/search_trunc/many/blob/refs/heads/main/")
+        html.matches("/search_trunc/many/blob/")
             .count(),
         5,
         "{html}"
@@ -1001,7 +1012,7 @@ async fn long_match_contract(pg: bool) {
 
     let (status, html) = anonymous.page("/search?q=wide-token&type=code").await;
     assert_eq!(status, StatusCode::OK, "{html}");
-    assert!(html.contains(&code_hit("search_wide", "wide")), "{html}");
+    assert!(has_code_hit(&html, "search_wide", "wide"), "{html}");
     assert!(!html.contains("could not be searched"), "{html}");
     f.finish().await;
 }

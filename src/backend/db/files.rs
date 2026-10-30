@@ -123,7 +123,7 @@ native_operation!(crate::backend::db::postgres::files::reserve_upload,
 
 native_operation!(crate::backend::db::postgres::files::charge_upload,
     crate::backend::db::sqlite::files::charge_upload,
-    fn charge_upload(pool: &DbPool, user: i64, reason: &str, size: i64) -> Result<(), AdmissionError>);
+    fn charge_upload(pool: &DbPool, user: i64, reason: &str, size: i64) -> Result<Uuid, AdmissionError>);
 
 native_operation!(crate::backend::db::postgres::files::verify_pending_upload,
     crate::backend::db::sqlite::files::verify_pending_upload,

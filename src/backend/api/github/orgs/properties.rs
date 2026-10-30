@@ -207,7 +207,7 @@ async fn remove(
     actor.require_write()?;
     let org = target(&state, &name).await?;
     outcome(
-        properties::remove(&state.pool, actor.database_actor(), org.id, &property)
+        properties::remove(&state.pool, actor.database_actor(), org.id, &property, None)
             .await
             .map_err(error)?,
     )?;

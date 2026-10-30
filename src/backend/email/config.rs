@@ -154,6 +154,11 @@ pub fn from_env() -> Result<Option<SmtpConfig>, String> {
     from_lookup(&|name| std::env::var(name).ok())
 }
 
+/// Whether the environment sets up a mail server. Saved settings take precedence over it.
+pub fn environment_configured() -> bool {
+    matches!(from_env(), Ok(Some(_)))
+}
+
 fn unavailable(error: impl std::fmt::Display) -> String {
     tracing::warn!(%error, "could not read email settings");
     "The email settings are unavailable.".to_owned()
@@ -221,7 +226,7 @@ pub async fn describe(pool: &DbPool) -> Result<Option<(SmtpConfig, Source, bool)
 pub async fn is_configured(pool: &DbPool) -> bool {
     match db::email::get_email_settings(pool).await {
         Ok(Some(_)) => true,
-        Ok(None) => matches!(from_env(), Ok(Some(_))),
+        Ok(None) => environment_configured(),
         Err(error) => {
             tracing::warn!(%error, "could not read email settings");
             false

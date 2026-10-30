@@ -223,6 +223,7 @@ pub struct RevertRequest {
 /// all the way to the owning storage node. Older peers must reject, not ignore, this authority.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AsyncMergePublication {
+    pub policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
     pub uuid: String,
     pub token_id: i64,
     pub pull_request_id: i64,
@@ -231,6 +232,31 @@ pub struct AsyncMergePublication {
     pub base: String,
     pub result: String,
     pub method: MergeMethod,
+}
+
+/// The original credential and the policy snapshot the merge actually evaluated.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeAuthorization {
+    pub token: Option<i64>,
+    /// The browser session the merge came from, which must still be live when it publishes.
+    #[serde(default)]
+    pub session: Option<String>,
+    pub policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
+}
+impl From<Option<i64>> for MergeAuthorization {
+    fn from(token: Option<i64>) -> Self {
+        Self { token, ..Self::default() }
+    }
+}
+// A session id is a credential, so it never reaches a log.
+impl std::fmt::Debug for MergeAuthorization {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MergeAuthorization")
+            .field("token", &self.token)
+            .field("session", &self.session.as_ref().map(|_| "[redacted]"))
+            .field("policy", &self.policy)
+            .finish()
+    }
 }
 
 /// A prepared, direct branch merge. Both mutable branches are pinned independently of the
@@ -246,6 +272,7 @@ pub struct BranchMergePublication {
 }
 
 /// One branch that a restack moves: the commit it must still be at, and the commit it moves to.
+/// Equal commits hold a branch the restack built on without moving it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestackMove {
     pub branch: String,

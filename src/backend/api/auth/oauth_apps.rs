@@ -1,6 +1,9 @@
 //! GitHub's OAuth device and authorization-code flows, including the public CLI client.
 use crate::backend::{
-    api::http::{config::link_origin, context::PageContext, session},
+    api::{
+        http::{config::link_origin, context::PageContext, session},
+        user::responses::field,
+    },
     app::AppState,
     db::{
         self,
@@ -21,9 +24,6 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
 type Fields = HashMap<String, String>;
-fn field<'a>(fields: &'a Fields, key: &str) -> &'a str {
-    fields.get(key).map(String::as_str).unwrap_or("")
-}
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -110,10 +110,10 @@ async fn admit(state: &AppState, headers: &HeaderMap, key: &str) -> Result<(), R
     {
         return Err(StatusCode::SERVICE_UNAVAILABLE.into_response());
     }
-    admission::admit_login(
+    admission::admit_operation(
         &state.pool,
         session::client_address(headers),
-        None,
+        "device",
         &format!(
             "{key}:{}",
             session::client_address(headers).unwrap_or("local")

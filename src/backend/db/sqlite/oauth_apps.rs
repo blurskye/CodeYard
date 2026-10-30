@@ -1,5 +1,5 @@
-use crate::backend::db::{credentials::Actor, oauth_apps::{Application, ApplicationSummary, Exchange, Grant, Token, APPLICATION_PAGE_SIZE, APPLICATIONS_SQL}};
-use crate::backend::identity::{oauth_apps, tokens::token_hash};
+use crate::backend::db::{credentials::Actor, oauth_apps::{self, Application, ApplicationSummary, Exchange, Grant, Token, APPLICATION_PAGE_SIZE, APPLICATIONS_SQL}};
+use crate::backend::identity::{oauth_apps as oauth, tokens::token_hash};
 use anyhow::Result;
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -28,7 +28,7 @@ pub async fn register(
 
 pub async fn application(pool: &SqlitePool, client_id: &str) -> Result<Option<Application>> {
     Ok(
-        sqlx::query_as("SELECT * FROM oauth_applications WHERE client_id=$1")
+        sqlx::query_as(&format!("SELECT * FROM oauth_applications WHERE client_id=$1 AND {}", oauth_apps::client_condition("$1")))
             .bind(client_id)
             .fetch_optional(pool)
             .await?,
@@ -97,6 +97,11 @@ pub async fn exchange(
         .bind(hash)
         .execute(&mut *tx)
         .await?;
+    let active: bool = sqlx::query_scalar(&format!("SELECT $1=$2 OR {}", oauth_apps::client_condition("$1")))
+        .bind(client_id).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_one(&mut *tx).await?;
+    if !active {
+        return Ok(Exchange::Denied);
+    }
     let grant: Option<Grant> =
         sqlx::query_as("SELECT * FROM oauth_app_grants WHERE hash=$1 AND client_id=$2 ")
             .bind(hash)
@@ -119,7 +124,7 @@ pub async fn exchange(
     if grant.kind == "web"
         && (redirect_uri.is_some_and(|uri| uri != grant.redirect_uri)
             || state.is_some_and(|state| state != grant.state)
-            || !oauth_apps::verify_challenge(&grant.challenge, verifier))
+            || !oauth::verify_challenge(&grant.challenge, verifier))
     {
         return Ok(Exchange::Invalid);
     }
@@ -147,7 +152,7 @@ pub async fn exchange(
     };
 
     let token_id: Option<i64> = sqlx::query_scalar("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope) SELECT u.id,'OAuth: ' || $3,$4,CASE WHEN EXISTS(SELECT 1 FROM github_apps WHERE client_id=$3 AND access_level>=3) THEN 'write' ELSE $5 END FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') RETURNING id")
-        .bind(actor).bind(&grant.session_id).bind(client_id).bind(token_hash(value)).bind(if oauth_apps::write_scope(&grant.scopes) { "write" } else { "read" }).fetch_optional(&mut *tx).await?;
+        .bind(actor).bind(&grant.session_id).bind(client_id).bind(token_hash(value)).bind(if oauth::write_scope(&grant.scopes) { "write" } else { "read" }).fetch_optional(&mut *tx).await?;
     let Some(token_id) = token_id else {
         return Ok(Exchange::Denied);
     };
@@ -179,8 +184,9 @@ pub async fn owned_token(
     client: &str,
     hash: &str,
 ) -> Result<Option<crate::backend::db::models::PersonalAccessToken>> {
-    Ok(sqlx::query_as("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND NOT u.is_banned AND NOT u.must_change_password")
-        .bind(client).bind(hash).fetch_optional(pool).await?)
+    let issuer = oauth_apps::token_issuer_condition("t", "$3");
+    Ok(sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}"))
+        .bind(client).bind(hash).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(pool).await?)
 }
 
 pub async fn reset_token(
@@ -190,8 +196,10 @@ pub async fn reset_token(
     new_hash: &str,
 ) -> Result<Option<crate::backend::db::models::PersonalAccessToken>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let old: Option<crate::backend::db::models::PersonalAccessToken> = sqlx::query_as("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND NOT u.is_banned AND NOT u.must_change_password")
-        .bind(client).bind(hash).fetch_optional(&mut *tx).await?;
+    // A token from an app that is no longer available is not refreshed.
+    let issuer = oauth_apps::token_issuer_condition("t", "$3");
+    let old: Option<crate::backend::db::models::PersonalAccessToken> = sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}"))
+        .bind(client).bind(hash).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(&mut *tx).await?;
     let Some(old) = old else { return Ok(None); };
     let replacement: crate::backend::db::models::PersonalAccessToken = sqlx::query_as("INSERT INTO personal_access_tokens(user_id,name,scope,expires_at,token_hash) VALUES($1,$2,$3,$4,$5) RETURNING id,user_id,name,scope,expires_at,created_at")
         .bind(old.user_id).bind(&old.name).bind(&old.scope).bind(old.expires_at).bind(new_hash).fetch_one(&mut *tx).await?;
@@ -216,6 +224,11 @@ pub async fn revoke(
         .bind(hash)
         .execute(&mut *tx)
         .await?;
+    let active: bool = sqlx::query_scalar(&format!("SELECT $1=$2 OR {}", oauth_apps::client_condition("$1")))
+        .bind(client).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_one(&mut *tx).await?;
+    if !active {
+        return Ok(());
+    }
     let user: Option<i64>=sqlx::query_scalar("SELECT t.user_id FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id WHERE o.client_id=$1 AND t.token_hash=$2").bind(client).bind(hash).fetch_optional(&mut *tx).await?;
     if let Some(user) = user {
         if authorization {

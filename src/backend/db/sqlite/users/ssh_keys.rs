@@ -184,10 +184,15 @@ pub async fn get_user_by_ssh_key_id(pool: &SqlitePool, key_id: i64) -> Result<Op
 pub async fn list_user_key_summaries(
     pool: &SqlitePool,
     user_id: i64,
+    credential: &AccountCredential<'_>,
     after: i64,
 ) -> Result<Vec<crate::backend::db::users::ssh_keys::SshKeySummary>> {
-    Ok(sqlx::query_as("SELECT id,name,fingerprint,key_type,created_at FROM ssh_keys WHERE user_id=?1 AND id>?2 ORDER BY id LIMIT 100")
-        .bind(user_id).bind(after.max(0)).fetch_all(pool).await?)
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::transitions::require_account(&mut tx, user_id, credential).await?;
+    let keys = sqlx::query_as("SELECT id,name,fingerprint,key_type,created_at FROM ssh_keys WHERE user_id=?1 AND id>?2 ORDER BY id LIMIT 100")
+        .bind(user_id).bind(after.max(0)).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(keys)
 }
 
 pub async fn user_keys_page(

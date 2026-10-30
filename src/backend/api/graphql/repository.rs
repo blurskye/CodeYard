@@ -152,13 +152,14 @@ pub(super) async fn resolve(
         }
         "nameWithOwner" | "url" | "sshUrl" => {
             let name = format!("{}/{}", owner(&repo, request).await?, repo.name);
+            let ssh = super::super::http::config::ssh_clone_base();
             Ok(json!(match field {
                 "nameWithOwner" => name,
                 "url" => url(&format!("/{name}")),
-                _ => format!(
-                    "{}/{name}.git",
-                    super::super::http::config::ssh_clone_base().trim_end_matches('/')
-                ),
+                // sshUrl is non-null in the schema; with SSH off there is no remote to
+                // advertise, and a bare "/owner/repo.git" would be a local path.
+                _ if ssh.trim().is_empty() => String::new(),
+                _ => format!("{}/{name}.git", ssh.trim_end_matches('/')),
             }))
         }
         "discussion" | "discussions" | "discussionCategories" | "hasDiscussionsEnabled" => {

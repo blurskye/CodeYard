@@ -1,7 +1,10 @@
 //! Native registration and account-owner consent for GitHub Apps.
 mod manifests;
 use crate::backend::{
-    api::http::{context::PageContext, middleware, session},
+    api::{
+        http::{context::PageContext, middleware, session},
+        user::responses::field,
+    },
     app::AppState,
     db::{self, github_apps::App},
     identity::{github_apps as apps, oauth_apps as oauth, tokens::token_hash},
@@ -22,9 +25,6 @@ use manifests::{manifest_approve, manifest_preview, manifest_start};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 type Fields = HashMap<String, String>;
-fn field<'a>(form: &'a Fields, key: &str) -> &'a str {
-    form.get(key).map(String::as_str).unwrap_or("")
-}
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/settings/apps", get(list))
@@ -35,6 +35,7 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/settings/apps/new", get(new).post(register))
         .route("/settings/apps/:id/delete", axum::routing::post(delete_registration))
+        .route("/settings/apps/:slug/regenerate", axum::routing::post(regenerate))
         .route("/apps/:slug", get(install_get))
         .route(
             "/apps/:slug/installations/new",
@@ -82,7 +83,8 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         return r;
     }
     let mut model = model("list");
-    match db::github_apps::apps(&ctx.state.pool, ctx.user.as_ref().unwrap().id).await {
+    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
+    match db::github_apps::apps(&ctx.state.pool, ctx.user.as_ref().unwrap().id, &session).await {
         Ok(apps) => model.registered = apps.into_iter().map(|app| (app.id, app.name, app.slug)).collect(),
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Apps unavailable"),
     }
@@ -117,7 +119,8 @@ async fn managed_installations(
         return response;
     }
     let mut model = model("installations");
-    match db::github_apps::managed_installations(&ctx.state.pool, ctx.user.as_ref().unwrap().id)
+    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
+    match db::github_apps::managed_installations(&ctx.state.pool, ctx.user.as_ref().unwrap().id, &session)
         .await
     {
         Ok(rows) => {
@@ -178,6 +181,48 @@ async fn uninstall(
         ),
     }
 }
+fn key_failure(ctx: &PageContext, error: apps::RegistrationKeyError) -> Response {
+    let status = match error {
+        apps::RegistrationKeyError::Limited => StatusCode::TOO_MANY_REQUESTS,
+        apps::RegistrationKeyError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    ctx.error(status, "App credential generation is temporarily unavailable")
+}
+
+async fn regenerate(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri, Path(slug): Path<String>, Form(form): Form<Fields>) -> Response {
+    let mut ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    ctx.return_to = Some("/settings/apps".into());
+    if let Some(response) = login(&ctx) { return response; }
+    if let Err(response) = ctx.check_csrf(&form) { return response; }
+    let actor = ctx.user.as_ref().unwrap().id;
+    let Some(session) = session::extract_session_id(&ctx.headers) else {
+        return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
+    };
+    match db::github_apps::app(&ctx.state.pool, &slug).await {
+        Ok(Some(app)) if app.owner_id == actor && app.slug == slug => {},
+        Ok(_) => return ctx.error(StatusCode::NOT_FOUND, "App not found"),
+        Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Apps unavailable"),
+    }
+    let (private, public) = match apps::registration_key(&ctx.state.pool, actor).await {
+        Ok(keys) => keys,
+        Err(error) => return key_failure(&ctx, error),
+    };
+    let secret = oauth::random();
+    match db::github_apps::rotate_credentials(&ctx.state.pool, actor, &session, &slug, &public, &token_hash(&secret)).await {
+        Ok(Some(client)) => {
+            let mut model = model("new");
+            model.credentials = Some((client, secret, private));
+            page(&ctx, model)
+        }
+        Ok(None) => ctx.error(StatusCode::NOT_FOUND, "App not found"),
+        Err(error) if error.is::<db::users::accounts::AccountRestricted>() => ctx.error(StatusCode::FORBIDDEN, "Account unavailable"),
+        Err(_) => ctx.error(StatusCode::SERVICE_UNAVAILABLE, "App credential replacement unavailable"),
+    }
+}
+
 async fn new(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
@@ -214,7 +259,7 @@ async fn register(
         return manifest_approve(&ctx, &form).await;
     }
     let slug = field(&form, "slug");
-    let name = field(&form, "name");
+    let name = apps::valid_name(field(&form, "name"));
     let homepage = field(&form, "homepage");
     let url = url::Url::parse(homepage).ok();
     let permissions = serde_json::from_str::<Value>(field(&form, "permissions"))
@@ -233,8 +278,7 @@ async fn register(
         crate::backend::webhooks::events::subscription(&chosen)
     };
     if !apps::valid_slug(slug)
-        || name.trim().is_empty()
-        || name.len() > 100
+        || name.is_none()
         || field(&form, "description").len() > 1000
         || homepage.len() > 2048
         || !url.is_some_and(|url| {
@@ -264,15 +308,9 @@ async fn register(
     let Some(session) = session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    let key = apps::generate_key().await;
-    let (private, public) = match key {
+    let (private, public) = match apps::registration_key(&ctx.state.pool, ctx.user.as_ref().unwrap().id).await {
         Ok(keys) => keys,
-        _ => {
-            return ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Key generation unavailable",
-            )
-        }
+        Err(error) => return key_failure(&ctx, error),
     };
     let permissions = permissions.unwrap();
     let client = format!("Iv1.{}", &oauth::random()[..16]);
@@ -284,7 +322,7 @@ async fn register(
         is_public: true,
         client_id: client.clone(),
         slug: slug.into(),
-        name: name.trim().into(),
+        name: name.unwrap_or_default().into(),
         description: field(&form, "description").into(),
         homepage: homepage.into(),
         public_key: public,

@@ -34,10 +34,10 @@ pub async fn list(
         .bind(repo).bind(viewer).bind(pull).fetch_all(pool).await?)
 }
 
-pub async fn members(pool: &SqlitePool, repo: i64, team: i64, after: i64) -> Result<Vec<i64>> {
-    let rows = sqlx::query_scalar("SELECT DISTINCT u.id FROM effective_team_memberships m JOIN teams t ON t.id=m.team_id JOIN org_memberships o ON o.org_id=t.org_id AND o.user_id=m.user_id JOIN users u ON u.id=m.user_id JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL WHERE r.id=?1 AND t.id=?2 AND m.role IN ('member','maintainer') AND o.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 3 AND 5) AND u.id>?3 ORDER BY u.id LIMIT 500")
-        .bind(repo).bind(team).bind(after).fetch_all(pool).await?;
-    Ok(rows)
+pub async fn members(pool: &SqlitePool, repo: i64, teams: &[i64], after: i64) -> Result<Vec<crate::backend::db::models::User>> {
+    let access = super::super::repositories::access::USER_REPO_ACCESS_SQL;
+    Ok(sqlx::query_as(&format!("SELECT DISTINCT u.* FROM effective_team_memberships m JOIN teams t ON t.id=m.team_id JOIN org_memberships o ON o.org_id=t.org_id AND o.user_id=m.user_id JOIN users u ON u.id=m.user_id JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL WHERE r.id=?1 AND t.id IN (SELECT value FROM json_each(?2)) AND u.id>?3 AND t.notifications_enabled AND m.role IN ('member','maintainer') AND o.role IN ('owner','admin','member') AND NOT r.is_archived AND NOT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=r.id) AND ({access})>=3 AND EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 3 AND 5) ORDER BY u.id LIMIT 100"))
+        .bind(repo).bind(serde_json::to_string(teams)?).bind(after).fetch_all(pool).await?)
 }
 
 pub async fn set_requests(pool: &SqlitePool, actor: i64, pull: i64, input: &crate::backend::db::pull_requests::team_reviewers::ReviewRequests<'_>) -> Result<crate::backend::db::pull_requests::team_reviewers::ReviewRequestChanges> {
@@ -134,8 +134,10 @@ pub async fn change(
             continue;
         }
         if expected.is_some() {
-            let reviewed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews v JOIN effective_team_memberships m ON m.user_id=v.author_id AND m.team_id=?2 WHERE v.pull_request_id=?1 AND v.state<>'pending' AND v.author_id<>(SELECT author_id FROM pull_requests WHERE id=?1))")
-                .bind(pull).bind(team.id).fetch_one(&mut *tx).await?;
+            // A member's decision on the current head stands in for the team; an older or
+            // dismissed one, or the author's own, does not.
+            let reviewed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM effective_team_memberships m WHERE m.team_id=?2 AND m.user_id<>(SELECT author_id FROM pull_requests WHERE id=?1) AND COALESCE((SELECT v.state IN ('approved','changes_requested') AND v.commit_sha=?3 FROM pr_reviews v WHERE v.pull_request_id=?1 AND v.author_id=m.user_id AND v.state NOT IN ('commented','pending') ORDER BY v.created_at DESC,v.id DESC LIMIT 1),FALSE))")
+                .bind(pull).bind(team.id).bind(&current.head_sha).fetch_one(&mut *tx).await?;
             if reviewed {
                 continue;
             }

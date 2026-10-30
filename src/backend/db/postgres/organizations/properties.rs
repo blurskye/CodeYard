@@ -6,7 +6,7 @@ use crate::backend::db::{
 use anyhow::{ensure, Result};
 use sqlx::{PgConnection, PgPool};
 use std::collections::HashSet;
-use OrganizationOutcome::{Applied, Denied, Missing};
+use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
 
 pub(crate) async fn definitions_on(c: &mut PgConnection, org: i64) -> Result<Vec<Definition>> {
     sqlx::query_as::<_,DefinitionRow>("SELECT * FROM organization_repository_properties WHERE org_id=$1 ORDER BY LOWER(property_name),id").bind(org).fetch_all(c).await?.into_iter().map(DefinitionRow::decode).collect()
@@ -19,6 +19,39 @@ pub async fn catalog(
     let mut tx = begin_read(pool).await?;
     require_read_org!(tx, actor, org);
     let result = definitions_on(&mut tx, org).await?;
+    tx.commit().await?;
+    Ok(Applied(result))
+}
+pub async fn summaries(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+) -> Result<OrganizationOutcome<Vec<DefinitionSummary>>> {
+    let mut tx = begin_read(pool).await?;
+    require_read_org!(tx, actor, org);
+    let result = sqlx::query_as::<_, DefinitionSummary>("SELECT id,property_name,value_type,description,required,require_explicit_values FROM organization_repository_properties WHERE org_id=$1 ORDER BY LOWER(property_name),id LIMIT $2")
+        .bind(org)
+        .bind(MAX_DEFINITIONS as i64)
+        .fetch_all(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Applied(result))
+}
+pub async fn definition(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    name: &str,
+) -> Result<OrganizationOutcome<Option<Definition>>> {
+    let mut tx = begin_read(pool).await?;
+    require_read_org!(tx, actor, org);
+    let result = sqlx::query_as::<_, DefinitionRow>("SELECT * FROM organization_repository_properties WHERE org_id=$1 AND LOWER(property_name)=LOWER($2)")
+        .bind(org)
+        .bind(name)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(DefinitionRow::decode)
+        .transpose()?;
     tx.commit().await?;
     Ok(Applied(result))
 }
@@ -90,6 +123,7 @@ pub async fn remove(
     actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     name: &str,
+    definition: Option<i64>,
 ) -> Result<OrganizationOutcome<()>> {
     let grant = actor.into();
     let actor = grant.user_id;
@@ -98,7 +132,10 @@ pub async fn remove(
         return Ok(Denied);
     }
     if !credential(&mut tx, &grant, org, "organization_custom_properties").await? { return Ok(Denied); }
-    if sqlx::query("DELETE FROM organization_repository_properties WHERE org_id=$1 AND LOWER(property_name)=LOWER($2)").bind(org).bind(name).execute(&mut *tx).await?.rows_affected()==0 {return Ok(Missing);}
+    // A native form names the definition it showed, so a replacement with the same name survives.
+    if sqlx::query("DELETE FROM organization_repository_properties WHERE org_id=$1 AND LOWER(property_name)=LOWER($2) AND ($3::BIGINT IS NULL OR id=$3)").bind(org).bind(name).bind(definition).execute(&mut *tx).await?.rows_affected()==0 {
+        return Ok(if definition.is_some() { Conflict } else { Missing });
+    }
     tx.commit().await?;
     Ok(Applied(()))
 }

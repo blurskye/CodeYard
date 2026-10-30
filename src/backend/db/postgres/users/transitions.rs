@@ -163,8 +163,10 @@ pub(crate) async fn credential_live(
             // Installation revocation takes this row before deleting its personal tokens.
             let _: Option<i64> = sqlx::query_scalar("SELECT i.id FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id WHERE t.token_id=$1 FOR SHARE OF i")
                 .bind(id).fetch_optional(&mut **tx).await?;
-            let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar("SELECT expires_at FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND (NOT $4 OR scope='write') AND token_hash=$3 FOR SHARE")
-                .bind(id).bind(actor).bind(hash).bind(write).fetch_optional(&mut **tx).await?;
+            // A token issued to an OAuth app ends with that app's availability.
+            let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "$5");
+            let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar(&format!("SELECT t.expires_at FROM personal_access_tokens t WHERE t.id=$1 AND t.user_id=$2 AND (NOT $4 OR t.scope='write') AND t.token_hash=$3 AND {issuer} FOR SHARE OF t"))
+                .bind(id).bind(actor).bind(hash).bind(write).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(&mut **tx).await?;
             match expiry {
                 Some(None) => true,
                 Some(Some(expiry)) => {
@@ -759,13 +761,19 @@ async fn revoke_credentials(tx: &mut Transaction<'_, Postgres>, user_id: i64) ->
     Ok(())
 }
 
-/// Uses a reset link and sets the password it was sent for. The link is used, the hash replaced
-/// and the credentials revoked in one transaction. Returns the account, or None when the link is
-/// no longer usable.
+/// Account facts to pin password verification outside the consuming transaction.
+pub async fn password_reset_account(pool: &PgPool, token_hash: &str) -> Result<Option<User>> {
+    Ok(sqlx::query_as("SELECT u.* FROM users u JOIN email_tokens t ON t.user_id=u.id WHERE t.purpose='reset' AND t.token_hash=$1 AND t.expires_at>clock_timestamp() AND u.email=t.email AND u.password_hash IS NOT NULL AND NOT u.is_banned")
+        .bind(token_hash).fetch_optional(pool).await?)
+}
+
+/// Consumes the link, compares the verified password state and revokes credentials atomically.
 pub async fn reset_password_with_link(
     pool: &PgPool,
     token_hash: &str,
     replacement: &str,
+    expected_hash: &str,
+    expected_temporary: bool,
 ) -> Result<Option<i64>> {
     let mut tx = pool.begin().await?;
     // Retain the owning organizations and account before the issuance, as in account changes.
@@ -796,10 +804,12 @@ pub async fn reset_password_with_link(
     };
     let changed = sqlx::query(
         "UPDATE users SET password_hash=$2,must_change_password=FALSE,updated_at=NOW()
-         WHERE id=$1 AND password_hash IS NOT NULL AND NOT is_banned",
+         WHERE id=$1 AND password_hash=$3 AND must_change_password=$4 AND NOT is_banned",
     )
     .bind(user_id)
     .bind(replacement)
+    .bind(expected_hash)
+    .bind(expected_temporary)
     .execute(&mut *tx)
     .await?
     .rows_affected()

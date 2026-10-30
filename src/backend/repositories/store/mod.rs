@@ -2182,6 +2182,7 @@ impl RepoStore {
                         WriteVia::Direct,
                         publication.authority.token_id(),
                         Some(&publication.authority),
+                        None,
                     )
                     .await
             }
@@ -2216,6 +2217,7 @@ impl RepoStore {
         base: &str,
         result: &str,
         method: MergeMethod,
+        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
     ) -> Result<(), RepoError> {
         let authority = actor.into();
         let actor = authority.user_id;
@@ -2235,6 +2237,7 @@ impl RepoStore {
                         WriteVia::Merge,
                         token,
                         Some(&authority),
+                        policy,
                     )
                     .await
             }
@@ -2250,6 +2253,7 @@ impl RepoStore {
                             result: result.into(),
                             method,
                             token: rpc::wire::PublicationCredential::retain(authority),
+                            policy,
                         },
                         b"",
                     )
@@ -2274,6 +2278,7 @@ impl RepoStore {
         base_branch: &str,
         base: &str,
         result: &str,
+        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
     ) -> Result<(), RepoError> {
         let authority = actor.into();
         let actor = authority.user_id;
@@ -2297,6 +2302,7 @@ impl RepoStore {
                         WriteVia::Merge,
                         token,
                         Some(&authority),
+                        policy,
                     )
                     .await
             }
@@ -2310,6 +2316,7 @@ impl RepoStore {
                             base: base.into(),
                             result: result.into(),
                             token: rpc::wire::PublicationCredential::retain(authority),
+                            policy,
                         },
                         b"",
                     )

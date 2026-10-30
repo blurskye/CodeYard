@@ -2,12 +2,14 @@ use crate::backend::{
     crypto::{SecretEncryptor, SecretError},
     db::{
         organization_values::{
-            self, Kind, OrganizationValue, Save, Selection, StoredValue, ValueError,
+            self, Kind, OrganizationValue, Save, Selection, SettingsPage, SettingsValue, StoredValue,
+            ValueError, SETTINGS_PAGE_SIZE,
         },
         organizations::{administers, OrganizationOutcome},
+        users::accounts::AccountCredential,
     },
 };
-use sqlx::{SqliteConnection as Connection, SqlitePool as Pool};
+use sqlx::{Sqlite, SqliteConnection as Connection, SqlitePool as Pool, Transaction};
 
 async fn authorize(connection: &mut Connection, actor: i64, org: i64) -> Result<(), ValueError> {
     match super::authority::authority(connection, actor, org)
@@ -18,6 +20,14 @@ async fn authorize(connection: &mut Connection, actor: i64, org: i64) -> Result<
         OrganizationOutcome::Missing => Err(ValueError::NotFound),
         _ => Err(ValueError::Denied),
     }
+}
+
+async fn authorize_write(tx: &mut Transaction<'_, Sqlite>, actor: i64, credential: &AccountCredential<'_>, org: i64) -> Result<(), ValueError> {
+    authorize(tx, actor, org).await?;
+    if !crate::backend::db::sqlite::users::transitions::retain_write_credential(tx, actor, credential).await.map_err(ValueError::Authority)? {
+        return Err(ValueError::Denied);
+    }
+    Ok(())
 }
 
 pub async fn key(
@@ -52,6 +62,31 @@ pub async fn list(
     let rows = sqlx::query_as("SELECT name,kind,value,visibility,created_at,updated_at FROM org_actions_values WHERE org_id=$1 AND kind=$2 ORDER BY name").bind(org).bind(kind.as_str()).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
+}
+
+/// The page and selected-ID summaries share retained owner/session authority.
+pub async fn settings_page(pool: &Pool, actor: i64, session: &str, org: i64, page: i64) -> Result<SettingsPage, ValueError> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    authorize(&mut tx, actor, org).await?;
+    if !crate::backend::db::sqlite::users::transitions::live_session(&mut tx, actor, session).await.map_err(ValueError::Authority)? {
+        return Err(ValueError::Denied);
+    }
+    let rows = sqlx::query_as::<_, SettingsValue>(
+        "WITH page AS MATERIALIZED (
+             SELECT kind,name FROM org_actions_values WHERE org_id=$1 ORDER BY kind,name LIMIT $2 OFFSET $3
+         )
+         SELECT v.name,v.kind,CASE WHEN v.kind='variable' THEN v.value ELSE '' END AS value,v.visibility,v.created_at,v.updated_at,
+         CASE WHEN v.visibility='selected' THEN COALESCE((
+             SELECT group_concat(repo_id,', ') FROM (
+                 SELECT s.repo_id FROM org_actions_value_repositories s JOIN repositories r ON r.id=s.repo_id AND r.owner_org_id=s.org_id AND r.owner_kind='org'
+                 WHERE s.org_id=v.org_id AND s.kind=v.kind AND s.name=v.name ORDER BY s.repo_id
+             )
+         ),'') ELSE '' END AS repository_ids
+         FROM page p JOIN org_actions_values v ON v.org_id=$1 AND v.kind=p.kind AND v.name=p.name ORDER BY v.kind,v.name")
+        .bind(org).bind(SETTINGS_PAGE_SIZE + 1).bind((page.clamp(1,1000) - 1) * SETTINGS_PAGE_SIZE)
+        .fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(SettingsPage::from_rows(rows))
 }
 
 async fn valid_repositories(
@@ -107,12 +142,13 @@ pub async fn save(
     pool: &Pool,
     encryptor: Option<&SecretEncryptor>,
     actor: i64,
+    credential: &AccountCredential<'_>,
     org: i64,
     input: &Save<'_>,
 ) -> Result<bool, ValueError> {
     organization_values::validate(input.name, input.value.unwrap_or_default())?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, org).await?;
+    authorize_write(&mut tx, actor, credential, org).await?;
     let kind = input.kind.as_str();
     let previous = input.previous.unwrap_or(input.name);
     let old: Option<StoredValue> = sqlx::query_as("SELECT name,value,visibility,encrypted_value,nonce FROM org_actions_values WHERE org_id=$1 AND kind=$2 AND name=$3").bind(org).bind(kind).bind(previous).fetch_optional(&mut *tx).await?;
@@ -196,12 +232,13 @@ pub async fn save(
 pub async fn delete(
     pool: &Pool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     org: i64,
     kind: Kind,
     name: &str,
 ) -> Result<(), ValueError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, org).await?;
+    authorize_write(&mut tx, actor, credential, org).await?;
     let result =
         sqlx::query("DELETE FROM org_actions_values WHERE org_id=$1 AND kind=$2 AND name=$3")
             .bind(org)
@@ -262,13 +299,14 @@ pub async fn repositories(
 pub async fn select(
     pool: &Pool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     org: i64,
     kind: Kind,
     name: &str,
     change: Selection<'_>,
 ) -> Result<(), ValueError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, org).await?;
+    authorize_write(&mut tx, actor, credential, org).await?;
     selected(&mut tx, org, kind, name).await?;
     match change {
         Selection::Set(ids) => replace_repositories(&mut tx, org, kind, name, ids).await?,

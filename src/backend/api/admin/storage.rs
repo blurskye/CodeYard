@@ -1,5 +1,6 @@
 //! Admin storage overview page.
 use crate::backend::api::http::context::PageContext;
+use crate::backend::api::user::responses::require_account;
 use crate::backend::{app::AppState, db};
 use crate::webui::{app::Page, pages::admin::storage as view};
 use axum::{
@@ -28,8 +29,8 @@ async fn show(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    if ctx.administrator().is_none() {
-        return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
+    if let Err(response) = require_account(&ctx, true) {
+        return response;
     }
     let model = view::Page {
         database: database_name(&ctx.state.pool).into(),

@@ -210,7 +210,6 @@ async fn load_search(
     viewer: Option<i64>,
     filters: SearchFilters,
 ) -> Result<SearchModel, DiscoveryReadError> {
-    let _permit = admit_search().await?;
     let SearchFilters {
         text,
         tab,
@@ -228,6 +227,7 @@ async fn load_search(
         model.tab = tab.unwrap_or_else(|| "repos".into());
         return Ok(model);
     }
+    let _permit = admit_search().await?;
     let unavailable = |_| DiscoveryReadError::Unavailable;
     // Explicit content searches do not scan unrelated tables for tab badges.
     let cap = SEARCH_COUNT_CAP as i64;
@@ -276,7 +276,7 @@ async fn load_search(
             .map_err(unavailable)?;
             let (repos, has_older) = take_page(repos);
             model.has_older = has_older;
-            model.repositories = repository_cards(state, repos).await?;
+            model.repositories = repository_cards(state, viewer, repos).await?;
         }
         "issues" => {
             let issues = db::repositories::discovery::search_issues(
@@ -372,6 +372,7 @@ async fn load_search(
             model.scan = content.scan;
             model.unsearched = content.unsearched;
             model.truncated = content.truncated;
+            model.window_limited = content.window_limited;
         }
     }
     model.counts = counts;
@@ -409,10 +410,29 @@ pub(super) async fn search_page(
         Err(message) => return ctx.error(StatusCode::BAD_REQUEST, message),
     };
     let viewer = ctx.user.as_ref().map(|user| user.id);
-    match load_search(&ctx.state, viewer, filters).await {
-        Ok(model) => ctx.page_model("Search", AppPage::Discovery(view::Page::Search(model))),
-        Err(_) => unavailable(&ctx, "search"),
+    let model = match load_search(&ctx.state, viewer, filters).await {
+        Ok(model) => model,
+        Err(_) => return unavailable(&ctx, "search"),
+    };
+    // A signed-in search reads private rows with the viewer's access, and its waits for admission
+    // and Git can outlast the session that asked. A session that ended never becomes live again,
+    // so one that is live now was live for every read before.
+    if let Some(viewer) = viewer {
+        let live = match ctx.session_id.as_deref() {
+            Some(id) => match db::users::sessions::get_session_user(&ctx.state.pool, id).await {
+                Ok(user) => user.is_some_and(|user| user.id == viewer),
+                Err(_) => return unavailable(&ctx, "search_session"),
+            },
+            None => false,
+        };
+        if !live {
+            return ctx.error(
+                StatusCode::UNAUTHORIZED,
+                "Your session has ended. Sign in again.",
+            );
+        }
     }
+    ctx.page_model("Search", AppPage::Discovery(view::Page::Search(model)))
 }
 
 #[cfg(test)]

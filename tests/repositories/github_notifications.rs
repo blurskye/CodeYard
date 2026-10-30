@@ -65,6 +65,7 @@ async fn comment(f: &Database, actor: i64, name: &str, number: i32, body: &str) 
         f.pool(),
         &NotificationBroadcaster::new(f.pool()),
         actor,
+        &codeyard::backend::db::users::accounts::AccountCredential::Trusted,
         "alice".into(),
         name.into(),
         number,

@@ -206,10 +206,10 @@ async fn profile_and_follow(pg: bool) {
                 .unwrap_err(),
             identity::profiles::ProfileError::Denied
         );
-        assert!(db::following::follow_user(f.pool(), actor, other)
+        assert!(db::following::follow_user(f.pool(), actor, other, &db::users::accounts::AccountCredential::Trusted)
             .await
             .unwrap_err()
-            .is::<db::following::FollowRestricted>());
+            .is::<db::users::accounts::AccountRestricted>());
         f.execute(
             &format!("UPDATE users SET {restriction}=FALSE WHERE id=$1"),
             &[actor],
@@ -219,7 +219,7 @@ async fn profile_and_follow(pg: bool) {
     assert!(!db::following::is_user_following(f.pool(), actor, other)
         .await
         .unwrap());
-    assert!(db::following::follow_user(f.pool(), actor, other)
+    assert!(db::following::follow_user(f.pool(), actor, other, &db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap());
     f.finish().await;

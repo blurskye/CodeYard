@@ -16,7 +16,7 @@ pub const PREFIX: &str = super::tokens::FGPAT_PREFIX;
 /// The longest lifetime any token may have, and the default organization maximum.
 pub const MAX_DAYS: i64 = 366;
 pub const DEFAULT_DAYS: i64 = 30;
-pub const MAX_REPOSITORIES: usize = 100;
+pub const MAX_REPOSITORIES: usize = db::fine_grained_tokens::MAX_REPOSITORIES;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Group {
@@ -258,8 +258,7 @@ pub fn validate(
     policy: Option<&Policy>,
     now: DateTime<Utc>,
 ) -> Result<Map<String, Value>, TokenError> {
-    let name = request.name.trim();
-    if name.is_empty() || name.len() > 100 || name.chars().any(char::is_control) {
+    if super::tokens::valid_name(&request.name).is_none() {
         return Err(TokenError::Invalid("Use a name of 1-100 characters."));
     }
     if request.description.len() > 1024 || request.description.contains('\0') {
@@ -533,15 +532,30 @@ impl Grant {
         let reach = self.reaches(pool, &repo).await?;
         if repo.is_gist {
             // A gist is an account resource: its owner's gists permission covers it.
-            if reach && allows(&self.permissions, "gists", true) {
+            if self.account(repo.owner_user_id.unwrap_or_default(), "gists", true) {
                 return Ok(Some(
                     serde_json::json!({"metadata":"read","contents":"write"}),
                 ));
             }
         } else if reach {
-            return Ok(Some(Value::Object(self.group(Group::Repository))));
+            let mut permissions = if repo.is_private {
+                Map::new()
+            } else {
+                public_read().as_object().cloned().unwrap_or_default()
+            };
+            permissions.extend(self.group(Group::Repository));
+            return Ok(Some(Value::Object(permissions)));
         }
         Ok((!repo.is_private).then(public_read))
+    }
+
+    /// Whether the token may create a repository for `owner`: only its own owner, with all
+    /// repositories selected and administration write.
+    pub fn creates_repository(&self, owner: Owner) -> bool {
+        self.active
+            && self.access == Access::All
+            && self.owner == owner
+            && allows(&self.permissions, "administration", true)
     }
 
     /// Whether the token acts for the account itself with `key`.
@@ -577,6 +591,9 @@ pub enum Need {
     Organization(&'static str),
     /// A new repository for the token's owner: all repositories and administration write.
     CreateRepository,
+    /// A fork or template copy: `key` read on the source repository. The handler checks the
+    /// destination owner, named in the body, as for `CreateRepository`.
+    CopyRepository(&'static str),
     /// The owner's packages: `/user/packages`, `/users/{user}/packages`, `/orgs/{org}/packages`.
     Packages,
     Denied,
@@ -587,7 +604,7 @@ impl Need {
     pub fn permission(self) -> Option<&'static str> {
         match self {
             Self::Repository(key) | Self::Account(key) | Self::Organization(key) => Some(key),
-            Self::CreateRepository => Some("administration"),
+            Self::CreateRepository | Self::CopyRepository(_) => Some("administration"),
             Self::Packages => Some("packages"),
             Self::Public | Self::Free | Self::Denied => None,
         }
@@ -618,7 +635,7 @@ pub fn need(path: &str, write: bool) -> Need {
         ["user", "keys", ..] => Need::Account("git_ssh_keys"),
         ["user", "ssh_signing_keys", ..] => Need::Account("ssh_signing_keys"),
         ["user", "starred", ..] => Need::Account("starring"),
-        ["user", "subscriptions"] => Need::Account("watching"),
+        ["user", "subscriptions"] | ["repos", _, _, "subscription"] => Need::Account("watching"),
         ["user", "blocks", ..] => Need::Account("blocking"),
         ["user", "interaction-limits"] => Need::Account("interaction_limits"),
         ["user", "social_accounts"] => {
@@ -628,6 +645,7 @@ pub fn need(path: &str, write: bool) -> Need {
                 Need::Free
             }
         }
+        ["user", "repos"] if !write => Need::Free,
         ["user", "repos"] if write => Need::CreateRepository,
         ["user", "packages", ..] | ["users", _, "packages", ..] => Need::Packages,
         ["user", id] if !write && id.parse::<i64>().is_ok() => Need::Public,
@@ -640,6 +658,8 @@ pub fn need(path: &str, write: bool) -> Need {
             }
         }
         ["orgs", _, rest @ ..] => organization_need(rest, write),
+        ["repos", _, _, "forks"] if write => Need::CopyRepository("metadata"),
+        ["repos", _, _, "generate"] if write => Need::CopyRepository("contents"),
         ["repos", _, _, ..] => {
             repository_permission(path, write).map_or(Need::Denied, Need::Repository)
         }
@@ -653,6 +673,7 @@ pub fn need(path: &str, write: bool) -> Need {
         }
         ["gists"] | ["gists", "starred"] => Need::Account("gists"),
         ["gists", "public"] if !write => Need::Public,
+        ["gists", _, "star"] => Need::Account("gists"),
         ["gists", ..] => {
             if write {
                 Need::Account("gists")
@@ -690,7 +711,9 @@ fn organization_need(rest: &[&str], write: bool) -> Need {
         ["properties", ..] => Need::Organization("organization_custom_properties"),
         ["projectsV2", ..] => Need::Organization("organization_projects"),
         ["repos"] if write => Need::CreateRepository,
-        ["repos"] | ["events"] if !write => Need::Public,
+        // The list handler drops private repositories outside the token's selection.
+        ["repos"] if !write => Need::Free,
+        ["events"] if !write => Need::Public,
         ["packages", ..] => Need::Packages,
         // Fine-grained tokens cannot manage token grants, as on GitHub.
         _ => Need::Denied,
@@ -710,11 +733,7 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
         (Some("actions"), Some("variables" | "organization-variables")) => Some("variables"),
         (Some("actions"), Some("runners" | "oidc" | "policies")) => Some("administration"),
         (Some("actions"), Some("concurrency_groups")) => Some("actions"),
-        (Some("environments"), _)
-            if matches!(parts.get(5).copied(), Some("secrets" | "variables")) =>
-        {
-            Some("environments")
-        }
+        (Some("environments"), _) if !write || matches!(parts.get(5).copied(), Some("secrets" | "variables")) => Some("environments"),
         (Some("hooks"), _) => Some("repository_hooks"),
         (Some("pulls"), _)
             if write
@@ -727,6 +746,7 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
         }
         (Some("dependabot"), Some("alerts")) => Some("vulnerability_alerts"),
         (Some("dependabot"), Some("secrets")) => Some("dependabot_secrets"),
+        (Some("secret-scanning"), Some("custom-patterns")) => Some("administration"),
         (Some("secret-scanning"), _) => Some("secret_scanning_alerts"),
         (Some("code-scanning"), _) => Some("security_events"),
         (Some("attestations"), _) => Some("attestations"),
@@ -762,6 +782,7 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
             _,
         ) => read("metadata"),
         (Some("issue-types"), _) => read("issues"),
+        (Some("stacks"), _) => Some("pull_requests"),
         (Some("comments"), _) => Some("contents"),
         _ => super::github_apps::repository_permission(path, write),
     }
@@ -926,7 +947,8 @@ mod tests {
         assert_eq!(need("/user/keys/4", true), Need::Account("git_ssh_keys"));
         assert_eq!(need("/search/repositories", false), Need::Public);
         assert_eq!(need("/users/alice/repos", false), Need::Public);
-        assert_eq!(need("/user/repos", false), Need::Denied);
+        assert_eq!(need("/user/repos", false), Need::Free);
+        assert_eq!(need("/orgs/acme/repos", false), Need::Free);
         assert_eq!(need("/user/repos", true), Need::CreateRepository);
         assert_eq!(
             need("/orgs/acme/hooks", false),
@@ -955,7 +977,9 @@ mod tests {
             Need::Repository("contents")
         );
         assert_eq!(need("/repos/a/b", true), Need::Repository("administration"));
-        assert_eq!(need("/repos/a/b/forks", true), Need::Denied);
+        assert_eq!(need("/repos/a/b/forks", false), Need::Repository("metadata"));
+        assert_eq!(need("/repos/a/b/forks", true), Need::CopyRepository("metadata"));
+        assert_eq!(need("/repos/a/b/generate", true), Need::CopyRepository("contents"));
         assert_eq!(need("/repos/a/b/import", false), Need::Denied);
     }
 }

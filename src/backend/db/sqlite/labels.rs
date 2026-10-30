@@ -560,8 +560,9 @@ async fn record_label_changes(tx: &mut Transaction<'_, Sqlite>, repo: i64, targe
     Ok(())
 }
 
+/// On a connection, so a list can read its labels in the snapshot it read its rows in.
 pub(crate) async fn get_items_labels(
-    pool: &SqlitePool,
+    connection: &mut sqlx::SqliteConnection,
     target: LabelTarget,
     item_ids: &[i64],
 ) -> Result<Vec<ItemLabel>> {
@@ -575,5 +576,5 @@ pub(crate) async fn get_items_labels(
         ids.push_bind(id);
     }
     query.push(format!(") ORDER BY il.{column}, l.name"));
-    Ok(query.build_query_as().fetch_all(pool).await?)
+    Ok(query.build_query_as().fetch_all(connection).await?)
 }

@@ -12,7 +12,9 @@ pub(crate) fn scan_window(limit: i64, offset: i64) -> (i64, i64, i64) {
 }
 
 /// A row outside any source's newest offset-plus-limit prefix cannot enter the merged window.
-pub(crate) fn activity_sql(readable: &str) -> String {
+/// Private rows need the viewer's live session `$6`; `session_live` is the engine's expiry test
+/// for the session alias `s`.
+pub(crate) fn activity_sql(readable: &str, session_live: &str) -> String {
     format!(r#"
         WITH pushes AS (
             SELECT 'push' AS kind, p.id AS item_id, p.repo_id, p.created_at,
@@ -64,7 +66,8 @@ pub(crate) fn activity_sql(readable: &str) -> String {
         FROM scanned a JOIN repositories r ON r.id=a.repo_id
         LEFT JOIN users owner_user ON r.owner_kind='user' AND r.owner_user_id=owner_user.id
         LEFT JOIN organizations o ON r.owner_kind='org' AND r.owner_org_id=o.id
-        LEFT JOIN users u ON u.id=$4
+        LEFT JOIN users u ON u.id=$4 AND NOT u.is_banned AND NOT u.must_change_password
+            AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=$6 AND s.user_id=u.id AND {session_live})
         ORDER BY a.created_at DESC,a.kind,a.item_id DESC
         "#)
 }
@@ -85,6 +88,13 @@ pub struct ActivityRow {
     pub commit_count: Option<i32>,
     pub owner_name: String,
     pub repo_name: String,
+}
+
+/// Private profile activity is tied to the browser session that initiated the read.
+#[derive(Clone, Copy)]
+pub struct ActivityViewer<'a> {
+    pub user: i64,
+    pub session: &'a str,
 }
 
 pub struct ActivityBatch {
@@ -124,4 +134,4 @@ native_operation!(crate::backend::db::postgres::activity::record_repository_push
 
 native_operation!(crate::backend::db::postgres::activity::list_user_activity,
     crate::backend::db::sqlite::activity::list_user_activity,
-    fn list_user_activity(pool: &DbPool, user_id: i64, viewer: Option<i64>, limit: i64, offset: i64) -> Result<ActivityBatch>);
+    fn list_user_activity(pool: &DbPool, user_id: i64, viewer: Option<ActivityViewer<'_>>, limit: i64, offset: i64) -> Result<ActivityBatch>);

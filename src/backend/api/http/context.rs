@@ -74,6 +74,9 @@ pub struct PageContext {
     pub state: Arc<AppState>,
     pub headers: HeaderMap,
     pub user: Option<User>,
+    /// The id of the verified browser session the request carried, for operations that must
+    /// check that the same session is still live when they take effect. None without one.
+    pub session_id: Option<String>,
     pub csrf_token: String,
     pub path: String,
     pub query: HashMap<String, String>,
@@ -166,6 +169,7 @@ impl PageContext {
         }
 
         let had_verified_session = existing_session.is_some();
+        let session_id = existing_session.as_ref().map(|s| s.id.clone());
         // A visitor with no cookie gets a session row only on the sign-in pages, which have
         // a form to protect. Other cookieless pages (crawlers, 404s, public browsing) write
         // nothing and carry an empty token; the theme switch accepts that. A stale cookie
@@ -236,6 +240,7 @@ impl PageContext {
             state,
             headers,
             user,
+            session_id,
             unread_notifications,
             csrf_token,
             path,
@@ -385,6 +390,7 @@ mod tests {
             state: Arc::new(crate::backend::api::tests::closed_state().await),
             headers: HeaderMap::new(),
             user: None,
+            session_id: None,
             csrf_token: "a".repeat(64),
             path: "/setup".into(),
             query: HashMap::new(),
@@ -427,6 +433,7 @@ mod tests {
             state: Arc::new(crate::backend::api::tests::closed_state().await),
             headers: HeaderMap::new(),
             user: None,
+            session_id: None,
             csrf_token: String::new(),
             path: "/_forms/theme".into(),
             query: HashMap::new(),
@@ -479,6 +486,7 @@ mod tests {
             state: Arc::new(crate::backend::api::tests::closed_state().await),
             headers,
             user: Some(user),
+            session_id: None,
             csrf_token: "a".repeat(64),
             path: "/search".into(),
             query: HashMap::from([("q".into(), "rust".into())]),

@@ -501,6 +501,19 @@ async fn pull_request_comment_hooks(pg: bool, url: &str) {
     let rows = deliveries(&database, hook, 3).await;
     assert_eq!(rows[0].event, "pull_request_review_comment");
     assert_eq!(rows[0].action.as_deref(), Some("created"));
+    // The inline comment carries its diff context and position, as the REST comment does.
+    let sent: Value = serde_json::from_str(&rows[0].request_body).unwrap();
+    assert!(
+        sent["comment"]["diff_hunk"]
+            .as_str()
+            .unwrap()
+            .contains("+topic.txt"),
+        "{sent}"
+    );
+    assert_eq!(sent["comment"]["position"], 1);
+    assert_eq!(sent["comment"]["original_position"], 1);
+    assert_eq!(sent["comment"]["reactions"]["total_count"], 0);
+    assert_eq!(sent["comment"]["start_line"], Value::Null);
     alice.expect("POST", &format!("/api/repos/alice/proj/pulls/{number}/merge"),
         json!({"expected_head": head, "expected_base": pull["base_sha"], "merge_method": "merge"}), StatusCode::OK).await;
     alice
@@ -646,8 +659,25 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
     )
     .unwrap();
     assert_eq!(push["head_commit"]["id"], base);
+    assert_eq!(push["head_commit"]["distinct"], true);
+    assert_eq!(push["head_commit"]["added"], json!(["README.md"]));
     alice.branch("topic", &base).await;
-    deliveries(&database, hook, 4).await;
+    let rows = deliveries(&database, hook, 4).await;
+    let topic: Value = serde_json::from_str(
+        &rows
+            .iter()
+            .find(|row| row.event == "push" && row.request_body.contains("refs/heads/topic"))
+            .unwrap()
+            .request_body,
+    )
+    .unwrap();
+    // The new branch brings no commit that main did not already have.
+    assert_eq!(topic["commits"], json!([]));
+    assert_eq!(topic["head_commit"]["distinct"], false);
+    assert!(topic["compare"]
+        .as_str()
+        .unwrap()
+        .ends_with(&format!("/commit/{base}")));
     alice
         .expect(
             "DELETE",

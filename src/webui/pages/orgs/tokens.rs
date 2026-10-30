@@ -2,6 +2,7 @@
 //! the tokens it has approved.
 use super::{fields, Page};
 use crate::webui::components::{compact_date, DraftCheckbox, DraftInput};
+use crate::webui::navigation::NavLink;
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +15,8 @@ pub struct TokenPanel {
     pub max_lifetime_days: String,
     pub pending: Vec<TokenGrant>,
     pub active: Vec<TokenGrant>,
+    pub pending_next: Option<String>,
+    pub active_next: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -109,6 +112,7 @@ pub(super) fn panel(page: &Page) -> Element {
                         }
                     }
                 }
+                if let Some(next) = &tokens.pending_next { NavLink { class: "org-pagination", href: next.clone(), "Next pending requests" } }
             }
             section { class: "org-panel", header { class: "org-panel-header", h3 { "Active tokens" } }
                 ul { class: "org-list",
@@ -128,6 +132,7 @@ pub(super) fn panel(page: &Page) -> Element {
                         }
                     }
                 }
+                if let Some(next) = &tokens.active_next { NavLink { class: "org-pagination", href: next.clone(), "Next active tokens" } }
             }
         }
     }

@@ -1143,6 +1143,7 @@ pub(crate) async fn publish_merge(
 
 /// Moves each branch in `moves` from its old commit to its new one, provided `base_branch` is still
 /// at `base`. Each move is `(branch, old, new)` and fails on its own when the branch is not at `old`.
+/// A move with `old` equal to `new` only verifies that branch.
 /// All of them land in one ref transaction, so either every branch moves or none does.
 pub(crate) async fn publish_restack(
     path: &Path,
@@ -1164,6 +1165,7 @@ pub(crate) async fn publish_restack(
         validate_merge_revision(branch, new)?;
         let reference = crate::backend::git::branch_ref(branch)
             .ok_or_else(|| anyhow!("Invalid head branch"))?;
+        // A branch the rebase built on but did not rewrite must still be where it was read.
         if old == new {
             input.push_str(&format!("verify {reference} {old}\n"));
         } else {

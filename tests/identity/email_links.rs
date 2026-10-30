@@ -340,7 +340,7 @@ async fn reset_links(pg: bool) {
     assert!(links::is_valid(pool, Purpose::Reset, &token).await.unwrap());
 
     // Sent mail keeps no body, so the link is not left in the outbox.
-    db::email::mark_email_sent(pool, mail[0].id).await.unwrap();
+    db::email::mark_email_sent(pool, mail[0].id, mail[0].attempts).await.unwrap();
     assert_eq!(
         f.scalar(
             "SELECT COUNT(*) FROM email_outbox WHERE id=$1 AND body_text=''",

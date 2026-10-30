@@ -30,9 +30,7 @@ pub async fn merge_pull_request(
 ) -> Result<Json<MergeResponse>, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
     pull_requests::merge::merge_pull_request(
-        &state.pool,
-        &state.ci_runs,
-        &state.notification_broadcaster,
+        &state,
         crate::backend::db::credentials::Actor::from((actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
         (owner, repo, number),
         request,
@@ -140,9 +138,7 @@ pub(crate) async fn native_merge(
         return render_detail(&ctx, &repo, Kind::Pull, &value, &draft, Some("A branch changed since this pull request was created. This comparison is out of date; merge was not attempted."), StatusCode::CONFLICT).await;
     }
     match crate::backend::repositories::pull_requests::merge::merge_pull_request_checked(
-        &ctx.state.pool,
-        &ctx.state.ci_runs,
-        &ctx.state.notification_broadcaster,
+        &ctx.state,
         ctx.database_actor(ctx.require_user()?.id),
         (owner, name, number),
         crate::backend::repositories::pull_requests::merge::MergeRequest {

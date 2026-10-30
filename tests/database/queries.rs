@@ -1380,6 +1380,17 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         ]
     );
 
+    // Consent cannot survive a head without a known base-writer publisher.
+    db::pull_requests::auto_merge::enable_auto_merge(pool, &db::pull_requests::auto_merge::AutoMergeRequest {
+        pull_request_id: first.id,
+        enabled_by: owner.id,
+        token_id: None,
+        merge_method: "merge".into(),
+        commit_title: None,
+        commit_message: None,
+        author_email: None,
+        enabled_at: chrono::Utc::now(),
+    }).await.unwrap();
     // Head and base moves use independent compare-and-swaps, so contention on
     // one revision cannot prevent the other revision from advancing.
     assert!(!db::pull_requests::records::move_open_pull_request_head(
@@ -1389,6 +1400,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         &sha('6'),
         first.head_repo_id,
         &first.head_branch,
+        None,
     )
     .await
     .unwrap());
@@ -1399,9 +1411,11 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         &sha('6'),
         first.head_repo_id,
         &first.head_branch,
+        None,
     )
     .await
     .unwrap());
+    assert!(db::pull_requests::auto_merge::get_auto_merge(pool, first.id).await.unwrap().is_none());
     assert!(db::pull_requests::records::move_open_pull_request_base(
         pool,
         first.id,
@@ -1454,6 +1468,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         &sha('8'),
         first.head_repo_id,
         &first.head_branch,
+        None,
     )
     .await
     .unwrap());
@@ -1494,6 +1509,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
             &sha('8'),
             pull.head_repo_id,
             &pull.head_branch,
+            None,
         )
         .await
         .unwrap());
@@ -2302,7 +2318,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             assigned_open
                 .iter()
-                .map(|e| e.issue.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["assigned open"]
@@ -2315,7 +2331,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             created_closed
                 .iter()
-                .map(|e| e.issue.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["opened closed"]
@@ -2341,7 +2357,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             assigned_open
                 .iter()
-                .map(|e| e.issue.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["assigned open", "private assigned"]
@@ -2438,7 +2454,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             review_open
                 .iter()
-                .map(|e| e.pull_request.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["review pr"]
@@ -2459,7 +2475,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             review_open
                 .iter()
-                .map(|e| e.pull_request.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["private review pr", "review pr"]
@@ -2477,7 +2493,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             assigned_pr_open
                 .iter()
-                .map(|e| e.pull_request.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["assigned pr"]
@@ -2495,7 +2511,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             created_closed
                 .iter()
-                .map(|e| e.pull_request.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["merged pr"]
@@ -2522,7 +2538,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             involved_open
                 .iter()
-                .map(|e| e.pull_request.title.as_str())
+                .map(|e| e.title.as_str())
                 .collect()
         ),
         ["assigned pr", "opened pr", "private review pr", "review pr"]

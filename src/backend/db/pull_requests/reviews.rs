@@ -46,8 +46,14 @@ pub struct ReviewBatch<'a> {
 }
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::save_review_batch,
     crate::backend::db::sqlite::pull_requests::reviews::save_review_batch,
-    fn save_review_batch(pool: &DbPool, input: ReviewBatch<'_>) -> Result<PullRequestReview>);
+    /// The saved review and the ids of the inline comments its submission published, read in the
+    /// submitting transaction; a draft publishes none.
+    fn save_review_batch(pool: &DbPool, input: ReviewBatch<'_>) -> Result<(PullRequestReview, Vec<i64>)>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::insert_comment,
+    crate::backend::db::sqlite::pull_requests::reviews::insert_comment,
+    /// The visibility decision is made in the insertion transaction, never by a post-commit read.
+    fn insert_comment(pool: &DbPool, input: NewPullRequestComment<'_>, pending: bool, expected_review: Option<i64>) -> Result<(PullRequestComment, bool)>);
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull_request_comment,
     crate::backend::db::sqlite::pull_requests::reviews::add_pull_request_comment,
     fn add_pull_request_comment(
@@ -232,7 +238,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::edit_pul
     expected_body: &str,
 ) -> Result<Option<PullRequestComment>>);
 
-// Deletes a conversation comment: its author, or a maintainer. False when refused.
+// Deletes a visible comment: its author or a current repository writer. False when refused.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::delete_pull_request_comment,
     crate::backend::db::sqlite::pull_requests::reviews::delete_pull_request_comment,
     fn delete_pull_request_comment(
@@ -252,6 +258,10 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::edit_rev
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::delete_pending_review_by_id,
     crate::backend::db::sqlite::pull_requests::reviews::delete_pending_review_by_id,
     fn delete_pending_review_by_id(pool: &DbPool, pr_id: i64, author_id: i64, review_id: i64) -> Result<Option<PullRequestReview>>);
+// Saves a review, submitting the author's pending review when there is one. Returns the review
+// and the ids of the comments it published, read in the same transaction, so a reply saved after
+// the submission is not published twice. With `expected_pending`, the review may be on the commit
+// that draft was started on instead of the current head.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::save_pull_request_review,
     crate::backend::db::sqlite::pull_requests::reviews::save_pull_request_review,
     #[allow(clippy::too_many_arguments)]

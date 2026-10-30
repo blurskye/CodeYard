@@ -493,9 +493,7 @@ pub(super) async fn resolve(
                     request.authorize(repo.id, "contents", true).await?;
                     let method = merge_method(&input, &current)?;
                     pull_requests::merge::merge_pull_request(
-                        pool,
-                        &request.state.ci_runs,
-                        broadcaster,
+                        &request.state,
                         request.auth.database_actor(),
                         (owner, repo.name, current.number),
                         pull_requests::merge::MergeRequest {
@@ -571,7 +569,6 @@ pub(super) async fn resolve(
                 let repo = repository::by_id(current.repo_id, request).await?;
                 request.authorize(repo.id, "pull-requests", true).await?;
                 if field == "enablePullRequestAutoMerge" {
-                    request.require_oauth_scope("workflow")?;
                     request.authorize(repo.id, "contents", true).await?;
                     let options = pull_requests::auto_merge::EnableRequest {
                         expected_head: optional_text(&input, "expectedHeadOid"),
@@ -655,6 +652,7 @@ pub(super) async fn resolve(
                     pool,
                     broadcaster,
                     actor,
+                    &db::users::accounts::AccountCredential::Token(request.auth.token.id),
                     &current.username,
                     field == "followUser",
                 )

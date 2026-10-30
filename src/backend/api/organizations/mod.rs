@@ -43,10 +43,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
             post(dependabot::post),
         )
         .route(
-            "/settings/organizations/:id/private-registries",
-            post(private_registries::post),
-        )
-        .route(
             "/settings/organizations/:id/webhooks/:action",
             post(webhooks::post),
         )
@@ -57,6 +53,11 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
         .merge(settings::router())
         .merge(tokens::router())
         .layer(DefaultBodyLimit::max(organization::BODY_LIMIT))
+        .route(
+            "/settings/organizations/:id/private-registries",
+            post(private_registries::post)
+                .layer(DefaultBodyLimit::max(private_registries::BODY_LIMIT)),
+        )
         .merge(properties::router())
         .merge(avatar::router())
         .merge(action_values::router())

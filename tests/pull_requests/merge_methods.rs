@@ -546,6 +546,8 @@ async fn prepared_merge_contract(pg: bool) {
         commit_title: None,
         commit_message: None,
         author_email: None,
+        token: None,
+        session: None,
     };
 
     // A setting that changes after the merge was prepared is the one that decides.
@@ -589,6 +591,38 @@ async fn prepared_merge_contract(pg: bool) {
         json!({"is_private": false, "allow_squash_merge": true}),
     )
     .await;
+    // A merge asked for from a browser session publishes only while that session is signed in.
+    let prepared = prepare_pull_request_merge(
+        f.pool(),
+        &app.state.ci_runs,
+        app.merger_id,
+        ("alice".to_owned(), "proj".to_owned(), number),
+        MergeRequest {
+            session: Some("0".repeat(64)),
+            ..request(head.as_str(), main1.as_str())
+        },
+    )
+    .await
+    .unwrap();
+    let signed_out = publish_prepared_merge(
+        f.pool(),
+        &app.state.ci_runs,
+        &app.state.notification_broadcaster,
+        prepared,
+    )
+    .await;
+    assert!(
+        matches!(
+            signed_out,
+            Err(OperationError::Denied {
+                code: "write_denied",
+                ..
+            })
+        ),
+        "a merge from a signed-out session was published"
+    );
+    assert_eq!(main_tip(&path), main1);
+    assert_eq!(app.alice.pull(number as i64).await["state"], "open");
     let prepared = prepare_pull_request_merge(
         f.pool(),
         &app.state.ci_runs,

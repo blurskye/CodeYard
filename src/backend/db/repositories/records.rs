@@ -74,7 +74,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::list_user
 
 native_operation!(crate::backend::db::postgres::repositories::records::count_user_repositories,
     crate::backend::db::sqlite::repositories::records::count_user_repositories,
-    fn count_user_repositories(pool: &DbPool, user_id: i64, include_private: bool) -> Result<i64>);
+    fn count_user_repositories(pool: &DbPool, user_id: i64, owner_session: Option<&str>) -> Result<i64>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::list_shared_repositories,
     crate::backend::db::sqlite::repositories::records::list_shared_repositories,
@@ -82,10 +82,10 @@ native_operation!(crate::backend::db::postgres::repositories::records::list_shar
 
 native_operation!(crate::backend::db::postgres::repositories::records::list_user_repository_page,
     crate::backend::db::sqlite::repositories::records::list_user_repository_page,
-    fn list_user_repository_page(pool: &DbPool, user: i64, include_private: bool, text: &str, limit: i64, offset: i64) -> Result<(Vec<Repository>, i64)>);
+    fn list_user_repository_page(pool: &DbPool, user: i64, owner_session: Option<&str>, text: &str, include_archived: bool, limit: i64, offset: i64) -> Result<(Vec<Repository>, i64)>);
 native_operation!(crate::backend::db::postgres::repositories::records::list_shared_repository_page,
     crate::backend::db::sqlite::repositories::records::list_shared_repository_page,
-    fn list_shared_repository_page(pool: &DbPool, user: i64, text: &str, limit: i64, offset: i64) -> Result<(Vec<SharedRepository>, i64)>);
+    fn list_shared_repository_page(pool: &DbPool, user: i64, text: &str, include_archived: bool, limit: i64, offset: i64) -> Result<(Vec<SharedRepository>, i64)>);
 
 /// Order of a public repository list. The limit applies after this order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +143,13 @@ native_operation!(crate::backend::db::postgres::repositories::records::list_publ
     sort: RepositorySort,
     limit: i64,
 ) -> Result<Vec<Repository>>);
+
+// The most starred public repositories that `viewer` does not own personally, whose name or
+// description contains `text` as the viewer's own and shared lists match it. The filter runs
+// before the limit, so it never empties the list while other repositories match.
+native_operation!(crate::backend::db::postgres::repositories::records::list_trending_repositories,
+    crate::backend::db::sqlite::repositories::records::list_trending_repositories,
+    fn list_trending_repositories(pool: &DbPool, viewer: i64, text: &str, limit: i64) -> Result<Vec<Repository>>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::search_public_repositories,
     crate::backend::db::sqlite::repositories::records::search_public_repositories,

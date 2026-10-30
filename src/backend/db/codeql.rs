@@ -16,7 +16,11 @@ pub struct Database {
     pub updated_at: DateTime<Utc>,
 }
 
+pub const UPLOAD_QUOTA: &str = "codeql_database";
+
 pub struct NewDatabase<'a> {
+    /// The retained quota charge, confirmed in the publication transaction.
+    pub charge: uuid::Uuid,
     pub repo: i64,
     pub actor: super::credentials::Actor,
     pub language: &'a str,

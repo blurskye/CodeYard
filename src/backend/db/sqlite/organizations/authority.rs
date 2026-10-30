@@ -134,7 +134,7 @@ pub(super) async fn metadata(
     org: i64,
 ) -> Result<OrganizationMetadata> {
     Ok(sqlx::query_as(
-        "SELECT o.id,o.name,o.display_name,o.description,o.is_verified,NOT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AS governance_suspended FROM organizations o WHERE o.id=?1",
+        "SELECT o.id,o.name,o.display_name,o.description,o.is_verified,NOT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AS governance_suspended,o.avatar_file_id FROM organizations o WHERE o.id=?1",
     )
     .bind(org)
     .fetch_one(connection)

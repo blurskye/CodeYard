@@ -724,7 +724,7 @@ fn dashboard_places_all_owned_repositories_before_secondary_trending() {
     assert!(html.contains("Updated Oct 2, 2026"));
     assert!(html.contains("2 forks"));
     assert!(html[sidebar..].contains("href=\"/explore?sort=stars\""));
-    assert!(html.contains("Most starred of the 100 newest public repositories."));
+    assert!(html.contains("Most starred public repositories of other owners."));
     for rejected_panel in ["Welcome back", "Personal account", "recent activity"] {
         assert!(!html.contains(rejected_panel));
     }
