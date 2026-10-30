@@ -1,5 +1,5 @@
-use crate::backend::db::oauth_apps::{Application, Exchange, Grant, Token};
-use crate::backend::identity::{oauth_apps, tokens::token_hash};
+use crate::backend::db::oauth_apps::{self, Application, Exchange, Grant, Token};
+use crate::backend::identity::{oauth_apps as oauth, tokens::token_hash};
 use anyhow::Result;
 use chrono::Utc;
 use sqlx::PgPool;
@@ -123,7 +123,7 @@ pub async fn exchange(
     if grant.kind == "web"
         && (redirect_uri.is_some_and(|uri| uri != grant.redirect_uri)
             || state.is_some_and(|state| state != grant.state)
-            || !oauth_apps::verify_challenge(&grant.challenge, verifier))
+            || !oauth::verify_challenge(&grant.challenge, verifier))
     {
         return Ok(Exchange::Invalid);
     }
@@ -156,7 +156,7 @@ pub async fn exchange(
         .fetch_optional(&mut *tx)
         .await?;
     let token_id: Option<i64> = sqlx::query_scalar("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope) SELECT u.id,'OAuth: ' || $3,$4,CASE WHEN EXISTS(SELECT 1 FROM github_apps WHERE client_id=$3 AND access_level>=3) THEN 'write' ELSE $5 END FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND s.expires_at>clock_timestamp() RETURNING id")
-        .bind(actor).bind(&grant.session_id).bind(client_id).bind(token_hash(value)).bind(if oauth_apps::write_scope(&grant.scopes) { "write" } else { "read" }).fetch_optional(&mut *tx).await?;
+        .bind(actor).bind(&grant.session_id).bind(client_id).bind(token_hash(value)).bind(if oauth::write_scope(&grant.scopes) { "write" } else { "read" }).fetch_optional(&mut *tx).await?;
     let Some(token_id) = token_id else {
         return Ok(Exchange::Denied);
     };
