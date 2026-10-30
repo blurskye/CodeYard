@@ -982,8 +982,8 @@ impl PreparedMerge {
     pub(super) fn bind_async_request(&mut self, uuid: &str, token_id: i64) {
         self.async_request = Some((uuid.into(), token_id));
     }
-    pub(super) fn bind_auto_merge(&mut self, pull_request_id: i64, enabled_at: chrono::DateTime<chrono::Utc>) {
-        self.auto_merge = Some(db::pull_requests::merge_policy::AutoMergeIdentity { pull_request_id, enabled_at });
+    pub(super) fn bind_auto_merge(&mut self, pull_request_id: i64, generation: &str) {
+        self.auto_merge = Some(db::pull_requests::merge_policy::AutoMergeIdentity { pull_request_id, generation: generation.into() });
     }
     pub(super) fn matches_request(&self, repo_id: i64, pull_id: i64) -> bool {
         self.repository.id == repo_id && self.pull_request.id == pull_id

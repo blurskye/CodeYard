@@ -4,7 +4,7 @@
 use super::{actor, merge, require_write, OperationError};
 use crate::backend::{
     app::AppState,
-    db::{self, models::PullRequest, pull_requests::auto_merge::AutoMerge},
+    db::{self, models::PullRequest, pull_requests::auto_merge::{AutoMerge, AutoMergeRequest}},
     repositories::store::MergeMethod,
 };
 use std::{sync::Arc, time::Duration};
@@ -64,7 +64,7 @@ pub async fn enable(
     merge::merge_message(pull, request.merge_method, request.commit_title.as_deref(), request.commit_message.as_deref(), request.author_email.as_deref())?;
     db::pull_requests::auto_merge::enable_auto_merge(
         pool,
-        &AutoMerge {
+        &AutoMergeRequest {
             pull_request_id: pull.id,
             enabled_by: actor_id,
             token_id: request.token,
@@ -101,12 +101,13 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
         let page =
             db::pull_requests::auto_merge::pending_auto_merges(pool, after, CHECK_BATCH).await?;
         let (Some(last), short) = (
-            page.last().map(|entry| entry.pull_request_id),
+            page.last().map(|entry| entry.request.pull_request_id),
             (page.len() as i64) < CHECK_BATCH,
         ) else {
             return Ok(());
         };
         for entry in page {
+            let AutoMerge { request: entry, generation } = entry;
             let pull =
                 db::pull_requests::records::get_pull_request_by_id(pool, entry.pull_request_id)
                     .await?;
@@ -123,7 +124,7 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
                 None => None,
             };
             let (Some(pull), Some(repository), Some(owner)) = (pull, repository, owner) else {
-                db::pull_requests::auto_merge::disable_auto_merge(pool, entry.pull_request_id)
+                db::pull_requests::auto_merge::retire_auto_merge(pool, entry.pull_request_id, &generation)
                     .await?;
                 continue;
             };
@@ -131,7 +132,7 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
             // disabled or replaced since. Only the request as it stands now may merge.
             let current =
                 db::pull_requests::auto_merge::get_auto_merge(pool, entry.pull_request_id).await?;
-            if current.is_none_or(|current| current.enabled_at != entry.enabled_at) {
+            if current.is_none_or(|current| current.generation != generation) {
                 continue;
             }
             let prepared = merge::prepare_pull_request_merge(
@@ -154,14 +155,14 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
             .await;
             let merged = match prepared {
                 Ok(mut prepared) => {
-                    prepared.bind_auto_merge(entry.pull_request_id, entry.enabled_at);
+                    prepared.bind_auto_merge(entry.pull_request_id, &generation);
                     merge::publish_prepared_merge(pool, &state.ci_runs, &state.notification_broadcaster, prepared).await
                 }
                 Err(error) => Err(error),
             };
             match merged {
                 Ok(_) | Err(OperationError::BranchMerged { .. }) => {
-                    db::pull_requests::auto_merge::disable_auto_merge(pool, pull.id).await?;
+                    db::pull_requests::auto_merge::retire_auto_merge(pool, pull.id, &generation).await?;
                 }
                 Err(error) => {
                     tracing::debug!(pull_request = pull.id, %error, "auto-merge is still waiting");
