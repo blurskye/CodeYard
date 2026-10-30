@@ -122,14 +122,13 @@ async fn read_parts(mut multipart: Multipart) -> Result<UploadParts, UploadFormE
             }
             form.files.push((file_name, form.content.len() - start));
         } else {
-            let mut bytes = Vec::new();
-            while let Some(chunk) = part.chunk().await.map_err(read_error)? {
-                if bytes.len() + chunk.len() > MAX_FIELD_BYTES {
-                    return Err(UploadFormError::Unreadable);
-                }
-                bytes.extend_from_slice(&chunk);
-            }
-            let value = String::from_utf8(bytes).map_err(|_| UploadFormError::Unreadable)?;
+            let value = crate::backend::api::http::multipart::bounded_text(
+                &mut part,
+                MAX_FIELD_BYTES,
+            )
+            .await
+            .map_err(read_error)?
+            .ok_or(UploadFormError::Unreadable)?;
             form.fields.insert(name, value);
         }
     }

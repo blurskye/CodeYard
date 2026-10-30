@@ -32,6 +32,11 @@ use std::sync::Arc;
 
 const PER_PAGE: i64 = 30;
 
+/// An asset upload carries the file, the CSRF token and the label, so a form with more parts or
+/// a longer text field is not one of ours.
+const MAX_UPLOAD_PARTS: usize = 8;
+const MAX_UPLOAD_FIELD_BYTES: usize = 4096;
+
 /// The list shows no notes, so it asks for the item without them.
 fn release_item(row: &ReleaseRow, with_body: bool) -> ReleaseItem {
     let release = &row.release;
@@ -685,12 +690,17 @@ pub(crate) async fn upload_asset(
     let read = async {
         let mut fields = HashMap::new();
         let mut file = None;
+        let mut parts = 0;
         loop {
-            let part = match multipart.next_field().await {
+            let mut part = match multipart.next_field().await {
                 Ok(Some(part)) => part,
                 Ok(None) => break,
                 Err(error) => return Err(upload_read_error(&ctx, &error)),
             };
+            parts += 1;
+            if parts > MAX_UPLOAD_PARTS {
+                return Err(ctx.error(StatusCode::BAD_REQUEST, "The upload could not be read."));
+            }
             let part_name = part.name().unwrap_or_default().to_owned();
             if part_name == "file" {
                 let filename = part.file_name().unwrap_or_default().to_owned();
@@ -698,8 +708,23 @@ pub(crate) async fn upload_asset(
                     Ok(bytes) => file = Some((filename, bytes.to_vec())),
                     Err(error) => return Err(upload_read_error(&ctx, &error)),
                 }
-            } else if let Ok(text) = part.text().await {
-                fields.insert(part_name, text);
+            } else {
+                match crate::backend::api::http::multipart::bounded_text(
+                    &mut part,
+                    MAX_UPLOAD_FIELD_BYTES,
+                )
+                .await
+                {
+                    Ok(Some(text)) => {
+                        fields.insert(part_name, text);
+                    }
+                    Ok(None) => {
+                        return Err(
+                            ctx.error(StatusCode::BAD_REQUEST, "The upload could not be read.")
+                        )
+                    }
+                    Err(error) => return Err(upload_read_error(&ctx, &error)),
+                }
             }
         }
         Ok((fields, file))
