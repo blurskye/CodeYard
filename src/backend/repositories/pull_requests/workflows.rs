@@ -128,9 +128,11 @@ async fn queue_pull_request_workflow_event(
     payload: &serde_json::Value,
 ) -> Result<(), AdmissionError> {
     let target = event == "pull_request_target";
-    if !target && (pull.is_draft || (pull.state != "open" && payload["action"] != "closed")) {
+    if !target && pull.state != "open" && payload["action"] != "closed" {
         return Ok(());
     }
+    // Drafts run only the pull_request workflows that list this activity explicitly.
+    let draft_only_explicit = !target && pull.is_draft;
     let awaiting_approval = !target
         && !manual
         && pull.head_repo_id != Some(repository.id)
@@ -186,6 +188,13 @@ async fn queue_pull_request_workflow_event(
     let mut applicable = Vec::new();
     for workflow in workflows {
         if !workflow.matches_activity(event, payload["action"].as_str().unwrap_or_default()) {
+            continue;
+        }
+        if draft_only_explicit
+            && workflow
+                .pull_request_filter(event)
+                .is_none_or(|filter| filter.types.is_empty())
+        {
             continue;
         }
         match workflow.matches_event_with_budget(event, &trunk, &mut match_budget) {
@@ -419,7 +428,7 @@ pub async fn run_pull_request_workflows(
             message: "Pull request head changed; reload before running workflows".into(),
         });
     }
-    queue_pull_request_ci(
+    let queued = queue_pull_request_ci(
         pool,
         ci,
         repository,
@@ -428,7 +437,60 @@ pub async fn run_pull_request_workflows(
         true,
         crate::backend::db::models::AccessLevel::Owner,
     )
-    .await
-    .map_err(workflows_not_queued)?;
+    .await;
+    let released = release_awaiting_runs(pool, ci, repository, &pull, user.id).await;
+    queued.and(released).map_err(workflows_not_queued)?;
     Ok(pull)
+}
+
+/// Approval admits the runs that waited for it again with the event that queued them. The
+/// synchronize request above would skip workflows limited to other activities, such as
+/// `opened`, and leave their runs waiting.
+async fn release_awaiting_runs(
+    pool: &DbPool,
+    ci: &CiRuns,
+    repository: &Repository,
+    pull: &PullRequest,
+    actor_id: i64,
+) -> Result<(), AdmissionError> {
+    let (trunk, _, _) = super::stacks::merge_target(pool, pull)
+        .await
+        .map_err(|_| AdmissionError::Unavailable)?;
+    let runs =
+        db::ci::latest_ci_runs_for_commit(pool, repository.id, &pull.head_sha, pull.id, &trunk)
+            .await?;
+    let mut payloads: Vec<serde_json::Value> = Vec::new();
+    for run in runs {
+        if !run.approval_required
+            || run.status != "queued"
+            || run.event != "pull_request"
+            || run.pull_request_id != Some(pull.id)
+        {
+            continue;
+        }
+        if let Some(payload) = run.event_payload {
+            if payload["action"] != "synchronize" && !payloads.contains(&payload) {
+                payloads.push(payload);
+            }
+        }
+    }
+    let mut first_failure = None;
+    for payload in payloads {
+        if let Err(error) = queue_pull_request_workflow_event(
+            pool,
+            ci,
+            repository,
+            pull,
+            actor_id,
+            true,
+            db::models::AccessLevel::Owner,
+            "pull_request",
+            &payload,
+        )
+        .await
+        {
+            first_failure = first_failure.or(Some(error));
+        }
+    }
+    first_failure.map_or(Ok(()), Err)
 }
