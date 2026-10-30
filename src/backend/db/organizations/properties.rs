@@ -8,6 +8,8 @@ use std::collections::HashSet;
 pub mod query;
 
 pub const MAX_DEFINITIONS: usize = 100;
+/// Leaves room for selected values, drafts and repository chrome in the 16 MiB page model.
+pub const MAX_CATALOG_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_ALLOWED_VALUES: usize = 200;
 pub const MAX_VALUE_BYTES: usize = 1024;
 pub const MAX_FORM_VALUE_BYTES: usize = MAX_ALLOWED_VALUES * MAX_VALUE_BYTES + 2 * (MAX_ALLOWED_VALUES - 1);
@@ -370,6 +372,16 @@ pub(crate) fn checked_changes(
     result.sort_unstable_by_key(|(id, _)| *id);
     Ok(result)
 }
+pub(crate) fn checked_catalog_bytes<'a>(fields: impl IntoIterator<Item = &'a DefinitionInput>) -> Result<()> {
+    let mut bytes = 2usize;
+    for definition in fields {
+        bytes = bytes.checked_add(serde_json::to_vec(definition)?.len() + 1)
+            .filter(|bytes| *bytes <= MAX_CATALOG_BYTES)
+            .ok_or_else(|| invalid("properties", "The serialized property catalog must fit within 2 MiB"))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn checked_definitions(
     inputs: &[DefinitionInput],
     existing: &[Definition],
@@ -402,7 +414,10 @@ pub(crate) fn checked_definitions(
             "An organization can define at most 100 repository properties"
         )
     );
-    Ok(())
+    checked_catalog_bytes(existing.iter()
+        .filter(|definition| !seen.contains(&definition.fields.property_name.to_ascii_lowercase()))
+        .map(|definition| &definition.fields)
+        .chain(inputs.iter()))
 }
 #[derive(Debug)]
 pub struct RepositoryValues {

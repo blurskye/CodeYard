@@ -333,6 +333,7 @@ pub fn repo_engagement(repo: &RepoChrome, class: &str) -> Element {
                 } else {
                     form { method: "post", action: repo.action("fork"),
                         {csrf(&repo.csrf_token)}
+                        {repository_id(repo.id)}
                         button { class: "repo-engagement-button", r#type: "submit",
                             {engagement_content("fork", "Fork", repo.forks)}
                         }

@@ -129,14 +129,24 @@ pub async fn update(
     tx.commit().await?;
     Ok(pattern)
 }
-pub async fn publish(pool: &PgPool, actor: i64, owner: Owner, id: i64) -> Result<()> {
+pub async fn publish(pool: &PgPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, owner: Owner, id: i64) -> Result<()> {
+    let actor = actor.into();
+    let actor_id = actor.user_id();
     let mut tx = pool.begin().await?;
-    authority(&mut tx, actor, owner, true).await?;
+    authority(&mut tx, actor_id, owner, true).await?;
+    if let Some(credential) = actor.credential() {
+        super::super::users::transitions::require_account(&mut tx, actor_id, &credential).await?;
+    }
+    let actor = actor_id;
     let mut pattern = read(&mut tx, owner)
         .await?
         .into_iter()
         .find(|pattern| pattern.id == id)
         .ok_or(Refusal::Missing)?;
+    if pattern.state == "published" {
+        tx.commit().await?;
+        return Ok(());
+    }
     pattern.state = "published".into();
     pattern.push_protection_enabled = true;
     if let Owner::Organization(org) = owner {

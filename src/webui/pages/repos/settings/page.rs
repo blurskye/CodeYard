@@ -1180,7 +1180,13 @@ pub fn rejected_form(
                                 }
                             }
                         } else {
-                            for (name, value) in fields { label { key: "{name}", class: "repo-field", span { "{field_label(name)}" } DraftTextarea { name: name.clone(), initial_value: value.clone(), rows: 2 } } }
+                            for (name, value) in fields {
+                                if matches!(name.as_str(), "original_description" | "pattern_id" | "organization") {
+                                    input { key: "{name}", r#type: "hidden", name: name.clone(), value: value.clone() }
+                                } else {
+                                    label { key: "{name}", class: "repo-field", span { "{field_label(name)}" } DraftTextarea { name: name.clone(), initial_value: value.clone(), rows: 2 } }
+                                }
+                            }
                         }
                         label { class: "repo-check-label", input { r#type: "checkbox", name: "confirm", value: "yes", required: true } " Confirm and retry" }
                         div { class: "repo-form-actions",

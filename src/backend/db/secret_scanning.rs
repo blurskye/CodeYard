@@ -37,7 +37,7 @@ native_operation!(super::postgres::secret_scanning::patterns::update,super::sqli
 native_operation!(super::postgres::secret_scanning::patterns::delete,super::sqlite::secret_scanning::patterns::delete,
     fn delete_patterns(pool:&DbPool,actor:i64,owner:Owner,input:&[Delete],resolve:bool)->Result<()>);
 native_operation!(super::postgres::secret_scanning::patterns::publish,super::sqlite::secret_scanning::patterns::publish,
-    fn publish_pattern(pool:&DbPool,actor:i64,owner:Owner,id:i64)->Result<()>);
+    fn publish_pattern(pool:&DbPool,actor:impl Into<super::users::accounts::AccountActor>,owner:Owner,id:i64)->Result<()>);
 native_operation!(super::postgres::secret_scanning::patterns::effective,super::sqlite::secret_scanning::patterns::effective,
     fn effective_patterns(pool:&DbPool,repo:i64)->Result<(Vec<Pattern>,Vec<String>)>);
 native_operation!(super::postgres::secret_scanning::patterns::configs,super::sqlite::secret_scanning::patterns::configs,
