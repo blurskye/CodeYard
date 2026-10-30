@@ -405,9 +405,8 @@ async fn has_pending_comments(
     pr_id: i64,
     author_id: i64,
 ) -> Result<bool, OperationError> {
-    db::pull_requests::reviews::list_pending_review_comments(pool, pr_id, author_id)
+    db::pull_requests::reviews::has_pending_review_comments(pool, pr_id, author_id)
         .await
-        .map(|comments| !comments.is_empty())
         .map_err(database_error)
 }
 
