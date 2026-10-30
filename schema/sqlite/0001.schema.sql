@@ -1213,8 +1213,9 @@ CREATE TABLE webhook_deliveries (
 CREATE INDEX idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id, id);
 CREATE INDEX webhook_deliveries_expiry ON webhook_deliveries(delivered_at, id);
 
--- Sign-in and recovery look accounts up by address, ignoring case.
-CREATE INDEX idx_users_email_lower ON users(lower(email));
+-- Sign-in and recovery look accounts up by address, ignoring case, so no two accounts may
+-- share one.
+CREATE UNIQUE INDEX idx_users_email_lower ON users(lower(email));
 
 CREATE TABLE email_settings (
     id INTEGER PRIMARY KEY CHECK (id IS NULL OR typeof(id)='integer') CHECK (id = 1),

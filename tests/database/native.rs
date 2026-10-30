@@ -4813,3 +4813,27 @@ async fn postgres_issue_and_pull_request_counts_and_search() {
     check_issue_and_pull_request_counts_and_search(&fixture.pool).await;
     fixture.pool.close().await;
 }
+
+#[tokio::test]
+async fn primary_emails_differing_only_in_case_conflict_on_both_engines() {
+    let postgres = PostgresDatabase::new().await;
+    let sqlite = NativeDatabase::new().await;
+    for pool in [&postgres.pool, &sqlite.pool] {
+        db::users::accounts::create_user(pool, "first_owner", Some("Owner@Example.test"))
+            .await
+            .unwrap();
+        let error =
+            db::users::accounts::create_user(pool, "second_owner", Some("owner@example.test"))
+                .await
+                .unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<sqlx::Error>()
+                .and_then(sqlx::Error::as_database_error)
+                .is_some_and(|error| error.is_unique_violation()),
+            "{error:#}"
+        );
+    }
+    postgres.pool.close().await;
+    sqlite.close().await;
+}

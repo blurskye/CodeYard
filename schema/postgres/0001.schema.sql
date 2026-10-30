@@ -1394,8 +1394,9 @@ CREATE TABLE IF NOT EXISTS repo_actions_settings (
     rest_settings TEXT NOT NULL DEFAULT '{}' CHECK (json_typeof(rest_settings::json)='object')
 );
 
--- Sign-in and recovery look accounts up by address, ignoring case.
-CREATE INDEX idx_users_email_lower ON users(lower(email));
+-- Sign-in and recovery look accounts up by address, ignoring case, so no two accounts may
+-- share one.
+CREATE UNIQUE INDEX idx_users_email_lower ON users(lower(email));
 
 CREATE INDEX IF NOT EXISTS idx_users_avatar_file ON users(avatar_file_id) WHERE avatar_file_id IS NOT NULL;
 
