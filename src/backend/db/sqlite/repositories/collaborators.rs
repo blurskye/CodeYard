@@ -79,7 +79,7 @@ pub async fn list(
     repo_id: i64,
     query: &CollaboratorQuery<'_>,
 ) -> Result<Vec<Collaborator>> {
-    let projection = super::access::USER_REPO_ACCESS_SQL;
+    let projection = super::access::user_repo_grant_sql();
     Ok(sqlx::query_as(&format!("WITH candidates AS (SELECT owner_user_id AS id FROM repositories WHERE id=?1 AND owner_kind='user' UNION SELECT user_id FROM repo_access WHERE repo_id=?1 UNION SELECT m.user_id FROM org_memberships m JOIN repositories r ON r.owner_org_id=m.org_id WHERE r.id=?1 AND m.role IN ('owner','admin','member'))
         SELECT * FROM (SELECT u.*, ({projection}) AS permission,
         EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id) AS direct,
@@ -110,7 +110,7 @@ pub async fn update_invitation(
 ) -> Result<Invitation> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     admin(&mut tx, actor, repo_id).await?;
-    let invitation=sqlx::query_as::<_,Invitation>("UPDATE repository_invitations SET permission=COALESCE(?3,permission),state=CASE WHEN ?3 IS NULL THEN 'cancelled' ELSE 'pending' END WHERE id=?1 AND repo_id=?2 AND state='pending' AND created_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-7 days') RETURNING *").bind(id).bind(repo_id).bind(permission.map(|level|level as i16)).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
+    let invitation=sqlx::query_as::<_,Invitation>("UPDATE repository_invitations SET permission=COALESCE(?3,permission),inviter_id=?4,state=CASE WHEN ?3 IS NULL THEN 'cancelled' ELSE 'pending' END WHERE id=?1 AND repo_id=?2 AND state='pending' AND created_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-7 days') RETURNING *").bind(id).bind(repo_id).bind(permission.map(|level|level as i16)).bind(actor).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
     tx.commit().await?;
     Ok(invitation)
 }

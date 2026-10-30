@@ -126,6 +126,16 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
         ELSE 0 END)
     "#;
 
+const PUBLIC_READ_BASELINE: &str = "CASE WHEN NOT r.is_private THEN 1 ELSE 0 END";
+
+/// The access projection without the read that every visitor has on a public repository: what
+/// the user's own grants, organization settings and team memberships give. A collaborator is
+/// someone with such a grant, not everyone who can read.
+pub(crate) fn user_repo_grant_sql() -> String {
+    debug_assert!(USER_REPO_ACCESS_SQL.contains(PUBLIC_READ_BASELINE));
+    USER_REPO_ACCESS_SQL.replacen(PUBLIC_READ_BASELINE, "0", 1)
+}
+
 /// Whether repository `r` is readable by the viewer, whom the query joins as `u` (NULL for an
 /// anonymous visitor). It follows `repositories::access::can_read`: public repositories, the
 /// personal repositories of a site admin, and the access projection for everything else.
