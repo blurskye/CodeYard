@@ -116,6 +116,17 @@ fn asset_response(origin: &str, base: &str, tag: &str, asset: &ReleaseAsset) -> 
     }
 }
 
+/// What the source archives of a release are cut from: the tag's full ref, so a branch with the
+/// same name is not downloaded. A draft whose tag does not exist yet keeps the commit it was
+/// saved for.
+pub(super) fn archive_revision(release: &db::models::Release) -> String {
+    if release.is_draft && crate::backend::git::is_full_commit_id(&release.target_commitish) {
+        release.target_commitish.clone()
+    } else {
+        format!("refs/tags/{}", release.tag_name)
+    }
+}
+
 fn release_response(
     origin: &str,
     (owner, name): (&str, &str),
@@ -129,7 +140,7 @@ fn release_response(
         crate::webui::encode_component(name)
     );
     let tag = crate::webui::encode_component(&release.tag_name);
-    let revision = crate::webui::encode_component(&format!("refs/tags/{}", release.tag_name));
+    let revision = crate::webui::encode_component(&archive_revision(release));
     ReleaseResponse {
         id: release.id,
         tag_name: release.tag_name.clone(),

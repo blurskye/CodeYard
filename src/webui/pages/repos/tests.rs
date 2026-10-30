@@ -360,6 +360,7 @@ fn fixtures() -> Vec<Page> {
                     body: "Notes".into(),
                     author: "alice".into(),
                     target: "main".into(),
+                    archive_revision: "refs/tags/v1.0".into(),
                     created_at: "2026-10-01T00:00:00Z".into(),
                     published_at: Some("2026-10-02T00:00:00Z".into()),
                     draft: false,

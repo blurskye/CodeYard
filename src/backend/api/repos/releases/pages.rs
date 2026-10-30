@@ -45,6 +45,7 @@ fn release_item(row: &ReleaseRow) -> ReleaseItem {
         body: release.body.clone().unwrap_or_default(),
         author: row.author.clone(),
         target: release.target_commitish.clone(),
+        archive_revision: super::json::archive_revision(release),
         created_at: release.created_at.to_rfc3339(),
         published_at: release.published_at.map(|date| date.to_rfc3339()),
         draft: release.is_draft,
