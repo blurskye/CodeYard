@@ -1,6 +1,6 @@
 //! Closing keyword references in pull request descriptions.
 use super::db;
-use std::sync::LazyLock;
+use std::{collections::HashMap, sync::LazyLock};
 
 static REFERENCE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([a-z0-9_.-]+/[a-z0-9_.-]+)?#([1-9][0-9]*)\b|(https?://[^\s<>]+))").unwrap()
@@ -79,6 +79,7 @@ pub async fn references(
         issue.number,
     )
     .await?;
+    let mut visible = HashMap::new();
     for pull in candidates {
         if !links(
             &pull.body,
@@ -90,12 +91,14 @@ pub async fn references(
         ) {
             continue;
         }
-        let Some(repo) =
-            db::repositories::records::get_repository_by_id(pool, pull.repo_id).await?
-        else {
-            continue;
-        };
-        if crate::backend::repositories::access::can_read(pool, viewer, &repo).await? {
+        if !visible.contains_key(&pull.repo_id) {
+            let allowed = match db::repositories::records::get_repository_by_id(pool, pull.repo_id).await? {
+                Some(repo) => crate::backend::repositories::access::can_read(pool, viewer, &repo).await?,
+                None => false,
+            };
+            visible.insert(pull.repo_id, allowed);
+        }
+        if visible[&pull.repo_id] {
             result.push(pull);
         }
     }
