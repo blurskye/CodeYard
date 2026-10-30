@@ -2496,6 +2496,12 @@ impl LocalStore {
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
+        // A move to the commit the branch is already at only holds that branch: the ref
+        // transaction verifies it, and nothing else treats it as a write.
+        let moved: Vec<&RestackMove> = moves
+            .iter()
+            .filter(|restack| restack.old != restack.new)
+            .collect();
         live_write(
             pool,
             repo_id,
@@ -2506,7 +2512,7 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        for restack in moves {
+        for restack in &moved {
             let write = BranchWrite {
                 branch: &restack.branch,
                 old: Some(&restack.old),
@@ -2564,7 +2570,7 @@ impl LocalStore {
                 return Err(RepoError::new(ErrorKind::Conflict, "Restack head changed"));
             }
         }
-        let writes = moves
+        let writes = moved
             .iter()
             .map(|restack| BranchWrite {
                 branch: &restack.branch,
@@ -2586,7 +2592,7 @@ impl LocalStore {
             ))
             .await
             .map_err(RepoError::from)?;
-        let updates = moves
+        let updates = moved
             .iter()
             .map(|restack| {
                 (
@@ -2597,7 +2603,7 @@ impl LocalStore {
             })
             .collect::<Vec<_>>();
         let followup = self.after_ref_change(pool, repo_id, actor, &updates).await;
-        for restack in moves {
+        for restack in &moved {
             record_branch_update(
                 pool,
                 repo_id,

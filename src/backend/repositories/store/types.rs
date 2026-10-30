@@ -249,6 +249,7 @@ pub struct BranchMergePublication {
 }
 
 /// One branch that a restack moves: the commit it must still be at, and the commit it moves to.
+/// Equal commits hold a branch the restack built on without moving it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestackMove {
     pub branch: String,
