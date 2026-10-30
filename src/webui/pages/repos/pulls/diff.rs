@@ -809,7 +809,7 @@ fn split_file_body(
             {lines.annotations_above(file,&rows)}
             {lines.above_patch(&top, composer, composer_top)}
         }
-        div { class: "collaboration-split patch-lines", style: format!("--patch-digits:{}", patch_gutter_digits(&rows)),
+        div { class: "collaboration-split patch-lines", style: patch_gutter_digits(&rows).map(|digits| format!("--patch-digits:{digits}")),
             for (index, pair) in pairs.iter().enumerate() {
                 {split_row(lines, &file.filename, &rows, *pair)}
                 if let Some(lines) = lines {

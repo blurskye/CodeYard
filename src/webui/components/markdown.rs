@@ -1241,11 +1241,11 @@ impl<'r> Emitter<'r> {
         // its glyph, so copied text is unchanged.
         let permalink = match id {
             Some(id) if self.document => format!(
-                "<a class=\"heading-permalink\" href=\"#{id}\" aria-label=\"Permalink to this section\"></a>"
+                "<a class=\"heading-permalink\" href=\"#{}\" aria-label=\"Permalink to this section\"></a>", escape_html(id)
             ),
             _ => String::new(),
         };
-        let id = id.map(|id| format!(" id=\"{id}\"")).unwrap_or_default();
+        let id = id.map(id_attribute).unwrap_or_default();
         self.write(&format!(
             "<{tag}{id}{attributes} class=\"{class}\">{permalink}{inner}</{tag}>"
         ))
