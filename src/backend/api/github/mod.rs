@@ -325,6 +325,7 @@ async fn responses(request: Request, next: Next) -> Response {
         .headers_mut()
         .entry(header::CACHE_CONTROL)
         .or_insert_with(|| "no-store".parse().unwrap());
+    response.headers_mut().append(header::VARY, "Accept".parse().unwrap());
     response.headers_mut().insert(
         "x-github-api-version-selected",
         "2022-11-28".parse().unwrap(),
