@@ -140,12 +140,7 @@ pub(super) fn workflow_file_url(model: &ActionsPage, run: &Run) -> Option<String
     {
         return None;
     }
-    let path = path
-        .split('/')
-        .map(encode_component)
-        .collect::<Vec<_>>()
-        .join("/");
-    Some(format!("{base}/blob/{}/{path}", encode_component(sha)))
+    Some(crate::webui::pages::repos::ref_path::file_url(&base, "blob", sha, path))
 }
 
 /// The commit's short id. It links to the commit page when the repository has one.

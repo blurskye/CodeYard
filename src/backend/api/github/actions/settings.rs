@@ -133,13 +133,6 @@ fn switch_url(org: &str, setting: Setting, rest: &str) -> String {
     ))
 }
 
-fn selected(stored: &Value, setting: Setting) -> Vec<i64> {
-    stored[setting.key()]["selected_repository_ids"]
-        .as_array()
-        .map(|ids| ids.iter().filter_map(Value::as_i64).collect())
-        .unwrap_or_default()
-}
-
 async fn organization_switch(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -203,94 +196,36 @@ async fn organization_repositories(
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
     let actor = auth.database_actor();
     let setting = switch(&uri);
-    let stored = db::action_settings::settings(&state.pool, actor.clone(), &scope, setting, None)
-        .await
-        .map_err(failure)?;
-    let org = db::organizations::get_public_organization(&state.pool, &params["org"])
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    if !write {
-        let mut repositories = Vec::new();
-        for id in selected(&stored, setting) {
-            if let Some(repo) = db::repositories::records::get_repository_by_id(&state.pool, id)
-                .await
-                .map_err(Error::unavailable)?
-                .filter(|repo| repo.owner_org_id == Some(org.id))
-            {
-                repositories.push(repo);
-            }
-        }
-        let (offset, limit) = page.window()?;
-        let total = repositories.len();
-        let mut values = Vec::new();
-        for repo in repositories.iter().skip(offset).take(limit) {
-            values.push(super::super::repos::document(&state, repo, Some(&auth)).await?);
-        }
-        return Ok((
-            page.headers(&uri, offset.saturating_add(limit) < total)?,
-            Json(json!({"total_count":total,"repositories":values})),
-        )
-            .into_response());
-    }
-    let mut ids = selected(&stored, setting);
-    // Only repositories being added are checked; removing never needs them to exist.
-    let added = if params.contains_key("repository_id") {
+    use db::action_settings::SelectionChange;
+    let change = if !write {
+        None
+    } else if params.contains_key("repository_id") {
         let id = super::id(&params, "repository_id")?;
-        ids.retain(|existing| *existing != id);
-        if method == axum::http::Method::DELETE {
-            Vec::new()
-        } else {
-            ids.push(id);
-            vec![id]
-        }
+        Some(if method == axum::http::Method::DELETE { SelectionChange::Remove(id) } else { SelectionChange::Add(id) })
     } else {
         let body = input(request).await?;
-        ids = body["selected_repository_ids"]
-            .as_array()
+        let ids = body["selected_repository_ids"].as_array()
             .ok_or_else(|| Error::validation("Actions", "selected_repository_ids", "missing"))?
-            .iter()
-            .map(|id| {
-                id.as_i64().ok_or_else(|| {
-                    Error::validation("Actions", "selected_repository_ids", "invalid")
-                })
-            })
-            .collect::<Result<_>>()?;
-        ids.sort_unstable();
-        ids.dedup();
-        ids.clone()
+            .iter().map(|id| id.as_i64().ok_or_else(|| Error::validation("Actions", "selected_repository_ids", "invalid")))
+            .collect::<Result<Vec<_>>>()?;
+        Some(SelectionChange::Set(ids))
     };
-    for id in added {
-        let owned = db::repositories::records::get_repository_by_id(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?
-            .is_some_and(|repo| repo.owner_org_id == Some(org.id));
-        if !owned {
-            return Err(Error::validation(
-                "Actions",
-                "selected_repository_ids",
-                "invalid",
-            ));
-        }
+    let (offset, limit) = page.window()?;
+    let (total, rows) = db::action_settings::repositories(&state.pool, actor, &scope, setting, change.as_ref(), (offset as i64, limit as i64))
+        .await.map_err(failure)?;
+    if write {
+        return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    db::action_settings::settings(
-        &state.pool,
-        actor,
-        &scope,
-        setting,
-        Some(&json!({"selected_repository_ids":ids})),
-    )
-    .await
-    .map_err(failure)?;
-    Ok(StatusCode::NO_CONTENT.into_response())
+    let values: Vec<_> = rows.iter().map(|repo| crate::backend::webhooks::payloads::repository(repo, &params["org"])).collect();
+    Ok((page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?, Json(json!({"total_count":total,"repositories":values}))).into_response())
 }
 
-fn document(policy: &Policy, params: &Params) -> Result<Value> {
+fn document(policy: &Policy, params: &Params, organization: Option<&str>) -> Result<Value> {
     let mut value: Value = serde_json::from_str(&policy.data).map_err(Error::unavailable)?;
-    let (source_type, source, url) = if let Some(org) = params.get("org") {
+    let (source_type, source, url) = if let Some(org) = organization.or_else(|| params.get("org").map(String::as_str)) {
         (
             "Organization",
-            org.clone(),
+            org.to_owned(),
             api_url(&format!(
                 "/orgs/{}/actions/policies/{}",
                 crate::webui::encode_component(org),
@@ -319,11 +254,15 @@ fn document(policy: &Policy, params: &Params) -> Result<Value> {
     Ok(value)
 }
 
+#[derive(serde::Deserialize)]
+struct PolicyQuery { has_parents: Option<bool> }
+
 async fn policies(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(params): Path<Params>,
     Query(page): Query<Pagination>,
+    Query(query): Query<PolicyQuery>,
     OriginalUri(uri): OriginalUri,
     request: Request,
 ) -> Result<Response> {
@@ -335,42 +274,26 @@ async fn policies(
         .get("policy_id")
         .map(|_| super::id(&params, "policy_id"))
         .transpose()?;
+    if !write && id.is_none() {
+        let (offset, limit) = page.window()?;
+        let (total, rows) = db::action_settings::policies_page(&state.pool, actor, &scope, query.has_parents.unwrap_or(true), offset as i64, limit as i64).await.map_err(failure)?;
+        let values = rows.iter().map(|row| document(&row.policy, &params, row.organization.as_deref())).collect::<Result<Vec<_>>>()?;
+        return Ok((page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?, Json(json!({"total_count":total,"policies":values}))).into_response());
+    }
     let body = if write && method != axum::http::Method::DELETE {
         Some(input(request).await?)
     } else {
         None
     };
     let change = if write { Some(body.as_ref()) } else { None };
-    let (offset, limit) = if write || id.is_some() { (0, 1) } else { page.window()? };
-    let result = db::action_settings::policies(&state.pool, actor, &scope, id, change, offset as i64, limit as i64)
+    let rows = db::action_settings::policies(&state.pool, actor, &scope, id, change)
         .await
         .map_err(failure)?;
-    let rows = result.rows;
     if method == axum::http::Method::DELETE {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    if id.is_some() || write {
-        let value = document(rows.first().ok_or_else(Error::missing)?, &params)?;
-        return Ok((
-            if id.is_none() {
-                StatusCode::CREATED
-            } else {
-                StatusCode::OK
-            },
-            Json(value),
-        )
-            .into_response());
-    }
-    let total = result.total;
-    let values: Vec<_> = rows
-        .iter()
-        .map(|row| document(row, &params))
-        .collect::<Result<_>>()?;
-    Ok((
-        page.headers(&uri, (offset as i64).saturating_add(limit as i64) < total)?,
-        Json(json!({"total_count":total,"policies":values})),
-    )
-        .into_response())
+    let value = document(rows.first().ok_or_else(Error::missing)?, &params, None)?;
+    Ok((if id.is_none() { StatusCode::CREATED } else { StatusCode::OK }, Json(value)).into_response())
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

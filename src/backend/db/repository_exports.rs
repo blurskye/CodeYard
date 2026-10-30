@@ -66,6 +66,10 @@ pub enum ExportRefusal {
     Archive,
 }
 
+native_operation!(crate::backend::db::postgres::repository_exports::discussion_ids,
+    crate::backend::db::sqlite::repository_exports::discussion_ids,
+    fn discussion_ids(pool: &DbPool, repo: i64, pulls: bool, before: i64, limit: i64) -> Result<Vec<i64>>);
+
 native_operation!(crate::backend::db::postgres::repository_exports::create,
     crate::backend::db::sqlite::repository_exports::create,
     fn create(pool: &DbPool, actor: i64, org: Option<i64>, ids: &[i64], options: &ExportOptions) -> Result<RepositoryExport>);

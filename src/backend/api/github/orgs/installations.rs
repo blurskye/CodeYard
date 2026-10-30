@@ -1,5 +1,5 @@
 //! Organization owners see installations from the same store as app and user discovery.
-use super::owner;
+use super::owner_actor;
 use crate::backend::{
     api::github::{
         apps::installations::{document, installation_page, more},
@@ -30,9 +30,10 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let org = owner(&state, &headers, &name).await?;
+    let (org, actor) = owner_actor(&state, &headers, &name).await?;
     let filter = InstallationFilter {
         org: Some(org.id),
+        actor: Some(actor.user.id),
         ..InstallationFilter::default()
     };
     let (offset, limit) = page.window()?;

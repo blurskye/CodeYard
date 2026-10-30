@@ -620,6 +620,7 @@ CREATE INDEX IF NOT EXISTS idx_pull_requests_author_id ON pull_requests(author_i
 CREATE INDEX IF NOT EXISTS idx_pull_requests_state ON pull_requests(state);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_repo_state ON pull_requests(repo_id, state);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_head_repo_state ON pull_requests(head_repo_id, state);
+CREATE INDEX IF NOT EXISTS pull_requests_check_heads ON pull_requests(repo_id, head_sha, number) WHERE state='open' AND head_repo_id=repo_id;
 CREATE INDEX IF NOT EXISTS idx_pull_requests_created_at ON pull_requests(created_at);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_updated_at ON pull_requests(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_repo_stack ON pull_requests(repo_id, stack_id);
@@ -702,6 +703,7 @@ CREATE TABLE IF NOT EXISTS pr_comments (
     line INTEGER,
     side VARCHAR(5), -- LEFT, RIGHT
     commit_sha VARCHAR(40),
+    diff_base_sha TEXT CHECK (length(diff_base_sha)=40),
     in_reply_to_comment_id BIGINT REFERENCES pr_comments(id) ON DELETE CASCADE,
     resolved_at TIMESTAMPTZ,
     resolved_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
@@ -1075,9 +1077,13 @@ CREATE INDEX IF NOT EXISTS idx_ci_runs_status ON ci_runs(status);
 CREATE INDEX IF NOT EXISTS idx_ci_runs_push_user_created_at ON ci_runs(triggered_by_id, created_at DESC)
     WHERE event = 'push';
 
+-- External checks and Actions jobs allocate their public check-run identity here.
+CREATE TABLE check_run_identities (id BIGSERIAL PRIMARY KEY);
+
 -- actions-runs: observed executions, not synthetic workflow plans
 CREATE TABLE actions_jobs (
     id BIGSERIAL PRIMARY KEY,
+    check_run_id BIGINT NOT NULL UNIQUE REFERENCES check_run_identities(id),
     run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
     generation TEXT NOT NULL,
     workflow_path TEXT NOT NULL,
@@ -2653,6 +2659,7 @@ CREATE TABLE repository_advisories (
     cve_requested_at TIMESTAMPTZ, published_at TIMESTAMPTZ, closed_at TIMESTAMPTZ,
     publisher_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     report_accepted BOOLEAN NOT NULL DEFAULT FALSE,
+    revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX repository_advisories_repo ON repository_advisories(repo_id,id);
@@ -3398,7 +3405,7 @@ CREATE TABLE organization_external_property_installations (
     id BIGSERIAL PRIMARY KEY,
     org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     display_name TEXT NOT NULL,
-    installation_id BIGINT,
+    installation_id BIGINT NOT NULL REFERENCES github_app_installations(id) ON DELETE CASCADE,
     UNIQUE (org_id, display_name),
     UNIQUE (org_id, installation_id)
 );
@@ -3447,7 +3454,7 @@ CREATE TABLE check_suites (
 CREATE INDEX check_suites_ref ON check_suites(repo_id,head_sha,id);
 
 CREATE TABLE check_runs (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY REFERENCES check_run_identities(id),
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     suite_id BIGINT NOT NULL REFERENCES check_suites(id) ON DELETE CASCADE,
     name TEXT NOT NULL,

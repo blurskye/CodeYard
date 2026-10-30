@@ -50,7 +50,7 @@ pub(super) async fn load(
         "blob" => {
             let blob = store.blob_by_id_range(oid, crate::backend::repositories::store::BlobRange::Window { offset: 0, length: 0 }).await.map_err(unavailable)?;
             request.charge(blob.size.min(8_000) as usize)?;
-            Ok(json!({"__typename":"Blob","_repo":repo.id,"id":node_id::git("B",oid),"oid":oid,"byteSize":blob.size,
+            Ok(json!({"__typename":"Blob","_repo":repo.id,"id":node_id::git_object("B",repo.id,oid),"oid":oid,"byteSize":blob.size,
                 "isBinary":blob.is_binary,"isTruncated":blob.size > crate::backend::repositories::store::MAX_BLOB_RESPONSE_BYTES as u64}))
         }
         "tree" => {
@@ -63,7 +63,7 @@ pub(super) async fn load(
             request.charge(tree.tree.iter().fold(0usize, |bytes, entry|
                 bytes.saturating_add(entry.path.len().saturating_mul(6)).saturating_add(256)))?;
             Ok(
-                json!({"__typename":"Tree","_repo":repo.id,"id":node_id::git("T",oid),"oid":oid,"entries":tree.tree.iter().map(|e|json!({"_repo":repo.id,"name":e.path,"nameRaw":STANDARD.encode(&e.path_raw),"path":e.path,"pathRaw":STANDARD.encode(&e.path_raw),"submodule":null,"mode":i32::from_str_radix(&e.mode,8).unwrap_or(0),"oid":e.sha,"size":e.size.unwrap_or(0),"type":e.kind})).collect::<Vec<_>>()}),
+                json!({"__typename":"Tree","_repo":repo.id,"id":node_id::git_object("T",repo.id,oid),"oid":oid,"entries":tree.tree.iter().map(|e|json!({"_repo":repo.id,"name":e.path,"nameRaw":STANDARD.encode(&e.path_raw),"path":e.path,"pathRaw":STANDARD.encode(&e.path_raw),"submodule":null,"mode":i32::from_str_radix(&e.mode,8).unwrap_or(0),"oid":e.sha,"size":e.size.unwrap_or(0),"type":e.kind})).collect::<Vec<_>>()}),
             )
         }
         "tag" => {
@@ -71,7 +71,7 @@ pub(super) async fn load(
             request.charge(tag.message.len().saturating_add(tag.tag.len()).saturating_add(tag.object.len())
                 .saturating_add(tag.tagger.as_ref().map_or(0, |tagger| tagger.name.len().saturating_add(tagger.email.len()))))?;
             Ok(
-                json!({"__typename":"Tag","_repo":repo.id,"_target":tag.object,"id":node_id::git("TAG",oid),"oid":oid,"name":tag.tag,"message":tag.message,"tagger":tag.tagger.as_ref().map(|t|json!({"name":t.name,"email":t.email,"date":t.date,"user":null}))}),
+                json!({"__typename":"Tag","_repo":repo.id,"_target":tag.object,"id":node_id::git_object("TAG",repo.id,oid),"oid":oid,"name":tag.tag,"message":tag.message,"tagger":tag.tagger.as_ref().map(|t|json!({"name":t.name,"email":t.email,"date":t.date,"user":null}))}),
             )
         }
         _ => Err(missing()),
@@ -259,64 +259,21 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
     if !matches!(kind, "C" | "B" | "TAG" | "T") {
         return Err(missing());
     }
-    let oid = std::str::from_utf8(&bytes).map_err(|_| missing())?;
-    if !crate::backend::git::is_full_commit_id(oid) {
+    let key = std::str::from_utf8(&bytes).map_err(|_| missing())?;
+    let (repo, oid) = if let Some((repo, oid)) = key.split_once('/') {
+        (repo.parse::<i64>().ok().filter(|id| *id > 0).ok_or_else(missing)?, oid)
+    } else if request.auth.is_job() {
+        // Only a single-repository job credential gives an old, unqualified ID an unambiguous
+        // origin. Other legacy IDs cannot retain repository-specific identity, so fail closed
+        // instead of selecting a different fork or probing every readable repository.
+        let token = db::ci_tokens::get(&request.state.pool, request.auth.token.id).await.map_err(unavailable)?.ok_or_else(missing)?;
+        (token.repo_id, key)
+    } else {
         return Err(missing());
-    }
-    if request.auth.is_job() {
-        let token = db::ci_tokens::get(&request.state.pool, request.auth.token.id)
-            .await
-            .map_err(unavailable)?
-            .ok_or_else(missing)?;
-        let repo = repository::by_id(token.repo_id, request).await?;
-        return checked(&repo, kind, oid, request).await;
-    }
-    // REST's content-addressed IDs have no repository component. Find a readable copy;
-    // never probe inaccessible stores, and never treat storage failure as absence.
-    let mut offset = 0;
-    let mut storage_error = None;
-    loop {
-        let rows = db::repositories::discovery::search_repositories(
-            &request.state.pool,
-            Some(request.auth.user.id),
-            "",
-            db::repositories::records::RepositorySort::Recent,
-            offset,
-            100,
-        )
-        .await
-        .map_err(unavailable)?;
-        if rows.is_empty() {
-            return Err(storage_error.unwrap_or_else(missing));
-        }
-        offset += rows.len() as i64;
-        for repo in rows {
-            if !repository::optional_authority(repo.id, "contents", request).await? { continue; }
-            match repo_store(&repo, request.state.cluster.as_ref())
-                .git_object_kind(oid)
-                .await
-            {
-                Ok(actual)
-                    if matches!(
-                        (kind, actual.as_str()),
-                        ("C", "commit") | ("B", "blob") | ("TAG", "tag") | ("T", "tree")
-                    ) =>
-                {
-                    match load(&repo, oid, request).await {
-                        Ok(value) => return Ok(value),
-                        Err(error) => match error.extensions.as_ref().and_then(|extensions| extensions.get("type")) {
-                            Some(async_graphql::Value::String(kind)) if kind == "INTERNAL" => storage_error = Some(error),
-                            Some(async_graphql::Value::String(kind)) if kind == "NOT_FOUND" || kind == "FORBIDDEN" => {},
-                            _ => return Err(error), // Resource limits are query-wide, not candidate failures.
-                        },
-                    }
-                }
-                Ok(_) => {}
-                Err(error) if error.kind == ErrorKind::NotFound => {}
-                Err(error) => storage_error = Some(unavailable(error)),
-            }
-        }
-    }
+    };
+    if !crate::backend::git::is_full_commit_id(oid) { return Err(missing()); }
+    let repo = repository::by_id(repo, request).await?;
+    checked(&repo, kind, oid, request).await
 }
 pub(super) async fn resolve(
     field: &str,

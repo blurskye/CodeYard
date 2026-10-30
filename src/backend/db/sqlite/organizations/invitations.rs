@@ -31,7 +31,7 @@ pub async fn invite_organization_member(
 }
 pub async fn set_organization_invitation_by_owner(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     target: i64,
     role: OrgRole,
@@ -48,7 +48,7 @@ pub async fn set_organization_invitation_by_owner(
 }
 pub async fn create_organization_invitation(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
@@ -57,7 +57,7 @@ pub async fn create_organization_invitation(
 }
 async fn save(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
@@ -78,14 +78,17 @@ async fn save(
 // The caller holds the write transaction and owns commit or rollback.
 pub(super) async fn save_in_transaction(
     mut tx: &mut SqliteConnection,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
     policy: InvitationOffer,
 ) -> Result<OrganizationOutcome<OrgInvitation>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let replace = matches!(policy, InvitationOffer::Replace);
     let actor_role = require_org!(tx, actor, org);
+    if !credential(tx, &grant, org, "members").await? { return Ok(Denied); }
     if !administers(actor_role)
         || (owner_only && actor_role != OrgRole::Owner)
         || (!input.reinstate && !can_change_member(actor_role, None, Some(input.role)))
@@ -310,7 +313,7 @@ pub async fn cancel_organization_invitation(
 }
 pub async fn cancel_invitation_id(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     id: i64,
     owner_only: bool,
@@ -319,15 +322,17 @@ pub async fn cancel_invitation_id(
 }
 async fn cancel(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     target: i64,
     by_id: bool,
     owner_only: bool,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let actor_role = require_org!(tx, actor, org);
-    if !administers(actor_role) || (owner_only && actor_role != OrgRole::Owner) {
+    if !credential(&mut tx, &grant, org, "members").await? || !administers(actor_role) || (owner_only && actor_role != OrgRole::Owner) {
         return Ok(Denied);
     }
     let outcome = cancel_offers(&mut tx, actor_role, org, target, by_id).await?;
@@ -403,10 +408,12 @@ pub async fn list_received_organization_invitations(
 /// organization ends once the account is a member.
 pub async fn accept_organization_invitation(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let sql = format!("SELECT i.* FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=?2 AND (?3 IS NULL OR i.id=?3) AND {LIVE} AND NOT EXISTS(SELECT 1 FROM organization_member_history h WHERE h.org_id=i.org_id AND h.user_id=?1 AND h.removed_at>=i.created_at) ORDER BY i.id LIMIT 1");
     let Some(invitation): Option<OrgInvitation> = sqlx::query_as(&sql)
@@ -427,6 +434,7 @@ pub async fn accept_organization_invitation(
     let Ok(role) = invitation.role.parse::<OrgRole>() else {
         return Ok(Denied);
     };
+    if !credential(&mut tx, &grant, org, "members").await? { return Ok(Denied); }
     if membership_role(&mut tx, org, actor).await?.is_some() {
         return Ok(Conflict);
     }

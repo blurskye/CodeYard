@@ -643,6 +643,8 @@ pub fn need(path: &str, write: bool) -> Need {
         ["repos", _, _, ..] => {
             repository_permission(path, write).map_or(Need::Denied, Need::Repository)
         }
+        ["repositories", _, "environments", _, "variables", ..] => Need::Repository("environments"),
+        ["organizations", _, "actions", "cache", ..] => Need::Organization("organization_administration"),
         ["repositories" | "search" | "events" | "networks" | "feeds" | "advisories"
         | "organizations", ..]
             if !write =>

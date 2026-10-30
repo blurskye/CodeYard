@@ -21,9 +21,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::sync::Arc;
 
-fn empty(status: StatusCode) -> Response {
-    (status, [(header::CONTENT_LENGTH, "0")]).into_response()
-}
+use super::super::empty;
 // These ten operations document no JSON representation for errors.
 fn response(result: Result<Response>) -> Response {
     result.unwrap_or_else(|error| empty(error.0))

@@ -126,7 +126,12 @@ pub(crate) fn decode_review_request(value: &str) -> Option<(i64, bool, i64)> {
     (pull > 0 && target > 0).then_some((pull, bytes[8] != 0, target))
 }
 
-/// Git objects (`C` commit, `B` blob, `TAG` tag) use their content ID; `REF` uses the repository and ref.
+/// Git object fields such as comments, checks and URLs belong to one immutable repository ID.
+pub(crate) fn git_object(kind: &str, repo: i64, oid: &str) -> String {
+    git(kind, &format!("{repo}/{}", oid.to_ascii_lowercase()))
+}
+
+/// Non-numeric keys for gists, licenses and composite resources.
 pub(crate) fn git(kind: &str, key: &str) -> String {
     format!("{kind}_{}", URL_SAFE_NO_PAD.encode(key))
 }

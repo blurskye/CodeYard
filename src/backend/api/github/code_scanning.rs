@@ -210,7 +210,7 @@ async fn upload_status(
     Path((owner, name, id)): Path<(String, String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
-    let upload = records::upload(&state.pool, repo.id, &id)
+    let upload = records::upload_status(&state.pool, repo.id, &id)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -243,6 +243,10 @@ fn normalize_ref(reference: &str) -> String {
     }
 }
 impl Filters {
+    fn pull_request(&self, resource: &str) -> Result<Option<i32>> {
+        if self.pr.is_some_and(|number| number <= 0) { return Err(Error::validation(resource, "pr", "invalid")); }
+        Ok(self.pr)
+    }
     fn pagination(&self) -> Pagination {
         Pagination {
             page: self.page,
@@ -260,15 +264,12 @@ impl Filters {
         {
             return Err(Error::validation("Analysis", "direction", "invalid"));
         }
-        if self.pr.is_some_and(|number| number <= 0) {
-            return Err(Error::validation("Analysis", "pr", "invalid"));
-        }
         Ok(records::AnalysisFilters {
             reference: None,
             tool_name: self.tool_name.as_deref(),
             tool_guid: self.tool_guid.as_deref(),
             sarif_id: self.sarif_id.as_deref(),
-            pull_request: self.pr,
+            pull_request: self.pull_request("Analysis")?,
             ascending: self.direction.as_deref() == Some("asc"),
         })
     }
@@ -317,6 +318,7 @@ impl Filters {
             tool_guid: self.tool_guid.as_deref(),
             state: self.state.as_deref(),
             severity: self.severity.as_deref(),
+            pull_request: self.pull_request("Alert")?,
             sort,
         })
     }
@@ -452,6 +454,14 @@ async fn delete_analysis(
         json!({"next_analysis_url":url,"confirm_delete_url":url.map(|url|format!("{url}?confirm_delete=true"))}),
     ))
 }
+async fn alert_repository(state: &AppState, headers: &HeaderMap, owner: &str, name: &str) -> Result<db::models::Repository> {
+    let (repo, _) = repository(state, headers, owner, name, false).await?;
+    if repo.is_private {
+        scope(state, headers, owner, name, false, false).await?;
+    }
+    Ok(repo)
+}
+
 async fn find_alert(state: &AppState, repo: i64, number: i64) -> Result<records::Alert> {
     records::alert(&state.pool, repo, number)
         .await
@@ -464,8 +474,9 @@ async fn alert_document(
     owner: &str,
     name: &str,
     reference: Option<&str>,
+    pull_request: Option<i32>,
 ) -> Result<Value> {
-    let instance = records::instance(&state.pool, row.id, reference)
+    let instance = records::instance_filtered(&state.pool, row.id, reference, pull_request)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -487,7 +498,7 @@ async fn alerts(
     Query(query): Query<Filters>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
+    let repo = alert_repository(&state, &headers, &owner, &name).await?;
     let (offset, limit) = query.pagination().window()?;
     let reference = query.ref_name.as_deref().map(normalize_ref);
     let mut filters = query.alert_filters()?;
@@ -504,7 +515,7 @@ async fn alerts(
     let next = rows.len() > limit;
     let mut values = Vec::new();
     for row in rows.iter().take(limit) {
-        values.push(listed_alert(&state, row, &repo, &owner, reference.as_deref()).await?);
+        values.push(listed_alert(&state, row, &repo, &owner, reference.as_deref(), filters.pull_request).await?);
     }
     query.pagination().response(&uri, values, next)
 }
@@ -514,11 +525,10 @@ async fn listed_alert(
     repo: &db::models::Repository,
     owner: &str,
     reference: Option<&str>,
+    pull_request: Option<i32>,
 ) -> Result<Value> {
-    let reference = reference
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("refs/heads/{}", repo.default_branch));
-    alert_document(state, row, owner, &repo.name, Some(&reference)).await
+    let default = pull_request.is_none().then(|| format!("refs/heads/{}", repo.default_branch));
+    alert_document(state, row, owner, &repo.name, reference.or(default.as_deref()), pull_request).await
 }
 async fn org_alerts(
     State(state): State<Arc<AppState>>,
@@ -527,28 +537,18 @@ async fn org_alerts(
     Query(query): Query<Filters>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    use db::organizations::{self, OrganizationOutcome};
     let auth = auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(auth::required)?;
     let org = super::orgs::target(&state, &name).await?;
-    let role = organizations::membership::get_organization_role(&state.pool, auth.user.id, org.id)
-        .await
-        .map_err(Error::unavailable)?;
-    if !matches!(
-        role,
-        OrganizationOutcome::Applied(db::models::OrgRole::Owner | db::models::OrgRole::Admin)
-    ) {
-        return Err(Error::new(
-            StatusCode::FORBIDDEN,
-            "Must have organization security access",
-        ));
-    }
     let (offset, limit) = query.pagination().window()?;
-    let filters = query.alert_filters()?;
-    let rows = records::alert_page(
+    let reference = query.ref_name.as_deref().map(normalize_ref);
+    let mut filters = query.alert_filters()?;
+    filters.reference = reference.as_deref();
+    let rows = records::organization_alert_page(
         &state.pool,
-        records::AlertScope::Organization(org.id),
+        auth.user.id,
+        org.id,
         &filters,
         offset as i64,
         (limit + 1) as i64,
@@ -558,12 +558,9 @@ async fn org_alerts(
     let next = rows.len() > limit;
     let mut values = Vec::new();
     for row in rows.iter().take(limit) {
-        let repo = db::repositories::records::get_repository_by_id(&state.pool, row.repo_id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        let mut alert = listed_alert(&state, row, &repo, &name, None).await?;
-        alert["repository"] = payloads::repository(&repo, &name);
+        let repo = &row.repository;
+        let mut alert = payloads::code_scanning_alert(&row.alert, std::slice::from_ref(&row.instance), &name, &repo.name, row.dismissed_by.as_ref().map(payloads::user)).map_err(Error::unavailable)?;
+        alert["repository"] = payloads::repository(repo, &name);
         values.push(alert);
     }
     query.pagination().response(&uri, values, next)
@@ -573,10 +570,10 @@ async fn alert(
     headers: HeaderMap,
     Path((owner, name, number)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
-    let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
+    let repo = alert_repository(&state, &headers, &owner, &name).await?;
     let row = find_alert(&state, repo.id, number).await?;
     Ok(Json(
-        alert_document(&state, &row, &owner, &name, None).await?,
+        alert_document(&state, &row, &owner, &name, None, None).await?,
     ))
 }
 #[derive(Deserialize)]
@@ -604,7 +601,7 @@ async fn update_alert(
         .await
         .map_err(failure)?;
     Ok(Json(
-        alert_document(&state, &row, &owner, &name, None).await?,
+        alert_document(&state, &row, &owner, &name, None, None).await?,
     ))
 }
 async fn instances(
@@ -614,14 +611,15 @@ async fn instances(
     Query(query): Query<Filters>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
+    let repo = alert_repository(&state, &headers, &owner, &name).await?;
     let row = find_alert(&state, repo.id, number).await?;
     let (offset, limit) = query.pagination().window()?;
     let reference = query.ref_name.as_deref().map(normalize_ref);
-    let rows = records::instances(
+    let rows = records::instances_filtered(
         &state.pool,
         row.id,
         reference.as_deref(),
+        query.pull_request("AlertInstance")?,
         offset as i64,
         (limit + 1) as i64,
     )
@@ -632,12 +630,7 @@ async fn instances(
         .iter()
         .take(limit)
         .map(|instance| {
-            let mut value = payloads::code_scanning_instance(instance, &owner, &name, number)
-                .map_err(Error::unavailable)?;
-            if row.state == "dismissed" {
-                value["state"] = json!("dismissed");
-            }
-            Ok(value)
+            payloads::code_scanning_instance(instance, &owner, &name, number).map_err(Error::unavailable)
         })
         .collect::<Result<Vec<_>>>()?;
     query.pagination().response(&uri, values, next)

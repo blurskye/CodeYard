@@ -716,9 +716,9 @@ async fn transfer_selections(pg: bool) {
         .await
         .unwrap();
         assert_eq!(
-            values::repositories(f.pool(), owner, organizations[0].id, kind, "SELECTED")
+            values::repositories(f.pool(), owner, organizations[0].id, kind, "SELECTED", 0, 100)
                 .await
-                .unwrap()
+                .unwrap().1
                 .len(),
             1
         );
@@ -740,9 +740,9 @@ async fn transfer_selections(pg: bool) {
             .unwrap()
             .is_empty());
         assert!(
-            values::repositories(f.pool(), owner, organizations[0].id, kind, "SELECTED")
+            values::repositories(f.pool(), owner, organizations[0].id, kind, "SELECTED", 0, 100)
                 .await
-                .unwrap()
+                .unwrap().1
                 .is_empty()
         );
     }
@@ -755,9 +755,9 @@ async fn transfer_selections(pg: bool) {
             .unwrap()
             .is_empty());
         assert!(
-            values::repositories(f.pool(), owner, organizations[0].id, kind, "SELECTED")
+            values::repositories(f.pool(), owner, organizations[0].id, kind, "SELECTED", 0, 100)
                 .await
-                .unwrap()
+                .unwrap().1
                 .is_empty()
         );
     }

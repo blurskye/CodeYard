@@ -42,8 +42,9 @@ async fn perform(
     let args: Parameters = if body.is_empty() {
         Parameters::default()
     } else {
-        serde_json::from_slice(&body)
+        serde_json::from_slice::<Option<Parameters>>(&body)
             .map_err(|_| Error::invalid_simple("Invalid re-run parameters"))?
+            .unwrap_or_default()
     };
     match selection {
         Selection::All => {

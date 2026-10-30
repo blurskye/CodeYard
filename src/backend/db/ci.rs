@@ -222,7 +222,7 @@ native_operation!(crate::backend::db::postgres::ci::request_ci_cancellation_with
     fn request_ci_cancellation_with_token(pool: &DbPool, run_id: Uuid, actor_id: i64, token_id: i64) -> Result<(bool, Vec<(i64,i64)>)>);
 native_operation!(crate::backend::db::postgres::ci::delete_ci_run_data,
     crate::backend::db::sqlite::ci::delete_ci_run_data,
-    fn delete_ci_run_data(pool: &DbPool, actor: i64, repo: i64, id: i64, kind: CiRunDeletion) -> Result<bool>);
+    fn delete_ci_run_data(pool: &DbPool, actor: impl Into<super::users::tokens::Actor>, repo: i64, id: i64, kind: CiRunDeletion) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::ci::get_ci_run_by_id,
     crate::backend::db::sqlite::ci::get_ci_run_by_id,
     fn get_ci_run_by_id(pool: &DbPool, repo_id: i64, id: i64) -> Result<Option<CiRun>>);

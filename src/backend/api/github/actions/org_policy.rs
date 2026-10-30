@@ -20,20 +20,15 @@ use std::sync::Arc;
 
 fn outcome<T>(value: OrganizationOutcome<T>) -> Result<T> {
     match value {
-        OrganizationOutcome::Applied(value) => Ok(value),
-        OrganizationOutcome::Missing => Err(Error::missing()),
         OrganizationOutcome::Conflict => Err(Error::new(
             StatusCode::CONFLICT,
             "Organization policy conflict",
-        )),
-        OrganizationOutcome::Suspended => Err(Error::new(
-            StatusCode::FORBIDDEN,
-            "Organization governance is suspended",
         )),
         OrganizationOutcome::Denied => Err(Error::new(
             StatusCode::FORBIDDEN,
             "Organization administration required",
         )),
+        other => crate::backend::api::github::orgs::outcome(other),
     }
 }
 
@@ -58,10 +53,10 @@ async fn get_policy(
         .map_err(Error::unavailable)?;
     Ok(Json(match kind {
         CacheLimit::Storage => {
-            json!({"max_cache_size_gb":own.cache_size_gib.unwrap_or(i32::MAX).min(site.cache_size_gib.unwrap_or(10))})
+            json!({"max_cache_size_gb":kind.effective(site.cache_size_gib, own.cache_size_gib, None)})
         }
         CacheLimit::Retention => {
-            json!({"max_cache_retention_days":own.cache_retention_days.unwrap_or(i32::MAX).min(site.cache_retention_days.unwrap_or(7))})
+            json!({"max_cache_retention_days":kind.effective(site.cache_retention_days, own.cache_retention_days, None)})
         }
     }))
 }

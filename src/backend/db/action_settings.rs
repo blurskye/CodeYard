@@ -253,14 +253,39 @@ native_operation!(crate::backend::db::postgres::action_settings::settings,
 native_operation!(crate::backend::db::postgres::action_settings::effective,
     crate::backend::db::sqlite::action_settings::effective,
     fn effective(pool: &DbPool, repo: i64) -> Result<(Value, Value)>);
+native_operation!(crate::backend::db::postgres::action_settings::policies_page,
+    crate::backend::db::sqlite::action_settings::policies_page,
+    fn policies_page(pool: &DbPool, actor: impl Into<super::credentials::Actor>, scope: &Scope, has_parents: bool, offset: i64, limit: i64) -> Result<(i64, Vec<ListedPolicy>)>);
 native_operation!(crate::backend::db::postgres::action_settings::policies,
     crate::backend::db::sqlite::action_settings::policies,
-    fn policies(pool: &DbPool, actor: impl Into<super::credentials::Actor>, scope: &Scope, id: Option<i64>, change: Option<Option<&Value>>, offset: i64, limit: i64) -> Result<PolicyPage>);
+    fn policies(pool: &DbPool, actor: impl Into<super::credentials::Actor>, scope: &Scope, id: Option<i64>, change: Option<Option<&Value>>) -> Result<Vec<Policy>>);
 
-pub struct PolicyPage {
-    pub total: i64,
-    pub rows: Vec<Policy>,
+pub enum SelectionChange {
+    Set(Vec<i64>),
+    Add(i64),
+    Remove(i64),
 }
+
+pub(crate) fn change_selection(stored: &mut Value, setting: Setting, change: &SelectionChange) -> Result<Vec<i64>> {
+    ensure!(matches!(setting, Setting::Permissions | Setting::Runners), Refusal::Invalid);
+    ensure!(stored[setting.key()]["enabled_repositories"] == "selected", Refusal::Invalid);
+    let mut ids: Vec<i64> = stored[setting.key()]["selected_repository_ids"].as_array()
+        .map(|ids| ids.iter().filter_map(Value::as_i64).collect()).unwrap_or_default();
+    let added = match change {
+        SelectionChange::Set(next) => { ids = next.clone(); next.clone() }
+        SelectionChange::Add(id) => { ids.push(*id); vec![*id] }
+        SelectionChange::Remove(id) => { ids.retain(|value| value != id); Vec::new() }
+    };
+    ids.sort_unstable();
+    ids.dedup();
+    ensure!(ids.len() <= 10_000 && ids.iter().all(|id| *id > 0), Refusal::Invalid);
+    stored[setting.key()]["selected_repository_ids"] = json!(ids);
+    Ok(added)
+}
+
+native_operation!(crate::backend::db::postgres::action_settings::repositories,
+    crate::backend::db::sqlite::action_settings::repositories,
+    fn repositories(pool: &DbPool, actor: impl Into<super::credentials::Actor>, scope: &Scope, setting: Setting, change: Option<&SelectionChange>, window: (i64, i64)) -> Result<(i64, Vec<super::models::Repository>)>);
 
 #[derive(sqlx::FromRow)]
 pub struct Policy {
@@ -268,6 +293,41 @@ pub struct Policy {
     pub data: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct ListedPolicy {
+    #[sqlx(flatten)]
+    pub policy: Policy,
+    pub organization: Option<String>,
+}
+#[derive(sqlx::FromRow)]
+pub(crate) struct PolicySelector {
+    pub id: i64,
+    pub own: bool,
+    pub conditions: Option<String>,
+}
+
+impl PolicySelector {
+    pub(crate) fn applies(&self, repository: &super::rulesets::RepositoryContext<'_>, budget: &mut crate::backend::ci::workflows::WorkflowMatchBudget) -> Result<bool> {
+        if self.own { return Ok(true); }
+        match policy_conditions(self.conditions.as_deref())? {
+            Some(conditions) => Ok(conditions.matches_repository(repository, budget)?),
+            None => Ok(true),
+        }
+    }
+}
+
+pub(crate) fn policy_conditions(stored: Option<&str>) -> Result<Option<super::rulesets::Conditions>> {
+    let Some(stored) = stored else { return Ok(None); };
+    let mut value: Value = serde_json::from_str(stored)?;
+    if value.is_null() { return Ok(None); }
+    let fields = value.as_object_mut().ok_or(Refusal::Invalid)?;
+    fields.remove("workflow_path");
+    if fields.is_empty() { return Ok(None); }
+    let conditions: super::rulesets::Conditions = serde_json::from_value(value).map_err(|_| Refusal::Invalid)?;
+    ensure!(conditions.ref_name.is_none() && usize::from(conditions.repository_name.is_some()) + usize::from(conditions.repository_id.is_some()) + usize::from(conditions.repository_property.is_some()) == 1, Refusal::Invalid);
+    Ok(Some(conditions))
 }
 
 pub(crate) fn policy_update(existing: Option<&str>, input: &Value) -> Result<Value> {
@@ -330,6 +390,7 @@ pub(crate) fn policy_update(existing: Option<&str>, input: &Value) -> Result<Val
         result.get("name").is_some() && result.get("enforcement").is_some(),
         Refusal::Invalid
     );
+    policy_conditions(result.get("conditions").map(Value::to_string).as_deref())?;
     // Restrictive rules are stored but no CI admission or claiming path evaluates
     // them yet, so an active policy with rules would claim enforcement that does not run.
     ensure!(

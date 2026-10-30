@@ -220,6 +220,12 @@ native_operation!(crate::backend::db::postgres::packages::nuget_downloaded,
 native_operation!(crate::backend::db::postgres::packages::version_by_id,
     crate::backend::db::sqlite::packages::version_by_id,
     fn version_by_id(pool: &DbPool, package: i64, token: Option<Credential<'_>>, id: i64) -> Result<Version>);
+native_operation!(crate::backend::db::postgres::packages::version_counts,
+    crate::backend::db::sqlite::packages::version_counts,
+    fn version_counts(pool: &DbPool, ids: &[i64]) -> Result<Vec<(i64, i64)>>);
+native_operation!(crate::backend::db::postgres::packages::version_tags,
+    crate::backend::db::sqlite::packages::version_tags,
+    fn version_tags(pool: &DbPool, ids: &[i64]) -> Result<Vec<(i64, String)>>);
 native_operation!(crate::backend::db::postgres::packages::version_count,
     crate::backend::db::sqlite::packages::version_count,
     fn version_count(pool: &DbPool, package: i64, token: Option<Credential<'_>>) -> Result<i64>);

@@ -79,7 +79,6 @@ pub async fn prepare(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     viewer: Option<i64>,
-    token: Option<i64>,
     query: Search,
 ) -> Result<(Search, bool)> {
     let deadline = Instant::now() + Duration::from_secs(8);
@@ -88,7 +87,6 @@ pub async fn prepare(
         viewer,
         &query.git_candidates(),
         &Options {
-            token,
             repository: None,
             sort: Some("updated".into()),
             ascending: false,

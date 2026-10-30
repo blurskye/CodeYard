@@ -305,6 +305,7 @@ pub(in crate::backend::api::repos) async fn save_rule(
         pool,
         db::repositories::protection::BranchProtectionRuleUpsert {
             actor_id,
+            token_id: None,
             repo_id: repository.id,
             pattern,
             require_pull_request: req.require_pull_request,

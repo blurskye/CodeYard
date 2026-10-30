@@ -229,7 +229,7 @@ async fn list(
             Ok((cursor.at, cursor.id))
         })
         .transpose()?;
-    let limit = query.per_page.unwrap_or(30).clamp(1, 100);
+    let limit = super::pagination::page_size(query.per_page);
     let options = Listing {
         state: query.state.as_deref(),
         sort,
@@ -337,7 +337,15 @@ async fn create(
                     || error.downcast_ref::<StorageError>().is_some_and(|error| matches!(error.kind, LifecycleFailure::Denied));
                 if !denied { tracing::warn!(ghsa_id=%row.ghsa_id,%error,"Optional vulnerability-report fork was not created"); }
             }
-            Err(error) => return Err(failure(error)),
+            Err(error) => {
+                match advisories::discard_created(&state.pool, actor.user.id, &row).await {
+                    Ok(true) => return Err(failure(error)),
+                    Ok(false) => {}
+                    Err(cleanup) => tracing::error!(ghsa_id=%row.ghsa_id,%cleanup,"Failed advisory provisioning left a draft requiring cleanup"),
+                }
+                tracing::warn!(ghsa_id=%row.ghsa_id,%error,"Private-fork provisioning failed; retained advisory is reported to the caller");
+                return Err(Error::new(StatusCode::SERVICE_UNAVAILABLE, format!("Advisory {} was created but its private fork could not be provisioned", row.ghsa_id)));
+            }
         }
     }
     Ok((

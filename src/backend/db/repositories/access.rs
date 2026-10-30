@@ -28,6 +28,10 @@ native_operation!(crate::backend::db::postgres::repositories::access::readable_r
     crate::backend::db::sqlite::repositories::access::readable_repositories_by_ids,
     fn readable_repositories_by_ids(pool: &DbPool, user_id: i64, ids: &[i64]) -> Result<Vec<Repository>>);
 
+native_operation!(crate::backend::db::postgres::repositories::access::author_associations,
+    crate::backend::db::sqlite::repositories::access::author_associations,
+    fn author_associations(pool: &DbPool, repo_id: i64, users: &[i64]) -> Result<Vec<(i64, String)>>);
+
 native_operation!(crate::backend::db::postgres::repositories::access::get_user_repo_access,
     crate::backend::db::sqlite::repositories::access::get_user_repo_access,
     fn get_user_repo_access(

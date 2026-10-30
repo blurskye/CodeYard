@@ -24,12 +24,25 @@ pub struct IssueMetadata<'a> {
     pub issue_type: Option<i64>,
 }
 
+impl IssueMetadata<'_> {
+    pub(crate) fn unique_assignees(&self) -> Result<Vec<i64>> {
+        let mut ids = Vec::new();
+        for &id in self.assignees {
+            if !ids.contains(&id) {
+                anyhow::ensure!(ids.len() < crate::backend::db::assignees::MAX_ASSIGNEES as usize, crate::backend::db::assignees::AssignmentRefusal::TooMany);
+                ids.push(id);
+            }
+        }
+        Ok(ids)
+    }
+}
+
 native_operation!(crate::backend::db::postgres::issues::create_issue_with_metadata,
     crate::backend::db::sqlite::issues::create_issue_with_metadata,
     fn create_issue_with_metadata(
     pool: &DbPool,
     repo_id: i64,
-    author_id: i64,
+    author_id: impl Into<crate::backend::db::users::tokens::Actor>,
     title: &str,
     body: &str,
     metadata: IssueMetadata<'_>,
@@ -143,6 +156,18 @@ native_operation!(crate::backend::db::postgres::issues::list_issue_comments,
     offset: i64,
 ) -> Result<Vec<IssueCommentEntry>>);
 
+#[derive(sqlx::FromRow)]
+pub struct ConversationComment {
+    pub id: i64,
+    pub pull_request: bool,
+    pub item_id: i64,
+    pub number: i32,
+    pub author_id: i64,
+    pub body: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
 pub struct CommentFilter {
     pub number: Option<i32>,
     pub since: Option<chrono::DateTime<chrono::Utc>>,
@@ -153,7 +178,7 @@ pub struct CommentFilter {
 
 native_operation!(crate::backend::db::postgres::issues::list_repository_comments,
     crate::backend::db::sqlite::issues::list_repository_comments,
-    fn list_repository_comments(pool: &DbPool, repo_id: i64, filter: &CommentFilter) -> Result<Vec<(i64, bool)>>);
+    fn list_repository_comments(pool: &DbPool, repo_id: i64, filter: &CommentFilter) -> Result<Vec<ConversationComment>>);
 
 native_operation!(crate::backend::db::postgres::issues::get_issue_comment,
     crate::backend::db::sqlite::issues::get_issue_comment,

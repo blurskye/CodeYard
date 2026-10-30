@@ -39,7 +39,7 @@ pub use crate::backend::git::{
     MAX_WORKFLOW_DIRECTORY_ENTRIES, MAX_WORKFLOW_FILE_NAME_BYTES,
 };
 pub use editor::{
-    FileWrite, PreparedFile, UploadFile, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_FILES,
+    CommitIdentities, FileWrite, PreparedFile, UploadFile, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_FILES,
     MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
 };
 use error::invalid_ref;
@@ -221,18 +221,19 @@ impl RepoStore {
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
+        token: Option<i64>,
         input: git::objects::ObjectWrite,
         bytes: &[u8],
     ) -> Result<String, RepoError> {
         match &self.0 {
             Backend::Local(local) => {
                 local
-                    .write_git_object(pool, repo_id, actor, input, bytes)
+                    .write_git_object(pool, repo_id, actor, token, input, bytes)
                     .await
             }
             Backend::Remote(remote) => {
                 remote
-                    .call_as(actor, Operation::WriteGitObject { input }, bytes)
+                    .call_as(actor, Operation::WriteGitObject { input, token }, bytes)
                     .await
             }
         }
@@ -1195,7 +1196,7 @@ impl RepoStore {
         offset: usize,
         limit: usize,
     ) -> Result<CommitComparison, RepoError> {
-        if offset > MAX_COMMIT_OFFSET || limit > 250 {
+        if limit > 250 {
             return Err(RepoError::response_too_large());
         }
         match (&self.0, &source.0) {
@@ -1859,9 +1860,14 @@ impl RepoStore {
         author: &str,
         email: &str,
     ) -> Result<PreparedFile, RepoError> {
+        self.prepare_file_with_identities(write, content, author, email, &CommitIdentities::default()).await
+    }
+
+    pub async fn prepare_file_with_identities(&self, write: &FileWrite, content: &[u8], author: &str, email: &str, identities: &CommitIdentities) -> Result<PreparedFile, RepoError> {
         write.validate()?;
-        match &self.0 {
-            Backend::Local(local) => local.prepare_file(write, content, author, email).await,
+        identities.validate()?;
+        let prepared = match &self.0 {
+            Backend::Local(local) => local.prepare_file_with_identities(write, content, author, email, identities).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
@@ -1869,12 +1875,15 @@ impl RepoStore {
                             write: write.clone(),
                             author: author.into(),
                             email: email.into(),
+                            identities: identities.clone(),
                         },
                         content,
                     )
                     .await
             }
-        }
+        }?;
+        identities.check_prepared(&prepared.commit)?;
+        Ok(prepared)
     }
 
     #[expect(

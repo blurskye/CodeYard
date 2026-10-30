@@ -90,7 +90,7 @@ async fn mutate(
 ) -> Result<Response> {
     let (repo, actor) = visible(&state, &headers, &params, true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    if !access::can_admin(&state.pool, &actor.user, &repo)
+    if !access::can_maintain(&state.pool, &actor.user, &repo)
         .await
         .map_err(Error::unavailable)?
     {

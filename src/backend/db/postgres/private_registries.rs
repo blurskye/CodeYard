@@ -6,7 +6,7 @@ use crate::backend::{
     },
 };
 use serde_json::Value;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 
 async fn prune(c: &mut sqlx::PgConnection, org: i64, configurations: &mut [Configuration]) -> Result<(), RegistryError> {
     let ids: Vec<i64> = configurations.iter().flat_map(|config| config.selected_repository_ids.iter().flatten().copied()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();

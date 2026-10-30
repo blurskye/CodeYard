@@ -34,6 +34,9 @@ pub async fn upsert_branch_protection_rule(
         .await?,
         ProtectionWriteRefusal::Denied
     );
+    if let Some(token) = input.token_id {
+        anyhow::ensure!(super::super::users::tokens::permits_write(&mut tx, input.actor_id, token, Some(input.repo_id), None, "administration").await?, ProtectionWriteRefusal::Denied);
+    }
     let previous: Option<String> = sqlx::query_scalar("SELECT github_settings FROM branch_protection_rules WHERE repo_id=$1 AND pattern=$2 FOR UPDATE").bind(input.repo_id).bind(input.pattern).fetch_optional(&mut *tx).await?;
     let previous: crate::backend::db::models::BranchProtectionSettings = previous
         .map(|value| serde_json::from_str(&value))
@@ -46,6 +49,7 @@ pub async fn upsert_branch_protection_rule(
         .unwrap_or_else(|| previous.clone());
     // Signatures are changed only through their own subresource.
     settings.required_signatures = previous.required_signatures;
+    crate::backend::db::repositories::protection::normalize_check_bindings(&mut settings.checks)?;
     crate::backend::db::repositories::protection::prune_check_bindings(&mut settings, input.require_status_checks, &input.required_status_checks);
     if validate_apps {
         validate_push_apps_on(&mut tx, input.repo_id, &settings.push_apps).await?;
@@ -155,10 +159,12 @@ pub async fn upsert_branch_protection_rule(
 
 pub async fn delete_branch_protection_rule(
     pool: &PgPool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::tokens::Actor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<bool> {
+    let actor = actor_id.into();
+    let actor_id = actor.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_admin_authority(
@@ -166,6 +172,9 @@ pub async fn delete_branch_protection_rule(
         ).await?,
         ProtectionWriteRefusal::Denied
     );
+    if let Some(token) = actor.token_id {
+        anyhow::ensure!(super::super::users::tokens::permits_write(&mut tx, actor_id, token, Some(repo_id), None, "administration").await?, ProtectionWriteRefusal::Denied);
+    }
     let result =
         sqlx::query("DELETE FROM branch_protection_rules WHERE repo_id = $1 AND pattern = $2")
             .bind(repo_id)
@@ -179,17 +188,22 @@ pub async fn delete_branch_protection_rule(
 
 pub async fn update_branch_protection_rule(
     pool: &PgPool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::tokens::Actor>,
     repo_id: i64,
     pattern: &str,
     update: crate::backend::db::repositories::protection::ProtectionUpdate,
 ) -> Result<BranchProtectionRule> {
+    let actor = actor_id.into();
+    let actor_id = actor.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
             .await?,
         ProtectionWriteRefusal::Denied
     );
+    if let Some(token) = actor.token_id {
+        anyhow::ensure!(super::super::users::tokens::permits_write(&mut tx, actor_id, token, Some(repo_id), None, "administration").await?, ProtectionWriteRefusal::Denied);
+    }
     let mut rule = sqlx::query_as::<_, BranchProtectionRule>(
         "SELECT * FROM branch_protection_rules WHERE repo_id=$1 AND pattern=$2 FOR UPDATE",
     )

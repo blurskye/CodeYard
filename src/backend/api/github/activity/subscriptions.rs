@@ -3,7 +3,7 @@ use crate::backend::{app::AppState, db, repositories::engagement, webhooks::payl
 use axum::{
     body::Bytes,
     extract::{OriginalUri, Path, Query, State},
-    http::{header, HeaderMap, StatusCode, Uri},
+    http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{delete, get, put, MethodRouter},
     Json,
@@ -16,9 +16,7 @@ fn document(owner: &str, name: &str, watch: &db::models::Watch) -> Value {
     let url = super::super::repo_url(owner, name);
     json!({"subscribed":matches!(watch.level.as_str(),"watching"|"custom"),"ignored":watch.level=="ignoring","reason":null,"created_at":watch.created_at,"url":format!("{url}/subscription"),"repository_url":url})
 }
-fn empty(status: StatusCode) -> Response {
-    (status, [(header::CONTENT_LENGTH, "0")]).into_response()
-}
+use super::super::empty;
 
 async fn read(
     State(state): State<Arc<AppState>>,
@@ -74,8 +72,7 @@ async fn set_value(
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer.ok_or_else(auth::required)?.user;
-    let input: Subscription =
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid subscription"))?;
+    let input: Subscription = super::super::optional_json::decode(&body).map_err(|_| Error::invalid("Invalid subscription"))?.unwrap_or_default();
     let subscribed = input.subscribed.unwrap_or(false);
     let ignored = input.ignored.unwrap_or(false);
     if subscribed && ignored {
@@ -159,12 +156,9 @@ async fn collection(
     .map_err(Error::unavailable)?;
     let mut items = Vec::new();
     let has_next = rows.len() > limit;
-    for repo in rows.iter().take(limit) {
-        let owner = db::repositories::records::repository_owner_name(&state.pool, repo.id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        items.push(payloads::repository(repo, &owner));
+    let readable = auth::readable_repositories(&state, viewer.as_ref(), &rows.iter().map(|repo| repo.id).collect::<Vec<_>>(), "metadata").await?;
+    for repo in rows.iter().take(limit).filter(|repo| readable.contains(&repo.id)) {
+        items.push(super::super::repos::document(&state, repo, viewer.as_ref()).await?);
     }
     page.response(&uri, items, has_next)
 }

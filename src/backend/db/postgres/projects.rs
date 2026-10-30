@@ -4,7 +4,7 @@ use crate::backend::db::projects::{
 };
 use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
-pub use exports::{fields_page, list_page};
+pub use exports::{fields_page, fields_window, list_page, list_window};
 use sqlx::{PgPool, Postgres, Transaction};
 mod extended;
 mod items;

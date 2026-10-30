@@ -262,13 +262,13 @@ native_operation!(crate::backend::db::postgres::issue_attributes::catalog,crate:
 native_operation!(crate::backend::db::postgres::issue_attributes::organization_catalog,crate::backend::db::sqlite::issue_attributes::organization_catalog,
     fn organization_catalog(pool:&DbPool,org:i64,actor:i64,kind:&str)->Result<Vec<Attribute>>);
 native_operation!(crate::backend::db::postgres::issue_attributes::configure_organization,crate::backend::db::sqlite::issue_attributes::configure_organization,
-    fn configure_organization(pool:&DbPool,org:i64,actor:i64,definition:&Definition)->Result<i64>);
+    fn configure_organization(pool:&DbPool,org:i64,actor:impl Into<crate::backend::db::users::tokens::Actor>,definition:&Definition)->Result<Attribute>);
 native_operation!(crate::backend::db::postgres::issue_attributes::create_organization_field,crate::backend::db::sqlite::issue_attributes::create_organization_field,
-    fn create_organization_field(pool:&DbPool,org:i64,actor:i64,definition:&Definition)->Result<Attribute>);
+    fn create_organization_field(pool:&DbPool,org:i64,actor:impl Into<crate::backend::db::users::tokens::Actor>,definition:&Definition)->Result<Attribute>);
 native_operation!(crate::backend::db::postgres::issue_attributes::patch_organization_field,crate::backend::db::sqlite::issue_attributes::patch_organization_field,
-    fn patch_organization_field(pool:&DbPool,org:i64,actor:i64,id:i64,changes:&FieldChanges)->Result<Attribute>);
+    fn patch_organization_field(pool:&DbPool,org:i64,actor:impl Into<crate::backend::db::users::tokens::Actor>,id:i64,changes:&FieldChanges)->Result<Attribute>);
 native_operation!(crate::backend::db::postgres::issue_attributes::delete_organization_definition,crate::backend::db::sqlite::issue_attributes::delete_organization_definition,
-    fn delete_organization_definition(pool:&DbPool,org:i64,actor:i64,id:i64,kind:&str)->Result<()>);
+    fn delete_organization_definition(pool:&DbPool,org:i64,actor:impl Into<crate::backend::db::users::tokens::Actor>,id:i64,kind:&str)->Result<()>);
 native_operation!(crate::backend::db::postgres::issue_attributes::values,crate::backend::db::sqlite::issue_attributes::values,
     fn values(pool:&DbPool,repo:i64,issue:i64,viewer:Option<i64>)->Result<Vec<FieldValue>>);
 native_operation!(crate::backend::db::postgres::issue_attributes::assigned_type,crate::backend::db::sqlite::issue_attributes::assigned_type,
@@ -285,8 +285,8 @@ native_operation!(crate::backend::db::postgres::issue_attributes::configure_chec
 native_operation!(crate::backend::db::postgres::issue_attributes::delete_definition,crate::backend::db::sqlite::issue_attributes::delete_definition,
     fn delete_definition(pool:&DbPool,repo:i64,actor:i64,id:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::issue_attributes::set_values,crate::backend::db::sqlite::issue_attributes::set_values,
-    fn set_values(pool:&DbPool,repo:i64,actor:i64,issue:i64,values:&[ValueInput],replace:bool)->Result<()>);
+    fn set_values(pool:&DbPool,repo:i64,actor:impl Into<crate::backend::db::users::tokens::Actor>,issue:i64,values:&[ValueInput],replace:bool)->Result<()>);
 native_operation!(crate::backend::db::postgres::issue_attributes::delete_value,crate::backend::db::sqlite::issue_attributes::delete_value,
-    fn delete_value(pool:&DbPool,repo:i64,actor:i64,issue:i64,field:i64)->Result<()>);
+    fn delete_value(pool:&DbPool,repo:i64,actor:impl Into<crate::backend::db::users::tokens::Actor>,issue:i64,field:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::issue_attributes::set_type,crate::backend::db::sqlite::issue_attributes::set_type,
-    fn set_type(pool:&DbPool,repo:i64,actor:i64,issue:i64,kind:Option<i64>)->Result<()>);
+    fn set_type(pool:&DbPool,repo:i64,actor:impl Into<crate::backend::db::users::tokens::Actor>,issue:i64,kind:Option<i64>)->Result<()>);

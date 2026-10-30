@@ -35,12 +35,10 @@ fn batch(after: i64) -> Result<orgs::OrganizationPage> {
 }
 
 fn outcome<T>(value: orgs::OrganizationOutcome<T>) -> Result<T> {
-    use orgs::OrganizationOutcome::*;
     match value {
-        Applied(value) => Ok(value),
-        Missing => Err(Error::missing()),
-        Denied | Suspended => Err(denied()),
-        Conflict => Err(Error::validation("Team", "name", "already_exists")),
+        orgs::OrganizationOutcome::Denied => Err(denied()),
+        orgs::OrganizationOutcome::Conflict => Err(Error::validation("Team", "name", "already_exists")),
+        other => super::orgs::outcome(other),
     }
 }
 

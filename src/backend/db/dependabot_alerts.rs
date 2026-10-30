@@ -159,7 +159,7 @@ pub(crate) fn catalogue_matches(a: &Value, q: &std::collections::HashMap<String,
     if q.get("ecosystem").is_some_and(|ecosystem| !vulnerabilities().any(|v| v["package"]["ecosystem"] == *ecosystem)) { return false; }
     if q.get("affects").is_some_and(|affects| !affects.split(',').any(|p| {
         let (name, version) = p.rsplit_once('@').filter(|(n, _)| !n.is_empty()).map_or((p, None), |(n, v)| (n, Some(v)));
-        vulnerabilities().any(|v| v["package"]["name"] == name && version.is_none_or(|version| affected(version, v["vulnerable_version_range"].as_str().unwrap_or(""))))
+        vulnerabilities().any(|v| v["package"]["name"] == name && version.is_none_or(|version| crate::backend::vulnerabilities::ecosystem(v["package"]["ecosystem"].as_str().unwrap_or("")).is_some_and(|ecosystem| crate::backend::vulnerabilities::in_range(ecosystem, version, v["vulnerable_version_range"].as_str().unwrap_or("")))))
     })) { return false; }
     if q.get("cwes").is_some_and(|cwes| !a["cwes"].as_array().into_iter().flatten().any(|v| cwes.split(',').any(|c| v["cwe_id"] == format!("CWE-{}", c.trim_start_matches("CWE-"))))) { return false; }
     [("published", "published_at"), ("updated", "updated_at"), ("modified", "updated_at")].iter().all(|(key, field)| q.get(*key).is_none_or(|range| catalogue_date_matches(a[*field].as_str().unwrap_or(""), range)))

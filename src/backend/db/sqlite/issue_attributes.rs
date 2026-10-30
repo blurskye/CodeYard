@@ -123,16 +123,21 @@ pub async fn owner_can_configure(pool: &SqlitePool, repo: i64, actor: i64) -> Re
 async fn begin_write(
     pool: &SqlitePool,
     repo: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     issue: Option<i64>,
     owner: bool,
 ) -> Result<Transaction<'_, Sqlite>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
     lock_metadata(&mut tx).await?;
+    if let Some(token) = grant.token_id {
+        anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "issues").await?, Refusal::Denied);
+    }
     if owner {
         anyhow::ensure!(
             owner_connection(&mut tx, repo, actor).await?,
@@ -346,57 +351,61 @@ pub async fn organization_catalog(
 async fn begin_organization_write(
     pool: &SqlitePool,
     org: i64,
-    actor: i64,
+    actor: crate::backend::db::users::tokens::Actor,
 ) -> Result<Transaction<'_, Sqlite>> {
     use crate::backend::db::{models::OrgRole, organizations::OrganizationOutcome};
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    match super::organizations::authority::authority(&mut tx, actor, org).await? {
+    match super::organizations::authority::authority(&mut tx, actor.user_id, org).await? {
         OrganizationOutcome::Applied(OrgRole::Owner) => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
     }
     lock_metadata(&mut tx).await?;
+    if let Some(token) = actor.token_id {
+        anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor.user_id, token, None, Some(org), "organization_administration").await?, Refusal::Denied);
+    }
     Ok(tx)
 }
 pub async fn configure_organization(
     pool: &SqlitePool,
     org: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     d: &Definition,
-) -> Result<i64> {
+) -> Result<Attribute> {
     d.validate()?;
+    let actor = actor.into();
     let tx = begin_organization_write(pool, org, actor).await?;
-    configure_owner(tx, actor, (None, Some(org)), d)
-        .await
-        .map(|attribute| attribute.id)
+    configure_owner(tx, actor.user_id, (None, Some(org)), d).await
 }
 pub async fn create_organization_field(
     pool: &SqlitePool,
     org: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     d: &Definition,
 ) -> Result<Attribute> {
     anyhow::ensure!(d.id.is_none() && d.kind == "field", Refusal::Invalid);
     d.validate()?;
+    let actor = actor.into();
     let tx = begin_organization_write(pool, org, actor).await?;
-    configure_owner(tx, actor, (None, Some(org)), d).await
+    configure_owner(tx, actor.user_id, (None, Some(org)), d).await
 }
 pub async fn patch_organization_field(
     pool: &SqlitePool,
     org: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     id: i64,
     changes: &FieldChanges,
 ) -> Result<Attribute> {
+    let actor = actor.into();
     let mut tx = begin_organization_write(pool, org, actor).await?;
-    let current = catalog_owner(&mut tx, None, Some(org), Some(actor), "field")
+    let current = catalog_owner(&mut tx, None, Some(org), Some(actor.user_id), "field")
         .await?
         .into_iter()
         .find(|attribute| attribute.id == id)
         .ok_or(Refusal::Missing)?;
     let definition = changes.apply_to(&current);
     definition.validate()?;
-    configure_owner(tx, actor, (None, Some(org)), &definition).await
+    configure_owner(tx, actor.user_id, (None, Some(org)), &definition).await
 }
 /// Deleting an attribute removes its type or values from every issue that uses it, so those
 /// issues need a new revision for incremental readers.
@@ -413,11 +422,11 @@ async fn touch_users(tx: &mut Transaction<'_, Sqlite>, attribute: i64) -> Result
 pub async fn delete_organization_definition(
     pool: &SqlitePool,
     org: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     id: i64,
     kind: &str,
 ) -> Result<()> {
-    let mut tx = begin_organization_write(pool, org, actor).await?;
+    let mut tx = begin_organization_write(pool, org, actor.into()).await?;
     touch_users(&mut tx, id).await?;
     let deleted =
         sqlx::query("DELETE FROM issue_attributes WHERE id=?1 AND owner_org_id=?2 AND kind=?3")
@@ -445,12 +454,14 @@ pub async fn delete_definition(pool: &SqlitePool, repo: i64, actor: i64, id: i64
 pub async fn set_values(
     pool: &SqlitePool,
     repo: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     issue: i64,
     values: &[ValueInput],
     replace: bool,
 ) -> Result<()> {
-    let mut tx = begin_write(pool, repo, actor, Some(issue), false).await?;
+    let grant = actor.into();
+    let actor = grant.user_id;
+    let mut tx = begin_write(pool, repo, grant, Some(issue), false).await?;
     fields_in_transaction(&mut tx, repo, actor, issue, values, replace).await?;
     tx.commit().await?;
     Ok(())
@@ -518,11 +529,13 @@ pub(crate) async fn fields_in_transaction(
 pub async fn delete_value(
     pool: &SqlitePool,
     repo: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     issue: i64,
     field: i64,
 ) -> Result<()> {
-    let mut tx = begin_write(pool, repo, actor, Some(issue), false).await?;
+    let grant = actor.into();
+    let actor = grant.user_id;
+    let mut tx = begin_write(pool, repo, grant, Some(issue), false).await?;
     let fields = catalog_connection(&mut tx, repo, Some(actor), "field").await?;
     anyhow::ensure!(fields.iter().any(|f| f.id == field), Refusal::Missing);
     let result =
@@ -540,11 +553,13 @@ pub async fn delete_value(
 pub async fn set_type(
     pool: &SqlitePool,
     repo: i64,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     issue: i64,
     kind: Option<i64>,
 ) -> Result<()> {
-    let mut tx = begin_write(pool, repo, actor, Some(issue), false).await?;
+    let grant = actor.into();
+    let actor = grant.user_id;
+    let mut tx = begin_write(pool, repo, grant, Some(issue), false).await?;
     type_in_transaction(&mut tx, repo, actor, issue, kind).await?;
     tx.commit().await?;
     Ok(())

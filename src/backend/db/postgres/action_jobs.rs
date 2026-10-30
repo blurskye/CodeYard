@@ -96,7 +96,11 @@ pub async fn apply(
                     .is_ok_and(|bytes| bytes.len() <= 8192)),
             "matrix metadata exceeds the native limit"
         );
-        sqlx::query("INSERT INTO actions_jobs(run_id,generation,workflow_path,logical_job,variant,name,labels,workflow_name,status,created_at,matrix) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued',$9,$10) ON CONFLICT(run_id,generation,workflow_path,logical_job,variant) DO NOTHING").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).bind(display).bind(Json(labels)).bind(workflow_name).bind(at).bind(matrix.as_ref().map(|matrix|Json(&matrix.values))).execute(&mut *tx).await?;
+        let existing: Option<i64> = sqlx::query_scalar("SELECT check_run_id FROM actions_jobs WHERE run_id=$1 AND generation=$2 AND workflow_path=$3 AND logical_job=$4 AND variant=$5").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).fetch_optional(&mut *tx).await?;
+        if existing.is_none() {
+            let check = super::checks::allocate_run_id(&mut tx).await?;
+            sqlx::query("INSERT INTO actions_jobs(run_id,generation,workflow_path,logical_job,variant,name,labels,workflow_name,status,created_at,matrix,check_run_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued',$9,$10,$11)").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).bind(display).bind(Json(labels)).bind(workflow_name).bind(at).bind(matrix.as_ref().map(|matrix|Json(&matrix.values))).bind(check).execute(&mut *tx).await?;
+        }
     }
     let id:i64=sqlx::query_scalar("SELECT id FROM actions_jobs WHERE run_id=$1 AND generation=$2 AND workflow_path=$3 AND logical_job=$4 AND variant=$5").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).fetch_one(&mut *tx).await?;
     match &event.update {
@@ -245,12 +249,23 @@ pub async fn list(
     tx.commit().await?;
     Ok(Page { total, jobs })
 }
+pub async fn by_check_run(pool: &PgPool, repo: i64, id: i64) -> Result<Option<Job>> {
+    Ok(sqlx::query_as("SELECT j.* FROM actions_jobs j JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.check_run_id=$2 AND j.started_at IS NOT NULL").bind(repo).bind(id).fetch_optional(pool).await?)
+}
+
 pub async fn steps(pool: &PgPool, repo: i64, job: i64) -> Result<Vec<Step>> {
     Ok(sqlx::query_as("SELECT s.* FROM actions_steps s JOIN actions_jobs j ON j.id=s.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2 ORDER BY s.number").bind(repo).bind(job).fetch_all(pool).await?)
 }
-pub async fn annotations(pool: &PgPool, repo: i64, job: i64) -> Result<Vec<Json<Annotation>>> {
-    Ok(sqlx::query_scalar("SELECT a.annotation FROM actions_job_annotations a JOIN actions_jobs j ON j.id=a.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2 ORDER BY a.id")
-        .bind(repo).bind(job).fetch_all(pool).await?)
+pub async fn annotations(pool: &PgPool, repo: i64, job: i64, offset: i64, limit: i64) -> Result<(i64, Vec<Json<Annotation>>)> {
+    ensure!(offset >= 0 && (1..=100).contains(&limit), "invalid annotation page");
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+    let total = sqlx::query_scalar("SELECT COUNT(*) FROM actions_job_annotations a JOIN actions_jobs j ON j.id=a.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2")
+        .bind(repo).bind(job).fetch_one(&mut *tx).await?;
+    let rows = sqlx::query_scalar("SELECT a.annotation FROM actions_job_annotations a JOIN actions_jobs j ON j.id=a.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2 ORDER BY a.id LIMIT $3 OFFSET $4")
+        .bind(repo).bind(job).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok((total, rows))
 }
 pub async fn usage(
     pool: &PgPool,
@@ -261,6 +276,11 @@ pub async fn usage(
 ) -> Result<Vec<crate::backend::db::action_jobs::Usage>> {
     Ok(sqlx::query_as("SELECT j.id,j.run_id,j.labels,j.duration_ms,c.started_at AS run_started_at,c.completed_at AS run_completed_at FROM actions_jobs j JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND ($2::bigint IS NULL OR COALESCE(c.workflow_run_id,c.id)=$2) AND ($3::text IS NULL OR j.workflow_path=$3) AND j.started_at >= $4 AND j.duration_ms IS NOT NULL AND j.started_at IS NOT NULL ORDER BY j.id")
         .bind(repo).bind(run).bind(workflow).bind(since).fetch_all(pool).await?)
+}
+
+pub async fn elapsed(pool: &PgPool, repo: i64, run: i64) -> Result<i64> {
+    Ok(sqlx::query_scalar("SELECT COALESCE(SUM(GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (completed_at-started_at))*1000))),0)::BIGINT FROM ci_runs WHERE repo_id=$1 AND COALESCE(workflow_run_id,id)=$2 AND started_at IS NOT NULL AND completed_at IS NOT NULL")
+        .bind(repo).bind(run).fetch_one(pool).await?)
 }
 
 pub async fn observed(pool: &PgPool, repo: i64, run: i64) -> Result<bool> {

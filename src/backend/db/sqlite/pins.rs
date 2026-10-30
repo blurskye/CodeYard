@@ -46,9 +46,10 @@ pub async fn set_pin(
 ) -> Result<()> {
     let s = scope(item);
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let permission = if s.pull { "pull_requests" } else { "issues" };
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?
-            && super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+            && super::credentials::repository(&mut tx, &crate::backend::db::credentials::Actor::from((actor, credential)), repo, permission, true).await?,
         PinRefusal::Denied
     );
     let present: bool = sqlx::query_scalar(&format!(

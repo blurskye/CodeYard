@@ -205,7 +205,8 @@ async fn update(
     request: Request,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = auth.user;
     if !access::can_admin(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
@@ -243,6 +244,7 @@ async fn update(
     };
     let mut upsert = BranchProtectionRuleUpsert {
         actor_id: actor.id,
+        token_id: Some(auth.token.id),
         repo_id: repo.id,
         pattern: &branch,
         require_pull_request: input.required_pull_request_reviews.is_some(),
@@ -500,12 +502,9 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 
-/// A status check may name the app that reports it, but only an installed app. The branch
-/// protection update lists the refusal as a plain string, as GitHub documents for it.
-/// Producer bindings for required checks, chosen as GitHub chooses them. An explicit `app_id`
-/// pins that App and -1 allows any producer. An omitted one, and a context named only in the
-/// deprecated `contexts` list without a binding in `existing`, pins the App behind the newest
-/// run of that check, or allows any producer when no App has reported it.
+/// Producer bindings for required checks. An explicit `app_id` pins that known App and -1 allows
+/// any producer. An omitted one, and a deprecated `contexts` entry without an existing binding,
+/// pins the most recent App producer, or allows any producer when no App has reported it.
 pub(super) async fn check_bindings(
     state: &AppState,
     repo: i64,
@@ -536,7 +535,6 @@ pub(super) async fn check_bindings(
             }
             None => recent_producer(state, repo, &check.context).await?,
         };
-        bindings.retain(|binding| binding["context"] != check.context.as_str());
         bindings.push(json!({"context": check.context, "app_id": app}));
     }
     for context in contexts {
@@ -547,6 +545,7 @@ pub(super) async fn check_bindings(
             bindings.push(json!({"context": context, "app_id": app}));
         }
     }
+    protection::normalize_check_bindings(&mut bindings).map_err(write_error)?;
     Ok(bindings)
 }
 

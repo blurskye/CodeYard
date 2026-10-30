@@ -1,5 +1,5 @@
 use crate::backend::db::{
-    action_settings::{policy_update, Policy, PolicyPage, Refusal, Scope, Setting},
+    action_settings::{policy_update, ListedPolicy, Policy, PolicySelector, Refusal, Scope, Setting},
     credentials::Actor,
     organizations::{self, OrganizationOutcome},
 };
@@ -112,29 +112,104 @@ pub async fn settings(
     Ok(stored)
 }
 
+pub async fn repositories(
+    pool: &PgPool,
+    actor: impl Into<Actor>,
+    scope: &Scope,
+    setting: Setting,
+    change: Option<&crate::backend::db::action_settings::SelectionChange>,
+    window: (i64, i64),
+) -> Result<(i64, Vec<crate::backend::db::models::Repository>)> {
+    let (offset, limit) = window;
+    ensure!(matches!(scope, Scope::Organization(_)) && offset >= 0 && (1..=100).contains(&limit), Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    if change.is_none() {
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+    }
+    let actor = actor.into();
+    let (_, _, org) = authority(&mut tx, &actor, scope, change.is_some(), setting.organization_permission()).await?;
+    let stored: Option<String> = sqlx::query_scalar("SELECT rest_settings FROM org_actions_settings WHERE org_id=$1")
+        .bind(org).fetch_optional(&mut *tx).await?;
+    let mut stored: Value = serde_json::from_str(stored.as_deref().unwrap_or("{}"))?;
+    if let Some(change) = change {
+        let mut added = crate::backend::db::action_settings::change_selection(&mut stored, setting, change)?;
+        added.sort_unstable();
+        added.dedup();
+        let owned: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repositories WHERE owner_org_id=$1 AND id=ANY($2)")
+            .bind(org).bind(&added).fetch_one(&mut *tx).await?;
+        ensure!(owned == added.len() as i64, Refusal::Invalid);
+        sqlx::query("INSERT INTO org_actions_settings(org_id,rest_settings) VALUES($1,$2) ON CONFLICT(org_id) DO UPDATE SET rest_settings=EXCLUDED.rest_settings,updated_at=NOW()")
+            .bind(org).bind(stored.to_string()).execute(&mut *tx).await?;
+    }
+    let ids: Vec<i64> = stored[setting.key()]["selected_repository_ids"].as_array()
+        .map(|ids| ids.iter().filter_map(Value::as_i64).collect()).unwrap_or_default();
+    let total = sqlx::query_scalar("SELECT COUNT(*) FROM repositories WHERE owner_org_id=$1 AND id=ANY($2)")
+        .bind(org).bind(&ids).fetch_one(&mut *tx).await?;
+    let rows = sqlx::query_as("SELECT * FROM repositories WHERE owner_org_id=$1 AND id=ANY($2) ORDER BY id LIMIT $3 OFFSET $4")
+        .bind(org).bind(&ids).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok((total, rows))
+}
+
+pub async fn policies_page(pool: &PgPool, actor: impl Into<Actor>, scope: &Scope, has_parents: bool, offset: i64, limit: i64) -> Result<(i64, Vec<ListedPolicy>)> {
+    ensure!(offset >= 0 && (1..=100).contains(&limit), Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
+    let actor = actor.into();
+    let (_, column, scope_id) = authority(&mut tx, &actor, scope, false, "organization_administration").await?;
+    let repository = if let Scope::Repository(repo) = scope {
+        if has_parents { sqlx::query_as::<_, crate::backend::db::models::Repository>("SELECT r.* FROM repositories r WHERE r.id=$1 AND r.owner_kind='org' AND EXISTS(SELECT 1 FROM actions_policies p WHERE p.org_id=r.owner_org_id)").bind(repo).fetch_optional(&mut *tx).await? } else { None }
+    } else { None };
+    let selected = if let Some(repository) = repository.as_ref().filter(|repo| repo.owner_kind == "org" && repo.owner_org_id.is_some()) {
+        let org = repository.owner_org_id.ok_or(Refusal::Missing)?;
+        let definitions = super::organizations::properties::definitions_on(&mut tx, org).await?;
+        let values = super::organizations::properties::values_on(&mut tx, repository.id, &definitions).await?;
+        let properties = values.into_iter().filter_map(|value| value.value.map(|stored| (value.property_name, match stored { crate::backend::db::organizations::properties::PropertyValue::String(value) => vec![value], crate::backend::db::organizations::properties::PropertyValue::Strings(values) => values }))).collect();
+        let context = crate::backend::db::rulesets::RepositoryContext { id: repository.id, name: &repository.name, default_branch: &repository.default_branch, is_private: repository.is_private, is_archived: repository.is_archived, is_fork: repository.is_fork, properties: &properties };
+        let mut budget = crate::backend::ci::workflows::WorkflowMatchBudget::new();
+        let (mut after, mut total, mut ids) = (0_i64, 0_i64, Vec::new());
+        loop {
+            let selectors: Vec<PolicySelector> = sqlx::query_as(&format!("SELECT p.id,COALESCE(p.{column}=$1,FALSE) AS own,CASE WHEN p.{column}=$1 THEN NULL ELSE (p.data::jsonb->'conditions')::text END AS conditions FROM actions_policies p WHERE (p.{column}=$1 OR p.org_id=$2) AND p.id>$3 ORDER BY p.id LIMIT 100")).bind(scope_id).bind(org).bind(after).fetch_all(&mut *tx).await?;
+            let finished = selectors.len() < 100;
+            for selector in selectors {
+                after = selector.id;
+                if selector.applies(&context, &mut budget)? {
+                    if total >= offset && ids.len() < limit as usize { ids.push(selector.id); }
+                    total += 1;
+                }
+            }
+            if finished { break; }
+        }
+        Some((total, ids))
+    } else { None };
+    let select = "SELECT p.id,p.data,p.created_at,p.updated_at,o.name AS organization FROM actions_policies p LEFT JOIN organizations o ON o.id=p.org_id";
+    let (total, rows) = if let Some((total, ids)) = selected {
+        let rows = sqlx::query_as(&format!("{select} WHERE p.id=ANY($1) ORDER BY p.id")).bind(&ids).fetch_all(&mut *tx).await?;
+        (total, rows)
+    } else {
+        let total = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM actions_policies WHERE {column}=$1")).bind(scope_id).fetch_one(&mut *tx).await?;
+        let rows = sqlx::query_as(&format!("{select} WHERE p.{column}=$1 ORDER BY p.id LIMIT $2 OFFSET $3")).bind(scope_id).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+        (total, rows)
+    };
+    tx.commit().await?;
+    Ok((total, rows))
+}
+
 pub async fn policies(
     pool: &PgPool,
     actor: impl Into<Actor>,
     scope: &Scope,
     id: Option<i64>,
     change: Option<Option<&Value>>,
-    offset: i64,
-    limit: i64,
-) -> Result<PolicyPage> {
-    ensure!(offset >= 0 && (1..=100).contains(&limit) && (id.is_none() && change.is_none() || offset == 0), Refusal::Invalid);
+) -> Result<Vec<Policy>> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
-    if change.is_none() { sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?; }
     let (_, column, scope_id) = authority(&mut tx, &actor, scope, change.is_some(), "organization_administration").await?;
-    let total: i64 = if change.is_none() {
-        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM actions_policies WHERE {column}=$1 AND ($2::bigint IS NULL OR id=$2)"))
-            .bind(scope_id).bind(id).fetch_one(&mut *tx).await?
-    } else { 0 };
-    let locking = if change.is_some() { " FOR UPDATE" } else { "" };
-    let mut rows: Vec<Policy> = if change.is_some() && id.is_none() { Vec::new() } else {
-        sqlx::query_as(&format!("SELECT id,data,created_at,updated_at FROM actions_policies WHERE {column}=$1 AND ($2::bigint IS NULL OR id=$2) ORDER BY id LIMIT $3 OFFSET $4{locking}"))
-            .bind(scope_id).bind(id).bind(limit).bind(offset).fetch_all(&mut *tx).await?
-    };
+    ensure!(id.is_some() || change.is_some(), Refusal::Invalid);
+    let mut rows: Vec<Policy> = if let Some(id) = id {
+        let lock = if change.is_some() { "FOR UPDATE" } else { "" };
+        sqlx::query_as(&format!("SELECT id,data,created_at,updated_at FROM actions_policies WHERE {column}=$1 AND id=$2 {lock}")).bind(scope_id).bind(id).fetch_all(&mut *tx).await?
+    } else { Vec::new() };
     ensure!(id.is_none() || !rows.is_empty(), Refusal::Missing);
     if let Some(change) = change {
         if let Some(input) = change {
@@ -151,7 +226,6 @@ pub async fn policies(
             rows.clear();
         }
     }
-    let total = if change.is_some() { rows.len() as i64 } else { total };
     tx.commit().await?;
-    Ok(PolicyPage { total, rows })
+    Ok(rows)
 }

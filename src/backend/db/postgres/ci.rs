@@ -321,7 +321,7 @@ async fn enqueue_ci_run_inner(
             }
         };
         let context_sql = format!(
-            "SELECT head_repo_id IS DISTINCT FROM repo_id, COALESCE(workflows_approved_sha = head_sha, FALSE), jsonb_build_object('number', number, 'title', title, 'head_ref', head_branch, 'base_ref', $4::text, 'base_sha', CASE WHEN base_branch = $4 THEN base_sha ELSE (SELECT trunk_layer.base_sha FROM pull_requests trunk_layer WHERE trunk_layer.repo_id = pull_requests.repo_id AND trunk_layer.stack_id = pull_requests.stack_id AND trunk_layer.state = 'open' AND trunk_layer.base_branch = $4 AND NOT EXISTS (SELECT 1 FROM pull_requests below WHERE below.repo_id = trunk_layer.repo_id AND below.stack_id = trunk_layer.stack_id AND below.state = 'open' AND below.head_branch = trunk_layer.base_branch) ORDER BY trunk_layer.id LIMIT 1) END) FROM pull_requests WHERE id = $1 AND repo_id = $2 AND head_sha = $3 AND {} AND ((state = 'open' AND NOT is_draft) OR $5) FOR UPDATE",
+            "SELECT head_repo_id IS DISTINCT FROM repo_id, COALESCE(workflows_approved_sha = head_sha, FALSE), jsonb_build_object('number', number, 'title', title, 'head_ref', head_branch, 'head_sha', head_sha, 'head_repo_id', head_repo_id, 'base_ref', $4::text, 'base_sha', CASE WHEN base_branch = $4 THEN base_sha ELSE (SELECT trunk_layer.base_sha FROM pull_requests trunk_layer WHERE trunk_layer.repo_id = pull_requests.repo_id AND trunk_layer.stack_id = pull_requests.stack_id AND trunk_layer.state = 'open' AND trunk_layer.base_branch = $4 AND NOT EXISTS (SELECT 1 FROM pull_requests below WHERE below.repo_id = trunk_layer.repo_id AND below.stack_id = trunk_layer.stack_id AND below.state = 'open' AND below.head_branch = trunk_layer.base_branch) ORDER BY trunk_layer.id LIMIT 1) END) FROM pull_requests WHERE id = $1 AND repo_id = $2 AND head_sha = $3 AND {} AND ((state = 'open' AND NOT is_draft) OR $5) FOR UPDATE",
             branch_or_trunk_sql("$4")
         );
         let context: Option<(bool, bool, serde_json::Value)> = sqlx::query_as(&context_sql)
@@ -1100,17 +1100,22 @@ async fn request_cancellation(
 
 pub async fn delete_ci_run_data(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     repo: i64,
     id: i64,
     kind: crate::backend::db::ci::CiRunDeletion,
 ) -> Result<bool> {
     use crate::backend::db::ci::CiRunDeletion;
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin().await?;
     ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         CiAdmissionRefusal::Denied("CI run deletion permission denied")
     );
+    if let Some(token) = credential.token_id {
+        ensure!(super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "actions").await?, CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
+    }
     let statuses: Vec<(i64, String)> = sqlx::query_as("SELECT id,status FROM ci_runs WHERE repo_id=$1 AND COALESCE(workflow_run_id,id)=$2 ORDER BY id FOR UPDATE").bind(repo).bind(id).fetch_all(&mut *tx).await?;
     if statuses.is_empty() {
         return Ok(false);

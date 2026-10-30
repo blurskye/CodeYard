@@ -49,12 +49,7 @@ async fn lock(
     Path(p): Path<HashMap<String, String>>,
     body: Bytes,
 ) -> Result<StatusCode> {
-    let input: Lock = if body.is_empty() {
-        Lock::default()
-    } else {
-        serde_json::from_slice(&body)
-            .map_err(|_| Error::validation("Issue", "lock_reason", "invalid"))?
-    };
+    let input: Lock = super::optional_json::decode(&body).map_err(|_| Error::validation("Issue", "lock_reason", "invalid"))?.unwrap_or_default();
     change(state, headers, p, true, input.lock_reason.as_deref()).await
 }
 async fn unlock(

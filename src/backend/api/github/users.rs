@@ -250,7 +250,7 @@ async fn list(
     Query(query): Query<UserList>,
 ) -> Result<Response> {
     auth::authenticate(&state, &headers, false).await?;
-    let limit = query.per_page.unwrap_or(30).clamp(1, 100);
+    let limit = super::pagination::page_size(query.per_page);
     let mut users = accounts::list_users_since(
         &state.pool,
         query.since.unwrap_or(0).max(0),

@@ -205,30 +205,24 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 }
                 .map_err(|e| github::labels::write_error(e).graphql())?;
             }
-        } else if !remove {
-            let users = db::users::accounts::get_users_by_ids(pool, &changes).await.map_err(unavailable)?;
-            if users.len() != changes.len() { return Err(missing()); }
-            let owner = repository::owner(&repo, request).await?;
-            let number = i32::try_from(value["number"].as_i64().ok_or_else(missing)?).map_err(|_| missing())?;
-            crate::backend::issues::assignments::assign(
-                pool,
-                &request.state.notification_broadcaster,
-                &crate::backend::issues::assignments::Target {
-                    actor: &request.auth.user, repository: &repo, owner: &owner, item, number,
-                    title: value["title"].as_str().ok_or_else(missing)?,
-                },
-                &users,
-            ).await.map_err(|error| github::issues::assignment_error(error).graphql())?;
         } else {
-            for user in changes {
-                let username = db::users::accounts::get_user_by_id(pool, user)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?
-                    .username;
-                db::assignees::unassign_user(pool, actor, repo.id, item, &username)
-                    .await
-                    .map_err(|e| github::issues::assignment_error(e).graphql())?;
+            use crate::backend::issues::assignments;
+            let mut ids = changes;
+            ids.sort_unstable();
+            ids.dedup();
+            let users = db::users::accounts::get_users_by_ids(pool, &ids).await.map_err(unavailable)?;
+            if users.len() != ids.len() { return Err(missing()); }
+            let owner = repository::owner(&repo, request).await?;
+            let target = assignments::Target {
+                actor: &request.auth.user, repository: &repo, owner: &owner, item,
+                number: i32::try_from(value["number"].as_i64().ok_or_else(missing)?).map_err(|_| missing())?,
+                title: value["title"].as_str().ok_or_else(missing)?,
+            };
+            if remove {
+                let names: Vec<_> = users.into_iter().map(|user| user.username).collect();
+                assignments::unassign(pool, &target, &names).await.map_err(|e| github::issues::assignment_error(e).graphql())?;
+            } else {
+                assignments::assign(pool, &request.state.notification_broadcaster, &target, &users).await.map_err(|e| github::issues::assignment_error(e).graphql())?;
             }
         }
     }

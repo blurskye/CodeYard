@@ -1,4 +1,4 @@
-use crate::backend::db::pages::{Attempt, Build, Deployment, Refusal, Site, Update, NO_PUBLISHER};
+use crate::backend::db::pages::{Attempt, Build, Deployment, Refusal, Role, Site, Update, NO_PUBLISHER};
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -13,9 +13,12 @@ async fn begin_read<'a>(pool: &'a PgPool, reader: &Reader<'_>, repo: i64) -> Res
     Ok(tx)
 }
 
-async fn authorize_write(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, administer: bool) -> Result<()> {
-    let allowed = if administer { super::discussions::lock_repository_mutation_authority(tx, actor, repo).await? }
-        else { super::discussions::lock_write_authority(tx, actor, repo).await? };
+async fn authorize_write(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, role: Role) -> Result<()> {
+    let allowed = match role {
+        Role::Admin => super::discussions::lock_repository_mutation_authority(tx, actor, repo).await?,
+        Role::Maintain => super::discussions::lock_exclusive_maintain_authority(tx, actor, repo).await?,
+        Role::Write => super::discussions::lock_write_authority(tx, actor, repo).await?,
+    };
     anyhow::ensure!(allowed && super::users::transitions::credential_live(tx, actor, credential, true).await?, Refusal::Denied);
     Ok(())
 }
@@ -36,7 +39,7 @@ pub async fn save(
 ) -> Result<Site> {
     input.validate(create)?;
     let mut tx = pool.begin().await?;
-    authorize_write(&mut tx, actor, credential, repo, true).await?;
+    authorize_write(&mut tx, actor, credential, repo, Role::Maintain).await?;
     let existing: Option<Site> = sqlx::query_as("SELECT * FROM pages_sites WHERE repo_id=$1")
         .bind(repo)
         .fetch_optional(&mut *tx)
@@ -87,7 +90,7 @@ pub async fn save(
 }
 pub async fn delete(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64) -> Result<()> {
     let mut tx = pool.begin().await?;
-    authorize_write(&mut tx, actor, credential, repo, true).await?;
+    authorize_write(&mut tx, actor, credential, repo, Role::Admin).await?;
     anyhow::ensure!(
         sqlx::query("DELETE FROM pages_sites WHERE repo_id=$1")
             .bind(repo)
@@ -117,7 +120,7 @@ pub async fn build(pool: &PgPool, reader: &Reader<'_>, repo: i64, id: i64) -> Re
 }
 pub async fn request_build(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, sha: &str) -> Result<Build> {
     let mut tx = pool.begin().await?;
-    authorize_write(&mut tx, actor, credential, repo, false).await?;
+    authorize_write(&mut tx, actor, credential, repo, Role::Write).await?;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM pages_sites WHERE repo_id=$1 AND build_type='legacy')",
     )
@@ -137,7 +140,7 @@ pub async fn request_deployment(
     input: Attempt<'_>,
 ) -> Result<Deployment> {
     let mut tx = pool.begin().await?;
-    authorize_write(&mut tx, actor, credential, repo, false).await?;
+    authorize_write(&mut tx, actor, credential, repo, Role::Write).await?;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM pages_sites WHERE repo_id=$1 AND build_type='workflow')",
     )
@@ -164,7 +167,7 @@ pub async fn deployment(pool: &PgPool, reader: &Reader<'_>, repo: i64, id: i64) 
 }
 pub async fn cancel(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, id: i64) -> Result<()> {
     let mut tx = pool.begin().await?;
-    authorize_write(&mut tx, actor, credential, repo, false).await?;
+    authorize_write(&mut tx, actor, credential, repo, Role::Write).await?;
     let row: Deployment =
         sqlx::query_as("SELECT * FROM pages_deployments WHERE repo_id=$1 AND id=$2")
             .bind(repo)

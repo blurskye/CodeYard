@@ -38,13 +38,18 @@ async fn authority(
 pub async fn enabled(pool: &PgPool, repo: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_private_reporting p JOIN repositories r ON r.id=p.repo_id WHERE r.id=$1 AND NOT r.is_private)").bind(repo).fetch_one(pool).await?)
 }
-pub async fn set_enabled(pool: &PgPool, actor: i64, repo: i64, enabled: bool) -> Result<()> {
+pub async fn set_enabled(pool: &PgPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, repo: i64, enabled: bool) -> Result<()> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_admin_authority(&mut tx, actor, repo)
             .await?,
         Refusal::Denied
     );
+    if let Some(token) = grant.token_id {
+        anyhow::ensure!(super::super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "administration").await?, Refusal::Denied);
+    }
     if let Some(configuration) = super::super::code_security::repository_configuration(&mut *tx, repo).await? {
         if let Some(fixed) = crate::backend::db::code_security::private_reporting(&configuration.settings, true)? {
             anyhow::ensure!(fixed == enabled, Refusal::Denied);

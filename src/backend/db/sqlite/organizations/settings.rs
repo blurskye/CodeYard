@@ -48,14 +48,17 @@ pub async fn owned(
 }
 pub async fn change(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     input: &Changes,
 ) -> Result<OrganizationOutcome<Updated>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
+    if !credential(&mut tx, &grant, org, "organization_administration").await? { return Ok(Denied); }
     let mut settings = get_on(&mut tx, org)
         .await?
         .context("Organization settings scope disappeared")?;

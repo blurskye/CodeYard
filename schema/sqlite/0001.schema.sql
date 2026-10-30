@@ -588,6 +588,7 @@ CREATE TABLE pr_comments (
     line INTEGER CHECK (line IS NULL OR typeof(line)='integer') CHECK (line BETWEEN -2147483648 AND 2147483647),
     side TEXT CHECK (length(side)<=5), 
     commit_sha TEXT CHECK (length(commit_sha)<=40),
+    diff_base_sha TEXT CHECK (length(diff_base_sha)=40),
     in_reply_to_comment_id INTEGER REFERENCES pr_comments(id) ON DELETE CASCADE CHECK (in_reply_to_comment_id IS NULL OR typeof(in_reply_to_comment_id)='integer'),
     resolved_at TEXT,
     resolved_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL CHECK (resolved_by_id IS NULL OR typeof(resolved_by_id)='integer'),
@@ -989,6 +990,7 @@ CREATE INDEX idx_pull_requests_state ON pull_requests(state);
 
 CREATE INDEX idx_pull_requests_repo_state ON pull_requests(repo_id, state);
 CREATE INDEX idx_pull_requests_head_repo_state ON pull_requests(head_repo_id, state);
+CREATE INDEX pull_requests_check_heads ON pull_requests(repo_id, head_sha, number) WHERE state='open' AND head_repo_id=repo_id;
 
 CREATE INDEX idx_pull_requests_created_at ON pull_requests(created_at);
 CREATE INDEX idx_pull_requests_updated_at ON pull_requests(updated_at DESC);
@@ -1779,9 +1781,13 @@ CREATE TABLE actions_run_metadata (
     head_owner TEXT
 );
 
+-- External checks and Actions jobs allocate their public check-run identity here.
+CREATE TABLE check_run_identities (id INTEGER PRIMARY KEY AUTOINCREMENT);
+
 -- actions-runs: observed executions, not synthetic workflow plans
 CREATE TABLE actions_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_run_id BIGINT NOT NULL UNIQUE REFERENCES check_run_identities(id),
     run_id INTEGER NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
     generation TEXT NOT NULL,
     workflow_path TEXT NOT NULL,
@@ -2507,6 +2513,7 @@ CREATE TABLE repository_advisories (
     cve_requested_at TEXT, published_at TEXT, closed_at TEXT,
     publisher_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     report_accepted BOOLEAN NOT NULL DEFAULT FALSE,
+    revision INTEGER NOT NULL DEFAULT 0 CHECK (typeof(revision)='integer' AND revision >= 0),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 );
 CREATE INDEX repository_advisories_repo ON repository_advisories(repo_id,id);
@@ -3243,7 +3250,7 @@ CREATE TABLE organization_external_property_installations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     display_name TEXT NOT NULL,
-    installation_id BIGINT,
+    installation_id BIGINT NOT NULL REFERENCES github_app_installations(id) ON DELETE CASCADE,
     UNIQUE (org_id, display_name),
     UNIQUE (org_id, installation_id)
 );
@@ -3292,7 +3299,7 @@ CREATE TABLE check_suites (
 CREATE INDEX check_suites_ref ON check_suites(repo_id,head_sha,id);
 
 CREATE TABLE check_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id BIGINT PRIMARY KEY NOT NULL REFERENCES check_run_identities(id),
     repo_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     suite_id INTEGER NOT NULL REFERENCES check_suites(id) ON DELETE CASCADE,
     name TEXT NOT NULL,

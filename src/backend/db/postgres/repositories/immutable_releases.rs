@@ -11,24 +11,30 @@ use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 // Enforced when the repository opts in or its organization enforces it for all or selected
 // repositories. A repository setting never removes an organization's enforcement.
-const ENFORCED_SQL: &str = "(EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=$1) OR EXISTS(SELECT 1 FROM repositories r JOIN organization_immutable_releases o ON o.org_id=r.owner_org_id WHERE r.id=$1 AND (o.enforced_repositories='all' OR (o.enforced_repositories='selected' AND EXISTS(SELECT 1 FROM organization_immutable_release_repositories s WHERE s.org_id=o.org_id AND s.repo_id=r.id)))))";
+const OWNER_ENFORCED_SQL: &str = "EXISTS(SELECT 1 FROM repositories r JOIN organization_immutable_releases o ON o.org_id=r.owner_org_id WHERE r.id=$1 AND (o.enforced_repositories='all' OR (o.enforced_repositories='selected' AND EXISTS(SELECT 1 FROM organization_immutable_release_repositories s WHERE s.org_id=o.org_id AND s.repo_id=r.id))))";
+fn enforced_sql() -> String { format!("(EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=$1) OR {OWNER_ENFORCED_SQL})") }
+/// Whether the repository opts in, and whether its owner enforces immutable releases.
 pub async fn policy(pool: &PgPool, repo: i64) -> Result<(bool, bool)> {
-    Ok(sqlx::query_as("SELECT EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=$1), EXISTS(SELECT 1 FROM repositories r JOIN organization_immutable_releases o ON o.org_id=r.owner_org_id WHERE r.id=$1 AND (o.enforced_repositories='all' OR (o.enforced_repositories='selected' AND EXISTS(SELECT 1 FROM organization_immutable_release_repositories s WHERE s.org_id=o.org_id AND s.repo_id=r.id))))").bind(repo).fetch_one(pool).await?)
+    Ok(sqlx::query_as(&format!("SELECT EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=$1), {OWNER_ENFORCED_SQL}")).bind(repo).fetch_one(pool).await?)
 }
-
 pub async fn enabled(pool: &PgPool, repo: i64) -> Result<bool> {
-    Ok(sqlx::query_scalar(&format!("SELECT {ENFORCED_SQL}"))
+    Ok(sqlx::query_scalar(&format!("SELECT {}", enforced_sql()))
         .bind(repo)
         .fetch_one(pool)
         .await?)
 }
-pub async fn set_enabled(pool: &PgPool, actor: i64, repo: i64, enabled: bool) -> Result<()> {
+pub async fn set_enabled(pool: &PgPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, repo: i64, enabled: bool) -> Result<()> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin().await?;
     ensure!(
         crate::backend::db::postgres::discussions::lock_archive_authority(&mut tx, actor, repo)
             .await?,
         Refusal::Denied
     );
+    if let Some(token) = credential.token_id {
+        ensure!(crate::backend::db::postgres::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "administration").await?, Refusal::Denied);
+    }
     let archived: bool = sqlx::query_scalar("SELECT is_archived FROM repositories WHERE id=$1")
         .bind(repo)
         .fetch_one(&mut *tx)
@@ -88,7 +94,7 @@ pub(crate) async fn freeze(
     if !was_draft || release.is_draft || release.is_immutable {
         return Ok(());
     }
-    let enabled: bool = sqlx::query_scalar(&format!("SELECT {ENFORCED_SQL}"))
+    let enabled: bool = sqlx::query_scalar(&format!("SELECT {}", enforced_sql()))
         .bind(release.repo_id)
         .fetch_one(&mut **tx)
         .await?;

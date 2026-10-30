@@ -8,7 +8,7 @@ use crate::backend::{
     webhooks::payloads,
 };
 use axum::{
-    body::{to_bytes, Body},
+    body::to_bytes,
     extract::{Path, Query, Request, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -64,7 +64,7 @@ async fn document(
 async fn readable(state: &AppState, headers: &HeaderMap, owner: &str, name: &str) -> Result<(i64, db::credentials::Actor)> {
     let (repo, auth) = repository(state, headers, owner, name, false).await?;
     let auth = auth.ok_or_else(auth::required)?;
-    Ok((repo.id, auth.database_actor(headers)?))
+    Ok((repo.id, auth.database_actor()))
 }
 
 pub(super) async fn list(
@@ -85,6 +85,7 @@ pub(super) async fn get(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, name, language)): Path<(String, String, String)>,
+    method: axum::http::Method,
 ) -> Result<Response> {
     let (repo, actor) = readable(&state, &headers, &owner, &name).await?;
     let row = codeql::get(&state.pool, actor, repo, &language)
@@ -101,6 +102,9 @@ pub(super) async fn get(
         })
     {
         return Ok(axum::Json(document(&state, &row, &owner, &name).await?).into_response());
+    }
+    if method == axum::http::Method::HEAD {
+        return Ok(([(header::CONTENT_TYPE, "application/zip".to_owned()), (header::CONTENT_LENGTH, row.size.to_string()), (header::CONTENT_DISPOSITION, attachment_disposition(&row.name)), (header::CACHE_CONTROL, "private, no-store".to_owned())], axum::body::Body::empty()).into_response());
     }
     let permit = state
         .storage
@@ -132,7 +136,7 @@ pub(super) async fn get(
                         attachment_disposition(&row.name),
                     ),
                 ],
-                Body::from_stream(stream),
+                crate::backend::api::http::middleware::download_body(stream),
             )
                 .into_response()
         }
@@ -177,11 +181,7 @@ pub(in crate::backend::api::github) async fn upload(
     let filename = query
         .name
         .ok_or_else(|| Error::validation("CodeqlDatabase", "name", "missing_field"))?;
-    if filename.is_empty()
-        || filename.len() > 255
-        || filename.chars().any(char::is_control)
-        || filename.contains(['/', '\\'])
-    {
+    if !crate::backend::storage::valid_basename(&filename, 255) {
         return Err(Error::validation("CodeqlDatabase", "name", "invalid"));
     }
     if headers

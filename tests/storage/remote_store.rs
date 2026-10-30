@@ -757,6 +757,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         write: write("main", path, revision),
         author: "RPC author".into(),
         email: "rpc@example.invalid".into(),
+        identities: Default::default(),
     };
 
     for (caller, request, message) in [

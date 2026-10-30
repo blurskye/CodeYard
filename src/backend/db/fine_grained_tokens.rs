@@ -22,6 +22,13 @@ pub struct Token {
     pub last_used_ip: Option<String>,
 }
 
+/// Portable policy predicate for trusted SQL parameter/column expressions, never request values.
+/// Non-classic credentials retain their own grant checks; an absent policy allows classic tokens.
+pub(in crate::backend::db) fn classic_allowed_condition(token: &str, organization: &str) -> String {
+    let token = format!("CAST({token} AS BIGINT)");
+    format!("NOT EXISTS(SELECT 1 FROM organization_token_policies policy WHERE policy.org_id={organization} AND NOT policy.classic_allowed AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id={token}))")
+}
+
 /// A token's bounds with the live organization facts its access depends on.
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Bounds {
@@ -124,13 +131,36 @@ native_operation!(crate::backend::db::postgres::fine_grained_tokens::policy, cra
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::set_policy, crate::backend::db::sqlite::fine_grained_tokens::set_policy,
     /// Saves the policy while `actor` owns the organization; false when they do not.
     fn set_policy(pool: &DbPool, actor: impl Into<super::credentials::Actor>, org: i64, policy: &Policy) -> Result<bool>);
+    fn set_policy(pool: &DbPool, actor: i64, org: i64, policy: &Policy) -> Result<bool>);
+/// Which of an organization's tokens a listing shows: those in `status` whose users are still
+/// members and that pass every filter given, newest first unless `ascending`.
+#[derive(Default)]
+pub struct TokenFilter<'a> {
+    pub status: &'a str,
+    /// The usernames of the tokens' users; any user when empty.
+    pub owners: &'a [String],
+    /// Any token when empty.
+    pub token_ids: &'a [i64],
+    /// A repository the token must reach.
+    pub repository: Option<i64>,
+    /// A catalog permission the token must hold, at this level when one is given.
+    pub permission: Option<(&'a str, Option<&'a str>)>,
+    pub last_used_before: Option<DateTime<Utc>>,
+    pub last_used_after: Option<DateTime<Utc>>,
+    pub ascending: bool,
+}
+
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::organization_tokens, crate::backend::db::sqlite::fine_grained_tokens::organization_tokens,
-    /// The organization's newest 1000 tokens with `status` whose users are still members.
-    fn organization_tokens(pool: &DbPool, org: i64, status: &str) -> Result<Vec<Token>>);
+    /// A page of the organization's tokens that `filter` shows.
+    fn organization_tokens(pool: &DbPool, org: i64, filter: &TokenFilter<'_>, offset: i64, limit: i64) -> Result<Vec<Token>>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::review, crate::backend::db::sqlite::fine_grained_tokens::review,
     /// Moves the organization's tokens in `from` to `status` while `reviewer` owns the
     /// organization, and returns how many changed.
     fn review(pool: &DbPool, org: i64, reviewer: impl Into<super::credentials::Actor>, tokens: &[i64], from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
+    fn review(pool: &DbPool, org: i64, reviewer: i64, tokens: &[i64], from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
+native_operation!(crate::backend::db::postgres::fine_grained_tokens::review_all, crate::backend::db::sqlite::fine_grained_tokens::review_all,
+    /// `review` for every token in `from` whose user is still a member, in one statement.
+    fn review_all(pool: &DbPool, org: i64, reviewer: impl Into<super::credentials::Actor>, from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::classic_refused, crate::backend::db::sqlite::fine_grained_tokens::classic_refused,
     /// Whether `token` is a classic personal token and `org` refuses classic tokens. OAuth,
     /// App, job and fine-grained tokens are never classic.

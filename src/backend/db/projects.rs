@@ -107,6 +107,9 @@ pub struct ListFilter {
     pub open: bool,
     pub closed: bool,
     pub writable: bool,
+    /// Exclusive keyset bounds on the project id, for cursor pages.
+    pub after: Option<i64>,
+    pub before: Option<i64>,
     pub order: ListOrder,
     pub descending: bool,
 }
@@ -143,6 +146,14 @@ impl ListFilter {
             let readable = if postgres { super::postgres::repositories::access::readable_condition() } else { super::sqlite::repositories::access::readable_condition() };
             let viewer = sql.placeholder(1);
             conditions.push(format!("EXISTS(SELECT 1 FROM project_items i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id={viewer} WHERE i.project_id=p.id AND i.{column}=CAST({id} AS BIGINT) AND ({readable}))"));
+        }
+        if let Some(after) = self.after {
+            let after = sql.bind(after.to_string());
+            conditions.push(format!("p.id>CAST({after} AS BIGINT)"));
+        }
+        if let Some(before) = self.before {
+            let before = sql.bind(before.to_string());
+            conditions.push(format!("p.id<CAST({before} AS BIGINT)"));
         }
         for title in &self.titles { conditions.push(sql.matches("p.title", title)); }
         if self.open { conditions.push("p.closed_at IS NULL".into()); }
@@ -485,6 +496,15 @@ native_operation!(super::postgres::projects::delete_field, super::sqlite::projec
     fn delete_field(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, field: i64) -> Result<()>);
 native_operation!(super::postgres::projects::add_item, super::sqlite::projects::add_item,
     fn add_item(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, content: &Content) -> Result<Item>);
+    fn add_item(pool: &DbPool, actor: i64, project: i64, content: &Content) -> Result<Item>);
+native_operation!(super::postgres::projects::item, super::sqlite::projects::item,
+    fn item(pool: &DbPool, viewer: Option<i64>, project: i64, id: i64) -> Result<Option<Item>>);
+native_operation!(super::postgres::projects::items_page, super::sqlite::projects::items_page,
+    fn items_page(pool: &DbPool, viewer: Option<i64>, project: i64, after: i64, before: i64, limit: i64) -> Result<Vec<Item>>);
+native_operation!(super::postgres::projects::list_window, super::sqlite::projects::list_window,
+    fn list_window(pool: &DbPool, viewer: Option<i64>, owner: Owner, after: i64, before: i64, limit: i64) -> Result<Vec<Project>>);
+native_operation!(super::postgres::projects::fields_window, super::sqlite::projects::fields_window,
+    fn fields_window(pool: &DbPool, viewer: Option<i64>, project: i64, after: i64, before: i64, limit: i64) -> Result<Vec<Field>>);
 native_operation!(super::postgres::projects::items, super::sqlite::projects::items,
     fn items(pool: &DbPool, viewer: Option<i64>, project: i64) -> Result<Vec<Item>>);
 native_operation!(super::postgres::projects::update_item, super::sqlite::projects::update_item,

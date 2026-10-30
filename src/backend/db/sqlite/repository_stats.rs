@@ -4,6 +4,14 @@ use sqlx::SqlitePool;
 
 use crate::backend::db::repository_stats::{LanguageSource, RepoActivityPoint, WorkflowUsage};
 
+pub(crate) const DOCUMENT_FACTS: &str = "(SELECT COUNT(*) FROM issues WHERE repo_id=r.id AND state='open')+(SELECT COUNT(*) FROM pull_requests WHERE repo_id=r.id AND state='open') AS open_items,(SELECT MAX(accepted_at) FROM ci_accepted_pushes WHERE repo_id=r.id) AS pushed_at,(SELECT language FROM repo_languages WHERE repo_id=r.id ORDER BY bytes DESC,language LIMIT 1) AS language";
+
+pub async fn readable_snapshots(pool: &SqlitePool, viewer: Option<i64>, ids: &[i64]) -> Result<Vec<crate::backend::db::repository_stats::RepositorySnapshot>> {
+    anyhow::ensure!(ids.len() <= 500, "Repository page exceeds its limit");
+    Ok(sqlx::query_as(&format!("SELECT r.*,{DOCUMENT_FACTS},COALESCE(person.username,org.name) AS owner FROM repositories r LEFT JOIN users person ON person.id=r.owner_user_id LEFT JOIN organizations org ON org.id=r.owner_org_id LEFT JOIN users u ON u.id=?1 WHERE r.id IN(SELECT value FROM json_each(?2)) AND {}", super::repositories::access::readable_condition()))
+        .bind(viewer).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
+}
+
 pub async fn repository_document_facts(
     pool: &SqlitePool,
     repo: i64,
@@ -13,7 +21,7 @@ pub async fn repository_document_facts(
 
 pub async fn repository_document_metadata(pool: &SqlitePool, repos: &[i64]) -> Result<Vec<crate::backend::db::repository_stats::RepositoryDocumentMetadata>> {
     anyhow::ensure!(repos.len() <= 100, "Repository document page exceeds 100 rows");
-    Ok(sqlx::query_as("SELECT r.id AS repo_id,(SELECT COUNT(*) FROM issues WHERE repo_id=r.id AND state='open')+(SELECT COUNT(*) FROM pull_requests WHERE repo_id=r.id AND state='open') AS open_items,(SELECT MAX(accepted_at) FROM ci_accepted_pushes WHERE repo_id=r.id) AS pushed_at,(SELECT language FROM repo_languages WHERE repo_id=r.id ORDER BY bytes DESC,language LIMIT 1) AS language,COALESCE((SELECT MAX(created_at) FROM repository_pushes WHERE repo_id=r.id),r.created_at) AS last_pushed_at,COALESCE((SELECT wiki_enabled FROM repository_features WHERE repo_id=r.id),false) AS wiki,COALESCE((SELECT enabled FROM repository_discussion_settings WHERE repo_id=r.id),false) AS discussions FROM repositories r WHERE r.id IN (SELECT value FROM json_each(?1))").bind(serde_json::to_string(repos)?).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&format!("SELECT r.id AS repo_id,{DOCUMENT_FACTS},COALESCE((SELECT MAX(created_at) FROM repository_pushes WHERE repo_id=r.id),r.created_at) AS last_pushed_at,COALESCE((SELECT wiki_enabled FROM repository_features WHERE repo_id=r.id),false) AS wiki,COALESCE((SELECT enabled FROM repository_discussion_settings WHERE repo_id=r.id),false) AS discussions FROM repositories r WHERE r.id IN (SELECT value FROM json_each(?1))")).bind(serde_json::to_string(repos)?).fetch_all(pool).await?)
 }
 
 pub async fn language_source(pool: &SqlitePool, repo_id: i64) -> Result<Option<LanguageSource>> {

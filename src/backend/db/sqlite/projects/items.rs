@@ -176,6 +176,26 @@ pub async fn add_item(
     Ok(item)
 }
 
+pub async fn item(pool: &SqlitePool, viewer: Option<i64>, project: i64, id: i64) -> Result<Option<Item>> {
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, viewer, project).await?;
+    let item = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND i.id=$3 AND (i.repo_id IS NULL OR {})", super::super::repositories::access::readable_condition()))
+        .bind(project).bind(viewer).bind(id).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(item)
+}
+
+pub async fn items_page(pool: &SqlitePool, viewer: Option<i64>, project: i64, after: i64, before: i64, limit: i64) -> Result<Vec<Item>> {
+    anyhow::ensure!(after >= 0 && before > 0 && (1..=101).contains(&limit), Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, viewer, project).await?;
+    let direction = if before < i64::MAX { "DESC" } else { "ASC" };
+    let items = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (i.repo_id IS NULL OR {}) AND ($3=0 OR (i.position,i.id)>(SELECT b.position,b.id FROM project_items b WHERE b.project_id=$1 AND b.id=$3)) AND ($4=9223372036854775807 OR (i.position,i.id)<(SELECT b.position,b.id FROM project_items b WHERE b.project_id=$1 AND b.id=$4)) ORDER BY i.position {direction},i.id {direction} LIMIT $5", super::super::repositories::access::readable_condition()))
+        .bind(project).bind(viewer).bind(after).bind(before).bind(limit).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(items)
+}
+
 pub async fn content_items(pool: &SqlitePool, viewer: Option<i64>, content: &Content, include_archived: bool, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Item>)> {
     anyhow::ensure!(offset >= 0 && (0..=100).contains(&limit), Refusal::Invalid);
     let (issue, pull) = match content { Content::Issue(id) => (Some(*id), None), Content::PullRequest(id) => (None, Some(*id)), _ => return Ok((0, Vec::new())) };

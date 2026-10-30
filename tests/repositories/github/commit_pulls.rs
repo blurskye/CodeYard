@@ -216,9 +216,9 @@ pub(super) async fn run(
         repo,
         Some(milestone.number),
         db::milestones::MilestoneInput {
-            title: "Updated association release",
-            description: Some("Native milestone"),
-            due_on: Some(due_on),
+            title: Some("Updated association release"),
+            description: Some(Some("Native milestone")),
+            due_on: Some(Some(due_on)),
             state: None,
         },
     )

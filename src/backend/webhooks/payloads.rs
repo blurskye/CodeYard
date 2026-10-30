@@ -237,12 +237,7 @@ pub fn community_file(file: Option<&crate::backend::repositories::community::Fil
         return Value::Null;
     };
     let encode = crate::webui::encode_component;
-    let path = file
-        .path
-        .split('/')
-        .map(encode)
-        .collect::<Vec<_>>()
-        .join("/");
+    let path = crate::webui::pages::repos::ref_path::encode_path(&file.path);
     let base = format!(
         "/repos/{}/{}",
         encode(&file.owner),
@@ -735,6 +730,15 @@ pub fn repository_owner(repo: &Repository, owner: &str) -> Value {
     })
 }
 
+pub fn repository_snapshot(snapshot: &crate::backend::db::repository_stats::RepositorySnapshot) -> Value {
+    let mut value = repository(&snapshot.repository, &snapshot.owner);
+    value["open_issues"] = json!(snapshot.facts.open_items);
+    value["open_issues_count"] = json!(snapshot.facts.open_items);
+    value["pushed_at"] = json!(snapshot.facts.pushed_at);
+    value["language"] = json!(snapshot.facts.language);
+    value
+}
+
 pub fn repository(repo: &Repository, owner: &str) -> Value {
     let full_name = format!("{owner}/{}", repo.name);
     let html_url = repository_url(owner, &repo.name);
@@ -865,21 +869,36 @@ fn git_verification(signature: Option<&str>, payload: Option<&[u8]>) -> Value {
 
 /// GitHub's short commit object, as a workflow run names its head commit.
 pub fn simple_commit(commit: &CommitInfo) -> Value {
+    simple_commit_document(
+        (&commit.sha, &commit.tree_sha, &commit.message), commit.committer_timestamp,
+        (&commit.author_name, &commit.author_email), (&commit.committer_name, &commit.committer_email),
+    )
+}
+
+/// The same short commit from the bounded snapshot already captured for a push event.
+pub fn pushed_head(commit: &PushedCommit) -> Value {
+    simple_commit_document(
+        (&commit.id, &commit.tree_id, &commit.message), commit.committer_time,
+        (&commit.author_name, &commit.author_email), (&commit.committer_name, &commit.committer_email),
+    )
+}
+
+fn simple_commit_document((id, tree_id, message): (&str, &str, &str), timestamp: i64, (author, author_email): (&str, &str), (committer, committer_email): (&str, &str)) -> Value {
     json!({
-        "id": commit.sha, "tree_id": commit.tree_sha, "message": commit.message,
-        "timestamp": chrono::DateTime::from_timestamp(commit.committer_timestamp, 0).map(time),
-        "author": {"name": commit.author_name, "email": commit.author_email},
-        "committer": {"name": commit.committer_name, "email": commit.committer_email},
+        "id": id, "tree_id": tree_id, "message": message,
+        "timestamp": chrono::DateTime::from_timestamp(timestamp, 0).map(time),
+        "author": {"name": author, "email": author_email},
+        "committer": {"name": committer, "email": committer_email},
     })
 }
 
 /// The Git object shared by the contents API and commit responses.
-pub fn git_commit(commit: &CommitInfo, owner: &str, repo: &str) -> Value {
+pub fn git_commit(commit: &CommitInfo, owner: &str, repo: &str, repo_id: i64) -> Value {
     let url = repo_url(owner, repo);
     let html = repository_url(owner, repo);
     let signature = |name: &str, email: &str, timestamp: i64| json!({"name": name, "email": email, "date": chrono::DateTime::from_timestamp(timestamp, 0)});
     json!({
-        "sha": commit.sha, "node_id": node_id::git("C", &commit.sha),
+        "sha": commit.sha, "node_id": node_id::git_object("C", repo_id, &commit.sha),
         "url": format!("{url}/git/commits/{}", commit.sha),
         "html_url": format!("{html}/commit/{}", commit.sha),
         "message": commit.message,
@@ -1852,7 +1871,7 @@ pub fn action_job(
         "head_branch":branch,"name":job.name,"url":format!("{api}/actions/jobs/{}",job.id),
         "html_url":format!("{}/{}/{}/actions?job={}",link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(repo),run.run_id),
         "status":job.status,"conclusion":job.conclusion,"started_at":time(job.started_at.unwrap_or(job.created_at)),"completed_at":optional_time(job.completed_at),"created_at":time(job.created_at),
-        "check_run_url":"","labels":job.labels.0,"runner_id":null,"runner_name":if run.engine.as_deref()==Some("codeyard-actions"){Some("codeyard-actions")}else{None},"runner_group_id":null,"runner_group_name":null,
+        "check_run_url":format!("{api}/check-runs/{}",job.check_run_id),"labels":job.labels.0,"runner_id":null,"runner_name":if run.engine.as_deref()==Some("codeyard-actions"){Some("codeyard-actions")}else{None},"runner_group_id":null,"runner_group_name":null,
         "steps":steps.iter().map(|step|json!({"number":step.number,"name":step.name,"status":step.status,"conclusion":step.conclusion,"started_at":time(step.started_at),"completed_at":optional_time(step.completed_at)})).collect::<Vec<_>>()})
 }
 

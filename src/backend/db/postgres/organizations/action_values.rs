@@ -245,13 +245,20 @@ pub async fn repositories(
     org: i64,
     kind: Kind,
     name: &str,
-) -> Result<Vec<crate::backend::db::models::Repository>, ValueError> {
+    offset: i64,
+    limit: i64,
+) -> Result<(i64, Vec<crate::backend::db::repository_stats::RepositorySnapshot>), ValueError> {
+    if offset < 0 || !(1..=10_000).contains(&limit) { return Err(ValueError::Authority(anyhow::anyhow!("Invalid repository page"))); }
     let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
     authorize(&mut tx, actor, org).await?;
     selected(&mut tx, org, kind, name).await?;
-    let rows = sqlx::query_as("SELECT r.* FROM repositories r JOIN org_actions_value_repositories s ON s.repo_id=r.id AND s.org_id=r.owner_org_id WHERE s.org_id=$1 AND s.kind=$2 AND s.name=$3 AND r.owner_kind='org' ORDER BY r.id").bind(org).bind(kind.as_str()).bind(name).fetch_all(&mut *tx).await?;
+    let selection = "FROM repositories r JOIN org_actions_value_repositories s ON s.repo_id=r.id AND s.org_id=r.owner_org_id JOIN organizations o ON o.id=r.owner_org_id WHERE s.org_id=$1 AND s.kind=$2 AND s.name=$3 AND r.owner_kind='org'";
+    let total = sqlx::query_scalar(&format!("SELECT COUNT(*) {selection}")).bind(org).bind(kind.as_str()).bind(name).fetch_one(&mut *tx).await?;
+    let rows = sqlx::query_as(&format!("SELECT r.*,{},o.name AS owner {selection} ORDER BY r.id LIMIT $4 OFFSET $5", crate::backend::db::postgres::repository_stats::DOCUMENT_FACTS))
+        .bind(org).bind(kind.as_str()).bind(name).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
     tx.commit().await?;
-    Ok(rows)
+    Ok((total, rows))
 }
 
 pub async fn select(
@@ -297,12 +304,7 @@ pub async fn inherited(
     kind: Kind,
 ) -> Result<Vec<OrganizationValue>, ValueError> {
     let mut tx = pool.begin().await?;
-    let allowed = if kind == Kind::Secret {
-        super::super::discussions::lock_admin_authority(&mut tx, actor, repo).await
-    } else {
-        super::super::discussions::lock_contribution_authority(&mut tx, actor, repo).await
-    }
-    .map_err(ValueError::Authority)?;
+    let allowed = super::super::discussions::lock_settings_read_authority(&mut tx, actor, repo, kind == Kind::Secret).await.map_err(ValueError::Authority)?;
     if !allowed {
         return Err(ValueError::Denied);
     }

@@ -62,10 +62,10 @@ async fn save(
         .get("issue_type_id")
         .map(|id| id.parse::<i64>().map_err(|_| Error::missing()))
         .transpose()?;
-    let id = issue_attributes::configure_organization(
+    let value = issue_attributes::configure_organization(
         &state.pool,
         org.id,
-        actor.user.id,
+        (actor.user.id, actor.token.id),
         &Definition {
             id,
             kind: "type".into(),
@@ -80,12 +80,6 @@ async fn save(
     )
     .await
     .map_err(|error| super::super::issue_attributes::error(error).simple())?;
-    let value = issue_attributes::organization_catalog(&state.pool, org.id, actor.user.id, "type")
-        .await
-        .map_err(|error| super::super::issue_attributes::error(error).simple())?
-        .into_iter()
-        .find(|value| value.id == id)
-        .ok_or_else(Error::missing)?;
     Ok(Json(payloads::issue_type(&value)))
 }
 async fn remove(
@@ -101,7 +95,7 @@ async fn remove(
     issue_attributes::delete_organization_definition(
         &state.pool,
         org.id,
-        actor.user.id,
+        (actor.user.id, actor.token.id),
         id,
         "type",
     )

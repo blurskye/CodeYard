@@ -125,6 +125,10 @@ pub(super) async fn target(state: &AppState, name: &str) -> Result<Organization>
 }
 
 async fn owner(state: &AppState, headers: &HeaderMap, name: &str) -> Result<Organization> {
+    owner_actor(state, headers, name).await.map(|(org, _)| org)
+}
+
+async fn owner_actor(state: &AppState, headers: &HeaderMap, name: &str) -> Result<(Organization, auth::Authentication)> {
     let actor = auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(auth::required)?;
@@ -140,7 +144,7 @@ async fn owner(state: &AppState, headers: &HeaderMap, name: &str) -> Result<Orga
             "Must be an organization owner",
         ));
     }
-    Ok(org)
+    Ok((org, actor))
 }
 
 async fn get_org(
@@ -150,21 +154,17 @@ async fn get_org(
 ) -> Result<Json<Value>> {
     let actor = auth::authenticate(&state, &headers, false).await?;
     let org = target(&state, &name).await?;
-    let owner = if let Some(actor) = actor {
-        matches!(
-            organizations::get_organization_role(&state.pool, actor.user.id, org.id)
-                .await
-                .map_err(Error::unavailable)?,
-            OrganizationOutcome::Applied(crate::backend::db::models::OrgRole::Owner)
-        )
-    } else {
-        false
-    };
+    if let Some(actor) = actor {
+        if let OrganizationOutcome::Applied(owned) = organizations::settings::owned(&state.pool, actor.user.id, org.id)
+            .await.map_err(Error::unavailable)? {
+            return settings::document(&state, &owned.organization, &owned.settings, true).await.map(Json);
+        }
+    }
     let configuration = organizations::settings::get(&state.pool, org.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    settings::document(&state, &org, &configuration, owner)
+    settings::document(&state, &org, &configuration, false)
         .await
         .map(Json)
 }
@@ -219,7 +219,7 @@ async fn list(
     Query(query): Query<Since>,
 ) -> Result<Response> {
     auth::authenticate(&state, &headers, false).await?;
-    let limit = query.per_page.unwrap_or(30).clamp(1, 100);
+    let limit = super::pagination::page_size(query.per_page);
     let mut orgs = discovery::list_organizations(
         &state.pool,
         None,
@@ -617,7 +617,7 @@ async fn accept(
     }
     let org = target(&state, &name).await?;
     let member = outcome(
-        organizations::accept_organization_invitation(&state.pool, actor.user.id, org.id, None)
+        organizations::accept_organization_invitation(&state.pool, (actor.user.id, actor.token.id), org.id, None)
             .await
             .map_err(Error::unavailable)?,
     )?;

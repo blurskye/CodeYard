@@ -59,8 +59,8 @@ pub async fn get(pool: &PgPool, repo: i64, id: i64, attempt: Option<i32>) -> Res
     Ok(sqlx::query_as(&format!("SELECT c.*,{waiting} AS deployment_waiting FROM ci_runs c WHERE c.repo_id=$1 AND COALESCE(c.workflow_run_id,c.id)=$2 AND ($3::integer IS NULL OR COALESCE(c.workflow_run_attempt,1)=$3) ORDER BY COALESCE(c.workflow_run_attempt,1) DESC LIMIT 1")).bind(repo).bind(id).bind(attempt).fetch_optional(pool).await?)
 }
 
-pub async fn metadata(pool: &PgPool, repo: i64, id: i64) -> Result<Option<RunMetadata>> {
-    Ok(sqlx::query_as("SELECT m.*,(SELECT s.id FROM check_suites s WHERE s.ci_run_id=c.id) AS check_suite_id FROM actions_run_metadata m JOIN ci_runs c ON c.id=m.run_id WHERE c.repo_id=$1 AND c.id=$2").bind(repo).bind(id).fetch_optional(pool).await?)
+pub async fn metadata(pool: &PgPool, repo: i64, ids: &[i64]) -> Result<Vec<RunMetadata>> {
+    Ok(sqlx::query_as("SELECT m.*,origin.created_at AS origin_created_at,origin.triggered_by_id AS actor_id,(SELECT s.id FROM check_suites s WHERE s.ci_run_id=c.id) AS check_suite_id FROM actions_run_metadata m JOIN ci_runs c ON c.id=m.run_id JOIN ci_runs origin ON origin.id=COALESCE(c.workflow_run_id,c.id) WHERE c.repo_id=$1 AND c.id=ANY($2)").bind(repo).bind(ids).fetch_all(pool).await?)
 }
 
 const FILTER:&str="c.repo_id=$1 AND c.workflow_path NOT LIKE '%,%' AND NOT EXISTS(SELECT 1 FROM ci_runs newer WHERE newer.workflow_run_id=COALESCE(c.workflow_run_id,c.id) AND newer.workflow_run_attempt>COALESCE(c.workflow_run_attempt,1)) AND ($2='' OR c.workflow_path=$2) AND ($3='' OR EXISTS(SELECT 1 FROM users a WHERE a.id=origin.triggered_by_id AND a.username=$3)) AND ($4='' OR COALESCE(c.pull_request_event->>'head_ref',c.branch) IN ($4,'refs/heads/'||$4,'refs/tags/'||$4)) AND ($5='' OR c.event=$5) AND (NOT $7 OR c.status NOT IN ('queued','pending','running','in_progress')) AND ($8::timestamptz IS NULL OR origin.created_at>$8 OR (NOT $12 AND origin.created_at=$8)) AND ($9::timestamptz IS NULL OR origin.created_at<$9 OR ($11 AND origin.created_at=$9)) AND ($10='' OR c.head_sha=$10) AND ($13::bigint IS NULL OR EXISTS(SELECT 1 FROM check_suites s WHERE s.id=$13 AND s.ci_run_id=c.id))";

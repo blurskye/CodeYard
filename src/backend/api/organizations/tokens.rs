@@ -56,8 +56,11 @@ async fn grants(
     status: &str,
 ) -> anyhow::Result<Vec<view::TokenGrant>> {
     let pool = &ctx.state.pool;
-    let mut rows = db::fine_grained_tokens::organization_tokens(pool, org, status).await?;
-    rows.truncate(100);
+    let filter = db::fine_grained_tokens::TokenFilter {
+        status,
+        ..Default::default()
+    };
+    let rows = db::fine_grained_tokens::organization_tokens(pool, org, &filter, 0, 100).await?;
     let mut ids: Vec<_> = rows.iter().map(|token| token.user_id).collect();
     ids.sort_unstable();
     ids.dedup();

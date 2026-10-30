@@ -1,6 +1,6 @@
 use crate::backend::db::{
     credentials::Actor,
-    deployments::{Deployment, Filter, NewDeployment, NewStatus, Refusal, Status},
+    deployments::{pair, Deployment, Filter, NewDeployment, NewStatus, Refusal, Status},
 };
 use anyhow::{ensure, Result};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -54,7 +54,7 @@ pub async fn delete(pool: &PgPool, actor: impl Into<Actor>, repo: i64, id: i64) 
     Ok(())
 }
 
-pub async fn create_status(pool: &PgPool, actor: impl Into<Actor>, repo: i64, deployment: i64, input: &NewStatus) -> Result<(Deployment, Vec<Status>)> {
+pub async fn create_status(pool: &PgPool, actor: impl Into<Actor>, repo: i64, deployment: i64, input: &NewStatus) -> Result<Vec<(Deployment, Status)>> {
     input.validate()?;
     let actor = actor.into();
     let mut tx = write(pool, &actor, repo).await?;
@@ -62,26 +62,28 @@ pub async fn create_status(pool: &PgPool, actor: impl Into<Actor>, repo: i64, de
         .bind(repo).bind(deployment).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
     let environment = input.environment.as_deref().unwrap_or(&current.environment);
     let key = environment.to_lowercase();
-    let mut saved: Vec<Status> = Vec::new();
+    // Each status is returned with its deployment as this transaction left it.
+    let mut saved: Vec<(Deployment, Status)> = Vec::new();
     if input.state == "success" && input.auto_inactive.unwrap_or(true) {
-        saved = sqlx::query_as("INSERT INTO deployment_statuses(deployment_id,creator_id,state,description,environment,log_url,environment_url) SELECT d.id,$4,'inactive','',s.environment,s.log_url,s.environment_url FROM deployment_statuses s JOIN repository_deployments d ON d.id=s.deployment_id WHERE d.repo_id=$1 AND d.id<$2 AND NOT d.transient_environment AND NOT d.production_environment AND d.environment_key=$3 AND s.state='success' AND s.id=(SELECT MAX(latest.id) FROM deployment_statuses latest WHERE latest.deployment_id=d.id) ORDER BY d.id RETURNING *")
+        let statuses: Vec<Status> = sqlx::query_as("INSERT INTO deployment_statuses(deployment_id,creator_id,state,description,environment,log_url,environment_url) SELECT d.id,$4,'inactive','',s.environment,s.log_url,s.environment_url FROM deployment_statuses s JOIN repository_deployments d ON d.id=s.deployment_id WHERE d.repo_id=$1 AND d.id<$2 AND NOT d.transient_environment AND NOT d.production_environment AND d.environment_key=$3 AND s.state='success' AND s.id=(SELECT MAX(latest.id) FROM deployment_statuses latest WHERE latest.deployment_id=d.id) ORDER BY d.id RETURNING *")
             .bind(repo).bind(deployment).bind(&key).bind(actor.user_id).fetch_all(&mut *tx).await?;
-        if !saved.is_empty() {
-            let ids: Vec<_> = saved.iter().map(|status| status.deployment_id).collect();
-            sqlx::query("UPDATE repository_deployments SET updated_at=NOW() WHERE id=ANY($1)")
-                .bind(&ids).execute(&mut *tx).await?;
+        if !statuses.is_empty() {
+            let ids: Vec<_> = statuses.iter().map(|status| status.deployment_id).collect();
+            let deployments: Vec<Deployment> = sqlx::query_as("UPDATE repository_deployments SET updated_at=NOW() WHERE id=ANY($1) RETURNING *")
+                .bind(&ids).fetch_all(&mut *tx).await?;
+            saved = pair(deployments, statuses)?;
         }
     }
     let log_url = input.log_url.as_deref().or(input.target_url.as_deref()).unwrap_or("");
     let row = sqlx::query_as("INSERT INTO deployment_statuses(deployment_id,creator_id,state,description,environment,log_url,environment_url) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *")
         .bind(deployment).bind(actor.user_id).bind(&input.state).bind(&input.description).bind(environment).bind(log_url).bind(&input.environment_url).fetch_one(&mut *tx).await?;
-    saved.push(row);
     sqlx::query("INSERT INTO deployment_environments(repo_id,name,name_key) VALUES($1,$2,$3) ON CONFLICT(repo_id,name_key) DO NOTHING")
         .bind(repo).bind(environment).bind(&key).execute(&mut *tx).await?;
     let updated = sqlx::query_as("UPDATE repository_deployments SET environment=$3,environment_key=$4,updated_at=NOW() WHERE repo_id=$1 AND id=$2 RETURNING *")
         .bind(repo).bind(deployment).bind(environment).bind(key).fetch_one(&mut *tx).await?;
+    saved.push((updated, row));
     tx.commit().await?;
-    Ok((updated, saved))
+    Ok(saved)
 }
 
 pub async fn get_status(pool: &PgPool, viewer: Option<i64>, deployment: i64, id: i64) -> Result<Option<Status>> {

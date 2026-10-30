@@ -186,6 +186,7 @@ pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
             has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
         }
         ["gists", ..] => has_scope(scopes, "gist"),
+        ["markdown"] | ["markdown", "raw"] => true,
         ["users", _, "repos" | "starred" | "subscriptions", ..] | ["search", ..] => {
             !write && has_scope(scopes, "repo")
         }

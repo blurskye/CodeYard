@@ -6,7 +6,9 @@ use anyhow::{ensure, Result};
 use sqlx::{PgPool, Postgres, Transaction};
 use std::collections::BTreeMap;
 
-async fn authorize(tx: &mut Transaction<'_, Postgres>, actor: i64, scope: Scope) -> Result<()> {
+async fn authorize(tx: &mut Transaction<'_, Postgres>, actor: impl Into<crate::backend::db::users::tokens::Actor>, scope: Scope) -> Result<()> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let allowed = match scope {
         Scope::Repository(repo) => {
             super::discussions::lock_admin_authority(tx, actor, repo).await?
@@ -16,6 +18,13 @@ async fn authorize(tx: &mut Transaction<'_, Postgres>, actor: i64, scope: Scope)
         }
     };
     ensure!(allowed, Refusal::Denied);
+    if let Some(token) = credential.token_id {
+        let (repo, org, permission) = match scope {
+            Scope::Repository(repo) => (Some(repo), None, "administration"),
+            Scope::Organization(org) => (None, Some(org), "organization_administration"),
+        };
+        ensure!(super::users::tokens::permits_write(tx, actor, token, repo, org, permission).await?, Refusal::Denied);
+    }
     Ok(())
 }
 
@@ -42,7 +51,7 @@ pub async fn get(pool: &PgPool, actor: i64, scope: Scope) -> Result<Settings> {
     Ok(result)
 }
 
-pub async fn save(pool: &PgPool, actor: i64, scope: Scope, settings: &Settings) -> Result<()> {
+pub async fn save(pool: &PgPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, scope: Scope, settings: &Settings) -> Result<()> {
     settings.validate()?;
     let mut tx = pool.begin().await?;
     authorize(&mut tx, actor, scope).await?;
@@ -79,7 +88,7 @@ pub async fn inclusions(pool: &PgPool, actor: i64, org: i64) -> Result<Vec<Inclu
 
 pub async fn change_inclusion(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     name: &str,
     remove: bool,

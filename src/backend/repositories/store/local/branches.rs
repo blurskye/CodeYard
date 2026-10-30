@@ -242,6 +242,7 @@ impl LocalStore {
             Some(prepared.path().to_owned()),
         )
         .await?;
+        self.check_contents_grant(pool, repo, actor, token).await?;
         publication
             .scope(git::repository::publish_pull_branch_update(
                 self.path(),

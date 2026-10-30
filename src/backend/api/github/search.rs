@@ -32,7 +32,8 @@ async fn search_issues(
 ) -> Result<Response> {
     let auth = auth::authenticate(&state, &headers, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
-    let query = Search::parse(q.get("q").map_or("", String::as_str)).map_err(Error::invalid)?;
+    let query = Search::parse(q.get("q").map_or("", String::as_str)).map_err(Error::invalid)?
+        .with_classic_policy(auth.as_ref().map(|auth| auth.token.id));
     if query.needs_viewer() && viewer.is_none() {
         return Err(auth::required());
     }

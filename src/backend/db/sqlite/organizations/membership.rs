@@ -101,7 +101,7 @@ pub async fn update_organization_member_role(
 
 pub async fn update_organization_member_role_by_owner(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     target: i64,
     role: OrgRole,
@@ -111,15 +111,17 @@ pub async fn update_organization_member_role_by_owner(
 
 async fn update_member_role(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     target: i64,
     role: OrgRole,
     owner_only: bool,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let actor_role = require_org!(tx, actor, org);
-    if !administers(actor_role) || (owner_only && actor_role != OrgRole::Owner) {
+    if !credential(&mut tx, &grant, org, "members").await? || !administers(actor_role) || (owner_only && actor_role != OrgRole::Owner) {
         return Ok(Denied);
     }
     let target_active = active(&mut tx, target).await?;
@@ -176,7 +178,7 @@ pub async fn remove_organization_member(
 /// not a member, in one transaction so an acceptance cannot slip between the two.
 pub async fn remove_member_or_invitation_by_owner(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
@@ -185,7 +187,7 @@ pub async fn remove_member_or_invitation_by_owner(
 
 pub async fn convert_to_outside_collaborator(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
@@ -194,7 +196,7 @@ pub async fn convert_to_outside_collaborator(
 
 pub async fn prepare_outside_conversion(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
@@ -211,14 +213,17 @@ enum Removal {
 
 async fn remove_member(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     target: i64,
     owner_only: bool,
     mode: Removal,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let actor_role = require_org!(tx, actor, org);
+    if !credential(&mut tx, &grant, org, "members").await? { return Ok(Denied); }
     // Any member may leave on their own; the last-owner check below still applies.
     let leaving = actor == target && mode == Removal::Remove && !owner_only;
     if !leaving && (!administers(actor_role) || (owner_only && actor_role != OrgRole::Owner)) {

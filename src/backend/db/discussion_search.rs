@@ -14,6 +14,7 @@ pub(crate) enum Expr {
 pub struct Search {
     expr: Expr,
     fields: Vec<&'static str>,
+    policy_token: Option<i64>,
 }
 #[derive(Default)]
 pub struct Collection {
@@ -294,6 +295,13 @@ fn parse_words(words: Vec<String>) -> Result<Expr, &'static str> {
 }
 
 impl Search {
+    /// Apply classic-token organization policy before counting/paging, in the search snapshot.
+    /// Other credential bounds still require the caller's resource-specific grant checks.
+    pub fn with_classic_policy(mut self, token: Option<i64>) -> Self {
+        self.policy_token = token;
+        self
+    }
+
     /// GraphQL carries the search order in the query text rather than REST's separate parameters.
     pub fn parse_ordered(query: &str) -> Result<(Self, Sort, bool), &'static str> {
         let mut words = tokens(query)?;
@@ -365,6 +373,7 @@ impl Search {
         let search = Self {
             expr: Expr::And(values),
             fields: Vec::new(),
+            policy_token: None,
         };
         search.statement(false, "TRUE")?;
         Ok(search)
@@ -385,7 +394,7 @@ impl Search {
         if fields.is_empty() {
             fields = vec!["title", "body", "comments"];
         }
-        let search = Self { expr, fields };
+        let search = Self { expr, fields, policy_token: None };
         // Validate before admission to a database connection.
         search.statement(false, "TRUE")?;
         Ok(search)
@@ -410,6 +419,7 @@ impl Search {
             args: Vec::new(),
             prefix: String::new(),
         };
+        let readable = sql.repository_policy(readable, self.policy_token);
         let predicate = sql.expr(&self.expr, &self.fields)?;
         let mut text = Vec::new();
         positive_text(&self.expr, false, &mut text);
@@ -492,6 +502,12 @@ impl Statement {
     }
     pub fn placeholder(&self, index: usize) -> String {
         format!("{}{index}", if self.postgres { '$' } else { '?' })
+    }
+    pub(crate) fn repository_policy(&mut self, readable: &str, token: Option<i64>) -> String {
+        let Some(token) = token else { return readable.to_owned() };
+        let token = self.bind(token.to_string());
+        let allowed = super::fine_grained_tokens::classic_allowed_condition(&token, "r.owner_org_id");
+        format!("({readable}) AND (NOT r.is_private OR ({allowed}))")
     }
     pub(crate) fn bind(&mut self, value: impl Into<String>) -> String {
         self.args.push(value.into());
@@ -751,6 +767,14 @@ mod tests {
         let sql = query.statement(true, "r.id>0").unwrap();
         assert!(!sql.prefix.contains("a' bug"));
         assert!(sql.args.iter().any(|s| s == "a' bug"));
+        // Restricted classic-token repositories must be excluded by the counted relation itself.
+        for postgres in [true, false] {
+            let guarded = query.clone().with_classic_policy(Some(987654321)).statement(postgres, "r.id>0").unwrap();
+            assert!(guarded.prefix.contains("organization_token_policies"));
+            assert!(guarded.prefix.contains("NOT r.is_private OR"));
+            assert!(guarded.args.iter().any(|arg| arg == "987654321"));
+            assert!(!guarded.prefix.contains("987654321"));
+        }
         for q in [
             "",
             "foo OR",

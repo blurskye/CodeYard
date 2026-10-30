@@ -15,6 +15,7 @@ fn prepared(sha: &str) -> codeyard::backend::repositories::store::PreparedFile {
         reference: "refs/heads/main".into(),
         expected: Some(sha.into()),
         web_commit: false,
+        token_id: None,
         new_branch: false,
         commit: CommitInfo {
             sha: sha.into(),
@@ -159,6 +160,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (
             Operation::WriteGitObject {
                 input: codeyard::backend::git::objects::ObjectWrite::Blob,
+                token: None,
             },
             false,
         ),
@@ -408,6 +410,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 },
                 author: "Tester".into(),
                 email: "tester@example.invalid".into(),
+                identities: Default::default(),
             },
             false,
         ),
@@ -418,6 +421,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                     reference: "refs/heads/main".into(),
                     expected: Some(sha.into()),
                     web_commit: false,
+                    token_id: None,
                     new_branch: false,
                     commit: codeyard::backend::repositories::store::CommitInfo {
                         sha: sha.into(),

@@ -44,7 +44,7 @@ pub async fn build(
             .get("hook_after")
             .and_then(|id| id.parse().ok())
             .unwrap_or(0),
-        false,
+        Default::default(),
     )
     .await
     .map_err(|_| HookError::Unavailable)?

@@ -5,6 +5,26 @@ use crate::backend::db::{
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 
+/// A trusted account operation, or an operation initiated with a token whose grant must
+/// still be live when the native transaction commits.
+#[derive(Clone, Copy)]
+pub struct Actor {
+    pub user_id: i64,
+    pub token_id: Option<i64>,
+}
+
+impl From<i64> for Actor {
+    fn from(user_id: i64) -> Self {
+        Self { user_id, token_id: None }
+    }
+}
+
+impl From<(i64, i64)> for Actor {
+    fn from((user_id, token_id): (i64, i64)) -> Self {
+        Self { user_id, token_id: Some(token_id) }
+    }
+}
+
 native_operation!(crate::backend::db::postgres::users::tokens::create_token,
     crate::backend::db::sqlite::users::tokens::create_token,
     fn create_token(pool: &DbPool, user_id: i64, session_id: &str, name: &str, hash: &str,
@@ -26,6 +46,9 @@ native_operation!(crate::backend::db::postgres::users::tokens::repository_write,
     crate::backend::db::sqlite::users::tokens::repository_write,
     /// Narrows native write authority at a Git publication boundary.
     fn repository_write(pool: &DbPool, token: i64, actor: i64, repo: i64, permission: &str) -> Result<bool>);
+native_operation!(crate::backend::db::postgres::users::tokens::can_write_repository,
+    crate::backend::db::sqlite::users::tokens::can_write_repository,
+    fn can_write_repository(pool: &DbPool, actor: i64, token: i64, repo: i64, permission: &str) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::users::tokens::touch_token,
     crate::backend::db::sqlite::users::tokens::touch_token,
     /// Records when and from which client address a token was last used.

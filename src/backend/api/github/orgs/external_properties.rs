@@ -45,7 +45,7 @@ async fn scope(
     headers: &HeaderMap,
     name: &str,
     write: bool,
-) -> Result<(i64, i64)> {
+) -> Result<(auth::Authentication, i64)> {
     let actor = auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(auth::required)?;
@@ -53,7 +53,7 @@ async fn scope(
         actor.require_write()?;
     }
     let org = target(state, name).await?;
-    Ok((actor.user.id, org.id))
+    Ok((actor, org.id))
 }
 fn installation(row: data::Installation) -> Value {
     json!({"display_name": row.display_name, "installation": {"id": row.installation_id}})
@@ -65,7 +65,7 @@ async fn installations(
 ) -> Result<Json<Value>> {
     let (actor, org) = scope(&state, &headers, &name, false).await?;
     let rows = outcome(
-        data::installations(&state.pool, actor, org)
+        data::installations(&state.pool, actor.user.id, org)
             .await
             .map_err(Error::unavailable)?,
     )?;
@@ -83,13 +83,18 @@ async fn register(
     Json(input): Json<Registration>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (actor, org) = scope(&state, &headers, &name, true).await?;
+    let installation_id = match input.installation_id {
+        Some(id) => Some(id),
+        None => crate::backend::identity::github_apps::authority(&state.pool, actor.token.id)
+            .await.map_err(Error::unavailable)?.and_then(|authority| authority.installation()),
+    };
     let row = outcome(
         data::register(
             &state.pool,
-            actor,
+            (actor.user.id, actor.token.id),
             org,
             &input.display_name,
-            input.installation_id,
+            installation_id,
         )
         .await
         .map_err(Error::unavailable)?,
@@ -103,7 +108,7 @@ async fn definitions(
 ) -> Result<Json<Value>> {
     let (actor, org) = scope(&state, &headers, &name, false).await?;
     let rows = outcome(
-        data::definitions(&state.pool, actor, org)
+        data::definitions(&state.pool, actor.user.id, org)
             .await
             .map_err(Error::unavailable)?,
     )?;
@@ -126,6 +131,7 @@ struct Values {
 #[derive(Deserialize)]
 struct PropertyValue {
     repository_name: String,
+    #[serde(deserialize_with = "Option::deserialize")]
     value: Option<String>,
 }
 #[derive(Deserialize)]
@@ -160,7 +166,7 @@ async fn set_values(
         }
     }
     outcome(
-        data::set_values(&state.pool, actor, org, &values)
+        data::set_values(&state.pool, (actor.user.id, actor.token.id), org, &values)
             .await
             .map_err(Error::unavailable)?,
     )?;
@@ -190,7 +196,7 @@ async fn set_property(
         })
         .collect::<Vec<_>>();
     outcome(
-        data::set_values(&state.pool, actor, org, &values)
+        data::set_values(&state.pool, (actor.user.id, actor.token.id), org, &values)
             .await
             .map_err(Error::unavailable)?,
     )?;
@@ -203,7 +209,7 @@ async fn delete_values(
 ) -> Result<StatusCode> {
     let (actor, org) = scope(&state, &headers, &name, true).await?;
     outcome(
-        data::delete_values(&state.pool, actor, org, &property)
+        data::delete_values(&state.pool, (actor.user.id, actor.token.id), org, &property)
             .await
             .map_err(Error::unavailable)?,
     )?;

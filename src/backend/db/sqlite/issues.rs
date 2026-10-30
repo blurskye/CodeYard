@@ -19,11 +19,15 @@ use sqlx::{Sqlite, SqlitePool, Transaction};
 pub async fn create_issue_with_metadata(
     pool: &SqlitePool,
     repo_id: i64,
-    author_id: i64,
+    author_id: impl Into<crate::backend::db::users::tokens::Actor>,
     title: &str,
     body: &str,
     metadata: IssueMetadata<'_>,
 ) -> Result<Issue> {
+    let credential = author_id.into();
+    let author_id = credential.user_id;
+    let assignees = metadata.unique_assignees()?;
+    let metadata = IssueMetadata { assignees: &assignees, ..metadata };
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::discussions::require_contribution_authority(&mut tx, author_id, repo_id).await?;
     if !metadata.labels.is_empty() || !metadata.assignees.is_empty() {
@@ -48,7 +52,7 @@ pub async fn create_issue_with_metadata(
     if !metadata.labels.is_empty() {
         super::labels::write_item_labels_transaction(
             &mut tx,
-            author_id,
+            Some(author_id),
             repo_id,
             LabelTarget::Issue,
             issue.id,
@@ -77,6 +81,8 @@ pub async fn create_issue_with_metadata(
             Some(number),
         )
         .await?;
+        sqlx::query("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind,detail) SELECT ?1,'issue',?2,?3,'milestoned',title FROM milestones WHERE repo_id=?1 AND number=?4")
+            .bind(repo_id).bind(issue.id).bind(author_id).bind(number).execute(&mut *tx).await?;
     }
     if let Some(kind) = metadata.issue_type {
         super::issue_attributes::lock_metadata(&mut tx).await?;
@@ -693,12 +699,14 @@ pub async fn list_repository_comments(
     pool: &SqlitePool,
     repo_id: i64,
     filter: &crate::backend::db::issues::CommentFilter,
-) -> Result<Vec<(i64, bool)>> {
+) -> Result<Vec<crate::backend::db::issues::ConversationComment>> {
+    anyhow::ensure!(filter.offset >= 0 && (1..=101).contains(&filter.limit), "Invalid conversation comment page");
     let order = crate::backend::db::issues::repository_item_order(filter.sort);
     Ok(sqlx::query_as(&format!(r"WITH comments AS (
-        SELECT c.id,false AS pull_request,i.number,c.created_at,c.updated_at FROM issue_comments c JOIN issues i ON i.id=c.issue_id WHERE i.repo_id=?1
-        UNION ALL SELECT c.id,true,p.number,c.created_at,c.updated_at FROM pr_comments c JOIN pull_requests p ON p.id=c.pull_request_id WHERE p.repo_id=?1 AND c.path IS NULL AND c.review_id IS NULL
-        ) SELECT i.id,i.pull_request FROM comments i WHERE (?2 IS NULL OR i.number=?2) AND (?3 IS NULL OR i.updated_at>?3) ORDER BY {order},i.id,i.pull_request LIMIT ?4 OFFSET ?5"))
+        SELECT c.id,false AS pull_request,i.id AS item_id,i.number,c.author_id,c.created_at,c.updated_at FROM issue_comments c JOIN issues i ON i.id=c.issue_id WHERE i.repo_id=?1
+        UNION ALL SELECT c.id,true,p.id,p.number,c.author_id,c.created_at,c.updated_at FROM pr_comments c JOIN pull_requests p ON p.id=c.pull_request_id WHERE p.repo_id=?1 AND c.path IS NULL AND c.review_id IS NULL
+        ), page AS (SELECT i.* FROM comments i WHERE (?2 IS NULL OR i.number=?2) AND (?3 IS NULL OR i.updated_at>?3) ORDER BY {order},i.id,i.pull_request LIMIT ?4 OFFSET ?5)
+        SELECT i.*,CASE WHEN i.pull_request THEN pc.body ELSE ic.body END AS body FROM page i LEFT JOIN issue_comments ic ON NOT i.pull_request AND ic.id=i.id LEFT JOIN pr_comments pc ON i.pull_request AND pc.id=i.id ORDER BY {order},i.id,i.pull_request"))
         .bind(repo_id).bind(filter.number).bind(filter.since.map(|date| date.to_rfc3339_opts(chrono::SecondsFormat::Micros,true))).bind(filter.limit).bind(filter.offset).fetch_all(pool).await?)
 }
 

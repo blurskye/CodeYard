@@ -609,6 +609,7 @@ pub(super) async fn run(
                 pool,
                 records::CommentCreate {
                     actor_id: alice,
+                    token_id: None,
                     repo_id: repo,
                     sha,
                     body: &format!("page-marker-{number}"),
@@ -658,6 +659,7 @@ pub(super) async fn run(
         pool,
         records::CommentCreate {
             actor_id: bob,
+            token_id: None,
             repo_id: repo,
             sha,
             body: "revoked read access",

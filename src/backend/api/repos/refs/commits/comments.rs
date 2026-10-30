@@ -377,6 +377,7 @@ pub(super) async fn submit(
                     &ctx.state.notification_broadcaster,
                     records::CommentEdit {
                         actor_id: actor,
+                        token_id: None,
                         repo_id: loaded.repository.id,
                         id,
                         body: &draft.body,

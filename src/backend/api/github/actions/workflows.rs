@@ -31,25 +31,11 @@ pub(super) async fn discover(
     if store.refs().await.map_err(store_error)?.is_empty() {
         return Ok(Vec::new());
     }
-    let definitions = ci::list_workflows_for_ref(&store, &repo.default_branch)
+    let definitions = ci::list_workflows_for_ref(&store, &format!("refs/heads/{}", repo.default_branch))
         .await
         .map_err(Error::unavailable)?;
-    let mut values = Vec::new();
-    for definition in definitions {
-        values.push(
-            workflows::register_workflow(
-                &state.pool,
-                repo.id,
-                &definition.path,
-                &definition.name,
-                true,
-            )
-            .await
-            .map_err(Error::unavailable)?,
-        );
-    }
-    values.sort_by_key(|workflow| workflow.id);
-    Ok(values)
+    let definitions: Vec<_> = definitions.into_iter().map(|definition| (definition.path, definition.name)).collect();
+    workflows::register_workflows(&state.pool, repo.id, &definitions, true).await.map_err(Error::unavailable)
 }
 
 pub(super) async fn lookup(
@@ -152,9 +138,9 @@ async fn enabled(
     enable: bool,
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
-    let actor = authentication.ok_or_else(auth::required)?.user.id;
+    let authentication = authentication.ok_or_else(auth::required)?;
     let workflow = lookup(state, &repo, key).await?;
-    workflows::set_workflow_enabled(&state.pool, actor, repo.id, workflow.id, enable)
+    workflows::set_workflow_enabled(&state.pool, (authentication.user.id, authentication.token.id), repo.id, workflow.id, enable)
         .await
         .map_err(|error| {
             if error
@@ -268,13 +254,7 @@ async fn badge(
             _ => ("no status", "#9f9f9f"),
         }
     };
-    let escape = |text: &str| {
-        text.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('"', "&quot;")
-            .replace('\'', "&apos;")
-    };
+    let escape = crate::webui::components::escape_html;
     let label = escape(&workflow.name.chars().take(22).collect::<String>());
     let title = escape(&workflow.name);
     let svg = format!(

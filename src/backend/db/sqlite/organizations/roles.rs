@@ -88,16 +88,19 @@ pub async fn teams(
 }
 pub async fn change(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     target: &RoleTarget,
     role: Option<i64>,
     assigned: bool,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
+    if !credential(&mut tx, &grant, org, "members").await? { return Ok(Denied); }
     let (user, team) = match target {
         RoleTarget::User(name) => {
             let id: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE username=?1")

@@ -121,7 +121,7 @@ pub async fn installations(
     offset: i64,
     limit: i64,
 ) -> Result<(i64, Vec<Installation>)> {
-    let filters = format!("($1 IS NULL OR i.app_id=$1) AND ($2 IS NULL OR ({reaches} AND EXISTS(SELECT 1 FROM github_apps a JOIN users u ON u.id=a.owner_id WHERE a.id=i.app_id AND NOT u.is_banned AND NOT u.must_change_password))) AND ($3 IS NULL OR i.org_id=$3) AND ($4 IS NULL OR i.id=$4) AND {ACCOUNT_AVAILABLE}", reaches = actor_reaches("$2"));
+    let filters = format!("($1 IS NULL OR i.app_id=$1) AND ($2 IS NULL OR ({reaches} AND EXISTS(SELECT 1 FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE a.id=i.app_id AND NOT u.is_banned AND NOT u.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password))) AND ($3 IS NULL OR i.org_id=$3) AND ($4 IS NULL OR i.id=$4) AND ($2 IS NULL OR $3 IS NULL OR EXISTS(SELECT 1 FROM org_memberships m JOIN users actor ON actor.id=m.user_id WHERE m.org_id=$3 AND m.user_id=$2 AND m.role='owner' AND NOT actor.is_banned AND NOT actor.must_change_password)) AND {ACCOUNT_AVAILABLE}", reaches = actor_reaches("$2"));
     // One snapshot for the count and the page.
     let mut tx = pool.begin().await?;
     let total: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM github_app_installations i WHERE {filters}"))
@@ -252,17 +252,24 @@ async fn change_in_connection(
 }
 pub async fn change_repository(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     id: i64,
     repo: i64,
     add: bool,
 ) -> Result<RepositoryChange> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     let installation: Option<(bool, Option<i64>)> = sqlx::query_as(&format!("SELECT i.all_repos,i.org_id FROM github_app_installations i JOIN users u ON u.id=$1 JOIN repositories r ON r.id=$3 WHERE i.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND ({})>=5", super::repositories::access::USER_REPO_ACCESS_SQL)).bind(actor).bind(id).bind(repo).fetch_optional(&mut *tx).await?;
     let Some((all_repos, org)) = installation else {
         return Ok(RepositoryChange::Missing);
     };
+    if let Some(token) = credential.token_id {
+        if !super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "administration").await? {
+            return Ok(RepositoryChange::Missing);
+        }
+    }
     if all_repos {
         return Ok(RepositoryChange::AllRepositories);
     }

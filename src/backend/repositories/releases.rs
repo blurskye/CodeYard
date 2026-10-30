@@ -835,12 +835,7 @@ pub async fn upload_asset(
 }
 
 fn validate_asset_fields(filename: &str, label: Option<&str>) -> Result<(), ReleaseError> {
-    if filename.is_empty()
-        || filename.len() > 255
-        || matches!(filename, "." | "..")
-        || filename.contains(['/', '\\'])
-        || filename.chars().any(char::is_control)
-    {
+    if !crate::backend::storage::valid_basename(filename, 255) {
         return Err(ReleaseError::Invalid("Asset file name is not valid"));
     }
     if label.is_some_and(|label| label.contains('\0')) {

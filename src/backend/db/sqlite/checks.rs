@@ -1,5 +1,5 @@
 use crate::backend::db::checks::{
-    Annotation, Credential, Filter, Preference, Refusal, Run, RunData, RunPatch, Suite,
+    Annotation, AutomaticSuites, Credential, Filter, Preference, Publisher, Refusal, Run, RunChange, RunData, RunDetails, RunPatch, Suite, SuiteDetails,
 };
 use anyhow::{ensure, Result};
 use sqlx::{types::Json, Sqlite, SqlitePool, Transaction};
@@ -47,6 +47,13 @@ async fn authority(
                 app = Some(app_id);
             }
         }
+        // An installation token publishes as its App.
+        let installed: Option<i64> = sqlx::query_scalar("SELECT i.app_id FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id WHERE t.token_id=?1")
+            .bind(id).fetch_optional(&mut **tx).await?;
+        if let Some(app_id) = installed {
+            publisher = format!("app:{app_id}");
+            app = Some(app_id);
+        }
         let bot: bool = sqlx::query_scalar("SELECT username=?2 FROM users WHERE id=?1")
             .bind(actor)
             .bind(crate::backend::db::ci_tokens::BOT)
@@ -72,10 +79,9 @@ async fn authority(
     Ok((publisher, app))
 }
 
-/// The GitHub App behind the newest check run named `name` in the repository, if that run
-/// came from an App.
+/// The most recent App producer of this name. A newer account-owned run must not erase its pin.
 pub async fn recent_app(pool: &SqlitePool, repo: i64, name: &str) -> Result<Option<i64>> {
-    Ok(sqlx::query_scalar::<_, Option<i64>>("SELECT s.app_id FROM check_runs r JOIN check_suites s ON s.id=r.suite_id WHERE r.repo_id=?1 AND r.name=?2 ORDER BY r.id DESC LIMIT 1")
+    Ok(sqlx::query_scalar::<_, Option<i64>>("SELECT s.app_id FROM check_runs r JOIN check_suites s ON s.id=r.suite_id WHERE r.repo_id=?1 AND r.name=?2 AND s.app_id IS NOT NULL ORDER BY r.id DESC LIMIT 1")
         .bind(repo)
         .bind(name)
         .fetch_optional(pool)
@@ -83,23 +89,36 @@ pub async fn recent_app(pool: &SqlitePool, repo: i64, name: &str) -> Result<Opti
         .flatten())
 }
 
-pub async fn application(
-    pool: &SqlitePool,
-    id: i64,
-) -> Result<Option<crate::backend::db::oauth_apps::Application>> {
-    Ok(
-        sqlx::query_as("SELECT g.id,o.owner_id,o.client_id,o.secret_hash,o.name,o.homepage,o.redirect_uri,o.created_at FROM github_apps g JOIN oauth_applications o ON o.client_id=g.client_id WHERE g.id=?1")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?,
-    )
+pub async fn publishers(pool: &SqlitePool, ids: &[i64]) -> Result<Vec<Publisher>> {
+    crate::backend::db::checks::projection_ids(ids)?;
+    if ids.is_empty() { return Ok(Vec::new()); }
+    Ok(sqlx::query_as("SELECT a.id,a.client_id,a.name,a.homepage,a.created_at,a.owner_id,u.username AS owner_login,u.is_admin AS owner_is_admin FROM github_apps a JOIN users u ON u.id=a.owner_id WHERE a.id IN (SELECT value FROM json_each(?1))").bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
 }
+
+pub async fn run_details(pool: &SqlitePool, repo: i64, ids: &[i64]) -> Result<Vec<RunDetails>> {
+    crate::backend::db::checks::projection_ids(ids)?;
+    if ids.is_empty() { return Ok(Vec::new()); }
+    Ok(sqlx::query_as("SELECT r.id AS run_id,s.*,(SELECT COUNT(*) FROM check_annotations a WHERE a.run_id=r.id) AS annotation_count FROM check_runs r JOIN check_suites s ON s.id=r.suite_id AND s.repo_id=r.repo_id WHERE r.repo_id=?1 AND r.id IN (SELECT value FROM json_each(?2))").bind(repo).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
+}
+
+pub async fn suite_details(pool: &SqlitePool, repo: i64, ids: &[i64]) -> Result<Vec<SuiteDetails>> {
+    crate::backend::db::checks::projection_ids(ids)?;
+    if ids.is_empty() { return Ok(Vec::new()); }
+    Ok(sqlx::query_as("SELECT s.id AS suite_id,(SELECT COUNT(DISTINCT r.name) FROM check_runs r WHERE r.suite_id=s.id AND r.repo_id=s.repo_id) AS run_count,c.status AS ci_status,COALESCE(c.approval_required,FALSE) AS ci_approval_required FROM check_suites s LEFT JOIN ci_runs c ON c.id=s.ci_run_id AND c.repo_id=s.repo_id WHERE s.repo_id=?1 AND s.id IN (SELECT value FROM json_each(?2))").bind(repo).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
+}
+
+pub async fn pulls_many(pool: &SqlitePool, repo: i64, heads: &[String]) -> Result<Vec<crate::backend::db::checks::Pull>> {
+    crate::backend::db::checks::projection_heads(heads)?;
+    if heads.is_empty() { return Ok(Vec::new()); }
+    Ok(sqlx::query_as("WITH heads AS (SELECT DISTINCT value AS sha FROM json_each(?2)) SELECT p.id,p.number,p.head_branch,p.base_branch,p.head_sha,p.base_sha FROM heads h CROSS JOIN pull_requests p WHERE p.id IN (SELECT id FROM pull_requests WHERE repo_id=?1 AND head_sha=h.sha AND state='open' AND head_repo_id=repo_id ORDER BY number LIMIT 100) ORDER BY p.head_sha,p.number").bind(repo).bind(serde_json::to_string(heads)?).fetch_all(pool).await?)
+}
+
 pub async fn pulls(
     pool: &SqlitePool,
     repo: i64,
     sha: &str,
 ) -> Result<Vec<crate::backend::db::checks::Pull>> {
-    Ok(sqlx::query_as("SELECT id,number,head_branch,base_branch,head_sha,base_sha FROM pull_requests WHERE repo_id=?1 AND head_sha=?2 AND state='open' AND head_repo_id=?1 ORDER BY number LIMIT 100").bind(repo).bind(sha).fetch_all(pool).await?)
+    pulls_many(pool, repo, &[sha.to_owned()]).await
 }
 pub async fn suite(pool: &SqlitePool, repo: i64, id: i64) -> Result<Option<Suite>> {
     Ok(
@@ -145,6 +164,29 @@ async fn insert_suite(
         false,
     ))
 }
+pub async fn automatic_suites(pool: &SqlitePool, repo: &crate::backend::db::models::Repository, sha: &str, branch: &str, after: i64) -> Result<AutomaticSuites> {
+    crate::backend::db::checks::validate_automatic(sha, branch, after)?;
+    let mut page = AutomaticSuites { after, ..Default::default() };
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let current: Option<crate::backend::db::models::Repository> = sqlx::query_as("SELECT * FROM repositories WHERE id=?1 AND NOT is_archived AND NOT is_gist")
+        .bind(repo.id).fetch_optional(&mut *tx).await?;
+    let Some(current) = current else { return Ok(page); };
+    if current.owner_kind != repo.owner_kind || current.owner_user_id != repo.owner_user_id || current.owner_org_id != repo.owner_org_id { return Ok(page); }
+    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let mut apps: Vec<i64> = sqlx::query_scalar(&format!("SELECT o.id FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN oauth_applications o ON o.client_id=a.client_id JOIN users owner ON owner.id=a.owner_id JOIN users u ON u.id=a.bot_id JOIN repositories r ON r.id=?1 LEFT JOIN check_suite_preferences p ON p.repo_id=r.id AND p.app_id=o.id WHERE o.id>?2 AND COALESCE(p.setting,1) AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT u.is_banned AND NOT u.must_change_password AND json_extract(a.permissions,'$.checks') IN ('write','admin') AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ({access})>=3 ORDER BY o.id LIMIT 101"))
+        .bind(repo.id).bind(after).fetch_all(&mut *tx).await?;
+    page.has_next = apps.len() > 100;
+    apps.truncate(100);
+    page.after = apps.last().copied().unwrap_or(after);
+    let sha = sha.to_ascii_lowercase();
+    for app in apps {
+        let (suite, created) = insert_suite(&mut tx, &format!("app:{app}"), Some(app), repo.id, &sha, Some(branch)).await?;
+        if created { page.suites.push(suite); }
+    }
+    tx.commit().await?;
+    Ok(page)
+}
+
 /// The check suite GitHub Actions publishes for a workflow run. Each run attempt has its own,
 /// as on GitHub; its publisher names the run, so no credential can write to it.
 pub(super) async fn insert_workflow_suite(
@@ -180,7 +222,7 @@ pub async fn create_suite(
     Ok(result)
 }
 
-async fn save(tx: &mut Transaction<'_, Sqlite>, run: &Run, input: &RunPatch) -> Result<()> {
+async fn save(tx: &mut Transaction<'_, Sqlite>, run: &Run, input: &RunPatch) -> Result<Suite> {
     sqlx::query(
         "UPDATE check_runs SET name=?2,status=?3,conclusion=?4,data=?5,updated_at=?6 WHERE id=?1",
     )
@@ -229,15 +271,14 @@ async fn save(tx: &mut Transaction<'_, Sqlite>, run: &Run, input: &RunPatch) -> 
     } else {
         None
     };
-    sqlx::query("UPDATE check_suites SET status=?2,conclusion=?3,updated_at=?4 WHERE id=?1")
-        .bind(run.suite_id)
-        .bind(status)
-        .bind(conclusion)
-        .bind(chrono::Utc::now())
-        .execute(&mut **tx)
-        .await?;
-    Ok(())
+    Ok(sqlx::query_as("UPDATE check_suites SET status=?2,conclusion=?3,updated_at=?4 WHERE id=?1 RETURNING *")
+        .bind(run.suite_id).bind(status).bind(conclusion).bind(chrono::Utc::now())
+        .fetch_one(&mut **tx).await?)
 }
+pub(crate) async fn allocate_run_id(connection: &mut sqlx::SqliteConnection) -> Result<i64> {
+    Ok(sqlx::query_scalar("INSERT INTO check_run_identities DEFAULT VALUES RETURNING id").fetch_one(connection).await?)
+}
+
 pub async fn create_run(
     pool: &SqlitePool,
     credential: Credential<'_>,
@@ -245,21 +286,21 @@ pub async fn create_run(
     sha: &str,
     branch: Option<&str>,
     input: &RunPatch,
-) -> Result<Run> {
+) -> Result<RunChange> {
     input.validate(true)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let (publisher, app) = authority(&mut tx, credential, repo, false).await?;
     let (suite, _) = insert_suite(&mut tx, &publisher, app, repo, sha, branch).await?;
-    let mut run: Run = sqlx::query_as("INSERT INTO check_runs(repo_id,suite_id,name,data,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?5) RETURNING *")
-        .bind(repo).bind(suite.id).bind(input.name.as_deref().ok_or(Refusal::Invalid)?).bind(Json(RunData::default())).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
+    let id = allocate_run_id(&mut tx).await?;
+    let mut run: Run = sqlx::query_as("INSERT INTO check_runs(repo_id,suite_id,name,data,created_at,updated_at,id) VALUES(?1,?2,?3,?4,?5,?5,?6) RETURNING *")
+        .bind(repo).bind(suite.id).bind(input.name.as_deref().ok_or(Refusal::Invalid)?).bind(Json(RunData::default())).bind(chrono::Utc::now()).bind(id).fetch_one(&mut *tx).await?;
     input.apply(&mut run)?;
-    save(&mut tx, &run, input).await?;
+    let saved_suite = save(&mut tx, &run, input).await?;
+    let completed_suite = (suite.status != "completed" && saved_suite.status == "completed").then_some(saved_suite);
     let result = sqlx::query_as("SELECT * FROM check_runs WHERE id=?1")
-        .bind(run.id)
-        .fetch_one(&mut *tx)
-        .await?;
+        .bind(run.id).fetch_one(&mut *tx).await?;
     tx.commit().await?;
-    Ok(result)
+    Ok(RunChange { run: result, completed_suite })
 }
 pub async fn update_run(
     pool: &SqlitePool,
@@ -267,7 +308,7 @@ pub async fn update_run(
     repo: i64,
     id: i64,
     input: &RunPatch,
-) -> Result<Run> {
+) -> Result<RunChange> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let (publisher, _) = authority(&mut tx, credential, repo, false).await?;
     let suite: Suite = sqlx::query_as("SELECT s.* FROM check_suites s JOIN check_runs r ON r.suite_id=s.id WHERE r.id=?1 AND r.repo_id=?2")
@@ -278,13 +319,12 @@ pub async fn update_run(
         .fetch_one(&mut *tx)
         .await?;
     input.apply(&mut run)?;
-    save(&mut tx, &run, input).await?;
+    let saved_suite = save(&mut tx, &run, input).await?;
+    let completed_suite = (suite.status != "completed" && saved_suite.status == "completed").then_some(saved_suite);
     let result = sqlx::query_as("SELECT * FROM check_runs WHERE id=?1")
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
+        .bind(id).fetch_one(&mut *tx).await?;
     tx.commit().await?;
-    Ok(result)
+    Ok(RunChange { run: result, completed_suite })
 }
 
 const RUNS: &str = " FROM check_runs r JOIN check_suites s ON s.id=r.suite_id WHERE r.repo_id=?1 AND (?2 IS NULL OR r.suite_id=?2) AND (?3 IS NULL OR s.head_sha=?3) AND (?4 IS NULL OR r.name=?4) AND (?5 IS NULL OR r.status=?5) AND (?6 IS NULL OR s.app_id=?6) AND (?7 OR NOT EXISTS(SELECT 1 FROM check_runs n WHERE n.suite_id=r.suite_id AND n.name=r.name AND n.id>r.id))";
@@ -335,7 +375,7 @@ pub async fn run_count(pool: &SqlitePool, repo: i64, filter: &Filter) -> Result<
         .fetch_one(pool)
         .await?)
 }
-const SUITES: &str = " FROM check_suites s WHERE s.repo_id=?1 AND (?2 IS NULL OR s.head_sha=?2) AND (?3 IS NULL OR s.app_id=?3) AND (?4 IS NULL OR EXISTS(SELECT 1 FROM check_runs r WHERE r.suite_id=s.id AND r.name=?4))";
+const SUITES: &str = " FROM check_suites s WHERE s.repo_id=?1 AND (?2 IS NULL OR s.head_sha=?2) AND (?3 IS NULL OR CASE WHEN s.ci_run_id IS NOT NULL THEN 15368 ELSE s.app_id END=?3) AND (?4 IS NULL OR EXISTS(SELECT 1 FROM check_runs r WHERE r.suite_id=s.id AND r.name=?4))";
 pub async fn suites(
     pool: &SqlitePool,
     repo: i64,

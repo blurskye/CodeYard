@@ -292,7 +292,7 @@ async fn effect(
         Action::AddLabel => {
             super::labels::write_item_labels_transaction(
                 tx,
-                actor,
+                None,
                 repo,
                 LabelTarget::Issue,
                 id,
@@ -301,10 +301,17 @@ async fn effect(
             )
             .await?;
             super::issue_attributes::touch(tx, id).await?;
+            let (name, color): (String, String) = sqlx::query_as("SELECT name,color FROM labels WHERE id=?1").bind(p.target_id).fetch_one(&mut **tx).await?;
             Ok((
                 Some(
-                    sqlx::query_scalar("SELECT id FROM timeline_events WHERE repo_id=?1 AND subject_kind='issue' AND subject_id=?2 AND actor_id=?3 AND kind='labeled' ORDER BY id DESC LIMIT 1")
-                        .bind(repo).bind(id).bind(actor).fetch_one(&mut **tx).await?,
+                    super::issue_attributes::event(
+                        tx,
+                        (repo, id, actor),
+                        "labeled",
+                        &name,
+                        &color,
+                    )
+                    .await?,
                 ),
                 None,
                 None,

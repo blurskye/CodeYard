@@ -812,14 +812,8 @@ pub(super) async fn run(
                 tar::Archive::new(flate2::read::GzDecoder::new(bytes.as_slice()))
                     .unpack(extracted.path())
                     .unwrap();
-                assert_eq!(
-                    extracted.path().join("projects_000001.json").exists(),
-                    !exclude
-                );
-                assert_eq!(
-                    extracted.path().join("project_fields_000001.json").exists(),
-                    !exclude
-                );
+                assert!(extracted.path().join("projects_000001.json").exists());
+                assert!(extracted.path().join("project_fields_000001.json").exists());
                 assert!(extracted.path().join("teams_000001.json").exists());
             }
         }

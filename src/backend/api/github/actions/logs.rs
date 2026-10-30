@@ -168,7 +168,11 @@ async fn download(
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
         let step = if params.contains_key("step_number") {
-            Some(i32::try_from(id(&params, "step_number")?).map_err(|_| Error::missing())?)
+            let position: usize = params["step_number"].parse().map_err(|_| Error::missing())?;
+            let steps = db::action_jobs::steps(&state.pool, repo.id, job.id)
+                .await
+                .map_err(Error::unavailable)?;
+            Some(steps.get(position).ok_or_else(Error::missing)?.number)
         } else {
             None
         };

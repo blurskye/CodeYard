@@ -241,6 +241,21 @@ pub(super) async fn require_write(
 
 pub(super) fn write_error(error: anyhow::Error) -> OperationError {
     use db::discussions::DiscussionWriteRefusal;
+    // Initial metadata now shares the create transaction, so preserve its typed refusals.
+    let metadata = error.downcast_ref::<db::assignees::AssignmentRefusal>().map(|r| (
+        matches!(r, db::assignees::AssignmentRefusal::Denied), matches!(r, db::assignees::AssignmentRefusal::NotFound), r.to_string(),
+    )).or_else(|| error.downcast_ref::<db::labels::LabelWriteRefusal>().map(|r| (
+        matches!(r, db::labels::LabelWriteRefusal::Denied), false, r.to_string(),
+    ))).or_else(|| error.downcast_ref::<db::milestones::MilestoneWriteRefusal>().map(|r| (
+        matches!(r, db::milestones::MilestoneWriteRefusal::Denied), matches!(r, db::milestones::MilestoneWriteRefusal::NotFound), r.to_string(),
+    ))).or_else(|| error.downcast_ref::<db::issue_attributes::Refusal>().map(|r| (
+        matches!(r, db::issue_attributes::Refusal::Denied), matches!(r, db::issue_attributes::Refusal::Missing), r.to_string(),
+    )));
+    if let Some((denied, missing, message)) = metadata {
+        return if denied { OperationError::Denied { code: "forbidden", message } }
+        else if missing { OperationError::Missing { code: "not_found", message } }
+        else { OperationError::Invalid { code: "validation_error", message } };
+    }
     if let Some(refusal) = error.downcast_ref::<db::relationships::Refusal>() {
         return match refusal {
             db::relationships::Refusal::Denied => OperationError::Denied {

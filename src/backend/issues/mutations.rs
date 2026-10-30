@@ -35,7 +35,22 @@ pub async fn create_issue(
     repo: String,
     req: CreateIssueRequest,
 ) -> Result<db::models::Issue, OperationError> {
-    let user = super::actor(pool, actor_id).await?;
+    create_issue_with_metadata(pool, broadcaster, actor_id, owner, repo, req, db::issues::IssueMetadata::default()).await
+}
+
+/// Validate and commit all initial metadata before announcing a new issue. Trusted native callers
+/// retain the simple wrapper; token-backed adapters retain the initiating credential here.
+pub async fn create_issue_with_metadata(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor: impl Into<db::users::tokens::Actor>,
+    owner: String,
+    repo: String,
+    req: CreateIssueRequest,
+    metadata: db::issues::IssueMetadata<'_>,
+) -> Result<db::models::Issue, OperationError> {
+    let actor = actor.into();
+    let user = super::actor(pool, actor.user_id).await?;
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -64,21 +79,24 @@ pub async fn create_issue(
     }
 
     let body = req.body.as_deref().unwrap_or("");
-    let issue = db::issues::create_issue_with_metadata(
-        pool,
-        repository.id,
-        user.id,
-        &req.title,
-        body,
-        db::issues::IssueMetadata {
-            token: req.token,
-            parent: req.parent_issue_id,
-            ..Default::default()
-        },
-    )
-    .await
-    .map_err(super::write_error)?;
+    let metadata = db::issues::IssueMetadata { parent: req.parent_issue_id.or(metadata.parent), ..metadata };
+    let issue = db::issues::create_issue_with_metadata(pool, repository.id, actor, &req.title, body, metadata)
+        .await.map_err(super::write_error)?;
 
+    // Persistence has committed. Assignment effects are best-effort and cannot turn a successful
+    // create into a metadata error that invites the caller to create the same issue again.
+    if !metadata.assignees.is_empty() {
+        match db::users::accounts::get_users_by_ids(pool, metadata.assignees).await {
+            Ok(users) => {
+                let users: Vec<_> = users.iter().collect();
+                super::assignments::announce(pool, broadcaster, &super::assignments::Target {
+                    actor: &user, repository: &repository, owner: &owner,
+                    item: db::assignees::AssignedItem::Issue(issue.id), number: issue.number, title: &issue.title,
+                }, &users).await;
+            }
+            Err(error) => tracing::warn!(issue_id = issue.id, ?error, "Initial issue assignments could not be announced"),
+        }
+    }
     let link = format!("/{owner}/{repo}/issues/{}", issue.number);
     let notified = notify_watchers(
         pool,

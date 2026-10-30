@@ -318,7 +318,7 @@ async fn contract(pg: bool) {
     assert_eq!(active["status"], "in_progress");
     assert_eq!(active["steps"][0]["conclusion"], "success");
     assert_eq!(active["runner_id"], Value::Null);
-    assert_eq!(active["check_run_url"], "");
+    assert!(active["check_run_url"].as_str().unwrap().contains("/check-runs/"));
     assert!(!active.to_string().contains(&generation));
     assert!(!active.to_string().contains("private-runtime"));
     for (path, token) in [
@@ -602,11 +602,12 @@ async fn annotations(
             assert_eq!(result.unwrap(), job);
         }
     }
-    assert!(db::action_jobs::annotations(f.pool(), other, job)
+    assert!(db::action_jobs::annotations(f.pool(), other, job, 0, 100)
         .await
         .unwrap()
-        .is_empty());
-    let path = format!("/api/v3/repos/alice/project/check-runs/{job}/annotations");
+        .1.is_empty());
+    let check = f.scalar("SELECT check_run_id FROM actions_jobs WHERE id=$1", &[job]).await;
+    let path = format!("/api/v3/repos/alice/project/check-runs/{check}/annotations");
     let (_, body) = checked(
         api,
         "checks/list-annotations",

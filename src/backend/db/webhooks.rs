@@ -128,6 +128,48 @@ pub struct NewDelivery {
     pub response_body: Option<String>,
 }
 
+/// Which deliveries by status code a history keeps: successes are 2xx, as in
+/// `WebhookDelivery::succeeded`; everything else, including deliveries without a response, failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeliveryOutcome {
+    Success,
+    Failure,
+}
+
+/// The delivery history a settings read loads, newest first. Without `bodies` the request and
+/// response bodies stay empty.
+#[derive(Clone, Copy, Debug)]
+pub struct DeliveryWindow {
+    pub bodies: bool,
+    /// Only deliveries with an id below this one.
+    pub before: Option<i64>,
+    pub outcome: Option<DeliveryOutcome>,
+    /// At most this many rows, up to 101: a page of 100 and one more to tell that another follows.
+    pub limit: i64,
+}
+
+impl Default for DeliveryWindow {
+    fn default() -> Self {
+        Self {
+            bodies: false,
+            before: None,
+            outcome: None,
+            limit: 100,
+        }
+    }
+}
+
+impl DeliveryWindow {
+    /// The SQL condition on the `status_code` column that keeps only the wanted outcome.
+    pub(crate) fn outcome_sql(&self) -> &'static str {
+        match self.outcome {
+            None => "",
+            Some(DeliveryOutcome::Success) => " AND status_code BETWEEN 200 AND 299",
+            Some(DeliveryOutcome::Failure) => " AND (status_code IS NULL OR status_code NOT BETWEEN 200 AND 299)",
+        }
+    }
+}
+
 /// The settings projection, loaded under the same authority as hook changes.
 pub struct HookSettings {
     pub hooks: Vec<WebhookSummary>,
@@ -137,7 +179,7 @@ pub struct HookSettings {
 }
 
 native_operation!(crate::backend::db::postgres::webhooks::read_settings, crate::backend::db::sqlite::webhooks::read_settings,
-    fn read_settings(pool: &DbPool, owner: HookOwner, actor_id: i64, credential: &AccountCredential<'_>, hook: Option<i64>, delivery: Option<i64>, after: i64, full_deliveries: bool) -> Result<Option<HookSettings>>);
+    fn read_settings(pool: &DbPool, owner: HookOwner, actor_id: i64, credential: &AccountCredential<'_>, hook: Option<i64>, delivery: Option<i64>, after: i64, deliveries: DeliveryWindow) -> Result<Option<HookSettings>>);
 
 native_operation!(crate::backend::db::postgres::webhooks::list_managed_webhooks, crate::backend::db::sqlite::webhooks::list_managed_webhooks,
     fn list_managed_webhooks(pool: &DbPool, owner: HookOwner, actor: i64, credential: &AccountCredential<'_>, offset: i64, limit: i64) -> Result<Option<Vec<Webhook>>>);

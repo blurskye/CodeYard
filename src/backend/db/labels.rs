@@ -89,7 +89,7 @@ native_operation!(crate::backend::db::postgres::labels::list_repo_labels_page,
 
 native_operation!(crate::backend::db::postgres::labels::list_milestone_labels,
     crate::backend::db::sqlite::labels::list_milestone_labels,
-    fn list_milestone_labels(pool: &DbPool, repo_id: i64, milestone_id: i64, limit: i64, offset: i64) -> Result<Vec<Label>>);
+    fn list_milestone_labels(pool: &DbPool, viewer: Option<i64>, repo_id: i64, milestone_id: i64, limit: i64, offset: i64) -> Result<Vec<Label>>);
 
 native_operation!(crate::backend::db::postgres::labels::list_label_usage,
     crate::backend::db::sqlite::labels::list_label_usage,

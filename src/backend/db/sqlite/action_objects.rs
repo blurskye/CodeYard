@@ -285,8 +285,9 @@ pub(crate) async fn cache_policy(
     connection: &mut sqlx::SqliteConnection,
     repo: i64,
 ) -> Result<(i64, i32)> {
-    let (gib,days):(i32,i32)=sqlx::query_as("SELECT MIN(COALESCE((SELECT cache_size_gib FROM actions_settings WHERE id=1),10),COALESCE((SELECT cache_size_gib FROM repo_actions_settings WHERE repo_id=$1),100000),COALESCE((SELECT s.cache_size_gib FROM org_actions_settings s JOIN repositories r ON r.owner_org_id=s.org_id AND r.owner_kind='org' WHERE r.id=$1),100000)),MIN(COALESCE((SELECT cache_retention_days FROM actions_settings WHERE id=1),7),COALESCE((SELECT cache_retention_days FROM repo_actions_settings WHERE repo_id=$1),365),COALESCE((SELECT s.cache_retention_days FROM org_actions_settings s JOIN repositories r ON r.owner_org_id=s.org_id AND r.owner_kind='org' WHERE r.id=$1),365))").bind(repo).fetch_one(connection).await?;
-    Ok((i64::from(gib) * 1024 * 1024 * 1024, days))
+    let (site_size,site_days,repo_size,repo_days,org_size,org_days): (Option<i32>,Option<i32>,Option<i32>,Option<i32>,Option<i32>,Option<i32>,Option<i32>) = sqlx::query_as("SELECT (SELECT cache_size_gib FROM actions_settings WHERE id=1),(SELECT cache_retention_days FROM actions_settings WHERE id=1),(SELECT cache_size_gib FROM repo_actions_settings WHERE repo_id=$1),(SELECT cache_retention_days FROM repo_actions_settings WHERE repo_id=$1),(SELECT s.cache_size_gib FROM org_actions_settings s JOIN repositories r ON r.owner_org_id=s.org_id AND r.owner_kind='org' WHERE r.id=$1),(SELECT s.cache_retention_days FROM org_actions_settings s JOIN repositories r ON r.owner_org_id=s.org_id AND r.owner_kind='org' WHERE r.id=$1)").bind(repo).fetch_one(connection).await?;
+    use crate::backend::db::actions::CacheLimit;
+    Ok((i64::from(CacheLimit::Storage.effective(site_size, org_size, repo_size)) * 1024 * 1024 * 1024, CacheLimit::Retention.effective(site_days, org_days, repo_days)))
 }
 
 /// Apply the repository's current cache size and retention limits to its existing caches.
@@ -432,7 +433,7 @@ pub async fn query_objects(
         .build_query_scalar()
         .fetch_one(&mut *tx)
         .await?;
-    let mut query = object_query(filter, "*");
+    let mut query = object_query(filter, "id,repo_id,run_id,kind,scope,name,version,size,finalized,NULL AS manifest,created_at,accessed_at,expires_at");
     let order = match filter.order {
         ObjectOrder::Created => "created_at",
         ObjectOrder::Accessed => "accessed_at",

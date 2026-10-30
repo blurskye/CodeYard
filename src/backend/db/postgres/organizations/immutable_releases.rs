@@ -14,8 +14,6 @@ pub async fn get(
     pool: &PgPool,
     actor: i64,
     org: i64,
-    offset: i64,
-    limit: i64,
 ) -> Result<OrganizationOutcome<Settings>> {
     let mut tx = begin_read(pool).await?;
     if require_read_org!(tx, actor, org) != OrgRole::Owner {
@@ -28,18 +26,20 @@ pub async fn get(
     .fetch_optional(&mut *tx)
     .await?
     .unwrap_or_else(|| "none".to_owned());
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM organization_immutable_release_repositories s JOIN repositories r ON r.id=s.repo_id WHERE s.org_id=$1 AND r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL").bind(org).fetch_one(&mut *tx).await?;
-    let repositories = if limit > 0 {
-        sqlx::query_as("SELECT r.* FROM organization_immutable_release_repositories s JOIN repositories r ON r.id=s.repo_id WHERE s.org_id=$1 AND r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL ORDER BY r.id LIMIT $2 OFFSET $3").bind(org).bind(limit).bind(offset).fetch_all(&mut *tx).await?
-    } else {
-        Vec::new()
-    };
     tx.commit().await?;
-    Ok(Applied(Settings {
-        enforced_repositories,
-        total,
-        repositories,
-    }))
+    Ok(Applied(Settings { enforced_repositories }))
+}
+
+pub async fn repositories(pool: &PgPool, actor: i64, org: i64, offset: i64, limit: i64) -> Result<OrganizationOutcome<(i64, Vec<crate::backend::db::repository_stats::RepositorySnapshot>)>> {
+    anyhow::ensure!(offset >= 0 && (1..=100).contains(&limit), "Invalid repository page");
+    let mut tx = begin_read(pool).await?;
+    if require_read_org!(tx, actor, org) != OrgRole::Owner { return Ok(Denied); }
+    let selection = "FROM organization_immutable_release_repositories s JOIN repositories r ON r.id=s.repo_id JOIN organizations o ON o.id=r.owner_org_id WHERE s.org_id=$1 AND r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL";
+    let count = sqlx::query_scalar(&format!("SELECT COUNT(*) {selection}")).bind(org).fetch_one(&mut *tx).await?;
+    let rows = sqlx::query_as(&format!("SELECT r.*,{},o.name AS owner {selection} ORDER BY r.id LIMIT $2 OFFSET $3", crate::backend::db::postgres::repository_stats::DOCUMENT_FACTS))
+        .bind(org).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Applied((count, rows)))
 }
 
 pub async fn change(
@@ -68,7 +68,7 @@ pub async fn change(
     };
     if !matches!(change, Change::Enforcement(..)) {
         let mode: Option<String> = sqlx::query_scalar(
-            "SELECT enforced_repositories FROM organization_immutable_releases WHERE org_id=$1",
+            "SELECT enforced_repositories FROM organization_immutable_releases WHERE org_id=$1 FOR UPDATE",
         )
         .bind(org)
         .fetch_optional(&mut *tx)

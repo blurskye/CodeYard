@@ -18,6 +18,7 @@ pub struct Search {
     expr: Expr,
     fields: Vec<String>,
     git: Option<String>,
+    policy_token: Option<i64>,
 }
 #[derive(Debug, sqlx::FromRow)]
 pub struct Hit {
@@ -25,18 +26,11 @@ pub struct Hit {
     pub repository_id: Option<i64>,
     pub score: i64,
 }
-/// Search must exclude refused repository scopes before matching, counting or pagination.
-pub(crate) fn credential_readable(base: &str, token: Option<i64>) -> String {
-    let Some(token) = token else { return base.to_owned(); };
-    format!("({base}) AND NOT (EXISTS(SELECT 1 FROM organization_token_policies policy WHERE policy.org_id=r.owner_org_id AND NOT policy.classic_allowed) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id={token}))")
-}
-
 pub struct Results {
     pub total: i64,
     pub items: Vec<Hit>,
 }
 pub struct Options {
-    pub token: Option<i64>,
     pub repository: Option<i64>,
     pub sort: Option<String>,
     pub ascending: bool,
@@ -58,6 +52,12 @@ pub struct Topic {
     pub repository_count: i64,
 }
 impl Search {
+    /// Counts, candidate budgets and topic usage obey classic-token policy in the native snapshot.
+    pub fn with_classic_policy(mut self, token: Option<i64>) -> Self {
+        self.policy_token = token;
+        self
+    }
+
     pub fn parse(kind: Kind, text: &str) -> Result<Self, &'static str> {
         let mut expr = discussion_search::expression(text)?;
         if kind == Kind::Repositories
@@ -98,6 +98,7 @@ impl Search {
             expr: broader(&self.expr, self.fields.iter().any(|f| f == "readme"), false),
             fields: vec!["name".into(), "description".into()],
             git: None,
+            policy_token: self.policy_token,
         }
     }
     pub fn needs_viewer(&self) -> bool {
@@ -118,6 +119,7 @@ impl Search {
             expr,
             fields,
             git: None,
+            policy_token: None,
         };
         for field in &search.fields {
             search.field(field)?;
@@ -132,6 +134,7 @@ impl Search {
         repository: Option<i64>,
     ) -> Result<Statement, &'static str> {
         let mut sql = Statement::new(postgres);
+        let readable = sql.repository_policy(readable, self.policy_token);
         let predicate = self.expr(&mut sql, &self.expr)?;
         let mut words = Vec::new();
         discussion_search::positive_text(&self.expr, false, &mut words);
@@ -422,4 +425,4 @@ pub(crate) fn extract_fields(
 native_operation!(crate::backend::db::postgres::catalog_search::search,crate::backend::db::sqlite::catalog_search::search,
     fn search(pool:&DbPool,viewer:Option<i64>,query:&Search,options:&Options)->anyhow::Result<Results>);
 native_operation!(crate::backend::db::postgres::catalog_search::topic,crate::backend::db::sqlite::catalog_search::topic,
-    fn topic(pool:&DbPool,viewer:Option<i64>,token:Option<i64>,name:&str)->anyhow::Result<Option<Topic>>);
+    fn topic(pool:&DbPool,viewer:Option<i64>,name:&str,policy_token:Option<i64>)->anyhow::Result<Option<Topic>>);

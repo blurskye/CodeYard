@@ -175,14 +175,8 @@ async fn model(
         if source_path.len() <= 4096 {
             // The code view with the line query reaches lines past the first preview.
             alert.code_url = format!(
-                "{}/blob/{}/{}?view=code&line={line}#L{line}",
-                loaded.chrome.base(),
-                instance.commit_sha,
-                source_path
-                    .split('/')
-                    .map(crate::webui::encode_component)
-                    .collect::<Vec<_>>()
-                    .join("/"),
+                "{}?view=code&line={line}#L{line}",
+                crate::webui::pages::repos::ref_path::file_url(&loaded.chrome.base(), "blob", &instance.commit_sha, source_path),
                 line = alert.line
             );
         }

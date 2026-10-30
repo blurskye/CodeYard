@@ -87,6 +87,24 @@ pub(super) async fn documents(
     for page in items.chunks(100) {
         values.extend(documents_page(pool, reader, repo, owner, page).await?.into_iter().filter(|value| !value.is_null()));
     }
+    // The pages were read by separate queries after the request's access check. Checking the
+    // reader's access again afterwards means nothing returned was read after it was lost.
+    if let Reader::Request(_, credential) = reader {
+        let current = db::repositories::records::get_repository_by_id(pool, repo.id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+        if !crate::backend::repositories::access::can_read(
+            pool,
+            credential.map(|auth| &auth.user),
+            &current,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        {
+            return Err(Error::missing());
+        }
+    }
     Ok(values)
 }
 
@@ -204,16 +222,8 @@ async fn documents_page(
             .map(|user| (user.username.clone(), user))
             .collect()
     };
-    let mut associations: HashMap<i64, &'static str> = HashMap::new();
-    for author in sorted(
-        issues
-            .values()
-            .map(|issue| issue.author_id)
-            .chain(pulls.values().map(|pull| pull.author_id))
-            .collect(),
-    ) {
-        associations.insert(author, super::pulls::association(pool, repo, author).await?);
-    }
+    let authors = sorted(issues.values().map(|issue| issue.author_id).chain(pulls.values().map(|pull| pull.author_id)).collect());
+    let associations = crate::backend::repositories::access::author_associations(pool, repo, &authors).await.map_err(Error::unavailable)?;
     let issue_labels = db::labels::get_issues_labels(pool, &issue_ids)
         .await
         .map_err(Error::unavailable)?;
@@ -297,7 +307,7 @@ async fn documents_page(
             )
         };
         value["user"] = payloads::user(&users[&author]);
-        value["author_association"] = json!(associations[&author]);
+        value["author_association"] = json!(associations.get(&author).map_or("NONE", String::as_str));
         value["closed_by"] = closed_by
             .and_then(|id| users.get(&id))
             .map_or(Value::Null, payloads::user);
@@ -450,9 +460,9 @@ async fn read(
     headers: HeaderMap,
     Path(p): Path<HashMap<String, String>>,
 ) -> Result<Json<Value>> {
-    let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
+    let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
-    Ok(Json(document(&state.pool, &repo, &p["owner"], item).await?))
+    Ok(Json(document(&state.pool, Reader::Request(&state, auth.as_ref()), &repo, &p["owner"], item).await?))
 }
 
 async fn list(
@@ -606,22 +616,8 @@ async fn list(
     .await
     .map_err(Error::unavailable)?;
     let next = rows.len() > limit;
-    let mut items = Vec::new();
-    for (id, pull) in rows {
-        items.push(
-            document(
-                &state.pool,
-                &repo,
-                &p["owner"],
-                if pull {
-                    AssignedItem::PullRequest(id)
-                } else {
-                    AssignedItem::Issue(id)
-                },
-            )
-            .await?,
-        );
-    }
+    let selected: Vec<_> = rows.into_iter().take(limit).map(|(id, pull)| if pull { AssignedItem::PullRequest(id) } else { AssignedItem::Issue(id) }).collect();
+    let items = documents(&state.pool, Reader::Request(&state, auth.as_ref()), &repo, &p["owner"], &selected).await?;
     page.response(&uri, items, next)
 }
 
@@ -645,7 +641,7 @@ pub(super) fn pull_error(
 
 fn title(value: Option<&Value>) -> Result<Option<String>> {
     match value {
-        None => Ok(None),
+        None | Some(Value::Null) => Ok(None),
         Some(Value::String(title)) => Ok(Some(title.clone())),
         Some(Value::Number(title)) if title.is_i64() || title.is_u64() => {
             Ok(Some(title.to_string()))
@@ -661,6 +657,21 @@ fn text(value: &Value, field: &str) -> Result<Option<String>> {
         Some(Value::String(text)) => Ok(Some(text.clone())),
         _ => Err(Error::invalid(format!("Invalid {field}"))),
     }
+}
+
+fn assignee_names(names: Vec<String>) -> Result<Vec<String>> {
+    let mut unique = std::collections::BTreeSet::new();
+    for name in names {
+        unique.insert(name);
+        if unique.len() > db::assignees::MAX_ASSIGNEES as usize { return Err(Error::invalid("Too many assignees")); }
+    }
+    Ok(unique.into_iter().collect())
+}
+
+async fn resolve_assignees(pool: &db::DbPool, names: &[String]) -> Result<Vec<db::models::User>> {
+    let users = db::users::accounts::get_users_by_usernames(pool, names).await.map_err(Error::unavailable)?;
+    if users.len() != names.len() { return Err(Error::invalid("User cannot be assigned")); }
+    Ok(users)
 }
 
 #[derive(Default)]
@@ -739,30 +750,11 @@ pub(in crate::backend::api) async fn metadata(
                 None => Vec::new(),
             }
         };
-        let assignable = db::assignees::list_assignable_usernames(pool, repo.id)
-            .await
-            .map_err(Error::unavailable)?;
-        let mut users = Vec::new();
-        for name in names {
-            if !assignable
-                .iter()
-                .any(|candidate| candidate.eq_ignore_ascii_case(&name))
-            {
-                return Err(Error::invalid("User cannot be assigned"));
-            }
-            let user = db::users::accounts::get_user_by_username(pool, &name)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(|| Error::invalid("User cannot be assigned"))?;
-            if !users
-                .iter()
-                .any(|candidate: &db::models::User| candidate.id == user.id)
-            {
-                users.push(user);
-            }
-        }
-        if users.len() > db::assignees::MAX_ASSIGNEES as usize {
-            return Err(Error::invalid("Too many assignees"));
+        let names = assignee_names(names)?;
+        let users = resolve_assignees(pool, &names).await?;
+        let ids: Vec<_> = users.iter().map(|user| user.id).collect();
+        if db::assignees::assignable_user_ids(pool, repo.id, &ids).await.map_err(Error::unavailable)?.len() != ids.len() {
+            return Err(Error::invalid("User cannot be assigned"));
         }
         result.assignees = Some(users);
     }
@@ -797,17 +789,18 @@ pub(in crate::backend::api) fn assignment_error(error: anyhow::Error) -> Error {
 
 pub(in crate::backend::api) async fn apply_metadata(
     state: &AppState,
-    actor: &db::models::User,
+    authentication: &auth::Authentication,
     repo: &db::models::Repository,
     item: AssignedItem,
     detail: (&str, i32, &str),
     metadata: Metadata,
 ) -> Result<()> {
+    let actor = &authentication.user;
     if let Some(kind) = metadata.issue_type {
         let AssignedItem::Issue(id) = item else {
             return Err(Error::invalid("Pull requests do not support issue types"));
         };
-        db::issue_attributes::set_type(&state.pool, repo.id, actor.id, id, kind)
+        db::issue_attributes::set_type(&state.pool, repo.id, (actor.id, authentication.token.id), id, kind)
             .await
             .map_err(super::issue_attributes::error)?;
     }
@@ -834,47 +827,12 @@ pub(in crate::backend::api) async fn apply_metadata(
         .map_err(Error::unavailable)?;
     }
     if let Some(users) = metadata.assignees {
-        let mut added = Vec::new();
-        for name in db::assignees::list_assignees(&state.pool, item)
-            .await
-            .map_err(Error::unavailable)?
-        {
-            if !users.iter().any(|user| user.username.eq_ignore_ascii_case(&name)) {
-                db::assignees::unassign_user(&state.pool, actor.id, repo.id, item, &name)
-                    .await.map_err(assignment_error)?;
-            }
-        }
-        for user in users {
-            if db::assignees::assign_user(&state.pool, actor.id, repo.id, item, user.id)
-                .await
-                .map_err(assignment_error)?
-            {
-                added.push(user.id);
-            }
-        }
+        use crate::backend::issues::assignments;
         let (owner, number, title) = detail;
-        let pull_request = matches!(item, AssignedItem::PullRequest(_));
-        let link = format!(
-            "/{owner}/{}/{}/{number}",
-            repo.name,
-            if pull_request { "pulls" } else { "issues" }
-        );
-        crate::backend::notifications::assignments::notify_assignees(
-            &state.pool,
-            &state.notification_broadcaster,
-            &crate::backend::notifications::assignments::Assignment {
-                actor,
-                repository: repo,
-                owner,
-                repo: &repo.name,
-                number,
-                pull_request,
-                title,
-                link: &link,
-            },
-            &added,
-        )
-        .await;
+        let target = assignments::Target { actor, repository: repo, owner, item, number, title };
+        let removed: Vec<_> = db::assignees::list_assignees(&state.pool, item).await.map_err(Error::unavailable)?.into_iter().filter(|name| !users.iter().any(|user| user.username == *name)).collect();
+        assignments::unassign(&state.pool, &target, &removed).await.map_err(assignment_error)?;
+        assignments::assign(&state.pool, &state.notification_broadcaster, &target, &users).await.map_err(assignment_error)?;
     }
     Ok(())
 }
@@ -886,8 +844,8 @@ async fn create(
     Json(input): Json<Value>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    let actor = auth.user;
+    let authentication = auth.ok_or_else(auth::required)?;
+    let actor = &authentication.user;
     let title = title(input.get("title"))?.ok_or_else(|| Error::invalid("Title is required"))?;
     let parent_issue_id = input
         .get("parent_issue_id")
@@ -900,10 +858,11 @@ async fn create(
         .transpose()?;
     let body = text(&input, "body")?;
     let metadata = metadata(&state.pool, &repo, &actor, &input).await?;
-    let issue = crate::backend::issues::mutations::create_issue(
+    let assignees: Vec<i64> = metadata.assignees.as_deref().unwrap_or_default().iter().map(|user| user.id).collect();
+    let issue = crate::backend::issues::mutations::create_issue_with_metadata(
         &state.pool,
         &state.notification_broadcaster,
-        actor.id,
+        (actor.id, authentication.token.id),
         p["owner"].clone(),
         repo.name.clone(),
         crate::backend::issues::mutations::CreateIssueRequest {
@@ -911,24 +870,22 @@ async fn create(
             body,
             repository_id: Some(repo.id),
             parent_issue_id,
-            token: Some(auth.token.id),
+            token: Some(authentication.token.id),
+        },
+        db::issues::IssueMetadata {
+            parent: parent_issue_id,
+            labels: metadata.labels.as_deref().unwrap_or_default(),
+            assignees: &assignees,
+            milestone: metadata.milestone.flatten(),
+            issue_type: metadata.issue_type.flatten(),
         },
     )
     .await
     .map_err(operation_error)?;
     let item = AssignedItem::Issue(issue.id);
-    apply_metadata(
-        &state,
-        &actor,
-        &repo,
-        item,
-        (&p["owner"], issue.number, &issue.title),
-        metadata,
-    )
-    .await?;
     Ok((
         StatusCode::CREATED,
-        Json(document(&state.pool, &repo, &p["owner"], item).await?),
+        Json(document(&state.pool, Reader::Request(&state, Some(&authentication)), &repo, &p["owner"], item).await?),
     ))
 }
 
@@ -939,7 +896,8 @@ async fn update(
     Json(input): Json<Value>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let authentication = auth.ok_or_else(auth::required)?;
+    let actor = &authentication.user;
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
     let title = title(input.get("title"))?;
     let body = text(&input, "body")?;
@@ -949,7 +907,16 @@ async fn update(
     if matches!(item, AssignedItem::PullRequest(_)) && metadata.issue_type.is_some() {
         return Err(Error::invalid("Pull requests do not support issue types"));
     }
+    let metadata_only = title.is_none() && body.is_none() && requested_state.is_none() && reason.is_none() && (metadata.issue_type.is_some() || metadata.labels.is_some() || metadata.assignees.is_some() || metadata.milestone.is_some());
     let (number, title) = match item {
+        AssignedItem::Issue(id) if metadata_only => {
+            let issue = db::issues::get_issue_by_id(&state.pool, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+            (issue.number, issue.title)
+        }
+        AssignedItem::PullRequest(id) if metadata_only => {
+            let pull = db::pull_requests::records::get_pull_request_by_id(&state.pool, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+            (pull.number, pull.title)
+        }
         AssignedItem::Issue(id) => {
             let issue = db::issues::get_issue_by_id(&state.pool, id)
                 .await
@@ -985,14 +952,14 @@ async fn update(
     };
     apply_metadata(
         &state,
-        &actor,
+        &authentication,
         &repo,
         item,
         (&p["owner"], number, &title),
         metadata,
     )
     .await?;
-    Ok(Json(document(&state.pool, &repo, &p["owner"], item).await?))
+    Ok(Json(document(&state.pool, Reader::Request(&state, Some(&authentication)), &repo, &p["owner"], item).await?))
 }
 
 #[derive(serde::Deserialize)]
@@ -1008,26 +975,11 @@ async fn change_assignees(
     remove: bool,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let authentication = auth.ok_or_else(auth::required)?;
+    let actor = &authentication.user;
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
-    let mut names = db::assignees::list_assignees(&state.pool, item)
-        .await
-        .map_err(Error::unavailable)?;
-    if remove {
-        names.retain(|name| {
-            !input
-                .assignees
-                .iter()
-                .any(|removed| removed.eq_ignore_ascii_case(name))
-        });
-    } else {
-        names.extend(input.assignees);
-    }
-    let plan = metadata(&state.pool, &repo, &actor, &json!({"assignees":names})).await?;
-    if plan.assignees.is_none() {
-        return Err(Error::new(StatusCode::FORBIDDEN, "Assignment denied"));
-    }
-    let current = document(&state.pool, &repo, &p["owner"], item).await?;
+    let names = assignee_names(input.assignees)?;
+    let current = document(&state.pool, Reader::Request(&state, Some(&authentication)), &repo, &p["owner"], item).await?;
     let number = current["number"]
         .as_i64()
         .and_then(|number| i32::try_from(number).ok())
@@ -1035,16 +987,15 @@ async fn change_assignees(
     let title = current["title"]
         .as_str()
         .ok_or_else(|| Error::unavailable(()))?;
-    apply_metadata(
-        &state,
-        &actor,
-        &repo,
-        item,
-        (&p["owner"], number, title),
-        plan,
-    )
-    .await?;
-    Ok(Json(document(&state.pool, &repo, &p["owner"], item).await?))
+    use crate::backend::issues::assignments;
+    let target = assignments::Target { actor: &actor, repository: &repo, owner: &p["owner"], item, number, title };
+    if remove {
+        assignments::unassign(&state.pool, &target, &names).await.map_err(assignment_error)?;
+    } else {
+        let users = resolve_assignees(&state.pool, &names).await?;
+        assignments::assign(&state.pool, &state.notification_broadcaster, &target, &users).await.map_err(assignment_error)?;
+    }
+    Ok(Json(document(&state.pool, Reader::Request(&state, Some(&authentication)), &repo, &p["owner"], item).await?))
 }
 
 async fn add_assignees(

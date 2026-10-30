@@ -12,6 +12,13 @@ use serde::de::DeserializeOwned;
 /// type, as GitHub reads it: a malformed body is refused rather than read as no options.
 pub(super) struct OptionalJson<T>(pub Option<T>);
 
+pub(super) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> super::Result<Option<T>> {
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Ok(None);
+    }
+    serde_json::from_slice(bytes).map_err(json_parse_error)
+}
+
 #[async_trait]
 impl<T, S> FromRequest<S> for OptionalJson<T>
 where
@@ -24,11 +31,6 @@ where
         let bytes = Bytes::from_request(request, state)
             .await
             .map_err(IntoResponse::into_response)?;
-        if bytes.iter().all(u8::is_ascii_whitespace) {
-            return Ok(Self(None));
-        }
-        serde_json::from_slice::<Option<T>>(&bytes)
-            .map(Self)
-            .map_err(|error| json_parse_error(error).into_response())
+        decode(&bytes).map(Self).map_err(IntoResponse::into_response)
     }
 }

@@ -94,10 +94,10 @@ async fn list(
         .map_err(super::store_error)?;
     let mut authors = BTreeSet::new();
     let deadline = Instant::now() + crate::backend::git::COMMIT_WALK_TIMEOUT;
-    // Every branch tip is walked, so an author who committed only on a feature branch is recorded.
+    // Walk branch and tag tips; tag-only and older merge-parent authors belong to the import.
     let tips: BTreeSet<&str> = refs
         .iter()
-        .filter(|(name, _)| name.starts_with("refs/heads/"))
+        .filter(|(name, _)| name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
         .map(|(_, sha)| sha.as_str())
         .collect();
     let mut seen = HashSet::new();
@@ -109,16 +109,13 @@ async fn list(
                 .await
                 .map_err(super::store_error)?;
             let count = commits.len();
-            let mut new = false;
             for commit in commits {
                 if seen.insert(commit.sha) {
-                    new = true;
                     authors.insert((commit.author_name, commit.author_email));
                 }
             }
-            // A page walked entirely from an earlier tip means this branch has joined known
-            // history, so its walk stops there.
-            if count < 100 || !new {
+            // A seen page does not prove that older merge parents have already been visited.
+            if count < 100 {
                 break;
             }
             offset += count;

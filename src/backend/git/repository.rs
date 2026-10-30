@@ -525,6 +525,9 @@ pub struct CommitFilter {
     /// Author addresses, any of which must equal the commit's, ignoring case.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub author_emails: Vec<String>,
+    /// Committer addresses use the same exact, case-insensitive matching as authors.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub committer_emails: Vec<String>,
 }
 
 impl CommitFilter {
@@ -536,6 +539,7 @@ impl CommitFilter {
             && self.until.is_none()
             && self.message.is_none()
             && self.author_emails.is_empty()
+            && self.committer_emails.is_empty()
     }
 
     fn matches(&self, commit: &git2::Commit<'_>) -> bool {
@@ -552,6 +556,13 @@ impl CommitFilter {
                 .iter()
                 .any(|address| address.eq_ignore_ascii_case(&email))
             {
+                return false;
+            }
+        }
+        if !self.committer_emails.is_empty() {
+            let committer = commit.committer();
+            let email = String::from_utf8_lossy(committer.email_bytes());
+            if !self.committer_emails.iter().any(|address| address.eq_ignore_ascii_case(&email)) {
                 return false;
             }
         }
@@ -1876,7 +1887,7 @@ pub(crate) async fn list_path_commits(
         Ok(id)
     }).await?;
     let needs_filter =
-        filter.author.is_some() || filter.message.is_some() || !filter.author_emails.is_empty();
+        filter.author.is_some() || filter.message.is_some() || !filter.author_emails.is_empty() || !filter.committer_emails.is_empty();
     let mut command = process::git_command()?;
     command
         .arg("--literal-pathspecs")

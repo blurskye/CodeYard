@@ -14,7 +14,7 @@ pub async fn search(
     let statement = query
         .statement(
             true,
-            &crate::backend::db::catalog_search::credential_readable(&super::repositories::access::readable_condition(), options.token),
+            &super::repositories::access::readable_condition(),
             options.repository,
         )
         .map_err(anyhow::Error::msg)?;
@@ -44,14 +44,15 @@ pub async fn search(
     tx.commit().await?;
     Ok(Results { total, items })
 }
-pub async fn topic(pool: &PgPool, viewer: Option<i64>, token: Option<i64>, name: &str) -> Result<Option<Topic>> {
+pub async fn topic(pool: &PgPool, viewer: Option<i64>, name: &str, policy_token: Option<i64>) -> Result<Option<Topic>> {
     let mut tx = super::repositories::discovery::search_connection(pool).await?;
-    let sql=format!("SELECT t.*,COUNT(*) AS repository_count FROM topics t JOIN repository_topics rt ON rt.topic=t.name JOIN repositories r ON r.id=rt.repo_id LEFT JOIN users u ON u.id=$1 WHERE t.name=$2 AND ({}) GROUP BY t.name",crate::backend::db::catalog_search::credential_readable(&super::repositories::access::readable_condition(), token));
-    let topic = sqlx::query_as(&sql)
-        .bind(viewer)
-        .bind(name)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let mut statement = crate::backend::db::discussion_search::Statement::new(true);
+    let readable = statement.repository_policy(&super::repositories::access::readable_condition(), policy_token);
+    let name = statement.bind(name);
+    let sql=format!("SELECT t.*,COUNT(*) AS repository_count FROM topics t JOIN repository_topics rt ON rt.topic=t.name JOIN repositories r ON r.id=rt.repo_id LEFT JOIN users u ON u.id=$1 WHERE t.name={name} AND ({readable}) GROUP BY t.name");
+    let mut query = sqlx::query_as(&sql).bind(viewer);
+    for value in &statement.args { query = query.bind(value); }
+    let topic = query.fetch_optional(&mut *tx).await?;
     tx.commit().await?;
     Ok(topic)
 }

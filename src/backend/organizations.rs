@@ -12,7 +12,7 @@ static CONVERSION_SLOTS: Semaphore = Semaphore::const_new(16);
 /// Acknowledgement follows the authoritative transaction, including for asynchronous REST requests.
 pub async fn convert_to_outside(
     pool: &DbPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     target: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {

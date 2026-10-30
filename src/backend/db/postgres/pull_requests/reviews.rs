@@ -110,8 +110,8 @@ async fn insert_comment(
 async fn insert_comment_on(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, input: &NewPullRequestComment<'_>, review_id: Option<i64>) -> Result<PullRequestComment> {
     let comment = sqlx::query_as::<_, PullRequestComment>(
         r#"
-        INSERT INTO pr_comments (pull_request_id, author_id, body, path, line, side, commit_sha, in_reply_to_comment_id, review_id,start_line,start_side)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,$10,$11)
+        INSERT INTO pr_comments (pull_request_id, author_id, body, path, line, side, commit_sha, in_reply_to_comment_id, review_id,start_line,start_side,diff_base_sha)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,$10,$11,CASE WHEN $4 IS NOT NULL THEN COALESCE((SELECT diff_base_sha FROM pr_comments WHERE id=$8),(SELECT COALESCE(fork_sha,base_sha) FROM pull_requests WHERE id=$1)) END)
         RETURNING *
         "#,
     )

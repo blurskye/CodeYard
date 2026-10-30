@@ -209,7 +209,7 @@ pub(super) async fn list_deliveries(
             ))
         })
         .transpose()?;
-    let limit = query.per_page.unwrap_or(30).clamp(1, 100);
+    let limit = super::super::pagination::page_size(query.per_page);
     let mut rows = all
         .iter()
         .filter(|delivery| {

@@ -6,15 +6,14 @@ use crate::backend::db::{
 use anyhow::{ensure, Result};
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 
-async fn write(pool: &SqlitePool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64) -> Result<Transaction<'_, Sqlite>> {
-    let actor = actor.into();
+async fn write<'a>(pool: &'a SqlitePool, actor: &crate::backend::db::credentials::Actor, org: i64) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     match super::organizations::authority::authority(&mut tx, actor.user_id, org).await? {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
     }
-    ensure!(super::credentials::organization(&mut tx, &actor, org, "organization_administration", true).await?, Refusal::Denied);
+    ensure!(super::credentials::organization(&mut tx, actor, org, "organization_administration", true).await?, Refusal::Denied);
     Ok(tx)
 }
 async fn readable(connection: &mut SqliteConnection, actor: i64, org: i64) -> Result<()> {
@@ -103,6 +102,30 @@ pub async fn list(pool: &SqlitePool, actor: i64, org: i64) -> Result<Vec<Configu
     tx.commit().await?;
     Ok(rows)
 }
+pub async fn list_window(
+    pool: &SqlitePool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    org: i64,
+    after: i64,
+    before: i64,
+    limit: i64,
+) -> Result<Vec<Configuration>> {
+    ensure!(after >= 0 && (1..=101).contains(&limit), Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, actor, org).await?;
+    let direction = if before < i64::MAX { "DESC" } else { "ASC" };
+    let rows = sqlx::query_as(&format!(
+        "SELECT * FROM code_security_configurations WHERE org_id=$1 AND id>$2 AND id<$3 ORDER BY id {direction} LIMIT $4"
+    ))
+    .bind(org)
+    .bind(after)
+    .bind(before)
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(rows)
+}
 pub async fn save(
     pool: &SqlitePool,
     actor: impl Into<crate::backend::db::credentials::Actor>,
@@ -111,8 +134,8 @@ pub async fn save(
     patch: &serde_json::Value,
 ) -> Result<Configuration> {
     let actor = actor.into();
+    let mut tx = write(pool, &actor, org).await?;
     let actor_id = actor.user_id;
-    let mut tx = write(pool, actor, org).await?;
     let current = match id {
         Some(id) => Some(configuration(&mut tx, org, id).await?),
         None => None,
@@ -135,7 +158,8 @@ pub async fn save(
     Ok(row)
 }
 pub async fn delete(pool: &SqlitePool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, id: i64) -> Result<()> {
-    let mut tx = write(pool, actor, org).await?;
+    let actor = actor.into();
+    let mut tx = write(pool, &actor, org).await?;
     configuration(&mut tx, org, id).await?;
     sqlx::query("DELETE FROM code_security_configurations WHERE org_id=$1 AND id=$2")
         .bind(org)
@@ -156,7 +180,8 @@ pub async fn set_default(
         ["all", "none", "public", "private_and_internal"].contains(&scope),
         Refusal::Invalid
     );
-    let mut tx = write(pool, actor, org).await?;
+    let actor = actor.into();
+    let mut tx = write(pool, &actor, org).await?;
     configuration(&mut tx, org, id).await?;
     let rows: Vec<Configuration> =
         sqlx::query_as("SELECT * FROM code_security_configurations WHERE org_id=$1")
@@ -215,8 +240,8 @@ pub async fn attach(
         Refusal::Invalid
     );
     let actor = actor.into();
+    let mut tx = write(pool, &actor, org).await?;
     let actor_id = actor.user_id;
-    let mut tx = write(pool, actor, org).await?;
     let config = match id {
         Some(id) => Some(configuration(&mut tx, org, id).await?),
         None => None,
@@ -235,11 +260,25 @@ pub async fn repositories(
     actor: i64,
     org: i64,
     id: i64,
+    after: i64,
+    before: i64,
+    limit: i64,
 ) -> Result<Vec<Repository>> {
+    ensure!(after >= 0 && (1..=101).contains(&limit), Refusal::Invalid);
     let mut tx = pool.begin().await?;
     readable(&mut tx, actor, org).await?;
     configuration(&mut tx, org, id).await?;
-    let rows=sqlx::query_as("SELECT r.* FROM repositories r JOIN repository_security_settings s ON s.repo_id=r.id WHERE r.owner_org_id=$1 AND s.configuration_id=$2 ORDER BY r.id").bind(org).bind(id).fetch_all(&mut *tx).await?;
+    let direction = if before < i64::MAX { "DESC" } else { "ASC" };
+    let rows = sqlx::query_as(&format!(
+        "SELECT r.* FROM repositories r JOIN repository_security_settings s ON s.repo_id=r.id WHERE r.owner_org_id=$1 AND s.configuration_id=$2 AND r.id>$3 AND r.id<$4 ORDER BY r.id {direction} LIMIT $5"
+    ))
+    .bind(org)
+    .bind(id)
+    .bind(after)
+    .bind(before)
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(rows)
 }

@@ -55,14 +55,17 @@ async fn compatible_on(
 }
 pub async fn define(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     inputs: &[DefinitionInput],
 ) -> Result<OrganizationOutcome<Vec<Definition>>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
+    if !credential(&mut tx, &grant, org, "organization_custom_properties").await? { return Ok(Denied); }
     let existing = definitions_on(&mut tx, org).await?;
     checked_definitions(inputs, &existing)?;
     for input in inputs {
@@ -84,14 +87,17 @@ pub async fn define(
 }
 pub async fn remove(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     name: &str,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
+    if !credential(&mut tx, &grant, org, "organization_custom_properties").await? { return Ok(Denied); }
     if sqlx::query("DELETE FROM organization_repository_properties WHERE org_id=$1 AND LOWER(property_name)=LOWER($2)").bind(org).bind(name).execute(&mut *tx).await?.rows_affected()==0 {return Ok(Missing);}
     tx.commit().await?;
     Ok(Applied(()))
@@ -155,15 +161,18 @@ pub(crate) async fn creation_values_on(
 }
 pub async fn set_values(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     repositories: &[String],
     values: &[ValueInput],
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
+    if !credential(&mut tx, &grant, org, "organization_custom_properties").await? { return Ok(Denied); }
     ensure!(
         !repositories.is_empty() && repositories.len() <= 30,
         invalid(
@@ -261,7 +270,7 @@ pub async fn repository(
 }
 pub async fn set_repository_values(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     repo: i64,
     values: &[ValueInput],
 ) -> Result<()> {
@@ -270,7 +279,7 @@ pub async fn set_repository_values(
 /// Native forms bind the definition's immutable identity as well as the repository.
 pub async fn set_repository_value(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     repo: i64,
     definition: i64,
     value: &ValueInput,
@@ -286,11 +295,13 @@ pub async fn set_repository_value(
 }
 async fn change_repository_values(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     repo: i64,
     values: &[ValueInput],
     expected: Option<i64>,
 ) -> Result<()> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     ensure!(
         super::super::discussions::lock_archive_authority(&mut tx, actor, repo).await?,
@@ -298,10 +309,15 @@ async fn change_repository_values(
     );
     let org:i64=sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=$1 AND owner_kind='org' AND owner_org_id IS NOT NULL AND owner_user_id IS NULL").bind(repo).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
     // Archive authority already pins membership and tenant policy; never upgrade its shared row locks.
-    let owner = matches!(
+    let mut owner = matches!(
         read_authority(&mut tx, actor, org).await?,
         Applied(OrgRole::Owner)
     );
+    if let Some(token) = grant.token_id {
+        ensure!(super::super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "administration").await?, Refusal::Denied);
+        // Account ownership cannot lend an organization-only capability to a repository token.
+        if owner { owner = super::super::users::tokens::permits_write(&mut tx, actor, token, None, Some(org), "organization_custom_properties").await?; }
+    }
     let definitions = definitions_on(&mut tx, org).await?;
     if let Some(id) = expected {
         ensure!(

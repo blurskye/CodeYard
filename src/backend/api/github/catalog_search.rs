@@ -25,6 +25,7 @@ async fn catalog(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let authentication = auth::authenticate(&state, &headers, false).await?;
+    let deadline = tokio::time::Instant::now() + state.search_time_budget;
     let viewer = authentication.as_ref().map(|a| a.user.id);
     let kind = match uri.path().rsplit('/').next() {
         Some("repositories") => Kind::Repositories,
@@ -34,7 +35,8 @@ async fn catalog(
         _ => return Err(Error::missing()),
     };
     let search =
-        Search::parse(kind, q.get("q").map_or("", String::as_str)).map_err(Error::invalid)?;
+        Search::parse(kind, q.get("q").map_or("", String::as_str)).map_err(Error::invalid)?
+            .with_classic_policy(authentication.as_ref().map(|auth| auth.token.id));
     if search.needs_viewer() && viewer.is_none() {
         return Err(auth::required());
     }
@@ -88,7 +90,6 @@ async fn catalog(
             &state.pool,
             state.cluster.as_ref(),
             viewer,
-            authentication.as_ref().map(|auth| auth.token.id),
             search,
         )
         .await
@@ -101,7 +102,6 @@ async fn catalog(
         viewer,
         &search,
         &Options {
-            token: authentication.as_ref().map(|auth| auth.token.id),
             repository,
             sort: q.get("sort").cloned(),
             ascending,
@@ -139,6 +139,7 @@ async fn catalog(
                         &state,
                         &repo,
                         authentication.as_ref(),
+                        deadline,
                     )
                     .await?
                 } else {
@@ -194,7 +195,7 @@ async fn catalog(
                 }
             }
             Kind::Topics => {
-                let Some(topic) = db::catalog_search::topic(&state.pool, viewer, authentication.as_ref().map(|auth| auth.token.id), &hit.key)
+                let Some(topic) = db::catalog_search::topic(&state.pool, viewer, &hit.key, authentication.as_ref().map(|auth| auth.token.id))
                     .await
                     .map_err(Error::unavailable)?
                 else {

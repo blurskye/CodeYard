@@ -59,6 +59,11 @@ pub async fn get_owner_fork(
     Ok(sqlx::query_as("SELECT * FROM repositories WHERE owner_kind=$1 AND (owner_user_id=$2 OR owner_org_id=$3) AND forked_from_id=$4 AND NOT is_gist").bind(kind).bind(user).bind(org).bind(forked_from).fetch_optional(pool).await?)
 }
 
+/// Resolve an owner's fork by network identity, not its mutable repository name.
+pub async fn comparison_forks(pool: &PgPool, repo: i64, owner: &str) -> Result<Vec<Repository>> {
+    Ok(sqlx::query_as("WITH RECURSIVE ancestors(id,forked_from_id) AS (SELECT id,forked_from_id FROM repositories WHERE id=$1 UNION SELECT r.id,r.forked_from_id FROM repositories r JOIN ancestors a ON a.forked_from_id=r.id), network(id) AS (SELECT id FROM ancestors WHERE forked_from_id IS NULL UNION SELECT r.id FROM repositories r JOIN network n ON r.forked_from_id=n.id) SELECT r.* FROM repositories r JOIN network n ON n.id=r.id LEFT JOIN users u ON u.id=r.owner_user_id LEFT JOIN organizations o ON o.id=r.owner_org_id WHERE (u.username=$2 OR o.name=$2) ORDER BY (r.name=(SELECT name FROM repositories WHERE id=$1)) DESC,r.id LIMIT 2").bind(repo).bind(owner).fetch_all(pool).await?)
+}
+
 pub async fn list_forks(
     pool: &PgPool,
     repo_id: i64,

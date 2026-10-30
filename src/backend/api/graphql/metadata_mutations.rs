@@ -102,7 +102,7 @@ pub(super) async fn apply(
     let owner = repository::owner(repo, request).await?;
     github::issues::apply_metadata(
         &request.state,
-        &request.auth.user,
+        &request.auth,
         repo,
         item,
         (&owner, number, title),

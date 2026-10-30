@@ -9,7 +9,7 @@ use crate::backend::{
         protection::{check_branch_write, BranchWrite, History, Refusal, WriteVia, ANY_TIP},
         pull_requests,
         store::{
-            repo_store, CommitInfo, ErrorKind, FileWrite, PreparedFile, RepoError, RepoStore,
+            repo_store, CommitIdentities, CommitInfo, ErrorKind, FileWrite, PreparedFile, RepoError, RepoStore,
             UploadWrite, MAX_EDITOR_BYTES,
         },
     },
@@ -31,6 +31,27 @@ pub enum WriteFailure {
     TooLarge,
     Encoding,
     SavedFollowupFailed,
+}
+
+/// Decode Git content with bounded normalization, accepting conventional base64 whitespace.
+pub fn decode_base64(content: &str, limit: usize) -> Result<Vec<u8>, WriteFailure> {
+    use base64::Engine;
+    let encoded_limit = limit.div_ceil(3).saturating_mul(4);
+    let mut normalized = Vec::with_capacity(content.len().min(encoded_limit));
+    for character in content.chars().filter(|character| !character.is_whitespace()) {
+        if normalized.len() >= encoded_limit {
+            return Err(WriteFailure::TooLarge);
+        }
+        if !character.is_ascii() {
+            return Err(WriteFailure::Encoding);
+        }
+        normalized.push(character as u8);
+    }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(&normalized).map_err(|_| WriteFailure::Encoding)?;
+    if bytes.len() > limit {
+        return Err(WriteFailure::TooLarge);
+    }
+    Ok(bytes)
 }
 
 #[derive(Debug)]
@@ -127,10 +148,10 @@ enum FileContent {
     Text(String),
     Bytes(Vec<u8>),
 }
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum CommitOrigin {
     Web,
-    Api,
+    Api(CommitIdentities),
 }
 
 async fn check_web_signoff(
@@ -306,11 +327,12 @@ pub async fn write_file_bytes(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: i64,
+    actor_id: impl Into<db::users::tokens::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
     content: Vec<u8>,
+    identities: CommitIdentities,
 ) -> Result<FileSave, WriteError> {
     // The caller passes the repository it authorized, so a rename cannot retarget the write.
     save_file(
@@ -323,7 +345,7 @@ pub async fn write_file_bytes(
         input,
         FileContent::Bytes(content),
         None,
-        CommitOrigin::Api,
+        CommitOrigin::Api(identities),
     )
     .await
 }
@@ -338,11 +360,12 @@ pub async fn delete_file(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: i64,
+    actor_id: impl Into<db::users::tokens::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
     new_branch: Option<&str>,
+    identities: CommitIdentities,
 ) -> Result<FileSave, WriteError> {
     save_file(
         pool,
@@ -354,7 +377,7 @@ pub async fn delete_file(
         input,
         FileContent::Bytes(Vec::new()),
         new_branch,
-        CommitOrigin::Api,
+        CommitOrigin::Api(identities),
     )
     .await
 }
@@ -474,7 +497,7 @@ async fn save_file(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: i64,
+    actor_id: impl Into<db::users::tokens::Actor>,
     owner: &str,
     repository_id: i64,
     mut input: FileWrite,
@@ -482,6 +505,8 @@ async fn save_file(
     new_branch: Option<&str>,
     origin: CommitOrigin,
 ) -> Result<FileSave, WriteError> {
+    let actor = actor_id.into();
+    let actor_id = actor.user_id;
     if input.message.trim().is_empty() {
         input.message = default_commit_message(&input);
     }
@@ -500,6 +525,7 @@ async fn save_file(
         guard_revision,
         || {
             input.validate().map_err(write_error)?;
+            if let CommitOrigin::Api(identities) = &origin { identities.validate().map_err(write_error)?; }
             if let Some(name) = new_branch {
                 check_new_branch_name(name)?;
             }
@@ -555,8 +581,10 @@ async fn save_file(
         });
     }
     let email = user.commit_email();
+    let defaults = CommitIdentities::default();
+    let identities = match &origin { CommitOrigin::Web => &defaults, CommitOrigin::Api(identities) => identities };
     let mut prepared = store
-        .prepare_file(&input, &content, &user.username, &email)
+        .prepare_file_with_identities(&input, &content, &user.username, &email, identities)
         .await
         .map_err(|error| {
             if error.is_branch_missing() {
@@ -566,6 +594,7 @@ async fn save_file(
             }
         })?;
     prepared.web_commit = matches!(origin, CommitOrigin::Web);
+    prepared.token_id = actor.token_id;
     publish_commit(
         pool,
         &store,

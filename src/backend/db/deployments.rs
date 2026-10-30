@@ -162,7 +162,23 @@ native_operation!(crate::backend::db::postgres::deployments::delete,
     fn delete(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, id: i64) -> Result<()>);
 native_operation!(crate::backend::db::postgres::deployments::create_status,
     crate::backend::db::sqlite::deployments::create_status,
-    fn create_status(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, deployment: i64, input: &NewStatus) -> Result<(Deployment, Vec<Status>)>);
+    /// Every status the call saved, each with its deployment after the change; the new status is last.
+    fn create_status(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, deployment: i64, input: &NewStatus) -> Result<Vec<(Deployment, Status)>>);
+/// Pairs the inactive statuses written for older deployments with those deployments.
+pub(in crate::backend::db) fn pair(deployments: Vec<Deployment>, statuses: Vec<Status>) -> Result<Vec<(Deployment, Status)>> {
+    let deployments: std::collections::HashMap<i64, Deployment> =
+        deployments.into_iter().map(|deployment| (deployment.id, deployment)).collect();
+    statuses
+        .into_iter()
+        .map(|status| {
+            let deployment = deployments
+                .get(&status.deployment_id)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("deployment {} vanished during the status write", status.deployment_id))?;
+            Ok((deployment, status))
+        })
+        .collect()
+}
 native_operation!(crate::backend::db::postgres::deployments::get_status,
     crate::backend::db::sqlite::deployments::get_status,
     fn get_status(pool: &DbPool, viewer: Option<i64>, deployment: i64, id: i64) -> Result<Option<Status>>);

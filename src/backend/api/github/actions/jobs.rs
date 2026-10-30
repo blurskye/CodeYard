@@ -74,7 +74,7 @@ async fn list(
         "all" => false,
         _ => return Err(Error::invalid("Invalid job filter")),
     };
-    if run.started_at.is_some()
+    if !all && run.started_at.is_some()
         && !jobs::observed(&state.pool, repo.id, run.id)
             .await
             .map_err(Error::unavailable)?
@@ -123,15 +123,12 @@ pub(in crate::backend::api::github) async fn annotations(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let annotations = jobs::annotations(&state.pool, repo.id, id)
+    let (offset, limit) = page.window()?;
+    let (total, annotations) = jobs::annotations(&state.pool, repo.id, id, offset as i64, limit as i64)
         .await
         .map_err(Error::unavailable)?;
-    let total = annotations.len();
-    let (offset, limit) = page.window()?;
     let values: Vec<_> = annotations
         .into_iter()
-        .skip(offset)
-        .take(limit)
         .map(|row| {
             let mut value = json!(row.0);
             value["start_column"] = Value::Null;
@@ -142,7 +139,7 @@ pub(in crate::backend::api::github) async fn annotations(
         })
         .collect();
     Ok((
-        page.headers(&uri, offset.saturating_add(limit) < total)?,
+        page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?,
         Json(values),
     )
         .into_response())

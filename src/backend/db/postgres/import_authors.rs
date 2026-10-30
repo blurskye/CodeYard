@@ -13,7 +13,6 @@ pub async fn record(
         super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
         ImportRefusal::Denied
     );
-    let mut rows = Vec::new();
     for authors in crate::backend::db::import_authors::identities(authors).chunks(200) {
         let mut insert = sqlx::QueryBuilder::<sqlx::Postgres>::new("INSERT INTO repository_import_authors(repo_id,identity_hash,author_name,author_email) ");
         insert.push_values(authors, |mut row, (hash, name, email)| {
@@ -21,11 +20,8 @@ pub async fn record(
         });
         insert.push(" ON CONFLICT(repo_id,identity_hash) DO NOTHING");
         insert.build().execute(&mut *tx).await?;
-        let hashes: Vec<_> = authors.iter().map(|(hash, _, _)| hash.clone()).collect();
-        rows.extend(sqlx::query_as::<_, Author>("SELECT * FROM repository_import_authors WHERE repo_id=$1 AND identity_hash=ANY($2) ORDER BY id")
-            .bind(repo).bind(hashes).fetch_all(&mut *tx).await?);
     }
-    rows.sort_by_key(|row| row.id);
+    let rows = sqlx::query_as("SELECT * FROM repository_import_authors WHERE repo_id=$1 ORDER BY id").bind(repo).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
 }

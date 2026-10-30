@@ -16,7 +16,7 @@ mod blocks;
 mod branch_operations;
 mod branches;
 mod catalog_search;
-pub(in crate::backend::api) mod checks;
+pub(crate) mod checks;
 mod code_scanning;
 mod code_security;
 mod comments;
@@ -168,7 +168,8 @@ impl Error {
         Self::new(StatusCode::NOT_FOUND, "Not Found")
     }
 
-    fn unavailable<E>(_: E) -> Self {
+    fn unavailable<E: std::fmt::Debug>(error: E) -> Self {
+        tracing::warn!(?error, "GitHub API dependency unavailable");
         Self::new(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable")
     }
 
@@ -308,6 +309,10 @@ async fn get_repository(
     ))
 }
 
+pub(super) fn empty(status: StatusCode) -> Response {
+    (status, [(header::CONTENT_LENGTH, "0")]).into_response()
+}
+
 async fn missing() -> Error {
     Error::missing()
 }
@@ -339,6 +344,7 @@ async fn responses(request: Request, next: Next) -> Response {
         .headers_mut()
         .entry(header::CACHE_CONTROL)
         .or_insert_with(|| "no-store".parse().unwrap());
+    response.headers_mut().append(header::VARY, "Accept".parse().unwrap());
     response.headers_mut().insert(
         "x-github-api-version-selected",
         "2022-11-28".parse().unwrap(),
@@ -511,6 +517,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .layer(axum::middleware::from_fn(super::http::interaction_proofs::prepare))
         .layer(axum::middleware::from_fn(auth::authorize_request))
         .layer(axum::middleware::from_fn(rate_limits::enforce))
+        .layer(axum::middleware::from_fn(auth::request_context))
         .layer(axum::middleware::from_fn(
             super::http::middleware::bounded_form_body,
         ))

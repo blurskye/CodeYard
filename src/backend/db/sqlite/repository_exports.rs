@@ -25,10 +25,11 @@ async fn selected(
     actor: i64,
     org: Option<i64>,
     ids: &[i64],
+    allow_deleted: bool,
 ) -> Result<bool> {
     for id in ids {
-        let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND (($3 IS NULL AND owner_kind='user' AND owner_user_id=$2) OR (owner_kind='org' AND owner_org_id=$3)))").bind(id).bind(actor).bind(org).fetch_one(&mut *connection).await?;
-        if !owned {
+        let owned: Option<bool> = sqlx::query_scalar("SELECT COALESCE((($3 IS NULL AND owner_kind='user' AND owner_user_id=$2) OR (owner_kind='org' AND owner_org_id=$3)),false) FROM repositories WHERE id=$1").bind(id).bind(actor).bind(org).fetch_optional(&mut *connection).await?;
+        if owned != Some(true) && !(allow_deleted && owned.is_none()) {
             return Ok(false);
         }
     }
@@ -48,6 +49,13 @@ async fn scoped(
     Ok(row)
 }
 
+/// Export enumeration is pinned by a descending ID cursor, never a shifting offset.
+pub async fn discussion_ids(pool: &SqlitePool, repo: i64, pulls: bool, before: i64, limit: i64) -> Result<Vec<i64>> {
+    anyhow::ensure!(before > 0 && (1..=100).contains(&limit), ExportRefusal::Invalid);
+    let table = if pulls { "pull_requests" } else { "issues" };
+    Ok(sqlx::query_scalar(&format!("SELECT id FROM {table} WHERE repo_id=$1 AND id<$2 ORDER BY id DESC LIMIT $3")).bind(repo).bind(before).bind(limit).fetch_all(pool).await?)
+}
+
 pub async fn create(
     pool: &SqlitePool,
     actor: i64,
@@ -60,7 +68,7 @@ pub async fn create(
     anyhow::ensure!(
         ids.len() <= 100
             && ids.iter().collect::<std::collections::BTreeSet<_>>().len() == ids.len()
-            && selected(&mut tx, actor, org, ids).await?
+            && selected(&mut tx, actor, org, ids, false).await?
             && (!ids.is_empty() || options.org_metadata_only)
             && (!options.org_metadata_only || (org.is_some() && ids.is_empty())),
         ExportRefusal::Invalid
@@ -108,7 +116,7 @@ pub async fn by_guid(
         None
     };
     if let Some(row) = &row {
-        if !selected(&mut tx, actor, row.owner_org_id, &row.repository_ids()?).await? {
+        if !selected(&mut tx, actor, row.owner_org_id, &row.repository_ids()?, row.state == "exported").await? {
             return Ok(None);
         }
     }

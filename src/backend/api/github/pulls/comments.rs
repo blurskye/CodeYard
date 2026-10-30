@@ -73,14 +73,14 @@ pub(super) async fn document(
 /// Diffs a comment list keeps in memory at once, however many revision pairs its page names.
 const MAX_CACHED_DIFFS: usize = 8;
 
-/// Comments are anchored to pairs of revisions. A list reuses each pair's diff while it is held.
+/// Comments retain their original base. A page reuses only the selected file's diff.
 async fn document_cached(
     state: &AppState,
     owner: &str,
     repo: &db::models::Repository,
     pull: &db::models::PullRequest,
     comment: &db::models::PullRequestComment,
-    diffs: &mut HashMap<(String, String), Vec<DiffFileInfo>>,
+    diffs: &mut HashMap<(String, String, String), Vec<DiffFileInfo>>,
 ) -> Result<Value> {
     let user = db::users::accounts::get_user_by_id(&state.pool, comment.author_id)
         .await
@@ -96,19 +96,20 @@ async fn document_cached(
     value["user"] = payloads::user(&user);
     value["author_association"] = json!(association(&state.pool, repo, user.id).await?);
     let key = (
-        pull.diff_base().to_owned(),
+        comment.diff_base_sha.as_deref().unwrap_or_else(|| pull.diff_base()).to_owned(),
         comment
             .commit_sha
             .as_deref()
             .unwrap_or(&pull.head_sha)
             .to_owned(),
+        comment.path.clone().unwrap_or_default(),
     );
     if !diffs.contains_key(&key) {
         if diffs.len() >= MAX_CACHED_DIFFS {
             diffs.clear();
         }
         let diff = repo_store(repo, state.cluster.as_ref())
-            .diff(&key.0, &key.1)
+            .diff_file(&key.0, &key.1, &key.2)
             .await
             .map_err(super::store_error)?;
         diffs.insert(key.clone(), diff.files);
@@ -257,7 +258,10 @@ pub(super) async fn prepare_with_diff(
         if let Some(position) = input.position.filter(|_| line.is_none()) {
             let loaded;
             let diff = if let Some(diff) = cached { diff } else {
-                loaded = repo_store(repo, state.cluster.as_ref()).diff(pull.diff_base(), &pull.head_sha).await.map_err(super::store_error)?;
+                loaded = repo_store(repo, state.cluster.as_ref())
+                    .diff_file(pull.diff_base(), input.commit_id.as_deref().unwrap_or(&pull.head_sha), path)
+                    .await
+                    .map_err(super::store_error)?;
                 &loaded
             };
             let row = diff

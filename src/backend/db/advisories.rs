@@ -264,6 +264,7 @@ pub struct Advisory {
     pub document: String,
     pub report_id: Option<i64>,
     pub report_accepted: bool,
+    pub revision: i64,
     pub private_fork_id: Option<i64>,
     pub cve_requested_at: Option<DateTime<Utc>>,
     pub publisher_id: Option<i64>,
@@ -337,6 +338,8 @@ native_operation!(crate::backend::db::postgres::advisories::get,crate::backend::
     fn get(pool:&DbPool,actor:Option<i64>,repo:i64,ghsa:&str)->Result<Option<Advisory>>);
 native_operation!(crate::backend::db::postgres::advisories::create,crate::backend::db::sqlite::advisories::create,
     fn create(pool:&DbPool,actor:i64,repo:i64,value:&Value,report:bool)->Result<Advisory>);
+native_operation!(crate::backend::db::postgres::advisories::discard_created,crate::backend::db::sqlite::advisories::discard_created,
+    fn discard_created(pool:&DbPool,actor:i64,created:&Advisory)->Result<bool>);
 native_operation!(crate::backend::db::postgres::advisories::update,crate::backend::db::sqlite::advisories::update,
     fn update(pool:&DbPool,actor:i64,repo:i64,ghsa:&str,patch:&Value)->Result<Advisory>);
 native_operation!(crate::backend::db::postgres::advisories::request_cve,crate::backend::db::sqlite::advisories::request_cve,

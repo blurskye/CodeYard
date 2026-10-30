@@ -45,15 +45,20 @@ pub(crate) fn validate_identity(name: &str, email: &str) -> std::result::Result<
 }
 
 impl Signature {
-    fn git(&self) -> Result<git2::Signature<'static>> {
+    pub(crate) fn validate(&self) -> std::result::Result<(), RepoError> {
         validate_identity(&self.name, &self.email)?;
         // libgit2 writes object dates as unsigned 32-bit seconds, so other dates would wrap.
         if self
             .date
             .is_some_and(|date| u32::try_from(date.timestamp()).is_err())
         {
-            return Err(invalid("Git dates must fall between 1970 and 2106").into());
+            return Err(invalid("Git dates must fall between 1970 and 2106"));
         }
+        Ok(())
+    }
+
+    fn git(&self) -> Result<git2::Signature<'static>> {
+        self.validate()?;
         let signature = match self.date {
             Some(date) => git2::Signature::new(
                 &self.name,

@@ -100,6 +100,8 @@ async fn run(
             boolean(&q, "collab", false)?,
             boolean(&q, "orgs", false)?,
         ])
+    } else if q.get("filter").is_some_and(|filter| filter == "repos") {
+        Some([true, true, true])
     } else {
         None
     };
@@ -113,7 +115,8 @@ async fn run(
         scopes,
         pulls,
     })
-    .map_err(Error::invalid)?;
+    .map_err(Error::invalid)?
+    .with_classic_policy(Some(auth.token.id));
     let (offset, limit) = page.window()?;
     let result = db::discussion_search::search(
         &state.pool,

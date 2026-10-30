@@ -312,7 +312,7 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                 &db::users::accounts::AccountCredential::Session(&revoked), hook)
                 .await.unwrap().is_none());
             let snapshot =
-                webhooks::read_settings(f.pool(), scope, admin, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), admin).await), Some(hook), Some(id), 0, false)
+                webhooks::read_settings(f.pool(), scope, admin, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), admin).await), Some(hook), Some(id), 0, Default::default())
                     .await
                     .unwrap()
                     .unwrap();
@@ -346,7 +346,7 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                 Some(hook),
                 Some(id),
                 0,
-                false
+                Default::default()
             )
             .await
             .unwrap()

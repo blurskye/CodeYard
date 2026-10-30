@@ -51,17 +51,17 @@ pub(super) async fn search_document(
     state: &AppState,
     repo: &Repository,
     viewer: Option<&auth::Authentication>,
+    deadline: tokio::time::Instant,
 ) -> Result<Value> {
     let mut value = document(state, repo, viewer).await?;
-    let git = crate::backend::repositories::catalog_search::git_facts(
-        repo,
-        state.cluster.as_ref(),
-        false,
-    )
-    .await
-    .map_err(Error::unavailable)?;
-    value["license"] = git
-        .license
+    let license = match tokio::time::timeout_at(deadline, crate::backend::repositories::catalog_search::git_facts(
+        repo, state.cluster.as_ref(), false,
+    )).await {
+        Ok(Ok(git)) => git.license,
+        // Optional Git decoration must not hide database search results.
+        Ok(Err(_)) | Err(_) => None,
+    };
+    value["license"] = license
         .and_then(crate::backend::repositories::templates::license)
         .map(|template| super::meta::license_document(template, false))
         .unwrap_or(Value::Null);
@@ -847,9 +847,10 @@ async fn set_property_values(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let Json(input) = input.map_err(super::json_error)?;
+    let auth = auth.ok_or_else(auth::required)?;
     db::organizations::properties::set_repository_values(
         &state.pool,
-        auth.ok_or_else(auth::required)?.user.id,
+        (auth.user.id, auth.token.id),
         repo.id,
         &input.properties,
     )

@@ -597,6 +597,16 @@ impl LocalStore {
         Ok(change)
     }
 
+    /// Recheck the initiating contents credential on a write that publishes no ref yet.
+    async fn check_contents_grant(&self, pool: &db::DbPool, repo: i64, actor: i64, token: Option<i64>) -> Result<(), RepoError> {
+        let Some(token) = token else { return Ok(()) };
+        if !db::users::tokens::repository_write(pool, token, actor, repo, "contents").await
+            .map_err(|_| RepoError::authority_unavailable())? {
+            return Err(RepoError::write_denied());
+        }
+        Ok(())
+    }
+
     /// Recheck the initiating contents credential at publication. Without workflows permission,
     /// updates must also leave workflow files as they are or as an existing branch has them.
     /// The contents check runs last, after the possibly slow tree inspection, so a credential
@@ -623,11 +633,7 @@ impl LocalStore {
             .await
             .map_err(|_| RepoError::workflow_denied())?;
         }
-        if !db::users::tokens::repository_write(pool, token, actor, repo, "contents").await
-            .map_err(|_| RepoError::authority_unavailable())? {
-            return Err(RepoError::write_denied());
-        }
-        Ok(())
+        self.check_contents_grant(pool, repo, actor, Some(token)).await
     }
 
     pub(super) async fn git_tree(
@@ -659,6 +665,7 @@ impl LocalStore {
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
+        token: Option<i64>,
         input: git::objects::ObjectWrite,
         bytes: &[u8],
     ) -> Result<String, RepoError> {
@@ -670,7 +677,8 @@ impl LocalStore {
         if bytes.len() > limit {
             return Err(RepoError::response_too_large());
         }
-        let _lock = git::locks::lock(self.path()).await;
+        let lock = Arc::new(git::locks::lock(self.path()).await);
+        let permit = process::operation_slot(process::RPC_TIMEOUT).await.map_err(|_| unavailable("Git operation timed out"))?;
         let repository = live_write(
             pool,
             repo_id,
@@ -681,10 +689,14 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
+        self.check_contents_grant(pool, repo_id, actor, token).await?;
         let bytes = bytes.to_vec();
-        let sha = self
-            .blocking(move |path| git::objects::write(path, input, &bytes))
-            .await?;
+        let path = self.path().to_owned();
+        let held = lock.clone();
+        let sha = tokio::task::spawn_blocking(move || {
+            let _held = (held, permit);
+            git::objects::write(&path, input, &bytes)
+        }).await.map_err(|_| unavailable("Git did not finish"))?.map_err(RepoError::from)?;
         // An object no ref names is not in any replica pack. In a replicated repository a
         // hidden ref keeps it, and the ref change makes replicas copy it like any other
         // accepted write. A single server keeps it until Git prunes unreachable objects.
@@ -1848,6 +1860,10 @@ impl LocalStore {
         editor::prepare(self.path(), write, content, author, email).await
     }
 
+    pub(super) async fn prepare_file_with_identities(&self, write: &FileWrite, content: &[u8], author: &str, email: &str, identities: &editor::CommitIdentities) -> Result<editor::PreparedFile, RepoError> {
+        editor::prepare_with_identities(self.path(), write, content, author, email, identities).await
+    }
+
     pub(super) async fn prepare_upload(
         &self,
         write: &editor::UploadWrite,
@@ -1953,6 +1969,7 @@ impl LocalStore {
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
+        self.check_publication_grant(pool, repo_id, actor, prepared.token_id, vec![(prepared.expected.clone().unwrap_or_else(|| editor::ZERO.to_owned()), prepared.commit.sha.clone())], None).await?;
         let commit = publication
             .scope(editor::publish(self.path(), prepared))
             .await?;

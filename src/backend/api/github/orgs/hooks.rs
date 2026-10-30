@@ -8,7 +8,7 @@ use crate::backend::{
     },
     db::{
         models::{Organization, Webhook},
-        webhooks::{self as hooks, HookOwner, HookSettings},
+        webhooks::{self as hooks, DeliveryWindow, HookOwner, HookSettings},
     },
     webhooks::{
         payloads,
@@ -71,7 +71,7 @@ async fn snapshot(
     actor: &auth::Authentication,
     hook: i64,
     delivery: Option<i64>,
-    history: bool,
+    history: Option<DeliveryWindow>,
 ) -> Result<HookSettings> {
     let settings = hooks::read_settings(
         &state.pool,
@@ -81,7 +81,7 @@ async fn snapshot(
         Some(hook),
         delivery,
         0,
-        history,
+        history.unwrap_or_default(),
     )
     .await
     .map_err(Error::unavailable)?
@@ -139,7 +139,7 @@ async fn get_hook(
         &actor,
         id(&params, "hook_id")?,
         None,
-        false,
+        None,
     )
     .await?;
     Ok(Json(document(&org.name, snapshot.hook.as_ref().unwrap())))
@@ -156,7 +156,7 @@ async fn get_config(
         &actor,
         id(&params, "hook_id")?,
         None,
-        false,
+        None,
     )
     .await?;
     Ok(Json(payloads::webhook_config(
@@ -272,7 +272,7 @@ async fn create(
     )
     .await
     .map_err(error)?;
-    let hook = snapshot(&state, org.id, &actor, id, None, false)
+    let hook = snapshot(&state, org.id, &actor, id, None, None)
         .await?
         .hook
         .unwrap();
@@ -306,7 +306,7 @@ async fn update(
     .map_err(error)?;
     Ok(Json(document(
         &org.name,
-        &snapshot(&state, org.id, &actor, id, None, false)
+        &snapshot(&state, org.id, &actor, id, None, None)
             .await?
             .hook
             .unwrap(),
@@ -334,7 +334,7 @@ async fn update_config(
     .await
     .map_err(error)?;
     Ok(Json(payloads::webhook_config(
-        &snapshot(&state, org.id, &actor, id, None, false)
+        &snapshot(&state, org.id, &actor, id, None, None)
             .await?
             .hook
             .unwrap(),
@@ -404,7 +404,7 @@ async fn delivery(
         &actor,
         id(&params, "hook_id")?,
         Some(id(&params, "delivery_id")?),
-        false,
+        None,
     )
     .await?;
     Ok(Json(payloads::webhook_delivery(
@@ -420,13 +420,14 @@ async fn deliveries(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (org, actor) = actor(&state, &headers, &params["org"], false).await?;
+    let window = query.window(true)?;
     let snapshot = snapshot(
         &state,
         org.id,
         &actor,
         id(&params, "hook_id")?,
         None,
-        true,
+        Some(window),
     )
     .await?;
     let (headers, rows) = delivery_page(snapshot.deliveries, query, &uri)?;

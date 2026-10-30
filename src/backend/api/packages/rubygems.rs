@@ -185,14 +185,7 @@ fn md5(bytes: &[u8]) -> String {
 fn compact(body: String, method: &Method, headers: &HeaderMap) -> Result<Response> {
     let bytes = body.into_bytes();
     let etag = format!("\"{}\"", md5(&bytes));
-    if headers
-        .get(header::IF_NONE_MATCH)
-        .and_then(|h| h.to_str().ok())
-        .is_some_and(|h| {
-            h.split(',')
-                .any(|v| v.trim().trim_start_matches("W/") == etag || v.trim() == "*")
-        })
-    {
+    if crate::backend::api::http::static_files::not_modified(headers, &etag) {
         return Ok((StatusCode::NOT_MODIFIED, [(header::ETAG, etag)]).into_response());
     }
     let mut start = 0;

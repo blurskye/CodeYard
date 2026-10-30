@@ -76,13 +76,8 @@ impl GistEdit {
     }
 }
 pub fn valid_gist_filename(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= MAX_GIST_FILENAME_BYTES
-        && !matches!(name, "." | "..")
+    crate::backend::storage::valid_basename(name, MAX_GIST_FILENAME_BYTES)
         && !name.eq_ignore_ascii_case(".git")
-        && !name
-            .chars()
-            .any(|c| c.is_control() || matches!(c, '/' | '\\'))
 }
 fn invalid() -> RepoError {
     RepoError::new(ErrorKind::Invalid, "Invalid gist files or description")

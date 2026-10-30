@@ -86,6 +86,16 @@ pub async fn create(
     tx.commit().await?;
     Ok(row)
 }
+/// Compensates failed provisioning only while the newly created draft is untouched.
+pub async fn discard_created(pool: &PgPool, actor: i64, created: &Advisory) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    if !super::discussions::lock_repository_mutation_authority(&mut tx, actor, created.repo_id).await? { return Ok(false); }
+    let deleted = sqlx::query("DELETE FROM repository_advisories WHERE id=$1 AND repo_id=$2 AND author_id=$3 AND revision=$4 AND state='draft' AND private_fork_id IS NULL AND report_id IS NULL AND cve_requested_at IS NULL")
+        .bind(created.id).bind(created.repo_id).bind(actor).bind(created.revision).execute(&mut *tx).await?.rows_affected() == 1;
+    tx.commit().await?;
+    Ok(deleted)
+}
+
 async fn administration(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     actor: i64,
@@ -162,7 +172,7 @@ pub async fn update(
     } else {
         None
     };
-    let updated: Advisory=sqlx::query_as("UPDATE repository_advisories SET document=$3,state=$4,updated_at=$5,published_at=$6,publisher_id=$7,closed_at=$8,report_accepted=$9 WHERE repo_id=$1 AND ghsa_id=$2 RETURNING *").bind(repo).bind(ghsa).bind(serde_json::to_string(&data)?).bind(state).bind(now).bind(published_at).bind(publisher).bind(closed_at).bind(row.report_accepted||(row.report_id.is_some()&&state=="draft")).fetch_one(&mut *tx).await?;
+    let updated: Advisory=sqlx::query_as("UPDATE repository_advisories SET revision=revision+1,document=$3,state=$4,updated_at=$5,published_at=$6,publisher_id=$7,closed_at=$8,report_accepted=$9 WHERE repo_id=$1 AND ghsa_id=$2 RETURNING *").bind(repo).bind(ghsa).bind(serde_json::to_string(&data)?).bind(state).bind(now).bind(published_at).bind(publisher).bind(closed_at).bind(row.report_accepted||(row.report_id.is_some()&&state=="draft")).fetch_one(&mut *tx).await?;
     if state == "published" {
         super::super::dependabot_alerts::published(updated.clone())?;
     }
@@ -183,7 +193,7 @@ pub async fn request_cve(pool: &PgPool, actor: i64, repo: i64, ghsa: &str) -> Re
             && Data::from_row(&row)?.cve_id.is_none(),
         Refusal::Conflict
     );
-    sqlx::query("UPDATE repository_advisories SET cve_requested_at=$3,updated_at=$3 WHERE repo_id=$1 AND ghsa_id=$2").bind(repo).bind(ghsa).bind(Utc::now()).execute(&mut *tx).await?;
+    sqlx::query("UPDATE repository_advisories SET revision=revision+1,cve_requested_at=$3,updated_at=$3 WHERE repo_id=$1 AND ghsa_id=$2").bind(repo).bind(ghsa).bind(Utc::now()).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -203,7 +213,7 @@ pub async fn attach_fork(
     let changed = sqlx::query("UPDATE repositories SET visibility_locked=true WHERE id=$1 AND is_private AND owner_kind='user' AND owner_user_id=$2 AND forked_from_id=$3")
         .bind(fork).bind(actor).bind(repo).execute(&mut *tx).await?.rows_affected();
     anyhow::ensure!(changed == 1, Refusal::Denied);
-    sqlx::query("UPDATE repository_advisories SET private_fork_id=$3,updated_at=$4 WHERE repo_id=$1 AND ghsa_id=$2").bind(repo).bind(ghsa).bind(fork).bind(Utc::now()).execute(&mut *tx).await?;
+    sqlx::query("UPDATE repository_advisories SET revision=revision+1,private_fork_id=$3,updated_at=$4 WHERE repo_id=$1 AND ghsa_id=$2").bind(repo).bind(ghsa).bind(fork).bind(Utc::now()).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
