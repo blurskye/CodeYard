@@ -293,6 +293,7 @@ pub(crate) async fn reviewers(
             .flatten()
             .collect()
     };
+    let requested_ids: HashSet<i64> = requested.iter().map(|user| user.id).collect();
     let mut reviewers: Vec<pulls::Reviewer> = decisions
         .into_iter()
         .filter_map(|decision| {
@@ -308,16 +309,17 @@ pub(crate) async fn reviewers(
                 status,
                 stale: status != pulls::ReviewerStatus::Dismissed
                     && decision.commit_sha.as_deref() != Some(head),
-                pending: requested.iter().any(|user| user.id == decision.author_id),
+                pending: requested_ids.contains(&decision.author_id),
                 code_owner,
             })
         })
         .collect();
+    let mut seen: HashSet<String> = reviewers
+        .iter()
+        .map(|reviewer| reviewer.username.clone())
+        .collect();
     for user in requested {
-        if !reviewers
-            .iter()
-            .any(|reviewer| reviewer.username == user.username)
-        {
+        if seen.insert(user.username.clone()) {
             let code_owner = owner_ids.contains(&user.id);
             reviewers.push(pulls::Reviewer {
                 username: user.username,
