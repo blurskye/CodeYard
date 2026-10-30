@@ -12,7 +12,7 @@ use crate::backend::repositories::store::repo_store;
 use crate::webui::app::Page;
 use crate::webui::components::charts::{normalize_days, DailyActivity};
 use crate::webui::pages::repos::insights::{
-    Contributor, DependencyRow, Fork, Page as InsightsPage, Week, WorkflowUsage, FORKS_PER_PAGE,
+    Contributor, DependencyRow, Fork, Page as InsightsPage, Week, WorkflowUsage, CONTRIBUTORS_SHOWN, FORKS_PER_PAGE,
 };
 use crate::webui::pages::repos::page::Page as RepoPage;
 use axum::extract::{Path, State};
@@ -327,17 +327,20 @@ async fn contributors(
         Ok(opened) => opened,
         Err(response) => return response,
     };
-    let found = match repo_store(&loaded.repository, ctx.state.cluster.as_ref())
+    let mut found = match repo_store(&loaded.repository, ctx.state.cluster.as_ref())
         .contributors()
         .await
     {
         Ok(found) => found,
         Err(error) => return chrome::store_error(&ctx, Some(&loaded.chrome), error),
     };
+    found.sort_by(|a, b| b.commits.cmp(&a.commits).then_with(|| a.name.cmp(&b.name)));
+    let omitted = found.len().saturating_sub(CONTRIBUTORS_SHOWN);
+    found.truncate(CONTRIBUTORS_SHOWN);
     let Ok(accounts) = contributor_accounts(&ctx.state.pool, &found).await else {
         return chrome::unavailable(&ctx);
     };
-    let mut rows: Vec<Contributor> = found
+    let rows: Vec<Contributor> = found
         .into_iter()
         .map(|contributor| Contributor {
             username: accounts
@@ -347,12 +350,11 @@ async fn contributors(
             commits: i64::from(contributor.commits),
         })
         .collect();
-    rows.sort_by(|a, b| b.commits.cmp(&a.commits).then_with(|| a.name.cmp(&b.name)));
     show(
         &ctx,
         loaded,
         "Contributors",
-        InsightsPage::Contributors { rows },
+        InsightsPage::Contributors { rows, omitted },
     ).await
 }
 

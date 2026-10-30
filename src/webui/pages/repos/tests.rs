@@ -605,6 +605,7 @@ fn insight_pages() -> Vec<InsightsPage> {
             ],
         },
         InsightsPage::Contributors {
+            omitted: 0,
             rows: vec![
                 Contributor {
                     name: hostile.into(),

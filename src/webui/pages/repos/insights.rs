@@ -26,6 +26,8 @@ pub enum Page {
     },
     Contributors {
         rows: Vec<Contributor>,
+        #[serde(default)]
+        omitted: usize,
     },
     Community {
         health_percentage: usize,
@@ -165,7 +167,7 @@ pub fn render(repo: &RepoChrome, page: Page) -> Element {
             ul {for check in checks {li {class:"repo-settings-row",strong {"{check.name}"} span {if check.present {"Present"} else {"Missing"}} if let Some(href)=check.href {NavLink {href,"View file"}}}}}
             p {"Add missing files with the repository editor. Public .github repositories can supply shared community files."}
         }},
-        Page::Contributors { rows } => contributors(&rows),
+        Page::Contributors { rows, omitted } => contributors(&rows, omitted),
         Page::CodeFrequency { weeks } => code_frequency(repo, &weeks),
         Page::Actions { days, workflows } => actions(repo, &path, days, &workflows),
         Page::Forks {
@@ -254,9 +256,9 @@ fn pulse(path: &str, days: i32, activity: &[DailyActivity]) -> Element {
     }
 }
 
-fn contributors(rows: &[Contributor]) -> Element {
+fn contributors(rows: &[Contributor], omitted: usize) -> Element {
     let top = rows.first().map_or(1, |row| row.commits.max(1));
-    let hidden = rows.len().saturating_sub(CONTRIBUTORS_SHOWN);
+    let hidden = omitted.saturating_add(rows.len().saturating_sub(CONTRIBUTORS_SHOWN));
     rsx! {
         {heading("Contributors", "Authors of the commits on every branch, by number of commits.", None)}
         if rows.is_empty() {
