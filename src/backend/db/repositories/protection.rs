@@ -30,6 +30,17 @@ pub enum ProtectionWriteRefusal {
     RuleLimit,
 }
 
+pub struct ProtectionSnapshot {
+    pub repository_id: i64,
+    pub rules: Vec<BranchProtectionRule>,
+    pub users: std::collections::HashMap<i64, String>,
+    pub teams: std::collections::HashMap<i64, String>,
+}
+
+native_operation!(crate::backend::db::postgres::repositories::protection::read_protection_snapshot,
+    crate::backend::db::sqlite::repositories::protection::read_protection_snapshot,
+    fn read_protection_snapshot(pool: &DbPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo_id: i64) -> Result<ProtectionSnapshot>);
+
 /// Room for the longest server-owned context, `gitserv/workflow/` and a workflow path.
 const MAX_CHECK_BYTES: usize = 512;
 

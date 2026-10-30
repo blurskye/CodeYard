@@ -6,6 +6,41 @@ use crate::backend::db::repositories::protection::{
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+pub async fn read_protection_snapshot(
+    pool: &SqlitePool,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    repo_id: i64,
+) -> Result<crate::backend::db::repositories::protection::ProtectionSnapshot> {
+    let actor = actor.into();
+    let mut tx = pool.begin().await?;
+    anyhow::ensure!(super::super::discussions::lock_settings_read_authority(&mut tx, actor.user_id(), repo_id, true).await?, ProtectionWriteRefusal::Denied);
+    if let Some(credential) = actor.credential() {
+        super::super::users::transitions::require_read_account(&mut tx, actor.user_id(), &credential).await?;
+    }
+    let rules: Vec<BranchProtectionRule> = sqlx::query_as("SELECT * FROM branch_protection_rules WHERE repo_id=?1 ORDER BY pattern")
+        .bind(repo_id).fetch_all(&mut *tx).await?;
+    let mut users = Vec::new();
+    let mut teams = Vec::new();
+    for rule in &rules {
+        users.extend(rule.push_allowances.iter().chain(&rule.force_push_allowances).copied());
+        teams.extend(rule.push_team_allowances.iter().copied());
+    }
+    users.sort_unstable(); users.dedup();
+    teams.sort_unstable(); teams.dedup();
+    let users: Vec<(i64, String)> = if users.is_empty() { Vec::new() } else {
+        sqlx::query_as("SELECT id,username FROM users WHERE id IN (SELECT value FROM json_each(?1))")
+            .bind(serde_json::to_string(&users)?).fetch_all(&mut *tx).await?
+    };
+    let teams: Vec<(i64, String)> = if teams.is_empty() { Vec::new() } else {
+        sqlx::query_as("SELECT t.id,t.slug FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL WHERE r.id=?1 AND t.id IN (SELECT value FROM json_each(?2)) AND t.privacy IN ('visible','secret')")
+            .bind(repo_id).bind(serde_json::to_string(&teams)?).fetch_all(&mut *tx).await?
+    };
+    tx.commit().await?;
+    Ok(crate::backend::db::repositories::protection::ProtectionSnapshot {
+        repository_id: repo_id, rules, users: users.into_iter().collect(), teams: teams.into_iter().collect(),
+    })
+}
+
 pub async fn list_branch_protection_rules(
     pool: &SqlitePool,
     repo_id: i64,
