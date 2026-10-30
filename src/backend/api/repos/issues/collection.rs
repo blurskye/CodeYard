@@ -47,7 +47,10 @@ pub async fn create_issue(
     let issue = crate::backend::issues::mutations::create_issue(
         &state.pool,
         &state.notification_broadcaster,
-        current_actor.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: current_actor.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         owner,
         repo,
         req,
@@ -720,8 +723,8 @@ fn form_fields(form: &[FormElement], answers: &[Vec<String>]) -> Vec<view::FormF
                     vec![element.value.clone()]
                 }
                 FormKind::Dropdown if given.is_empty() && !element.multiple => element
-                    .options
-                    .get(element.default)
+                    .default
+                    .and_then(|index| element.options.get(index))
                     .map(|option| vec![option.label.clone()])
                     .unwrap_or_default(),
                 _ => given,
@@ -1125,7 +1128,10 @@ pub(crate) async fn native_create(
             let created = crate::backend::issues::mutations::create_issue_with_metadata(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
-                actor.id,
+                db::users::accounts::AccountActor::Session {
+                    user_id: actor.id,
+                    session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+                },
                 owner.clone(),
                 name.clone(),
                 crate::backend::issues::mutations::CreateIssueRequest {
@@ -1135,9 +1141,10 @@ pub(crate) async fn native_create(
                     parent_issue_id: None,
                     token: None,
                 },
-                db::issues::IssueMetadata {
-                    parent: None, labels: &labels, assignees: &assignees,
-                    milestone: draft.milestone.parse().ok(), issue_type: None,
+                db::issues::OwnedIssueMetadata {
+                    labels, assignees,
+                    milestone: draft.milestone.parse().ok(),
+                    ..Default::default()
                 },
             )
             .await

@@ -33,8 +33,22 @@ pub enum ProtectionWriteRefusal {
 /// Maximum actors in a protection allowance list, including combined user, team and app lists.
 pub const MAX_ALLOWANCE_ACTORS: usize = 100;
 
+pub struct ProtectionSnapshot {
+    pub repository_id: i64,
+    pub rules: Vec<BranchProtectionRule>,
+    pub users: std::collections::HashMap<i64, String>,
+    pub teams: std::collections::HashMap<i64, String>,
+}
+
+native_operation!(crate::backend::db::postgres::repositories::protection::read_protection_snapshot,
+    crate::backend::db::sqlite::repositories::protection::read_protection_snapshot,
+    fn read_protection_snapshot(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64) -> Result<ProtectionSnapshot>);
+
 /// Room for the longest server-owned context, `gitserv/workflow/` and a workflow path.
 const MAX_CHECK_BYTES: usize = 512;
+
+/// The most approvals a rule can require, as the GitHub representation allows.
+pub const MAX_REQUIRED_APPROVALS: i32 = 6;
 
 pub fn validate_required_checks(checks: &[String]) -> Result<(), ProtectionWriteRefusal> {
     if checks.len() > 100 || checks.iter().any(|check| check.len() > MAX_CHECK_BYTES) {
@@ -72,7 +86,7 @@ pub(crate) fn normalize_check_bindings(checks: &mut Vec<serde_json::Value>) -> R
 /// an omitted setting means.
 pub struct BranchProtectionRuleUpsert<'a> {
     pub actor_id: i64,
-    pub token_id: Option<i64>,
+    pub credential: Option<crate::backend::db::users::accounts::AccountCredential<'a>>,
     pub repo_id: i64,
     pub pattern: &'a str,
     pub require_pull_request: bool,
@@ -98,7 +112,7 @@ impl Default for BranchProtectionRuleUpsert<'_> {
     fn default() -> Self {
         Self {
             actor_id: 0,
-            token_id: None,
+            credential: None,
             repo_id: 0,
             pattern: "",
             require_pull_request: true,
@@ -261,7 +275,7 @@ pub(crate) fn apply_protection_update(
             }
             if let Some(value) = input.required_approving_review_count {
                 anyhow::ensure!(
-                    (0..=6).contains(&value),
+                    (0..=MAX_REQUIRED_APPROVALS).contains(&value),
                     ProtectionWriteRefusal::InvalidChecks
                 );
                 rule.required_approving_reviews = value;
@@ -488,14 +502,14 @@ native_operation!(crate::backend::db::postgres::repositories::protection::delete
     crate::backend::db::sqlite::repositories::protection::delete_branch_protection_rule,
     fn delete_branch_protection_rule(
     pool: &DbPool,
-    actor_id: impl Into<super::super::users::tokens::Actor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::repositories::protection::update_branch_protection_rule,
     crate::backend::db::sqlite::repositories::protection::update_branch_protection_rule,
-    fn update_branch_protection_rule(pool: &DbPool, actor_id: impl Into<super::super::users::tokens::Actor>, repo_id: i64, pattern: &str, update: ProtectionUpdate) -> Result<BranchProtectionRule>);
+    fn update_branch_protection_rule(pool: &DbPool, actor_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, pattern: &str, update: ProtectionUpdate) -> Result<BranchProtectionRule>);
 
 native_operation!(crate::backend::db::postgres::repositories::protection::branch_redirect,
     crate::backend::db::sqlite::repositories::protection::branch_redirect,

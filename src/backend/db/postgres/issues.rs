@@ -21,13 +21,13 @@ use sqlx::{PgPool, Postgres, Transaction};
 pub async fn create_issue_with_metadata(
     pool: &PgPool,
     repo_id: i64,
-    author_id: impl Into<crate::backend::db::users::tokens::Actor>,
+    author_id: impl Into<crate::backend::db::credentials::Actor>,
     title: &str,
     body: &str,
     metadata: IssueMetadata<'_>,
 ) -> Result<Issue> {
-    let credential = author_id.into();
-    let author_id = credential.user_id;
+    let authority = author_id.into();
+    let author_id = authority.user_id;
     let assignees = metadata.unique_assignees()?;
     let metadata = IssueMetadata { assignees: &assignees, ..metadata };
     super::retry_on_deadlock(|| async {
@@ -56,15 +56,13 @@ pub async fn create_issue_with_metadata(
             // Type writes take the attribute guard before any issue row.
             super::issue_attributes::lock_metadata(&mut tx).await?;
         }
-        if let Some(token) = metadata.token {
-            anyhow::ensure!(
-                super::users::tokens::repository_write_on(&mut tx, token, author_id, repo_id, "issues").await?,
-                DiscussionWriteRefusal::Denied
-            );
-        }
+        anyhow::ensure!(
+            super::credentials::repository(&mut tx, &authority, repo_id, "issues", true).await?,
+            DiscussionWriteRefusal::Denied
+        );
         let issue = insert_in_transaction(&mut tx, repo_id, author_id, title, body).await?;
         if !metadata.labels.is_empty() {
-            super::labels::write_item_labels_transaction(
+            let labels = super::labels::write_item_labels_transaction(
                 &mut tx,
                 Some(author_id),
                 repo_id,
@@ -74,6 +72,9 @@ pub async fn create_issue_with_metadata(
                 false,
             )
             .await?;
+            for label in labels {
+                super::issue_attributes::event(&mut tx, (repo_id, issue.id, author_id), "labeled", &label.name, "").await?;
+            }
         }
         for &user in metadata.assignees {
             super::assignees::assign_in_transaction(
@@ -95,8 +96,9 @@ pub async fn create_issue_with_metadata(
                 Some(number),
             )
             .await?;
-            sqlx::query("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind,detail) SELECT $1,'issue',$2,$3,'milestoned',title FROM milestones WHERE repo_id=$1 AND number=$4")
-                .bind(repo_id).bind(issue.id).bind(author_id).bind(number).execute(&mut *tx).await?;
+            let title: String = sqlx::query_scalar("SELECT title FROM milestones WHERE repo_id=$1 AND number=$2")
+                .bind(repo_id).bind(number).fetch_one(&mut *tx).await?;
+            super::issue_attributes::event(&mut tx, (repo_id, issue.id, author_id), "milestoned", &title, "").await?;
         }
         if let Some(kind) = metadata.issue_type {
             super::issue_attributes::type_in_transaction(
@@ -121,7 +123,7 @@ pub async fn create_issue_with_metadata(
                         replace: false,
                     },
                     true,
-                    metadata.token,
+                    authority.token_id(),
                 )
                 .await?
             }

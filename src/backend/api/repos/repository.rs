@@ -16,7 +16,7 @@ use crate::backend::api::repos::code::contents::{
 use crate::backend::api::repos::forms::{checkbox, field, repeated, with_status};
 use crate::backend::api::repos::labels::{label_write_error, parse_label_color};
 use crate::backend::api::repos::responses::{
-    lifecycle_error, lifecycle_status, repository_owner, repository_topics, ForkParent,
+    lifecycle_error, lifecycle_status, repository_fork_counts, repository_owner, repository_topics, ForkParent,
     RepoResponse,
 };
 use crate::backend::api::repos::settings::branch_protection;
@@ -158,7 +158,10 @@ async fn repository_response(
         None
     };
 
-    let mut response = RepoResponse::new(repository, &owner, topics, forked_from);
+    let forks = repository_fork_counts(&state.pool, Some(headers), &[repository.id]).await?
+        .remove(&repository.id).unwrap_or_default();
+    check_repo_read_access(&state.pool, repository, headers).await?;
+    let mut response = RepoResponse::new(repository, &owner, topics, forked_from, forks);
     response.default_branch = default_branch;
     Ok(response)
 }
@@ -170,8 +173,9 @@ pub struct RenameRepoRequest {
 
 #[derive(Deserialize)]
 pub struct UpdateRepoRequest {
-    pub description: Option<String>,
-    pub is_private: bool,
+    #[serde(default, deserialize_with = "db::repositories::records::nullable_change")]
+    pub description: Option<Option<String>>,
+    pub is_private: Option<bool>,
     pub allow_merge_commit: Option<bool>,
     pub allow_squash_merge: Option<bool>,
     pub allow_rebase_merge: Option<bool>,
@@ -192,7 +196,10 @@ pub async fn rename_repo(
     // DB alias; stable operation-owned storage is never moved or compensated.
     let updated = db::repositories::records::rename_repository(
         &state.pool,
-        user.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: user.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         repository.id,
         &req.new_name,
     )
@@ -219,7 +226,10 @@ pub async fn transfer_repo(
     let updated = lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
-        user.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: user.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         repository.id,
         &req.new_owner,
     )
@@ -285,9 +295,10 @@ pub async fn update_repo(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
-    lifecycle::validate_description(req.description.as_deref().unwrap_or(""))
-        .map_err(lifecycle_error)?;
-    if !req.is_private
+    if let Some(Some(description)) = &req.description {
+        lifecycle::validate_description(description).map_err(lifecycle_error)?;
+    }
+    if req.is_private == Some(false)
         && lifecycle::visibility_locked(&state.pool, &repository)
             .await
             .map_err(|error| {
@@ -307,29 +318,24 @@ pub async fn update_repo(
     }
     // The merge methods, description and visibility save in one transaction, so a refusal or a
     // failed write leaves all of them unchanged.
-    db::repositories::records::update_repository(
+    let updated = db::repositories::records::patch_repository(
         &state.pool,
-        user.id,
-        repository.id,
-        req.description.as_deref(),
-        req.is_private,
-        db::repositories::records::MergeMethodUpdate {
-            merge: req.allow_merge_commit,
-            squash: req.allow_squash_merge,
-            rebase: req.allow_rebase_merge,
+        db::users::accounts::AccountActor::Session {
+            user_id: user.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         },
-    )
-    .await
-    .map_err(repository_settings_error)?;
-    let updated = db::repositories::records::get_repository_by_id(&state.pool, repository.id)
-        .await
-        .map_err(repository_settings_error)?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
+        repository.id,
+        &db::repositories::records::RepositoryChanges {
+            description: req.description.as_ref().map(|value| value.as_deref()),
+            is_private: req.is_private,
+            merge_methods: db::repositories::records::MergeMethodUpdate {
+                merge: req.allow_merge_commit,
+                squash: req.allow_squash_merge,
+                rebase: req.allow_rebase_merge,
+            },
+            ..Default::default()
+        },
+    ).await.map_err(repository_settings_error)?;
 
     Ok(Json(repository_response(&state, &headers, &updated).await?))
 }
@@ -342,7 +348,10 @@ pub async fn delete_repo(
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
-    lifecycle::delete(&state.pool, state.cluster.as_ref(), actor.id, repository.id)
+    lifecycle::delete(&state.pool, state.cluster.as_ref(), db::users::accounts::AccountActor::Session {
+        user_id: actor.id,
+        session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+    }, repository.id)
         .await
         .map_err(lifecycle_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -367,6 +376,7 @@ pub(super) async fn settings_model(
     let mut settings = view::settings::Settings {
         tab: tab.to_owned(),
         branches,
+        git_unavailable: loaded.git_unavailable,
         default_branch: loaded.chrome.default_branch.clone(),
         allow_merge_commit: loaded.repository.allow_merge_commit,
         allow_squash_merge: loaded.repository.allow_squash_merge,
@@ -492,21 +502,23 @@ pub(super) async fn settings_model(
         }
     }
     if tab == "secrets" {
-        settings.environments_page = match ctx.query.get("environments_page") {
-            Some(value) => value.parse::<i64>().ok().filter(|value| (0..=100_000).contains(value)).ok_or_else(|| ctx.repo_error(&loaded.chrome, StatusCode::BAD_REQUEST, "Invalid environment page."))?,
-            None => 0,
-        };
-        settings.environments = db::environments::list(&ctx.state.pool, loaded.repository.id, settings.environments_page * 100, 100).await.map_err(|_| unavailable(ctx))?.into_iter().map(|environment| environment.name).collect();
+        let per_page = db::environment_values::ENVIRONMENTS_PER_PAGE;
+        settings.environment_page = super::paging::number(ctx, "environment_page", 1, 1..=usize::MAX.min(i64::MAX as usize) / per_page)?;
+        settings.environments = db::environment_values::environments(
+            &ctx.state.pool, viewer.id, loaded.repository.id, ((settings.environment_page - 1) * per_page) as i64,
+        ).await.map_err(|_| unavailable(ctx))?;
+        settings.environments_more = settings.environments.len() > per_page;
+        settings.environments.truncate(per_page);
         if let Some(name) = ctx.query.get("environment").filter(|name| !name.is_empty()) {
-            db::environment_values::environment_key(name).map_err(|_| {
+            let key = db::environment_values::environment_key(name).map_err(|_| {
                 ctx.repo_error(
                     &loaded.chrome,
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "Invalid environment name.",
                 )
             })?;
-            let name = db::environments::get(&ctx.state.pool, loaded.repository.id, name).await.map_err(|_| unavailable(ctx))?.map(|environment| environment.name)
-                .ok_or_else(|| {
+            let name = db::environment_values::environment(&ctx.state.pool, viewer.id, loaded.repository.id, &key)
+                .await.map_err(|_| unavailable(ctx))?.ok_or_else(|| {
                     ctx.repo_error(
                         &loaded.chrome,
                         StatusCode::NOT_FOUND,
@@ -549,17 +561,17 @@ pub(super) async fn settings_model(
             }));
         }
         settings.secrets_enabled = ctx.state.secret_encryptor.is_some();
-        settings.variables = db::variables::list(&ctx.state.pool, viewer.id, &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), loaded.repository.id)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .into_iter()
-            .map(|variable| view::settings::secrets::Variable {
-                name: variable.name,
-                value: variable.value,
-            })
-            .collect();
-        settings.secrets =
-            db::secrets::list_secrets(&ctx.state.pool, viewer.id, loaded.repository.id)
+        if settings.environment.is_none() {
+            settings.variables = db::variables::list(&ctx.state.pool, viewer.id, &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), loaded.repository.id)
+                .await
+                .map_err(|_| unavailable(ctx))?
+                .into_iter()
+                .map(|variable| view::settings::secrets::Variable {
+                    name: variable.name,
+                    value: variable.value,
+                })
+                .collect();
+            settings.secrets = db::secrets::list_secrets(&ctx.state.pool, viewer.id, loaded.repository.id)
                 .await
                 .map_err(|_| unavailable(ctx))?
                 .into_iter()
@@ -568,6 +580,7 @@ pub(super) async fn settings_model(
                     updated_at: secret.updated_at.to_rfc3339(),
                 })
                 .collect();
+        }
     }
     if tab == "dependabot-secrets" {
         settings.secrets_enabled = ctx.state.secret_encryptor.is_some();
@@ -760,15 +773,9 @@ async fn branch_rules(
     ctx: &PageContext,
     loaded: &Loaded,
 ) -> Result<Vec<view::settings::BranchRule>, Response> {
-    let rules = db::repositories::protection::list_branch_protection_rules(
-        &ctx.state.pool,
-        loaded.repository.id,
-    )
-    .await
-    .map_err(|_| unavailable(ctx))?;
-    let rules = branch_protection::rule_responses(&ctx.state.pool, rules, ctx.user.as_ref().map_or(-1, |user| user.id))
-        .await
-        .map_err(|_| unavailable(ctx))?;
+    let rules = branch_protection::authorized_rule_responses(&ctx.state.pool,
+        ctx.database_actor(ctx.require_user()?.id), loaded.repository.id)
+        .await.map_err(|(status, error)| ctx.error(status, &error.0.message))?;
     let mut listed = Vec::with_capacity(rules.len());
     for rule in rules {
         listed.push(view::settings::BranchRule {
@@ -908,6 +915,10 @@ async fn protection_form(
         Ok(user) => user.id,
         Err(response) => return response,
     };
+    let actor_id = db::users::accounts::AccountActor::Session {
+        user_id: actor_id,
+        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    };
     let pool = &ctx.state.pool;
     let repository = &loaded.repository;
     let section = view::settings::settings_section(action).unwrap_or("general");
@@ -937,7 +948,7 @@ async fn protection_form(
     }
     let submitted = submitted_rule(form, pairs);
     let outcome = match rule_request(&submitted) {
-        Ok(request) => branch_protection::save_rule(pool, actor_id, repository, request)
+        Ok(request) => branch_protection::save_rule(pool, ctx.database_actor(actor_id), repository, request)
             .await
             .map(|_| ()),
         Err(refusal) => Err(refusal),
@@ -1115,7 +1126,8 @@ fn safe_submission(action: &str, values: &HashMap<String, String>) -> HashMap<St
         "autolink-delete" => &["autolink_id"],
         "remove-collaborator" | "remove-invited-collaborator" => &["username"],
         "label" => &["name", "color", "description"],
-        "edit-label" => &["label_id", "name", "color", "description"],
+        "edit-label" => &["label_id", "name", "color", "description", "original_description"],
+        "secret-pattern-publish" => &["pattern_id", "organization"],
         "delete-label" => &["label_id"],
         "delete" => &["confirmation"],
         _ => &[],
@@ -1242,11 +1254,15 @@ impl FormAction {
     }
 }
 
-fn form_page_suffix(name: &str) -> &'static str {
-    FORM_ACTIONS
-        .iter()
-        .find(|row| row.name == name)
-        .map_or("", |row| row.page)
+fn form_page_suffix(name: &str) -> String {
+    let Some(row) = FORM_ACTIONS.iter().find(|row| row.name == name) else {
+        return String::new();
+    };
+    // A settings form returns to its own section.
+    match (row.page, view::settings::settings_section(name)) {
+        ("/settings", Some(section)) => format!("/settings?tab={section}"),
+        _ => row.page.to_owned(),
+    }
 }
 
 /// The editor or delete page a rejected save names in `from`, when it is a page of this repository
@@ -1277,11 +1293,7 @@ pub(super) async fn get_form(
     Path(params): Path<HashMap<String, String>>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    let base = format!(
-        "/{}/{}",
-        crate::webui::encode_component(&params["owner"]),
-        crate::webui::encode_component(&params["repo"])
-    );
+    let base = crate::webui::repository_path(&params["owner"], &params["repo"]);
     let editor = query
         .get("from")
         .and_then(|from| editor_return(from, &base));
@@ -1311,9 +1323,8 @@ pub(super) async fn post_form(
     // This URL accepts only POST, so every failure page must link its appearance switch to
     // the repository page instead. Set it before the checks that can fail.
     ctx.return_to = Some(format!(
-        "/{}/{}{}",
-        crate::webui::encode_component(owner),
-        crate::webui::encode_component(name),
+        "{}{}",
+        crate::webui::repository_path(owner, name),
         form_page_suffix(action)
     ));
     if let Err(response) = ctx.check_csrf(&form) {
@@ -1492,6 +1503,10 @@ async fn mutate(
     let base = crate::webui::repository_path(owner, name);
     let cluster = ctx.state.cluster.as_ref();
     let ci = &ctx.state.ci_runs;
+    let authority = || db::users::accounts::AccountActor::Session {
+        user_id: actor.id,
+        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    };
     match action {
         "star" | "unstar" | "watch" | "unwatch" => {
             use crate::backend::repositories::engagement::{change, Engagement};
@@ -1503,7 +1518,10 @@ async fn mutate(
             change(
                 pool,
                 &ctx.state.notification_broadcaster,
-                actor.id,
+                db::users::accounts::AccountActor::Session {
+                    user_id: actor.id,
+                    session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+                },
                 repository.id,
                 kind,
                 !action.starts_with("un"),
@@ -1519,7 +1537,10 @@ async fn mutate(
                 .collect();
             crate::backend::repositories::engagement::set_level(
                 pool,
-                actor.id,
+                db::users::accounts::AccountActor::Session {
+                    user_id: actor.id,
+                    session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+                },
                 repository.id,
                 &field(form, "level"),
                 &events,
@@ -1534,24 +1555,20 @@ async fn mutate(
                 cluster,
                 &ctx.state.repos_path,
                 &ctx.state.notification_broadcaster,
-                actor.id,
+                authority(),
                 repository.id,
                 owner,
             )
             .await
             .map_err(lifecycle_error)?;
-            Ok(format!(
-                "/{}/{}",
-                crate::webui::encode_component(&actor.username),
-                crate::webui::encode_component(&fork.name)
-            ))
+            Ok(crate::webui::repository_path(&actor.username, &fork.name))
         }
         "create-branch" => {
             crate::backend::repositories::refs::create_branch(
                 pool,
                 cluster,
                 ci,
-                actor.id,
+                authority(),
                 owner,
                 repository.id,
                 &field(form, "name"),
@@ -1568,7 +1585,7 @@ async fn mutate(
             crate::backend::repositories::refs::set_default_branch(
                 pool,
                 cluster,
-                actor.id,
+                authority(),
                 repository,
                 &field(form, "branch"),
             )
@@ -1581,7 +1598,7 @@ async fn mutate(
                 pool,
                 cluster,
                 ci,
-                actor.id,
+                authority(),
                 repository.id,
                 &field(form, "name"),
             )
@@ -1595,7 +1612,7 @@ async fn mutate(
                 pool,
                 cluster,
                 ci,
-                actor.id,
+                authority(),
                 owner,
                 repository.id,
                 &field(form, "name"),
@@ -1610,7 +1627,7 @@ async fn mutate(
             crate::backend::repositories::refs::delete_tag(
                 pool,
                 cluster,
-                actor.id,
+                authority(),
                 repository.id,
                 &field(form, "name"),
             )
@@ -1640,7 +1657,7 @@ async fn mutate(
             }
             db::repositories::records::update_repository(
                 pool,
-                actor.id,
+                authority(),
                 repository.id,
                 Some(&field(form, "description")),
                 db::repositories::records::VisibilityUpdate {
@@ -1664,7 +1681,7 @@ async fn mutate(
         "merge-methods" => {
             db::repositories::records::set_merge_methods(
                 pool,
-                actor.id,
+                authority(),
                 repository.id,
                 db::repositories::records::MergeMethodUpdate {
                     merge: Some(checkbox(form, "allow_merge_commit")),
@@ -1696,6 +1713,9 @@ async fn mutate(
                 .await
                 .map_err(
                     |error| match error.downcast_ref::<db::secret_scanning::Refusal>() {
+                        _ if error.is::<db::users::accounts::AccountRestricted>() => ApiError::failure(
+                            StatusCode::FORBIDDEN, "forbidden", "A live unrestricted credential is required.",
+                        ),
                         Some(db::secret_scanning::Refusal::Denied) => ApiError::failure(
                             StatusCode::FORBIDDEN,
                             "forbidden",
@@ -1763,12 +1783,11 @@ async fn mutate(
             )
             .await
             .map_err(|error| {
-                let status = match error.downcast_ref::<db::oidc::Refusal>() {
-                    Some(db::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
-                    Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
-                    None => StatusCode::SERVICE_UNAVAILABLE,
-                };
-                ApiError::failure(status, "oidc_settings", "Could not save OIDC settings")
+                ApiError::failure(
+                    crate::backend::api::http::error::oidc_settings_status(&error),
+                    "oidc_settings",
+                    "Could not save OIDC settings",
+                )
             })?;
             Ok(format!("{base}/settings?tab=actions"))
         }
@@ -1872,7 +1891,7 @@ async fn mutate(
                 .map_err(access_error)?;
             let updated = db::repositories::records::rename_repository(
                 pool,
-                actor.id,
+                authority(),
                 repository.id,
                 &field(form, "name"),
             )
@@ -1884,7 +1903,7 @@ async fn mutate(
             let updated = lifecycle::transfer(
                 pool,
                 ctx.state.cluster.as_ref(),
-                actor.id,
+                authority(),
                 repository.id,
                 &field(form, "new_owner"),
             )
@@ -1900,7 +1919,7 @@ async fn mutate(
             // Archiving an archived repository, or the reverse, changes nothing and is not an error.
             db::repositories::records::set_repository_archived(
                 pool,
-                actor.id,
+                authority(),
                 repository.id,
                 action == "archive",
             )
@@ -1909,7 +1928,10 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "delete" => {
-            lifecycle::delete(pool, cluster, actor.id, repository.id)
+            lifecycle::delete(pool, cluster, db::users::accounts::AccountActor::Session {
+                user_id: actor.id,
+                session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+            }, repository.id)
                 .await
                 .map_err(lifecycle_error)?;
             Ok(crate::webui::profile_path(owner))
@@ -1917,7 +1939,7 @@ async fn mutate(
         "template" => {
             db::repositories::records::patch_repository(
                 pool,
-                actor.id,
+                authority(),
                 repository.id,
                 &db::repositories::records::RepositoryChanges {
                     is_template: Some(checkbox(form, "is_template")),
@@ -2046,7 +2068,10 @@ async fn mutate(
             };
             crate::backend::repositories::access::change_collaborator(
                 pool,
-                actor.id,
+                db::users::accounts::AccountActor::Session {
+                    user_id: actor.id,
+                    session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+                },
                 repository.id,
                 &field(form, "username"),
                 permission,

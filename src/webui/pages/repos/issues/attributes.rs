@@ -56,6 +56,7 @@ fn definition(repo: &Repository, url: &str, a: &IssueAttribute, (item_id, owner_
                         name: "attribute_id",
                         value: a.id.to_string(),
                     }
+                    input { r#type: "hidden", name: "expected_updated", value: a.updated.clone() }
                 }
                 label {
                     "Name"
@@ -272,6 +273,7 @@ fn blank(kind: &str) -> IssueAttribute {
     IssueAttribute {
         revision: String::new(),
         id: 0,
+        updated: String::new(),
         kind: kind.into(),
         name: String::new(),
         description: None,

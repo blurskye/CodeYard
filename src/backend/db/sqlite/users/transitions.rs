@@ -64,9 +64,26 @@ pub(crate) async fn require_account(
     actor: i64,
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
+    require_account_with_mode(tx, actor, credential, true).await
+}
+
+pub(crate) async fn require_read_account(
+    tx: &mut Transaction<'_, sqlx::Sqlite>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<()> {
+    require_account_with_mode(tx, actor, credential, false).await
+}
+
+async fn require_account_with_mode(
+    tx: &mut Transaction<'_, sqlx::Sqlite>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    write: bool,
+) -> Result<()> {
     use crate::backend::db::users::accounts::AccountRestricted;
     anyhow::ensure!(active_account(tx, actor).await?, AccountRestricted);
-    anyhow::ensure!(credential_live(tx, actor, credential, true).await?, AccountRestricted);
+    anyhow::ensure!(credential_live(tx, actor, credential, write).await?, AccountRestricted);
     Ok(())
 }
 

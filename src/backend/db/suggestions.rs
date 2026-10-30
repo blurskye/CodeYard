@@ -185,6 +185,6 @@ native_operation!(crate::backend::db::postgres::suggestions::set_enabled,crate::
 native_operation!(crate::backend::db::postgres::suggestions::list,crate::backend::db::sqlite::suggestions::list,
     fn list(pool:&DbPool,repo:i64,actor:i64,issue:i64,filter:&ListFilter<'_>)->Result<Vec<Suggestion>>);
 native_operation!(crate::backend::db::postgres::suggestions::propose,crate::backend::db::sqlite::suggestions::propose,
-    fn propose(pool:&DbPool,repo:i64,actor:i64,credential:&super::users::accounts::AccountCredential<'_>,issue:i64,proposal:&Proposal)->Result<Suggestion>);
+    fn propose(pool:&DbPool,repo:i64,actor:i64,credential:&super::users::accounts::AccountCredential<'_>,issue:i64,proposal:&Proposal,target_repository:Option<i64>)->Result<Suggestion>);
 native_operation!(crate::backend::db::postgres::suggestions::resolve,crate::backend::db::sqlite::suggestions::resolve,
     fn resolve(pool:&DbPool,repo:i64,actor:i64,credential:&super::users::accounts::AccountCredential<'_>,issue:i64,id:i64,approve:bool)->Result<Resolution>);

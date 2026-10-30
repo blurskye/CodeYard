@@ -45,7 +45,7 @@ pub async fn readable_repository_ids(
     repo_ids: &[i64],
 ) -> Result<Vec<i64>> {
     anyhow::ensure!(repo_ids.len() <= 100, "Repository page exceeds its limit");
-    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=ANY($2) AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({USER_REPO_ACCESS_SQL}) >= 1)"))
+    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=ANY($2) AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND NOT u.is_banned AND NOT u.must_change_password AND (u.is_admin OR r.owner_user_id=u.id)) OR ({USER_REPO_ACCESS_SQL}) >= 1)"))
         .bind(user_id).bind(repo_ids).fetch_all(pool).await?)
 }
 
@@ -146,7 +146,7 @@ pub(crate) fn user_repo_grant_sql() -> String {
 /// personal repositories of a site admin, and the access projection for everything else.
 pub(crate) fn readable_condition() -> String {
     format!(
-        "(NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL}) >= 1))"
+        "(NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin AND NOT u.is_banned AND NOT u.must_change_password) OR ({USER_REPO_ACCESS_SQL}) >= 1))"
     )
 }
 
@@ -442,13 +442,18 @@ pub(super) async fn revoke_repo_access_in_transaction(
 
 pub async fn change_personal_repository_collaborator(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     username: &str,
     permission: Option<AccessLevel>,
 ) -> Result<CollaboratorChange> {
+    let admission = actor.into();
+    let actor = admission.user_id();
     let mut tx = pool.begin().await?;
     lock_membership_shared(&mut tx).await?;
+    if let Some(credential) = admission.credential() {
+        super::super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     let actor_state: Option<(bool, bool)> =
         sqlx::query_as("SELECT is_banned,must_change_password FROM users WHERE id=$1 FOR SHARE")
             .bind(actor)

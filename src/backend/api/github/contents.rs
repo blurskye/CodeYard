@@ -315,6 +315,7 @@ async fn save(
     let (owner, name, path) = (&params["owner"], &params["repo"], &params["path"]);
     let (repo, auth) = repository(&state, &headers, owner, name, true).await?;
     let auth = auth.ok_or_else(auth::required)?;
+    let authority = auth.database_actor();
     let actor = auth.user;
     let branch = input.branch.as_deref().unwrap_or(&repo.default_branch);
     let store = repo_store(&repo, state.cluster.as_ref());
@@ -365,7 +366,7 @@ async fn save(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
-            (actor.id, auth.token.id),
+            authority,
             owner,
             repo.id,
             write,
@@ -378,7 +379,7 @@ async fn save(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
-            (actor.id, auth.token.id),
+            authority,
             owner,
             repo.id,
             write,

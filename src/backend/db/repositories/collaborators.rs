@@ -16,6 +16,15 @@ pub struct Invitation {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(sqlx::FromRow)]
+pub struct InvitationSummary {
+    #[sqlx(flatten)]
+    pub invitation: Invitation,
+    pub owner: String,
+    pub repository: String,
+    pub inviter: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
     #[error("Repository administration required")]
@@ -62,9 +71,12 @@ native_operation!(crate::backend::db::postgres::repositories::collaborators::lis
 native_operation!(crate::backend::db::postgres::repositories::collaborators::invitations,
     crate::backend::db::sqlite::repositories::collaborators::invitations,
     fn invitations(pool: &DbPool, actor: i64, repo_id: Option<i64>, offset: i64, limit: i64) -> Result<Vec<Invitation>>);
+native_operation!(crate::backend::db::postgres::repositories::collaborators::recipient_invitations,
+    crate::backend::db::sqlite::repositories::collaborators::recipient_invitations,
+    fn recipient_invitations(pool: &DbPool, actor: i64, session: &str, offset: i64, limit: i64) -> Result<Vec<InvitationSummary>>);
 native_operation!(crate::backend::db::postgres::repositories::collaborators::update_invitation,
     crate::backend::db::sqlite::repositories::collaborators::update_invitation,
     fn update_invitation(pool: &DbPool, actor: i64, repo_id: i64, id: i64, permission: Option<AccessLevel>) -> Result<Invitation>);
 native_operation!(crate::backend::db::postgres::repositories::collaborators::respond,
     crate::backend::db::sqlite::repositories::collaborators::respond,
-    fn respond(pool: &DbPool, actor: i64, id: i64, accept: bool) -> Result<()>);
+    fn respond(pool: &DbPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, id: i64, accept: bool) -> Result<()>);

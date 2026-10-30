@@ -222,10 +222,9 @@ impl CiRuns {
     ) -> Result<db::models::CiRun, AdmissionError> {
         self.rerun_run_options(
             run_id,
-            actor_id,
+            actor_id.into(),
             false,
             db::ci::CiReplaySelection::All,
-            None,
             true,
         )
         .await
@@ -240,15 +239,20 @@ impl CiRuns {
         debug: bool,
         credential: Option<i64>,
     ) -> Result<db::models::CiRun, AdmissionError> {
-        self.rerun_selected_workflow(
-            repo,
-            id,
-            actor,
-            debug,
-            credential,
-            db::ci::CiReplaySelection::All,
-        )
-        .await
+        let actor = match credential {
+            Some(token_id) => db::users::accounts::AccountActor::Token { user_id: actor, token_id },
+            None => actor.into(),
+        };
+        self.rerun_workflow_run_as(repo, id, actor, debug).await
+    }
+    pub async fn rerun_workflow_run_as(
+        &self,
+        repo: i64,
+        id: i64,
+        actor: db::users::accounts::AccountActor,
+        debug: bool,
+    ) -> Result<db::models::CiRun, AdmissionError> {
+        self.rerun_selected_workflow(repo, id, actor, debug, db::ci::CiReplaySelection::All).await
     }
     pub async fn rerun_failed_workflow_run(
         &self,
@@ -261,9 +265,11 @@ impl CiRuns {
         self.rerun_selected_workflow(
             repo,
             id,
-            actor,
+            match credential {
+                Some(token_id) => db::users::accounts::AccountActor::Token { user_id: actor, token_id },
+                None => actor.into(),
+            },
             debug,
-            credential,
             db::ci::CiReplaySelection::Failed,
         )
         .await
@@ -285,9 +291,11 @@ impl CiRuns {
         self.rerun_selected_workflow(
             repo,
             source.workflow_run_id.unwrap_or(source.id),
-            actor,
+            match credential {
+                Some(token_id) => db::users::accounts::AccountActor::Token { user_id: actor, token_id },
+                None => actor.into(),
+            },
             debug,
-            credential,
             db::ci::CiReplaySelection::Job(id),
         )
         .await
@@ -296,9 +304,8 @@ impl CiRuns {
         &self,
         repo: i64,
         id: i64,
-        actor: i64,
+        actor: db::users::accounts::AccountActor,
         debug: bool,
-        credential: Option<i64>,
         selection: db::ci::CiReplaySelection,
     ) -> Result<db::models::CiRun, AdmissionError> {
         let source = db::action_runs::get(&self.pool, repo, id, None)
@@ -309,19 +316,23 @@ impl CiRuns {
                 "Source workflow metadata is unavailable",
             ));
         }
-        self.rerun_run_options(source.run_id, actor, debug, selection, credential, false)
+        self.rerun_run_options(source.run_id, actor, debug, selection, false)
             .await
     }
 
     async fn rerun_run_options(
         &self,
         run_id: Uuid,
-        actor_id: i64,
+        actor: db::users::accounts::AccountActor,
         debug: bool,
         selection: db::ci::CiReplaySelection,
-        credential: Option<i64>,
         allow_active: bool,
     ) -> Result<db::models::CiRun, AdmissionError> {
+        let actor_id = actor.user_id();
+        let credential = match &actor {
+            db::users::accounts::AccountActor::Token { token_id, .. } => Some(*token_id),
+            _ => None,
+        };
         let run = db::ci::get_ci_run_by_run_id(&self.pool, run_id)
             .await?
             .ok_or(AdmissionError::Missing("Run not found"))?;
@@ -332,11 +343,15 @@ impl CiRuns {
                 source: run.id,
                 source_uuid: run.run_id,
                 credential,
+                authority: Some(actor.clone()),
                 allow_active,
                 selection,
                 definition: None,
                 debug,
             });
+        if attempt.is_none() && actor.credential().is_some() {
+            return Err(AdmissionError::Conflict("This legacy run cannot retain replay credentials"));
+        }
         let head_sha = run.head_sha.ok_or(AdmissionError::Conflict(
             "This run has no commit to run again",
         ))?;

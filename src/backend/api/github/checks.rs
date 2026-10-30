@@ -575,9 +575,9 @@ pub(in crate::backend::api) async fn request_again(
         .ok_or_else(Error::missing)?;
     if let Some(ci_run) = stored.ci_run_id {
         // An Actions suite shows its workflow run, so rerequesting it queues another attempt of that run.
-        let credential = match credential {
-            Credential::Token(id) => Some(id),
-            Credential::Session(_) => None,
+        let authority = match credential {
+            Credential::Token(token_id) => db::users::accounts::AccountActor::Token { user_id: actor, token_id },
+            Credential::Session(session) => db::users::accounts::AccountActor::Session { user_id: actor, session: session.to_owned() },
         };
         // Each attempt has its own suite and CI run; reruns go through the shared workflow run.
         let workflow_run = db::ci::get_ci_run_by_id(&state.pool, repo.id, ci_run)
@@ -587,7 +587,7 @@ pub(in crate::backend::api) async fn request_again(
             .ok_or_else(Error::missing)?;
         state
             .ci_runs
-            .rerun_workflow_run(repo.id, workflow_run, actor, false, credential)
+            .rerun_workflow_run_as(repo.id, workflow_run, authority, false)
             .await
             .map_err(super::actions::admission_error)?;
         return Ok(());
@@ -616,15 +616,19 @@ pub(in crate::backend::api) async fn request_again(
     emit(state, repo, actor, event, "rerequested", doc).await;
     Ok(())
 }
+/// The accepted action and its delivery finish even if the request is cancelled.
 pub(in crate::backend::api) async fn request_action(
-    state: &AppState, repo: &Repository, owner: &str, actor: i64,
+    state: &Arc<AppState>, repo: &Repository, owner: &str, actor: i64,
     credential: Credential<'_>, run: i64, identifier: String,
 ) -> Result<()> {
     let run = checks::requested_action(&state.pool, credential, repo.id, run, &identifier).await.map_err(write_error)?;
-    let doc = run_document(state, repo, owner, &run).await?;
-    let repository = repo.clone();
-    webhooks::emit(&state.pool, repo, "check_run", vec![actor], move |owner, people| json!({"action":"requested_action", "requested_action":{"identifier":identifier}, "check_run":doc, "repository":payloads::repository(&repository, owner), "sender":payloads::person(&people.get(actor))})).await;
-    Ok(())
+    let (state, repo, owner) = (Arc::clone(state), repo.clone(), owner.to_owned());
+    tokio::spawn(async move {
+        let doc = run_document(&state, &repo, &owner, &run).await?;
+        let repository = repo.clone();
+        webhooks::emit(&state.pool, &repo, "check_run", vec![actor], move |owner, people| json!({"action":"requested_action", "requested_action":{"identifier":identifier}, "check_run":doc, "repository":payloads::repository(&repository, owner), "sender":payloads::person(&people.get(actor))})).await;
+        Ok(())
+    }).await.map_err(Error::unavailable)?
 }
 
 #[derive(Deserialize)]

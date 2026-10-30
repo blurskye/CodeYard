@@ -208,6 +208,7 @@ async fn contract(pg: bool) {
         alice_id,
         &db::issue_attributes::Definition {
             id: None,
+            expected_updated: None,
             kind: "type".into(),
             name: "Retained type".into(),
             description: None,
@@ -309,6 +310,7 @@ async fn contract(pg: bool) {
             rationale: None,
             confidence: None,
         },
+        None,
     )
     .await
     .unwrap();

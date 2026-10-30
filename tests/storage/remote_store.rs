@@ -2934,7 +2934,7 @@ async fn remote_web_contract() {
         repository: uuid,
         operation: Operation::CreateBranch {
             name: "actorless".into(),
-            sha: public_head.sha.clone(),
+            sha: public_head.sha.clone().into(),
         },
         actor: None,
         ci_run: None,

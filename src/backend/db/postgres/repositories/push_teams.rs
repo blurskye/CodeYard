@@ -13,6 +13,7 @@ pub async fn by_names(pool: &PgPool, repo: i64, names: &[String]) -> Result<Vec<
 }
 pub async fn by_ids(pool: &PgPool, repo: i64, ids: &[i64]) -> Result<Vec<TeamAccess>> {
     validate_count(ids.len())?;
+    if ids.is_empty() { return Ok(Vec::new()); }
     Ok(sqlx::query_as(&format!("SELECT t.*,o.name AS org_slug,({PERMISSION})::SMALLINT AS permission FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL JOIN organizations o ON o.id=t.org_id LEFT JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id WHERE r.id=$1 AND t.id=ANY($2) AND t.privacy IN ('visible','secret') ORDER BY t.id")).bind(repo).bind(ids).fetch_all(pool).await?)
 }
 pub(super) async fn eligible_ids_on(

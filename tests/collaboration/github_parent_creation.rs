@@ -288,7 +288,7 @@ async fn parents(pg: bool) {
         rationale: None,
         confidence: None,
     };
-    let suggested = db::suggestions::propose(f.pool(), repos[0].id, alice, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await), child, &proposal)
+    let suggested = db::suggestions::propose(f.pool(), repos[0].id, alice, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await), child, &proposal, None)
         .await
         .unwrap();
     for approve in [false, true] {
@@ -316,7 +316,7 @@ async fn parents(pg: bool) {
             .unwrap()
             .is_empty()
     );
-    let denied = db::suggestions::propose(f.pool(), repos[0].id, bot, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), bot).await), child, &proposal)
+    let denied = db::suggestions::propose(f.pool(), repos[0].id, bot, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), bot).await), child, &proposal, None)
         .await
         .unwrap_err();
     assert!(matches!(

@@ -268,7 +268,7 @@ async fn file_finder_excludes_gitlinks_but_keeps_blobs_and_symlinks() {
         &[&repo.find_commit(base).unwrap()],
     )
     .unwrap();
-    let paths = list_file_paths(directory.path(), "main", 100)
+    let paths = list_file_paths(directory.path(), "main", 100, "")
         .await
         .unwrap();
     assert_eq!(paths.paths, ["file.txt", "link"]);
@@ -325,7 +325,7 @@ async fn file_finder_streams_a_sorted_prefix_with_a_json_byte_budget() {
         &[],
     )
     .unwrap();
-    let found = list_file_paths(directory.path(), "main", 10_000)
+    let found = list_file_paths(directory.path(), "main", 10_000, "")
         .await
         .unwrap();
     assert!(found.truncated);

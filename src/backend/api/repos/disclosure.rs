@@ -68,7 +68,7 @@ async fn toggle(
     };
     match records::set_enabled(
         &ctx.state.pool,
-        ctx.user.as_ref().unwrap().id,
+        ctx.database_actor(ctx.user.as_ref().unwrap().id),
         loaded.repository.id,
         enabled,
     )
@@ -81,6 +81,9 @@ async fn toggle(
     }
 }
 fn failure(error: &anyhow::Error) -> (StatusCode, &str) {
+    if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+        return (StatusCode::FORBIDDEN, "A live unrestricted credential is required.");
+    }
     if let Some(refusal) = error.downcast_ref::<advisories::Refusal>() {
         let status = match refusal {
             advisories::Refusal::Missing | advisories::Refusal::Denied => StatusCode::NOT_FOUND,
@@ -156,8 +159,7 @@ async fn index_model(
     let mut rows = if let Some(user) = &ctx.user {
         match records::list_reports(
             &ctx.state.pool,
-            user.id,
-            &crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+            ctx.database_actor(user.id),
             loaded.repository.id,
             21,
             ((page - 1) * 20) as i64,
@@ -212,8 +214,7 @@ async fn thread_model(
     };
     let mut thread = match records::report_thread(
         &ctx.state.pool,
-        actor,
-        &crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+        ctx.database_actor(actor),
         loaded.repository.id,
         id,
         ((page - 1) * 20) as i64,
@@ -337,7 +338,7 @@ async fn create(
     let result = match records::NewReport::new(&title, &body) {
         Ok(_) => advisories::create(
             &ctx.state.pool,
-            actor,
+            ctx.database_actor(actor),
             loaded.repository.id,
             &serde_json::json!({"summary":title,"description":body,"vulnerabilities":[]}),
             true,
@@ -392,18 +393,22 @@ async fn change(
     let body = field(&form, "body");
     let intent = field(&form, "intent");
     let result = match intent.as_str() {
-        "reply" => records::reply(&ctx.state.pool, actor, loaded.repository.id, id, &body).await,
-        "close" => records::set_state(&ctx.state.pool, actor, loaded.repository.id, id, true).await,
+        // A reply returns how many replies came before it, which names the page that shows it.
+        "reply" => records::reply(&ctx.state.pool, ctx.database_actor(actor), loaded.repository.id, id, &body).await.map(Some),
+        "close" => records::set_state(&ctx.state.pool, ctx.database_actor(actor), loaded.repository.id, id, true).await.map(|()| None),
         "reopen" => {
-            records::set_state(&ctx.state.pool, actor, loaded.repository.id, id, false).await
+            records::set_state(&ctx.state.pool, ctx.database_actor(actor), loaded.repository.id, id, false).await.map(|()| None)
         }
         _ => return ctx.error(StatusCode::BAD_REQUEST, "Unknown report action"),
     };
     match result {
-        Ok(()) if intent != "reply" && !body.is_empty() => {
-            thread_model(&ctx, loaded, id, 1, None, body).await
-        }
-        Ok(()) => ctx.redirect(&format!("{}/security/reports/{id}", loaded.chrome.base())),
+        Ok(None) if !body.is_empty() => thread_model(&ctx, loaded, id, 1, None, body).await,
+        Ok(None) => ctx.redirect(&format!("{}/security/reports/{id}", loaded.chrome.base())),
+        Ok(Some(earlier)) => ctx.redirect(&format!(
+            "{}/security/reports/{id}?page={}",
+            loaded.chrome.base(),
+            earlier / 20 + 1
+        )),
         Err(error) => {
             let (status, message) = failure(&error);
             with_status(

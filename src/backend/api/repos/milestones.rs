@@ -181,8 +181,9 @@ pub(crate) async fn native_index(
             items,
             sort,
             page_number,
-            has_next: offset + db::milestones::MILESTONES_PER_PAGE
-                < if tab == "open" { open } else { closed },
+            has_next: page_number < crate::backend::api::repos::paging::MAX_PAGE
+                && offset + db::milestones::MILESTONES_PER_PAGE
+                    < if tab == "open" { open } else { closed },
         }),
     ))
 }
@@ -421,6 +422,11 @@ async fn milestone_page(
         }
         None => (None, StatusCode::OK),
     };
+    // A failed form is shown at its POST address; appearance changes return to the milestone.
+    let mut ctx = ctx.clone();
+    if refused.is_some() {
+        ctx.return_to = Some(format!("{}/milestones/{number}", repo.view.url()));
+    }
     Ok(with_status(
         ctx.page_model(
             &title,

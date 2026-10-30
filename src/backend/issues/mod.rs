@@ -241,6 +241,9 @@ pub(super) async fn require_write(
 
 pub(super) fn write_error(error: anyhow::Error) -> OperationError {
     use db::discussions::DiscussionWriteRefusal;
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return OperationError::Denied { code: "forbidden", message: "A live unrestricted credential is required.".into() };
+    }
     // Initial metadata now shares the create transaction, so preserve its typed refusals.
     let metadata = error.downcast_ref::<db::assignees::AssignmentRefusal>().map(|r| (
         matches!(r, db::assignees::AssignmentRefusal::Denied), matches!(r, db::assignees::AssignmentRefusal::NotFound), r.to_string(),

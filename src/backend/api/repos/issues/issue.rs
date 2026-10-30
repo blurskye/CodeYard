@@ -177,9 +177,26 @@ pub(crate) async fn native_detail(
                         .await
                         .map_err(|_| unavailable(&ctx))?
                         .ok_or_else(|| unavailable(&ctx))?;
-                return Ok(
-                    ctx.redirect(&format!("/{owner}/{}/issues/{}", target.name, moved.number))
-                );
+                // The comment and the page the old link asked for still apply at the new home.
+                let comment = ctx
+                    .query
+                    .get("comment")
+                    .and_then(|id| id.parse::<i64>().ok())
+                    .filter(|id| *id > 0);
+                let page = ctx
+                    .query
+                    .get("page")
+                    .and_then(|page| page.parse::<usize>().ok())
+                    .filter(|page| (2..=crate::backend::issues::MAX_COMMENT_PAGE).contains(page));
+                let suffix = match (comment, page) {
+                    (Some(id), _) => format!("?comment={id}#comment-{id}"),
+                    (None, Some(page)) => format!("?page={page}"),
+                    (None, None) => String::new(),
+                };
+                return Ok(ctx.redirect(&format!(
+                    "/{owner}/{}/issues/{}{suffix}",
+                    target.name, moved.number
+                )));
             }
             let pull_request = db::pull_requests::records::get_pull_request(
                 &ctx.state.pool,
@@ -345,6 +362,12 @@ pub(crate) async fn native_edit(
     let draft = submitted_detail(&form, "edit");
     let title = field(&form, "title");
     let body = field(&form, "body");
+    if !value.can_edit {
+        return Err(ctx.error(
+            StatusCode::FORBIDDEN,
+            "Only the author or a repository writer may edit this entry.",
+        ));
+    }
     if let Err(message) = expected(&form, &value) {
         return render_detail(
             &ctx,
@@ -542,6 +565,7 @@ mod tests {
             labels: vec![],
             comparison: None,
             comment_count: 0,
+            can_edit: false,
             can_tick: false,
             tasks: Default::default(),
             commit_count: None,

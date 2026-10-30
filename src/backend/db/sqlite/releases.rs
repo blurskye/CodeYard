@@ -1,4 +1,6 @@
 mod notes;
+mod read;
+pub use read::read_release_snapshot;
 use crate::backend::db::models::{File, Release, ReleaseAsset, ReleaseRow};
 use crate::backend::db::releases::{
     NewReleaseAsset, ReleaseChanges, ReleaseFields, ReleaseRefusal,

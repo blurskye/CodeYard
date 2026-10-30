@@ -90,11 +90,7 @@ fn entry(row: Record, organization: &str, repository: &str) -> anyhow::Result<vi
     if let Some(values) = document.get("tags").and_then(Value::as_object) {
         for (key, value) in values.iter().take(10) {
             if let Some(value) = value.as_str() {
-                let mut preview: String = value.chars().take(192).collect();
-                if preview.len() < value.len() {
-                    preview.push('…');
-                }
-                tags.push((key.clone(), preview));
+                tags.push((key.clone(), crate::webui::excerpt(value, 192)));
             }
         }
         omitted_tags = values.len().saturating_sub(tags.len());

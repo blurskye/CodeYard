@@ -1,6 +1,6 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::{access_error, readable_repository};
+use crate::backend::api::repos::access::{access_error, check_repo_read_access, readable_repository};
 use crate::backend::api::repos::chrome::{
     commit, default_ref, ensure_ref, load_refs_from_repo, ref_names_under,
     repository_default_branch, store_error, Loaded,
@@ -90,6 +90,7 @@ pub async fn list_commits(
         })
         .collect();
 
+    check_repo_read_access(&state.pool, &repository, &headers).await?;
     Ok(Json(responses))
 }
 
@@ -210,6 +211,8 @@ async fn commits_page(ctx: &PageContext, loaded: &Loaded) -> Result<Response, Re
     } else {
         format!("Commits to {path}")
     };
+    check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers).await
+        .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     Ok(ctx.page_model(
         &title,
         crate::webui::app::Page::Repositories(view::page::Page::Commits {

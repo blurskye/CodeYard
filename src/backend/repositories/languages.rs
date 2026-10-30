@@ -8,13 +8,15 @@ use anyhow::Result;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::{LazyLock, Mutex},
+    sync::{Arc, LazyLock, Mutex, Weak},
     time::Duration,
 };
 
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(60);
 type RefreshRequest = (HashSet<String>, Option<Option<i64>>);
 static REFRESHES: LazyLock<Mutex<HashMap<PathBuf, Option<RefreshRequest>>>> =
+    LazyLock::new(Default::default);
+static COMPUTATIONS: LazyLock<Mutex<HashMap<i64, Weak<tokio::sync::Mutex<()>>>>> =
     LazyLock::new(Default::default);
 
 pub async fn stored(pool: &DbPool, repo_id: i64) -> Result<Vec<LanguageStat>> {
@@ -30,54 +32,58 @@ pub async fn stored(pool: &DbPool, repo_id: i64) -> Result<Vec<LanguageStat>> {
         .collect())
 }
 
-/// Remote computations use an immutable primary revision and publish under the same database
-/// placement/version check as local computations. A replica cannot publish an older tree.
+fn computation(repo_id: i64) -> Arc<tokio::sync::Mutex<()>> {
+    let mut computations = COMPUTATIONS.lock().unwrap_or_else(|error| error.into_inner());
+    computations.retain(|_, lock| lock.strong_count() != 0);
+    let lock = computations.get(&repo_id).and_then(Weak::upgrade)
+        .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(())));
+    computations.insert(repo_id, Arc::downgrade(&lock));
+    lock
+}
+
+/// The owning primary computes immutable revisions and publishes under its repository
+/// lease and the database placement/version check. Replicas never publish a cache.
 pub async fn compute_and_store(
     pool: &DbPool,
     store: &RepoStore,
     repository: &db::models::Repository,
     branch: &str,
 ) -> Result<Vec<LanguageStat>, RepoError> {
+    let Some(path) = store.local_dir() else {
+        // Do not hold a frontend single-flight lock across RPC: an owning store can
+        // run in this process too, and must acquire the same lock itself.
+        return tokio::time::timeout(REFRESH_TIMEOUT, store.languages_from_primary(branch))
+            .await.map_err(|_| RepoError::new(ErrorKind::Unavailable, "Language computation timed out"))?;
+    };
+    let computation = computation(repository.id);
     tokio::time::timeout(REFRESH_TIMEOUT, async {
+        let _computation = computation.lock().await;
         let Some(source) = db::repository_stats::language_source(pool, repository.id).await? else {
             return Ok(Vec::new());
         };
         if source.default_branch != repository.default_branch || source.storage_node_id != repository.storage_node_id {
             return Ok(Vec::new());
         }
-        if let Some(path) = store.local_dir() {
-            let mut source = source;
-            let mut branch = branch.to_owned();
-            loop {
-                let tip = git::branch_tip(path, &branch)?;
-                let languages = compute_local(pool, path, &branch, &source).await?;
-                let current = git::default_branch(path).await?.unwrap_or_else(|| "main".into());
-                if current == branch && git::branch_tip(path, &branch)? == tip
-                    && db::repository_stats::languages_computed(pool, &source, &tip.clone().unwrap_or_default()).await?
-                {
-                    return Ok(languages);
-                }
-                let Some(current_source) = db::repository_stats::language_source(pool, repository.id).await? else {
-                    return Ok(Vec::new());
-                };
-                if current_source.storage_node_id != repository.storage_node_id {
-                    return Ok(Vec::new());
-                }
-                source = current_source;
-                branch = current;
+        let mut source = source;
+        let mut branch = branch.to_owned();
+        loop {
+            let tip = git::branch_tip(path, &branch)?;
+            let languages = compute_local(pool, path, &branch, &source).await?;
+            let current = git::default_branch(path).await?.unwrap_or_else(|| "main".into());
+            if current == branch && git::branch_tip(path, &branch)? == tip
+                && db::repository_stats::languages_computed(pool, &source, &tip.clone().unwrap_or_default()).await?
+            {
+                return Ok::<_, anyhow::Error>(languages);
             }
+            let Some(current_source) = db::repository_stats::language_source(pool, repository.id).await? else {
+                return Ok(Vec::new());
+            };
+            if current_source.storage_node_id != repository.storage_node_id {
+                return Ok(Vec::new());
+            }
+            source = current_source;
+            branch = current;
         }
-        let reference = format!("refs/heads/{branch}");
-        let revision = store.refs_from_primary().await?
-            .remove(&reference).unwrap_or_default();
-        if db::repository_stats::languages_computed(pool, &source, &revision).await? {
-            return stored(pool, repository.id).await;
-        }
-        let languages = if revision.is_empty() { Vec::new() } else {
-            store.languages(&revision).await?
-        };
-        anyhow::ensure!(store_rows(pool, &source, &revision, &languages).await?, "Repository changed during language persistence");
-        Ok::<_, anyhow::Error>(languages)
     }).await.map_err(|_| RepoError::new(ErrorKind::Unavailable, "Language computation timed out"))?
         .map_err(RepoError::from)
 }
@@ -114,6 +120,8 @@ pub(crate) fn refresh_default_branch(
                 return;
             };
             let work = async {
+                let computation = computation(repo_id);
+                let _computation = computation.lock().await;
                 let Some(source) = db::repository_stats::language_source(&pool, repo_id).await?
                 else {
                     return Ok(());
@@ -151,14 +159,19 @@ async fn compute_local(
     } else {
         git::compute_language_stats(path, &tip).await?
     };
-    // Standalone pushes need not change SQL's write_version. Retain the Git lock from the final
-    // tip check through publication so an older scan cannot overwrite a newer cache.
-    let _publication = git::locks::lock(path).await;
-    if git::branch_tip(path, branch)?.unwrap_or_default() == tip {
-        match store_rows(pool, source, &tip, &languages).await? {
+    // A feature-branch push must not discard a completed scan of this unchanged tip.
+    // Only publication is serialized: refresh the source/version under the same lease
+    // as ref publishers, then retain the database placement CAS through commit.
+    let _publication = git::locks::publication(path).await?;
+    let Some(current) = db::repository_stats::language_source(pool, source.repo_id).await? else {
+        return Ok(languages);
+    };
+    if current.default_branch == branch && current.storage_node_id == source.storage_node_id
+        && git::branch_tip(path, branch)?.unwrap_or_default() == tip
+    {
+        match store_rows(pool, &current, &tip, &languages).await? {
             true => {}
-            // A push that moved the version during this scan also lost the store. Scanning the
-            // default branch again uses a fresh source, so the stored rows are not left stale.
+            // Placement/version may still change independently of this process's lease.
             false => refresh_default_branch(
                 pool.clone(),
                 source.repo_id,

@@ -412,7 +412,7 @@ impl Gateway {
         db::repositories::records::advance_contribution_version(&self.pool, repo.id).await?;
         if let Some(actor) = db::users::accounts::get_user_by_id(&self.pool, operation.actor_id).await? {
             let history = History::Push { repository: &path, quarantine: None };
-            if let Err(error) = crate::backend::repositories::rule_suites::record_push(&self.pool, &repo, &actor, updates, &history).await {
+            if let Err(error) = crate::backend::repositories::rule_suites::record_push(&self.pool, &repo, &actor, updates, &history, Some(operation.credential)).await {
                 tracing::warn!(%error, "could not record accepted rule suites");
             }
         }

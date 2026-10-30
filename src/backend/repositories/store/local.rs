@@ -4,7 +4,7 @@
 mod branches;
 mod gists;
 use super::{
-    allowed_merge_methods, editor, AsyncMergePublication, BlobBytes, BlobRange, ErrorKind,
+    allowed_merge_methods, editor, AsyncMergePublication, BlobBytes, BlobPreviewMetadata, BlobRange, ErrorKind,
     FileWrite, GitService, MergeMethod, MergeRequest, RepoError, RestackMove,
     MAX_ARCHIVE_RESPONSE_BYTES, MAX_BLOB_RESPONSE_BYTES,
 };
@@ -54,9 +54,24 @@ fn unavailable(message: &'static str) -> RepoError {
     RepoError::new(ErrorKind::Unavailable, message)
 }
 
+async fn record_secret_bypasses(
+    pool: &db::DbPool, repo_id: i64, actor: i64,
+    bypasses: Vec<crate::backend::repositories::secret_scanning::push_protection::ApprovedBypass>,
+) -> Result<(), RepoError> {
+    let mut failed = false;
+    for bypass in bypasses {
+        if let Err(error) = db::secret_scanning::use_bypass(pool, repo_id, actor, &bypass.hash, chrono::Utc::now()).await {
+            tracing::warn!(repo_id, %error, "accepted publication bypass could not be recorded");
+            failed = true;
+        }
+    }
+    if failed { Err(RepoError::applied_followup_failed()) } else { Ok(()) }
+}
+
 fn normalize_blob_range(range: BlobRange, size: u64) -> Result<(u64, usize), RepoError> {
     let (offset, length) = match range {
         BlobRange::Full => (0, size),
+        BlobRange::Preview { .. } => return Err(RepoError::new(ErrorKind::Invalid, "Preview requires a stream reader")),
         BlobRange::Window { offset, length } => {
             let offset = offset.min(size);
             (offset, length.min(size - offset))
@@ -286,15 +301,10 @@ async fn record_branch_update(
             return;
         }
     };
-    // A save must not wait behind a busy database for the sake of a profile feed entry.
-    let record = db::activity::record_repository_push(pool, repo_id, actor, branch, count);
-    match tokio::time::timeout(std::time::Duration::from_millis(500), record).await {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => tracing::warn!(repo_id, %error, "could not record a branch update"),
-        Err(_) => tracing::warn!(
-            repo_id,
-            "gave up recording a branch update on a busy database"
-        ),
+    // This receipt also owns pushed-commit totals, not just optional feed decoration.
+    // Let database admission finish instead of cancelling a valid insert under contention.
+    if let Err(error) = db::activity::record_repository_push(pool, repo_id, actor, branch, count).await {
+        tracing::warn!(repo_id, %error, "could not record a branch update");
     }
 }
 
@@ -347,7 +357,10 @@ fn request_storage_size(pool: db::DbPool, repo_id: i64, store: LocalStore) -> (u
             drop(git::locks::lock(&path).await);
             let result = async {
                 let size = store.size_bytes().await?.min(i64::MAX as u64) as i64;
-                db::repositories::records::update_repo_size(&pool, repo_id, size).await.map_err(RepoError::from)?;
+                match store.node_id {
+                    Some(node) => db::repositories::records::update_repo_size_at(&pool, repo_id, size, node).await,
+                    None => db::repositories::records::update_repo_size(&pool, repo_id, size).await,
+                }.map_err(RepoError::from)?;
                 Ok(size)
             }.await;
             if let Err(error) = &result { tracing::warn!(repo_id, %error, "could not refresh repository storage size"); }
@@ -677,7 +690,8 @@ impl LocalStore {
         if bytes.len() > limit {
             return Err(RepoError::response_too_large());
         }
-        let lock = Arc::new(git::locks::lock(self.path()).await);
+        // The publication guard includes the process lock; taking both would wait on itself.
+        let lock = git::locks::publication(self.path()).await.map_err(RepoError::from)?;
         let permit = process::operation_slot(process::RPC_TIMEOUT).await.map_err(|_| unavailable("Git operation timed out"))?;
         let repository = live_write(
             pool,
@@ -701,21 +715,26 @@ impl LocalStore {
         // hidden ref keeps it, and the ref change makes replicas copy it like any other
         // accepted write. A single server keeps it until Git prunes unreachable objects.
         let reference = format!("refs/codeyard/objects/{sha}");
-        if repository.storage_node_id.is_some()
-            && !self.mirror_refs().await?.contains_key(&reference)
-        {
-            let held = self.blocking(git::retained_objects_in_use).await?;
-            ensure_room(
-                held,
-                &[&reference],
-                "Git-data objects that no branch or tag names",
-                git::MAX_RETAINED_OBJECT_REFS,
-                git::MAX_RETAINED_OBJECT_REF_BYTES,
-            )?;
-            let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
-            git::publish_ref_create(self.path(), &reference, &sha)
-                .await
-                .map_err(RepoError::from)?;
+        if repository.storage_node_id.is_some() {
+            let retained_ref = reference.clone();
+            if !self.blocking(move |path| git::repository::retained::exists(path, &retained_ref)).await? {
+                let held = self.blocking(git::retained_objects_in_use).await?;
+                if ensure_room(held, &[&reference], "Git-data objects that no branch or tag names",
+                    git::MAX_RETAINED_OBJECT_REFS, git::MAX_RETAINED_OBJECT_REF_BYTES).is_err()
+                {
+                    let candidates = self.blocking(git::repository::retained::candidates).await?;
+                    let redundant = git::repository::retained::reachable(self.path(), candidates).await.map_err(RepoError::from)?;
+                    if !redundant.is_empty() {
+                        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
+                        git::repository::retained::delete(self.path(), &redundant).await.map_err(RepoError::from)?;
+                    }
+                    ensure_room(self.blocking(git::retained_objects_in_use).await?, &[&reference],
+                        "Git-data objects that no branch or tag names", git::MAX_RETAINED_OBJECT_REFS,
+                        git::MAX_RETAINED_OBJECT_REF_BYTES)?;
+                }
+                let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
+                git::publish_ref_create(self.path(), &reference, &sha).await.map_err(RepoError::from)?;
+            }
         }
         refresh_storage_size(pool.clone(), repo_id, self.clone());
         Ok(sha)
@@ -765,10 +784,11 @@ impl LocalStore {
         pool: &db::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         source: &LocalStore,
         options: &super::CopyOptions,
     ) -> Result<(), RepoError> {
+        let actor = authority.user_id();
         let default_branch = options.default_branch.as_str();
         // The row is already discoverable. Keep copied objects outside its live path
         // until the source-access check, on the same filesystem for atomic publication.
@@ -818,8 +838,8 @@ impl LocalStore {
             ));
         }
         let _publication = git::locks::lock(self.path()).await;
-        // The new row is not yet readable to its creator: a gist fork reserves its gist
-        // only after storage exists. Publication only has to match the row still placed here.
+        // A pending gist has no ready gist row yet; its explicit owner is its only writer.
+        // Ordinary copies recheck destination authority after potentially slow copying.
         let destination = access::current_repository(pool, repo_id)
             .await
             .map_err(|error| match error {
@@ -828,6 +848,13 @@ impl LocalStore {
             })?;
         if !repository_matches_path(&destination, self.path(), self.node_id) {
             return Err(RepoError::write_denied());
+        }
+        if destination.is_gist {
+            if destination.owner_user_id != Some(actor) || destination.is_archived {
+                return Err(RepoError::write_denied());
+            }
+        } else {
+            live_write(pool, repo_id, actor, None, &History::SingleCommit, self.path(), self.node_id).await?;
         }
         let copied = Self::new(
             temporary
@@ -851,6 +878,18 @@ impl LocalStore {
             &copied,
         )
         .await?;
+        // Retain the initiating credential through copying, lock waits and namespace checks.
+        live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
+        if let db::users::accounts::AccountActor::Token { token_id, .. } = &authority {
+            let source_repository = access::current_repository(pool, source_repo_id).await
+                .map_err(|_| RepoError::authority_unavailable())?;
+            crate::backend::repositories::git_sessions::ReceiveCredential::Token(*token_id)
+                .authorize(pool, &source_repository, false).await.map_err(RepoError::from)?;
+        }
+        if !destination.is_gist {
+            live_write(pool, repo_id, actor, None, &History::SingleCommit, self.path(), self.node_id).await?;
+        }
+        access::credential_user(pool, &authority, true).await.map_err(RepoError::from)?;
         tokio::fs::rename(temporary.path(), self.path())
             .await
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
@@ -967,8 +1006,9 @@ impl LocalStore {
         &self,
         git_ref: &str,
         limit: usize,
+        query: &str,
     ) -> Result<FileList, RepoError> {
-        git::list_file_paths(self.path(), git_ref, limit)
+        git::list_file_paths(self.path(), git_ref, limit, query)
             .await
             .map_err(RepoError::from)
     }
@@ -997,6 +1037,18 @@ impl LocalStore {
         mode: u32,
         range: BlobRange,
     ) -> Result<BlobBytes, RepoError> {
+        if let BlobRange::Preview { offset, line } = range {
+            // The preview reader starts its own `git cat-file`, so it takes a slot like any other Git work.
+            let _permit =
+                git::repository::process::operation_slot(git::repository::process::RPC_TIMEOUT)
+                    .await
+                    .map_err(|_| unavailable("Git operation timed out"))?;
+            let preview = git::repository::read_blob_preview(self.path(), id, size, offset, line)
+                .await.map_err(RepoError::from)?;
+            return Ok(BlobBytes { id: id.to_owned(), bytes: preview.bytes, is_binary: preview.is_binary,
+                size, offset: preview.offset, mode,
+                preview: Some(BlobPreviewMetadata { first_line: preview.first_line, previous: preview.previous }) });
+        }
         let (offset, length) = normalize_blob_range(range, size)?;
         let (bytes, is_binary) = git::read_blob_range(self.path(), id, size, offset, length)
             .await
@@ -1008,6 +1060,7 @@ impl LocalStore {
             size,
             offset,
             mode,
+            preview: None,
         })
     }
 
@@ -1355,49 +1408,32 @@ impl LocalStore {
     pub(super) async fn checkout_pack(
         destination: &Path,
         sha: &str,
-        mut pack: tempfile::NamedTempFile,
+        source: &str,
+        pack: tempfile::NamedTempFile,
         permit: tokio::sync::OwnedSemaphorePermit,
         lock: tokio::sync::OwnedMutexGuard<()>,
     ) -> Result<(), RepoError> {
         let destination = destination.to_owned();
         let sha = sha.to_owned();
-        tokio::task::spawn_blocking(move || {
-            let (_permit, _lock) = (permit, lock);
-            use std::io::{Read, Seek};
-            pack.as_file_mut()
-                .rewind()
-                .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
-            let mut header = [0; 8];
-            pack.read_exact(&mut header)
-                .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
-            if &header != b"0008NAK\n" {
-                return Err(unavailable("Invalid upload-pack response"));
-            }
-            std::fs::create_dir(&destination)
-                .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
-            let result = (|| -> anyhow::Result<()> {
-                // A cancelled run removes its workspace while this task may still be
-                // running. Never create the directory again behind it.
-                let mut options = git2::RepositoryInitOptions::new();
-                options.mkdir(false).mkpath(false);
-                let repo = git2::Repository::init_opts(&destination, &options)?;
-                let odb = repo.odb()?;
-                let mut writer = odb.packwriter()?;
-                std::io::copy(&mut pack, &mut writer)?;
-                writer.commit()?;
-                let oid = git2::Oid::from_str(&sha)?;
-                let commit = git::repository::find_commit_checked(&repo, oid)?;
-                repo.set_head_detached(oid)?;
-                repo.checkout_tree(commit.as_object(), None)?;
-                Ok(())
-            })();
-            if result.is_err() {
-                let _ = std::fs::remove_dir_all(&destination);
-            }
-            result.map_err(RepoError::from)
-        })
-        .await
-        .map_err(|_| unavailable("Git did not finish"))?
+        let source = source.to_owned();
+        tokio::spawn(async move {
+        let (_permit, _lock) = (permit, lock);
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        let mut input = tokio::fs::File::from_std(pack.reopen().map_err(anyhow::Error::from)?);
+        input.rewind().await.map_err(anyhow::Error::from)?;
+        let mut header = [0; 8];
+        input.read_exact(&mut header).await.map_err(anyhow::Error::from)?;
+        if &header != b"0008NAK\n" {
+            return Err(unavailable("Invalid upload-pack response"));
+        }
+        let result = git::repository::materialize_checkout(
+            &destination, &sha, &source, Some(input),
+        ).await.map_err(RepoError::from);
+        if result.is_err() {
+            let _ = tokio::fs::remove_dir_all(&destination).await;
+        }
+        result
+        }).await.map_err(|_| unavailable("Git did not finish"))?
     }
 
     // ----- Writes -----
@@ -1495,6 +1531,8 @@ impl LocalStore {
         git::repository::publish_pull_head(self.path(), number, head, expected_head, &prepared)
             .await
             .map_err(RepoError::from)?;
+        refresh_storage_size(pool.clone(), repo_id, self.clone());
+        git::maintenance::after_push(repo_id, self.path().to_owned());
         Ok(())
     }
 
@@ -1502,10 +1540,11 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         name: &str,
         sha: &str,
     ) -> Result<String, RepoError> {
+        let actor = authority.user_id();
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -1523,7 +1562,7 @@ impl LocalStore {
         };
         // The branch points at a commit that is already stored, not at one the editor has just
         // written, so the merge commits in its history are read from the repository.
-        live_write(
+        let repository = live_write(
             pool,
             repo_id,
             actor,
@@ -1535,9 +1574,13 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
+        let bypasses = crate::backend::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+            pool, &repository, actor, self.path(), None, std::slice::from_ref(&target),
+        ).await.map_err(RepoError::from)?;
         let _change = self
-            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
+            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, authority.token_id())
             .await?;
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
         publication
             .scope(git::publish_ref_create(self.path(), &reference, &target))
             .await
@@ -1560,7 +1603,9 @@ impl LocalStore {
             &target,
         )
         .await;
+        let bypass_followup = record_secret_bypasses(pool, repo_id, actor, bypasses).await;
         followup?;
+        bypass_followup?;
         Ok(target)
     }
 
@@ -1568,11 +1613,12 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         reference: &str,
         sha: &str,
         force: bool,
     ) -> Result<(String, String), RepoError> {
+        let actor = authority.user_id();
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -1628,10 +1674,18 @@ impl LocalStore {
             self.blocking(move |path| git::check_tag_budget(path, None, &[replacement]))
                 .await?;
         }
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
+        if old == new {
+            return Ok((old, new));
+        }
+        let bypasses = crate::backend::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+            pool, &repository, actor, self.path(), None, std::slice::from_ref(&new),
+        ).await.map_err(RepoError::from)?;
         let writes = write.as_ref().into_iter().collect::<Vec<_>>();
         let _change = self
-            .begin_branch_change(pool, repo_id, actor, &writes, &publication, None)
+            .begin_branch_change(pool, repo_id, actor, &writes, &publication, authority.token_id())
             .await?;
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
         publication
             .scope(git::publish_ref(
                 self.path(),
@@ -1662,7 +1716,9 @@ impl LocalStore {
             )
             .await;
         }
+        let bypass_followup = record_secret_bypasses(pool, repo_id, actor, bypasses).await;
         followup?;
+        bypass_followup?;
         Ok((old, new))
     }
 
@@ -1670,9 +1726,10 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         name: &str,
     ) -> Result<(), RepoError> {
+        let actor = authority.user_id();
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -1697,7 +1754,7 @@ impl LocalStore {
             new: None,
             via: WriteVia::Direct,
         };
-        live_write(
+        let repository = live_write(
             pool,
             repo_id,
             actor,
@@ -1709,8 +1766,9 @@ impl LocalStore {
         .await?;
         let reference = git::branch_ref(name).ok_or_else(|| super::invalid_ref("branch"))?;
         let _change = self
-            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
+            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, authority.token_id())
             .await?;
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
         publication
             .scope(git::publish_ref_delete(self.path(), &reference, &old))
             .await
@@ -1732,20 +1790,21 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         name: &str,
         sha: &str,
         message: Option<&str>,
         tagger_name: &str,
         tagger_email: &str,
     ) -> Result<TagInfo, RepoError> {
+        let actor = authority.user_id();
         if message.is_some_and(|message| message.len() > git::MAX_TAG_MESSAGE_BYTES) {
             return Err(RepoError::new(
                 ErrorKind::Invalid,
                 "The tag message is too large",
             ));
         }
-        let _lock = git::locks::lock(self.path()).await;
+        let publication = git::locks::publication(self.path()).await.map_err(RepoError::from)?;
         let reference = git::tag_ref(name).ok_or_else(|| super::invalid_ref("tag"))?;
         self.ensure_room_for_ref(&reference).await?;
         let (owned_name, owned_sha, owned_message) =
@@ -1788,17 +1847,24 @@ impl LocalStore {
         let replacement = (reference.clone(), tag.sha.clone());
         self.blocking(move |path| git::check_tag_budget(path, None, &[replacement]))
             .await?;
+        let bypasses = crate::backend::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+            pool, &repository, actor, self.path(), None, std::slice::from_ref(&tag.sha),
+        ).await.map_err(RepoError::from)?;
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
-        git::publish_ref_create(self.path(), &reference, &tag.sha)
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
+        publication.scope(git::publish_ref_create(self.path(), &reference, &tag.sha))
             .await
             .map_err(RepoError::from)?;
-        self.after_ref_change(
+        let followup = self.after_ref_change(
             pool,
             repo_id,
             actor,
             &[(reference, editor::ZERO.to_owned(), tag.sha.clone())],
         )
-        .await?;
+        .await;
+        let bypass_followup = record_secret_bypasses(pool, repo_id, actor, bypasses).await;
+        followup?;
+        bypass_followup?;
         Ok(tag)
     }
 
@@ -1806,10 +1872,11 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         name: &str,
     ) -> Result<(), RepoError> {
-        let _lock = git::locks::lock(self.path()).await;
+        let actor = authority.user_id();
+        let publication = git::locks::publication(self.path()).await.map_err(RepoError::from)?;
         let owned_name = name.to_owned();
         let old = self
             .blocking(move |repo| git::prepare_delete_tag(repo, &owned_name))
@@ -1838,7 +1905,8 @@ impl LocalStore {
         )
         .await?;
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
-        git::publish_ref_delete(self.path(), &reference, &old)
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
+        publication.scope(git::publish_ref_delete(self.path(), &reference, &old))
             .await
             .map_err(RepoError::from)?;
         self.after_ref_change(
@@ -1882,6 +1950,25 @@ impl LocalStore {
         prepared: &editor::PreparedFile,
         dependency_publication: Option<&db::repositories::dependencies::Publication>,
     ) -> Result<CommitInfo, RepoError> {
+        let (store, pool, prepared, dependency_publication) = (
+            self.clone(), pool.clone(), prepared.clone(), dependency_publication.cloned(),
+        );
+        tokio::spawn(async move {
+            store.publish_file_owned(&pool, repo_id, actor, &prepared, dependency_publication.as_ref()).await
+        }).await.map_err(|_| RepoError::applied_followup_failed())?
+    }
+
+    async fn publish_file_owned(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        prepared: &editor::PreparedFile,
+        dependency_publication: Option<&db::repositories::dependencies::Publication>,
+    ) -> Result<CommitInfo, RepoError> {
+        let staged = editor::claim_staged(self.path(), prepared)?;
+        let prepared_path = staged.as_ref().map_or(self.path(), |staged| staged.path());
+        let quarantine = staged.as_ref().map(|staged| staged.path().join("objects"));
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -1899,7 +1986,7 @@ impl LocalStore {
         // the source history that it brings into the destination.
         let history = if prepared.new_branch {
             History::Stored {
-                repository: self.path(),
+                repository: prepared_path,
             }
         } else {
             History::SingleCommit
@@ -1961,23 +2048,26 @@ impl LocalStore {
                 &repository,
                 actor,
                 self.path(),
-                None,
+                quarantine.as_deref(),
                 std::slice::from_ref(&prepared.commit.sha),
             )
             .await
             .map_err(RepoError::from)?;
         let _change = self
-            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
+            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, Some(prepared_path))
             .await?;
-        self.check_publication_grant(pool, repo_id, actor, prepared.token_id, vec![(prepared.expected.clone().unwrap_or_else(|| editor::ZERO.to_owned()), prepared.commit.sha.clone())], None).await?;
-        let commit = publication
-            .scope(editor::publish(self.path(), prepared))
-            .await?;
-        for bypass in bypasses {
-            db::secret_scanning::use_bypass(pool, repo_id, actor, &bypass.hash, chrono::Utc::now())
-                .await
-                .map_err(RepoError::from)?;
+        if let Some(authority) = &prepared.authority {
+            if authority.user_id() != actor { return Err(RepoError::write_denied()); }
+            self.check_publication_grant(pool, repo_id, actor, authority.token_id(), vec![(
+                prepared.expected.clone().unwrap_or_else(|| editor::ZERO.to_owned()),
+                prepared.commit.sha.clone(),
+            )], quarantine.clone()).await?;
+            access::check_publication_actor(pool, authority, &repository).await?;
         }
+        let commit = publication
+            .scope(editor::publish_staged(self.path(), prepared, staged.as_deref()))
+            .await?;
+        let bypass_followup = record_secret_bypasses(pool, repo_id, actor, bypasses).await;
         let followup = self
             .after_ref_change(
                 pool,
@@ -2004,6 +2094,7 @@ impl LocalStore {
         )
         .await;
         followup?;
+        bypass_followup?;
         Ok(commit)
     }
 
@@ -2015,6 +2106,10 @@ impl LocalStore {
         actor: i64,
         moves: &[crate::backend::webhooks::ref_changes::RefMove],
     ) -> Result<(), RepoError> {
+        // In-flight contributor proofs may have observed the pre-publication head after
+        // the preparation-time version bump. Invalidate them before other follow-ups.
+        let contributors = db::repositories::records::advance_contribution_version(pool, repo_id)
+            .await.map_err(|_| RepoError::applied_followup_failed());
         let activity = crate::backend::repositories::activity::record_moves(
             pool,
             repo_id,
@@ -2034,6 +2129,23 @@ impl LocalStore {
             .map_err(|_| RepoError::applied_followup_failed())?
             .ok_or_else(RepoError::applied_followup_failed)?;
         crate::backend::repositories::dependencies::observe_refs(pool, &repository, moves).await;
+        // Evaluate-only reporting must neither hide accepted native writes nor skip other
+        // follow-ups when its storage is unavailable.
+        let suites: anyhow::Result<()> = async {
+            let user = db::users::accounts::get_user_by_id(pool, actor).await?
+                .ok_or_else(|| anyhow::anyhow!("rule suite actor is unavailable"))?;
+            let updates: Vec<_> = moves.iter().map(|(reference, old, new)| {
+                crate::backend::repositories::git_sessions::validation::RefUpdate {
+                    reference: reference.clone(), old: old.clone(), new: new.clone(),
+                }
+            }).collect();
+            crate::backend::repositories::rule_suites::record_push(
+                pool, &repository, &user, &updates, &History::Stored { repository: self.path() }, None,
+            ).await
+        }.await;
+        if let Err(error) = suites {
+            tracing::warn!(repo_id, %error, "could not record native rule suites");
+        }
         let accepted = async {
             for (reference, _, new) in moves.iter().filter(|(_, _, new)| new != editor::ZERO) {
                 // Web and API saves get the same incremental secret scan that a push gets.
@@ -2067,7 +2179,7 @@ impl LocalStore {
         )
         .await;
         git::maintenance::after_push(repo_id, self.path().to_owned());
-        accepted.and(metadata).and(activity)
+        accepted.and(metadata).and(activity).and(contributors)
     }
 
     /// Git has already published the branch. A metadata failure must not imply rollback.
@@ -2347,6 +2459,7 @@ impl LocalStore {
         method: MergeMethod,
         via: WriteVia,
         token: Option<i64>,
+        credential: Option<&db::users::accounts::AccountActor>,
     ) -> Result<(), RepoError> {
         self.publish_merge_authorized(
             pool,
@@ -2360,6 +2473,7 @@ impl LocalStore {
             via,
             token,
             None,
+            credential,
         )
         .await
     }
@@ -2387,6 +2501,7 @@ impl LocalStore {
             WriteVia::Merge,
             Some(request.token_id),
             Some(request),
+            None,
         )
         .await
     }
@@ -2407,6 +2522,7 @@ impl LocalStore {
         via: WriteVia,
         token: Option<i64>,
         authority: Option<&AsyncMergePublication>,
+        credential: Option<&db::users::accounts::AccountActor>,
     ) -> Result<(), RepoError> {
         let publication = git::locks::publication(self.path())
             .await
@@ -2437,6 +2553,9 @@ impl LocalStore {
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
+        let bypasses = crate::backend::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+            pool, &repository, actor, self.path(), None, &[result.to_owned()],
+        ).await.map_err(RepoError::from)?;
         if let Some(authority) = authority {
             db::users::tokens::token_user(pool, authority.token_id, true)
                 .await
@@ -2471,6 +2590,10 @@ impl LocalStore {
         }
         self.check_publication_grant(pool, repo_id, actor, token, vec![(base.to_owned(), result.to_owned())], None)
             .await?;
+        if let Some(credential) = credential {
+            if credential.user_id() != actor { return Err(RepoError::write_denied()); }
+            crate::backend::repositories::access::check_publication_actor(pool, credential, &repository).await?;
+        }
         publication
             .scope(git::publish_merge(
                 self.path(),
@@ -2503,7 +2626,9 @@ impl LocalStore {
             result,
         )
         .await;
-        followup
+        let bypass_followup = record_secret_bypasses(pool, repo_id, actor, bypasses).await;
+        followup?;
+        bypass_followup
     }
 
     /// Replays the commits of `from..head` onto `onto`, for a restack. No branch moves.
@@ -2537,13 +2662,14 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         stack_id: i64,
         versions: &[(i64, i64)],
         base_branch: &str,
         base: &str,
         moves: &[RestackMove],
     ) -> Result<(), RepoError> {
+        let actor = authority.user_id();
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -2629,6 +2755,8 @@ impl LocalStore {
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &references, &publication, None)
             .await?;
+        let repository = access::current_repository(pool, repo_id).await.map_err(|_| RepoError::write_denied())?;
+        access::check_publication_actor(pool, &authority, &repository).await.map_err(|_| RepoError::write_denied())?;
         publication
             .scope(git::publish_restack(
                 self.path(),
@@ -2693,7 +2821,7 @@ impl LocalStore {
             return Ok(None);
         }
         let target = String::from_utf8(output).map_err(|_| unavailable("HEAD is not text"))?;
-        Ok(Some(target.trim().to_owned()))
+        Ok(Some(target.strip_suffix('\n').unwrap_or(&target).to_owned()))
     }
 
     /// The refs and HEAD that a replica copy takes from this primary, read as one listing.
@@ -2863,7 +2991,7 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: db::users::accounts::AccountActor,
         name: &str,
     ) -> Result<(), RepoError> {
         self.patch_repository(pool, repo_id, actor, name, Default::default())
@@ -2877,9 +3005,10 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         new_owner: &str,
     ) -> Result<db::models::Repository, RepoError> {
+        let actor = authority.user_id();
         let (store, pool, new_owner) = (self.clone(), pool.clone(), new_owner.to_owned());
         tokio::spawn(async move {
             let _lock = git::locks::lock(store.path()).await;
@@ -2895,6 +3024,7 @@ impl LocalStore {
             if !repository_matches_path(&repository, store.path(), store.node_id) {
                 return Err(RepoError::write_denied());
             }
+            access::credential_user(&pool, &authority, true).await.map_err(RepoError::from)?;
             let (target, owner) =
                 crate::backend::repositories::lifecycle::transfer_target(&pool, &new_owner)
                     .await
@@ -2908,7 +3038,7 @@ impl LocalStore {
             )
             .await?;
             db::repositories::records::transfer_repository_checked(
-                &pool, actor, repo_id, target, &owner,
+                &pool, authority, repo_id, target, &owner, &repository.name,
             )
             .await
             .map_err(|error| {
@@ -2952,8 +3082,7 @@ impl LocalStore {
             .await?;
             db::repositories::dependencies::configure(
                 &pool,
-                actor,
-                &credential,
+                (actor, &credential),
                 repo_id,
                 feature,
                 enabled,
@@ -2980,7 +3109,7 @@ impl LocalStore {
         mutation.validate()?;
         let (store, pool) = (self.clone(), pool.clone());
         tokio::spawn(async move {
-            let _lock = git::locks::lock(store.path()).await;
+            let _publication = git::locks::publication(store.path()).await.map_err(RepoError::from)?;
             let repository = live_write(
                 &pool,
                 repo_id,
@@ -3004,7 +3133,11 @@ impl LocalStore {
             };
             let mut target = String::new();
             let mut tag_oid = String::new();
-            if matches!(&mutation, Mutation::Create { .. }) || attestation.is_some() {
+            let publishing = match &mutation {
+                Mutation::Create { fields, .. } => !fields.is_draft,
+                Mutation::Update { changes, .. } => changes.is_draft == Some(false),
+            };
+            if matches!(&mutation, Mutation::Create { .. }) || publishing || attestation.is_some() {
                 let reference = git::tag_ref(&tag).ok_or_else(|| super::invalid_ref("tag"))?;
                 let draft_target = match &mutation {
                     Mutation::Create {
@@ -3121,7 +3254,7 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        actor: db::users::accounts::AccountActor,
         name: &str,
         changes: db::repositories::records::RepositoryChanges<String>,
     ) -> Result<db::models::Repository, RepoError> {
@@ -3140,10 +3273,11 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         name: &str,
         changes: &db::repositories::records::RepositoryChanges<String>,
     ) -> Result<db::models::Repository, RepoError> {
+        let actor = authority.user_id();
         let _lock = git::locks::lock(self.path()).await;
         let previous =
             access::check_admin(pool, repo_id, actor)
@@ -3200,10 +3334,11 @@ impl LocalStore {
             String::new()
         };
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
+        access::credential_user(pool, &authority, true).await.map_err(RepoError::from)?;
         self.set_head_target(&reference).await?;
         let updated = db::repositories::records::patch_repository_and_default(
             pool,
-            actor,
+            authority,
             repo_id,
             &changes.borrowed(),
             name,
@@ -3217,6 +3352,7 @@ impl LocalStore {
                 // back when the database already names the requested default.
                 use db::repositories::records::RepositorySettingsRefusal;
                 let must_restore = if error.downcast_ref::<RepositorySettingsRefusal>().is_some()
+                    || error.is::<db::users::accounts::AccountRestricted>()
                     || previous.default_branch == name
                 {
                     true
@@ -3246,6 +3382,9 @@ impl LocalStore {
                     if restored.is_err() {
                         return Err(unavailable("Repository update failed and HEAD could not be restored; reconciliation is required"));
                     }
+                }
+                if error.is::<db::users::accounts::AccountRestricted>() {
+                    return Err(RepoError::write_denied());
                 }
                 return Err(match error.downcast_ref::<RepositorySettingsRefusal>() {
                     Some(
@@ -3314,6 +3453,7 @@ impl LocalStore {
         if session.allow_unreachable {
             command.args(["-c", "uploadpack.allowAnySHA1InWant=true"]);
         }
+        process::limit_memory(&mut command);
         command.arg("upload-pack");
         if session.stateless {
             command.arg("--stateless-rpc");

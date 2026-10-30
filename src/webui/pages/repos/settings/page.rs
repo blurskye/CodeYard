@@ -150,7 +150,11 @@ pub struct Settings {
     #[serde(default)]
     pub environments: Vec<String>,
     #[serde(default)]
-    pub environments_page: i64,
+    pub environment_page: usize,
+    #[serde(default)]
+    pub environments_more: bool,
+    #[serde(default)]
+    pub git_unavailable: bool,
     pub environment: Option<Box<super::environments::Environment>>,
     pub properties: Option<Box<super::properties::Properties>>,
     #[serde(default)]
@@ -450,7 +454,9 @@ fn default_branch_section(repo: &RepoChrome, settings: &Settings) -> Element {
     rsx! {
         section { class: "repo-settings-section panel",
             header { class: "repo-section-heading", div { h3 { "Default branch" } p { "Repository pages and new clones open on this branch." } } }
-            if settings.branches.is_empty() {
+            if settings.git_unavailable {
+                p { class: "repo-list-empty", "Branch choices are temporarily unavailable. Retry when repository storage is available." }
+            } else if settings.branches.is_empty() {
                 p { class: "repo-list-empty", "The repository has no branches yet. Push one to choose a default." }
             } else {
                 form { method: "post", action: repo.action("default-branch"), class: "repo-form-body",
@@ -1183,7 +1189,13 @@ pub fn rejected_form(
                                 }
                             }
                         } else {
-                            for (name, value) in fields { label { key: "{name}", class: "repo-field", span { "{field_label(name)}" } DraftTextarea { name: name.clone(), initial_value: value.clone(), rows: 2 } } }
+                            for (name, value) in fields {
+                                if matches!(name.as_str(), "original_description" | "pattern_id" | "organization") {
+                                    input { key: "{name}", r#type: "hidden", name: name.clone(), value: value.clone() }
+                                } else {
+                                    label { key: "{name}", class: "repo-field", span { "{field_label(name)}" } DraftTextarea { name: name.clone(), initial_value: value.clone(), rows: 2 } }
+                                }
+                            }
                         }
                         label { class: "repo-check-label", input { r#type: "checkbox", name: "confirm", value: "yes", required: true } " Confirm and retry" }
                         div { class: "repo-form-actions",

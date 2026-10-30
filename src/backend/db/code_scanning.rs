@@ -214,6 +214,55 @@ pub struct NewFinding {
     pub total_count: i64,
 }
 
+pub struct AlertSelection<'a> {
+    pub repo: i64,
+    pub number: Option<i64>,
+    pub filters: &'a AlertFilters<'a>,
+    pub offset: i64,
+    pub limit: i64,
+}
+
+pub struct AlertSnapshot {
+    pub rows: Vec<Alert>,
+    pub instances: std::collections::HashMap<i64, Instance>,
+}
+
+native_operation!(super::postgres::code_scanning::security_read_allowed, super::sqlite::code_scanning::security_read_allowed,
+    fn security_read_allowed(pool: &DbPool, actor: i64, session: &str, repo: i64) -> Result<bool>);
+
+native_operation!(super::postgres::code_scanning::read_alert_snapshot, super::sqlite::code_scanning::read_alert_snapshot,
+    fn read_alert_snapshot(pool: &DbPool, actor: i64, session: &str, selection: &AlertSelection<'_>) -> Result<AlertSnapshot>);
+
+pub struct PullSelection<'a> {
+    pub repo: i64,
+    pub head: &'a str,
+    pub base: &'a str,
+    pub number: i32,
+    pub branch: Option<&'a str>,
+    pub base_branch: &'a str,
+    pub merge_commits: &'a [String],
+}
+
+pub struct PullGroup {
+    pub analysis: Analysis,
+    pub baseline: Option<i64>,
+    pub incomplete: bool,
+    pub total: i64,
+    pub findings: Vec<NewFinding>,
+}
+
+#[derive(Default)]
+pub struct PullSnapshot {
+    pub groups: Vec<PullGroup>,
+    pub more: bool,
+    pub processing: Vec<(String, String, Option<String>)>,
+}
+
+native_operation!(super::postgres::code_scanning::pull_snapshot, super::sqlite::code_scanning::pull_snapshot,
+    fn pull_snapshot(pool: &DbPool, actor: i64, session: &str, selection: &PullSelection<'_>) -> Result<PullSnapshot>);
+native_operation!(super::postgres::code_scanning::pull_merge_candidates, super::sqlite::code_scanning::pull_merge_candidates,
+    fn pull_merge_candidates(pool: &DbPool, actor: i64, session: &str, repo: i64, number: i32) -> Result<Vec<String>>);
+
 pub struct Change {
     pub alert: Alert,
     pub action: &'static str,

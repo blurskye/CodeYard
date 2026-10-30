@@ -15,8 +15,6 @@ native_operation!(crate::backend::db::postgres::issues::issue_repositories,
 /// the issue is saved with everything it asks for or not at all.
 #[derive(Clone, Copy, Default)]
 pub struct IssueMetadata<'a> {
-    /// Initiating API credential, retained until the insert and metadata commit.
-    pub token: Option<i64>,
     pub parent: Option<i64>,
     pub labels: &'a [i64],
     pub assignees: &'a [i64],
@@ -37,12 +35,30 @@ impl IssueMetadata<'_> {
     }
 }
 
+#[derive(Default)]
+pub struct OwnedIssueMetadata {
+    pub parent: Option<i64>,
+    pub labels: Vec<i64>,
+    pub assignees: Vec<i64>,
+    pub milestone: Option<i32>,
+    pub issue_type: Option<i64>,
+}
+
+impl OwnedIssueMetadata {
+    pub fn borrowed(&self) -> IssueMetadata<'_> {
+        IssueMetadata {
+            parent: self.parent, labels: &self.labels, assignees: &self.assignees,
+            milestone: self.milestone, issue_type: self.issue_type,
+        }
+    }
+}
+
 native_operation!(crate::backend::db::postgres::issues::create_issue_with_metadata,
     crate::backend::db::sqlite::issues::create_issue_with_metadata,
     fn create_issue_with_metadata(
     pool: &DbPool,
     repo_id: i64,
-    author_id: impl Into<crate::backend::db::users::tokens::Actor>,
+    author_id: impl Into<crate::backend::db::credentials::Actor>,
     title: &str,
     body: &str,
     metadata: IssueMetadata<'_>,

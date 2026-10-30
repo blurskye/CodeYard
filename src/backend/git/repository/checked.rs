@@ -1067,7 +1067,19 @@ pub(crate) async fn publish_branch_rename(
     {
         return Err(RefConflict("Reference changed while renaming".into()).into());
     }
-    run_ref_command(path, &["branch", "--move", "--", old, new], b"", "Reference changed while renaming", &[(&old_ref, Some(target)), (&new_ref, None)]).await
+    let outcome = run_ref_command(path, &["branch", "--move", "--", old, new], b"", "Reference changed while renaming", &[(&old_ref, Some(target)), (&new_ref, None)]).await;
+    if outcome.is_err() {
+        // A timeout or failed exit may still follow an accepted ref move; report it as done so
+        // the caller finishes the metadata. Prefix-related refs cannot coexist, so do not probe
+        // the old name through the new ref's file.
+        let prefix_related = old_ref.starts_with(&format!("{new_ref}/")) || new_ref.starts_with(&format!("{old_ref}/"));
+        if current_reference(path, &new_ref).await?.as_deref() == Some(target)
+            && (prefix_related || current_reference(path, &old_ref).await?.is_none())
+        {
+            return Ok(());
+        }
+    }
+    outcome
 }
 
 pub(crate) async fn publish_ref_create(path: &Path, reference: &str, target: &str) -> Result<()> {
@@ -1221,14 +1233,26 @@ pub(crate) async fn checkout(path: &Path, destination: &Path, sha: &str) -> Resu
     let source = source
         .to_str()
         .ok_or_else(|| anyhow!("Invalid source storage path"))?;
+    materialize_checkout(destination, sha, source, None).await
+}
+
+pub(crate) async fn materialize_checkout(
+    destination: &Path,
+    sha: &str,
+    source: &str,
+    pack: Option<tokio::fs::File>,
+) -> Result<()> {
+    validate_merge_revision("main", sha)?;
     tokio::fs::create_dir(destination).await?;
     let mut init = process::git_command()?;
+    process::limit_memory(&mut init);
     init.arg("-C")
         .arg(destination)
         .args(["init", "--template="]);
     let (status, _) = process::buffered(init, b"", MAX_OUTPUT, CHECKOUT_TIMEOUT).await?;
     ensure!(status.success(), "git init failed");
     let mut origin = process::git_command()?;
+    process::limit_memory(&mut origin);
     origin
         .arg("-C")
         .arg(destination)
@@ -1236,13 +1260,18 @@ pub(crate) async fn checkout(path: &Path, destination: &Path, sha: &str) -> Resu
     let (status, _) = process::buffered(origin, b"", MAX_OUTPUT, CHECKOUT_TIMEOUT).await?;
     ensure!(status.success(), "git remote add failed");
     let mut fetch = process::git_command()?;
-    fetch
-        .arg("-C")
-        .arg(destination)
-        .args(["fetch", "--no-tags", "--", "origin", sha]);
-    let (status, _) = process::buffered(fetch, b"", MAX_OUTPUT, CHECKOUT_TIMEOUT).await?;
+    process::limit_memory(&mut fetch);
+    fetch.arg("-C").arg(destination);
+    let status = if let Some(pack) = pack {
+        fetch.args(["index-pack", "--stdin", "--fix-thin"]);
+        process::stream(fetch, pack, tokio::io::sink(), tokio::io::sink(), false).await?
+    } else {
+        fetch.args(["fetch", "--no-tags", "--", "origin", sha]);
+        process::buffered(fetch, b"", MAX_OUTPUT, CHECKOUT_TIMEOUT).await?.0
+    };
     ensure!(status.success(), "git fetch of CI commit failed");
     let mut switch = process::git_command()?;
+    process::limit_memory(&mut switch);
     switch
         .arg("-C")
         .arg(destination)

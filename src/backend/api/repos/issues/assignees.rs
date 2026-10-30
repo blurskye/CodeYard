@@ -18,6 +18,10 @@ use axum::Json;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+fn authority(ctx: &PageContext) -> ResultPage<db::credentials::Actor> {
+    Ok(ctx.database_actor(ctx.require_user()?.id))
+}
+
 pub(crate) fn assignment_error(error: anyhow::Error) -> ApiFailure {
     let (status, code, message) = match error.downcast_ref::<AssignmentRefusal>() {
         Some(AssignmentRefusal::Denied) => (
@@ -99,7 +103,7 @@ pub(crate) async fn native_assign(
     let username = field(&form, "username");
     let target = assignments::Target { actor: ctx.require_user()?, repository: &repo.record, owner: &owner, item: subject, number, title: &value.title };
     let outcome = match db::users::accounts::get_user_by_username(&ctx.state.pool, username.trim()).await.map_err(|_| unavailable(&ctx))? {
-        Some(assignee) => assignments::assign(&ctx.state.pool, &ctx.state.notification_broadcaster, &target, &[assignee]).await.map(|_| ()).map_err(assignment_error),
+        Some(assignee) => assignments::assign(&ctx.state.pool, &ctx.state.notification_broadcaster, &target, authority(&ctx)?, &[assignee]).await.map(|_| ()).map_err(assignment_error),
         None => Err(assignment_error(AssignmentRefusal::Unassignable.into())),
     };
     detail_outcome(&ctx, &repo, kind, &value, number, outcome).await
@@ -121,6 +125,6 @@ pub(crate) async fn native_unassign(
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     // A name that is no user, or is not assigned, leaves the item as it is and records nothing.
     let target = assignments::Target { actor: ctx.require_user()?, repository: &repo.record, owner: &owner, item: subject, number, title: &value.title };
-    let outcome = assignments::unassign(&ctx.state.pool, &target, &[username]).await.map(|_| ()).map_err(assignment_error);
+    let outcome = assignments::unassign(&ctx.state.pool, &target, authority(&ctx)?, &[username]).await.map(|_| ()).map_err(assignment_error);
     detail_outcome(&ctx, &repo, kind, &value, number, outcome).await
 }

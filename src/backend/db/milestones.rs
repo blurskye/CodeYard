@@ -42,6 +42,16 @@ pub(crate) fn due_on(day: Option<&str>) -> Result<Option<chrono::DateTime<chrono
     .transpose()
 }
 
+pub(crate) fn calendar_due_on(
+    current: Option<chrono::DateTime<chrono::Utc>>,
+    submitted: Option<chrono::DateTime<chrono::Utc>>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    match (current, submitted) {
+        (Some(current), Some(day)) if current.date_naive() == day.date_naive() => Some(current),
+        (_, changed) => changed,
+    }
+}
+
 native_operation!(crate::backend::db::postgres::milestones::save_milestone,
     crate::backend::db::sqlite::milestones::save_milestone,
     fn save_milestone(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>) -> Result<Milestone>);

@@ -89,6 +89,7 @@ pub enum SecretsError {
 
 impl SecretsError {
     pub(crate) fn authority(error: anyhow::Error) -> Self {
+        if error.is::<super::users::accounts::AccountRestricted>() { return Self::Denied; }
         // Anyhow downcasts also recognize contextual errors; retain typed denial
         // and driver sources without displaying SQL, keys or helper context.
         let error = match error.downcast::<Self>() {

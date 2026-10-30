@@ -59,15 +59,21 @@ impl Search {
     }
 
     pub fn parse(kind: Kind, text: &str) -> Result<Self, &'static str> {
-        let mut expr = discussion_search::expression(text)?;
-        if kind == Kind::Repositories
-            && !has(&expr, "fork", None)
-            && !has(&expr, "is", Some("fork"))
-            && !has(&expr, "repo", None)
+        Self::from_expression(kind, discussion_search::expression(text)?)
+            .map(Self::with_default_fork_filter)
+    }
+    pub fn with_default_fork_filter(mut self) -> Self {
+        if self.kind == Kind::Repositories
+            && !has(&self.expr, "fork", None)
+            && !has(&self.expr, "is", Some("fork"))
+            && !has(&self.expr, "repo", None)
         {
-            expr = Expr::And(vec![expr, Expr::Term("fork".into(), "false".into())]);
+            self.expr = Expr::And(vec![self.expr, Expr::Term("fork".into(), "false".into())]);
         }
-        Self::from_expression(kind, expr)
+        self
+    }
+    pub fn needs_readme(&self) -> bool {
+        self.fields.iter().any(|field| field == "readme")
     }
     pub fn needs_git(&self) -> bool {
         self.kind == Kind::Repositories
@@ -76,6 +82,12 @@ impl Search {
     pub fn with_git(mut self, facts: String) -> Self {
         self.git = Some(facts);
         self
+    }
+    pub fn git_licenses(&self) -> std::collections::HashMap<i64, Option<String>> {
+        #[derive(serde::Deserialize)]
+        struct Fact { repo_id: i64, license: Option<String> }
+        self.git.as_deref().and_then(|facts| serde_json::from_str::<Vec<Fact>>(facts).ok())
+            .unwrap_or_default().into_iter().map(|fact| (fact.repo_id, fact.license)).collect()
     }
     pub fn git_candidates(&self) -> Self {
         fn broader(expr: &Expr, readme: bool, negative: bool) -> Expr {
@@ -295,7 +307,7 @@ impl Search {
                     "stars" | "forks" | "size" | "followers" if repo => sql.range(
                         &match key.as_str() {
                             "stars" => format!("{r}.stars_count"),
-                            "forks" => format!("{r}.forks_count"),
+                            "forks" => super::repositories::discovery::public_fork_count_sql(r),
                             "followers" => format!("(SELECT COUNT(*) FROM watches w WHERE w.repo_id={r}.id AND w.level IN ('watching','custom'))"),
                             _ => format!("({r}.size_bytes/1024)"),
                         },
@@ -349,7 +361,19 @@ impl Search {
     ) -> Result<String, &'static str> {
         let sort = sort.unwrap_or("");
         let direction = if ascending { "ASC" } else { "DESC" };
-        let field=match(self.kind,sort){(_,"")=>return Ok(format!("m.score {direction},m.key ASC")),(Kind::Repositories,"stars")=>"i.stars_count",(Kind::Repositories,"forks")=>"i.forks_count",(Kind::Repositories,"updated")=>"i.updated_at",(Kind::Repositories,"help-wanted-issues")=>"(SELECT COUNT(*) FROM issues x WHERE x.repo_id=i.id AND x.state='open' AND EXISTS(SELECT 1 FROM issue_labels il JOIN labels l ON l.id=il.label_id WHERE il.issue_id=x.id AND lower(l.name)='help wanted'))",(Kind::Labels,"created")=>"i.created_at",(Kind::Labels,"updated")=>"COALESCE(i.updated_at,i.created_at)",(Kind::Users,"followers")=>"i.followers",(Kind::Users,"repositories")=>"i.repositories",(Kind::Users,"joined")=>"i.created_at",_=>return Err("Invalid search sort")};
+        let field: std::borrow::Cow<'_, str> = match (self.kind, sort) {
+            (_, "") => return Ok(format!("m.score {direction},m.key ASC")),
+            (Kind::Repositories, "stars") => "i.stars_count".into(),
+            (Kind::Repositories, "forks") => super::repositories::discovery::public_fork_count_sql("i").into(),
+            (Kind::Repositories, "updated") => "i.updated_at".into(),
+            (Kind::Repositories, "help-wanted-issues") => "(SELECT COUNT(*) FROM issues x WHERE x.repo_id=i.id AND x.state='open' AND EXISTS(SELECT 1 FROM issue_labels il JOIN labels l ON l.id=il.label_id WHERE il.issue_id=x.id AND lower(l.name)='help wanted'))".into(),
+            (Kind::Labels, "created") => "i.created_at".into(),
+            (Kind::Labels, "updated") => "COALESCE(i.updated_at,i.created_at)".into(),
+            (Kind::Users, "followers") => "i.followers".into(),
+            (Kind::Users, "repositories") => "i.repositories".into(),
+            (Kind::Users, "joined") => "i.created_at".into(),
+            _ => return Err("Invalid search sort"),
+        };
         let source = match self.kind {
             Kind::Repositories => "visible i",
             Kind::Labels => "labels i",

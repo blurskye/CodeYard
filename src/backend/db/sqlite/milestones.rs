@@ -101,9 +101,9 @@ pub async fn update_milestone(
     description: Option<&str>,
     due_date: Option<&str>,
 ) -> Result<Milestone> {
-    save_milestone(
+    save_milestone_in(
         pool,
-        actor_id,
+        actor_id.into(),
         repo_id,
         Some(number),
         MilestoneInput {
@@ -112,6 +112,8 @@ pub async fn update_milestone(
             due_on: Some(crate::backend::db::milestones::due_on(due_date)?),
             state: None,
         },
+        None,
+        true,
     )
     .await
 }
@@ -123,11 +125,12 @@ pub async fn save_milestone(
     number: Option<i32>,
     input: MilestoneInput<'_>,
 ) -> Result<Milestone> {
-    save_milestone_checked(pool, actor, repo_id, number, input, None).await
+    save_milestone_in(pool, actor.into(), repo_id, number, input, None, false).await
 }
 
-/// Saves a milestone; with `expected`, only while the stored title, description, due date and
-/// state still serialize to it, so a form never overwrites an edit it did not show.
+/// Saves a milestone from the edit form; with `expected`, only while the stored title,
+/// description, due date and state still serialize to it, so a form never overwrites an edit it
+/// did not show.
 pub async fn save_milestone_checked(
     pool: &SqlitePool,
     actor: impl Into<crate::backend::db::users::tokens::Actor>,
@@ -136,7 +139,19 @@ pub async fn save_milestone_checked(
     input: MilestoneInput<'_>,
     expected: Option<&str>,
 ) -> Result<Milestone> {
-    let credential = actor.into();
+    save_milestone_in(pool, actor.into(), repo_id, number, input, expected, true).await
+}
+
+/// Form dates are whole days (`calendar`): an unchanged day keeps the stored time of day.
+async fn save_milestone_in(
+    pool: &SqlitePool,
+    credential: crate::backend::db::users::tokens::Actor,
+    repo_id: i64,
+    number: Option<i32>,
+    input: MilestoneInput<'_>,
+    expected: Option<&str>,
+    calendar: bool,
+) -> Result<Milestone> {
     let actor_id = credential.user_id;
     anyhow::ensure!(
         input
@@ -162,6 +177,10 @@ pub async fn save_milestone_checked(
     let number = match number {
         Some(number) => number,
         None => sqlx::query_scalar::<_, i32>("UPDATE repositories SET milestone_number=milestone_number+1 WHERE id=?1 RETURNING milestone_number").bind(repo_id).fetch_one(&mut *tx).await?,
+    };
+    let due_on = match &existing {
+        Some(current) if calendar => crate::backend::db::milestones::calendar_due_on(current.due_on, due_on),
+        _ => due_on,
     };
     let due_date = due_on.map(|date| date.format("%Y-%m-%d").to_string());
     let due_on = due_on.map(|date| date.to_rfc3339_opts(chrono::SecondsFormat::Micros, true));

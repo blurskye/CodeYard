@@ -107,20 +107,35 @@ pub fn is_license_file(name: &str) -> bool {
             | "copying"
             | "copying.md"
             | "copying.txt"
+            | "unlicense"
+            | "unlicense.md"
+            | "unlicense.txt"
     )
 }
 
 /// The license template a text is. Case, punctuation, spacing and copyright lines do not
 /// change the answer; the community profile, REST, GraphQL and search all use this.
 pub fn detect_license(bytes: &[u8]) -> Option<&'static Template> {
+    // Bundled licenses fit well below this bound. Unknown documents must not amplify
+    // the raw-blob allowance into millions of per-word allocations.
+    if bytes.len() > 64 * 1024 {
+        return None;
+    }
+    // A notice is "Copyright", then a symbol, bracket or year. Prose that begins with the word,
+    // such as "copyright notice that is included", is part of the license terms.
+    fn is_notice(line: &str) -> bool {
+        line.trim_start()
+            .to_ascii_lowercase()
+            .strip_prefix("copyright")
+            .is_some_and(|rest| {
+                rest.trim_start()
+                    .starts_with(|ch: char| matches!(ch, '(' | '©' | '[') || ch.is_ascii_digit())
+            })
+    }
     fn normalize(text: &str) -> String {
         text.lines()
-            .filter(|line| {
-                !line
-                    .trim_start()
-                    .to_ascii_lowercase()
-                    .starts_with("copyright")
-            })
+            // The heading of the MIT license is optional.
+            .filter(|line| !is_notice(line) && !line.trim().eq_ignore_ascii_case("mit license"))
             .flat_map(|line| line.split(|ch: char| !ch.is_alphanumeric()))
             .filter(|word| !word.is_empty())
             .map(str::to_ascii_lowercase)

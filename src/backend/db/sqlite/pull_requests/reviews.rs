@@ -647,7 +647,7 @@ pub async fn save_pull_request_review(
     state: &str,
     body: Option<&str>,
     commit_sha: Option<&str>,
-    expected_pending: Option<i64>,
+    expected_pending: Option<Option<i64>>,
 ) -> Result<PullRequestReview> {
     save_review_batch(pool, crate::backend::db::pull_requests::reviews::ReviewBatch { pr_id, author_id, state: Some(state), body, commit_sha, expected_pending, create_pending: false, comments: &[], token: None, credential }).await
 }
@@ -664,14 +664,20 @@ pub async fn save_review_batch(pool: &SqlitePool, input: crate::backend::db::pul
         discussions::lock_pull_request_review_authority(&mut tx, author_id, pr_id).await?
     };
     anyhow::ensure!(super::super::users::transitions::credential_live(&mut tx, author_id, input.credential, true).await?, crate::backend::db::discussions::DiscussionWriteRefusal::Denied);
-    let pinned: bool = if let Some(id) = expected_pending {
+    // `Some(None)`: the form saw no pending draft, so a draft that appeared since is not submitted unseen.
+    if expected_pending == Some(None) {
+        let draft: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews WHERE pull_request_id=?1 AND author_id=?2 AND state='pending')")
+            .bind(pr_id).bind(author_id).fetch_one(&mut *tx).await?;
+        anyhow::ensure!(!draft, crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview);
+    }
+    let pinned: bool = if let Some(Some(id)) = expected_pending {
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews WHERE id=?1 AND pull_request_id=?2 AND author_id=?3 AND state='pending' AND commit_sha=?4)")
             .bind(id).bind(pr_id).bind(author_id).bind(commit_sha.as_deref()).fetch_one(&mut *tx).await?
     } else { false };
     anyhow::ensure!(
         current_state == "open"
             && matches!(state, "approved" | "changes_requested" | "commented")
-            && (pinned || (expected_pending.is_none() && commit_sha.as_deref() == Some(current_head.as_str())))
+            && (pinned || (expected_pending.flatten().is_none() && commit_sha.as_deref() == Some(current_head.as_str())))
             && (state == "commented" || author != author_id),
         crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview
     );

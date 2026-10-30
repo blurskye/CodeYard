@@ -213,8 +213,12 @@ pub async fn info_refs(
         return response;
     }
     let service = query.service.unwrap();
-    let line = format!("# service={service}\n");
-    let mut body = format!("{:04x}{line}0000", line.len() + 4).into_bytes();
+    let mut body = Vec::new();
+    crate::backend::repositories::store::source::append_packet(
+        &mut body,
+        &format!("# service={service}\n"),
+    );
+    body.extend_from_slice(b"0000");
     body.extend(refs);
     git_response(
         &format!("application/x-{service}-advertisement"),

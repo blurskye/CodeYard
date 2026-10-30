@@ -42,7 +42,7 @@ pub(super) async fn import(
         .await?
         .ok_or_else(auth::required)?;
     actor.require_write()?;
-    let value = store::import(&state.pool, actor.user.id, &value)
+    let value = store::import(&state.pool, actor.database_actor(), &value)
         .await
         .map_err(failure)?;
     Ok((StatusCode::CREATED, Json(value)).into_response())

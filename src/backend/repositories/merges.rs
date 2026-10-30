@@ -21,9 +21,6 @@ pub struct BranchMerge<'a> {
     pub message: Option<&'a str>,
     pub expected_base: Option<&'a str>,
     pub expected_head: Option<&'a str>,
-    /// The token the request came with, so publication can check its workflows permission.
-    /// `None` for a browser session.
-    pub token: Option<i64>,
 }
 
 fn moved() -> RefError {
@@ -38,11 +35,13 @@ pub async fn merge_branch(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repo_id: i64,
     owner: &str,
     input: BranchMerge<'_>,
 ) -> Result<Option<CommitInfo>, RefError> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let (repository, user) = access::check_write(pool, repo_id, actor)
         .await
         .map_err(RefError::Access)?;
@@ -127,53 +126,59 @@ pub async fn merge_branch(
         .commit_from_primary(&result)
         .await
         .map_err(RefError::Git)?;
-    // A failure after the ref moved still refreshes pull requests and queues workflows, since a
-    // retry finds the branches already merged.
-    let followup_failed = match store
-        .publish_branch_merge_as(
-            pool,
-            repo_id,
+    // Publication and its follow-ups run in an owned task, so a cancelled request cannot move
+    // the ref and then skip the pull-request refresh and push workflows; a retry would find the
+    // branches already merged and do nothing.
+    let (pool, cluster, ci) = (pool.clone(), cluster.cloned(), ci.clone());
+    let (owner, base_name) = (owner.to_owned(), input.base.to_owned());
+    let publication = BranchMergePublication {
+        base_branch: base_name.clone(),
+        base: base.clone(),
+        head_branch,
+        head,
+        result: result.clone(),
+        authority,
+    };
+    let base = base.clone();
+    tokio::spawn(async move {
+        // A failure after the ref moved still refreshes pull requests and queues workflows,
+        // since a retry finds the branches already merged.
+        let followup_failed = match repo_store(&repository, cluster.as_ref())
+            .publish_branch_merge_as(&pool, repo_id, actor, &publication)
+            .await
+            .map_err(publication_error)
+        {
+            Ok(_) => false,
+            Err(RefError::AppliedFollowupFailed) => true,
+            Err(error) => return Err(error),
+        };
+        let refreshed = pull_requests::refresh_open_pull_requests(
+            &pool,
+            &repository,
+            Some(&[base_name.as_str()]),
+            &ci,
             actor,
-            &BranchMergePublication {
-                base_branch: input.base.into(),
-                base: base.clone(),
-                head_branch,
-                head,
-                result: result.clone(),
-                token: input.token,
-            },
+            db::models::AccessLevel::Owner,
         )
         .await
-        .map_err(publication_error)
-    {
-        Ok(_) => false,
-        Err(RefError::AppliedFollowupFailed) => true,
-        Err(error) => return Err(error),
-    };
-    let refreshed = pull_requests::refresh_open_pull_requests(
-        pool,
-        &repository,
-        Some(&[input.base]),
-        ci,
-        actor,
-        db::models::AccessLevel::Owner,
-    )
+        .is_ok();
+        ci.queue_push_runs(
+            &repository,
+            &owner,
+            actor,
+            RefUpdate {
+                reference: base_ref,
+                old: Some(base),
+                new: result,
+                changed_paths: None,
+            },
+        )
+        .await;
+        if !refreshed || followup_failed {
+            return Err(RefError::AppliedFollowupFailed);
+        }
+        Ok(Some(commit))
+    })
     .await
-    .is_ok();
-    ci.queue_push_runs(
-        &repository,
-        owner,
-        actor,
-        RefUpdate {
-            reference: base_ref,
-            old: Some(base.clone()),
-            new: result,
-            changed_paths: None,
-        },
-    )
-    .await;
-    if !refreshed || followup_failed {
-        return Err(RefError::AppliedFollowupFailed);
-    }
-    Ok(Some(commit))
+    .map_err(|_| RefError::Unavailable)?
 }

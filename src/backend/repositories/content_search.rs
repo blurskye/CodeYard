@@ -64,6 +64,7 @@ pub struct Query {
     scope: Search,
     file: bool,
     path: bool,
+    highlights: Vec<regex::Regex>,
 }
 impl Query {
     pub fn parse(kind: KindOfSearch, text: &str) -> std::result::Result<Self, &'static str> {
@@ -80,12 +81,19 @@ impl Query {
             return Err("Invalid code search field");
         }
         let (scope, _) = repository_scope(&expr);
-        let scope =
-            Search::from_expression(Kind::Repositories, scope.unwrap_or(Expr::And(Vec::new())))?;
+        let scope = Search::from_expression(Kind::Repositories, scope.unwrap_or(Expr::And(Vec::new())))?
+            .with_default_fork_filter();
+        let mut words = Vec::new();
+        discussion_search::positive_text(&expr, false, &mut words);
+        let words: HashSet<_> = words.into_iter().map(str::to_lowercase).collect();
+        let highlights = words.into_iter().map(|word| {
+            regex::RegexBuilder::new(&regex::escape(&word)).case_insensitive(true).build()
+        }).collect::<std::result::Result<Vec<_>, _>>().map_err(|_| "Invalid search terms")?;
         let query = Self {
             kind,
             expr,
             scope,
+            highlights,
             file: fields.is_empty() || fields.iter().any(|f| f == "file"),
             path: fields.iter().any(|f| f == "path"),
         };
@@ -93,19 +101,12 @@ impl Query {
         Ok(query)
     }
     pub fn text_matches(&self, fragment: &str) -> Vec<TextMatch> {
-        let mut words = Vec::new();
-        discussion_search::positive_text(&self.expr, false, &mut words);
         let mut matches = Vec::new();
-        for word in words {
-            if let Ok(pattern) = regex::RegexBuilder::new(&regex::escape(word))
-                .case_insensitive(true)
-                .build()
-            {
-                matches.extend(pattern.find_iter(fragment).map(|m| TextMatch {
-                    text: m.as_str().to_owned(),
-                    indices: [m.start(), m.end()],
-                }));
-            }
+        for pattern in &self.highlights {
+            matches.extend(pattern.find_iter(fragment).map(|m| TextMatch {
+                text: m.as_str().to_owned(),
+                indices: [m.start(), m.end()],
+            }));
         }
         matches.sort_by_key(|m| m.indices);
         matches.dedup_by_key(|m| m.indices);
@@ -756,10 +757,10 @@ pub async fn search(
             scan.result.incomplete = true;
             continue;
         };
-        if refs.is_empty() {
+        let Some(revision) = refs.get(&format!("refs/heads/{}", repo.default_branch)) else {
             continue;
-        }
-        let Some(tip) = until(deadline, store.commit(&repo.default_branch)).await else {
+        };
+        let Some(tip) = until(deadline, store.commit(revision)).await else {
             scan.result.incomplete = true;
             continue;
         };

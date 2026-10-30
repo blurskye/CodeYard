@@ -361,6 +361,7 @@ fn fixtures() -> Vec<Page> {
                     body: "Notes".into(),
                     author: "alice".into(),
                     target: "main".into(),
+                    archive_revision: "refs/tags/v1.0".into(),
                     created_at: "2026-10-01T00:00:00Z".into(),
                     published_at: Some("2026-10-02T00:00:00Z".into()),
                     draft: false,
@@ -433,6 +434,7 @@ fn fixtures() -> Vec<Page> {
             page: 2,
             has_more: true,
             can_rerequest: true,
+            actions: Vec::new(),
         }),
     });
     pages.extend(insight_pages().into_iter().map(|page| Page::Insights {
@@ -443,6 +445,8 @@ fn fixtures() -> Vec<Page> {
         repo: insights_repo.clone(),
         page: super::dependency_graph::Page {
             sha: "a".repeat(40),
+            previous: None,
+            next: None,
             packages: vec![super::dependency_graph::Dependency {
                 name: "<script>".into(),
                 version: "1.0.0".into(),
@@ -638,6 +642,7 @@ fn insight_pages() -> Vec<InsightsPage> {
             ],
         },
         InsightsPage::Contributors {
+            omitted: 0,
             rows: vec![
                 Contributor {
                     name: hostile.into(),

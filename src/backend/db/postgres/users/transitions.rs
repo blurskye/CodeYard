@@ -115,9 +115,39 @@ pub(crate) async fn require_account(
     actor: i64,
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
+    require_account_with_mode(tx, actor, credential, true, false).await
+}
+
+/// Account-local mutations retain their original serialization and quota lock.
+pub(crate) async fn require_account_exclusive(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<()> {
+    require_account_with_mode(tx, actor, credential, true, true).await
+}
+
+pub(crate) async fn require_read_account(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<()> {
+    require_account_with_mode(tx, actor, credential, false, false).await
+}
+
+async fn require_account_with_mode(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    write: bool,
+    exclusive_actor: bool,
+) -> Result<()> {
     use crate::backend::db::users::accounts::AccountRestricted;
-    anyhow::ensure!(active_account(tx, actor).await?, AccountRestricted);
-    anyhow::ensure!(credential_live(tx, actor, credential, true).await?, AccountRestricted);
+    // Repository/org authority already holds a shared actor lock. Upgrading it
+    // after acquiring resource locks deadlocks concurrent requests by one actor.
+    // Shared is sufficient to prevent account restrictions through commit.
+    anyhow::ensure!(active_account_locked(tx, actor, exclusive_actor).await?, AccountRestricted);
+    anyhow::ensure!(credential_live(tx, actor, credential, write).await?, AccountRestricted);
     Ok(())
 }
 

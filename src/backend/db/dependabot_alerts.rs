@@ -663,7 +663,7 @@ native_operation!(crate::backend::db::postgres::dependabot_alerts::without_osv,c
 native_operation!(crate::backend::db::postgres::dependabot_alerts::global_one,crate::backend::db::sqlite::dependabot_alerts::global_one,
     fn global_one(pool:&DbPool, ghsa_id:&str)->Result<Option<Value>>);
 native_operation!(crate::backend::db::postgres::dependabot_alerts::import,crate::backend::db::sqlite::dependabot_alerts::import,
-    fn import(pool:&DbPool,actor:i64,value:&Value)->Result<Value>);
+    fn import(pool:&DbPool,actor:impl Into<super::credentials::Actor>,value:&Value)->Result<Value>);
 native_operation!(crate::backend::db::postgres::dependabot_alerts::alerts,crate::backend::db::sqlite::dependabot_alerts::alerts,
     fn alerts(pool:&DbPool,actor:impl Into<super::credentials::Actor>,repo:i64)->Result<Vec<Alert>>);
 native_operation!(crate::backend::db::postgres::dependabot_alerts::update,crate::backend::db::sqlite::dependabot_alerts::update,

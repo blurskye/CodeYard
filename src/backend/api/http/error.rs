@@ -12,6 +12,9 @@ pub struct ApiError {
 pub(crate) fn protection_write_error(
     error: anyhow::Error,
 ) -> (axum::http::StatusCode, axum::Json<ApiError>) {
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return ApiError::failure(StatusCode::FORBIDDEN, "forbidden", "A live unrestricted account credential is required");
+    }
     use crate::backend::db::repositories::ProtectionWriteRefusal as Refusal;
     use axum::{http::StatusCode, Json};
     let (status, code, message) = match error.downcast_ref::<Refusal>() {
@@ -42,12 +45,25 @@ pub(crate) fn protection_write_error(
     (status, Json(ApiError::new(code, message)))
 }
 
+/// The status of a refused native OIDC settings save: a denial is 403, any other typed refusal
+/// is 422, and an untyped failure is 503.
+pub(crate) fn oidc_settings_status(error: &anyhow::Error) -> StatusCode {
+    match error.downcast_ref::<db::oidc::Refusal>() {
+        Some(db::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
+        Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
+        None => StatusCode::SERVICE_UNAVAILABLE,
+    }
+}
+
 /// Current native settings authority, without driver/path disclosure.
 pub(crate) fn repository_settings_error(
     error: anyhow::Error,
 ) -> (axum::http::StatusCode, axum::Json<ApiError>) {
     use crate::backend::db::repositories::RepositorySettingsRefusal as Refusal;
     use axum::{http::StatusCode, Json};
+    if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+        return ApiError::failure(StatusCode::FORBIDDEN, "forbidden", "A live unrestricted credential is required.");
+    }
     let (status, code, message) = match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => (
             StatusCode::FORBIDDEN,

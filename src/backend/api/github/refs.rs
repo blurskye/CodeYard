@@ -1,6 +1,7 @@
 use super::{contents::store_error, pagination::Pagination, repo_url, repository, Error, Result};
 use crate::backend::{
     app::AppState,
+    db::users::accounts::AccountActor,
     repositories::{refs, store::repo_store},
 };
 use axum::{
@@ -125,7 +126,8 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user.id;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = AccountActor::Token { user_id: auth.user.id, token_id: auth.token_id() };
     if !crate::backend::git::is_full_commit_id(&input.sha) {
         return Err(Error::invalid("sha must be a full object ID"));
     }
@@ -186,7 +188,8 @@ async fn remove(
     Path((owner, name, reference)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user.id;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = AccountActor::Token { user_id: auth.user.id, token_id: auth.token_id() };
     let store = repo_store(&repo, state.cluster.as_ref());
     if !store
         .refs_from_primary()
@@ -231,7 +234,8 @@ async fn update(
     Json(input): Json<Update>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user.id;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = AccountActor::Token { user_id: auth.user.id, token_id: auth.token_id() };
     let full = format!("refs/{reference}");
     let sha = refs::update_reference(
         &state.pool,

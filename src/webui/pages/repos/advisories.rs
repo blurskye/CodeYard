@@ -76,6 +76,9 @@ fn fields(draft: &Draft, include_package: bool) -> Element {
             label {"Package ecosystem" DraftSelect {name:"ecosystem",initial_value:draft.ecosystem.clone(),options:ecosystem_options}}
             label {"Package name" DraftInput {name:"package",initial_value:draft.package.clone(),maxlength:Some(255)}}
             label {"Vulnerable versions" DraftInput {name:"range",initial_value:draft.range.clone(),maxlength:Some(1024)}}
+        } else {
+            label {"Affected packages (JSON)" DraftTextarea {name:"vulnerabilities_json",initial_value:draft.vulnerabilities_json.clone(),required:true,rows:10}}
+            p {"Complete each package's ecosystem, name and vulnerable_version_range before publishing. Keep patched_versions and vulnerable_functions when editing existing entries."}
         }
     }
 }
@@ -110,8 +113,6 @@ fn AdvisoryView(repo: RepoChrome, page: Page) -> Element {
                     if page.can_administer&&!repo.is_archived {
                         form {method:"post",action:repo.action("advisory"),{csrf(&repo.csrf_token)} {repository_id(repo.id)} input {r#type:"hidden",name:"ghsa",value:detail.row.ghsa.clone()}
                             {fields(&page.draft,false)}
-                            label { "Vulnerabilities (JSON array)" DraftTextarea { name: "vulnerabilities_json", initial_value: page.draft.vulnerabilities_json.clone(), rows: 10 } }
-                            p { "Edit every package's ecosystem, name, vulnerable_version_range and patched_versions here. Keep other entries in the array." }
                             button {r#type:"submit",name:"op",value:"save","Save advisory"}
                         }
                         form {method:"post",action:repo.action("advisory"),{csrf(&repo.csrf_token)} {repository_id(repo.id)} input {r#type:"hidden",name:"ghsa",value:detail.row.ghsa.clone()}

@@ -16,13 +16,14 @@ pub async fn commit_association_candidates(
     repo: i64,
     before: i64,
     limit: i64,
+    merged_only: bool,
 ) -> Result<Vec<PullRequest>> {
     anyhow::ensure!(
         (1..=512).contains(&limit),
         "Pull request association batch exceeds its limit"
     );
-    Ok(sqlx::query_as("SELECT * FROM pull_requests WHERE repo_id=$1 AND id<$2 AND (state='open' OR merged) ORDER BY id DESC LIMIT $3")
-        .bind(repo).bind(before).bind(limit).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT * FROM pull_requests WHERE repo_id=$1 AND id<$2 AND (state='open' OR merged) AND (NOT $4 OR merged) ORDER BY id DESC LIMIT $3")
+        .bind(repo).bind(before).bind(limit).bind(merged_only).fetch_all(pool).await?)
 }
 
 /// The branches and commits that the open pull requests of a repository record.

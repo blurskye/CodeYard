@@ -262,7 +262,10 @@ pub async fn check_branch_write_with(
         } else {
             false
         };
-        let app_allowed = if rule.restrict_pushes {
+        let app_allowed = if rule.restrict_pushes
+            && !rule.push_allowances.contains(&actor.id)
+            && !team_allowed
+        {
             app_allows_actor(
                 pool,
                 repository.id,
@@ -435,7 +438,14 @@ fn refusal(
             return Some(DELETION_BLOCKED);
         }
     }
-    if rule.restrict_pushes && !rule.push_allowances.contains(&actor_id) && !team_allowed {
+    // Creating a branch is limited by push restrictions only when the rule blocks creations.
+    let creation_allowed =
+        write.old.is_none() && write.new.is_some() && !rule.github_settings.block_creations;
+    if rule.restrict_pushes
+        && !creation_allowed
+        && !rule.push_allowances.contains(&actor_id)
+        && !team_allowed
+    {
         return Some(PUSHER_NOT_ALLOWED);
     }
     None

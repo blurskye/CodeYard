@@ -51,7 +51,7 @@ pub async fn save_profile(
     input: &ProfilePatch<'_>,
 ) -> Result<User> {
     let mut tx = pool.begin().await?;
-    super::transitions::require_account(&mut tx, user, credential).await?;
+    super::transitions::require_account_exclusive(&mut tx, user, credential).await?;
     let current: User = sqlx::query_as("SELECT * FROM users WHERE id=$1")
         .bind(user)
         .fetch_one(&mut *tx)

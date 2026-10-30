@@ -2591,7 +2591,8 @@ async fn label_usage_contract(pool: &DbPool) {
     db::labels::add_pull_request_labels(pool, owner.id, repo.id, pr.id, &[bug.id])
         .await
         .unwrap();
-    let usage: std::collections::BTreeMap<i64, i64> = db::labels::list_label_usage(pool, repo.id)
+    let usage: std::collections::BTreeMap<i64, i64> =
+        db::labels::list_label_usage(pool, repo.id, &[bug.id, docs.id, unused.id])
         .await
         .unwrap()
         .into_iter()
@@ -2623,13 +2624,14 @@ async fn label_usage_contract(pool: &DbPool) {
     db::labels::add_issue_labels(pool, owner.id, other.id, other_issue.id, &[other_bug.id])
         .await
         .unwrap();
-    let usage: std::collections::BTreeMap<i64, i64> = db::labels::list_label_usage(pool, repo.id)
+    let usage: std::collections::BTreeMap<i64, i64> =
+        db::labels::list_label_usage(pool, repo.id, &[bug.id, docs.id, unused.id])
         .await
         .unwrap()
         .into_iter()
         .collect();
     assert_eq!(usage, expected);
-    let other_usage: Vec<(i64, i64)> = db::labels::list_label_usage(pool, other.id).await.unwrap();
+    let other_usage: Vec<(i64, i64)> = db::labels::list_label_usage(pool, other.id, &[other_bug.id]).await.unwrap();
     assert_eq!(other_usage, vec![(other_bug.id, 1)]);
 }
 

@@ -1,6 +1,11 @@
 use super::chrome;
 use crate::backend::{
-    api::http::context::PageContext, app::AppState, repositories::dependency_graph as graph,
+    api::http::context::PageContext,
+    app::AppState,
+    repositories::{
+        dependency_graph as graph,
+        store::{ErrorKind, RepoError},
+    },
 };
 use crate::webui::{
     app::Page,
@@ -11,7 +16,7 @@ use crate::webui::{
 };
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, Uri},
+    http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
@@ -27,6 +32,13 @@ pub fn page_router() -> Router<Arc<AppState>> {
                 crate::backend::api::http::middleware::private_api_response,
             )),
         )
+}
+
+fn inventory_failure(ctx: &PageContext, loaded: &chrome::Loaded, error: RepoError) -> Response {
+    if error.kind == ErrorKind::Invalid {
+        return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &error.message);
+    }
+    chrome::store_error(ctx, Some(&loaded.chrome), error)
 }
 
 async fn respond(
@@ -46,17 +58,41 @@ async fn respond(
         Err(response) => return response,
     };
     let reader = crate::backend::db::dependency_graph::Reader::Viewer(ctx.user.as_ref().map(|user| ctx.database_actor(user.id)));
-    let (sha, packages) =
-        match graph::inventory(&ctx.state, &reader, &loaded.repository, &loaded.default_branch).await {
-            Ok(inventory) => inventory,
-            Err(error) => return chrome::store_error(&ctx, Some(&loaded.chrome), error),
-        };
+    let reference = format!("refs/heads/{}", loaded.default_branch);
     if download {
-        let mut document = graph::sbom(&owner, &name, &sha, &packages);
+        // The same typed document as the REST export, so submitted relationships survive.
+        let snapshots = match graph::pinned_snapshots(&ctx.state, &reader, &loaded.repository, &reference).await {
+            Ok(snapshots) => snapshots,
+            Err(error) => return inventory_failure(&ctx, &loaded, error),
+        };
+        if let Err((status, _)) = super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers).await {
+            return ctx.error(status, "Repository not found.");
+        }
+        let mut document = crate::backend::dependency_graph::sbom(&format!("{owner}/{name}"), &snapshots);
         return Json(document["sbom"].take()).into_response();
     }
+    let (sha, packages) = match graph::inventory(&ctx.state, &reader, &loaded.repository, &reference).await {
+        Ok(inventory) => inventory,
+        // A repository without commits has no dependencies yet.
+        Err(error) if error.kind == ErrorKind::NotFound => (String::new(), Vec::new()),
+        Err(error) => return inventory_failure(&ctx, &loaded, error),
+    };
+    if let Err((status, _)) = super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers).await {
+        return ctx.error(status, "Repository not found.");
+    }
+    let number = match super::paging::number(&ctx, "page", 1, 1..=super::paging::MAX_PAGE) {
+        Ok(number) => number,
+        Err(response) => return response,
+    };
+    let per_page = super::paging::DEFAULT_PER_PAGE;
+    let offset = (number - 1) * per_page;
+    let link = |page| format!("{}/dependency-graph?page={page}", loaded.chrome.base());
+    let previous = (number > 1).then(|| link(number - 1));
+    let next = (offset + per_page < packages.len()).then(|| link(number + 1));
     let packages = packages
         .into_iter()
+        .skip(offset)
+        .take(per_page)
         .map(|package| Dependency {
             name: package.name,
             version: package.version,
@@ -69,7 +105,7 @@ async fn respond(
         "Dependency graph",
         Page::Repositories(RepoPage::DependencyGraph {
             repo: loaded.chrome,
-            page: GraphPage { sha, packages },
+            page: GraphPage { sha, packages, previous, next },
         }),
     )
 }

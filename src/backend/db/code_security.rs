@@ -159,6 +159,23 @@ pub fn merge(current: Option<&str>, patch: &Value) -> Result<Value> {
     Ok(settings)
 }
 
+/// Enforced configurations fix only the toggles they explicitly configure.
+pub(crate) fn permits_toggle(configuration: &str, feature: &str, enabled: bool) -> Result<bool> {
+    let value: Value = serde_json::from_str(configuration)?;
+    if value["enforcement"] != "enforced" { return Ok(true); }
+    Ok(match value[feature].as_str() {
+        Some("enabled") => enabled,
+        Some("disabled") => !enabled,
+        _ => true,
+    })
+}
+
+pub(crate) fn with_toggle_status(current: Option<&str>, feature: &str, enabled: bool) -> Result<String> {
+    let mut value: Value = current.map(serde_json::from_str).transpose()?.unwrap_or_else(|| json!({}));
+    value[feature] = json!({"status": if enabled { "enabled" } else { "disabled" }});
+    Ok(value.to_string())
+}
+
 pub(crate) fn apply(current: Option<&str>, settings: &str) -> Result<String> {
     let mut value: Value = match current {
         Some(value) => serde_json::from_str(value)?,

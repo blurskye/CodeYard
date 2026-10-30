@@ -24,6 +24,7 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
     let kind = IssueAttribute {
         revision: String::new(),
         id: 1,
+        updated: String::new(),
         kind: "type".into(),
         name: "Bug".into(),
         description: Some(opaque.into()),
@@ -37,6 +38,7 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
     let number = IssueAttribute {
         revision: String::new(),
         id: 2,
+        updated: String::new(),
         kind: "field".into(),
         name: "Estimate".into(),
         description: None,
@@ -266,6 +268,7 @@ fn item() -> Item {
         updated: "revision-1".into(),
         labels: vec![],
         comment_count: 0,
+        can_edit: true,
         can_tick: false,
         tasks: Default::default(),
         commit_count: None,

@@ -16,6 +16,8 @@ pub struct ReleaseItem {
     pub body: String,
     pub author: String,
     pub target: String,
+    /// The revision the source archives are cut from.
+    pub archive_revision: String,
     pub created_at: String,
     pub published_at: Option<String>,
     pub draft: bool,
@@ -281,8 +283,7 @@ fn detail(
     can_write: bool,
 ) -> Element {
     let base = repo.base();
-    // The archive names the tag's full ref, so a branch with the same name is not downloaded.
-    let archive_ref = crate::webui::encode_component(&format!("refs/tags/{}", release.tag));
+    let archive_ref = crate::webui::encode_component(&release.archive_revision);
     let delete_id = format!("delete-release-{}", release.id);
     rsx! {
         section { class: "collaboration-page releases-page release-detail", aria_label: "Release {release.title}",

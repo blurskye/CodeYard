@@ -23,6 +23,7 @@ pub(super) fn error(error: anyhow::Error) -> Error {
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => Error::new(StatusCode::FORBIDDEN, error.to_string()),
         Some(Refusal::Missing) => Error::missing(),
+        Some(Refusal::Conflict) => Error::new(StatusCode::CONFLICT, error.to_string()),
         Some(_) => Error::invalid(error.to_string()),
         None if error.downcast_ref::<sqlx::Error>().is_some_and(|e| {
             e.as_database_error()
@@ -105,7 +106,7 @@ async fn save(
     db::issue_attributes::set_values(
         &state.pool,
         repo.id,
-        (actor.user.id, actor.token.id),
+        actor.database_actor(),
         issue,
         &input.issue_field_values,
         method == Method::PUT,
@@ -128,7 +129,7 @@ async fn remove(
     let actor = auth.ok_or_else(auth::required)?;
     let issue = issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
     let field = p["issue_field_id"].parse().map_err(|_| Error::missing())?;
-    db::issue_attributes::delete_value(&state.pool, repo.id, (actor.user.id, actor.token.id), issue, field)
+    db::issue_attributes::delete_value(&state.pool, repo.id, actor.database_actor(), issue, field)
         .await
         .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)

@@ -58,7 +58,7 @@ pub async fn get(
 }
 pub async fn create(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     value: &Value,
     report: bool,
@@ -68,6 +68,8 @@ pub async fn create(
         anyhow::ensure!(fork.is_boolean(), Refusal::Invalid);
     }
     let data = Data::parse(value, None, report)?;
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let report_id = if report {
         let input = crate::backend::db::repositories::security::NewReport::new(
@@ -82,6 +84,9 @@ pub async fn create(
         );
         None
     };
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     let row=sqlx::query_as("INSERT INTO repository_advisories(repo_id,ghsa_id,author_id,state,document,report_id) VALUES(?1,?2,?3,?4,?5,?6) RETURNING *").bind(repo).bind(identifier()).bind(actor).bind(if report {"triage"} else {"draft"}).bind(serde_json::to_string(&data)?).bind(report_id).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(row)
@@ -96,7 +101,7 @@ pub async fn discard_created(pool: &SqlitePool, actor: i64, created: &Advisory) 
     Ok(deleted)
 }
 
-async fn administration(
+pub(crate) async fn administration(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     actor: i64,
     repo: i64,
@@ -117,14 +122,19 @@ async fn administration(
 }
 pub async fn update(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     ghsa: &str,
     patch: &Value,
 ) -> Result<Advisory> {
     anyhow::ensure!(patch.get("start_private_fork").is_none(), Refusal::Invalid);
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     let previous = Data::from_row(&row)?;
     let data = Data::parse(patch, Some(&previous), false)?;
     let state = if let Some(state) = patch.get("state") {
@@ -182,9 +192,14 @@ pub async fn update(
     tx.commit().await?;
     Ok(updated)
 }
-pub async fn request_cve(pool: &SqlitePool, actor: i64, repo: i64, ghsa: &str) -> Result<()> {
+pub async fn request_cve(pool: &SqlitePool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo: i64, ghsa: &str) -> Result<()> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     let private: bool = sqlx::query_scalar("SELECT is_private FROM repositories WHERE id=$1").bind(repo).fetch_one(&mut *tx).await?;
     anyhow::ensure!(!private, Refusal::Conflict);
     anyhow::ensure!(
@@ -199,18 +214,23 @@ pub async fn request_cve(pool: &SqlitePool, actor: i64, repo: i64, ghsa: &str) -
 }
 pub async fn attach_fork(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     ghsa: &str,
     fork: i64,
 ) -> Result<()> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     anyhow::ensure!(
         matches!(row.state.as_str(), "draft" | "triage") && row.private_fork_id.is_none(),
         Refusal::Conflict
     );
-    let changed = sqlx::query("UPDATE repositories SET visibility_locked=true WHERE id=?1 AND is_private AND owner_kind='user' AND owner_user_id=?2 AND forked_from_id=?3")
+    let changed = sqlx::query("UPDATE repositories SET visibility_locked=true WHERE id=?1 AND is_private AND owner_kind='user' AND owner_user_id=?2 AND forked_from_id=?3 AND NOT EXISTS(SELECT 1 FROM repository_advisories a WHERE a.private_fork_id=?1)")
         .bind(fork).bind(actor).bind(repo).execute(&mut *tx).await?.rows_affected();
     anyhow::ensure!(changed == 1, Refusal::Denied);
     sqlx::query("UPDATE repository_advisories SET revision=revision+1,private_fork_id=?3,updated_at=?4 WHERE repo_id=?1 AND ghsa_id=?2").bind(repo).bind(ghsa).bind(fork).bind(Utc::now()).execute(&mut *tx).await?;

@@ -1,6 +1,6 @@
 use crate::backend::db::{
     models::{AccessLevel, User},
-    repositories::collaborators::{Added, Collaborator, CollaboratorQuery, Invitation, Refusal},
+    repositories::collaborators::{Added, Collaborator, CollaboratorQuery, Invitation, InvitationSummary, Refusal},
 };
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
@@ -91,6 +91,33 @@ pub async fn list(
         .bind(repo_id).bind(query.username).bind(query.permission).bind(query.affiliation).bind(query.limit).bind(query.offset).fetch_all(pool).await?)
 }
 
+fn administration(user: &str) -> String {
+    let access = super::access::USER_REPO_ACCESS_SQL;
+    format!("EXISTS(SELECT 1 FROM users u WHERE u.id={user} AND NOT u.is_banned AND NOT u.must_change_password
+        AND NOT r.is_gist AND NOT r.is_archived
+        AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=5)
+        AND (u.is_admin OR NOT EXISTS(SELECT 1 FROM user_blocks b WHERE r.owner_kind='user'
+            AND ((b.user_id=r.owner_user_id AND b.blocked_id=u.id) OR (b.blocked_id=r.owner_user_id AND b.user_id=u.id)))))")
+}
+
+fn invitation_query(projection: &str, joins: &str, session: bool) -> String {
+    let inviter = administration("i.inviter_id");
+    let viewer = administration("?1");
+    let credential = if session { "AND EXISTS(SELECT 1 FROM sessions s JOIN users viewer ON viewer.id=s.user_id WHERE s.id=?5 AND s.user_id=?1 AND julianday(s.expires_at)>julianday('now') AND NOT viewer.is_banned AND NOT viewer.must_change_password)" } else { "" };
+    format!("SELECT {projection} FROM repository_invitations i JOIN repositories r ON r.id=i.repo_id {joins}
+        WHERE i.state='pending' AND julianday(i.created_at)>julianday('now','-7 days') AND {inviter}
+        AND EXISTS(SELECT 1 FROM users recipient WHERE recipient.id=?1 AND NOT recipient.is_banned AND NOT recipient.must_change_password)
+        AND ((?2 IS NULL AND i.invitee_id=?1) OR (i.repo_id=?2 AND {viewer})) {credential}
+        ORDER BY i.id DESC LIMIT ?3 OFFSET ?4")
+}
+
+pub async fn recipient_invitations(pool: &SqlitePool, actor: i64, session: &str, offset: i64, limit: i64) -> Result<Vec<InvitationSummary>> {
+    anyhow::ensure!(offset >= 0 && (1..=101).contains(&limit), "Invalid invitation page");
+    let query = invitation_query("i.*,CASE WHEN r.owner_kind='user' THEN owner.username ELSE org.name END AS owner,r.name AS repository,inviter.username AS inviter",
+        "JOIN users inviter ON inviter.id=i.inviter_id LEFT JOIN users owner ON owner.id=r.owner_user_id LEFT JOIN organizations org ON org.id=r.owner_org_id", true);
+    Ok(sqlx::query_as(&query).bind(actor).bind(None::<i64>).bind(limit).bind(offset).bind(session).fetch_all(pool).await?)
+}
+
 pub async fn invitations(
     pool: &SqlitePool,
     actor: i64,
@@ -98,7 +125,8 @@ pub async fn invitations(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Invitation>> {
-    Ok(sqlx::query_as("SELECT * FROM repository_invitations WHERE state='pending' AND created_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-7 days') AND ((?2 IS NULL AND invitee_id=?1) OR repo_id=?2) ORDER BY id DESC LIMIT ?3 OFFSET ?4").bind(actor).bind(repo_id).bind(limit).bind(offset).fetch_all(pool).await?)
+    anyhow::ensure!(offset >= 0 && limit > 0, "Invalid invitation page");
+    Ok(sqlx::query_as(&invitation_query("i.*", "", false)).bind(actor).bind(repo_id).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
 pub async fn update_invitation(
@@ -115,11 +143,17 @@ pub async fn update_invitation(
     Ok(invitation)
 }
 
-pub async fn respond(pool: &SqlitePool, actor: i64, id: i64, accept: bool) -> Result<()> {
+pub async fn respond(pool: &SqlitePool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, id: i64, accept: bool) -> Result<()> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let invitation=sqlx::query_as::<_,Invitation>("SELECT * FROM repository_invitations WHERE id=?1 AND invitee_id=?2 AND state='pending' AND created_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-7 days')").bind(id).bind(actor).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
     let live: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut *tx).await?;
     anyhow::ensure!(live, Refusal::Denied);
+    if let Some(credential) = authority.credential() {
+        super::super::users::transitions::require_account(&mut tx, actor, &credential).await
+            .map_err(|error| if error.is::<crate::backend::db::users::accounts::AccountRestricted>() { Refusal::Denied.into() } else { error })?;
+    }
     if accept {
         admin(&mut tx, invitation.inviter_id, invitation.repo_id).await?;
         let current: i16=sqlx::query_scalar("SELECT COALESCE((SELECT access_level FROM repo_access WHERE repo_id=?1 AND user_id=?2),0)").bind(invitation.repo_id).bind(actor).fetch_one(&mut *tx).await?;

@@ -51,6 +51,7 @@ pub fn authorize_operation(
         Operation::Refs => ("Refs", false),
         Operation::MatchingRefs { .. } => ("MatchingRefs", false),
         Operation::PrimaryRefs => ("PrimaryRefs", false),
+        Operation::PrimaryLanguages { .. } => ("PrimaryLanguages", false),
         Operation::BranchPublication { .. } => ("BranchPublication", false),
         Operation::Info => ("Info", false),
         Operation::CommitCount => ("CommitCount", false),
@@ -207,7 +208,7 @@ impl RpcHandler {
         &self,
         store: &RepoStore,
         repo_id: Option<i64>,
-        actor: Option<i64>,
+        actor: Option<crate::backend::db::users::accounts::AccountActor>,
         source: Uuid,
         options: &crate::backend::repositories::store::CopyOptions,
     ) -> Result<(), RepoError> {
@@ -502,7 +503,7 @@ impl RpcHandler {
                 Some(source) => json!(self.initialize_copy(
                     &store,
                     repo_id,
-                    actor,
+                    actor.map(Into::into),
                     source,
                     &crate::backend::repositories::store::CopyOptions {
                         default_branch,
@@ -517,17 +518,17 @@ impl RpcHandler {
                 default_branch,
                 template,
                 default_branch_only,
-            } => json!(self.initialize_copy(
-                &store,
-                repo_id,
-                actor,
-                source,
-                &crate::backend::repositories::store::CopyOptions {
-                    default_branch,
-                    template,
-                    default_branch_only
-                }
-            )),
+            } => {
+                let (authority, default_branch) = default_branch.into_parts(
+                    actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                )?;
+                json!(self.initialize_copy(
+                    &store, repo_id, Some(authority), source,
+                    &crate::backend::repositories::store::CopyOptions {
+                        default_branch, template, default_branch_only,
+                    }
+                ))
+            },
             Operation::Remove => json!(store.remove()),
             Operation::Retire => json!(store.retire()),
             Operation::GistSnapshot { revision } => json!(store.gist_snapshot(
@@ -625,20 +626,23 @@ impl RpcHandler {
                 reference,
                 sha,
                 force,
-            } => json!(store.update_reference_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                &reference,
-                &sha,
-                force
-            )),
+            } => {
+                let (authority, sha) = sha.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.update_reference_as(
+                    pool,
+                    repo_id.ok_or_else(|| invalid("repository unavailable"))?,
+                    authority,
+                    &reference,
+                    &sha,
+                    force
+                ))
+            },
             Operation::ImportGit { import } => json!(store.import_git_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                 actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
                 import,
-                &body
+                body
             )),
             Operation::LockMigration { migration } => json!(store.lock_migration_as(
                 pool,
@@ -725,6 +729,7 @@ impl RpcHandler {
                     size: blob.size,
                     offset: blob.offset,
                     mode: blob.mode,
+                    preview: blob.preview,
                 })
                 .map_err(|_| Failure::Repository(unavailable()))?
             }
@@ -877,7 +882,7 @@ impl RpcHandler {
                 output = store.archive(&git_ref, &prefix, format).await?;
                 Value::Null
             }
-            Operation::Languages { git_ref } => {
+            Operation::Languages { git_ref } | Operation::PrimaryLanguages { git_ref } => {
                 let repository = db::repositories::records::get_repository_by_id(
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,
@@ -885,7 +890,7 @@ impl RpcHandler {
                 .await
                 .map_err(|_| unavailable())?
                 .ok_or_else(|| invalid("repository unavailable"))?;
-                let default_branch = store.info().await?.default_branch;
+                let default_branch = repository.default_branch.clone();
                 if repository.storage_node_id == Some(self.context.node_id)
                     && (git_ref == default_branch
                         || git_ref == format!("refs/heads/{default_branch}"))
@@ -905,7 +910,8 @@ impl RpcHandler {
                 limit,
                 raw_json,
             } => {
-                let paths = store.file_paths(&git_ref, limit).await?;
+                let (git_ref, query) = git_ref.into_parts();
+                let paths = store.file_paths_matching(&git_ref, &query, limit).await?;
                 encode_json(&paths, raw_json, &mut output)?
             }
             Operation::Blame { git_ref, path } => {
@@ -935,13 +941,16 @@ impl RpcHandler {
             Operation::CiWorkflowFile { sha, workflow_path } => {
                 json!(store.ci_workflow_file(&sha, &workflow_path))
             }
-            Operation::RenameBranch { old, new } => json!(store.rename_branch_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                &old,
-                &new
-            )),
+            Operation::RenameBranch { old, new } => {
+                let (authority, new) = new.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.rename_branch_as(
+                    pool,
+                    repo_id.ok_or_else(|| invalid("repository unavailable"))?,
+                    authority,
+                    &old,
+                    &new
+                ))
+            },
             Operation::MergeUpstream {
                 source,
                 branch,
@@ -961,25 +970,28 @@ impl RpcHandler {
                     token
                 ))
             }
-            Operation::CreateBranch { name, sha } => json!(store.create_branch_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                &name,
-                &sha
-            )),
-            Operation::SetDefaultBranch { name } => json!(store.set_default_branch_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                &name
-            )),
-            Operation::TransferRepository { new_owner } => json!(store.transfer_repository_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                &new_owner
-            )),
+            Operation::CreateBranch { name, sha } => {
+                let (authority, sha) = sha.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.create_branch_as(
+                    pool,
+                    repo_id.ok_or_else(|| invalid("repository unavailable"))?,
+                    authority,
+                    &name,
+                    &sha
+                ))
+            },
+            Operation::SetDefaultBranch { name } => {
+                let (authority, name) = name.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.set_default_branch_as(
+                    pool, repo_id.ok_or_else(|| invalid("repository unavailable"))?, authority, &name
+                ))
+            },
+            Operation::TransferRepository { new_owner } => {
+                let (authority, new_owner) = new_owner.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.transfer_repository_as(
+                    pool, repo_id.ok_or_else(|| invalid("repository unavailable"))?, authority, &new_owner
+                ))
+            },
             Operation::ConfigureDependencySecurity {
                 credential,
                 feature,
@@ -1007,41 +1019,50 @@ impl RpcHandler {
             Operation::PatchRepository {
                 default_branch,
                 changes,
-            } => json!(store.patch_repository_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                &default_branch,
-                &changes.borrowed()
-            )),
-            Operation::DeleteBranch { name } => json!(store.delete_branch_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                &name
-            )),
+            } => {
+                let (authority, default_branch) = default_branch.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.patch_repository_as(
+                    pool, repo_id.ok_or_else(|| invalid("repository unavailable"))?, authority,
+                    &default_branch, &changes.borrowed()
+                ))
+            },
+            Operation::DeleteBranch { name } => {
+                let (authority, name) = name.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.delete_branch_as(
+                    pool,
+                    repo_id.ok_or_else(|| invalid("repository unavailable"))?,
+                    authority,
+                    &name
+                ))
+            },
             Operation::CreateTag {
                 name,
                 sha,
                 message,
                 tagger_name,
                 tagger_email,
-            } => json!(store.create_tag_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                &name,
-                &sha,
-                message.as_deref(),
-                &tagger_name,
-                &tagger_email
-            )),
-            Operation::DeleteTag { name } => json!(store.delete_tag_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                &name
-            )),
+            } => {
+                let (authority, sha) = sha.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.create_tag_as(
+                    pool,
+                    repo_id.ok_or_else(|| invalid("repository unavailable"))?,
+                    authority,
+                    &name,
+                    &sha,
+                    message.as_deref(),
+                    &tagger_name,
+                    &tagger_email
+                ))
+            },
+            Operation::DeleteTag { name } => {
+                let (authority, name) = name.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.delete_tag_as(
+                    pool,
+                    repo_id.ok_or_else(|| invalid("repository unavailable"))?,
+                    authority,
+                    &name
+                ))
+            },
             Operation::PrepareFile {
                 write,
                 author,
@@ -1156,14 +1177,17 @@ impl RpcHandler {
             } => json!(store.publish_merge_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                {
+                    let actor = actor.ok_or_else(|| invalid("repository mutation requires an actor"))?;
+                    token.map(|value| value.into_actor(actor)).transpose()?.unwrap_or_else(|| actor.into())
+                },
                 &head_branch,
                 &base_branch,
                 &head,
                 &base,
                 &result,
                 method,
-                token
+                None
             )),
             Operation::PublishStackedMerge {
                 heads,
@@ -1174,12 +1198,15 @@ impl RpcHandler {
             } => json!(store.publish_stacked_merge_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                {
+                    let actor = actor.ok_or_else(|| invalid("repository mutation requires an actor"))?;
+                    token.map(|value| value.into_actor(actor)).transpose()?.unwrap_or_else(|| actor.into())
+                },
                 &heads,
                 &base_branch,
                 &base,
                 &result,
-                token,
+                None,
             )),
             Operation::PrepareRestack {
                 from,
@@ -1194,16 +1221,19 @@ impl RpcHandler {
                 base_branch,
                 base,
                 moves,
-            } => json!(store.publish_restack_as(
+            } => {
+                let (authority, base_branch) = base_branch.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.publish_restack_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                authority,
                 stack_id,
                 &versions,
                 &base_branch,
                 &base,
                 &moves
-            )),
+            ))
+            },
             Operation::AdvertiseRefs { service } => {
                 output = store.advertise_refs(service).await?;
                 Value::Null

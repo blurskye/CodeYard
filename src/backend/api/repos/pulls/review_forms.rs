@@ -293,6 +293,7 @@ pub(crate) async fn reviewers(
             .flatten()
             .collect()
     };
+    let requested_ids: HashSet<i64> = requested.iter().map(|user| user.id).collect();
     let mut reviewers: Vec<pulls::Reviewer> = decisions
         .into_iter()
         .filter_map(|decision| {
@@ -308,16 +309,17 @@ pub(crate) async fn reviewers(
                 status,
                 stale: status != pulls::ReviewerStatus::Dismissed
                     && decision.commit_sha.as_deref() != Some(head),
-                pending: requested.iter().any(|user| user.id == decision.author_id),
+                pending: requested_ids.contains(&decision.author_id),
                 code_owner,
             })
         })
         .collect();
+    let mut seen: HashSet<String> = reviewers
+        .iter()
+        .map(|reviewer| reviewer.username.clone())
+        .collect();
     for user in requested {
-        if !reviewers
-            .iter()
-            .any(|reviewer| reviewer.username == user.username)
-        {
+        if seen.insert(user.username.clone()) {
             let code_owner = owner_ids.contains(&user.id);
             reviewers.push(pulls::Reviewer {
                 username: user.username,
@@ -479,7 +481,12 @@ pub(crate) async fn native_review(
         &ctx.state.notification_broadcaster,
         user,
         &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
-        (owner.clone(), name.clone(), number),
+        review_rules::ReviewTarget {
+            owner: owner.clone(),
+            name: name.clone(),
+            number,
+            expected: Some((repo.record.id, value.id, submitted.pending_review)),
+        },
         request,
     )
     .await
@@ -714,7 +721,12 @@ pub(crate) async fn native_pull_comment(
         )
         .await;
     }
-    if inline && (line.commit != head || line.base != compare.base_sha) {
+    // A reply sits in its thread, wherever the thread was written, so only a new conversation
+    // must match the displayed revisions.
+    if inline
+        && line.in_reply_to.is_none()
+        && (line.commit != head || line.base != compare.base_sha)
+    {
         return refuse_comment(
             &ctx,
             &repo,
@@ -877,17 +889,23 @@ pub(crate) async fn native_set_viewed(
     if path.len() > db::pull_requests::reviews::MAX_COMMENT_PATH_BYTES || path.contains('\0') {
         return Err(ctx.error(StatusCode::BAD_REQUEST, "Invalid diff path."));
     }
-    let diff = repo_store(&repo.record, ctx.state.cluster.as_ref())
-        .diff_file(&pull.base_sha, &pull.head_sha, &path)
-        .await
-        .map_err(|error| crate::backend::api::repos::chrome::store_error(&ctx, None, error))?;
-    let blob_sha = diff
-        .files
-        .into_iter()
-        .find(|file| file.filename == path)
-        .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Choose a file in this diff."))?
-        .blob_sha;
-    let blob = (field(&form, "viewed") == "yes").then_some(blob_sha.as_str());
+    // Clearing a mark needs no Git read. A new mark names the file's blob in the diff the page
+    // shows, which a retargeted stack layer compares against its fork point.
+    let blob_sha = if field(&form, "viewed") == "yes" {
+        let diff = repo_store(&repo.record, ctx.state.cluster.as_ref())
+            .diff_stats(pull.diff_base(), &pull.head_sha)
+            .await
+            .map_err(|error| crate::backend::api::repos::chrome::store_error(&ctx, None, error))?;
+        let file = diff
+            .files
+            .into_iter()
+            .find(|file| file.filename == path)
+            .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Choose a file in this diff."))?;
+        Some(file.blob_sha)
+    } else {
+        None
+    };
+    let blob = blob_sha.as_deref();
     db::pull_requests::viewed::set_pull_request_file_viewed(
         &ctx.state.pool,
         pull.id,

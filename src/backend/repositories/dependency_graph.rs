@@ -8,7 +8,6 @@ use crate::backend::{
     db::{self, dependency_graph::Reader, models::Repository},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -53,6 +52,7 @@ async fn file(
         .await
     {
         // An oversized file is refused from its size, so the whole blob is never parsed.
+        Ok(blob) if !matches!(blob.mode, 0o100644 | 0o100755) => Err(invalid("Dependency files must be regular files; submit a dependency snapshot for symlinked manifests")),
         Ok(blob) if blob.size > limit => Err(invalid("Dependency file is too large")),
         Ok(blob) => Ok(Some(blob.bytes)),
         Err(error) if matches!(error.kind, ErrorKind::MissingPath | ErrorKind::NotFound) => {
@@ -69,7 +69,7 @@ const MAX_INVENTORY_PACKAGES: usize = 10_000;
 
 fn is_manifest(path: &str) -> bool {
     let (directory, name) = path.rsplit_once('/').unwrap_or(("", path));
-    (name == "package-lock.json" || super::dependencies::lockfiles::FILES.contains(&name))
+    (matches!(name, "package.json" | "package-lock.json" | "npm-shrinkwrap.json") || super::dependencies::lockfiles::FILES.contains(&name))
         && !directory
             .split('/')
             .any(|part| matches!(part, "node_modules" | "vendor" | ".git"))
@@ -152,7 +152,25 @@ pub(crate) async fn native_inventory(
 ) -> Result<(String, Vec<Package>), RepoError> {
     db::dependency_graph::check_read(&state.pool, reader, repo.id).await.map_err(graph_error)?;
     let store = repo_store(repo, state.cluster.as_ref());
-    let sha = store.commit(reference).await?.sha;
+    let sha = if crate::backend::git::is_full_commit_id(reference) {
+        store.commit(reference).await?
+    } else {
+        store.commit_from_primary(reference).await?
+    }.sha;
+    native_inventory_at(state, reader, repo, reference, &sha).await
+}
+
+/// The same scan of an already pinned commit. `reference` still decides which submitted
+/// snapshots cover a manifest, so a branch that shares the commit cannot hide another's files.
+pub(crate) async fn native_inventory_at(
+    state: &AppState,
+    reader: &Reader,
+    repo: &Repository,
+    reference: &str,
+    sha: &str,
+) -> Result<(String, Vec<Package>), RepoError> {
+    let store = repo_store(repo, state.cluster.as_ref());
+    let sha = sha.to_owned();
     let listing = store.file_paths(&sha, MAX_LISTED_PATHS).await?;
     // A partial listing could hide a lockfile, and a scan that saved it would mark its alerts fixed.
     if listing.truncated {
@@ -189,16 +207,28 @@ pub(crate) async fn native_inventory(
             "The repository has too many dependency files; submit a dependency snapshot",
         ));
     }
+    let paths = listing.paths.iter().map(String::as_str).collect::<HashSet<_>>();
+    let sibling = |directory: &str, name: &str| if directory.is_empty() { name.to_owned() } else { format!("{directory}/{name}") };
     let mut packages = BTreeMap::new();
     for path in manifests {
         if covered.contains(path) {
             continue;
         }
         let (directory, name) = path.rsplit_once('/').unwrap_or(("", path));
+        let shrinkwrap = sibling(directory, "npm-shrinkwrap.json");
+        if name == "package-lock.json" && paths.contains(shrinkwrap.as_str()) {
+            continue;
+        }
+        if name == "package.json" {
+            if paths.contains(shrinkwrap.as_str()) || paths.contains(sibling(directory, "package-lock.json").as_str()) {
+                continue;
+            }
+            return Err(invalid("An npm manifest needs a supported lockfile; submit a complete dependency snapshot"));
+        }
         let Some(bytes) = file(&store, &sha, path).await? else {
             continue;
         };
-        let parsed = if name == "package-lock.json" {
+        let parsed = if matches!(name, "package-lock.json" | "npm-shrinkwrap.json") {
             npm_packages(&store, &sha, directory, path, &bytes).await?
         } else {
             super::dependencies::lockfiles::parse(path, &bytes)
@@ -336,17 +366,49 @@ pub fn snapshot(
     }
 }
 
-pub fn sbom(owner: &str, name: &str, sha: &str, packages: &[Package]) -> Value {
-    let namespace = format!(
-        "{}/dependency-graph/sbom/{}",
-        crate::backend::api::github::repo_url(owner, name),
-        uuid::Uuid::new_v4()
-    );
-    let packages: Vec<_> = packages.iter().enumerate().map(|(index, package)| json!({
-        "SPDXID":format!("SPDXRef-Package-{index}"),"name":package.name,"versionInfo":package.version,
-        "downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION","licenseDeclared":"NOASSERTION",
-        "externalRefs":[{"referenceCategory":"PACKAGE-MANAGER","referenceType":"purl","referenceLocator":package.package_url}]
-    })).collect();
-    let relationships:Vec<_> = packages.iter().map(|package|json!({"relationshipType":"DESCRIBES","spdxElementId":"SPDXRef-DOCUMENT","relatedSpdxElement":package["SPDXID"]})).collect();
-    json!({"sbom":{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","creationInfo":{"created":chrono::Utc::now().to_rfc3339(),"creators":["Tool: Codeyard"]},"name":format!("{owner}/{name}"),"documentNamespace":namespace,"comment":format!("Dependency inventory at commit {sha}"),"packages":packages,"relationships":relationships}})
+/// The default branch's submitted snapshots and Codeyard's own scan, pinned to one commit.
+/// A repository without commits has none.
+pub(crate) async fn pinned_snapshots(
+    state: &AppState,
+    reader: &Reader,
+    repo: &Repository,
+    reference: &str,
+) -> Result<Vec<crate::backend::dependency_graph::Snapshot>, RepoError> {
+    let sha = match repo_store(repo, state.cluster.as_ref())
+        .commit_from_primary(reference)
+        .await
+    {
+        Ok(commit) => commit.sha,
+        Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
+            return Ok(Vec::new())
+        }
+        Err(error) => return Err(error),
+    };
+    let mut snapshots = db::dependency_graph::snapshots(&state.pool, reader, repo.id, Some(reference), Some(&sha))
+        .await
+        .map_err(graph_error)?;
+    append_native_snapshot(state, reader, repo, reference, Some(&sha), &mut snapshots).await?;
+    Ok(snapshots)
+}
+
+/// Adds Codeyard's own scan to the submitted snapshots already chosen for the same reference and
+/// commit, so every export shares one typed projection. A repository without commits has none.
+pub(crate) async fn append_native_snapshot(
+    state: &AppState,
+    reader: &Reader,
+    repo: &Repository,
+    reference: &str,
+    pinned: Option<&str>,
+    snapshots: &mut Vec<crate::backend::dependency_graph::Snapshot>,
+) -> Result<(), RepoError> {
+    let scanned = match pinned {
+        Some(sha) => native_inventory_at(state, reader, repo, reference, sha).await,
+        None => native_inventory(state, reader, repo, reference).await,
+    };
+    match scanned {
+        Ok((sha, packages)) => snapshots.push(snapshot(sha, reference.to_owned(), packages)),
+        Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {}
+        Err(error) => return Err(error),
+    }
+    Ok(())
 }

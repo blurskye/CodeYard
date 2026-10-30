@@ -30,6 +30,9 @@ pub(super) fn failure(error: anyhow::Error) -> Error {
     if let Some(graph @ (db::dependency_graph::GraphError::Limit | db::dependency_graph::GraphError::Disabled)) = error.downcast_ref::<db::dependency_graph::GraphError>() {
         return Error::new(StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
     }
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return Error::new(StatusCode::FORBIDDEN, "A live unrestricted credential is required");
+    }
     match error.downcast_ref::<advisories::Refusal>() {
         Some(advisories::Refusal::Denied) => {
             return Error::new(StatusCode::FORBIDDEN, "Advisory administration denied")
@@ -319,11 +322,11 @@ async fn create(
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     let actor = actor.ok_or_else(auth::required)?;
     let report = uri.path().ends_with("/reports");
-    let mut row = advisories::create(&state.pool, actor.user.id, repo.id, &value, report)
+    let mut row = advisories::create(&state.pool, crate::backend::db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id }, repo.id, &value, report)
         .await
         .map_err(failure)?;
     if value["start_private_fork"] == true {
-        match workflow::private_fork(&state, actor.user.id, &repo, &row.ghsa_id).await {
+        match workflow::private_fork(&state, actor.database_actor(), &repo, &row.ghsa_id).await {
             Ok(_) => {
                 if let Some(fresh) = advisories::get(&state.pool, Some(actor.user.id), repo.id, &row.ghsa_id).await.map_err(failure)? {
                     row = fresh;
@@ -365,7 +368,7 @@ async fn update(
     let actor = actor.ok_or_else(auth::required)?;
     let row = advisories::update(
         &state.pool,
-        actor.user.id,
+        crate::backend::db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id },
         repo.id,
         &params["ghsa_id"],
         &value,
@@ -383,7 +386,7 @@ async fn cve(
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     advisories::request_cve(
         &state.pool,
-        actor.ok_or_else(auth::required)?.user.id,
+        { let actor = actor.ok_or_else(auth::required)?; crate::backend::db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id } },
         repo.id,
         &params["ghsa_id"],
     )
@@ -399,7 +402,7 @@ async fn fork(
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let fork = workflow::private_fork(&state, actor.user.id, &repo, &params["ghsa_id"])
+    let fork = workflow::private_fork(&state, crate::backend::db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id }, &repo, &params["ghsa_id"])
         .await
         .map_err(failure)?;
     Ok((

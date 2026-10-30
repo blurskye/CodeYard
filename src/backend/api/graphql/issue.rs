@@ -373,10 +373,10 @@ pub(super) async fn mutation(
             .await
             .map_err(unavailable)?;
         let metadata = super::metadata_mutations::prepare(&input, &repo, request).await?;
-        let issue = issues::mutations::create_issue(
+        let issue = issues::mutations::create_issue_with_metadata(
             pool,
             broadcaster,
-            actor,
+            db::users::accounts::AccountActor::Token { user_id: actor, token_id: request.auth.token.id },
             repository::owner(&repo, request).await?,
             repo.name.clone(),
             CreateIssueRequest {
@@ -386,22 +386,10 @@ pub(super) async fn mutation(
                 parent_issue_id: None,
                 token: Some(request.auth.token.id),
             },
+            metadata.creation(),
         )
         .await
         .map_err(operation)?;
-        super::metadata_mutations::apply(
-            &repo,
-            db::assignees::AssignedItem::Issue(issue.id),
-            issue.number,
-            &issue.title,
-            metadata,
-            request,
-        )
-        .await?;
-        let issue = db::issues::get_issue_by_id(pool, issue.id)
-            .await
-            .map_err(unavailable)?
-            .ok_or_else(missing)?;
         payload["issue"] = object(&issue);
     } else if field == "addComment" && kind == "PR" {
         let pull = db::pull_requests::records::get_pull_request_by_id(pool, id)
@@ -488,7 +476,7 @@ pub(super) async fn mutation(
             repository::by_id(target.repo_id, request).await?;
             request.authorize(target.repo_id, "issues", false).await?;
             payload["issue"] = object(
-                &issues::mutations::close_duplicate(pool, broadcaster, actor, repo.id, issue.id, duplicate)
+                &issues::mutations::close_duplicate(pool, broadcaster, request.actor.clone(), repo.id, issue.id, duplicate)
                     .await
                     .map_err(operation)?,
             );

@@ -94,6 +94,26 @@ pub struct Run {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Default, sqlx::FromRow)]
+pub struct CheckSummary {
+    pub total: i64,
+    pub failed: i64,
+    pub pending: i64,
+}
+native_operation!(crate::backend::db::postgres::checks::summary, crate::backend::db::sqlite::checks::summary,
+    fn summary(pool: &DbPool, repo: i64, sha: &str) -> Result<CheckSummary>);
+
+pub const ANNOTATIONS_PER_PAGE: usize = 8;
+pub struct PageSnapshot {
+    pub run: Run,
+    pub suite: Suite,
+    pub annotations: Vec<Json<Annotation>>,
+    pub total: i64,
+}
+
+native_operation!(crate::backend::db::postgres::checks::page_snapshot, crate::backend::db::sqlite::checks::page_snapshot,
+    fn page_snapshot(pool: &DbPool, viewer: Option<i64>, session: Option<&str>, repo: i64, id: i64, offset: i64) -> Result<PageSnapshot>);
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct RunData {
     pub details_url: Option<String>,

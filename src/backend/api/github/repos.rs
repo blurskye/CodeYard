@@ -37,6 +37,9 @@ pub(in crate::backend::api) fn lifecycle_error(error: lifecycle::StorageError) -
 
 pub(in crate::backend::api) fn settings_error(error: anyhow::Error) -> Error {
     use records::RepositorySettingsRefusal::*;
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return Error::new(StatusCode::FORBIDDEN, "A live unrestricted credential is required");
+    }
     match error.downcast_ref::<records::RepositorySettingsRefusal>() {
         Some(Denied | VisibilityLocked) => {
             Error::new(StatusCode::FORBIDDEN, "Repository mutation denied")
@@ -52,20 +55,25 @@ pub(super) async fn search_document(
     repo: &Repository,
     viewer: Option<&auth::Authentication>,
     deadline: tokio::time::Instant,
+    cached_license: Option<Option<&str>>,
 ) -> Result<Value> {
     let mut value = document(state, repo, viewer).await?;
-    let license = match tokio::time::timeout_at(deadline, crate::backend::repositories::catalog_search::git_facts(
-        repo, state.cluster.as_ref(), false,
-    )).await {
-        Ok(Ok(git)) => git.license,
-        // Optional Git decoration must not hide database search results.
-        Ok(Err(_)) | Err(_) => None,
+    let license = match cached_license {
+        Some(license) => license.and_then(templates::license),
+        None => tokio::time::timeout_at(deadline,
+            crate::backend::repositories::catalog_search::git_facts(repo, state.cluster.as_ref(), false),
+        ).await.ok().and_then(|result| result.ok()).and_then(|git| git.license).and_then(templates::license),
     };
     value["license"] = license
-        .and_then(crate::backend::repositories::templates::license)
         .map(|template| super::meta::license_document(template, false))
         .unwrap_or(Value::Null);
     Ok(value)
+}
+
+async fn public_fork_count(state: &AppState, repo: i64) -> Result<i32> {
+    // The source token does not necessarily select any of its private forks.
+    Ok(db::repositories::discovery::public_fork_counts(&state.pool, &[repo])
+        .await.map_err(Error::unavailable)?.remove(&repo).unwrap_or_default())
 }
 
 /// A repository's REST document for `viewer`. Its fork parent and source appear only when the
@@ -82,6 +90,8 @@ pub(super) async fn documents(state: &AppState, repos: &[Repository], viewer: Op
     let ids: Vec<_> = repos.iter().map(|repo| repo.id).collect();
     let owners = records::repository_owner_names(&state.pool, &ids).await.map_err(Error::unavailable)?;
     let topics = topics::repository_topics(&state.pool, &ids).await.map_err(Error::unavailable)?;
+    // Counts only public forks: the viewer's credential does not necessarily select its private ones.
+    let forks = db::repositories::discovery::public_fork_counts(&state.pool, &ids).await.map_err(Error::unavailable)?;
     let mut metadata = std::collections::HashMap::new();
     for ids in ids.chunks(100) {
         metadata.extend(db::repository_stats::repository_document_metadata(&state.pool, ids).await.map_err(Error::unavailable)?.into_iter().map(|row| (row.repo_id, row)));
@@ -89,7 +99,7 @@ pub(super) async fn documents(state: &AppState, repos: &[Repository], viewer: Op
     let mut values = Vec::with_capacity(repos.len());
     for repo in repos {
         let (Some(owner), Some(facts)) = (owners.get(&repo.id), metadata.get(&repo.id)) else { continue; };
-        values.push(document_with(state, repo, viewer, owner, facts, topics.get(&repo.id).map(Vec::as_slice).unwrap_or_default()).await?);
+        values.push(document_with(state, repo, viewer, owner, facts, topics.get(&repo.id).map(Vec::as_slice).unwrap_or_default(), forks.get(&repo.id).copied().unwrap_or_default()).await?);
     }
     if let Some(viewer) = viewer {
         let readable = auth::readable_repositories(state, Some(viewer), &ids, "metadata").await?;
@@ -98,8 +108,9 @@ pub(super) async fn documents(state: &AppState, repos: &[Repository], viewer: Op
     Ok(values)
 }
 
-async fn document_with(state: &AppState, repo: &Repository, viewer: Option<&auth::Authentication>, owner: &str, facts: &db::repository_stats::RepositoryDocumentMetadata, topics: &[String]) -> Result<Value> {
+async fn document_with(state: &AppState, repo: &Repository, viewer: Option<&auth::Authentication>, owner: &str, facts: &db::repository_stats::RepositoryDocumentMetadata, topics: &[String], forks: i32) -> Result<Value> {
     let mut value = payloads::repository(repo, owner);
+    payloads::set_fork_counts(&mut value, forks);
     value["language"] = json!(facts.facts.language);
     value["open_issues_count"] = json!(facts.facts.open_items);
     value["open_issues"] = json!(facts.facts.open_items);
@@ -128,7 +139,8 @@ async fn document_with(state: &AppState, repo: &Repository, viewer: Option<&auth
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-            let document = payloads::repository(&ancestor, &owner);
+            let mut document = payloads::repository(&ancestor, &owner);
+            payloads::set_fork_counts(&mut document, public_fork_count(state, id).await?);
             if repo.forked_from_id == Some(id) {
                 value["parent"] = document.clone();
             }
@@ -265,6 +277,12 @@ async fn create(
                 target,
             },
             properties: &properties,
+            admission: creation::CreationAdmission {
+                authority: Some(&crate::backend::db::users::accounts::AccountActor::Token {
+                    user_id: actor.user.id, token_id: actor.token.id,
+                }),
+                advisory: None,
+            },
         },
         &input.name,
         input.description.as_deref(),
@@ -405,14 +423,14 @@ async fn update(
             .patch_repository_as(
                 &state.pool,
                 repo.id,
-                actor.id,
+                db::users::accounts::AccountActor::Token { user_id: actor.id, token_id: auth.token.id },
                 input.default_branch.as_deref().unwrap(),
                 &changes,
             )
             .await
             .map_err(store_error)?
     } else {
-        records::patch_repository(&state.pool, actor.id, repo.id, &changes)
+        records::patch_repository(&state.pool, db::users::accounts::AccountActor::Token { user_id: actor.id, token_id: auth.token.id }, repo.id, &changes)
             .await
             .map_err(settings_error)?
     };
@@ -425,10 +443,11 @@ async fn remove(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
+    let actor = actor.ok_or_else(auth::required)?;
     lifecycle::delete(
         &state.pool,
         state.cluster.as_ref(),
-        actor.ok_or_else(auth::required)?.user.id,
+        db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id },
         repo.id,
     )
     .await
@@ -454,7 +473,7 @@ async fn transfer(
     let repo = lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
-        actor.id,
+        db::users::accounts::AccountActor::Token { user_id: actor.id, token_id: auth.token.id },
         repo.id,
         &input.new_owner,
     )

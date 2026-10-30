@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
     future::Future,
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin,
     process::ExitStatus,
+    sync::{Arc, LazyLock, Mutex},
     time::Duration,
 };
 
@@ -165,7 +166,7 @@ fn validate_path(path: &str) -> Result<(), RepoError> {
 
 /// `.git` in any case, with the trailing spaces and dots and the short name `git~1` that
 /// Windows file systems treat as the same directory.
-fn is_git_dir_name(part: &str) -> bool {
+pub(super) fn is_git_dir_name(part: &str) -> bool {
     let name = part.trim_end_matches([' ', '.']);
     name.eq_ignore_ascii_case(".git") || name.eq_ignore_ascii_case("git~1")
 }
@@ -195,6 +196,29 @@ fn unavailable() -> RepoError {
     RepoError::new(ErrorKind::Unavailable, "Repository storage is unavailable.")
 }
 
+// Preparation crosses RPC requests. Keep isolated objects under a bounded, expiring server
+// lease rather than publishing them in the real object database or accepting a client path.
+pub(super) struct StagedFile {
+    temporary: tempfile::TempDir,
+    destination: PathBuf,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+impl StagedFile {
+    pub(super) fn path(&self) -> &Path { self.temporary.path() }
+}
+static STAGED: LazyLock<Mutex<std::collections::HashMap<String, Arc<StagedFile>>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+static STAGING_SLOTS: LazyLock<Arc<tokio::sync::Semaphore>> =
+    LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(64)));
+
+pub(super) fn claim_staged(path: &Path, prepared: &PreparedFile) -> Result<Option<Arc<StagedFile>>, RepoError> {
+    let Some(key) = &prepared.staging else { return Ok(None); };
+    let mut staged = STAGED.lock().map_err(|_| unavailable())?;
+    let entry = staged.get(key).ok_or_else(|| invalid("The prepared file expired; reopen the editor."))?;
+    if entry.destination != path { return Err(invalid("Invalid prepared file publication.")); }
+    Ok(staged.remove(key))
+}
+
 /// A bare repository on disk that editor commands run against.
 struct Repo<'a>(&'a Path);
 impl Repo<'_> {
@@ -205,6 +229,7 @@ impl Repo<'_> {
         identity: Option<(&Signature, &Signature)>,
     ) -> Result<(ExitStatus, Vec<u8>), RepoError> {
         let mut command = process::git_command().map_err(|_| unavailable())?;
+        process::limit_memory(&mut command);
         command.arg("--git-dir").arg(self.0).args(args);
         if let Some((author, committer)) = identity {
             for (role, identity) in [("AUTHOR", author), ("COMMITTER", committer)] {
@@ -360,6 +385,11 @@ impl Repo<'_> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PreparedFile {
+    /// Opaque owning-store lease; never a filesystem path.
+    #[serde(default)]
+    pub staging: Option<String>,
+    #[serde(default)]
+    pub authority: Option<crate::backend::db::users::accounts::AccountActor>,
     pub branch: String,
     pub reference: String,
     pub expected: Option<String>,
@@ -367,9 +397,6 @@ pub struct PreparedFile {
     /// Trusted server-side origin, not a field accepted by either file API.
     #[serde(default)]
     pub web_commit: bool,
-    /// Original API credential, revalidated by the storage owner under publication admission.
-    #[serde(default)]
-    pub token_id: Option<i64>,
     /// Publish this commit on an unborn destination, retaining its prepared source parent.
     #[serde(default)]
     pub new_branch: bool,
@@ -401,7 +428,6 @@ async fn prepare_commit(
     changes: &[Change<'_>],
     identity: (&Signature, &Signature),
 ) -> Result<PreparedFile, RepoError> {
-    let storage = Repo(path);
     if changes.is_empty() {
         return Err(invalid("A commit needs at least one file."));
     }
@@ -409,7 +435,7 @@ async fn prepare_commit(
     identity.1.validate()?;
     let reference =
         crate::backend::git::branch_ref(branch).ok_or_else(|| invalid("Invalid branch name."))?;
-    let current = storage.direct_ref(&reference).await?;
+    let current = Repo(path).direct_ref(&reference).await?;
     let expected = if expected_revision == "unborn" {
         None
     } else {
@@ -422,6 +448,17 @@ async fn prepare_commit(
         }
         return Err(conflict());
     }
+    let permit = STAGING_SLOTS.clone().try_acquire_owned().map_err(|_| unavailable())?;
+    let temporary = tempfile::tempdir().map_err(|_| unavailable())?;
+    crate::backend::git::repository::initialize_repository(temporary.path(), None, branch)
+        .await.map_err(RepoError::from)?;
+    let objects = std::fs::canonicalize(path.join("objects")).map_err(|_| unavailable())?;
+    let objects = objects.to_str().filter(|path| !path.contains(['\r', '\n']))
+        .ok_or_else(unavailable)?;
+    tokio::fs::write(temporary.path().join("objects/info/alternates"), format!("{objects}\n"))
+        .await.map_err(|_| unavailable())?;
+    let staged = Arc::new(StagedFile { temporary, destination: path.to_owned(), _permit: permit });
+    let storage = Repo(staged.path());
     let tree = match &current {
         Some(parent) => Some(oid(&storage
             .checked(
@@ -453,13 +490,21 @@ async fn prepare_commit(
     if metadata.parents != current.iter().cloned().collect::<Vec<_>>() {
         return Err(unavailable());
     }
+    let key = uuid::Uuid::new_v4().to_string();
+    STAGED.lock().map_err(|_| unavailable())?.insert(key.clone(), staged);
+    let expires = key.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(15 * 60)).await;
+        if let Ok(mut staged) = STAGED.lock() { staged.remove(&expires); }
+    });
     Ok(PreparedFile {
+        staging: Some(key),
+        authority: None,
         branch: branch.to_owned(),
         reference,
         expected,
         commit: metadata,
         web_commit: false,
-        token_id: None,
         new_branch: false,
     })
 }
@@ -541,7 +586,13 @@ pub(super) async fn prepare_upload(
 
 /// Moves the branch to the prepared commit; `Conflict` if it moved meanwhile.
 pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<CommitInfo, RepoError> {
+    let staged = claim_staged(path, prepared)?;
+    publish_staged(path, prepared, staged.as_deref()).await
+}
+
+pub(super) async fn publish_staged(path: &Path, prepared: &PreparedFile, staged: Option<&StagedFile>) -> Result<CommitInfo, RepoError> {
     let repo = Repo(path);
+    let objects = Repo(staged.map_or(path, StagedFile::path));
     if crate::backend::git::branch_ref(&prepared.branch).as_deref()
         != Some(prepared.reference.as_str())
         || !crate::backend::git::is_full_commit_id(&prepared.commit.sha)
@@ -552,7 +603,17 @@ pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<Comm
     {
         return Err(invalid("Invalid prepared file publication."));
     }
-    let bytes = repo
+    if prepared.expected.is_none() {
+        let references = repo.checked(&["for-each-ref", "--format=%(refname)", "refs/heads"], b"", None).await?;
+        let references = std::str::from_utf8(&references).map_err(|_| unavailable())?;
+        if references.lines().any(|reference| {
+            reference.strip_prefix(&prepared.reference).is_some_and(|tail| tail.starts_with('/'))
+                || prepared.reference.strip_prefix(reference).is_some_and(|tail| tail.starts_with('/'))
+        }) {
+            return Err(invalid("The branch name conflicts with an existing branch namespace."));
+        }
+    }
+    let bytes = objects
         .checked(&["cat-file", "commit", &prepared.commit.sha], b"", None)
         .await?;
     let commit = decode_commit(&bytes, &prepared.commit.sha)?;
@@ -570,10 +631,26 @@ pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<Comm
         prepared.commit.sha,
         prepared.expected.as_deref().unwrap_or(ZERO)
     );
-    crate::backend::git::repository::run_ref_transaction(
-        path, &transaction, "publish editor commit", "The branch changed since the editor started.",
-    ).await.map_err(RepoError::from)?;
-    Ok(prepared.commit.clone())
+    let result = if staged.is_some() {
+        let destination = std::path::absolute(path).map_err(|_| unavailable())?;
+        let destination = destination.to_str().ok_or_else(unavailable)?;
+        let lease = format!("--force-with-lease={}:{}", prepared.reference, prepared.expected.as_deref().unwrap_or_default());
+        let refspec = format!("{}:{}", prepared.commit.sha, prepared.reference);
+        // receive-pack quarantines incoming objects until the destination CAS accepts them.
+        objects.command(&["push", "--porcelain", "--no-verify", &lease, "--", destination, &refspec], b"", None).await
+    } else {
+        repo.command(&["update-ref", "--stdin"], transaction.as_bytes(), None).await
+    };
+    if result.as_ref().is_ok_and(|(status, _)| status.success()) {
+        return Ok(prepared.commit.clone());
+    }
+    // A killed or timed-out Git command may already have committed its transaction.
+    let current = repo.direct_ref(&prepared.reference).await?;
+    if current.as_deref() == Some(prepared.commit.sha.as_str()) {
+        return Ok(prepared.commit.clone());
+    }
+    if current != prepared.expected { return Err(conflict()); }
+    Err(unavailable())
 }
 
 fn oid(bytes: &[u8]) -> Result<String, RepoError> {
@@ -777,6 +854,7 @@ mod tests {
         .await
         .expect("shared directories should not be rebuilt for every file")
         .unwrap();
+        publish(root.path(), &prepared).await.unwrap();
         let tree = repo
             .find_commit(git2::Oid::from_str(&prepared.commit.sha).unwrap())
             .unwrap()
@@ -961,6 +1039,7 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
+        publish(root.path(), &prepared).await.unwrap();
         let tree = repo
             .find_commit(git2::Oid::from_str(&prepared.commit.sha).unwrap())
             .unwrap()

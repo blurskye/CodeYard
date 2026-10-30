@@ -23,11 +23,14 @@ pub(super) async fn download(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
+    let loaded = match super::super::chrome::load_database(&ctx, &owner, &name).await {
+        Ok(loaded) => loaded,
+        Err(response) => return response,
+    };
     let found = match releases::detail_by_id(
         &ctx.state.pool,
         ctx.user.as_ref().map(|user| user.id),
-        &owner,
-        &name,
+        loaded.repository.id,
         id,
     )
     .await

@@ -7,6 +7,7 @@ pub(crate) mod csrf;
 pub(crate) mod error;
 pub(crate) mod interaction_proofs;
 pub(crate) mod middleware;
+pub(crate) mod multipart;
 pub(crate) mod origin;
 pub(crate) mod render;
 pub(crate) mod session;

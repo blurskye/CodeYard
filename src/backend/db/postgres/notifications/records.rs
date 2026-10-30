@@ -20,7 +20,7 @@ pub async fn create_notification(
     use crate::backend::db::notifications::records::NotificationSuppressed;
     let mut tx = pool.begin().await?;
     lock_membership_shared(&mut tx).await?;
-    if matches!(input.kind, "user_followed" | "repository_starred") {
+    if matches!(input.kind, "user_followed" | "repository_starred" | "repository_watched") {
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':notification:' || ($1::bigint)::text,0))")
             .bind(input.user_id).execute(&mut *tx).await?;
     }
@@ -49,7 +49,7 @@ pub async fn create_notification(
             NotificationSuppressed
         );
     }
-    if matches!(input.kind, "user_followed" | "repository_starred") {
+    if matches!(input.kind, "user_followed" | "repository_starred" | "repository_watched") {
         let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=$1 AND actor_id=$2 AND kind=$3 AND ($3='user_followed' OR repo_id=$4) AND created_at>clock_timestamp()-INTERVAL '1 day')")
             .bind(input.user_id).bind(input.actor_id).bind(input.kind).bind(input.repo_id).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!recent, NotificationSuppressed);

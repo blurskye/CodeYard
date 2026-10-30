@@ -176,11 +176,14 @@ async fn review_update(
     repo: i64,
     input: Reviews,
 ) -> Result<ReviewProtectionUpdate> {
+    let max_approvals = crate::backend::db::repositories::protection::MAX_REQUIRED_APPROVALS;
     if input
         .required_approving_review_count
-        .is_some_and(|count| !(0..=6).contains(&count))
+        .is_some_and(|count| !(0..=max_approvals).contains(&count))
     {
-        return Err(Error::invalid("Review count must be between 0 and 6"));
+        return Err(Error::invalid(format!(
+            "Review count must be between 0 and {max_approvals}"
+        )));
     }
     Ok(ReviewProtectionUpdate {
         dismiss_stale_reviews: input.dismiss_stale_reviews,

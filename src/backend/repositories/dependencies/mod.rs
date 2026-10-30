@@ -164,6 +164,7 @@ pub(crate) fn check_publication(
 pub(crate) fn store_error(error: anyhow::Error) -> super::store::RepoError {
     use super::store::{ErrorKind, RepoError};
     use crate::backend::db::repositories::dependencies::Refusal;
+    if error.is::<db::users::accounts::AccountRestricted>() { return RepoError::write_denied(); }
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => RepoError::write_denied(),
         Some(Refusal::Missing) => RepoError::new(ErrorKind::NotFound, "Dependency alert not found"),

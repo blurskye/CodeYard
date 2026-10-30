@@ -44,10 +44,17 @@ async fn document(tx: &mut Transaction<'_, Sqlite>, repo: i64) -> Result<Snapsho
             .bind(repo)
             .fetch_optional(&mut **tx)
             .await?;
-    let inventory: Option<String> = sqlx::query_scalar(&format!("SELECT s.body FROM dependency_snapshots s JOIN repositories r ON r.id=s.repo_id WHERE s.repo_id=$1 AND s.reference='refs/heads/'||r.default_branch AND s.detector='Codeyard' AND s.correlator='lockfiles' AND s.sha={} ORDER BY s.scanned DESC,s.id DESC LIMIT 1", crate::backend::db::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL))
-        .bind(repo).fetch_optional(&mut **tx).await?;
-    let inventory: Option<crate::backend::dependency_graph::Snapshot> = inventory.map(|s| serde_json::from_str(&s)).transpose()?;
-    crate::backend::db::sqlite::dependabot_alerts::refresh(tx, repo, inventory.as_ref().map(|s| s.sha.as_str())).await?;
+    let sha: Option<String> = sqlx::query_scalar(&format!("SELECT {}", crate::backend::db::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL))
+        .bind(repo).fetch_one(&mut **tx).await?;
+    // Every contributing detector's newest submission at that one revision.
+    let inventory = match sha.as_deref() {
+        Some(sha) => {
+            let branch: String = sqlx::query_scalar("SELECT default_branch FROM repositories WHERE id=?1").bind(repo).fetch_one(&mut **tx).await?;
+            super::super::dependency_graph::snapshots_in(tx, repo, Some(&format!("refs/heads/{branch}")), Some(sha)).await?
+        }
+        None => Vec::new(),
+    };
+    crate::backend::db::sqlite::dependabot_alerts::refresh(tx, repo, sha.as_deref()).await?;
     let rows = sqlx::query_as("SELECT * FROM dependabot_alerts WHERE repo_id=$1 ORDER BY number")
         .bind(repo).fetch_all(&mut **tx).await?;
     records::project(rows, inventory, raw.as_deref().unwrap_or("{}"))
@@ -63,16 +70,17 @@ async fn save(tx: &mut Transaction<'_, Sqlite>, repo: i64, snapshot: &Snapshot) 
 
 pub async fn configure(
     pool: &SqlitePool,
-    actor: i64,
-    credential: &crate::backend::db::users::accounts::OwnedAccountCredential,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     feature: Feature,
     enabled: bool,
     private_consent: bool,
 ) -> Result<()> {
+    let authority = actor.into();
+    let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let repository = admin(&mut tx, actor, repo, true).await?;
-    ensure!(super::super::credentials::repository(&mut tx, &(actor, credential).into(), repo, "administration", true).await?, Refusal::Denied);
+    ensure!(super::super::credentials::repository(&mut tx, &authority, repo, "administration", true).await?, Refusal::Denied);
     let current = state_in(&mut tx, repo).await?;
     let Some(policy) = Policy::change(
         current.as_ref(),
@@ -86,6 +94,12 @@ pub async fn configure(
         tx.commit().await?;
         return Ok(());
     };
+    let configured: Option<String> = sqlx::query_scalar("SELECT c.settings FROM code_security_configurations c JOIN repository_security_settings s ON s.configuration_id=c.id JOIN repositories r ON r.id=s.repo_id AND r.owner_org_id=c.org_id WHERE r.id=$1")
+        .bind(repo).fetch_optional(&mut *tx).await?;
+    if let Some(configured) = configured {
+        ensure!(crate::backend::db::code_security::permits_toggle(&configured, "dependabot_alerts", policy.alerts)?
+            && crate::backend::db::code_security::permits_toggle(&configured, "dependabot_security_updates", policy.updates)?, Refusal::Denied);
+    }
     if matches!(feature, Feature::Updates) && enabled {
         let authorized = match policy.alerts_actor {
             Some(id) => {
@@ -187,6 +201,27 @@ pub async fn check_job(pool: &SqlitePool, job: &Job, feature: Feature) -> Result
     tx.commit().await?;
     Ok(())
 }
+pub async fn page_snapshot(pool: &SqlitePool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64) -> Result<records::PageSnapshot> {
+    let authority = actor.into();
+    let actor = authority.user_id;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    admin(&mut tx, actor, repo, false).await?;
+    if let Some(credential) = authority.credential() {
+        crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
+    let snapshot = document(&mut tx, repo).await?;
+    let state = state_in(&mut tx, repo).await?;
+    let ids: Vec<i64> = snapshot.alerts.values().filter_map(|alert| alert.update.as_ref()?.pull_request_id).collect();
+    let mut proposals = std::collections::BTreeMap::new();
+    for ids in ids.chunks(500) {
+        let rows: Vec<(i64, i32, String, bool)> = sqlx::query_as("SELECT id,number,state,merged FROM pull_requests WHERE repo_id=$1 AND id IN (SELECT value FROM json_each($2))")
+            .bind(repo).bind(serde_json::to_string(ids)?).fetch_all(&mut *tx).await?;
+        proposals.extend(rows.into_iter().map(|(id, number, state, merged)| (id, (number, state, merged))));
+    }
+    tx.commit().await?;
+    Ok(records::PageSnapshot { snapshot, state, proposals })
+}
+
 pub async fn snapshot(pool: &SqlitePool, actor: i64, repo: i64) -> Result<Snapshot> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     admin(&mut tx, actor, repo, false).await?;

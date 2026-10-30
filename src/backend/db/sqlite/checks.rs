@@ -1,6 +1,8 @@
 use crate::backend::db::checks::{
     Annotation, AutomaticSuites, Credential, Filter, Preference, Publisher, Refusal, Run, RunChange, RunData, RunDetails, RunPatch, Suite, SuiteDetails,
 };
+mod native;
+pub use native::page_snapshot;
 use anyhow::{ensure, Result};
 use sqlx::{types::Json, Sqlite, SqlitePool, Transaction};
 
@@ -363,6 +365,12 @@ pub async fn runs(
     .fetch_all(pool)
     .await?)
 }
+pub async fn summary(pool: &SqlitePool, repo: i64, sha: &str) -> Result<crate::backend::db::checks::CheckSummary> {
+    Ok(sqlx::query_as(&format!("SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN r.status='completed' AND (r.conclusion IS NULL OR r.conclusion NOT IN ('success','neutral','skipped')) THEN 1 ELSE 0 END),0) AS failed, COALESCE(SUM(CASE WHEN r.status<>'completed' THEN 1 ELSE 0 END),0) AS pending{RUNS}"))
+        .bind(repo).bind(None::<i64>).bind(sha).bind(None::<&str>).bind(None::<&str>)
+        .bind(None::<i64>).bind(false).fetch_one(pool).await?)
+}
+
 pub async fn run_count(pool: &SqlitePool, repo: i64, filter: &Filter) -> Result<i64> {
     Ok(sqlx::query_scalar(&format!("SELECT COUNT(*){RUNS}"))
         .bind(repo)

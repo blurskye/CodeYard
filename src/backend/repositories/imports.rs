@@ -170,14 +170,16 @@ fn spawn(
     let tasks = state.git_tasks.clone();
     tasks.spawn(async move {
         let _permit = permit;
-        let result = tokio::time::timeout(Duration::from_secs(900), async {
-            let (refs, default_branch, pack) = tokio::select! {
-                result = super::store::source::fetch(&import.vcs_url, credentials) => result?,
-                result = cancelled(&state.pool, &import) => {
-                    result?;
-                    anyhow::bail!("Import cancelled");
+        let result = async {
+            let (refs, default_branch, pack) = tokio::time::timeout(Duration::from_secs(900), async {
+                tokio::select! {
+                    result = super::store::source::fetch(&import.vcs_url, credentials) => result,
+                    result = cancelled(&state.pool, &import) => {
+                        result?;
+                        anyhow::bail!("Import cancelled");
+                    }
                 }
-            };
+            }).await??;
             let actor = credential
                 .user(&state.pool)
                 .await?
@@ -193,13 +195,13 @@ fn spawn(
                         refs,
                         default_branch,
                     },
-                    &pack,
+                    pack,
                 )
                 .await?;
             anyhow::Ok(())
-        })
+        }
         .await;
-        let success = matches!(result, Ok(Ok(())));
+        let success = result.is_ok();
         // Only identifiers are logged: upstream errors may contain credentials or response text.
         if !success {
             tracing::warn!(repo_id = repo.id, "source import failed");

@@ -181,6 +181,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         }
         let remove = field.starts_with("remove");
         let actor = request.auth.user.id;
+        let authority = request.actor.clone();
         // Preparing checks triage authority, that labels belong to this repository and that new
         // assignees can be assigned. A removed assignee may since have lost access, so removals
         // rely on the write's own triage check instead.
@@ -220,9 +221,9 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             };
             if remove {
                 let names: Vec<_> = users.into_iter().map(|user| user.username).collect();
-                assignments::unassign(pool, &target, &names).await.map_err(|e| github::issues::assignment_error(e).graphql())?;
+                assignments::unassign(pool, &target, authority, &names).await.map_err(|e| github::issues::assignment_error(e).graphql())?;
             } else {
-                assignments::assign(pool, &request.state.notification_broadcaster, &target, &users).await.map_err(|e| github::issues::assignment_error(e).graphql())?;
+                assignments::assign(pool, &request.state.notification_broadcaster, &target, authority, &users).await.map_err(|e| github::issues::assignment_error(e).graphql())?;
             }
         }
     }

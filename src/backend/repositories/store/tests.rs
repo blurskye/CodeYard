@@ -467,7 +467,7 @@ async fn editor_publications_and_new_branch_saves_schedule_primary_packing() {
             sample += usize::from(oid.as_bytes()[0] == 0x17);
             count += 1;
         }
-        let prepared = f
+        let mut prepared = f
             .store
             .prepare_file(
                 &FileWrite {
@@ -485,22 +485,15 @@ async fn editor_publications_and_new_branch_saves_schedule_primary_packing() {
             .await
             .unwrap();
         if new_branch {
-            f.store
-                .create_branch_as(
-                    &a.pool,
-                    a.repo_id,
-                    a.actor,
-                    "editor-branch",
-                    &prepared.commit.sha,
-                )
-                .await
-                .unwrap();
-        } else {
-            f.store
-                .publish_file_as(&a.pool, a.repo_id, a.actor, &prepared)
-                .await
-                .unwrap();
+            prepared.branch = "editor-branch".into();
+            prepared.reference = "refs/heads/editor-branch".into();
+            prepared.expected = None;
+            prepared.new_branch = true;
         }
+        f.store
+            .publish_file_as(&a.pool, a.repo_id, a.actor, &prepared)
+            .await
+            .unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(30), async {
             loop {
                 if !f.repo.path().join("gc.pid").exists()
@@ -549,7 +542,7 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
         let path = destination.clone();
         let task = tokio::spawn(async move {
             entered.send(()).unwrap();
-            super::local::LocalStore::checkout_pack(&path, &"1".repeat(40), pack, permit, lock)
+            super::local::LocalStore::checkout_pack(&path, &"1".repeat(40), "/repository.git", pack, permit, lock)
                 .await
         });
         queued.await.unwrap();

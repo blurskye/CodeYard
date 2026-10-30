@@ -174,15 +174,10 @@ async fn change(
         return match result {
             Ok(()) => ctx.redirect(&format!("/settings/organizations/{org}?tab=actions")),
             Err(error) => {
-                let status = match error.downcast_ref::<db::oidc::Refusal>() {
-                    Some(db::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
-                    Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
-                    None => StatusCode::SERVICE_UNAVAILABLE,
-                };
                 organization::respond(
                     &ctx,
                     Some(org),
-                    status,
+                    crate::backend::api::http::error::oidc_settings_status(&error),
                     Some("Could not save OIDC settings.".into()),
                     Default::default(),
                 )

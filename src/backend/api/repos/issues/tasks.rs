@@ -1,6 +1,6 @@
 //! Ticking a task box in an issue or pull request body, or in a comment. The box flips in the
-//! stored text and the text is saved through the same update the edit forms use. A writer may tick
-//! a box in the body, the author of a comment may tick one in it, and a stale page is refused.
+//! stored text and the text is saved through the same update the edit forms use. An author or writer
+//! may tick a box in the body, a comment author may tick one in it, and a stale page is refused.
 
 use super::issue::{save_entry_change, EntryChange};
 use crate::backend::api::http::context::PageContext;
@@ -32,7 +32,7 @@ pub(crate) async fn native_toggle_task(
     authorize_post(&ctx, &form)?;
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
-    let value = item(&ctx, &repo, kind, number).await?;
+    let value = item_metadata(&ctx, &repo, kind, number).await?;
     let actor_id = ctx.require_user()?.id;
     let index = field(&form, "task")
         .parse::<usize>()
@@ -92,6 +92,7 @@ pub(crate) async fn native_toggle_task(
         Ok(location) => Ok(ctx.redirect(&location)),
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);
+            let value = item(&ctx, &repo, kind, number).await?;
             render_detail(
                 &ctx,
                 &repo,
@@ -132,7 +133,7 @@ async fn comment_body(
                 })
         }
         // Only the author can edit a comment, so another account's comment, pending ones
-        // included, is not found here.
+        // included, is not found here. A reply in a submitted review keeps that review.
         Kind::Pull => {
             let pull =
                 db::pull_requests::records::get_pull_request(&ctx.state.pool, repo_id, number)
@@ -144,9 +145,7 @@ async fn comment_body(
                 .map(|comment| {
                     comment
                         .filter(|comment| {
-                            comment.author_id == actor_id
-                                && comment.pull_request_id == pull.id
-                                && comment.review_id.is_none()
+                            comment.author_id == actor_id && comment.pull_request_id == pull.id
                         })
                         .map(|comment| comment.body)
                 })
@@ -211,13 +210,7 @@ async fn save_comment_text(
             )
             .await
             .map_err(crate::backend::api::repos::pulls::operation_error)?;
-            let position = db::pull_requests::reviews::count_discussion_items_through(
-                pool,
-                comment.pull_request_id,
-                db::pull_requests::reviews::DiscussionRef::of_comment(&comment),
-            )
-            .await;
-            Ok(comment_link(base, id, position))
+            Ok(comment_rules::saved_comment_link(pool, base, &comment).await)
         }
     }
 }

@@ -95,13 +95,7 @@ async fn render(
                     if access::can_read(&ctx.state.pool, ctx.user.as_ref(), &fork).await? {
                         db::repositories::records::repository_owner_name(&ctx.state.pool, id)
                             .await?
-                            .map(|owner| {
-                                format!(
-                                    "/{}/{}",
-                                    crate::webui::encode_component(&owner),
-                                    crate::webui::encode_component(&fork.name)
-                                )
-                            })
+                            .map(|owner| crate::webui::repository_path(&owner, &fork.name))
                     } else {
                         None
                     }
@@ -250,6 +244,7 @@ async fn submit(
     {
         return ctx.error(StatusCode::FORBIDDEN, "Advisory administration denied.");
     }
+    let authority = ctx.database_actor(actor);
     let op = forms::field(&form, "op");
     let ghsa = forms::field(&form, "ghsa");
     let draft = Draft {
@@ -274,12 +269,12 @@ async fn submit(
         }
         match op.as_str() {
             "create"=>{
-                return Ok(advisories::create(&ctx.state.pool,actor,loaded.repository.id,&value,false).await?.ghsa_id);
+                return Ok(advisories::create(&ctx.state.pool,authority.clone(),loaded.repository.id,&value,false).await?.ghsa_id);
             }
-            "save"=>{advisories::update(&ctx.state.pool,actor,loaded.repository.id,&ghsa,&value).await?;}
-            "publish"|"close"|"draft"=>{let state=match op.as_str(){"publish"=>"published","close"=>"closed",_=>"draft"};advisories::update(&ctx.state.pool,actor,loaded.repository.id,&ghsa,&json!({"state":state})).await?;}
-            "cve"=>advisories::request_cve(&ctx.state.pool,actor,loaded.repository.id,&ghsa).await?,
-            "fork"=>{workflow::private_fork(&ctx.state,actor,&loaded.repository,&ghsa).await?;}
+            "save"=>{advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&value).await?;}
+            "publish"|"close"|"draft"=>{let state=match op.as_str(){"publish"=>"published","close"=>"closed",_=>"draft"};advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&json!({"state":state})).await?;}
+            "cve"=>advisories::request_cve(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa).await?,
+            "fork"=>{workflow::private_fork(&ctx.state,authority.clone(),&loaded.repository,&ghsa).await?;}
             _=>anyhow::bail!(advisories::Refusal::Invalid),
         }
         Ok::<_,anyhow::Error>(ghsa.clone())
@@ -291,12 +286,14 @@ async fn submit(
         ))
         .into_response(),
         Err(error) => {
-            let status = match error.downcast_ref::<advisories::Refusal>() {
+            let status = if error.is::<db::users::accounts::AccountRestricted>() {
+                StatusCode::FORBIDDEN
+            } else { match error.downcast_ref::<advisories::Refusal>() {
                 Some(advisories::Refusal::Denied) => StatusCode::FORBIDDEN,
                 Some(advisories::Refusal::Missing) => StatusCode::NOT_FOUND,
                 Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
                 None => StatusCode::SERVICE_UNAVAILABLE,
-            };
+            } };
             render(
                 &ctx,
                 loaded,

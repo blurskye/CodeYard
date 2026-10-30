@@ -120,9 +120,10 @@ async fn create(
     let field = issue_attributes::create_organization_field(
         &state.pool,
         org.id,
-        (actor.user.id, actor.token.id),
+        actor.database_actor(),
         &Definition {
             id: None,
+            expected_updated: None,
             kind: "field".into(),
             name: input.name,
             description: input.description,
@@ -163,7 +164,7 @@ async fn update(
     let field = issue_attributes::patch_organization_field(
         &state.pool,
         org.id,
-        (actor.user.id, actor.token.id),
+        actor.database_actor(),
         id,
         &FieldChanges {
             name: input.name,
@@ -191,7 +192,7 @@ async fn remove(
     issue_attributes::delete_organization_definition(
         &state.pool,
         org.id,
-        (actor.user.id, actor.token.id),
+        actor.database_actor(),
         id,
         "field",
     )

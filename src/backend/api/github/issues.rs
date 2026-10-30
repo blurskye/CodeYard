@@ -682,6 +682,17 @@ pub(in crate::backend::api) struct Metadata {
     milestone: Option<Option<i32>>,
 }
 
+impl Metadata {
+    pub(in crate::backend::api) fn creation(&self) -> db::issues::OwnedIssueMetadata {
+        db::issues::OwnedIssueMetadata {
+            labels: self.labels.clone().unwrap_or_default(),
+            assignees: self.assignees.as_deref().unwrap_or_default().iter().map(|user| user.id).collect(),
+            milestone: self.milestone.flatten(), issue_type: self.issue_type.flatten(),
+            ..Default::default()
+        }
+    }
+}
+
 pub(in crate::backend::api) async fn metadata(
     pool: &db::DbPool,
     repo: &db::models::Repository,
@@ -800,7 +811,7 @@ pub(in crate::backend::api) async fn apply_metadata(
         let AssignedItem::Issue(id) = item else {
             return Err(Error::invalid("Pull requests do not support issue types"));
         };
-        db::issue_attributes::set_type(&state.pool, repo.id, (actor.id, authentication.token.id), id, kind)
+        db::issue_attributes::set_type(&state.pool, repo.id, authentication.database_actor(), id, kind)
             .await
             .map_err(super::issue_attributes::error)?;
     }
@@ -831,8 +842,8 @@ pub(in crate::backend::api) async fn apply_metadata(
         let (owner, number, title) = detail;
         let target = assignments::Target { actor, repository: repo, owner, item, number, title };
         let removed: Vec<_> = db::assignees::list_assignees(&state.pool, item).await.map_err(Error::unavailable)?.into_iter().filter(|name| !users.iter().any(|user| user.username == *name)).collect();
-        assignments::unassign(&state.pool, &target, &removed).await.map_err(assignment_error)?;
-        assignments::assign(&state.pool, &state.notification_broadcaster, &target, &users).await.map_err(assignment_error)?;
+        assignments::unassign(&state.pool, &target, authentication.database_actor(), &removed).await.map_err(assignment_error)?;
+        assignments::assign(&state.pool, &state.notification_broadcaster, &target, authentication.database_actor(), &users).await.map_err(assignment_error)?;
     }
     Ok(())
 }
@@ -862,7 +873,7 @@ async fn create(
     let issue = crate::backend::issues::mutations::create_issue_with_metadata(
         &state.pool,
         &state.notification_broadcaster,
-        (actor.id, authentication.token.id),
+        authentication.database_actor(),
         p["owner"].clone(),
         repo.name.clone(),
         crate::backend::issues::mutations::CreateIssueRequest {
@@ -879,6 +890,7 @@ async fn create(
             milestone: metadata.milestone.flatten(),
             issue_type: metadata.issue_type.flatten(),
         },
+        metadata.creation(),
     )
     .await
     .map_err(operation_error)?;
@@ -990,10 +1002,10 @@ async fn change_assignees(
     use crate::backend::issues::assignments;
     let target = assignments::Target { actor: &actor, repository: &repo, owner: &p["owner"], item, number, title };
     if remove {
-        assignments::unassign(&state.pool, &target, &names).await.map_err(assignment_error)?;
+        assignments::unassign(&state.pool, &target, authentication.database_actor(), &names).await.map_err(assignment_error)?;
     } else {
         let users = resolve_assignees(&state.pool, &names).await?;
-        assignments::assign(&state.pool, &state.notification_broadcaster, &target, &users).await.map_err(assignment_error)?;
+        assignments::assign(&state.pool, &state.notification_broadcaster, &target, authentication.database_actor(), &users).await.map_err(assignment_error)?;
     }
     Ok(Json(document(&state.pool, Reader::Request(&state, Some(&authentication)), &repo, &p["owner"], item).await?))
 }

@@ -283,6 +283,7 @@ impl RemoteStore {
                     size: metadata.size,
                     offset: metadata.offset,
                     mode: metadata.mode,
+                    preview: metadata.preview,
                 })
             }
             Err(Failure::Repository(error)) => Err(error),
@@ -347,9 +348,11 @@ impl RemoteStore {
         let permit = crate::backend::git::repository::process::forwarding_permit()
             .await
             .map_err(RepoError::from)?;
-        let want = format!("want {oid}\n");
-        let request = format!("{:04x}{want}00000009done\n", want.len() + 4);
-        let pack = tempfile::NamedTempFile::new()
+        let mut request = Vec::new();
+        super::source::append_packet(&mut request, &format!("want {oid}\n"));
+        request.extend_from_slice(b"00000009done\n");
+        let parent = destination.parent().ok_or_else(|| rpc::wire::invalid("invalid checkout directory"))?;
+        let pack = tempfile::NamedTempFile::new_in(parent)
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
         let mut output = tokio::fs::File::from_std(
             pack.reopen()
@@ -359,7 +362,7 @@ impl RemoteStore {
             .git_session(
                 super::GitSession::new(super::GitService::UploadPack, true),
                 super::GitStreams {
-                    input: &mut request.as_bytes(),
+                    input: &mut request.as_slice(),
                     output: &mut output,
                     errors: &mut tokio::io::sink(),
                 },
@@ -376,7 +379,7 @@ impl RemoteStore {
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
         drop(output);
         let lock = crate::backend::git::locks::lock(destination).await;
-        LocalStore::checkout_pack(destination, sha, pack, permit, lock).await
+        LocalStore::checkout_pack(destination, sha, &self.disk_path, pack, permit, lock).await
     }
 }
 

@@ -187,7 +187,7 @@ pub async fn write_file(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: i64,
+    actor_id: impl Into<db::users::accounts::AccountActor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -250,16 +250,15 @@ pub fn free_branch_name(username: &str, refs: &HashMap<String, String>) -> Strin
         end -= 1;
     }
     let username = &username[..end];
+    // Usernames have no path separators. Each occupied branch (or directory of branches)
+    // therefore excludes at most one candidate, and all candidates share this one index.
+    let occupied: std::collections::HashSet<&str> = refs.keys()
+        .filter_map(|reference| reference.strip_prefix("refs/heads/"))
+        .map(|branch| branch.split('/').next().unwrap_or(branch))
+        .collect();
     (1..)
         .map(|number| format!("{username}-patch-{number}"))
-        .find(|name| {
-            let reference = format!("refs/heads/{name}");
-            // A name also conflicts with a branch that lives under it as a directory.
-            !refs.contains_key(&reference)
-                && !refs
-                    .keys()
-                    .any(|existing| existing.starts_with(&format!("{reference}/")))
-        })
+        .find(|name| !occupied.contains(name.as_str()))
         .unwrap_or_default()
 }
 
@@ -327,7 +326,7 @@ pub async fn write_file_bytes(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::users::tokens::Actor>,
+    actor_id: impl Into<db::users::accounts::AccountActor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -360,7 +359,7 @@ pub async fn delete_file(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::users::tokens::Actor>,
+    actor_id: impl Into<db::users::accounts::AccountActor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -391,7 +390,7 @@ pub async fn delete_file_web(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: i64,
+    actor_id: impl Into<db::users::accounts::AccountActor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -497,16 +496,16 @@ async fn save_file(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::users::tokens::Actor>,
-    owner: &str,
+    actor_id: impl Into<db::users::accounts::AccountActor>,
+    _owner: &str,
     repository_id: i64,
     mut input: FileWrite,
     content: FileContent,
     new_branch: Option<&str>,
     origin: CommitOrigin,
 ) -> Result<FileSave, WriteError> {
-    let actor = actor_id.into();
-    let actor_id = actor.user_id;
+    let authority = actor_id.into();
+    let actor_id = authority.user_id();
     if input.message.trim().is_empty() {
         input.message = default_commit_message(&input);
     }
@@ -594,12 +593,11 @@ async fn save_file(
             }
         })?;
     prepared.web_commit = matches!(origin, CommitOrigin::Web);
-    prepared.token_id = actor.token_id;
+    prepared.authority = Some(authority);
     publish_commit(
         pool,
         &store,
         ci,
-        owner,
         &repository,
         user,
         &prepared,
@@ -619,18 +617,31 @@ async fn publish_commit(
     pool: &db::DbPool,
     store: &RepoStore,
     ci: &CiRuns,
-    owner: &str,
     repository: &db::models::Repository,
     user: db::models::User,
     prepared: &PreparedFile,
     new_branch: Option<&str>,
 ) -> Result<FileSave, WriteError> {
+    let (pool, store, ci, repository, prepared, new_branch) = (
+        pool.clone(), store.clone(), ci.clone(), repository.clone(),
+        prepared.clone(), new_branch.map(str::to_owned),
+    );
+    // Once publication starts, client cancellation must not abandon accepted-write follow-ups.
+    tokio::spawn(async move {
+    let (pool, store, ci, repository, prepared, new_branch) = (
+        &pool, &store, &ci, &repository, &prepared, new_branch.as_deref(),
+    );
+    let mut accepted_followup_failed = false;
     let (branch, commit, old) = match new_branch {
         None => {
-            let commit = store
-                .publish_file_as(pool, repository.id, user.id, prepared)
-                .await
-                .map_err(write_error)?;
+            let commit = match store.publish_file_as(pool, repository.id, user.id, prepared).await {
+                Ok(commit) => commit,
+                Err(error) if error.is_applied_followup_failed() => {
+                    accepted_followup_failed = true;
+                    prepared.commit.clone()
+                }
+                Err(error) => return Err(write_error(error)),
+            };
             (prepared.branch.as_str(), commit, prepared.expected.clone())
         }
         Some(name) => {
@@ -647,17 +658,23 @@ async fn publish_commit(
             publication.reference = format!("refs/heads/{name}");
             publication.expected = None;
             publication.new_branch = true;
-            let commit = store
-                .publish_file_as(pool, repository.id, user.id, &publication)
-                .await
-                .map_err(write_error)?;
+            let commit = match store.publish_file_as(pool, repository.id, user.id, &publication).await {
+                Ok(commit) => commit,
+                Err(error) if error.is_applied_followup_failed() => {
+                    accepted_followup_failed = true;
+                    publication.commit.clone()
+                }
+                Err(error) => return Err(write_error(error)),
+            };
             (name, commit, None)
         }
     };
     // The branch moved: pull requests that use it follow, and push workflows run.
+    let current = access::current_repository_with_owner(pool, repository.id).await;
+    let followup_repository = current.as_ref().map(|(repo, _)| repo).unwrap_or(repository);
     let refreshed = pull_requests::refresh_open_pull_requests(
         pool,
-        repository,
+        followup_repository,
         Some(&[branch][..]),
         ci,
         user.id,
@@ -665,28 +682,35 @@ async fn publish_commit(
     )
     .await
     .is_ok();
-    ci.queue_push_runs(
-        repository,
-        owner,
-        user.id,
-        RefUpdate {
-            reference: format!("refs/heads/{branch}"),
-            old,
-            new: commit.sha.clone(),
-            changed_paths: None,
-        },
-    )
-    .await;
-    if !refreshed {
+    if let Ok((repository, owner)) = current {
+        ci.queue_push_runs(
+            &repository,
+            &owner,
+            user.id,
+            RefUpdate {
+                reference: format!("refs/heads/{branch}"),
+                old,
+                new: commit.sha.clone(),
+                changed_paths: None,
+            },
+        ).await;
+    } else {
+        accepted_followup_failed = true;
+    }
+    if !refreshed || accepted_followup_failed {
         return Err(WriteError {
             kind: WriteFailure::SavedFollowupFailed,
-            message: "The change was saved, but pull request refresh failed. Check the repository before retrying.".into(),
+            message: "The change was saved, but repository follow-up failed. Check the repository before retrying.".into(),
         });
     }
     Ok(FileSave {
         commit,
         actor: user,
     })
+    }).await.map_err(|_| WriteError {
+        kind: WriteFailure::SavedFollowupFailed,
+        message: "File publication was interrupted; check the branch before retrying.".into(),
+    })?
 }
 
 /// Adds or replaces every file of an upload in one commit. `content` holds the files' bytes
@@ -699,13 +723,15 @@ pub async fn upload_files(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: i64,
-    owner: &str,
+    actor_id: impl Into<db::users::accounts::AccountActor>,
+    _owner: &str,
     repository_id: i64,
     write: UploadWrite,
     content: Vec<u8>,
     new_branch: Option<&str>,
 ) -> Result<FileSave, WriteError> {
+    let authority = actor_id.into();
+    let actor_id = authority.user_id();
     let (guard_branch, guard_revision) = match new_branch {
         Some(name) => (name, "unborn"),
         None => (write.branch.as_str(), write.expected_revision.as_str()),
@@ -739,11 +765,11 @@ pub async fn upload_files(
             }
         })?;
     prepared.web_commit = true;
+    prepared.authority = Some(authority);
     publish_commit(
         pool,
         &store,
         ci,
-        owner,
         &repository,
         user,
         &prepared,

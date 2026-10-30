@@ -3,7 +3,7 @@ use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::paging::{json_page, PageQuery};
 use crate::backend::api::repos::responses::{
-    repository_owners, repository_topics, repository_unavailable, ForkParent, RepoResponse,
+    repository_fork_counts, repository_owners, repository_topics, repository_unavailable, ForkParent, RepoResponse,
 };
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -46,7 +46,10 @@ pub async fn fork_repo(
         state.cluster.as_ref(),
         &state.repos_path,
         &state.notification_broadcaster,
-        user.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: user.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         source_repo.id,
         &owner,
     )
@@ -60,15 +63,19 @@ pub async fn fork_repo(
         full_name: format!("{}/{}", owner, source_repo.name),
     };
 
+    let topics = repository_topics(&pool, &[forked_repo.id]).await?
+        .remove(&forked_repo.id).unwrap_or_default();
+    let forks = repository_fork_counts(&pool, Some(&headers), &[forked_repo.id]).await?
+        .remove(&forked_repo.id).unwrap_or_default();
     Ok((
         StatusCode::CREATED,
         Json(ForkResponse {
-            // A fork starts without the source's topics.
             repo: RepoResponse::new(
                 &forked_repo,
                 &user.username,
-                Vec::new(),
+                topics,
                 Some(forked_from_info),
+                forks,
             ),
             message: format!(
                 "Successfully forked {}/{} to {}/{}",
@@ -112,35 +119,21 @@ pub async fn check_fork(
     }))
 }
 
-/// One page of a repository's forks, newest first, without the private ones `viewer` may not
-/// read, and whether another page follows. Pages count every fork, so a hidden one never moves
-/// another between pages.
+/// Visibility is applied before paging, so hidden forks cannot create empty pages or links.
 pub(crate) async fn visible_forks(
     pool: &DbPool,
     viewer: Option<i64>,
+    session: &str,
     repo_id: i64,
     limit: i64,
     offset: i64,
 ) -> anyhow::Result<(Vec<Repository>, bool)> {
-    let mut forks =
-        db::repositories::discovery::list_forks(pool, repo_id, limit + 1, offset).await?;
+    let mut forks = db::repositories::discovery::list_visible_forks(
+        pool, viewer, Some(session), repo_id, limit + 1, offset,
+    ).await?;
     let more = forks.len() as i64 > limit;
     forks.truncate(limit as usize);
-    let private_ids: Vec<_> = forks
-        .iter()
-        .filter(|fork| fork.is_private)
-        .map(|fork| fork.id)
-        .collect();
-    let readable = if private_ids.is_empty() || viewer.is_none() {
-        Vec::new()
-    } else {
-        db::repositories::access::readable_repository_ids(pool, viewer, &private_ids).await?
-    };
-    let visible = forks
-        .into_iter()
-        .filter(|fork| !fork.is_private || readable.contains(&fork.id))
-        .collect();
-    Ok((visible, more))
+    Ok((forks, more))
 }
 
 pub async fn list_forks(
@@ -152,9 +145,11 @@ pub async fn list_forks(
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let (offset, limit) = json_page(query.page, query.per_page)?;
     let user = crate::backend::api::http::session::get_optional_user(&state.pool, &headers).await?;
+    let session = crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default();
     let (visible_forks, _) = visible_forks(
         &state.pool,
         user.map(|user| user.id),
+        &session,
         repository.id,
         limit as i64,
         offset as i64,
@@ -166,6 +161,16 @@ pub async fn list_forks(
         .collect::<Vec<_>>();
     let mut owners = repository_owners(&state.pool, &ids).await?;
     let mut topics = repository_topics(&state.pool, &ids).await?;
+    let mut fork_counts = repository_fork_counts(&state.pool, Some(&headers), &ids).await?;
+    // Enrichment may have observed topics written after a privacy or membership change.
+    let viewer = crate::backend::api::http::session::get_optional_user(&state.pool, &headers).await?;
+    let mut readable = std::collections::HashSet::new();
+    for ids in ids.chunks(100) {
+        readable.extend(db::repositories::access::readable_repository_ids(
+            &state.pool, viewer.as_ref().map(|user| user.id), ids,
+        ).await.map_err(|_| repository_unavailable())?);
+    }
+    crate::backend::api::repos::access::check_repo_read_access(&state.pool, &repository, &headers).await?;
     let owner = owners.remove(&repository.id).expect("validated owner");
     let parent_info = ForkParent {
         id: repository.id,
@@ -176,6 +181,7 @@ pub async fn list_forks(
 
     let mut responses = Vec::with_capacity(visible_forks.len());
     for fork in visible_forks {
+        if !readable.contains(&fork.id) { continue; }
         let fork_owner = owners.remove(&fork.id).expect("validated owner");
         let topics = topics.remove(&fork.id).unwrap_or_default();
         responses.push(RepoResponse::new(
@@ -183,6 +189,7 @@ pub async fn list_forks(
             &fork_owner,
             topics,
             Some(parent_info.clone()),
+            fork_counts.remove(&fork.id).unwrap_or_default(),
         ));
     }
     Ok(Json(responses))

@@ -38,7 +38,10 @@ async fn set_engagement(
     change(
         &state.pool,
         &state.notification_broadcaster,
-        actor.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: actor.id,
+            session: crate::backend::api::http::session::extract_session_id(headers).unwrap_or_default(),
+        },
         repository.id,
         kind,
         on,

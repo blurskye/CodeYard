@@ -152,8 +152,11 @@ async fn bounded_mutation_body(state: Arc<AppState>, request: Request, next: Nex
     {
         return next.run(request).await;
     }
+    let maximum = if request.uri().path().ends_with("/_forms/write-file") {
+        crate::backend::api::repos::code::contents::EDITOR_FORM_BODY_LIMIT as u64
+    } else { MAX_BODY };
     let declared = request.body().size_hint().upper();
-    if declared.is_some_and(|size| size > MAX_BODY) {
+    if declared.is_some_and(|size| size > maximum) {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     }
     let permit = if declared.is_some_and(|size| size <= SMALL_BODY) {
@@ -184,7 +187,7 @@ async fn bounded_mutation_body(state: Arc<AppState>, request: Request, next: Nex
     let (parts, body) = request.into_parts();
     let bytes = match tokio::time::timeout(
         Duration::from_secs(30),
-        axum::body::to_bytes(body, MAX_BODY as usize),
+        axum::body::to_bytes(body, maximum as usize),
     )
     .await
     {

@@ -133,16 +133,30 @@ fn check_optional_text(text: Option<&str>) -> Result<(), OperationError> {
     })
 }
 
+/// Native forms bind both immutable identities and the pending draft, including its absence.
+pub struct ReviewTarget {
+    pub owner: String,
+    pub name: String,
+    pub number: i32,
+    pub expected: Option<(i64, i64, Option<i64>)>,
+}
+
+impl From<(String, String, i32)> for ReviewTarget {
+    fn from((owner, name, number): (String, String, i32)) -> Self {
+        Self { owner, name, number, expected: None }
+    }
+}
+
 pub async fn create_pull_request_review(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     credential: &db::users::accounts::AccountCredential<'_>,
-    repository: (String, String, i32),
+    target: impl Into<ReviewTarget>,
     req: CreatePullRequestReviewRequest,
 ) -> Result<db::models::PullRequestReview, OperationError> {
-    create_review(pool, cluster, broadcaster, actor_id, credential, repository, req, None).await
+    create_review(pool, cluster, broadcaster, actor_id, credential, target.into(), req, None).await
 }
 
 pub async fn create_pull_request_review_batch(
@@ -151,10 +165,10 @@ pub async fn create_pull_request_review_batch(
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     credential: &db::users::accounts::AccountCredential<'_>,
-    repository: (String, String, i32),
+    target: impl Into<ReviewTarget>,
     batch: CreatePullRequestReviewBatchRequest,
 ) -> Result<db::models::PullRequestReview, OperationError> {
-    create_review(pool, cluster, broadcaster, actor_id, credential, repository, batch.review, Some(batch.comments)).await
+    create_review(pool, cluster, broadcaster, actor_id, credential, target.into(), batch.review, Some(batch.comments)).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -164,11 +178,11 @@ async fn create_review(
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     credential: &db::users::accounts::AccountCredential<'_>,
-    repository: (String, String, i32),
+    target: ReviewTarget,
     req: CreatePullRequestReviewRequest,
     batch: Option<Vec<super::comments::CreatePullRequestCommentRequest>>,
 ) -> Result<db::models::PullRequestReview, OperationError> {
-    let (owner, repo, number) = repository;
+    let ReviewTarget { owner, name: repo, number, expected } = target;
     let user = super::actor(pool, actor_id).await?;
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
@@ -201,6 +215,12 @@ async fn create_review(
             message: "Pull request not found".to_owned(),
         })?;
 
+    if expected.is_some_and(|(repository_id, pull_id, _)| repository_id != repository.id || pull_id != pull_request.id) {
+        return Err(OperationError::Conflict {
+            code: "revision_conflict",
+            message: "The repository or pull request changed. Reload before submitting.".to_owned(),
+        });
+    }
     if pull_request.state != "open" {
         return Err(OperationError::Invalid {
             code: "invalid_state",
@@ -299,7 +319,7 @@ async fn create_review(
     let review = db::pull_requests::reviews::save_review_batch(pool, db::pull_requests::reviews::ReviewBatch {
         pr_id: pull_request.id, author_id: user.id,
         state: if create_pending && req.state.is_none() { None } else { Some(&review_state) },
-        body: req.body.as_deref(), commit_sha: Some(&commit_sha), expected_pending: req.review_id,
+        body: req.body.as_deref(), commit_sha: Some(&commit_sha), expected_pending: expected.map(|(_, _, pending)| pending).or_else(|| req.review_id.map(Some)),
         create_pending, comments: &comments, token: req.token, credential,
     }).await.map_err(super::write_error)?;
     if review.state == "pending" { return Ok(review); }

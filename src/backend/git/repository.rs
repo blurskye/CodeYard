@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::ChildStdout;
 
+mod blob_preview;
+pub(crate) use blob_preview::{read_blob_preview, PREVIEW_BYTES, PREVIEW_LINES};
 mod checked;
 #[cfg(test)]
 mod history_tests;
@@ -17,9 +19,10 @@ pub(crate) mod locks;
 pub(crate) mod process;
 mod release_notes;
 mod replay;
+pub(crate) mod retained;
 mod revert;
 pub(crate) use checked::{
-    adds_merge_commit, checkout, commit_is_ancestor, current_branch_head, current_pull_head,
+    adds_merge_commit, checkout, materialize_checkout, commit_is_ancestor, current_branch_head, current_pull_head,
     initialize_repository, initialize_repository_copy, introduced_signatures, prepare_merge,
     prepare_pull_branch_update, prepare_pull_head, prepare_squash, prepare_upstream_merge,
     publish_branch_rename, publish_merge, publish_pull_branch_update, publish_pull_head,
@@ -830,7 +833,7 @@ fn apply_tree_history(output: &[u8], directory: &str, entries: &mut [TreeEntry])
 const MAX_FILE_LIST_BYTES: usize = 1024 * 1024;
 
 /// The file paths at a revision, sorted. `truncated` is set when there were more than
-/// `limit`; the first `limit` paths in sorted order are kept.
+/// the count or byte budget; the first matching paths in sorted order are kept.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileList {
     pub paths: Vec<String>,
@@ -843,7 +846,9 @@ pub(crate) async fn list_file_paths(
     repo_path: &Path,
     git_ref: &str,
     limit: usize,
+    query: &str,
 ) -> Result<FileList> {
+    let terms = crate::file_search::query_terms(query);
     let (path, revision) = (repo_path.to_owned(), git_ref.to_owned());
     let revision = process::blocking_until(Instant::now() + process::RPC_TIMEOUT, move || {
         let repo = Repository::open_bare(path)?;
@@ -900,6 +905,9 @@ pub(crate) async fn list_file_paths(
                 continue;
             }
             let path = crate::git_paths::from_bytes(path);
+            if !crate::file_search::matches_terms(&path, &terms) {
+                continue;
+            }
             if cutoff.as_ref().is_some_and(|cutoff| path >= *cutoff) {
                 truncated = true;
                 continue;

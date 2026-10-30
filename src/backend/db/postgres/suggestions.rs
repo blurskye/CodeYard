@@ -209,6 +209,7 @@ pub async fn propose(
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     issue: i64,
     p: &Proposal,
+    target_repository: Option<i64>,
 ) -> Result<Suggestion> {
     p.validate()?;
     let mut tx = pool.begin().await?;
@@ -217,6 +218,12 @@ pub async fn propose(
     super::discussions::lock_issue_contribution(&mut tx, actor, issue).await?;
     anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
     issue_scope(&mut tx, repo, issue).await?;
+    if let Some(expected) = target_repository {
+        anyhow::ensure!(p.action == Action::CloseIssue, Refusal::Invalid);
+        let current: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM issues WHERE id=$1 FOR SHARE")
+            .bind(p.target_id).fetch_optional(&mut *tx).await?;
+        anyhow::ensure!(current == Some(expected), Refusal::Missing);
+    }
     let record: Issue =
         sqlx::query_as("SELECT * FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE")
             .bind(issue)

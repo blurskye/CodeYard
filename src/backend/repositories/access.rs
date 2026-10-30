@@ -6,6 +6,42 @@ use crate::backend::db::{
 };
 use anyhow::Result;
 
+/// Retained account identity, without substituting Git permissions for a metadata operation.
+pub(crate) async fn credential_user(
+    pool: &db::DbPool,
+    actor: &db::users::accounts::AccountActor,
+    write: bool,
+) -> Result<User> {
+    use db::users::accounts::{AccountActor, AccountRestricted};
+    let user = match actor {
+        AccountActor::Trusted(id) => db::users::accounts::get_user_by_id(pool, *id).await?,
+        AccountActor::Session { session, .. } => db::users::sessions::get_session_user(pool, session).await?,
+        AccountActor::Token { token_id, .. } => db::users::tokens::token_user(pool, *token_id, write).await?,
+    }.ok_or(AccountRestricted)?;
+    anyhow::ensure!(user.id == actor.user_id() && !user.is_banned && !user.must_change_password, AccountRestricted);
+    Ok(user)
+}
+
+/// Recheck the credential retained by a native publication, after preparation and lock waits.
+pub(crate) async fn check_publication_actor(
+    pool: &db::DbPool,
+    actor: &db::users::accounts::AccountActor,
+    repository: &Repository,
+) -> Result<()> {
+    use db::users::accounts::AccountActor;
+    let repository = db::repositories::records::get_repository_by_id(pool, repository.id).await?
+        .ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
+    let user = match actor {
+        AccountActor::Trusted(id) => db::users::accounts::get_user_by_id(pool, *id).await?,
+        AccountActor::Session { session, .. } => db::users::sessions::get_session_user(pool, session).await?,
+        AccountActor::Token { token_id, .. } => Some(super::git_sessions::ReceiveCredential::Token(*token_id)
+            .authorize(pool, &repository, true).await?.0),
+    }.ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
+    anyhow::ensure!(user.id == actor.user_id() && can_write(pool, &user, &repository).await?,
+        db::users::accounts::AccountRestricted);
+    Ok(())
+}
+
 /// The access projection with the personal-repository administrator policy applied.
 pub async fn user_access(
     pool: &db::DbPool,
@@ -72,6 +108,9 @@ pub async fn can_read(
     let Some(user) = user else {
         return Ok(false);
     };
+    if user.is_banned || user.must_change_password {
+        return Ok(false);
+    }
     if repository.owner_kind == "user" && (user.is_admin || repository.is_personal_owner(user.id)) {
         return Ok(true);
     }
@@ -291,7 +330,7 @@ pub async fn check_write(
 /// Personal repository owners retain the existing collaborator policy.
 pub async fn change_collaborator(
     pool: &db::DbPool,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repo_id: i64,
     username: &str,
     permission: Option<db::models::AccessLevel>,
@@ -300,7 +339,11 @@ pub async fn change_collaborator(
         pool, actor, repo_id, username, permission,
     )
     .await
-    .map_err(|_| AccessError::Unavailable)?;
+    .map_err(|error| if error.is::<db::users::accounts::AccountRestricted>() {
+        AccessError::NotFound
+    } else {
+        AccessError::Unavailable
+    })?;
     match change {
         CollaboratorChange::Applied(user) => Ok(*user),
         CollaboratorChange::NotFound => Err(AccessError::NotFound),

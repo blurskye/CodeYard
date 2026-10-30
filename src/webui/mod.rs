@@ -27,6 +27,16 @@ pub fn workflow_filename(path: &str) -> String {
     name.strip_suffix(".yml").or_else(|| name.strip_suffix(".yaml")).unwrap_or(name).to_owned()
 }
 
+/// The first `limit` characters of `text`, with an ellipsis when more follow.
+pub fn excerpt(text: &str, limit: usize) -> String {
+    let mut chars = text.chars();
+    let mut output: String = chars.by_ref().take(limit).collect();
+    if chars.next().is_some() {
+        output.push('…');
+    }
+    output
+}
+
 /// Percent-encode one path segment or query value, never an entire URL.
 pub fn encode_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());

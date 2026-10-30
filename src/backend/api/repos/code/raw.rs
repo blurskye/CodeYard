@@ -1,11 +1,11 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
-use crate::backend::api::repos::chrome::{load, load_refs_from_repo, resolve};
+use crate::backend::api::repos::chrome::{load, resolve};
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::{repo_store, BlobBytes, BlobRange, RepoError};
 use axum::extract::{OriginalUri, Path, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use std::sync::Arc;
@@ -35,6 +35,11 @@ fn limit_message() -> String {
 }
 
 pub(crate) fn requested_range(headers: &HeaderMap) -> Result<(BlobRange, bool), ()> {
+    // These adapters do not publish a strong validator or Last-Modified. No If-Range
+    // value can be matched, so RFC 9110 requires a complete replacement response.
+    if headers.contains_key(header::IF_RANGE) {
+        return Ok((BlobRange::Full, false));
+    }
     let mut values = headers.get_all(header::RANGE).iter();
     let Some(value) = values.next() else {
         return Ok((BlobRange::Full, false));
@@ -104,19 +109,13 @@ fn raw_store_error(error: RepoError) -> (StatusCode, Json<ApiError>) {
 pub async fn get_raw_blob(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, git_ref, path)): Path<(String, String, String, String)>,
+    method: Method,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
-    let refs = load_refs_from_repo(&state, &repository).await?;
-    if refs.is_empty() {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ApiError::new("not_found", "Repository is empty")),
-        ));
-    }
-
-    let (range, partial) = requested_range(&headers).map_err(|_| {
+    let head = method == Method::HEAD;
+    let (range, partial) = (if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { requested_range(&headers) }).map_err(|_| {
         (
             StatusCode::RANGE_NOT_SATISFIABLE,
             Json(ApiError::new(
@@ -125,18 +124,19 @@ pub async fn get_raw_blob(
             )),
         )
     })?;
-    let permit = crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
+    let permit = if head { None } else { Some(crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
         .await
         .ok_or_else(|| {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(ApiError::new("downloads_busy", "Repository downloads busy")),
             )
-        })?;
+        })?) };
     let blob = repo_store(&repository, state.cluster.as_ref())
         .blob_range(&git_ref, &path, range)
         .await
         .map_err(raw_store_error)?;
+    check_repo_read_access(&state.pool, &repository, &headers).await?;
 
     check_repo_read_access(&state.pool, &repository, &headers).await?;
     Ok(raw_response(&path, blob, partial, permit))
@@ -146,8 +146,10 @@ pub(crate) fn raw_response(
     path: &str,
     blob: BlobBytes,
     partial: bool,
-    permit: tokio::sync::OwnedSemaphorePermit,
+    permit: impl Into<Option<tokio::sync::OwnedSemaphorePermit>>,
 ) -> Response {
+    let permit = permit.into();
+    let head = permit.is_none();
     let BlobBytes {
         id: _,
         bytes,
@@ -155,10 +157,13 @@ pub(crate) fn raw_response(
         size,
         offset,
         mode: _,
+        ..
     } = blob;
-    let length = bytes.len();
-    let mut response =
-        Response::new(crate::backend::api::http::middleware::buffered_download_body(bytes, permit));
+    let length = if head { size } else { bytes.len() as u64 };
+    let mut response = Response::new(match permit {
+        Some(permit) => crate::backend::api::http::middleware::buffered_download_body(bytes, permit),
+        None => axum::body::Body::empty(),
+    });
     *response.status_mut() = if partial {
         StatusCode::PARTIAL_CONTENT
     } else {
@@ -211,10 +216,15 @@ pub(crate) fn raw_response(
 pub async fn raw_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    method: Method,
     OriginalUri(uri): OriginalUri,
     super::GitPathParams(params): super::GitPathParams,
 ) -> Response {
-    let (range, partial) = match requested_range(&headers) {
+    if headers.contains_key(header::AUTHORIZATION) {
+        return token_raw_page(state, headers, method, &params).await;
+    }
+    let head = method == Method::HEAD;
+    let (range, partial) = match if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { requested_range(&headers) } {
         Ok(range) => range,
         Err(()) => return StatusCode::RANGE_NOT_SATISFIABLE.into_response(),
     };
@@ -232,21 +242,21 @@ pub async fn raw_page(
         Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let Some(permit) =
-        crate::backend::api::http::middleware::wait_for_slot(&ctx.state.repository_downloads).await
-    else {
-        return ctx.error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Repository downloads busy.",
-        );
+    let permit = if head { None } else {
+        let Some(permit) = crate::backend::api::http::middleware::wait_for_slot(&ctx.state.repository_downloads).await else {
+            return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Repository downloads busy.");
+        };
+        Some(permit)
     };
     let blob = repo_store(&loaded.repository, ctx.state.cluster.as_ref())
         .blob_range(&resolved.reference, &resolved.path, range)
         .await;
     match blob {
         Ok(blob) => {
-            if let Err(error) = check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers).await {
-                return error.into_response();
+            if let Err((status, _)) = check_repo_read_access(
+                &ctx.state.pool, &loaded.repository, &ctx.headers,
+            ).await {
+                return ctx.error(status, "Unable to download this repository file.");
             }
             ctx.with_cookie(raw_response(&resolved.path, blob, partial, permit))
         }
@@ -262,6 +272,58 @@ pub async fn raw_page(
             crate::backend::api::repos::chrome::store_error(&ctx, Some(&loaded.chrome), error)
         }
     }
+}
+
+/// REST contents documents advertise this same native URL. Bearer clients retain their
+/// repository-scoped token instead of being downgraded to anonymous browser visitors.
+async fn token_raw_page(state: Arc<AppState>, headers: HeaderMap, method: Method, params: &HashMap<String, String>) -> Response {
+    let (repository, authentication) = match crate::backend::api::github::repository(
+        &state, &headers, &params["owner"], &params["repo"], false,
+    ).await {
+        Ok(value) => value,
+        Err(error) => return error.into_response(),
+    };
+    let Some(authentication) = authentication else { return StatusCode::UNAUTHORIZED.into_response(); };
+    let credential = crate::backend::repositories::git_sessions::ReceiveCredential::Token(authentication.token.id);
+    if credential.authorize(&state.pool, &repository, false).await.is_err() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let store = repo_store(&repository, state.cluster.as_ref());
+    let refs = match store.refs().await {
+        Ok(refs) => refs,
+        Err(error) => return raw_store_error(error).into_response(),
+    };
+    let names = refs.keys().flat_map(|name| {
+        let short = name.strip_prefix("refs/heads/").or_else(|| name.strip_prefix("refs/tags/"));
+        std::iter::once(name.clone()).chain(short.map(str::to_owned))
+    }).collect::<Vec<_>>();
+    use crate::webui::pages::repos::ref_path::{resolve_repo_ref_path, split_path};
+    let Some(resolved) = resolve_repo_ref_path(&split_path(&params["ref_path"]), &names, true) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let head = method == Method::HEAD;
+    let (range, partial) = match if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { requested_range(&headers) } {
+        Ok(range) => range,
+        Err(()) => return StatusCode::RANGE_NOT_SATISFIABLE.into_response(),
+    };
+    let permit = if head { None } else {
+        let Some(permit) = crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads).await else {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        };
+        Some(permit)
+    };
+    let blob = match store.blob_range(&resolved.reference, &resolved.path, range).await {
+        Ok(blob) => blob,
+        Err(error) => return raw_store_error(error).into_response(),
+    };
+    let current = match crate::backend::repositories::access::current_repository(&state.pool, repository.id).await {
+        Ok(current) => current,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+    if credential.authorize(&state.pool, &current, false).await.is_err() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    raw_response(&resolved.path, blob, partial, permit)
 }
 
 #[cfg(test)]

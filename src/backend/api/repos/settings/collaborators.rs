@@ -76,8 +76,6 @@ pub async fn add_collaborator(
     Json(req): Json<AddCollaboratorRequest>,
 ) -> Result<Json<CollaboratorResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let repository = find_repository(&state.pool, &owner, &repo).await?;
-
     let access_level = match req.access_level.as_deref() {
         None => db::models::AccessLevel::Read,
         Some(name) => db::models::AccessLevel::parse_collaborator(name).ok_or_else(|| {
@@ -90,9 +88,13 @@ pub async fn add_collaborator(
             )
         })?,
     };
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
     let target_user = crate::backend::repositories::access::change_collaborator(
         &state.pool,
-        user.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: user.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         repository.id,
         &req.username,
         Some(access_level),
@@ -120,7 +122,10 @@ pub async fn remove_collaborator(
 
     crate::backend::repositories::access::change_collaborator(
         &state.pool,
-        user.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: user.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         repository.id,
         &username,
         None,

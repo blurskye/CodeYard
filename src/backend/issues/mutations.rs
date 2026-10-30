@@ -5,6 +5,7 @@ use crate::backend::notifications::watchers::{notify_watchers, WatchEvent, Watch
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
 use serde::Deserialize;
+use std::sync::Arc;
 #[derive(Deserialize)]
 pub struct CreateIssueRequest {
     pub title: String,
@@ -27,30 +28,110 @@ pub struct UpdateIssueRequest {
     pub state_reason: Option<String>,
 }
 
-pub async fn create_issue(
+async fn emit_issue_event(
     pool: &db::DbPool,
-    broadcaster: &NotificationBroadcaster,
-    actor_id: i64,
-    owner: String,
-    repo: String,
-    req: CreateIssueRequest,
-) -> Result<db::models::Issue, OperationError> {
-    create_issue_with_metadata(pool, broadcaster, actor_id, owner, repo, req, db::issues::IssueMetadata::default()).await
+    repository: &db::models::Repository,
+    issue: &db::models::Issue,
+    sender_id: i64,
+    action: &'static str,
+    previous: Option<&db::models::Issue>,
+) {
+    let author_id = issue.author_id;
+    let mut changes = serde_json::Map::new();
+    if let Some(previous) = previous {
+        if previous.title != issue.title {
+            changes.insert("title".into(), serde_json::json!({"from": previous.title}));
+        }
+        if previous.body != issue.body {
+            changes.insert("body".into(), serde_json::json!({"from": previous.body}));
+        }
+    }
+    let issue = issue.clone();
+    let document = repository.clone();
+    webhooks::emit(pool, repository, events::ISSUES, vec![author_id, sender_id], move |owner, people| {
+        let (author, sender) = (people.get(author_id), people.get(sender_id));
+        let mut payload = payloads::issues(action, &issue, &author, Scope { repo: &document, owner, sender: &sender });
+        if action == "edited" { payload["changes"] = serde_json::Value::Object(changes.clone()); }
+        payload
+    }).await;
 }
 
-/// Validate and commit all initial metadata before announcing a new issue. Trusted native callers
-/// retain the simple wrapper; token-backed adapters retain the initiating credential here.
-pub async fn create_issue_with_metadata(
+/// The duplicate relationship, closure and timeline event commit together; the closure's
+/// notifications finish even if the initiating HTTP request is cancelled.
+pub async fn close_duplicate(
     pool: &db::DbPool,
-    broadcaster: &NotificationBroadcaster,
-    actor: impl Into<db::users::tokens::Actor>,
+    broadcaster: &Arc<NotificationBroadcaster>,
+    actor: impl Into<db::users::accounts::AccountActor>,
+    repo: i64,
+    issue: i64,
+    duplicate: i64,
+) -> Result<db::models::Issue, OperationError> {
+    let (pool, broadcaster, actor) = (pool.clone(), broadcaster.clone(), actor.into());
+    tokio::spawn(async move {
+        let user = super::actor(&pool, actor.user_id()).await?;
+        let (repository, owner) = super::repository(&pool, repo).await?;
+        let (previous, saved) = db::issues::management::close_duplicate_with_previous(&pool, actor, repo, issue, duplicate)
+            .await
+            .map_err(|error| {
+                use db::issues::management::Refusal;
+                match error.downcast_ref::<Refusal>() {
+                    Some(Refusal::Missing) => OperationError::Missing { code: "not_found", message: error.to_string() },
+                    Some(Refusal::Denied) => OperationError::Denied { code: "forbidden", message: error.to_string() },
+                    Some(_) => OperationError::Invalid { code: "validation_error", message: error.to_string() },
+                    None => database_error(error),
+                }
+            })?;
+        if previous.state != saved.state {
+            after_update(&pool, &broadcaster, &repository, &user, &owner, &previous, &saved).await;
+        }
+        Ok(saved)
+    })
+    .await
+    .unwrap_or_else(|_| Err(OperationError::Unavailable {
+        code: "publication_interrupted",
+        message: "Duplicate closure was interrupted; check the issue before retrying.".into(),
+    }))
+}
+
+pub async fn create_issue(
+    pool: &db::DbPool,
+    broadcaster: &Arc<NotificationBroadcaster>,
+    actor: impl Into<db::users::accounts::AccountActor>,
     owner: String,
     repo: String,
     req: CreateIssueRequest,
-    metadata: db::issues::IssueMetadata<'_>,
 ) -> Result<db::models::Issue, OperationError> {
-    let actor = actor.into();
-    let user = super::actor(pool, actor.user_id).await?;
+    create_issue_with_metadata(pool, broadcaster, actor, owner, repo, req, db::issues::OwnedIssueMetadata::default()).await
+}
+
+pub async fn create_issue_with_metadata(
+    pool: &db::DbPool,
+    broadcaster: &Arc<NotificationBroadcaster>,
+    actor: impl Into<db::users::accounts::AccountActor>,
+    owner: String,
+    repo: String,
+    req: CreateIssueRequest,
+    metadata: db::issues::OwnedIssueMetadata,
+) -> Result<db::models::Issue, OperationError> {
+    let (pool, broadcaster, actor) = (pool.clone(), broadcaster.clone(), actor.into());
+    tokio::spawn(async move {
+        create_issue_owned(&pool, &broadcaster, actor, owner, repo, req, metadata.borrowed()).await
+    }).await.unwrap_or_else(|_| Err(OperationError::Unavailable {
+        code: "publication_interrupted",
+        message: "Issue creation was interrupted; check the repository before retrying.".into(),
+    }))
+}
+
+async fn create_issue_owned(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor: db::users::accounts::AccountActor,
+    owner: String,
+    repo: String,
+    req: CreateIssueRequest,
+    mut metadata: db::issues::IssueMetadata<'_>,
+) -> Result<db::models::Issue, OperationError> {
+    let user = super::actor(pool, actor.user_id()).await?;
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -79,7 +160,7 @@ pub async fn create_issue_with_metadata(
     }
 
     let body = req.body.as_deref().unwrap_or("");
-    let metadata = db::issues::IssueMetadata { parent: req.parent_issue_id.or(metadata.parent), ..metadata };
+    metadata.parent = req.parent_issue_id.or(metadata.parent);
     let issue = db::issues::create_issue_with_metadata(pool, repository.id, actor, &req.title, body, metadata)
         .await.map_err(super::write_error)?;
 
@@ -133,29 +214,7 @@ pub async fn create_issue_with_metadata(
     )
     .await;
 
-    let (author_id, sender_id) = (issue.author_id, user.id);
-    let issue_for_hook = issue.clone();
-    let repository_for_hook = repository.clone();
-    webhooks::emit(
-        pool,
-        &repository,
-        events::ISSUES,
-        vec![author_id, sender_id],
-        move |owner, people| {
-            let (author, sender) = (people.get(author_id), people.get(sender_id));
-            payloads::issues(
-                "opened",
-                &issue_for_hook,
-                &author,
-                Scope {
-                    repo: &repository_for_hook,
-                    owner,
-                    sender: &sender,
-                },
-            )
-        },
-    )
-    .await;
+    emit_issue_event(pool, &repository, &issue, user.id, "opened", None).await;
     Ok(issue)
 }
 
@@ -260,31 +319,6 @@ pub async fn update_issue(
     Ok(issue)
 }
 
-pub async fn close_duplicate(
-    pool: &db::DbPool,
-    broadcaster: &NotificationBroadcaster,
-    actor: i64,
-    repo: i64,
-    issue: i64,
-    duplicate: i64,
-) -> Result<db::models::Issue, OperationError> {
-    let user = super::actor(pool, actor).await?;
-    let (repository, owner) = super::repository(pool, repo).await?;
-    let (previous, saved) = db::issues::management::close_duplicate_with_previous(pool, actor, repo, issue, duplicate).await.map_err(|error| {
-        use db::issues::management::Refusal;
-        match error.downcast_ref::<Refusal>() {
-            Some(Refusal::Missing) => OperationError::Missing { code: "not_found", message: error.to_string() },
-            Some(Refusal::Denied) => OperationError::Denied { code: "forbidden", message: error.to_string() },
-            Some(_) => OperationError::Invalid { code: "validation_error", message: error.to_string() },
-            None => database_error(error),
-        }
-    })?;
-    if previous.state != saved.state {
-        after_update(pool, broadcaster, &repository, &user, &owner, &previous, &saved).await;
-    }
-    Ok(saved)
-}
-
 async fn after_update(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
@@ -323,41 +357,7 @@ async fn after_update(
         (false, "closed") => "closed",
         (false, _) => "reopened",
     };
-    let (author_id, sender_id) = (issue.author_id, user.id);
-    // An edited event names the previous value of each field that changed.
-    let mut changes = serde_json::Map::new();
-    if issue.title != existing.title {
-        changes.insert("title".into(), serde_json::json!({"from": existing.title}));
-    }
-    if issue.body != existing.body {
-        changes.insert("body".into(), serde_json::json!({"from": existing.body}));
-    }
-    let issue_for_hook = issue.clone();
-    let repository_for_hook = repository.clone();
-    webhooks::emit(
-        pool,
-        &repository,
-        events::ISSUES,
-        vec![author_id, sender_id],
-        move |owner, people| {
-            let (author, sender) = (people.get(author_id), people.get(sender_id));
-            let mut payload = payloads::issues(
-                action,
-                &issue_for_hook,
-                &author,
-                Scope {
-                    repo: &repository_for_hook,
-                    owner,
-                    sender: &sender,
-                },
-            );
-            if action == "edited" {
-                payload["changes"] = serde_json::Value::Object(changes.clone());
-            }
-            payload
-        },
-    )
-    .await;
+    emit_issue_event(pool, &repository, &issue, user.id, action, Some(&existing)).await;
 }
 
 /// Saves an edit from the GitHub API, which carries no form revision: the caller passes the

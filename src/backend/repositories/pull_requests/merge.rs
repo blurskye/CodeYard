@@ -972,6 +972,7 @@ fn same_revision(now: &db::models::PullRequest, prepared: &db::models::PullReque
 
 pub struct PreparedMerge {
     actor_id: i64,
+    authority: db::users::accounts::AccountActor,
     owner: String,
     repo: String,
     repository: db::models::Repository,
@@ -997,11 +998,27 @@ impl PreparedMerge {
 pub async fn prepare_pull_request_merge(
     pool: &db::DbPool,
     ci: &CiRuns,
-    actor_id: i64,
-    (owner, repo, number): (String, String, i32),
+    actor: impl Into<db::users::accounts::AccountActor>,
+    repository: (String, String, i32),
     request: MergeRequest,
 ) -> Result<PreparedMerge, OperationError> {
-    let token = request.token;
+    prepare_pull_request_merge_checked(pool, ci, actor.into(), repository, request, None).await
+}
+async fn prepare_pull_request_merge_checked(
+    pool: &db::DbPool,
+    ci: &CiRuns,
+    actor: db::users::accounts::AccountActor,
+    (owner, repo, number): (String, String, i32),
+    request: MergeRequest,
+    expected: Option<(i64, i64)>,
+) -> Result<PreparedMerge, OperationError> {
+    use db::users::accounts::AccountActor;
+    let authority = match (actor, request.token) {
+        (AccountActor::Trusted(user_id), Some(token_id)) => AccountActor::Token { user_id, token_id },
+        (actor, _) => actor,
+    };
+    let actor_id = authority.user_id();
+    let token = match &authority { AccountActor::Token { token_id, .. } => Some(*token_id), _ => None };
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
@@ -1010,8 +1027,11 @@ pub async fn prepare_pull_request_merge(
             message: "Repository not found".to_owned(),
         })?;
 
+    if expected.is_some_and(|(id, _)| repository.id != id) { return Err(stale_revision()); }
     let user = super::actor(pool, actor_id).await?;
     super::require_write(pool, &user, &repository).await?;
+    crate::backend::repositories::access::check_publication_actor(pool, &authority, &repository).await
+        .map_err(|error| publish_failure(error.into(), request.merge_method))?;
 
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
@@ -1020,6 +1040,7 @@ pub async fn prepare_pull_request_merge(
             code: "not_found",
             message: "Pull request not found".to_owned(),
         })?;
+    if expected.is_some_and(|(_, id)| pull_request.id != id) { return Err(stale_revision()); }
     // A merge uses this pull request's branches as they are now. An unrelated
     // broken fork must not deny a healthy pull request.
     pull_requests::refresh_open_pull_request(
@@ -1213,6 +1234,7 @@ pub async fn prepare_pull_request_merge(
 
     Ok(PreparedMerge {
         actor_id,
+        authority,
         owner,
         repo,
         repository,
@@ -1264,8 +1286,19 @@ pub async fn publish_prepared_merge(
     broadcaster: &NotificationBroadcaster,
     prepared: PreparedMerge,
 ) -> Result<MergeResponse, OperationError> {
+    let (pool, ci, broadcaster) = (pool.clone(), ci.clone(), broadcaster.clone());
+    tokio::spawn(async move { publish_prepared_merge_owned(&pool, &ci, &broadcaster, prepared).await })
+        .await.map_err(|_| OperationError::Unavailable { code: "merge_interrupted", message: "Merge publication was interrupted; check the branch before retrying.".into() })?
+}
+async fn publish_prepared_merge_owned(
+    pool: &db::DbPool,
+    ci: &CiRuns,
+    broadcaster: &NotificationBroadcaster,
+    prepared: PreparedMerge,
+) -> Result<MergeResponse, OperationError> {
     let PreparedMerge {
         actor_id,
+        authority,
         owner,
         repo,
         repository,
@@ -1340,7 +1373,7 @@ pub async fn publish_prepared_merge(
             .publish_merge_as(
                 pool,
                 repository.id,
-                user.id,
+                authority.clone(),
                 &merge.head_branch,
                 &merge.base_branch,
                 &merge.head,
@@ -1359,7 +1392,7 @@ pub async fn publish_prepared_merge(
             .publish_stacked_merge_as(
                 pool,
                 repository.id,
-                user.id,
+                authority.clone(),
                 &heads,
                 &merge.base_branch,
                 &merge.base,
@@ -1531,11 +1564,22 @@ pub async fn merge_pull_request(
     pool: &db::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
-    actor_id: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repository: (String, String, i32),
     request: MergeRequest,
 ) -> Result<MergeResponse, OperationError> {
-    let prepared = prepare_pull_request_merge(pool, ci, actor_id, repository, request).await?;
+    merge_pull_request_checked(pool, ci, broadcaster, actor, repository, request, None).await
+}
+pub async fn merge_pull_request_checked(
+    pool: &db::DbPool,
+    ci: &CiRuns,
+    broadcaster: &NotificationBroadcaster,
+    actor: impl Into<db::users::accounts::AccountActor>,
+    repository: (String, String, i32),
+    request: MergeRequest,
+    expected: Option<(i64, i64)>,
+) -> Result<MergeResponse, OperationError> {
+    let prepared = prepare_pull_request_merge_checked(pool, ci, actor.into(), repository, request, expected).await?;
     publish_prepared_merge(pool, ci, broadcaster, prepared).await
 }
 

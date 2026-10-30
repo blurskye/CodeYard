@@ -174,27 +174,24 @@ pub async fn list_milestone_labels(
         .bind(repo_id).bind(milestone_id).bind(limit).bind(offset).bind(viewer).fetch_all(pool).await?)
 }
 
-pub async fn list_label_usage(pool: &PgPool, repo_id: i64) -> Result<Vec<(i64, i64)>> {
-    let usage = sqlx::query_as::<_, (i64, i64)>(
-        r"SELECT l.id, COUNT(u.label_id)
+pub async fn list_label_usage(pool: &PgPool, repo_id: i64, label_ids: &[i64]) -> Result<Vec<(i64, i64)>> {
+    if label_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Only the given labels are counted, through the label_id indexes.
+    Ok(sqlx::query_as::<_, (i64, i64)>(
+        r"SELECT l.id,
+            (SELECT COUNT(*) FROM issue_labels il JOIN issues i ON i.id = il.issue_id
+              WHERE il.label_id = l.id AND i.repo_id = $1)
+          + (SELECT COUNT(*) FROM pr_labels pl JOIN pull_requests p ON p.id = pl.pull_request_id
+              WHERE pl.label_id = l.id AND p.repo_id = $1)
         FROM labels l
-        LEFT JOIN (
-            SELECT il.label_id FROM issues i
-            JOIN issue_labels il ON il.issue_id = i.id
-            WHERE i.repo_id = $1
-            UNION ALL
-            SELECT pl.label_id FROM pull_requests p
-            JOIN pr_labels pl ON pl.pull_request_id = p.id
-            WHERE p.repo_id = $1
-        ) u ON u.label_id = l.id
-        WHERE l.repo_id = $1
-        GROUP BY l.id",
+        WHERE l.repo_id = $1 AND l.id = ANY($2)",
     )
     .bind(repo_id)
+    .bind(label_ids)
     .fetch_all(pool)
-    .await?;
-
-    Ok(usage)
+    .await?)
 }
 
 pub async fn update_label(

@@ -1,6 +1,6 @@
 //! The values that cross the store boundary: Git sessions, blob reads, merge requests and
 //! the size limits that apply to them.
-use crate::backend::db::models::Repository;
+use crate::backend::db::{self, models::Repository};
 use crate::backend::git::{MAX_CI_WORKFLOW_BYTES, MAX_WORKFLOW_DIRECTORY_ENTRIES};
 use serde::{Deserialize, Serialize};
 
@@ -75,6 +75,14 @@ pub struct BlobBytes {
     pub offset: u64,
     /// The Git file mode of the entry, such as 0o100644 or 0o120000.
     pub mode: u32,
+    #[serde(default)]
+    pub preview: Option<BlobPreviewMetadata>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlobPreviewMetadata {
+    pub first_line: usize,
+    pub previous: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +91,8 @@ pub enum BlobRange {
     Full,
     /// A preview window. An offset beyond EOF produces an empty window at EOF.
     Window { offset: u64, length: u64 },
+    /// Native preview: count prefix lines and retain canonical previous-page boundaries once.
+    Preview { offset: u64, line: Option<u32> },
     /// An HTTP byte range with an inclusive optional end.
     Bytes { start: u64, end: Option<u64> },
     /// The final `length` bytes.
@@ -96,6 +106,8 @@ pub(crate) struct BlobMetadata {
     pub size: u64,
     pub offset: u64,
     pub mode: u32,
+    #[serde(default)]
+    pub preview: Option<BlobPreviewMetadata>,
 }
 
 pub const MAX_BLOB_RESPONSE_BYTES: usize = crate::backend::git::MAX_BLOB_MATERIALIZE_BYTES;
@@ -242,9 +254,7 @@ pub struct BranchMergePublication {
     pub head_branch: Option<String>,
     pub head: String,
     pub result: String,
-    /// The token the request came with, for the workflows permission; `None` for a session.
-    #[serde(default)]
-    pub token: Option<i64>,
+    pub authority: db::users::accounts::AccountActor,
 }
 
 /// One branch that a restack moves: the commit it must still be at, and the commit it moves to.

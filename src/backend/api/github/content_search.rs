@@ -60,6 +60,7 @@ async fn content(
                     "Search is busy. Try again shortly.",
                 )
             })?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8);
     let mut results = content_search::search(
         &state.pool,
         state.cluster.as_ref(),
@@ -101,6 +102,7 @@ async fn content(
                     repo,
                     authentication.as_ref(),
                     deadline,
+                    None,
                 )
                 .await?,
             );

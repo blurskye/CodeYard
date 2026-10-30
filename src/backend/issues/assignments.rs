@@ -21,12 +21,13 @@ pub async fn assign(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
     target: &Target<'_>,
+    authority: impl Into<db::credentials::Actor>,
     users: &[db::models::User],
 ) -> anyhow::Result<Vec<i64>> {
     let ids: Vec<i64> = users.iter().map(|user| user.id).collect();
     let added = db::assignees::assign_users(
         pool,
-        target.actor.id,
+        authority,
         target.repository.id,
         target.item,
         &ids,
@@ -45,11 +46,12 @@ pub async fn assign(
 pub async fn unassign(
     pool: &db::DbPool,
     target: &Target<'_>,
+    authority: impl Into<db::credentials::Actor>,
     usernames: &[String],
 ) -> anyhow::Result<Vec<String>> {
     let removed = db::assignees::unassign_users(
         pool,
-        target.actor.id,
+        authority,
         target.repository.id,
         target.item,
         usernames,

@@ -118,6 +118,7 @@ async fn enqueue(f: &Database, repo: i64, actor: i64, attempt: Option<&CiRun>) -
                 source: source.id,
                 source_uuid: source.run_id,
                 credential: None,
+                authority: None,
                 allow_active: false,
                 selection: db::ci::CiReplaySelection::All,
                 definition: None,

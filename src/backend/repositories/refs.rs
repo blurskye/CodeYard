@@ -27,12 +27,15 @@ pub enum RefError {
 
 async fn writable(
     pool: &db::DbPool,
-    actor: i64,
+    actor: &db::users::accounts::AccountActor,
     repo_id: i64,
 ) -> Result<(db::models::Repository, db::models::User), RefError> {
-    access::check_write(pool, repo_id, actor)
+    let (repository, user) = access::check_write(pool, repo_id, actor.user_id())
         .await
-        .map_err(RefError::Access)
+        .map_err(RefError::Access)?;
+    access::check_publication_actor(pool, actor, &repository).await
+        .map_err(|error| publication_error(RepoError::from(error)))?;
+    Ok((repository, user))
 }
 
 pub(super) fn publication_error(error: RepoError) -> RefError {
@@ -81,13 +84,15 @@ pub async fn create_branch(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     owner: &str,
     repo_id: i64,
     branch: &str,
     source: &str,
 ) -> Result<String, RefError> {
-    let (repository, _) = writable(pool, actor, repo_id).await?;
+    let authority = actor.into();
+    let actor = authority.user_id();
+    let (repository, _) = writable(pool, &authority, repo_id).await?;
     if branch.is_empty() {
         return Err(RefError::Invalid("Branch name is required"));
     }
@@ -100,7 +105,7 @@ pub async fn create_branch(
     // The store checks the protection rules for the new branch under the publication lock,
     // reading the history the branch brings in. That check is the one that can see signatures.
     let sha = repo_store(&repository, cluster)
-        .create_branch_as(pool, repository.id, actor, branch, source)
+        .create_branch_as(pool, repository.id, authority, branch, source)
         .await
         .map_err(publication_error)?;
     let refreshed = pull_requests::refresh_open_pull_requests(
@@ -139,18 +144,23 @@ pub async fn update_reference(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     owner: &str,
     repo_id: i64,
     reference: &str,
     sha: &str,
     force: bool,
 ) -> Result<String, RefError> {
-    let (repository, _) = writable(pool, actor, repo_id).await?;
+    let authority = actor.into();
+    let actor = authority.user_id();
+    let (repository, _) = writable(pool, &authority, repo_id).await?;
     let (old, sha) = repo_store(&repository, cluster)
-        .update_reference_as(pool, repo_id, actor, reference, sha, force)
+        .update_reference_as(pool, repo_id, authority, reference, sha, force)
         .await
         .map_err(publication_error)?;
+    if old == sha {
+        return Ok(sha);
+    }
     let refreshed = if let Some(branch) = reference.strip_prefix("refs/heads/") {
         pull_requests::refresh_open_pull_requests(
             pool,
@@ -188,7 +198,7 @@ pub async fn update_reference(
 pub async fn set_default_branch(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repository: &db::models::Repository,
     branch: &str,
 ) -> Result<(), RefError> {
@@ -205,11 +215,13 @@ pub async fn delete_branch(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repo_id: i64,
     branch: &str,
 ) -> Result<(), RefError> {
-    let (repository, user) = writable(pool, actor, repo_id).await?;
+    let authority = actor.into();
+    let actor = authority.user_id();
+    let (repository, user) = writable(pool, &authority, repo_id).await?;
     if git::branch_ref(branch).is_none() {
         return Err(invalid_ref("branch"));
     }
@@ -232,7 +244,7 @@ pub async fn delete_branch(
         return Err(RefError::Invalid("Cannot delete the default branch"));
     }
     repo_store(&repository, cluster)
-        .delete_branch_as(pool, repository.id, actor, branch)
+        .delete_branch_as(pool, repository.id, authority, branch)
         .await
         .map_err(publication_error)?;
     pull_requests::refresh_open_pull_requests(
@@ -256,14 +268,16 @@ pub async fn create_tag(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     owner: &str,
     repo_id: i64,
     tag: &str,
     source: &str,
     message: Option<&str>,
 ) -> Result<TagInfo, RefError> {
-    let (repository, _) = writable(pool, actor, repo_id).await?;
+    let authority = actor.into();
+    let actor = authority.user_id();
+    let (repository, _) = writable(pool, &authority, repo_id).await?;
     if tag.is_empty() {
         return Err(RefError::Invalid("Tag name is required"));
     }
@@ -277,7 +291,7 @@ pub async fn create_tag(
         .create_tag_as(
             pool,
             repository.id,
-            actor,
+            authority,
             tag,
             source,
             message,
@@ -304,16 +318,17 @@ pub async fn create_tag(
 pub async fn delete_tag(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repo_id: i64,
     tag: &str,
 ) -> Result<(), RefError> {
-    let (repository, _) = writable(pool, actor, repo_id).await?;
+    let authority = actor.into();
+    let (repository, _) = writable(pool, &authority, repo_id).await?;
     if git::tag_ref(tag).is_none() {
         return Err(invalid_ref("tag"));
     }
     repo_store(&repository, cluster)
-        .delete_tag_as(pool, repository.id, actor, tag)
+        .delete_tag_as(pool, repository.id, authority, tag)
         .await
         .map_err(publication_error)
 }

@@ -34,7 +34,7 @@ pub(super) async fn resolve(
             } else {
                 Some(id(&input, "issueTypeId", "IT")?)
             };
-            db::issue_attributes::set_type(pool, repo.id, actor, target, kind)
+            db::issue_attributes::set_type(pool, repo.id, db::users::accounts::AccountActor::Token { user_id: actor, token_id: request.auth.token.id }, target, kind)
                 .await
                 .map_err(|e| Error::new(e.to_string()))?;
         }

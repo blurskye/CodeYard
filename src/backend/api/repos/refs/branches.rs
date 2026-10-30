@@ -53,6 +53,7 @@ pub async fn list_branches(
         &repository_default_branch(&state, &repository).await?,
         &repository.default_branch,
     );
+    crate::backend::api::repos::access::check_repo_read_access(&state.pool, &repository, &headers).await?;
     Ok(Json(
         branches
             .into_iter()
@@ -75,7 +76,10 @@ pub async fn create_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        actor.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: actor.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         &owner,
         super::repository_id(&state, &owner, &repo).await?,
         &req.name,
@@ -99,7 +103,10 @@ pub async fn delete_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        actor.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: actor.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         super::repository_id(&state, &owner, &repo).await?,
         &branch,
     )
@@ -254,6 +261,8 @@ pub(in crate::backend::api::repos) async fn refs_page(
     if tab != "all" {
         rows.retain(|row| is_stale(row) == (tab == "stale"));
     }
+    crate::backend::api::repos::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers).await
+        .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     Ok(ctx.page_model(
         if tags { "Tags" } else { "Branches" },
         crate::webui::app::Page::Repositories(view::page::Page::Refs {

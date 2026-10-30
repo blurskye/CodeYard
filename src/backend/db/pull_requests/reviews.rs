@@ -36,7 +36,8 @@ pub struct ReviewBatch<'a> {
     pub state: Option<&'a str>,
     pub body: Option<&'a str>,
     pub commit_sha: Option<&'a str>,
-    pub expected_pending: Option<i64>,
+    /// The pending draft the caller saw: `Some(None)` when it saw none, `None` when it does not say.
+    pub expected_pending: Option<Option<i64>>,
     pub create_pending: bool,
     pub comments: &'a [NewPullRequestComment<'a>],
     pub token: Option<i64>,
@@ -254,7 +255,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::delete_p
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::save_pull_request_review,
     crate::backend::db::sqlite::pull_requests::reviews::save_pull_request_review,
     #[allow(clippy::too_many_arguments)]
-    fn save_pull_request_review(pool: &DbPool, pr_id: i64, author_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, state: &str, body: Option<&str>, commit_sha: Option<&str>, expected_pending: Option<i64>) -> Result<PullRequestReview>);
+    fn save_pull_request_review(pool: &DbPool, pr_id: i64, author_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, state: &str, body: Option<&str>, commit_sha: Option<&str>, expected_pending: Option<Option<i64>>) -> Result<PullRequestReview>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull_request_review,
     crate::backend::db::sqlite::pull_requests::reviews::add_pull_request_review,

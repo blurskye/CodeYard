@@ -1,6 +1,7 @@
 use crate::backend::db::{
     issues::management::{LinkedBranch, Refusal},
     models::Issue,
+    users::accounts::{AccountActor, AccountRestricted},
 };
 use crate::backend::db::assignees::AssignmentRefusal;
 use anyhow::{ensure, Result};
@@ -40,6 +41,14 @@ pub async fn pinned(pool: &PgPool, repo: i64) -> Result<Vec<Issue>> {
     Ok(sqlx::query_as("SELECT i.* FROM pinned_issues p JOIN issues i ON i.id=p.issue_id AND i.repo_id=p.repo_id WHERE p.repo_id=$1 ORDER BY p.slot").bind(repo).fetch_all(pool).await?)
 }
 
+async fn require_actor(tx: &mut Transaction<'_, Postgres>, actor: &AccountActor) -> Result<()> {
+    if let Some(credential) = actor.credential() {
+        super::super::users::transitions::require_account(tx, actor.user_id(), &credential).await
+            .map_err(|error| if error.is::<AccountRestricted>() { Refusal::Denied.into() } else { error })?;
+    }
+    Ok(())
+}
+
 async fn issue(tx: &mut Transaction<'_, Postgres>, repo: i64, id: i64) -> Result<Issue> {
     sqlx::query_as("SELECT * FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE")
         .bind(id)
@@ -49,12 +58,15 @@ async fn issue(tx: &mut Transaction<'_, Postgres>, repo: i64, id: i64) -> Result
         .ok_or_else(|| Refusal::Missing.into())
 }
 
-pub async fn pin(pool: &PgPool, actor: i64, repo: i64, id: i64, pinned: bool) -> Result<()> {
+pub async fn pin(pool: &PgPool, actor: impl Into<AccountActor>, repo: i64, id: i64, pinned: bool) -> Result<()> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin().await?;
     ensure!(
         super::super::discussions::lock_exclusive_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
+    require_actor(&mut tx, &authority).await?;
     issue(&mut tx, repo, id).await?;
     if pinned {
         let slots: Vec<i32> = sqlx::query_scalar("SELECT slot FROM pinned_issues WHERE repo_id=$1")
@@ -88,12 +100,15 @@ pub async fn pin(pool: &PgPool, actor: i64, repo: i64, id: i64, pinned: bool) ->
     Ok(())
 }
 
-pub async fn delete(pool: &PgPool, actor: i64, repo: i64, id: i64) -> Result<()> {
+pub async fn delete(pool: &PgPool, actor: impl Into<AccountActor>, repo: i64, id: i64) -> Result<()> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin().await?;
     ensure!(
         super::super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
+    require_actor(&mut tx, &authority).await?;
     issue(&mut tx, repo, id).await?;
     sqlx::query("DELETE FROM reactions WHERE subject_kind='issue' AND subject_id=$1 OR subject_kind='issue_comment' AND subject_id IN (SELECT id FROM issue_comments WHERE issue_id=$1)").bind(id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM notifications WHERE repo_id=$1 AND kind IN ('issue_comment','mention') AND metadata->>'comment_id' IN (SELECT id::text FROM issue_comments WHERE issue_id=$2)")
@@ -116,12 +131,14 @@ pub async fn delete(pool: &PgPool, actor: i64, repo: i64, id: i64) -> Result<()>
 
 pub async fn transfer(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<AccountActor>,
     repo: i64,
     id: i64,
     destination: i64,
 ) -> Result<Issue> {
     ensure!(repo != destination, Refusal::Destination);
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin().await?;
     for repo in [repo.min(destination), repo.max(destination)] {
         ensure!(
@@ -129,6 +146,7 @@ pub async fn transfer(
             Refusal::Denied
         );
     }
+    require_actor(&mut tx, &authority).await?;
     let same_owner: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories a JOIN repositories b ON a.owner_user_id=b.owner_user_id OR a.owner_org_id=b.owner_org_id WHERE a.id=$1 AND b.id=$2)").bind(repo).bind(destination).fetch_one(&mut *tx).await?;
     ensure!(same_owner, Refusal::Destination);
     // A private discussion must not become public through a transfer.
@@ -224,18 +242,16 @@ pub async fn redirect(pool: &PgPool, repo: i64, number: i32) -> Result<Option<Is
     Ok(sqlx::query_as("SELECT i.* FROM issue_redirects r JOIN issues i ON i.id=r.issue_id WHERE r.repo_id=$1 AND r.number=$2").bind(repo).bind(number).fetch_optional(pool).await?)
 }
 
-pub async fn close_duplicate(pool: &PgPool, actor: i64, repo: i64, id: i64, duplicate: i64) -> Result<Issue> {
-    Ok(close_duplicate_with_previous(pool, actor, repo, id, duplicate).await?.1)
-}
-
 pub async fn close_duplicate_with_previous(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<AccountActor>,
     repo: i64,
     id: i64,
     duplicate: i64,
 ) -> Result<(Issue, Issue)> {
     ensure!(id != duplicate, Refusal::Duplicate);
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin().await?;
     let target_repo: i64 = sqlx::query_scalar("SELECT repo_id FROM issues WHERE id=$1")
         .bind(duplicate)
@@ -264,10 +280,11 @@ pub async fn close_duplicate_with_previous(
             );
         }
     }
+    require_actor(&mut tx, &authority).await?;
     let previous = issue(&mut tx, repo, id).await?;
     issue(&mut tx, target_repo, duplicate).await?;
     sqlx::query("INSERT INTO issue_duplicates(issue_id,duplicate_id) VALUES($1,$2) ON CONFLICT(issue_id) DO UPDATE SET duplicate_id=excluded.duplicate_id").bind(id).bind(duplicate).execute(&mut *tx).await?;
-    let result: Issue = sqlx::query_as("UPDATE issues SET state='closed',state_reason='duplicate',closed_by_id=$1,closed_at=COALESCE(closed_at,clock_timestamp()),updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$2 RETURNING *").bind(actor).bind(id).fetch_one(&mut *tx).await?;
+    let result: Issue = sqlx::query_as("UPDATE issues SET state='closed',state_reason='duplicate',closed_by_id=CASE WHEN state='open' THEN $1 ELSE closed_by_id END,closed_at=COALESCE(closed_at,clock_timestamp()),updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$2 RETURNING *").bind(actor).bind(id).fetch_one(&mut *tx).await?;
     for (kind, detail, old) in crate::backend::db::timeline::edit_events(&previous.title, &previous.state, &result.title, &result.state) {
         super::super::timeline::append(&mut tx, repo, "issue", id, actor, kind, detail, old).await?;
     }
@@ -286,12 +303,14 @@ pub async fn linked_branches(pool: &PgPool, issue: i64) -> Result<Vec<LinkedBran
 
 pub async fn link_branch(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<AccountActor>,
     repo: i64,
     id: i64,
     branch_repo: i64,
     name: &str,
 ) -> Result<LinkedBranch> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin().await?;
     for repo in [repo.min(branch_repo), repo.max(branch_repo)] {
         ensure!(
@@ -299,6 +318,7 @@ pub async fn link_branch(
             Refusal::Denied
         );
     }
+    require_actor(&mut tx, &authority).await?;
     issue(&mut tx, repo, id).await?;
     let result = sqlx::query_as("INSERT INTO issue_linked_branches(issue_id,repo_id,name) VALUES($1,$2,$3) ON CONFLICT(issue_id,repo_id,name) DO UPDATE SET name=excluded.name RETURNING id,repo_id,name").bind(id).bind(branch_repo).bind(name).fetch_one(&mut *tx).await?;
     tx.commit().await?;

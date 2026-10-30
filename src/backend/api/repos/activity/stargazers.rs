@@ -26,5 +26,6 @@ pub async fn list_stargazers(
     .await
     .map_err(|_| repository_unavailable())?;
 
+    crate::backend::api::repos::access::check_repo_read_access(&state.pool, &repository, &headers).await?;
     Ok(Json(users.into_iter().map(UserResponse::from).collect()))
 }

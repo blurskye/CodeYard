@@ -133,7 +133,7 @@ pub async fn page(pool: &DbPool, repo: i64, input: &Query, viewer: Option<i64>) 
         .reference
         .as_ref()
         .is_some_and(|value| value.len() > 1024)
-        || input.actor.as_ref().is_some_and(|value| value.len() > 255)
+        || input.actor.as_ref().is_some_and(|value| value.len() > 1024 || value.chars().count() > 255)
     {
         return Err(InvalidQuery("Activity filter is too long").into());
     }

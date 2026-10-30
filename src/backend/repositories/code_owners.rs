@@ -22,7 +22,7 @@ const MAX_BYTES: usize = 3 * 1024 * 1024;
 const MAX_LINES: usize = 5_000;
 const MAX_PATTERN_BYTES: usize = 1024;
 const MAX_OWNERS: usize = 1000;
-const MAX_OWNER_BYTES: usize = 320;
+const MAX_OWNER_BYTES: usize = 1 + 1024 + 1 + 1024;
 const MAX_OWNER_EXPANSIONS: usize = 10_000;
 pub(crate) const MAX_REVIEWERS: usize = 5000;
 
@@ -135,21 +135,28 @@ fn segments_match(
     path: &[&str],
     budget: &mut WorkflowMatchBudget,
 ) -> anyhow::Result<bool> {
+    budget.charge(pattern.len(), path.len())?;
     let mut next = vec![false; path.len() + 1];
+    let mut row = vec![false; path.len() + 1];
     next[path.len()] = true;
-    for segment in pattern.iter().rev() {
-        let mut row = vec![false; path.len() + 1];
+    for (position, segment) in pattern.iter().enumerate().rev() {
+        row.fill(false);
         for index in (0..=path.len()).rev() {
-            code_owner_glob_matches_bounded("", "", budget)?;
             row[index] = if segment == "**" {
-                next[index] || (index < path.len() && row[index + 1])
+                if position + 1 == pattern.len() {
+                    // A terminal directory glob names descendants, not the directory's
+                    // replacement by a regular file. Middle globstars may still be empty.
+                    index < path.len() && (next[index + 1] || row[index + 1])
+                } else {
+                    next[index] || (index < path.len() && row[index + 1])
+                }
             } else {
                 index < path.len()
                     && next[index + 1]
                     && code_owner_glob_matches_bounded(segment, path[index], budget)?
             };
         }
-        next = row;
+        std::mem::swap(&mut next, &mut row);
     }
     Ok(next[0])
 }
@@ -340,6 +347,7 @@ pub async fn resolve_owners<'a>(
             .map(|team| team.team.slug)
             .collect()
     };
+    teams.retain(|team| team.split_once('/').is_some_and(|(_, slug)| review_teams.contains(slug)));
     let mut members = 0;
     for teams in teams.chunks(500) {
         let Some(org_id) = repository.owner_org_id else {
@@ -348,12 +356,6 @@ pub async fn resolve_owners<'a>(
         for (team, id) in
             db::organizations::teams::team_members_by_names(pool, org_id, teams).await?
         {
-            if !team
-                .split_once('/')
-                .is_some_and(|(_, slug)| review_teams.contains(slug))
-            {
-                continue;
-            }
             members += 1;
             anyhow::ensure!(
                 members <= MAX_REVIEWERS,

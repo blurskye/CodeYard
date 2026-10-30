@@ -23,7 +23,13 @@ pub struct Check {
     #[serde(default)]
     pub images: Vec<(String, String, Option<String>)>,
     #[serde(default)]
-    pub actions: Vec<(String, String, String)>,
+    pub actions: Vec<Action>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Action {
+    pub label: String,
+    pub description: String,
+    pub identifier: String,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Annotation {
@@ -53,12 +59,12 @@ pub fn render(repo: &RepoChrome, check: &Check) -> Element {
                         }
                     }
                     if check.can_rerequest {
-                        for (label, description, identifier) in &check.actions {
-                            form { method: "post", action: format!("{base}/action"),
+                        for action in &check.actions {
+                            form { method:"post", action:format!("{base}/action"),
                                 {csrf(&repo.csrf_token)}
-                                input { r#type: "hidden", name: "repository_id", value: "{repo.id}" }
-                                input { r#type: "hidden", name: "identifier", value: identifier.clone() }
-                                button { r#type: "submit", class: "btn btn-secondary", title: description.clone(), "{label}" }
+                                input { r#type:"hidden", name:"repository_id", value:repo.id.to_string() }
+                                input { r#type:"hidden", name:"identifier", value:action.identifier.clone() }
+                                button { r#type:"submit", class:"btn btn-secondary", title:action.description.clone(), "{action.label}" }
                             }
                         }
                     }

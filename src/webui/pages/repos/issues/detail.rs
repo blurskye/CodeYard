@@ -1106,7 +1106,7 @@ pub fn detail(
                     if kind == Kind::Issue && repo.signed_in && !repo.chrome.is_archived {
                         NavLink { class: "btn btn-primary collaboration-heading-action", href: format!("{}/new", repo.family_url(kind)), "New issue" }
                     }
-                    if may_edit && !repo.chrome.is_archived {
+                    if item.can_edit && repo.signed_in && !repo.chrome.is_archived {
                         details { open: draft.title.is_some() || draft.body.is_some(), class: "collaboration-edit", title: "Edit title and description",
                             summary { class: "btn btn-secondary btn-sm", "Edit" }
                             // A keyed loop item, so the form starts over when the page moves to another item.

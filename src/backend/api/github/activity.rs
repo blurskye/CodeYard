@@ -64,11 +64,11 @@ async fn change_star(
     enabled: bool,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let auth = auth.ok_or_else(auth::required)?;
     engagement::change(
         &state.pool,
         &state.notification_broadcaster,
-        actor.id,
+        db::users::accounts::AccountActor::Token { user_id: auth.user.id, token_id: auth.token.id },
         repo.id,
         Engagement::Star,
         enabled,

@@ -6,6 +6,41 @@ use crate::backend::db::repositories::protection::{
 use anyhow::Result;
 use sqlx::PgPool;
 
+pub async fn read_protection_snapshot(
+    pool: &PgPool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    repo_id: i64,
+) -> Result<crate::backend::db::repositories::protection::ProtectionSnapshot> {
+    let actor = actor.into();
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
+    anyhow::ensure!(super::super::discussions::lock_settings_read_authority(&mut tx, actor.user_id, repo_id, true).await?, ProtectionWriteRefusal::Denied);
+    if let Some(credential) = actor.credential() {
+        super::super::users::transitions::require_read_account(&mut tx, actor.user_id, &credential).await?;
+    }
+    let rules: Vec<BranchProtectionRule> = sqlx::query_as("SELECT * FROM branch_protection_rules WHERE repo_id=$1 ORDER BY pattern")
+        .bind(repo_id).fetch_all(&mut *tx).await?;
+    let mut users = Vec::new();
+    let mut teams = Vec::new();
+    for rule in &rules {
+        users.extend(rule.push_allowances.iter().chain(&rule.force_push_allowances).copied());
+        teams.extend(rule.push_team_allowances.iter().copied());
+    }
+    users.sort_unstable(); users.dedup();
+    teams.sort_unstable(); teams.dedup();
+    let users: Vec<(i64, String)> = if users.is_empty() { Vec::new() } else {
+        sqlx::query_as("SELECT id,username::text FROM users WHERE id=ANY($1)").bind(&users).fetch_all(&mut *tx).await?
+    };
+    let teams: Vec<(i64, String)> = if teams.is_empty() { Vec::new() } else {
+        sqlx::query_as("SELECT t.id,t.slug::text FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL WHERE r.id=$1 AND t.id=ANY($2) AND t.privacy IN ('visible','secret')")
+            .bind(repo_id).bind(&teams).fetch_all(&mut *tx).await?
+    };
+    tx.commit().await?;
+    Ok(crate::backend::db::repositories::protection::ProtectionSnapshot {
+        repository_id: repo_id, rules, users: users.into_iter().collect(), teams: teams.into_iter().collect(),
+    })
+}
+
 pub async fn list_branch_protection_rules(
     pool: &PgPool,
     repo_id: i64,
@@ -34,8 +69,9 @@ pub async fn upsert_branch_protection_rule(
         .await?,
         ProtectionWriteRefusal::Denied
     );
-    if let Some(token) = input.token_id {
-        anyhow::ensure!(super::super::users::tokens::permits_write(&mut tx, input.actor_id, token, Some(input.repo_id), None, "administration").await?, ProtectionWriteRefusal::Denied);
+    if let Some(credential) = input.credential.as_ref() {
+        let authority = crate::backend::db::credentials::Actor::from((input.actor_id, credential));
+        anyhow::ensure!(super::super::credentials::repository(&mut tx, &authority, input.repo_id, "administration", true).await?, ProtectionWriteRefusal::Denied);
     }
     let previous: Option<String> = sqlx::query_scalar("SELECT github_settings FROM branch_protection_rules WHERE repo_id=$1 AND pattern=$2 FOR UPDATE").bind(input.repo_id).bind(input.pattern).fetch_optional(&mut *tx).await?;
     let previous: crate::backend::db::models::BranchProtectionSettings = previous
@@ -159,12 +195,12 @@ pub async fn upsert_branch_protection_rule(
 
 pub async fn delete_branch_protection_rule(
     pool: &PgPool,
-    actor_id: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<bool> {
-    let actor = actor_id.into();
-    let actor_id = actor.user_id;
+    let authority = actor_id.into();
+    let actor_id = authority.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_admin_authority(
@@ -172,9 +208,7 @@ pub async fn delete_branch_protection_rule(
         ).await?,
         ProtectionWriteRefusal::Denied
     );
-    if let Some(token) = actor.token_id {
-        anyhow::ensure!(super::super::users::tokens::permits_write(&mut tx, actor_id, token, Some(repo_id), None, "administration").await?, ProtectionWriteRefusal::Denied);
-    }
+    anyhow::ensure!(super::super::credentials::repository(&mut tx, &authority, repo_id, "administration", true).await?, ProtectionWriteRefusal::Denied);
     let result =
         sqlx::query("DELETE FROM branch_protection_rules WHERE repo_id = $1 AND pattern = $2")
             .bind(repo_id)
@@ -188,22 +222,20 @@ pub async fn delete_branch_protection_rule(
 
 pub async fn update_branch_protection_rule(
     pool: &PgPool,
-    actor_id: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     pattern: &str,
     update: crate::backend::db::repositories::protection::ProtectionUpdate,
 ) -> Result<BranchProtectionRule> {
-    let actor = actor_id.into();
-    let actor_id = actor.user_id;
+    let authority = actor_id.into();
+    let actor_id = authority.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
             .await?,
         ProtectionWriteRefusal::Denied
     );
-    if let Some(token) = actor.token_id {
-        anyhow::ensure!(super::super::users::tokens::permits_write(&mut tx, actor_id, token, Some(repo_id), None, "administration").await?, ProtectionWriteRefusal::Denied);
-    }
+    anyhow::ensure!(super::super::credentials::repository(&mut tx, &authority, repo_id, "administration", true).await?, ProtectionWriteRefusal::Denied);
     let mut rule = sqlx::query_as::<_, BranchProtectionRule>(
         "SELECT * FROM branch_protection_rules WHERE repo_id=$1 AND pattern=$2 FOR UPDATE",
     )

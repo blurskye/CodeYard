@@ -7,7 +7,10 @@ use crate::backend::{
     },
     app::AppState,
     db,
-    repositories::{reads::same_fork_network, store::repo_store},
+    repositories::{
+        reads::same_fork_network,
+        store::{repo_store, ErrorKind},
+    },
 };
 use crate::webui::pages::repos::ref_path::compare_url;
 use crate::webui::pages::repos::{
@@ -42,7 +45,17 @@ pub(crate) async fn comparison(
     let base = store
         .commit(&format!("refs/heads/{}", draft.base))
         .await
-        .map_err(|_| ctx.error(StatusCode::BAD_REQUEST, "Base branch not found."))?
+        .map_err(|error| {
+            if error.kind == ErrorKind::NotFound {
+                ctx.error(StatusCode::BAD_REQUEST, "Base branch not found.")
+            } else {
+                crate::backend::api::repos::chrome::store_error(
+                    ctx,
+                    Some(&repo.view.chrome),
+                    error,
+                )
+            }
+        })?
         .sha;
     let value = if head_repo.id == repo.record.id {
         store.diff(&base, &head).await
@@ -139,6 +152,17 @@ pub(crate) async fn native_compare_page(
     let (names, _) = branches(&ctx, &repo.record).await?;
     let (base_repo, base_ref) = comparison_side(&ctx, &repo, &params["owner"], &base).await?;
     let (head_repo, head_ref) = comparison_side(&ctx, &repo, &params["owner"], &head).await?;
+    // `alice:topic` in alice's own repository names the local branch `topic`.
+    let base = if base_repo.id == repo.record.id {
+        base_ref.clone()
+    } else {
+        base
+    };
+    let head = if head_repo.id == repo.record.id {
+        head_ref.clone()
+    } else {
+        head
+    };
     // A branch of either side is named in full, so one called `refs/topic` is not read as the
     // exact ref `refs/topic`.
     let mut sides = Vec::with_capacity(2);

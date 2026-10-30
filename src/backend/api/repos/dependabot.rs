@@ -50,6 +50,9 @@ async fn open(
     Ok((ctx, loaded))
 }
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return ctx.error(StatusCode::FORBIDDEN, "A live unrestricted credential is required.");
+    }
     use db::advisories::Refusal;
     if let Some(graph @ (db::dependency_graph::GraphError::Limit | db::dependency_graph::GraphError::Disabled)) = error.downcast_ref::<db::dependency_graph::GraphError>() {
         return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &graph.to_string());
@@ -166,14 +169,14 @@ async fn mutate(
     {
         return ctx.error(StatusCode::CONFLICT, "The repository changed.");
     }
-    let actor = ctx.user.as_ref().unwrap().id;
+    let actor = ctx.database_actor(ctx.user.as_ref().unwrap().id);
     let result = if let Some(number) = number {
         let input = Update {
             state: values.get("state").cloned().unwrap_or_default(),
             dismissed_reason: values.get("dismissed_reason").cloned(),
             dismissed_comment: values.get("dismissed_comment").cloned(),
         };
-        store::update(&ctx.state.pool, ctx.database_actor(actor), loaded.repository.id, number, &input)
+        store::update(&ctx.state.pool, actor, loaded.repository.id, number, &input)
             .await
             .map(|_| ())
     } else {

@@ -40,16 +40,24 @@ fn item_id(item: AssignedItem) -> i64 {
     }
 }
 
-async fn begin_write(
-    pool: &SqlitePool,
-    actor_id: i64,
+async fn begin_write<'a>(
+    pool: &'a SqlitePool,
+    authority: &crate::backend::db::credentials::Actor,
     repo_id: i64,
-) -> Result<Transaction<'_, Sqlite>> {
+) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_triage_authority(&mut tx, actor_id, repo_id).await?,
+        super::discussions::lock_triage_authority(&mut tx, authority.user_id, repo_id).await?,
         AssignmentRefusal::Denied
     );
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, authority.user_id, &credential)
+            .await.map_err(|error| {
+                if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+                    AssignmentRefusal::Denied.into()
+                } else { error }
+            })?;
+    }
     Ok(tx)
 }
 
@@ -74,15 +82,16 @@ async fn locate_item(
 /// Assigns each of `user_ids` in one transaction. Returns the ones that were not assigned before.
 pub async fn assign_users(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     item: AssignedItem,
     user_ids: &[i64],
 ) -> Result<Vec<i64>> {
-    let mut tx = begin_write(pool, actor_id, repo_id).await?;
+    let authority = actor_id.into();
+    let mut tx = begin_write(pool, &authority, repo_id).await?;
     let mut added = Vec::new();
     for &user_id in user_ids {
-        if assign_in_transaction(&mut tx, actor_id, repo_id, item, user_id).await? {
+        if assign_in_transaction(&mut tx, authority.user_id, repo_id, item, user_id).await? {
             added.push(user_id);
         }
     }
@@ -158,12 +167,13 @@ pub(crate) async fn assign_in_transaction(
 /// assigned. A name that is no user, or is not assigned, removes nothing.
 pub async fn unassign_users(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     item: AssignedItem,
     usernames: &[String],
 ) -> Result<Vec<String>> {
-    let mut tx = begin_write(pool, actor_id, repo_id).await?;
+    let authority = actor_id.into();
+    let mut tx = begin_write(pool, &authority, repo_id).await?;
     let (link, column) = locate_item(&mut tx, repo_id, item).await?;
     let mut removed = Vec::new();
     for username in usernames {
@@ -177,7 +187,7 @@ pub async fn unassign_users(
         .rows_affected();
         if deleted > 0 {
             let (subject, id) = crate::backend::db::timeline::item_subject(item);
-            super::timeline::append(&mut tx, repo_id, subject, id, actor_id, "unassigned", username, "").await?;
+            super::timeline::append(&mut tx, repo_id, subject, id, authority.user_id, "unassigned", username, "").await?;
             removed.push(username.clone());
         }
     }

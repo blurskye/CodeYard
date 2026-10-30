@@ -549,7 +549,7 @@ pub(super) async fn run(
                     refs: prepared.refs,
                     default_branch: prepared.default_branch,
                 },
-                &prepared.pack,
+                prepared.pack,
             )
             .await
             .unwrap();

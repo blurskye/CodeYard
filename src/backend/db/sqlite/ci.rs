@@ -246,6 +246,16 @@ async fn enqueue_ci_run_inner(
     let mut parent_run = None;
     let mut replay = None;
     if let Some(request) = &requested_attempt {
+        if let Some(actor) = &request.authority {
+            ensure!(actor.user_id() == input.triggered_by_id,
+                CiAdmissionRefusal::Denied("CI credential actor changed"));
+            if let Some(credential) = actor.credential() {
+                super::users::transitions::require_account(&mut tx, input.triggered_by_id, &credential)
+                    .await.map_err(|error| if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+                        anyhow::anyhow!(CiAdmissionRefusal::Denied("CI credential is no longer authorized"))
+                    } else { error })?;
+            }
+        }
         if let Some(token) = request.credential {
             let owns:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR julianday(expires_at)>julianday('now')))").bind(token).bind(input.triggered_by_id).fetch_one(&mut *tx).await?;
             ensure!(

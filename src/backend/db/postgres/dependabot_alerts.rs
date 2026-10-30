@@ -115,13 +115,18 @@ async fn global_one_in(connection: &mut sqlx::PgConnection, ghsa_id: &str) -> Re
         None => Ok(None),
     }
 }
-pub async fn import(pool: &PgPool, actor: i64, value: &Value) -> Result<Value> {
+pub async fn import(pool: &PgPool, actor: impl Into<Actor>, value: &Value) -> Result<Value> {
+    let authority = actor.into();
+    let actor = authority.user_id;
     let value = dependabot_alerts::import_document(value)?;
     let mut tx = pool.begin().await?;
     ensure!(
         super::users::transitions::active_admin(&mut tx, actor).await?,
         Refusal::Denied
     );
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     sqlx::query("INSERT INTO global_advisories(ghsa_id,document) VALUES($1,$2) ON CONFLICT(ghsa_id) DO UPDATE SET document=$2,osv_id=NULL")
         .bind(value["ghsa_id"].as_str().unwrap()).bind(value.to_string()).execute(&mut *tx).await?;
     tx.commit().await?;

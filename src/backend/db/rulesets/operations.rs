@@ -23,6 +23,8 @@ native_operation!(crate::backend::db::postgres::organizations::rulesets::get_sui
     fn organization_rule_suite(pool:&DbPool,actor:i64,org:i64,id:i64)->Result<OrganizationOutcome<Suite>>);
 native_operation!(crate::backend::db::postgres::organizations::rulesets::push_rulesets,crate::backend::db::sqlite::organizations::rulesets::push_rulesets,
     fn push_rulesets(pool:&DbPool,repo:i64)->Result<Vec<Ruleset>>);
+native_operation!(crate::backend::db::postgres::organizations::rulesets::bypass_teams,crate::backend::db::sqlite::organizations::rulesets::bypass_teams,
+    fn bypass_teams(pool:&DbPool,repo:i64,actor:i64,teams:&[i64])->Result<Vec<i64>>);
 native_operation!(crate::backend::db::postgres::organizations::rulesets::record_suite,crate::backend::db::sqlite::organizations::rulesets::record_suite,
     fn record_rule_suite(pool:&DbPool,suite:&Suite)->Result<i64>);
 native_operation!(crate::backend::db::postgres::organizations::rulesets::list_repository_suites,crate::backend::db::sqlite::organizations::rulesets::list_repository_suites,

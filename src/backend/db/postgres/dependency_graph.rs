@@ -130,6 +130,20 @@ pub async fn snapshots(
     Ok(rows)
 }
 
+/// The latest submitted revision is one coherent stored inventory, not per-correlator tips.
+pub async fn latest_snapshots(pool: &PgPool, reader: &Reader, repo: i64, reference: &str) -> Result<Vec<Snapshot>, GraphError> {
+    let mut tx = pool.begin().await?;
+    authorize_in(&mut tx, reader, repo, false).await?;
+    let sha: Option<String> = sqlx::query_scalar("SELECT sha FROM dependency_snapshots WHERE repo_id=$1 AND reference=$2 ORDER BY id DESC LIMIT 1")
+        .bind(repo).bind(reference).fetch_optional(&mut *tx).await?;
+    let rows = match sha {
+        Some(sha) => snapshots_in(&mut tx, repo, Some(reference), Some(&sha)).await?,
+        None => Vec::new(),
+    };
+    tx.commit().await?;
+    Ok(rows)
+}
+
 pub async fn save_report(pool: &PgPool, reader: &Reader, repo: i64, id: &str, body: &str) -> Result<(), GraphError> {
     let mut tx = pool.begin().await?;
     // Read-authorized saves serialize before taking any repository locks, avoiding upgrades.

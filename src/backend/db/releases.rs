@@ -1,5 +1,5 @@
 //! Releases and their assets. Writers create and change them; readers see published releases,
-//! and writers also see drafts (the caller decides which list it asks for).
+//! and writers also see drafts. Authorized reads derive visibility in their database snapshot.
 mod notes;
 pub use notes::{release_note_pulls, ReleaseNotePull};
 
@@ -37,6 +37,23 @@ pub(in crate::backend::db) fn legacy_latest(rows: &[(i64, String, chrono::DateTi
 
 /// The most assets one release holds; immutable publication signs at most this many.
 pub const MAX_RELEASE_ASSETS: i64 = 1000;
+
+pub enum ReleaseSelection<'a> {
+    Page { limit: i64, offset: i64 },
+    Id(i64),
+    Tag(&'a str),
+}
+
+pub struct ReleaseSnapshot {
+    pub repository: crate::backend::db::models::Repository,
+    pub releases: Vec<ReleaseRow>,
+    pub assets: Vec<ReleaseAsset>,
+    pub total: i64,
+}
+
+native_operation!(crate::backend::db::postgres::releases::read_release_snapshot,
+    crate::backend::db::sqlite::releases::read_release_snapshot,
+    fn read_release_snapshot(pool: &DbPool, viewer: Option<i64>, repo_id: i64, selection: ReleaseSelection<'_>) -> Result<ReleaseSnapshot>);
 
 /// An uploaded file being attached to a release, with the details the asset row keeps.
 #[derive(Debug, Clone)]

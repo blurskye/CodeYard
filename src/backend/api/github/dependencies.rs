@@ -2,7 +2,7 @@
 use super::{auth, repository, Error, Result};
 use crate::backend::{
     app::AppState,
-    db::repositories::dependencies::Feature,
+    db::{self, repositories::dependencies::Feature},
     repositories::{
         access::AccessError,
         dependencies::{self, DependencyError, Status},

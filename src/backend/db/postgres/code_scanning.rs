@@ -1,5 +1,7 @@
 mod list;
 mod pulls;
+mod read;
+pub use read::{pull_merge_candidates, pull_snapshot, read_alert_snapshot, security_read_allowed};
 pub use list::{alert_page, analyses, analysis, analysis_sarif};
 pub use pulls::{baseline_analysis, new_findings, pull_analyses, pull_processing};
 
@@ -221,9 +223,16 @@ pub async fn dismiss(
     let mut tx = pool.begin().await?;
     super::credentials::require_account(&mut tx, &credential).await
         .map_err(|error| if error.is::<crate::backend::db::users::accounts::AccountRestricted>() { anyhow::Error::new(Refusal::Denied) } else { error })?;
+    let mut allowed = super::discussions::lock_write_authority(&mut tx, actor, repo).await?;
+    if !allowed {
+        let org: Option<i64> = sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=$1 AND NOT is_archived AND owner_kind='org'")
+            .bind(repo).fetch_optional(&mut *tx).await?.flatten();
+        if let Some(org) = org {
+            allowed = super::organizations::roles::manages_security(&mut tx, actor, org).await?;
+        }
+    }
     ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?
-            && super::credentials::repository(&mut tx, &credential, repo, "security_events", true).await?,
+        allowed && super::credentials::repository(&mut tx, &credential, repo, "security_events", true).await?,
         Refusal::Denied
     );
     sqlx::query("SELECT pg_advisory_xact_lock($1)")

@@ -63,7 +63,7 @@ async fn require_key_account(
     credential: Option<&AccountCredential<'_>>,
 ) -> Result<()> {
     if let Some(credential @ AccountCredential::Token(_, _)) = credential {
-        return super::transitions::require_account(tx, user, credential)
+        return super::transitions::require_account_exclusive(tx, user, credential)
             .await
             .map_err(|error| {
                 if error.is::<AccountRestricted>() {

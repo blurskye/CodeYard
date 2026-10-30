@@ -207,10 +207,9 @@ pub async fn generate_notes(
         .ok_or(ReleaseError::NotFound)?;
     let encode = crate::webui::encode_component;
     let base = format!(
-        "{}/{}/{}",
+        "{}{}",
         link_origin(),
-        encode(&owner),
-        encode(&repository.name)
+        crate::webui::repository_path(&owner, &repository.name)
     );
     let categories = if config.changelog.categories.is_empty() {
         vec![Category {

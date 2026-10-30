@@ -141,13 +141,8 @@ pub(crate) async fn repository(
     owner: &str,
     name: &str,
 ) -> ResultPage<RepositoryData> {
-    let record = db::repositories::records::get_repository(&ctx.state.pool, owner, name)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
-    check_repo_read_access(&ctx.state.pool, &record, &ctx.headers)
-        .await
-        .map_err(|failure| api_error(ctx, failure))?;
+    let loaded = crate::backend::api::repos::chrome::load_database(ctx, owner, name).await?;
+    let record = loaded.repository;
     let access = match &ctx.user {
         Some(user) => crate::backend::repositories::access::user_access(&ctx.state.pool, user, &record)
             .await.map_err(|_| unavailable(ctx))?,
@@ -160,9 +155,7 @@ pub(crate) async fn repository(
     let can_admin = access.can_admin();
     // Reuse the Code page's authorized projection, including visibility, real
     // engagement counts and actor-scoped actions. Never serialize the DB record.
-    let chrome = crate::backend::api::repos::chrome::load_database(ctx, owner, name)
-        .await?
-        .chrome;
+    let chrome = loaded.chrome;
     Ok(RepositoryData {
         record,
         view: view::Repository {
@@ -226,6 +219,12 @@ pub(crate) async fn issue_reference(
     })
 }
 
+fn can_edit_entry(ctx: &PageContext, repo: &RepositoryData, author_id: i64) -> bool {
+    !repo.record.is_archived && ctx.user.as_ref().is_some_and(|user| {
+        !user.is_banned && !user.must_change_password && (repo.view.can_write || user.id == author_id)
+    })
+}
+
 pub(crate) fn issue_item(
     issue: db::models::Issue,
     author: String,
@@ -248,6 +247,7 @@ pub(crate) fn issue_item(
         milestone: None,
         comparison: None,
         comment_count: 0,
+        can_edit: false,
         can_tick: false,
         tasks: Default::default(),
         commit_count: None,
@@ -409,7 +409,8 @@ pub(crate) fn pull_item(
             .user
             .as_ref()
             .is_some_and(|user| user.id != pull.author_id);
-    let can_tick = repo.view.can_write;
+    let can_edit = can_edit_entry(ctx, repo, pull.author_id);
+    let can_tick = can_edit;
     Ok(view::Item {
         id: pull.id,
         number: pull.number,
@@ -426,6 +427,7 @@ pub(crate) fn pull_item(
         assignees: Vec::new(),
         milestone: None,
         comment_count: 0,
+        can_edit,
         can_tick,
         tasks: Default::default(),
         commit_count: None,
@@ -506,6 +508,26 @@ pub(crate) async fn item(
     kind: Kind,
     number: i32,
 ) -> ResultPage<view::Item> {
+    item_with_comparison(ctx, repo, kind, number, true).await
+}
+
+/// Mutation admission needs the stored text and revision, not Git comparisons or CI verdicts.
+pub(crate) async fn item_metadata(
+    ctx: &PageContext,
+    repo: &RepositoryData,
+    kind: Kind,
+    number: i32,
+) -> ResultPage<view::Item> {
+    item_with_comparison(ctx, repo, kind, number, false).await
+}
+
+async fn item_with_comparison(
+    ctx: &PageContext,
+    repo: &RepositoryData,
+    kind: Kind,
+    number: i32,
+    comparison: bool,
+) -> ResultPage<view::Item> {
     if number <= 0 {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Entry not found."));
     }
@@ -531,9 +553,10 @@ pub(crate) async fn item(
                 .map_err(|_| unavailable(ctx))?
                 .first()
                 .map_or(0, |(_, count)| *count);
-            let can_tick = repo.view.can_write;
+            let can_edit = can_edit_entry(ctx, repo, value.author_id);
             let mut shown = issue_item(value, author, labels);
-            shown.can_tick = can_tick;
+            shown.can_edit = can_edit;
+            shown.can_tick = can_edit;
             shown.assignees = assignees;
             shown.milestone = milestone;
             shown.comment_count = comment_count;
@@ -549,6 +572,10 @@ pub(crate) async fn item(
             .map_err(|_| unavailable(ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
             let author = author(ctx, value.author_id).await?;
+            if !comparison {
+                return pull_item(ctx, repo, value, author, HeadRepository::Unreadable)
+                    .map_err(|response| *response);
+            }
             let head = match value.head_repo_id {
                 Some(id) if id != repo.record.id => {
                     db::repositories::records::get_repository_by_id(&ctx.state.pool, id)
@@ -586,6 +613,7 @@ pub(crate) async fn item(
                 .await
                 .map_err(|_| unavailable(ctx))?;
             let head_sha = value.head_sha.clone();
+            let diff_base = value.diff_base().to_owned();
             let mut view_item = pull_item(ctx, repo, value, author, head_repository)
                 .map_err(|response| *response)?;
             view_item.labels = labels.into_iter().map(label).collect();
@@ -627,13 +655,16 @@ pub(crate) async fn item(
                 !db::repositories::protection::server_owned_status_context(&status.context)
             })
             .collect::<Vec<_>>();
-            view_item.check_count = runs.len() as i64;
+            let integration = db::checks::summary(&ctx.state.pool, repo.record.id, &head_sha)
+                .await.map_err(|_| unavailable(ctx))?;
+            view_item.check_count = runs.len() as i64 + integration.total
+                + statuses.iter().filter(|status| !runs.iter().any(|run| run.commit_status_context() == status.context)).count() as i64;
             // The Commits tab counts the commits of the pull request, up to one more than it lists so
             // the tab can say "100+". When Git cannot count them the count is left out, so the tab
             // shows no number instead of a wrong one.
             let commit_count = match view_item.comparison.as_ref() {
                 Some(compare) => repo_store(&repo.record, ctx.state.cluster.as_ref())
-                    .branch_statuses(&compare.base_sha, std::slice::from_ref(&compare.head_sha))
+                    .branch_statuses(&diff_base, std::slice::from_ref(&compare.head_sha))
                     .await
                     .ok()
                     .and_then(|heads| {
@@ -647,7 +678,7 @@ pub(crate) async fn item(
             // Tab counts use metadata only; their full payloads are loaded by the selected tab.
             let file_count = match view_item.comparison.as_ref() {
                 Some(compare) => repo_store(&repo.record, ctx.state.cluster.as_ref())
-                    .diff_paths(&compare.base_sha, &compare.head_sha)
+                    .diff_paths(&diff_base, &compare.head_sha)
                     .await
                     .ok()
                     .map(|paths| paths.len() as i64),
@@ -658,7 +689,7 @@ pub(crate) async fn item(
                 compare.merge_commit_only = merge_with.len() > 1;
                 compare.merge_target = merge_target;
                 compare.merge_with = merge_with;
-                compare.has_checks = !runs.is_empty() || !statuses.is_empty();
+                compare.has_checks = !runs.is_empty() || !statuses.is_empty() || integration.total > 0;
                 // Each check counts once. A run writes its commit status under its own context, so only
                 // the statuses of other producers are added. Runs are the latest attempt of each workflow.
                 let states: Vec<&str> = runs
@@ -681,8 +712,8 @@ pub(crate) async fn item(
                     .filter(|state| {
                         !matches!(**state, "success" | "queued" | "running" | "pending")
                     })
-                    .count() as i64;
-                compare.checks_running = states
+                    .count() as i64 + integration.failed;
+                compare.checks_running = integration.pending > 0 || states
                     .iter()
                     .any(|state| matches!(*state, "queued" | "running" | "pending"));
             }
@@ -1030,6 +1061,7 @@ pub(crate) async fn render_detail(
     // Every text this page renders as Markdown, including what a form re-renders.
     let mut texts = vec![value.body.as_str(), draft.comment.as_str()];
     texts.extend(draft.body.as_deref());
+    texts.extend(comments.pinned.as_ref().map(|comment| comment.body.as_str()));
     texts.extend(
         comments
             .comments
@@ -1140,6 +1172,15 @@ pub(crate) async fn render_detail(
         }
         _ => Vec::new(),
     };
+    if kind == Kind::Issue {
+        db::issues::get_issue_by_id(&ctx.state.pool, value.id).await
+            .map_err(|_| unavailable(ctx))?
+            .filter(|issue| issue.repo_id == repo.record.id)
+            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
+    }
+    check_repo_read_access(&ctx.state.pool, &repo.record, &ctx.headers)
+        .await
+        .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     Ok(with_status(
         ctx.page_model(
             &format!("{} #{}", value.title, value.number),

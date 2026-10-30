@@ -18,7 +18,7 @@ pub enum EngagementError {
 }
 
 fn mutation_error(error: anyhow::Error) -> EngagementError {
-    if error.is::<db::users::blocks::InteractionBlocked>() {
+    if error.is::<db::users::blocks::InteractionBlocked>() || error.is::<db::users::accounts::AccountRestricted>() {
         EngagementError::Access(access::AccessError::WriteDenied)
     } else {
         EngagementError::Unavailable
@@ -35,20 +35,22 @@ pub enum Engagement {
 /// `watching`, `custom` or `ignoring`; `events` lists the kinds a `custom` watch wants.
 pub async fn set_level(
     pool: &db::DbPool,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repo_id: i64,
     level: &str,
     events: &[&str],
 ) -> Result<(), EngagementError> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     access::check_read(pool, repo_id, Some(actor))
         .await
         .map_err(EngagementError::Access)?;
     let saved = match level {
-        "participating" => db::repositories::engagement::unwatch_repo(pool, actor, repo_id)
+        "participating" => db::repositories::engagement::unwatch_repo(pool, authority, repo_id)
             .await
             .map(|_| ()),
         "watching" | "ignoring" => {
-            db::repositories::engagement::set_watch_level(pool, actor, repo_id, level, "").await
+            db::repositories::engagement::set_watch_level(pool, authority, repo_id, level, "").await
         }
         "custom" => {
             let events: Vec<&str> = ["issues", "pulls", "releases"]
@@ -57,7 +59,7 @@ pub async fn set_level(
                 .collect();
             db::repositories::engagement::set_watch_level(
                 pool,
-                actor,
+                authority,
                 repo_id,
                 "custom",
                 &events.join(","),
@@ -73,26 +75,28 @@ pub async fn set_level(
 pub async fn set_subscription(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repo_id: i64,
     subscribed: bool,
     ignored: bool,
 ) -> Result<(), EngagementError> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     if subscribed && !ignored {
-        change(pool, broadcaster, actor, repo_id, Engagement::Watch, true).await?;
+        change(pool, broadcaster, authority, repo_id, Engagement::Watch, true).await?;
     } else {
         access::check_read(pool, repo_id, Some(actor))
             .await
             .map_err(EngagementError::Access)?;
         db::repositories::engagement::set_watch_level(
             pool,
-            actor,
+            authority,
             repo_id,
             if ignored { "ignoring" } else { "participating" },
             "",
         )
         .await
-        .map_err(|_| EngagementError::Unavailable)?;
+        .map_err(mutation_error)?;
     }
     Ok(())
 }
@@ -100,12 +104,14 @@ pub async fn set_subscription(
 pub async fn change(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repo_id: i64,
     kind: Engagement,
     enabled: bool,
 ) -> Result<i32, EngagementError> {
-    let repository = access::check_read(pool, repo_id, Some(actor))
+    let authority = actor.into();
+    let actor = authority.user_id();
+    access::check_read(pool, repo_id, Some(actor))
         .await
         .map_err(EngagementError::Access)?;
     let user = db::users::accounts::get_user_by_id(pool, actor)
@@ -114,16 +120,16 @@ pub async fn change(
         .ok_or(EngagementError::Access(access::AccessError::NotFound))?;
     let changed = match (kind, enabled) {
         (Engagement::Star, true) => {
-            db::repositories::engagement::star_repo(pool, actor, repo_id).await
+            db::repositories::engagement::star_repo(pool, authority, repo_id).await
         }
         (Engagement::Star, false) => {
-            db::repositories::engagement::unstar_repo(pool, actor, repo_id).await
+            db::repositories::engagement::unstar_repo(pool, authority, repo_id).await
         }
         (Engagement::Watch, true) => {
-            db::repositories::engagement::watch_repo(pool, actor, repo_id).await
+            db::repositories::engagement::watch_repo(pool, authority, repo_id).await
         }
         (Engagement::Watch, false) => {
-            db::repositories::engagement::unwatch_repo(pool, actor, repo_id).await
+            db::repositories::engagement::unwatch_repo(pool, authority, repo_id).await
         }
     }
     .map_err(mutation_error)?;
@@ -154,7 +160,7 @@ pub async fn change(
         )
         .await;
     }
-    if let Some(recipient) = repository
+    if let Some(recipient) = updated
         .personal_owner_id()
         .filter(|_| enabled && changed)
     {
@@ -163,20 +169,20 @@ pub async fn change(
             .ok()
             .flatten()
         {
-            let title = format!("{} {verb} {}/{}", user.username, owner, repository.name);
+            let title = format!("{} {verb} {}/{}", user.username, owner, updated.name);
             let body = match kind {
                 Engagement::Star => format!("Total stars: {count}"),
                 Engagement::Watch => format!("Total watchers: {count}"),
             };
             let metadata = match kind {
                 Engagement::Star => {
-                    json!({"repo_owner": owner, "repo_name": repository.name, "stars_count": count, "subject": format!("{owner}/{}", repository.name)})
+                    json!({"repo_owner": owner, "repo_name": updated.name, "stars_count": count, "subject": format!("{owner}/{}", updated.name)})
                 }
                 Engagement::Watch => {
-                    json!({"repo_owner": owner, "repo_name": repository.name, "watchers_count": count, "subject": format!("{owner}/{}", repository.name)})
+                    json!({"repo_owner": owner, "repo_name": updated.name, "watchers_count": count, "subject": format!("{owner}/{}", updated.name)})
                 }
             };
-            let link = format!("/{}/{}", owner, repository.name);
+            let link = crate::webui::repository_path(&owner, &updated.name);
             let notice = NotificationRequest {
                 user_id: recipient,
                 actor_id: Some(actor),

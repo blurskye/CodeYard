@@ -319,6 +319,7 @@ async fn attributes(pg: bool) {
                 ("repository_id", &repository_id), ("item_id", &item_id), ("owner_key", &owner_key),
                 ("expected_revision", &db::issue_attributes::revision(&single).unwrap()),
                 ("attribute_id", &single.id.to_string()),
+                ("expected_updated", &single.updated_at.to_rfc3339()),
                 ("name", "single_select"),
                 ("data_type", "single_select"),
                 ("visibility", "all"),
@@ -411,6 +412,7 @@ async fn attributes(pg: bool) {
     )
     .await;
     let bug_current = db::issue_attributes::catalog(f.pool(), repo.id, Some(alice), "type").await.unwrap().into_iter().find(|attribute| attribute.id == bug).unwrap();
+    let bug_updated = bug_current.updated_at.to_rfc3339();
     let disabled = browser
         .form_reply(
             &action,
@@ -420,6 +422,7 @@ async fn attributes(pg: bool) {
                 ("repository_id", &repository_id), ("item_id", &item_id), ("owner_key", &owner_key),
                 ("expected_revision", &db::issue_attributes::revision(&bug_current).unwrap()),
                 ("attribute_id", &bug.to_string()),
+                ("expected_updated", &bug_updated),
                 ("name", "Bug"),
                 ("color", "red"),
             ],
@@ -518,6 +521,7 @@ async fn attributes(pg: bool) {
         admin,
         &db::issue_attributes::Definition {
             id: None,
+            expected_updated: None,
             kind: "field".into(),
             name: "Admin field".into(),
             description: None,
