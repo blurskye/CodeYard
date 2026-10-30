@@ -1429,29 +1429,120 @@ pub fn pull_request_review_comment_json(
         pull.number,
         id = comment.id
     );
-    let current = comment.commit_sha.as_deref().is_none_or(|sha| sha == pull.head_sha);
+    let current = review_comment_is_current(comment, pull);
+    // GitHub sends the range and position fields as null rather than leaving them out;
+    // `review_comment_diff` fills the positions from the diff.
     let mut value = json!({"id":comment.id,"node_id":node_id::encode("PRRC",comment.id),"url":url,"html_url":html,"pull_request_url":pull_url,
         "pull_request_review_id":comment.review_id,"body":comment.body,"path":comment.path,"diff_hunk":"",
         "commit_id":comment.commit_sha.as_deref().unwrap_or(&pull.head_sha),"original_commit_id":comment.commit_sha.as_deref().unwrap_or(&pull.head_sha),
         "user":person(author),"created_at":time(comment.created_at),"updated_at":time(comment.updated_at),"author_association":if repo.is_personal_owner(author.id){"OWNER"}else{"NONE"},
         "subject_type":if comment.line.is_some(){"line"}else{"file"},
+        "line":comment.line.filter(|_| current),"original_line":comment.line,"side":comment.side,
+        "start_line":comment.start_line.filter(|_| current),"original_start_line":comment.start_line,
+        "start_side":comment.start_line.and(comment.start_side.as_deref()),
+        "position":null,"original_position":null,
         "_links":{"self":{"href":url},"html":{"href":html},"pull_request":{"href":pull_url}}});
-    if let Some(line) = comment.line {
-        value["line"] = json!(current.then_some(line));
-        value["original_line"] = json!(line);
-    }
-    if let Some(side) = &comment.side {
-        value["side"] = json!(side);
-    }
-    if let Some(start) = comment.start_line {
-        value["start_line"] = json!(current.then_some(start));
-        value["original_start_line"] = json!(start);
-        value["start_side"] = json!(comment.start_side);
-    }
     if let Some(parent) = comment.in_reply_to_comment_id {
         value["in_reply_to_id"] = json!(parent);
     }
     value
+}
+
+/// Whether a review comment was written on the pull request's current head. An outdated
+/// comment keeps only its original coordinates.
+pub fn review_comment_is_current(comment: &PullRequestComment, pull: &PullRequest) -> bool {
+    comment
+        .commit_sha
+        .as_deref()
+        .is_none_or(|sha| sha == pull.head_sha)
+}
+
+/// The revision pair whose diff a review comment was written on.
+pub fn review_comment_revisions<'a>(
+    comment: &'a PullRequestComment,
+    pull: &'a PullRequest,
+) -> (&'a str, &'a str) {
+    (
+        pull.diff_base(),
+        comment.commit_sha.as_deref().unwrap_or(&pull.head_sha),
+    )
+}
+
+/// Fills a review comment's `diff_hunk` and positions from `files`, the diff of
+/// `review_comment_revisions`. An outdated comment has no `position` in the current diff.
+pub fn review_comment_diff(
+    value: &mut Value,
+    comment: &PullRequestComment,
+    pull: &PullRequest,
+    files: &[crate::backend::repositories::store::DiffFileInfo],
+) {
+    let Some(file) = files
+        .iter()
+        .find(|file| Some(file.filename.as_str()) == comment.path.as_deref())
+    else {
+        return;
+    };
+    value["diff_hunk"] = json!(file.patch);
+    let Some(line) = comment.line else {
+        return;
+    };
+    let left = comment.side.as_deref() == Some("LEFT");
+    if let Some((position, _, _)) = diff_positions(&file.patch)
+        .into_iter()
+        .find(|(_, old, new)| if left { *old == Some(line) } else { *new == Some(line) })
+    {
+        value["original_position"] = json!(position);
+        if review_comment_is_current(comment, pull) {
+            value["position"] = json!(position);
+        }
+    }
+}
+
+/// Each diff row's position with its old and new line. Positions count diff rows, not file
+/// lines; later hunk headers count too.
+pub fn diff_positions(patch: &str) -> Vec<(i32, Option<i32>, Option<i32>)> {
+    let (mut old, mut new, mut pos, mut begun) = (0, 0, 0, false);
+    let mut rows = Vec::new();
+    for row in patch.lines() {
+        if row.starts_with("@@ ") {
+            let mut fields = row.split_whitespace();
+            fields.next();
+            old = fields
+                .next()
+                .and_then(|s| s.trim_start_matches('-').split(',').next()?.parse().ok())
+                .unwrap_or(0);
+            new = fields
+                .next()
+                .and_then(|s| s.trim_start_matches('+').split(',').next()?.parse().ok())
+                .unwrap_or(0);
+            if begun {
+                pos += 1;
+            }
+            begun = true;
+            continue;
+        }
+        if !begun {
+            continue;
+        }
+        pos += 1;
+        match row.as_bytes().first() {
+            Some(b'+') => {
+                rows.push((pos, None, Some(new)));
+                new += 1;
+            }
+            Some(b'-') => {
+                rows.push((pos, Some(old), None));
+                old += 1;
+            }
+            Some(b' ') => {
+                rows.push((pos, Some(old), Some(new)));
+                old += 1;
+                new += 1;
+            }
+            _ => {}
+        }
+    }
+    rows
 }
 
 pub fn pull_request_review_comment(

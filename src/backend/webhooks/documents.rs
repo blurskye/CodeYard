@@ -79,6 +79,9 @@ async fn fill(
             payload["comment"]["author_association"] =
                 json!(access::author_association(pool, repo, user).await?);
         }
+        if payload["comment"].is_object() {
+            review_comment(pool, repo, &mut payload["comment"]).await?;
+        }
     }
     if let Some(user) = payload["review"]["user"]["id"].as_i64() {
         payload["review"]["author_association"] =
@@ -138,6 +141,54 @@ async fn comment(
     // `payloads::conversation_comment_id`.
     let counts = db::reactions::reaction_counts(pool, subject.name(), &[id / 2], 0).await?;
     comment["reactions"] = payloads::reaction_rollup(&format!("{url}/reactions"), &counts);
+    Ok(())
+}
+
+/// A review comment's reactions, by the comment document's `id` and `url`.
+pub(crate) async fn review_comment_reactions(
+    pool: &DbPool,
+    comment: &Value,
+) -> anyhow::Result<Value> {
+    let (Some(id), Some(url)) = (comment["id"].as_i64(), comment["url"].as_str()) else {
+        return Ok(Value::Null);
+    };
+    let counts =
+        db::reactions::reaction_counts(pool, Subject::PullRequestComment.name(), &[id], 0).await?;
+    Ok(payloads::reaction_rollup(&format!("{url}/reactions"), &counts))
+}
+
+/// Fills a review comment's reactions, and its diff hunk and positions from the diff it was
+/// written on. The diff is read from this node's copy of the repository; where another node
+/// stores it, the hunk stays empty rather than delaying the event.
+async fn review_comment(pool: &DbPool, repo: &Repository, document: &mut Value) -> anyhow::Result<()> {
+    let reactions = review_comment_reactions(pool, document).await?;
+    document["reactions"] = reactions;
+    let Some(id) = document["id"].as_i64() else {
+        return Ok(());
+    };
+    let Some(comment) = db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id).await?
+    else {
+        return Ok(());
+    };
+    let Some(path) = comment.path.as_deref() else {
+        return Ok(());
+    };
+    let Some(pull) = db::pull_requests::records::get_pull_request_by_id(pool, comment.pull_request_id)
+        .await?
+        .filter(|pull| pull.repo_id == repo.id)
+    else {
+        return Ok(());
+    };
+    let (base, head) = payloads::review_comment_revisions(&comment, &pull);
+    match crate::backend::repositories::store::repo_store(repo, None)
+        .diff_file(base, head, path)
+        .await
+    {
+        Ok(diff) => payloads::review_comment_diff(document, &comment, &pull, &diff.files),
+        Err(error) => {
+            tracing::warn!(repo_id = repo.id, comment_id = id, %error, "review comment diff could not be read for a webhook")
+        }
+    }
     Ok(())
 }
 
