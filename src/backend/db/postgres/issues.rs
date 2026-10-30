@@ -375,7 +375,7 @@ pub(crate) async fn update_issue_in_transaction(
         r#"UPDATE issues SET
             title = COALESCE($2, title), body = COALESCE($3, body),
             state = COALESCE($4, state),
-            state_reason = CASE WHEN $4 IS NULL OR $4=state THEN state_reason WHEN $4='open' THEN 'reopened' WHEN $4='closed' THEN COALESCE($9,'completed') ELSE state_reason END,
+            state_reason = CASE WHEN $4 IS NULL THEN state_reason WHEN $4='open' THEN CASE WHEN state='open' THEN state_reason ELSE 'reopened' END WHEN $4='closed' THEN CASE WHEN state='closed' THEN COALESCE($9,state_reason) ELSE COALESCE($9,'completed') END ELSE state_reason END,
             closed_at = CASE WHEN $4 = 'open' THEN NULL WHEN $4 = 'closed' AND state <> 'closed' THEN clock_timestamp() ELSE closed_at END,
             closed_by_id = CASE WHEN $4 = 'open' THEN NULL WHEN $4 = 'closed' AND state <> 'closed' THEN $7 ELSE closed_by_id END,
             updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond')
@@ -586,7 +586,7 @@ pub async fn edit_issue_comment(
         return Ok(None);
     }
     let comment = sqlx::query_as::<_, IssueComment>(
-        "UPDATE issue_comments SET body = $2, updated_at = clock_timestamp()
+        "UPDATE issue_comments SET body = $2, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond')
          WHERE id = $1 AND body = $3 RETURNING *",
     )
     .bind(comment_id)
@@ -594,6 +594,9 @@ pub async fn edit_issue_comment(
     .bind(expected_body)
     .fetch_optional(&mut *tx)
     .await?;
+    if comment.is_some() {
+        super::issue_attributes::touch(&mut tx, issue_id).await?;
+    }
     tx.commit().await?;
     Ok(comment)
 }
@@ -646,6 +649,9 @@ pub async fn delete_issue_comment(
         .bind(comment_id)
         .execute(&mut *tx)
         .await?;
+    if removed.rows_affected() == 1 {
+        super::issue_attributes::touch(&mut tx, issue_id).await?;
+    }
     tx.commit().await?;
     Ok(removed.rows_affected() == 1)
 }
