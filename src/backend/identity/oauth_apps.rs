@@ -3,20 +3,13 @@ use crate::backend::{
     db::{self, oauth_apps::Application, DbPool},
     identity::tokens::token_hash,
 };
-use rand::RngCore;
 use subtle::ConstantTimeEq;
 
 pub const CLI_CLIENT: &str = "178c6fc778ccc68e1d6a";
 const CLI_SECRET: &str = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b";
 
-pub fn random() -> String {
-    let mut bytes = [0; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
-    hex::encode(bytes)
-}
-
 pub fn user_code() -> String {
-    let value = random();
+    let value = crate::backend::crypto::random_hex();
     format!("{}-{}", &value[..4], &value[4..8]).to_uppercase()
 }
 

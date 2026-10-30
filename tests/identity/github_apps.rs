@@ -493,13 +493,13 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(requests, json!([]));
     // A real OAuth exchange supplies an app-owned user credential for narrowing.
-    let code = oauth_apps::random();
+    let code = codeyard::backend::crypto::random_hex();
     db::oauth_apps::save_grant(
         f.pool(),
         &db::oauth_apps::Grant {
             hash: tokens::token_hash(&code),
             client_id: app.client_id.clone(),
-            user_code: oauth_apps::random(),
+            user_code: codeyard::backend::crypto::random_hex(),
             scopes: "repo".into(),
             expires_at: chrono::Utc::now().timestamp() + 60,
             interval: 5,

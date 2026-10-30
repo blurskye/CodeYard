@@ -4,7 +4,7 @@ use crate::backend::{
     api::http::{context::PageContext, render::public_error, session},
     app::AppState,
     db,
-    identity::{admission, github_apps, oauth_apps, tokens::token_hash},
+    identity::{admission, github_apps, tokens::token_hash},
 };
 use crate::webui::{app::Page, pages::account};
 use axum::{
@@ -61,7 +61,7 @@ pub(super) async fn manifest_start(
     if state_value.len() > 1024 {
         return public_error(StatusCode::UNPROCESSABLE_ENTITY, "State is too long");
     }
-    let code = oauth_apps::random();
+    let code = crate::backend::crypto::random_hex();
     if db::github_app_manifests::save(
         &state.pool,
         &token_hash(&code),
@@ -137,7 +137,7 @@ pub(super) async fn manifest_approve(ctx: &PageContext, form: &Fields) -> Respon
     let Some(session) = session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    let code = oauth_apps::random();
+    let code = crate::backend::crypto::random_hex();
     match db::github_app_manifests::approve(
         &ctx.state.pool,
         &hash,

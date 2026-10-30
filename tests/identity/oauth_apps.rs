@@ -460,7 +460,7 @@ async fn contract(pg: bool) {
         base64::engine::general_purpose::STANDARD.encode(format!("{CLI}:{SECRET}"))
     );
     let path = format!("/api/v3/applications/{CLI}/token");
-    let other_id = oauth::random();
+    let other_id = codeyard::backend::crypto::random_hex();
     let other_app = db::oauth_apps::register(
         f.pool(),
         actor,
@@ -719,7 +719,7 @@ async fn contract(pg: bool) {
         .await["error"],
         "access_denied"
     );
-    let owned_id = oauth::random();
+    let owned_id = codeyard::backend::crypto::random_hex();
     db::oauth_apps::register(
         f.pool(),
         actor,

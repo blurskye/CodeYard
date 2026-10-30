@@ -263,9 +263,9 @@ async fn reset_token(
         .map_err(Error::unavailable)?
         .is_some()
     {
-        format!("ghu_{}", oauth::random())
+        format!("ghu_{}", crate::backend::crypto::random_hex())
     } else {
-        oauth::random()
+        crate::backend::crypto::random_hex()
     };
     let token =
         db::oauth_apps::reset_token(&state.pool, &id, &token_hash(old), &token_hash(&value))

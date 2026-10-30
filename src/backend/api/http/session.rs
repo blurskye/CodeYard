@@ -4,7 +4,6 @@ use axum::{
     http::{header, HeaderMap, StatusCode},
     Json,
 };
-use rand::{rngs::OsRng, RngCore};
 
 fn cookie_domain() -> Option<String> {
     std::env::var("COOKIE_DOMAIN")
@@ -41,9 +40,7 @@ pub(crate) fn session_duration_days() -> i64 {
 }
 
 pub(crate) fn generate_session_id() -> String {
-    let mut bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut bytes);
-    hex::encode(bytes)
+    crate::backend::crypto::random_hex()
 }
 
 pub(crate) fn build_session_cookie(session_id: &str, max_age_days: i64) -> String {

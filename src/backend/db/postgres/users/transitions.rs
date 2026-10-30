@@ -650,7 +650,7 @@ pub async fn admit_oauth_account(
         if suffix >= 32 {
             name = format!(
                 "{base}_{}",
-                &crate::backend::identity::oauth_apps::random()[..8]
+                &crate::backend::crypto::random_hex()[..8]
             );
         } else if suffix > 0 {
             name = format!("{base}_{suffix}");

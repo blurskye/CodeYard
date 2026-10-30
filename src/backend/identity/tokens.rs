@@ -2,7 +2,6 @@
 
 use crate::backend::db::{models::PersonalAccessToken, users::tokens, DbPool};
 use chrono::{DateTime, Utc};
-use rand::RngCore;
 use sha2::{Digest, Sha256};
 
 pub(crate) const TOKEN_BYTES: usize = 32;
@@ -41,16 +40,10 @@ pub enum TokenError {
     Unavailable,
 }
 
-pub(super) fn random_token() -> String {
-    let mut random = [0u8; TOKEN_BYTES];
-    rand::rngs::OsRng.fill_bytes(&mut random);
-    hex::encode(random)
-}
-
 /// Installation credentials use the hex format; Actions uses the URL-safe format with
 /// the same public prefix. Scanners must recognize both complete values.
 pub(crate) fn installation_token() -> String {
-    format!("{INSTALLATION_PREFIX}{}", random_token())
+    format!("{INSTALLATION_PREFIX}{}", crate::backend::crypto::random_hex())
 }
 
 /// A feed credential has only read-only event access and remains bound to this API token's
@@ -71,7 +64,7 @@ pub async fn activity_feed_token(pool: &DbPool, token_id: i64) -> Result<String,
     crate::backend::db::events::activity_feed_token(
         pool,
         token_id,
-        &format!("feed_{}", random_token()),
+        &format!("feed_{}", crate::backend::crypto::random_hex()),
     )
     .await
     .map_err(|_| TokenError::Unavailable)?
@@ -157,7 +150,7 @@ pub async fn create(
 ) -> Result<CreatedToken, TokenError> {
     validate(&input, Utc::now())?;
     let session_id = session_id.ok_or(TokenError::Denied)?;
-    let value = format!("{PAT_PREFIX}{}", random_token());
+    let value = format!("{PAT_PREFIX}{}", crate::backend::crypto::random_hex());
     let token = tokens::create_token(
         pool,
         actor,

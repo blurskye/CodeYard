@@ -2,7 +2,7 @@
 //! organization the user belongs to), a repository selection and named permissions. What it
 //! can do is always the intersection of those grants with the user's own live rights: every
 //! request still runs as the user, and this module only narrows it.
-use super::tokens::{random_token, token_hash};
+use super::tokens::token_hash;
 use crate::backend::db::{
     self,
     fine_grained_tokens::{within, Bounds, NewToken, Policy},
@@ -378,7 +378,7 @@ pub async fn create(
             ));
         }
     }
-    let value = format!("{PREFIX}{}", random_token());
+    let value = format!("{PREFIX}{}", crate::backend::crypto::random_hex());
     let write = permissions.values().any(|level| level != "read");
     let permissions = Value::Object(permissions).to_string();
     let (id, status) = db::fine_grained_tokens::create(
@@ -440,7 +440,7 @@ pub async fn regenerate(
             "Choose a future expiry within the owner's maximum lifetime.",
         ));
     }
-    let value = format!("{PREFIX}{}", random_token());
+    let value = format!("{PREFIX}{}", crate::backend::crypto::random_hex());
     if db::fine_grained_tokens::regenerate(pool, user, session, id, &token_hash(&value), expires_at)
         .await
         .map_err(unavailable)?

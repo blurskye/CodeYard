@@ -4,7 +4,6 @@ use crate::backend::{
     db,
 };
 use anyhow::{Context, Result};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -94,9 +93,7 @@ pub fn work_root(state: &std::path::Path) -> Result<std::path::PathBuf> {
     Ok(state.join("runner-workspaces").join(saved.work_folder))
 }
 pub fn new_remove_token() -> String {
-    let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
-    format!("codeyard-remove-v1.{}", hex::encode(bytes))
+    format!("codeyard-remove-v1.{}", crate::backend::crypto::random_hex())
 }
 pub fn remove_hash(token: &str) -> String {
     let mut hash = Sha256::new();

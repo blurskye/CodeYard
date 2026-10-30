@@ -6,7 +6,7 @@ use super::{
 use crate::backend::{
     app::AppState,
     db::{self, github_apps::App},
-    identity::{github_apps as apps, oauth_apps, tokens::token_hash},
+    identity::{github_apps as apps, tokens::token_hash},
     webhooks::settings::{self, HookError, HookForm},
 };
 use axum::{
@@ -33,7 +33,7 @@ pub(super) async fn convert(
     let manifest = apps::manifest(&value).ok_or_else(|| {
         Error::invalid_simple("Invalid manifest or unsupported permissions, events or setup automation")
     })?;
-    let webhook_secret = manifest.hook_url.as_ref().map(|_| oauth_apps::random());
+    let webhook_secret = manifest.hook_url.as_ref().map(|_| crate::backend::crypto::random_hex());
     let fields = if let Some(url) = &manifest.hook_url {
         let form = HookForm {
             username: None,
@@ -69,13 +69,13 @@ pub(super) async fn convert(
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
     let (private, public) = apps::generate_key().await.map_err(Error::unavailable)?;
-    let client_secret = oauth_apps::random();
+    let client_secret = crate::backend::crypto::random_hex();
     let app = App {
         id: 0,
         owner_id: draft.user_id.ok_or_else(Error::missing)?,
         bot_id: 0,
         is_public: manifest.is_public,
-        client_id: format!("Iv1.{}", &oauth_apps::random()[..16]),
+        client_id: format!("Iv1.{}", &crate::backend::crypto::random_hex()[..16]),
         slug: manifest.slug,
         name: manifest.name,
         description: manifest.description,

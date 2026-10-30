@@ -7,7 +7,7 @@ use crate::backend::{
     },
     app::AppState,
     db::{self, github_apps::App},
-    identity::{github_apps as apps, oauth_apps as oauth, tokens::token_hash},
+    identity::{github_apps as apps, tokens::token_hash},
 };
 use crate::webui::{
     app::Page,
@@ -210,7 +210,7 @@ async fn regenerate(State(state): State<Arc<AppState>>, headers: HeaderMap, uri:
         Ok(keys) => keys,
         Err(error) => return key_failure(&ctx, error),
     };
-    let secret = oauth::random();
+    let secret = crate::backend::crypto::random_hex();
     match db::github_apps::rotate_credentials(&ctx.state.pool, actor, &session, &slug, &public, &token_hash(&secret)).await {
         Ok(Some(client)) => {
             let mut model = model("new");
@@ -313,8 +313,8 @@ async fn register(
         Err(error) => return key_failure(&ctx, error),
     };
     let permissions = permissions.unwrap();
-    let client = format!("Iv1.{}", &oauth::random()[..16]);
-    let secret = oauth::random();
+    let client = format!("Iv1.{}", &crate::backend::crypto::random_hex()[..16]);
+    let secret = crate::backend::crypto::random_hex();
     let app = App {
         id: 0,
         owner_id: ctx.user.as_ref().unwrap().id,

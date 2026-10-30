@@ -2,7 +2,6 @@
 use crate::backend::db::DbPool;
 use anyhow::{ensure, Result};
 use chrono::{NaiveDate, Utc};
-use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::net::IpAddr;
 #[cfg(test)]
@@ -132,9 +131,7 @@ pub(crate) fn fingerprints(keys: &[DayKey], identity: &Identity) -> Result<Vec<F
 }
 
 pub(crate) fn new_salt() -> String {
-    let mut salt = [0_u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut salt);
-    hex::encode(salt)
+    crate::backend::crypto::random_hex()
 }
 #[derive(Clone, Debug)]
 pub struct Summary {

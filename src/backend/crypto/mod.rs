@@ -13,6 +13,14 @@ use aes_gcm::{
 };
 use rand::RngCore;
 
+/// 32 random bytes from the operating system as 64 lowercase hex digits. This is the one
+/// recipe for session ids, credentials, email-link tokens and salts; callers add any prefix.
+pub fn random_hex() -> String {
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
 /// True when `value` is exactly `len` hex digits.
 pub fn is_hex_token(value: &str, len: usize) -> bool {
     value.len() == len && value.bytes().all(|byte| byte.is_ascii_hexdigit())
