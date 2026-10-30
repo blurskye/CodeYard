@@ -16,7 +16,7 @@ mod blocks;
 mod branch_operations;
 mod branches;
 mod catalog_search;
-pub(in crate::backend::api) mod checks;
+pub(crate) mod checks;
 mod code_scanning;
 mod code_security;
 mod comments;

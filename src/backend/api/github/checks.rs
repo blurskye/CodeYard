@@ -7,7 +7,7 @@ use crate::backend::{
         checks::{self, Credential, Filter, Preference, Run, RunPatch, Suite, ACTIONS_APP_ID},
         models::Repository,
     },
-    repositories::store::repo_store,
+    repositories::store::{repo_store, RepoStore},
     webhooks::{self, payloads},
 };
 use axum::{
@@ -32,17 +32,17 @@ pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
     }
 }
 
-async fn app(state: &AppState, id: Option<i64>) -> Result<Value> {
+async fn app(pool: &db::DbPool, id: Option<i64>) -> Result<Value> {
     let Some(id) = id else {
         return Ok(Value::Null);
     };
-    let Some(app) = checks::application(&state.pool, id)
+    let Some(app) = checks::application(pool, id)
         .await
         .map_err(Error::unavailable)?
     else {
         return Ok(Value::Null);
     };
-    let owner = db::users::accounts::get_user_by_id(&state.pool, app.owner_id)
+    let owner = db::users::accounts::get_user_by_id(pool, app.owner_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -52,8 +52,8 @@ async fn app(state: &AppState, id: Option<i64>) -> Result<Value> {
 }
 
 /// The app that publishes workflow run check suites, acting as the Actions bot account.
-async fn actions_app(state: &AppState, repo: &Repository, owner: &str) -> Result<Value> {
-    let Some(bot) = db::users::accounts::get_user_by_username(&state.pool, db::ci_tokens::BOT)
+async fn actions_app(pool: &db::DbPool, repo: &Repository, owner: &str) -> Result<Value> {
+    let Some(bot) = db::users::accounts::get_user_by_username(pool, db::ci_tokens::BOT)
         .await
         .map_err(Error::unavailable)?
     else {
@@ -70,8 +70,8 @@ async fn actions_app(state: &AppState, repo: &Repository, owner: &str) -> Result
     )
 }
 
-async fn pulls(state: &AppState, repo: &Repository, owner: &str, sha: &str) -> Result<Value> {
-    let rows = checks::pulls(&state.pool, repo.id, sha)
+async fn pulls(pool: &db::DbPool, repo: &Repository, owner: &str, sha: &str) -> Result<Value> {
+    let rows = checks::pulls(pool, repo.id, sha)
         .await
         .map_err(Error::unavailable)?;
     Ok(json!(rows.into_iter().map(|pull| {
@@ -96,7 +96,7 @@ async fn run_document(
         .await
         .map_err(Error::unavailable)?;
     Ok(
-        json!({"id":run.id,"node_id":super::node_id::encode("CR",run.id),"head_sha":suite.head_sha,"name":run.name,"url":url,"html_url":format!("{}/{}/{}/runs/{}",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(&repo.name),run.id),"details_url":run.data.details_url,"external_id":run.data.external_id,"status":run.status,"conclusion":run.conclusion,"started_at":run.data.started_at,"completed_at":run.data.completed_at,"check_suite":{"id":suite.id},"output":{"title":run.data.title,"summary":run.data.summary,"text":run.data.text,"annotations_count":count,"annotations_url":format!("{url}/annotations"),"images":run.data.images},"app":app(state,suite.app_id).await?,"pull_requests":pulls(state,repo,owner,&suite.head_sha).await?}),
+        json!({"id":run.id,"node_id":super::node_id::encode("CR",run.id),"head_sha":suite.head_sha,"name":run.name,"url":url,"html_url":format!("{}/{}/{}/runs/{}",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(&repo.name),run.id),"details_url":run.data.details_url,"external_id":run.data.external_id,"status":run.status,"conclusion":run.conclusion,"started_at":run.data.started_at,"completed_at":run.data.completed_at,"check_suite":{"id":suite.id},"output":{"title":run.data.title,"summary":run.data.summary,"text":run.data.text,"annotations_count":count,"annotations_url":format!("{url}/annotations"),"images":run.data.images},"app":app(&state.pool,suite.app_id).await?,"pull_requests":pulls(&state.pool,repo,owner,&suite.head_sha).await?}),
     )
 }
 
@@ -110,8 +110,18 @@ async fn suite_document(
         .commit(&suite.head_sha)
         .await
         .map_err(store_error)?;
+    suite_document_at(&state.pool, repo, owner, suite, &commit).await
+}
+
+async fn suite_document_at(
+    pool: &db::DbPool,
+    repo: &Repository,
+    owner: &str,
+    suite: &Suite,
+    commit: &crate::backend::git::CommitInfo,
+) -> Result<Value> {
     let count = checks::run_count(
-        &state.pool,
+        pool,
         repo.id,
         &Filter {
             suite_id: Some(suite.id),
@@ -124,7 +134,7 @@ async fn suite_document(
     // A workflow run's suite has the run's state and is published by Actions.
     let (status, conclusion, publisher) = match suite.ci_run_id {
         Some(id) => {
-            let run = db::ci::get_ci_run(&state.pool, id)
+            let run = db::ci::get_ci_run(pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
@@ -132,18 +142,52 @@ async fn suite_document(
             (
                 status.to_owned(),
                 conclusion.map(str::to_owned),
-                actions_app(state, repo, owner).await?,
+                actions_app(pool, repo, owner).await?,
             )
         }
         None => (
             suite.status.clone(),
             suite.conclusion.clone(),
-            app(state, suite.app_id).await?,
+            app(pool, suite.app_id).await?,
         ),
     };
     Ok(
-        json!({"id":suite.id,"node_id":super::node_id::encode("CSU",suite.id),"head_sha":suite.head_sha,"head_branch":suite.head_branch,"status":status,"conclusion":conclusion,"url":url,"before":null,"after":null,"created_at":suite.created_at,"updated_at":suite.updated_at,"repository":payloads::repository(repo,owner),"latest_check_runs_count":count,"check_runs_url":format!("{url}/check-runs"),"app":publisher,"head_commit":{"id":commit.sha,"tree_id":commit.tree_sha,"message":commit.message,"timestamp":chrono::DateTime::from_timestamp(commit.timestamp,0),"author":{"name":commit.author_name,"email":commit.author_email},"committer":{"name":commit.committer_name,"email":commit.committer_email}},"pull_requests":pulls(state,repo,owner,&suite.head_sha).await?,"rerequestable":true,"runs_rerequestable":true}),
+        json!({"id":suite.id,"node_id":super::node_id::encode("CSU",suite.id),"head_sha":suite.head_sha,"head_branch":suite.head_branch,"status":status,"conclusion":conclusion,"url":url,"before":null,"after":null,"created_at":suite.created_at,"updated_at":suite.updated_at,"repository":payloads::repository(repo,owner),"latest_check_runs_count":count,"check_runs_url":format!("{url}/check-runs"),"app":publisher,"head_commit":{"id":commit.sha,"tree_id":commit.tree_sha,"message":commit.message,"timestamp":chrono::DateTime::from_timestamp(commit.timestamp,0),"author":{"name":commit.author_name,"email":commit.author_email},"committer":{"name":commit.committer_name,"email":commit.committer_email}},"pull_requests":pulls(pool,repo,owner,&suite.head_sha).await?,"rerequestable":true,"runs_rerequestable":true}),
     )
+}
+
+/// Runs on the store that accepted the branch publication, including RPC publications.
+pub(crate) async fn requested_after_push(
+    pool: &db::DbPool,
+    repo: &Repository,
+    actor: i64,
+    path: &std::path::Path,
+    sha: &str,
+    branch: &str,
+) -> Result<()> {
+    let mut after = 0;
+    let mut context = None;
+    loop {
+        let page = checks::automatic_suites(pool, repo, sha, branch, after).await.map_err(write_error)?;
+        after = page.after;
+        if !page.suites.is_empty() && context.is_none() {
+            let owner = db::repositories::records::repository_owner_name(pool, repo.id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+            let store = match repo.storage_node_id {
+                Some(node) => RepoStore::on_node(path.to_str().ok_or_else(|| Error::unavailable("Repository path is not UTF-8"))?, node),
+                None => repo_store(repo, None),
+            };
+            let commit = store.commit(sha).await.map_err(store_error)?;
+            context = Some((owner, commit));
+        }
+        if let Some((owner, commit)) = &context {
+            for suite in page.suites {
+                let doc = suite_document_at(pool, repo, owner, &suite, commit).await?;
+                emit_for_pool(pool, repo, actor, "check_suite", "requested", doc).await;
+            }
+        }
+        if !page.has_next { break; }
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -307,7 +351,7 @@ async fn get_run(
         "html_url":job_document["html_url"],"details_url":job_document["html_url"],"external_id":null,
         "status":job.status,"conclusion":job.conclusion,"started_at":job.started_at,"completed_at":job.completed_at,
         "check_suite":{"id":suite},"output":{"title":job.name,"summary":null,"text":null,"annotations_count":count,"annotations_url":format!("{url}/annotations"),"images":[]},
-        "app":actions_app(&state,&repo,&owner).await?,"pull_requests":pulls(&state,&repo,&owner,run.head_sha.as_deref().unwrap_or("")).await?})))
+        "app":actions_app(&state.pool,&repo,&owner).await?,"pull_requests":pulls(&state.pool,&repo,&owner,run.head_sha.as_deref().unwrap_or("")).await?})))
 }
 async fn get_suite(
     State(state): State<Arc<AppState>>,
@@ -614,8 +658,12 @@ async fn emit(
     action: &'static str,
     doc: Value,
 ) {
+    emit_for_pool(&state.pool, repo, actor, event, action, doc).await;
+}
+
+async fn emit_for_pool(pool: &db::DbPool, repo: &Repository, actor: i64, event: &'static str, action: &'static str, doc: Value) {
     let repository = repo.clone();
-    webhooks::emit(&state.pool,repo,event,vec![actor],move |owner,people| json!({"action":action,event:doc,"repository":payloads::repository(&repository,owner),"sender":payloads::person(&people.get(actor))})).await;
+    webhooks::emit(pool,repo,event,vec![actor],move |owner,people| json!({"action":action,event:doc,"repository":payloads::repository(&repository,owner),"sender":payloads::person(&people.get(actor))})).await;
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
