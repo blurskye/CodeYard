@@ -419,20 +419,20 @@ pub struct RepositoryMetadata {
 native_operation!(crate::backend::db::postgres::organizations::properties::catalog,crate::backend::db::sqlite::organizations::properties::catalog,
     fn catalog(pool:&DbPool,actor:i64,org:i64)->Result<OrganizationOutcome<Vec<Definition>>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::define,crate::backend::db::sqlite::organizations::properties::define,
-    fn define(pool:&DbPool,actor:i64,org:i64,inputs:&[DefinitionInput])->Result<OrganizationOutcome<Vec<Definition>>>);
+    fn define(pool:&DbPool,actor:impl Into<crate::backend::db::users::tokens::Actor>,org:i64,inputs:&[DefinitionInput])->Result<OrganizationOutcome<Vec<Definition>>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::remove,crate::backend::db::sqlite::organizations::properties::remove,
-    fn remove(pool:&DbPool,actor:i64,org:i64,name:&str)->Result<OrganizationOutcome<()>>);
+    fn remove(pool:&DbPool,actor:impl Into<crate::backend::db::users::tokens::Actor>,org:i64,name:&str)->Result<OrganizationOutcome<()>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::list_values,crate::backend::db::sqlite::organizations::properties::list_values,
     fn list_values(pool:&DbPool,actor:i64,org:i64,query:&query::RepositoryQuery,window:(i64,i64))->Result<OrganizationOutcome<Vec<RepositoryValues>>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::set_values,crate::backend::db::sqlite::organizations::properties::set_values,
-    fn set_values(pool:&DbPool,actor:i64,org:i64,repositories:&[String],values:&[ValueInput])->Result<OrganizationOutcome<()>>);
+    fn set_values(pool:&DbPool,actor:impl Into<crate::backend::db::users::tokens::Actor>,org:i64,repositories:&[String],values:&[ValueInput])->Result<OrganizationOutcome<()>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::repository,crate::backend::db::sqlite::organizations::properties::repository,
     fn repository(pool:&DbPool,viewer:Option<i64>,repo:i64)->Result<Option<RepositoryMetadata>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::set_repository_values,crate::backend::db::sqlite::organizations::properties::set_repository_values,
-    fn set_repository_values(pool:&DbPool,actor:i64,repo:i64,values:&[ValueInput])->Result<()>);
+    fn set_repository_values(pool:&DbPool,actor:impl Into<crate::backend::db::users::tokens::Actor>,repo:i64,values:&[ValueInput])->Result<()>);
 
 native_operation!(crate::backend::db::postgres::organizations::properties::set_repository_value,crate::backend::db::sqlite::organizations::properties::set_repository_value,
-    fn set_repository_value(pool:&DbPool,actor:i64,repo:i64,definition:i64,value:&ValueInput)->Result<()>);
+    fn set_repository_value(pool:&DbPool,actor:impl Into<crate::backend::db::users::tokens::Actor>,repo:i64,definition:i64,value:&ValueInput)->Result<()>);
 
 #[cfg(test)]
 mod tests {
