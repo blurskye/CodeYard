@@ -23,6 +23,35 @@ pub(in crate::backend::api) enum ScopeError {
     Unavailable,
 }
 
+/// Recheck the original REST credential and repository scope after buffering Git data.
+/// Cluster-node authorization cannot stand in for this reader's authority.
+pub(super) async fn recheck_repository_read(
+    state: &AppState,
+    headers: &HeaderMap,
+    repository: i64,
+    scope: &str,
+) -> Result<()> {
+    let mut auth = authenticate(state, headers, false).await?;
+    let repo = db::repositories::records::get_repository_by_id(&state.pool, repository)
+        .await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+    if let Some(reader) = &auth {
+        if scope == "contents" && !crate::backend::identity::oauth_apps::allows_git(&state.pool, reader.token.id, repo.is_gist)
+            .await.map_err(Error::unavailable)?
+        {
+            // An OAuth token without repo scope may still read public content.
+            auth = None;
+        } else {
+            reader.repository_scope(&state.pool, repository, scope, false).await.map_err(scope_error)?;
+        }
+    }
+    if !crate::backend::repositories::access::can_read(&state.pool, auth.as_ref().map(|reader| &reader.user), &repo)
+        .await.map_err(Error::unavailable)?
+    {
+        return Err(Error::missing());
+    }
+    Ok(())
+}
+
 /// Axum serves HEAD through GET routes; neither method may request write authority or mutate.
 pub(super) fn read_method(method: &Method) -> bool {
     *method == Method::GET || *method == Method::HEAD
