@@ -772,7 +772,8 @@ async fn contract(pg: bool) {
         &repo_runner_key.public_hex(),
         &format!("{}/slot", repo_runner_key.public_hex()),
         "local",
-        &[alice]
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -784,6 +785,7 @@ async fn contract(pg: bool) {
         &worker,
         "local",
         &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -895,7 +897,8 @@ async fn contract(pg: bool) {
         &org_runner_key.public_hex(),
         &worker,
         "local",
-        &[alice]
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -1005,6 +1008,7 @@ async fn contract(pg: bool) {
                 &jit_worker,
                 "local",
                 &[alice],
+                &codeyard::backend::ci::CiConfig::default().platform_labels(),
             )
             .await
             .unwrap()
@@ -1018,7 +1022,8 @@ async fn contract(pg: bool) {
                 &jit_key.public_hex(),
                 &format!("{}/second-slot", jit_key.public_hex()),
                 "local",
-                &[alice]
+                &[alice],
+                &codeyard::backend::ci::CiConfig::default().platform_labels(),
             )
             .await
             .unwrap()
@@ -1193,7 +1198,7 @@ async fn runner_settings_browser() {
         String::from_utf8_lossy(&result.stderr)
     );
     println!("{}", String::from_utf8_lossy(&result.stdout));
-    let groups = db::runners::list_groups(f.pool(), alice, org.id)
+    let (_, groups) = db::runners::list_groups(f.pool(), alice, org.id, &Default::default())
         .await
         .unwrap();
     assert_eq!(groups.len(), 1);

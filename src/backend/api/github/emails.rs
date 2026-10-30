@@ -139,7 +139,7 @@ async fn add(
     let added = identity::emails::change(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id),
+        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         &input.emails(),
         true,
     )
@@ -173,7 +173,7 @@ async fn remove(
     identity::emails::change(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id),
+        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         &input.emails(),
         false,
     )
@@ -202,7 +202,7 @@ async fn visibility(
     let user = identity::profiles::save(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id),
+        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         &ProfilePatch {
             primary_visibility: Some(&input.visibility),
             ..ProfilePatch::default()

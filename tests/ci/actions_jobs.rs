@@ -69,7 +69,7 @@ async fn contract(pg: bool) {
         StatusCode::OK,
     )
     .await;
-    let run = db::ci::claim_ci_run(f.pool(), "jobs", "local", &[alice])
+    let run = db::ci::claim_ci_run(f.pool(), "jobs", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();

@@ -403,6 +403,7 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
             let added = db::releases::add_release_asset(
                 f.pool(),
                 owner,
+                &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), owner).await),
                 r.id,
                 release.id,
                 &db::releases::NewReleaseAsset {

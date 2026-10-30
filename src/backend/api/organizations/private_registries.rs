@@ -146,12 +146,14 @@ pub(super) async fn post(
             ) || view::OIDC_FIELDS.iter().any(|(key, _)| name == key);
             known && value.len() <= if name == "value" { 16384 } else { 4096 }
         });
+    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let credential = db::users::accounts::AccountCredential::Session(&session);
     let result = if !bounded {
         Err(RegistryError::Invalid("configuration"))
     } else {
         match organization::field(&form, "action") {
             "registry-delete" => {
-                db::private_registries::delete(&ctx.state.pool, actor, org, &name).await
+                db::private_registries::delete(&ctx.state.pool, actor, &credential, org, &name).await
             }
             "registry-save" => match input(&form) {
                 Ok(body) => {
@@ -163,6 +165,7 @@ pub(super) async fn post(
                         &ctx.state.pool,
                         ctx.state.secret_encryptor.as_deref(),
                         actor,
+                        &credential,
                         org,
                         (!name.is_empty()).then_some(name.as_str()),
                         &body,

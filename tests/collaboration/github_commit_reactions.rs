@@ -301,6 +301,7 @@ async fn reactions(pg: bool) {
     db::reactions::create_reaction(
         f.pool(),
         alice,
+        &db::users::accounts::AccountCredential::Session(&browser.session),
         db::reactions::Target {
             repo_id: repo.id,
             item_id: issue.id,

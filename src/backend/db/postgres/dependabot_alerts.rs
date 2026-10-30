@@ -105,18 +105,18 @@ pub(crate) async fn refresh(tx: &mut Transaction<'_, Postgres>, repo: i64) -> Re
         snapshot.validate()?;
     }
     let keys = dependabot_alerts::osv_keys(&snapshots);
-    let advisories = global_in(tx, Some(&keys)).await?;
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT g.ghsa_id,a.data FROM global_advisories g JOIN osv_advisories a ON a.id=g.osv_id WHERE g.osv_id IN (SELECT p.advisory FROM osv_packages p JOIN jsonb_array_elements($1::jsonb) j ON p.ecosystem=j->>0 AND p.name=j->>1)",
+    let mut advisories = global_in(tx, Some(&keys)).await?;
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT a.data FROM osv_advisories a WHERE a.id IN (SELECT p.advisory FROM osv_packages p JOIN jsonb_array_elements($1::jsonb) j ON p.ecosystem=j->>0 AND p.name=j->>1) ORDER BY a.id",
     )
     .bind(&keys)
     .fetch_all(&mut **tx)
     .await?;
-    let osv = rows
-        .into_iter()
-        .map(|(id, data)| Ok((id, serde_json::from_str(&data)?)))
-        .collect::<Result<_>>()?;
-    let matches = dependabot_alerts::matches(&snapshots, &advisories, &osv);
+    let (mut osv, aliases) = dependabot_alerts::osv_records(rows)?;
+    let overrides: Vec<(String, Option<String>)> = sqlx::query_as("SELECT document,osv_id FROM global_advisories WHERE ghsa_id=ANY($1)")
+        .bind(&aliases).fetch_all(&mut **tx).await?;
+    dependabot_alerts::catalogue_for_records(&mut advisories, &mut osv, overrides)?;
+    let matches = dependabot_alerts::matches(&snapshots, &advisories, &osv)?;
     let now = Utc::now();
     let previous: Vec<Alert> =
         sqlx::query_as("SELECT * FROM dependabot_alerts WHERE repo_id=$1 ORDER BY number")

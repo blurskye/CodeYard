@@ -46,6 +46,7 @@ pub(crate) async fn react(
     db::reactions::toggle_reaction(
         &ctx.state.pool,
         user.id,
+        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
         detail.repository.id,
         id,
         db::reactions::Subject::Release,

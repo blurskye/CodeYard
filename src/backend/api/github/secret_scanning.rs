@@ -132,7 +132,7 @@ impl Filters {
                 values.split(',').any(|value| {
                     !matches!(
                         value,
-                        "false_positive" | "wont_fix" | "revoked" | "used_in_tests"
+                        "false_positive" | "wont_fix" | "revoked" | "used_in_tests" | "pattern_deleted" | "pattern_edited"
                     )
                 })
             })

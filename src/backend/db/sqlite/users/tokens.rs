@@ -15,20 +15,27 @@ pub async fn create_token(
     scope: &str,
     expires_at: Option<DateTime<Utc>>,
 ) -> Result<Option<PersonalAccessToken>> {
-    // One statement is atomic: its session and account checks read the same state as
-    // its insert. A password change that committed first makes the checks fail.
-    Ok(sqlx::query_as("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope,expires_at) SELECT id,?2,?3,?4,?5 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password AND EXISTS(SELECT 1 FROM sessions WHERE id=?6 AND user_id=?1 AND expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) RETURNING id,user_id,name,scope,expires_at,created_at")
-        .bind(user_id).bind(name).bind(hash).bind(scope).bind(expires_at.map(time::encode)).bind(session_id).fetch_optional(pool).await?)
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !super::transitions::active_session(&mut tx, user_id, session_id).await? { return Ok(None); }
+    let token = sqlx::query_as("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope,expires_at) VALUES(?1,?2,?3,?4,?5) RETURNING id,user_id,name,scope,expires_at,created_at")
+        .bind(user_id).bind(name).bind(hash).bind(scope).bind(expires_at.map(time::encode)).fetch_one(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Some(token))
 }
 
 /// The newest 100 tokens older than `before`, or the newest 100 when it is 0.
 pub async fn list_tokens(
     pool: &SqlitePool,
     user_id: i64,
+    session_id: &str,
     before: i64,
 ) -> Result<Vec<PersonalAccessToken>> {
-    Ok(sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at,last_used_at,last_used_ip FROM personal_access_tokens WHERE user_id=?1 AND (?2<=0 OR id<?2) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens f WHERE f.token_id=personal_access_tokens.id) ORDER BY id DESC LIMIT 100")
-        .bind(user_id).bind(before).fetch_all(pool).await?)
+    let mut tx = pool.begin().await?;
+    anyhow::ensure!(super::transitions::active_session_read(&mut tx, user_id, session_id).await?, crate::backend::db::users::accounts::AccountRestricted);
+    let tokens = sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at,last_used_at,last_used_ip FROM personal_access_tokens WHERE user_id=?1 AND (?2<=0 OR id<?2) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens f WHERE f.token_id=personal_access_tokens.id) ORDER BY id DESC LIMIT 100")
+        .bind(user_id).bind(before).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(tokens)
 }
 
 pub async fn delete_token(
@@ -37,12 +44,16 @@ pub async fn delete_token(
     session_id: &str,
     token_id: i64,
 ) -> Result<bool> {
-    Ok(sqlx::query("DELETE FROM personal_access_tokens WHERE id=?1 AND user_id=?2 AND EXISTS(SELECT 1 FROM users WHERE id=?2 AND NOT is_banned AND NOT must_change_password) AND EXISTS(SELECT 1 FROM sessions WHERE id=?3 AND user_id=?2 AND expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))")
-        .bind(token_id).bind(user_id).bind(session_id).execute(pool).await?.rows_affected() == 1)
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !super::transitions::active_session(&mut tx, user_id, session_id).await? { return Ok(false); }
+    let deleted = sqlx::query("DELETE FROM personal_access_tokens WHERE id=?1 AND user_id=?2")
+        .bind(token_id).bind(user_id).execute(&mut *tx).await?.rows_affected() == 1;
+    tx.commit().await?;
+    Ok(deleted)
 }
 
 pub async fn find_token(pool: &SqlitePool, hash: &str) -> Result<Option<PersonalAccessToken>> {
-    Ok(sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at,last_used_at,last_used_ip FROM personal_access_tokens WHERE token_hash=?1")
+    Ok(sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at,last_used_at,last_used_ip,token_hash FROM personal_access_tokens WHERE token_hash=?1")
         .bind(hash).fetch_optional(pool).await?)
 }
 

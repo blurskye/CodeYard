@@ -61,7 +61,7 @@ pub async fn create_user_cmd(pool: &DbPool, username: &str, email: Option<&str>)
 
 fn validate_cli_username(username: &str) -> Result<()> {
     use crate::backend::identity::credentials;
-    credentials::validate_username(username).map_err(|_| anyhow::anyhow!(
+    credentials::validate_namespace(username, 3).map_err(|_| anyhow::anyhow!(
         "Username must be 3-1024 bytes, at most 255 characters, and contain only letters, numbers, hyphens and underscores"
     ))?;
     credentials::validate_new_account_name(username)

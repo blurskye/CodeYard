@@ -73,7 +73,7 @@ async fn actor(
 async fn snapshot(
     state: &AppState,
     org: i64,
-    actor: i64,
+    actor: &auth::Authentication,
     hook: i64,
     delivery: Option<i64>,
     history: bool,
@@ -81,7 +81,8 @@ async fn snapshot(
     let settings = hooks::read_settings(
         &state.pool,
         HookOwner::Organization(org),
-        actor,
+        actor.user.id,
+        &actor.credential(),
         Some(hook),
         delivery,
         0,
@@ -117,6 +118,7 @@ async fn list(
         &state.pool,
         HookOwner::Organization(org.id),
         actor.user.id,
+        &actor.credential(),
         offset as i64,
         (limit + 1) as i64,
     )
@@ -139,7 +141,7 @@ async fn get_hook(
     let snapshot = snapshot(
         &state,
         org.id,
-        actor.user.id,
+        &actor,
         id(&params, "hook_id")?,
         None,
         false,
@@ -156,7 +158,7 @@ async fn get_config(
     let snapshot = snapshot(
         &state,
         org.id,
-        actor.user.id,
+        &actor,
         id(&params, "hook_id")?,
         None,
         false,
@@ -269,12 +271,13 @@ async fn create(
         state.secret_encryptor.as_deref(),
         HookOwner::Organization(org.id),
         &actor.user,
+        &actor.credential(),
         None,
         &input,
     )
     .await
     .map_err(error)?;
-    let hook = snapshot(&state, org.id, actor.user.id, id, None, false)
+    let hook = snapshot(&state, org.id, &actor, id, None, false)
         .await?
         .hook
         .unwrap();
@@ -300,6 +303,7 @@ async fn update(
         state.secret_encryptor.as_deref(),
         HookOwner::Organization(org.id),
         &actor.user,
+        &actor.credential(),
         id,
         &patch,
     )
@@ -307,7 +311,7 @@ async fn update(
     .map_err(error)?;
     Ok(Json(document(
         &org.name,
-        &snapshot(&state, org.id, actor.user.id, id, None, false)
+        &snapshot(&state, org.id, &actor, id, None, false)
             .await?
             .hook
             .unwrap(),
@@ -328,13 +332,14 @@ async fn update_config(
         state.secret_encryptor.as_deref(),
         HookOwner::Organization(org.id),
         &actor.user,
+        &actor.credential(),
         id,
         &patch,
     )
     .await
     .map_err(error)?;
     Ok(Json(payloads::webhook_config(
-        &snapshot(&state, org.id, actor.user.id, id, None, false)
+        &snapshot(&state, org.id, &actor, id, None, false)
             .await?
             .hook
             .unwrap(),
@@ -350,6 +355,7 @@ async fn remove(
         &state.pool,
         HookOwner::Organization(org.id),
         &actor.user,
+        &actor.credential(),
         id(&params, "hook_id")?,
     )
     .await
@@ -366,6 +372,7 @@ async fn ping(
         &state.pool,
         HookOwner::Organization(org.id),
         &actor.user,
+        &actor.credential(),
         id(&params, "hook_id")?,
     )
     .await
@@ -382,6 +389,7 @@ async fn redeliver(
         &state.pool,
         HookOwner::Organization(org.id),
         &actor.user,
+        &actor.credential(),
         id(&params, "hook_id")?,
         id(&params, "delivery_id")?,
     )
@@ -398,7 +406,7 @@ async fn delivery(
     let snapshot = snapshot(
         &state,
         org.id,
-        actor.user.id,
+        &actor,
         id(&params, "hook_id")?,
         Some(id(&params, "delivery_id")?),
         false,
@@ -420,7 +428,7 @@ async fn deliveries(
     let snapshot = snapshot(
         &state,
         org.id,
-        actor.user.id,
+        &actor,
         id(&params, "hook_id")?,
         None,
         true,

@@ -77,6 +77,7 @@ async fn search(pg: bool) {
         f.pool(),
         pull.id,
         alice,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
         "commented",
         Some("reviewvisible"),
         Some(&pull.head_sha),

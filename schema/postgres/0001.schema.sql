@@ -68,6 +68,8 @@ ALTER TABLE files ADD CONSTRAINT fk_files_user_id
 --------------------------------------------------------------------------------
 -- PART 2B: NODE CONFIGURATION & ACCESS REQUESTS
 --------------------------------------------------------------------------------
+CREATE UNIQUE INDEX users_username_folded ON users(lower(username COLLATE "C"));
+
 CREATE TABLE IF NOT EXISTS node_configuration (
     id SMALLINT PRIMARY KEY,
     node_mode VARCHAR(20) NOT NULL DEFAULT 'public', -- public | private
@@ -340,6 +342,9 @@ CREATE TABLE IF NOT EXISTS repositories (
     CONSTRAINT repo_unique_user UNIQUE (owner_user_id, name),
     CONSTRAINT repo_unique_org UNIQUE (owner_org_id, name)
 );
+CREATE UNIQUE INDEX organizations_name_folded ON organizations(lower(name COLLATE "C"));
+CREATE UNIQUE INDEX repo_unique_user_folded ON repositories(owner_user_id,lower(name COLLATE "C"));
+CREATE UNIQUE INDEX repo_unique_org_folded ON repositories(owner_org_id,lower(name COLLATE "C"));
 CREATE INDEX IF NOT EXISTS idx_repositories_name ON repositories(name);
 CREATE INDEX IF NOT EXISTS idx_repositories_storage_uuid ON repositories (right(disk_path, 40));
 CREATE INDEX IF NOT EXISTS idx_repositories_is_private ON repositories(is_private);
@@ -652,7 +657,7 @@ CREATE TABLE IF NOT EXISTS timeline_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_timeline_events_subject ON timeline_events(subject_kind, subject_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_timeline_events_repo_id ON timeline_events(repo_id);
+CREATE INDEX IF NOT EXISTS idx_timeline_events_repo_id ON timeline_events(repo_id, created_at, id);
 
 CREATE TABLE IF NOT EXISTS reactions (
     id BIGSERIAL PRIMARY KEY,
@@ -904,6 +909,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_scope ON notifications(user_id, scope_repository_id);
+CREATE INDEX notifications_user_id ON notifications(user_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_created_at ON notifications(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, read_at, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_saved ON notifications(user_id, saved_at, created_at DESC);
@@ -1128,6 +1134,7 @@ CREATE TABLE IF NOT EXISTS ci_accepted_pushes (
     accepted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY(repo_id, actor_id, reference, sha)
 );
+CREATE INDEX ci_accepted_pushes_time ON ci_accepted_pushes(repo_id, accepted_at);
 
 -- Per-account login throttling.
 CREATE TABLE IF NOT EXISTS auth_login_limits (
@@ -1272,6 +1279,7 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id, id);
+CREATE INDEX webhook_deliveries_expiry ON webhook_deliveries(delivered_at, id);
 
 CREATE TABLE IF NOT EXISTS email_settings (
     id SMALLINT PRIMARY KEY CHECK (id = 1),
@@ -1752,6 +1760,9 @@ CREATE TABLE notification_thread_subscriptions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX notifications_thread ON notifications(thread_id,id DESC);
+CREATE INDEX notifications_thread_created ON notifications(thread_id,created_at DESC,id DESC);
+CREATE INDEX notifications_thread_inbox ON notifications(thread_id,id DESC) WHERE done_at IS NULL;
+CREATE INDEX notifications_thread_unread ON notifications(thread_id,id DESC) WHERE read_at IS NULL AND done_at IS NULL;
 CREATE FUNCTION notification_threads_provenance() RETURNS TRIGGER AS $$
 BEGIN
     IF NEW.user_id IS DISTINCT FROM OLD.user_id OR NEW.scope_repository_id IS DISTINCT FROM OLD.scope_repository_id OR NEW.subject_type IS DISTINCT FROM OLD.subject_type OR NEW.subject_key IS DISTINCT FROM OLD.subject_key THEN
@@ -2301,6 +2312,7 @@ CREATE TABLE github_app_deliveries (
     delivered_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 CREATE INDEX github_app_deliveries_hook ON github_app_deliveries(webhook_id,id);
+CREATE INDEX github_app_deliveries_expiry ON github_app_deliveries(delivered_at, id);
 
 CREATE TABLE github_app_callbacks (
     app_id BIGINT NOT NULL REFERENCES github_apps(id) ON DELETE CASCADE,
@@ -2516,6 +2528,7 @@ CREATE TABLE project_fields (
     updated_at TIMESTAMPTZ NOT NULL,
     UNIQUE(project_id, name)
 );
+CREATE UNIQUE INDEX project_fields_name_folded ON project_fields(project_id, translate(name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'));
 
 -- migrations
 CREATE TABLE repository_imports (
@@ -3009,6 +3022,7 @@ CREATE TABLE repository_migration_locks (
     migration_id BIGINT NOT NULL REFERENCES repository_exports(id) ON DELETE CASCADE
 );
 CREATE INDEX repository_exports_user ON repository_exports(owner_user_id,id);
+CREATE INDEX repository_exports_active_actor ON repository_exports(actor_id, updated_at) WHERE state IN ('pending','exporting');
 CREATE INDEX repository_exports_org ON repository_exports(owner_org_id,id);
 CREATE FUNCTION repository_exports_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -3088,7 +3102,7 @@ CREATE TABLE secret_scanning_alerts (
     assigned_to BIGINT REFERENCES users(id) ON DELETE SET NULL,
     validity TEXT CHECK (validity IN ('active','inactive')),
     state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open','resolved')),
-    resolution TEXT CHECK (resolution IN ('false_positive','wont_fix','revoked','used_in_tests')),
+    resolution TEXT CHECK (resolution IN ('false_positive','wont_fix','revoked','used_in_tests','pattern_deleted','pattern_edited')),
     resolution_comment TEXT,
     resolved_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
     resolved_at TIMESTAMPTZ,
@@ -3132,6 +3146,7 @@ CREATE TABLE secret_scanning_jobs (
     completed_at TIMESTAMPTZ
 );
 CREATE INDEX secret_scanning_jobs_pending ON secret_scanning_jobs(status, id);
+CREATE INDEX secret_scanning_jobs_history ON secret_scanning_jobs(repo_id, id DESC);
 
 CREATE TABLE secret_scanning_commits (
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
@@ -3150,6 +3165,7 @@ CREATE TABLE secret_scanning_bypasses (
     used_at TIMESTAMPTZ
 );
 CREATE INDEX secret_scanning_bypasses_value ON secret_scanning_bypasses(repo_id, actor_id, secret_hash);
+CREATE INDEX secret_scanning_bypasses_unused_expiry ON secret_scanning_bypasses(expires_at, id) WHERE used_at IS NULL;
 
 CREATE TABLE secret_scanning_patterns (
     id BIGSERIAL PRIMARY KEY,
@@ -3260,6 +3276,16 @@ CREATE TABLE vulnerability_jobs (
     next_scan TIMESTAMPTZ NOT NULL,
     lease_until TIMESTAMPTZ
 );
+CREATE INDEX vulnerability_jobs_due ON vulnerability_jobs(next_scan, repo_id);
+CREATE FUNCTION repository_vulnerability_job() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT NEW.is_gist THEN
+        INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) VALUES(NEW.id,1,clock_timestamp());
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER repository_vulnerability_job AFTER INSERT ON repositories FOR EACH ROW EXECUTE FUNCTION repository_vulnerability_job();
 
 -- Actions job annotations
 CREATE TABLE actions_job_annotations (
@@ -3707,6 +3733,8 @@ CREATE TABLE repository_rule_suites (
     evaluations TEXT NOT NULL CHECK(octet_length(evaluations)<=16777216),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX repository_rule_suites_org_time ON repository_rule_suites(org_id, created_at, id);
+CREATE INDEX repository_rule_suites_repo_time ON repository_rule_suites(repo_id, created_at, id);
 CREATE INDEX repository_rule_suites_org ON repository_rule_suites(org_id,id DESC);
 CREATE INDEX repository_rule_suites_repo ON repository_rule_suites(repo_id,id DESC);
 

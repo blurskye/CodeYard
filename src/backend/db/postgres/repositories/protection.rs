@@ -46,6 +46,7 @@ pub async fn upsert_branch_protection_rule(
         .unwrap_or_else(|| previous.clone());
     // Signatures are changed only through their own subresource.
     settings.required_signatures = previous.required_signatures;
+    crate::backend::db::repositories::protection::prune_check_bindings(&mut settings, input.require_status_checks, &input.required_status_checks);
     if validate_apps {
         validate_push_apps_on(&mut tx, input.repo_id, &settings.push_apps).await?;
     }
@@ -227,7 +228,7 @@ async fn validate_push_apps_on(
     ids: &[i64],
 ) -> Result<()> {
     anyhow::ensure!(
-        ids.len() <= 100,
+        ids.len() <= crate::backend::db::repositories::protection::MAX_ALLOWANCE_ACTORS,
         ProtectionWriteRefusal::InvalidPushAllowances
     );
     for id in ids {
@@ -282,6 +283,10 @@ pub async fn rename_branch_settings(
     .bind(new)
     .execute(&mut *tx)
     .await?;
+    sqlx::query("DELETE FROM issue_linked_branches old WHERE old.repo_id=$1 AND old.name=$2 AND EXISTS(SELECT 1 FROM issue_linked_branches destination WHERE destination.issue_id=old.issue_id AND destination.repo_id=$1 AND destination.name=$3)")
+        .bind(repo).bind(old).bind(new).execute(&mut *tx).await?;
+    sqlx::query("UPDATE issue_linked_branches SET name=$3 WHERE repo_id=$1 AND name=$2")
+        .bind(repo).bind(old).bind(new).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM branch_redirects WHERE repo_id=$1 AND old_name=$2")
         .bind(repo)
         .bind(new)

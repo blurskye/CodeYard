@@ -7,10 +7,11 @@ use super::authority::*;
 
 pub async fn recover_suspended_organization_owner(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::transitions::AdministratorActor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
+    let actor = actor.into();
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     if sqlx::query_scalar::<_, i64>("SELECT id FROM organizations WHERE id=$1 FOR UPDATE")
@@ -23,11 +24,8 @@ pub async fn recover_suspended_organization_owner(
     }
     // Lock the users in id order so concurrent recoveries cannot deadlock.
     let users: Vec<(i64, bool, bool)> = sqlx::query_as("SELECT id,is_admin,NOT is_banned AND NOT must_change_password FROM users WHERE id=ANY($1) ORDER BY id FOR SHARE")
-        .bind(vec![actor, target]).fetch_all(&mut *tx).await?;
-    if !users
-        .iter()
-        .any(|&(id, admin, active)| id == actor && admin && active)
-    {
+        .bind(vec![actor.user_id, target]).fetch_all(&mut *tx).await?;
+    if !crate::backend::db::postgres::users::transitions::active_admin_session(&mut tx, &actor).await? {
         return Ok(Denied);
     }
     if remaining_active_owner(&mut tx, org, -1).await? {
@@ -51,7 +49,7 @@ pub async fn recover_suspended_organization_owner(
     .await?;
     let audit = serde_json::json!({"reason":"no_usable_owner","previous_role":old,"replacement_user_id":target});
     sqlx::query("INSERT INTO audit_log(org_id,actor_id,action,target_type,target_id,metadata) VALUES($1,$2,'org.governance.recover_owner','org_membership',$3,$4)")
-        .bind(org).bind(actor).bind(member.id).bind(audit).execute(&mut *tx).await?;
+        .bind(org).bind(actor.user_id).bind(member.id).bind(audit).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(member))
 }

@@ -162,7 +162,7 @@ async fn update(
     let user = crate::backend::identity::profiles::save(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id),
+        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         &ProfilePatch {
             display_name: text("name")?,
             bio: text("bio")?,
@@ -603,6 +603,7 @@ async fn create_key(
         &state.pool,
         actor.user.id,
         actor.token.id,
+        &actor.token.token_hash,
         title,
         &input.key,
     )
@@ -636,7 +637,7 @@ async fn delete_key(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let deleted =
-        ssh_keys::delete_user_ssh_key_for_token(&state.pool, actor.user.id, actor.token.id, id)
+        ssh_keys::delete_user_ssh_key_for_token(&state.pool, actor.user.id, actor.token.id, &actor.token.token_hash, id)
             .await
             .map_err(
                 |error| match error.downcast_ref::<ssh_keys::SshKeyWriteRefusal>() {

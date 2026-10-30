@@ -1,4 +1,4 @@
-//! Actions variables are plain text; repository readers may inspect their values.
+//! Actions variables are plain text; repository collaborators may inspect their values.
 use super::DbPool;
 use chrono::{DateTime, Utc};
 
@@ -31,11 +31,11 @@ pub enum VariableError {
 }
 
 pub fn validate(name: &str, value: &str) -> Result<(), VariableError> {
-    super::secrets::validate_repository_secret(name, "").map_err(|_| VariableError::InvalidName)?;
-    if value.len() > 48 * 1024 || value.contains('\0') {
-        return Err(VariableError::InvalidValue);
-    }
-    Ok(())
+    use codeyard_actions::values::InvalidValue;
+    codeyard_actions::values::validate(name, value).map_err(|error| match error {
+        InvalidValue::Name | InvalidValue::ReservedName => VariableError::InvalidName,
+        InvalidValue::Nul | InvalidValue::TooLarge => VariableError::InvalidValue,
+    })
 }
 
 pub fn validate_all(variables: &[(String, String)]) -> Result<(), VariableError> {
@@ -76,15 +76,15 @@ pub(crate) fn ensure_room(
 
 native_operation!(crate::backend::db::postgres::variables::list,
     crate::backend::db::sqlite::variables::list,
-    fn list(pool: &DbPool, actor: i64, repo: i64) -> Result<Vec<Variable>, VariableError>);
+    fn list(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64) -> Result<Vec<Variable>, VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::save,
     crate::backend::db::sqlite::variables::save,
-    fn save(pool: &DbPool, actor: i64, repo: i64, previous: Option<&str>, name: &str, value: Option<&str>) -> Result<(), VariableError>);
+    fn save(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, previous: Option<&str>, name: &str, value: Option<&str>) -> Result<(), VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::delete,
     crate::backend::db::sqlite::variables::delete,
-    fn delete(pool: &DbPool, actor: i64, repo: i64, name: &str) -> Result<(), VariableError>);
+    fn delete(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, name: &str) -> Result<(), VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::for_run,
     crate::backend::db::sqlite::variables::for_run,

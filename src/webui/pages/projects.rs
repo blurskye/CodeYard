@@ -305,6 +305,7 @@ pub fn render(page: Page) -> Element {
                     }
                 } }
                 if page.projects.is_empty() { p { "No projects yet." } }
+                {crate::webui::pages::discovery::page_links(page.previous.clone(), page.next.clone(), "Projects")}
                 if page.can_edit {
                     h2 { class: "text-xl font-semibold mt-6", "New project" }
                     form { method: "post", action: "{base}", class: "identity-form",

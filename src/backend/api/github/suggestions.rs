@@ -79,13 +79,15 @@ async fn resolve(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let authentication = auth.ok_or_else(auth::required)?;
+    let actor = &authentication.user;
     let issue = issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
     let id = p["suggestion_id"].parse().map_err(|_| Error::missing())?;
     let row = crate::backend::issues::suggestions::resolve(
         &state.pool,
         &state.notification_broadcaster,
-        &actor,
+        actor,
+        &authentication.credential(),
         (&repo, &p["owner"]),
         (issue, id),
         uri.path().ends_with("/approve"),

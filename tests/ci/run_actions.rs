@@ -91,7 +91,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap());
-    let claimed = db::ci::claim_ci_run(f.pool(), "log-worker", "local", &[alice_id, bob_id])
+    let claimed = db::ci::claim_ci_run(f.pool(), "log-worker", "local", &[alice_id, bob_id], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
@@ -710,7 +710,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
 
     // The run fails on its worker, which then records the result.
     let worker = "node/slot-1";
-    let claimed = db::ci::claim_ci_run(f.pool(), worker, "local", &[alice_id, bob_id])
+    let claimed = db::ci::claim_ci_run(f.pool(), worker, "local", &[alice_id, bob_id], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .expect("the run is claimed");

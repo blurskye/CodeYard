@@ -131,6 +131,7 @@ pub async fn create_pull_request_review(
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
+    credential: &db::users::accounts::AccountCredential<'_>,
     repository: (String, String, i32),
     req: CreatePullRequestReviewRequest,
 ) -> Result<db::models::PullRequestReview, OperationError> {
@@ -209,12 +210,18 @@ pub async fn create_pull_request_review(
         });
     }
 
+    let draft_commit = if let Some(id) = req.review_id {
+        db::pull_requests::reviews::get_pull_request_review_by_id(pool, id).await.map_err(database_error)?
+            .filter(|review| review.pull_request_id == pull_request.id && review.author_id == user.id && review.state == "pending")
+            .and_then(|review| review.commit_sha)
+    } else { None };
     let mut commit_sha = req
         .commit_sha
         .as_deref()
         .map(str::trim)
         .filter(|sha| !sha.is_empty())
         .map(str::to_string)
+        .or(draft_commit)
         .unwrap_or_else(|| pull_request.head_sha.clone());
 
     if !crate::backend::git::is_full_commit_id(&commit_sha) {
@@ -225,6 +232,7 @@ pub async fn create_pull_request_review(
     }
     commit_sha.make_ascii_lowercase();
 
+    if req.review_id.is_none() {
     let published_ref = if pull_request.head_repo_id == Some(repository.id) {
         format!("refs/heads/{}", pull_request.head_branch)
     } else {
@@ -254,10 +262,12 @@ pub async fn create_pull_request_review(
         });
     }
 
+    }
     let review = db::pull_requests::reviews::save_pull_request_review(
         pool,
         pull_request.id,
         user.id,
+        credential,
         &review_state,
         req.body.as_deref(),
         Some(commit_sha.as_str()),
@@ -407,7 +417,7 @@ async fn has_pending_comments(
 ) -> Result<bool, OperationError> {
     db::pull_requests::reviews::list_pending_review_comments(pool, pr_id, author_id)
         .await
-        .map(|comments| !comments.is_empty())
+        .map(|comments| !comments.comments.is_empty())
         .map_err(database_error)
 }
 

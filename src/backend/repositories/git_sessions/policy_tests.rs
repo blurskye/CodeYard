@@ -1967,7 +1967,7 @@ mod fixture {
             assert!(repository.size_bytes > 0);
             for _ in 0..runs.len() {
                 let run =
-                    db::ci::claim_ci_run(&fixture.pool, "worker", "local", &[fixture.actor_id])
+                    db::ci::claim_ci_run(&fixture.pool, "worker", "local", &[fixture.actor_id], &crate::backend::ci::CiConfig::default().platform_labels())
                         .await
                         .unwrap()
                         .unwrap();

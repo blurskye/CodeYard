@@ -111,10 +111,12 @@ async fn move_head(
     pull_id: i64,
     from: &str,
     to: &str,
+    head_repo: Option<i64>,
+    head_branch: &str,
     actor_id: i64,
     ci_access: Option<db::models::AccessLevel>,
 ) -> Result<bool, RefreshError> {
-    let moved = db::pull_requests::records::move_open_pull_request_head(pool, pull_id, from, to)
+    let moved = db::pull_requests::records::move_open_pull_request_head(pool, pull_id, from, to, head_repo, head_branch)
         .await
         .map_err(|_| RefreshError::Database)?;
     if !moved {
@@ -170,40 +172,6 @@ async fn move_head(
         }
     }
     Ok(true)
-}
-
-/// The pull ref can name a head that the row does not record, when a refresh published
-/// that head and then lost its row update. Publication compares against the recorded
-/// head, so record the published head first, or every later attempt conflicts.
-async fn record_published_head(
-    pool: &DbPool,
-    ci: &CiRuns,
-    base: &Repository,
-    base_store: &RepoStore,
-    pull: &db::pull_requests::records::PullRequestRevisions,
-    actor_id: i64,
-    ci_access: Option<db::models::AccessLevel>,
-) -> Result<bool, RefreshError> {
-    let reference = format!("refs/pull/{}/head", pull.number);
-    let published = match base_store.commit_from_primary(&reference).await {
-        Ok(commit) => commit.sha,
-        Err(error) if error.kind == ErrorKind::NotFound => return Ok(false),
-        Err(_) => return Err(RefreshError::Storage),
-    };
-    if published == pull.head_sha {
-        return Ok(false);
-    }
-    move_head(
-        pool,
-        ci,
-        base,
-        pull.id,
-        &pull.head_sha,
-        &published,
-        actor_id,
-        ci_access,
-    )
-    .await
 }
 
 async fn refresh_one(
@@ -302,13 +270,6 @@ async fn refresh_one(
 
         let mut head_ready = true;
         let mut head_failed = false;
-        if head.is_none()
-            && record_published_head(pool, ci, &base, &base_store, &pull, actor_id, ci_access)
-                .await?
-        {
-            changed = true;
-            retry = true;
-        }
         if let Some(head) = &head {
             // The pull request may have been closed while the refs were read. A closed
             // one takes no new commits from its fork.
@@ -319,19 +280,17 @@ async fn refresh_one(
             if !open {
                 return Ok(changed);
             }
-            // Existing same-repository pull requests may not have a retained ref yet.
-            // Their live branch is authoritative; do not replace their row with an older backup.
-            let expected_head = if head.id == base.id {
-                match base_store
-                    .commit_from_primary(&format!("refs/pull/{}/head", pull.number))
-                    .await
-                {
-                    Ok(commit) => Some(commit.sha),
-                    Err(error) if error.kind == ErrorKind::NotFound => None,
-                    Err(_) => return Err(RefreshError::Storage),
-                }
-            } else {
-                Some(pull.head_sha.clone())
+            // A retained ref has no branch provenance: it may come from a publication
+            // whose row CAS lost to a rename. Use it only as the storage CAS input,
+            // never as evidence for advancing the row. Only the live branch observation
+            // below may advance SQL, under the complete recorded-identity CAS.
+            let expected_head = match base_store
+                .commit_from_primary(&format!("refs/pull/{}/head", pull.number))
+                .await
+            {
+                Ok(commit) => Some(commit.sha),
+                Err(error) if error.kind == ErrorKind::NotFound => None,
+                Err(_) => return Err(RefreshError::Storage),
             };
             // Storage rechecks this real contributor's live source/base read authority
             // under the publication lock. An imported issue's author is not a credential.
@@ -369,20 +328,6 @@ async fn refresh_one(
             if let Err(error) = publication {
                 head_ready = false;
                 if error.kind == ErrorKind::Conflict {
-                    if head.id != base.id
-                        && record_published_head(
-                            pool,
-                            ci,
-                            &base,
-                            &base_store,
-                            &pull,
-                            actor_id,
-                            ci_access,
-                        )
-                        .await?
-                    {
-                        changed = true;
-                    }
                     retry = true;
                 } else {
                     head_failed = true;
@@ -398,6 +343,8 @@ async fn refresh_one(
                 pull.id,
                 &pull.head_sha,
                 &new_head,
+                pull.head_repo_id,
+                &pull.head_branch,
                 actor_id,
                 ci_access,
             )

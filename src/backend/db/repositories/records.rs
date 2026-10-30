@@ -16,6 +16,8 @@ native_operation!(crate::backend::db::postgres::repositories::records::create_re
 
 native_operation!(crate::backend::db::postgres::repositories::records::get_repository,
     crate::backend::db::sqlite::repositories::records::get_repository,
+    /// Resolve ASCII-case-insensitive repository coordinates, returning canonical spelling.
+    /// Principal/allowance lookups remain exact; namespace admission reserves case variants.
     fn get_repository(
     pool: &DbPool,
     owner_name: &str,

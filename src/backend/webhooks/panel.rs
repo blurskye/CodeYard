@@ -29,6 +29,7 @@ pub struct Place<'a> {
 pub async fn build(
     pool: &DbPool,
     actor: &User,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     place: &Place<'_>,
     query: &HashMap<String, String>,
 ) -> Result<WebhookPanel, HookError> {
@@ -36,6 +37,7 @@ pub async fn build(
         pool,
         place.owner,
         actor.id,
+        credential,
         query.get("hook").and_then(|id| id.parse().ok()),
         query.get("delivery").and_then(|id| id.parse().ok()),
         query
@@ -222,14 +224,18 @@ fn status_text(delivery: &WebhookDelivery) -> String {
 async fn with_saved_credentials(
     pool: &DbPool,
     owner: HookOwner,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     mut draft: HookDraft,
 ) -> HookDraft {
     let Some(id) = draft.id else {
         return draft;
     };
-    if let Ok(Some(hook)) = hooks::get_webhook(pool, owner, id).await {
-        draft.has_secret = hook.encrypted_secret.is_some();
-        draft.has_password = hook.username.is_some();
+    if let Ok(Some(snapshot)) = hooks::read_settings(pool, owner, actor, credential, Some(id), None, 0, false).await {
+        if let Some(hook) = snapshot.hook {
+            draft.has_secret = hook.encrypted_secret.is_some();
+            draft.has_password = hook.username.is_some();
+        }
     }
     draft
 }
@@ -275,6 +281,7 @@ pub async fn apply(
     pool: &DbPool,
     encryptor: Option<&SecretEncryptor>,
     actor: &User,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     owner: HookOwner,
     action: &str,
     form: &HashMap<String, String>,
@@ -286,11 +293,11 @@ pub async fn apply(
         "webhook-save" => {
             let draft = draft_from_form(pairs);
             let submitted = form_of(&draft, pairs);
-            match settings::save(pool, encryptor, owner, actor, draft.id, &submitted).await {
+            match settings::save(pool, encryptor, owner, actor, credential, draft.id, &submitted).await {
                 Ok(_) => Ok("saved"),
                 Err(error) => Err((
                     error,
-                    Some(with_saved_credentials(pool, owner, draft).await),
+                    Some(with_saved_credentials(pool, owner, actor.id, credential, draft).await),
                 )),
             }
         }
@@ -301,14 +308,14 @@ pub async fn apply(
                 )));
             }
             let id = hook_id.ok_or(HookError::NotFound).map_err(refused)?;
-            settings::delete(pool, owner, actor, id)
+            settings::delete(pool, owner, actor, credential, id)
                 .await
                 .map(|_| "deleted")
                 .map_err(refused)
         }
         "webhook-ping" => {
             let id = hook_id.ok_or(HookError::NotFound).map_err(refused)?;
-            settings::ping(pool, owner, actor, id)
+            settings::ping(pool, owner, actor, credential, id)
                 .await
                 .map(|_| "pinged")
                 .map_err(refused)
@@ -320,7 +327,7 @@ pub async fn apply(
             let (Some(hook), Some(delivery)) = (hook_id, delivery) else {
                 return Err(refused(HookError::NotFound));
             };
-            settings::redeliver(pool, owner, actor, hook, delivery)
+            settings::redeliver(pool, owner, actor, credential, hook, delivery)
                 .await
                 .map(|_| "redelivered")
                 .map_err(refused)

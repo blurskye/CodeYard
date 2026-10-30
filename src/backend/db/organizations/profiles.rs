@@ -32,15 +32,8 @@ native_operation!(crate::backend::db::postgres::organizations::profiles::list_re
 // Exact, case-sensitive namespace, matching the equality and UNIQUE rules of users.username.
 // Do not lowercase identities or conflate routing namespaces.
 pub(super) fn validate_slug(value: &str) -> std::result::Result<(), OrganizationInputError> {
-    if !(3..=1024).contains(&value.len())
-        || value.chars().count() > 255
-        || !value
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(OrganizationInputError::Slug);
-    }
-    Ok(())
+    crate::backend::identity::credentials::validate_namespace(value, 3)
+        .map_err(|_| OrganizationInputError::Slug)
 }
 pub(super) fn validate_name(value: &str) -> std::result::Result<(), OrganizationInputError> {
     if value.trim().is_empty()

@@ -17,8 +17,8 @@ pub async fn list(
     if !visible {
         return Err(AttestationError::NotFound);
     }
-    let mut rows: Vec<Attestation> = sqlx::query_as(&format!(r#"
-        SELECT a.id,a.bundle,a.initiator FROM repo_attestations a
+    let sizes: Vec<(i64, i64)> = sqlx::query_as(&format!(r#"
+        SELECT a.id,6*length(CAST(a.bundle AS BLOB))+4096 FROM repo_attestations a
         JOIN attestation_subjects s ON s.attestation_id=a.id
         JOIN repositories r ON r.id=a.repo_id LEFT JOIN users u ON u.id=$1
         WHERE a.repo_id=$2 AND s.digest=$3 AND {}
@@ -32,8 +32,10 @@ pub async fn list(
             CASE WHEN CAST($5 AS BIGINT) IS NOT NULL THEN a.id END ASC LIMIT $7
     "#,super::repositories::access::readable_condition()))
         .bind(actor).bind(repo).bind(digest).bind(page.after).bind(page.before).bind(page.predicate_type).bind(page.limit+1).fetch_all(&mut *tx).await?;
-    let more = rows.len() > page.limit as usize;
-    rows.truncate(page.limit as usize);
+    let ids = attestations::page_ids(&sizes, page.limit as usize)?;
+    let more = ids.len() < sizes.len();
+    let mut rows: Vec<Attestation> = sqlx::query_as("SELECT id,bundle,initiator FROM repo_attestations WHERE repo_id=$1 AND id IN (SELECT value FROM json_each($2)) ORDER BY CASE WHEN $3 IS NULL THEN id END DESC,CASE WHEN $3 IS NOT NULL THEN id END ASC")
+        .bind(repo).bind(serde_json::to_string(&ids).map_err(|_| AttestationError::InvalidBundle)?).bind(page.before).fetch_all(&mut *tx).await?;
     if page.before.is_some() {
         rows.reverse();
     }

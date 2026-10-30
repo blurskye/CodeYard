@@ -11,7 +11,7 @@ native_operation!(crate::backend::db::postgres::users::tokens::create_token,
         scope: &str, expires_at: Option<DateTime<Utc>>) -> Result<Option<PersonalAccessToken>>);
 native_operation!(crate::backend::db::postgres::users::tokens::list_tokens,
     crate::backend::db::sqlite::users::tokens::list_tokens,
-    fn list_tokens(pool: &DbPool, user_id: i64, before: i64) -> Result<Vec<PersonalAccessToken>>);
+    fn list_tokens(pool: &DbPool, user_id: i64, session_id: &str, before: i64) -> Result<Vec<PersonalAccessToken>>);
 native_operation!(crate::backend::db::postgres::users::tokens::delete_token,
     crate::backend::db::sqlite::users::tokens::delete_token,
     /// Deletes only while the browser session that asked is still signed in.

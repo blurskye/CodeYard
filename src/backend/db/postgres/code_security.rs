@@ -65,7 +65,7 @@ async fn apply_repository(
         .await?;
         // Private vulnerability reporting lives in its own table and is offered on public
         // repositories only.
-        match private_reporting(&config.settings)? {
+        match private_reporting(&config.settings, false)? {
             Some(true) => {
                 sqlx::query("INSERT INTO repository_private_reporting(repo_id,enabled_by_id) SELECT id,$2 FROM repositories WHERE id=$1 AND NOT is_private ON CONFLICT(repo_id) DO NOTHING")
                     .bind(repo).bind(actor).execute(&mut *connection).await?;
@@ -248,7 +248,7 @@ pub async fn repository_settings(pool: &PgPool, repo: i64) -> Result<Option<Repo
             .await?,
     )
 }
-pub async fn repository_configuration(pool: &PgPool, repo: i64) -> Result<Option<Configuration>> {
+pub async fn repository_configuration<'e>(pool: impl sqlx::Executor<'e, Database = sqlx::Postgres>, repo: i64) -> Result<Option<Configuration>> {
     Ok(sqlx::query_as("SELECT c.* FROM code_security_configurations c JOIN repository_security_settings s ON s.configuration_id=c.id JOIN repositories r ON r.id=s.repo_id AND r.owner_org_id=c.org_id WHERE r.id=$1").bind(repo).fetch_optional(pool).await?)
 }
 pub(crate) async fn apply_default(connection: &mut PgConnection, repo: &Repository) -> Result<()> {

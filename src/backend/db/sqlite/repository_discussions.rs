@@ -8,39 +8,14 @@ pub async fn enabled(pool: &SqlitePool, repo: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT COALESCE((SELECT enabled FROM repository_discussion_settings WHERE repo_id=?1),false)").bind(repo).fetch_one(pool).await?)
 }
 pub async fn categories(pool: &SqlitePool, repo: i64) -> Result<Vec<Category>> {
+    use crate::backend::db::repository_discussions::DEFAULT_CATEGORIES;
+    let rows: Vec<Category> = sqlx::query_as("SELECT * FROM discussion_categories WHERE repo_id=?1 ORDER BY id")
+        .bind(repo).fetch_all(pool).await?;
+    if DEFAULT_CATEGORIES.iter().all(|(_, slug, _, _, _)| rows.iter().any(|row| row.slug == *slug)) {
+        return Ok(rows);
+    }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    for (name, slug, emoji, description, answerable) in [
-        (
-            "Announcements",
-            "announcements",
-            "📣",
-            "Updates from maintainers",
-            false,
-        ),
-        (
-            "General",
-            "general",
-            "💬",
-            "Chat about the repository",
-            false,
-        ),
-        (
-            "Ideas",
-            "ideas",
-            "💡",
-            "Share ideas for new features",
-            false,
-        ),
-        ("Polls", "polls", "📊", "Ask the community", false),
-        ("Q&A", "q-a", "🙏", "Ask questions and find answers", true),
-        (
-            "Show and tell",
-            "show-and-tell",
-            "🙌",
-            "Show something you made",
-            false,
-        ),
-    ] {
+    for &(name, slug, emoji, description, answerable) in DEFAULT_CATEGORIES {
         sqlx::query("INSERT INTO discussion_categories(repo_id,name,slug,emoji,description,answerable) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(repo_id,slug) DO NOTHING").bind(repo).bind(name).bind(slug).bind(emoji).bind(description).bind(answerable).execute(&mut *tx).await?;
     }
     let rows = sqlx::query_as("SELECT * FROM discussion_categories WHERE repo_id=?1 ORDER BY id")
@@ -101,12 +76,14 @@ pub async fn labels(
 pub async fn list(
     pool: &SqlitePool,
     viewer: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     filter: &Filter,
     offset: i64,
     limit: i64,
 ) -> Result<(i64, Vec<Discussion>)> {
-    let statement = filter.statement(false, &super::repositories::access::readable_condition())?;
-    let mut connection = super::repositories::discovery::search_connection(pool).await?;
+    let reader = crate::backend::db::repositories::credentials::Reader::authenticated(viewer, credential);
+    let statement = filter.statement(false, &super::repositories::access::readable_condition(), &reader)?;
+    let mut connection = pool.begin().await?;
     let count_sql = format!("SELECT COUNT(*) {}", statement.prefix);
     let mut count = sqlx::query_scalar::<_, i64>(&count_sql).bind(viewer);
     for value in &statement.args {
@@ -129,13 +106,30 @@ pub async fn list(
         .bind(offset)
         .fetch_all(&mut *connection)
         .await?;
-    connection.finish().await?;
+    connection.commit().await?;
     Ok((total, rows))
+}
+
+async fn credential_authority(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    repo: i64,
+    scope: &str,
+) -> Result<()> {
+    use crate::backend::db::repositories::credentials::{repository_condition, Access, Reader};
+    anyhow::ensure!(super::users::transitions::credential_live(tx, actor, credential, true).await?, Refusal::Denied);
+    let reader = Reader::authenticated(actor, credential);
+    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}))", repository_condition(false, scope, Access::Write, "$3", "$4", "$5")))
+        .bind(actor).bind(repo).bind(reader.token()).bind(reader.session()).bind(reader.hash()).fetch_one(&mut **tx).await?;
+    anyhow::ensure!(allowed, Refusal::Denied);
+    Ok(())
 }
 
 pub async fn write(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
     discussion: Option<i64>,
     change: &Write<'_>,
@@ -146,6 +140,7 @@ pub async fn write(
             super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
             Refusal::Denied
         );
+        credential_authority(&mut tx, actor, credential, repo, "administration").await?;
         sqlx::query("INSERT INTO repository_discussion_settings(repo_id,enabled) VALUES (?1,?2) ON CONFLICT(repo_id) DO UPDATE SET enabled=excluded.enabled").bind(repo).bind(value).execute(&mut *tx).await?;
         tx.commit().await?;
         return Ok(repo);
@@ -154,6 +149,7 @@ pub async fn write(
         super::discussions::lock_contribution_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
+    credential_authority(&mut tx, actor, credential, repo, "discussions").await?;
     let enabled:bool=sqlx::query_scalar("SELECT COALESCE((SELECT enabled FROM repository_discussion_settings WHERE repo_id=?1),false)").bind(repo).fetch_one(&mut *tx).await?;
     anyhow::ensure!(enabled, Refusal::Denied);
     let current: Option<Discussion> = if let Some(id) = discussion {
@@ -315,14 +311,18 @@ pub async fn write(
                     anyhow::ensure!(!body.trim().is_empty(), Refusal::Invalid);
                     sqlx::query("UPDATE discussion_comments SET body=?2,updated_at=CURRENT_TIMESTAMP WHERE id=?1").bind(comment).bind(body).execute(&mut *tx).await?;
                 } else {
-                    let removes_answer:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM discussion_comments WHERE discussion_id=?1 AND is_answer AND (id=?2 OR reply_to_id=?2))").bind(id).bind(comment).fetch_one(&mut *tx).await?;
+                    let removes_answer:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM discussion_comments WHERE discussion_id=?1 AND is_answer AND id=?2)").bind(id).bind(comment).fetch_one(&mut *tx).await?;
                     if removes_answer {
                         clear_answer(&mut tx, id).await?;
                     }
-                    sqlx::query("DELETE FROM discussion_comments WHERE id=?1")
-                        .bind(comment)
-                        .execute(&mut *tx)
-                        .await?;
+                    let replies: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM discussion_comments WHERE reply_to_id=?1)")
+                        .bind(comment).fetch_one(&mut *tx).await?;
+                    if replies {
+                        sqlx::query("UPDATE discussion_comments SET body='',updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1")
+                            .bind(comment).execute(&mut *tx).await?;
+                    } else {
+                        sqlx::query("DELETE FROM discussion_comments WHERE id=?1").bind(comment).execute(&mut *tx).await?;
+                    }
                 }
             }
             *comment

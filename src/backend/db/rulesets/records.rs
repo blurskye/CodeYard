@@ -224,6 +224,8 @@ pub(in crate::backend::db) struct StoredSuite {
     pub created_at: DateTime<Utc>,
 }
 impl StoredSuite {
+    pub(in crate::backend::db) const SUMMARY_COLUMNS: &'static str = "s.id,s.org_id,s.repo_id,s.repository_name,s.actor_id,s.actor_name,s.ref_name,s.before_sha,s.after_sha,s.result,s.evaluation_result,'[]' AS evaluations,s.created_at";
+
     pub(in crate::backend::db) fn decode(self) -> Result<Suite> {
         let evaluations = serde_json::from_str(&self.evaluations)
             .context("Invalid stored rule suite evaluations")?;

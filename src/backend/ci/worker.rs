@@ -162,7 +162,7 @@ pub(super) async fn run(
             }
             service
                 .queue
-                .claim_with_stop(&worker, service.config.mode, Some(&mut claim_stop))
+                .claim_with_stop(&worker, service.config.mode, &service.config.platform_labels(), Some(&mut claim_stop))
                 .await
         };
         tokio::pin!(claim);
@@ -2031,7 +2031,7 @@ mod tests {
         )
         .await
         .unwrap();
-        db::ci::claim_ci_run(&pool, "worker", "local", &[owner.id])
+        db::ci::claim_ci_run(&pool, "worker", "local", &[owner.id], &crate::backend::ci::CiConfig::default().platform_labels())
             .await
             .unwrap()
             .unwrap();

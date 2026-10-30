@@ -99,6 +99,10 @@ pub(crate) fn storage_error(error: anyhow::Error) -> StorageError {
                         message: "Invalid repository website.",
                     }
                 }
+                None if matches!(error.downcast_ref::<db::secrets::SecretsError>(), Some(db::secrets::SecretsError::TotalTooLarge | db::secrets::SecretsError::TooManySecrets)) => StorageError {
+                    kind: LifecycleFailure::Invalid,
+                    message: "Delivered Actions secrets exceed the CI delivery budget.",
+                },
                 None => unavailable(),
             }
         }

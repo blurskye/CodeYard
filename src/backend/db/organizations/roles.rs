@@ -27,6 +27,13 @@ pub struct UserAssignment {
     #[sqlx(skip)]
     pub inherited_from: Vec<Team>,
 }
+#[derive(sqlx::FromRow)]
+pub(crate) struct InheritedTeam {
+    pub user_id: i64,
+    #[sqlx(flatten)]
+    pub team: Team,
+}
+
 #[derive(Clone, Debug)]
 pub enum RoleTarget {
     User(String),

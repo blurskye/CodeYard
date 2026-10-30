@@ -138,6 +138,8 @@ pub struct Range {
     #[serde(default)]
     pub events: Vec<Value>,
 }
+pub(crate) const MAX_AFFECTED_PACKAGES: usize = 2000;
+
 impl Advisory {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         ensure!(
@@ -149,7 +151,8 @@ impl Advisory {
             !record.id.is_empty()
                 && record.id.len() <= 256
                 && !record.id.chars().any(char::is_control)
-                && record.affected.len() <= 2000,
+                && record.affected.len() <= MAX_AFFECTED_PACKAGES
+                && record.affected.iter().all(|affected| !affected.package.name.contains('\0') && !affected.package.ecosystem.contains('\0')),
             "Invalid OSV record"
         );
         Ok(record)
@@ -317,7 +320,7 @@ impl Advisory {
                 .find_map(|e| e["fixed"].as_str());
             json!({"package":{"ecosystem":ecosystem,"name":affected.package.name},"vulnerable_version_range":if ranges.is_empty() {"unknown".into()} else {ranges.join(" || ")},"first_patched_version":patched,"vulnerable_functions":[]})
         }).collect::<Vec<_>>());
-        db::dependabot_alerts::import_document(&value)
+        db::dependabot_alerts::osv_document(&value)
     }
     pub fn document(&self) -> Value {
         let ghsa = self
@@ -460,6 +463,7 @@ pub async fn synchronize(
     Ok(())
 }
 pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bool>) {
+    let mut discovered = false;
     let mut interval = tokio::time::interval(Duration::from_secs(30));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -470,7 +474,10 @@ pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bo
                     tracing::warn!(%error,"OSV synchronization failed");
                 }
             }
-            db::vulnerabilities::queue_changed(&state.pool).await?;
+            if !discovered {
+                db::vulnerabilities::queue_changed(&state.pool).await?;
+                discovered = true;
+            }
             for _ in 0..20 {
                 let Some((repo, generation)) = db::vulnerabilities::claim(&state.pool).await?
                 else {
@@ -539,11 +546,11 @@ mod tests {
             std::slice::from_ref(&snapshot),
             std::slice::from_ref(&document),
             &osv,
-        );
+        ).unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].0.version, "1.0rc1");
         osv.values_mut().next().unwrap().withdrawn = Some(chrono::Utc::now());
-        assert!(db::dependabot_alerts::matches(&[snapshot], &[document], &osv).is_empty());
+        assert!(db::dependabot_alerts::matches(&[snapshot], &[document], &osv).unwrap().is_empty());
     }
     #[test]
     fn local_maven_advisories_match_namespaced_package_urls() {
@@ -564,7 +571,7 @@ mod tests {
             &[snapshot],
             &[document],
             &std::collections::BTreeMap::new(),
-        );
+        ).unwrap();
         assert_eq!(matches.len(), 1);
     }
     #[test]

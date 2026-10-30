@@ -19,22 +19,7 @@ pub async fn create(
     token: &NewToken<'_>,
 ) -> Result<Option<(i64, String)>> {
     let mut tx = pool.begin().await?;
-    // Serialize with account suspension and password-reset revocation, as classic tokens do.
-    let active = sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR UPDATE")
-        .bind(user).fetch_optional(&mut *tx).await?;
-    if active.is_none() {
-        return Ok(None);
-    }
-    // Its own statement, as for classic tokens: under READ COMMITTED it sees a password change
-    // that committed while this call waited for the lock above.
-    let live: Option<bool> = sqlx::query_scalar(
-        "SELECT expires_at>clock_timestamp() FROM sessions WHERE id=$1 AND user_id=$2 FOR SHARE",
-    )
-    .bind(session)
-    .bind(user)
-    .fetch_optional(&mut *tx)
-    .await?;
-    if live != Some(true) {
+    if !super::users::transitions::active_session(&mut tx, user, session).await? {
         return Ok(None);
     }
     let status = match token.owner_org_id {
@@ -71,8 +56,9 @@ pub async fn regenerate(
     expires_at: Option<DateTime<Utc>>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    let changed = sqlx::query("UPDATE personal_access_tokens SET token_hash=$4,expires_at=$5,last_used_at=NULL,last_used_ip=NULL WHERE id=$1 AND user_id=$2 AND EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=$1) AND EXISTS(SELECT 1 FROM users WHERE id=$2 AND NOT is_banned AND NOT must_change_password) AND EXISTS(SELECT 1 FROM sessions WHERE id=$3 AND user_id=$2 AND expires_at>clock_timestamp())")
-        .bind(token).bind(user).bind(session).bind(hash).bind(expires_at).execute(&mut *tx).await?.rows_affected() == 1;
+    if !super::users::transitions::active_session(&mut tx, user, session).await? { return Ok(false); }
+    let changed = sqlx::query("UPDATE personal_access_tokens SET token_hash=$3,expires_at=$4,last_used_at=NULL,last_used_ip=NULL WHERE id=$1 AND user_id=$2 AND EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=$1)")
+        .bind(token).bind(user).bind(hash).bind(expires_at).execute(&mut *tx).await?.rows_affected() == 1;
     if changed {
         sqlx::query(
             "UPDATE fine_grained_tokens SET requested_at=clock_timestamp() WHERE token_id=$1",

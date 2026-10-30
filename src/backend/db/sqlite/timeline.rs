@@ -52,8 +52,20 @@ pub async fn record_event(
     detail: &str,
     previous: &str,
 ) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO timeline_events (repo_id, subject_kind, subject_id, actor_id, kind, detail, previous) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    append(&mut tx, repo_id, subject, subject_id, actor_id, kind, detail, previous).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn append(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, repo_id: i64, subject: &str, subject_id: i64,
+    actor_id: i64, kind: &str, detail: &str, previous: &str,
+) -> Result<i64> {
+    let (detail, previous) = crate::backend::db::timeline::event_details(kind, detail, previous)?;
+    Ok(sqlx::query_scalar(
+        "INSERT INTO timeline_events (repo_id, subject_kind, subject_id, actor_id, kind, detail, previous) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) RETURNING id",
     )
     .bind(repo_id)
     .bind(subject)
@@ -62,14 +74,14 @@ pub async fn record_event(
     .bind(kind)
     .bind(detail)
     .bind(previous)
-    .execute(pool)
-    .await?;
-    Ok(())
+    .fetch_one(&mut **tx)
+    .await?)
 }
 
 /// The events from `after` up to `before`, each bound optional, oldest first.
 pub async fn list_events(
     pool: &SqlitePool,
+    repo: i64,
     subject: &str,
     subject_id: i64,
     after: Option<DateTime<Utc>>,
@@ -85,7 +97,9 @@ pub async fn list_events(
         r#"
         SELECT u.username AS actor, e.kind, e.detail, e.previous, e.created_at
         FROM timeline_events e LEFT JOIN users u ON u.id = e.actor_id
-        WHERE e.subject_kind = ?1 AND e.subject_id = ?2
+        WHERE e.subject_kind = ?1 AND e.subject_id = ?2 AND e.repo_id=?7
+          AND ((?1='issue' AND EXISTS(SELECT 1 FROM issues i WHERE i.id=?2 AND i.repo_id=?7))
+            OR (?1='pull_request' AND EXISTS(SELECT 1 FROM pull_requests p WHERE p.id=?2 AND p.repo_id=?7)))
           AND (?3 IS NULL OR e.created_at >= ?3) AND (?4 IS NULL OR e.created_at < ?4)
         ORDER BY e.created_at, e.id LIMIT ?5 OFFSET ?6
         "#,
@@ -96,6 +110,7 @@ pub async fn list_events(
     .bind(before)
     .bind(limit)
     .bind(offset)
+    .bind(repo)
     .fetch_all(pool)
     .await?)
 }

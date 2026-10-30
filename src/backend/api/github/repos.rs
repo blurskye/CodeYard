@@ -268,6 +268,7 @@ async fn create(
     features(
         &state,
         actor.user.id,
+        &actor.credential(),
         repo.id,
         Some(input.has_wiki.unwrap_or(true)),
         input.has_discussions,
@@ -322,6 +323,7 @@ struct Update {
 async fn features(
     state: &AppState,
     actor: i64,
+    credential: &db::users::accounts::AccountCredential<'_>,
     repo: i64,
     wiki: Option<bool>,
     discussions: Option<bool>,
@@ -336,6 +338,7 @@ async fn features(
         db::repository_discussions::write(
             &state.pool,
             actor,
+            credential,
             repo,
             None,
             &db::repository_discussions::Write::Enabled(enabled),
@@ -454,6 +457,7 @@ async fn update(
     features(
         &state,
         actor.id,
+        &auth.credential(),
         repo.id,
         input.has_wiki,
         input.has_discussions,

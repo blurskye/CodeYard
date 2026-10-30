@@ -662,17 +662,7 @@ pub async fn update_pull_request(
                 db::pull_requests::records::list_stack_members(pool, repository.id, stack)
                     .await
                     .map_err(super::write_error)?;
-            let mut branch = existing.base_branch.clone();
-            for _ in 0..members.len() {
-                let Some(parent) = members
-                    .iter()
-                    .find(|member| member.state == "merged" && member.head_branch == branch)
-                else {
-                    break;
-                };
-                branch = parent.base_branch.clone();
-            }
-            (branch != existing.base_branch).then_some(branch)
+            db::pull_requests::records::reopened_stack_base(&existing, &members)
         } else {
             None
         }
@@ -695,6 +685,7 @@ pub async fn update_pull_request(
         .map(|(branch, sha)| db::pull_requests::records::NewBase {
             branch: branch.as_str(),
             sha: sha.as_str(),
+            automatic_reopen: req.base.is_none() && reopened_base.is_some(),
         });
     let pull_request = db::pull_requests::records::update_pull_request(
         pool,
@@ -723,38 +714,6 @@ pub async fn update_pull_request(
         }
     })?.ok_or_else(|| OperationError::Conflict { code: "conflict", message: "This entry, merge operation, or your permission changed; reload and review your preserved submission".to_owned() })?;
 
-    let subject = db::timeline::Subject::PullRequest;
-    if pull_request.title != existing.title {
-        db::timeline::record(
-            pool,
-            repository.id,
-            subject,
-            existing.id,
-            user.id,
-            "renamed",
-            &pull_request.title,
-            &existing.title,
-        )
-        .await;
-    }
-    if pull_request.state != existing.state {
-        let kind = if pull_request.state == "closed" {
-            "closed"
-        } else {
-            "reopened"
-        };
-        db::timeline::record(
-            pool,
-            repository.id,
-            subject,
-            existing.id,
-            user.id,
-            kind,
-            "",
-            "",
-        )
-        .await;
-    }
     if let Some(body) = req.body.as_deref() {
         let link = format!("/{owner}/{repo}/pulls/{number}");
         notify_mentions(

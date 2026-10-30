@@ -45,6 +45,11 @@ pub async fn set_enabled(pool: &PgPool, actor: i64, repo: i64, enabled: bool) ->
             .await?,
         Refusal::Denied
     );
+    if let Some(configuration) = super::super::code_security::repository_configuration(&mut *tx, repo).await? {
+        if let Some(fixed) = crate::backend::db::code_security::private_reporting(&configuration.settings, true)? {
+            anyhow::ensure!(fixed == enabled, Refusal::Denied);
+        }
+    }
     let private: bool = sqlx::query_scalar("SELECT is_private FROM repositories WHERE id=$1")
         .bind(repo)
         .fetch_one(&mut *tx)
@@ -93,12 +98,14 @@ pub(crate) async fn create_report_in(
 pub async fn list_reports(
     pool: &PgPool,
     actor: i64,
+    session: &str,
     repo: i64,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Report>> {
     let mut tx = pool.begin().await?;
     let admin = authority(&mut tx, actor, repo, false).await?;
+    anyhow::ensure!(super::super::users::transitions::live_session(&mut tx, actor, session).await?, Refusal::Denied);
     let rows=sqlx::query_as::<_,Report>("SELECT s.*,u.username AS reporter FROM repository_security_reports s LEFT JOIN users u ON u.id=s.reporter_id WHERE s.repo_id=$1 AND (s.reporter_id=$2 OR $3) ORDER BY s.id DESC LIMIT $4 OFFSET $5").bind(repo).bind(actor).bind(admin).bind(limit.clamp(1,101)).bind(offset.clamp(0,100000)).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
@@ -115,12 +122,14 @@ async fn report_in(
 pub async fn report_thread(
     pool: &PgPool,
     actor: i64,
+    session: &str,
     repo: i64,
     id: i64,
     offset: i64,
 ) -> Result<Thread> {
     let mut tx = pool.begin().await?;
     let admin = authority(&mut tx, actor, repo, false).await?;
+    anyhow::ensure!(super::super::users::transitions::live_session(&mut tx, actor, session).await?, Refusal::Denied);
     let report = report_in(&mut tx, actor, repo, id, admin).await?;
     let replies=sqlx::query_as::<_,Reply>("SELECT s.*,u.username AS author FROM repository_security_replies s LEFT JOIN users u ON u.id=s.author_id WHERE s.report_id=$1 ORDER BY s.id LIMIT 21 OFFSET $2").bind(id).bind(offset.clamp(0,100000)).fetch_all(&mut *tx).await?;
     tx.commit().await?;

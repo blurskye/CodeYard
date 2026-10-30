@@ -17,10 +17,10 @@ pub enum AccountInputError {
     EmailFormat,
 }
 
-pub(crate) fn validate_username(username: &str) -> Result<(), AccountInputError> {
+pub(crate) fn validate_namespace(username: &str, min_bytes: usize) -> Result<(), AccountInputError> {
     // PostgreSQL VARCHAR(255) is a character bound, not a UTF-8 byte bound.
     // Non-ASCII usernames pass this check; the byte limit keeps request work bounded.
-    if !(3..=1024).contains(&username.len()) || username.chars().count() > 255 {
+    if !(min_bytes..=1024).contains(&username.len()) || username.chars().count() > 255 {
         return Err(AccountInputError::UsernameBounds);
     }
     if !username
@@ -33,7 +33,7 @@ pub(crate) fn validate_username(username: &str) -> Result<(), AccountInputError>
 }
 
 pub(crate) fn validate_account(input: &PasswordAccount<'_>) -> Result<(), AccountInputError> {
-    validate_username(input.username)?;
+    validate_namespace(input.username, 3)?;
     validate_new_password(input.password)?;
     // A blank optional address means none; the account is saved without one.
     if let Some(email) = input.email.filter(|email| !email.trim().is_empty()) {

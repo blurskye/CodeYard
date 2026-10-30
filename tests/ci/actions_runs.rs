@@ -56,7 +56,7 @@ async fn contract(pg: bool) {
         .await;
         ids.push(body["workflow_run_id"].as_i64().unwrap());
     }
-    let first = db::ci::claim_ci_run(f.pool(), "documents", "local", &[alice])
+    let first = db::ci::claim_ci_run(f.pool(), "documents", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
@@ -71,7 +71,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .unwrap();
-    let running = db::ci::claim_ci_run(f.pool(), "documents", "local", &[alice])
+    let running = db::ci::claim_ci_run(f.pool(), "documents", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();

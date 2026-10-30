@@ -51,6 +51,7 @@ pub async fn create_issue_with_metadata(
         if !metadata.labels.is_empty() {
             super::labels::write_item_labels_transaction(
                 &mut tx,
+                author_id,
                 repo_id,
                 LabelTarget::Issue,
                 issue.id,
@@ -62,6 +63,7 @@ pub async fn create_issue_with_metadata(
         for &user in metadata.assignees {
             super::assignees::assign_in_transaction(
                 &mut tx,
+                author_id,
                 repo_id,
                 AssignedItem::Issue(issue.id),
                 user,
@@ -71,6 +73,7 @@ pub async fn create_issue_with_metadata(
         if let Some(number) = metadata.milestone {
             super::milestones::set_item_milestone_in_transaction(
                 &mut tx,
+                author_id,
                 repo_id,
                 "issues",
                 issue.id,
@@ -371,11 +374,13 @@ pub(crate) async fn update_issue_in_transaction(
     edit: crate::backend::db::discussions::DiscussionEdit<'_>,
     state_reason: Option<&str>,
 ) -> Result<Option<Issue>> {
+    let old: Option<Issue> = sqlx::query_as("SELECT * FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE")
+        .bind(issue_id).bind(repo).fetch_optional(&mut **tx).await?;
     let issue = sqlx::query_as::<_, Issue>(
         r#"UPDATE issues SET
             title = COALESCE($2, title), body = COALESCE($3, body),
             state = COALESCE($4, state),
-            state_reason = CASE WHEN $4 IS NULL OR $4=state THEN state_reason WHEN $4='open' THEN 'reopened' WHEN $4='closed' THEN COALESCE($9,'completed') ELSE state_reason END,
+            state_reason = CASE WHEN $4='closed' AND $9::TEXT IS NOT NULL THEN $9 WHEN $4 IS NULL OR $4=state THEN state_reason WHEN $4='open' THEN 'reopened' WHEN $4='closed' THEN COALESCE($9,'completed') ELSE state_reason END,
             closed_at = CASE WHEN $4 = 'open' THEN NULL WHEN $4 = 'closed' AND state <> 'closed' THEN clock_timestamp() ELSE closed_at END,
             closed_by_id = CASE WHEN $4 = 'open' THEN NULL WHEN $4 = 'closed' AND state <> 'closed' THEN $7 ELSE closed_by_id END,
             updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond')
@@ -385,6 +390,11 @@ pub(crate) async fn update_issue_in_transaction(
     ).bind(issue_id).bind(edit.title).bind(edit.body).bind(edit.state)
         .bind(edit.expected_state).bind(edit.expected_updated).bind(edit.actor_id).bind(repo).bind(state_reason)
         .fetch_optional(&mut **tx).await?;
+    if let (Some(old), Some(issue)) = (old, issue.as_ref()) {
+        for (kind, detail, previous) in crate::backend::db::timeline::edit_events(&old.title, &old.state, &issue.title, &issue.state) {
+            super::timeline::append(tx, repo, "issue", issue_id, edit.actor_id, kind, detail, previous).await?;
+        }
+    }
     Ok(issue)
 }
 

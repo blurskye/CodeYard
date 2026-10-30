@@ -28,8 +28,7 @@ pub async fn key(
 ) -> Result<(String, crypto_box::SecretKey), ValueError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, org).await?;
-    let key = crypto_box::SecretKey::generate(&mut rand::thread_rng());
-    let (encrypted, nonce) = encryptor.encrypt(&key.to_bytes())?;
+    let (encrypted, nonce) = encryptor.generate_sealed_box_key()?;
     sqlx::query("INSERT INTO org_actions_keys(org_id,key_id,encrypted_key,nonce) VALUES($1,$2,$3,$4) ON CONFLICT(org_id) DO NOTHING")
         .bind(org).bind(uuid::Uuid::new_v4().simple().to_string()).bind(encrypted).bind(nonce.as_slice()).execute(&mut *tx).await?;
     let (id, encrypted, nonce): (String, Vec<u8>, Vec<u8>) =
@@ -37,12 +36,9 @@ pub async fn key(
             .bind(org)
             .fetch_one(&mut *tx)
             .await?;
-    let bytes: [u8; 32] = encryptor
-        .decrypt(&encrypted, &nonce)?
-        .try_into()
-        .map_err(|_| SecretError::DecryptionFailed)?;
+    let key = encryptor.sealed_box_key(&encrypted, &nonce)?;
     tx.commit().await?;
-    Ok((id, crypto_box::SecretKey::from(bytes)))
+    Ok((id, key))
 }
 
 pub async fn list(
@@ -95,6 +91,18 @@ async fn replace_repositories(
     for id in ids {
         sqlx::query("INSERT INTO org_actions_value_repositories(org_id,kind,name,repo_id) VALUES($1,$2,$3,$4)").bind(org).bind(kind.as_str()).bind(name).bind(id).execute(&mut *connection).await?;
     }
+    Ok(())
+}
+
+async fn delivery_budget(c: &mut Connection, org: i64) -> Result<(), ValueError> {
+    for private in [false, true] {
+        let bytes: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(bytes),0) FROM (SELECT length(CAST(name AS BLOB))+length(encrypted_value)-16 AS bytes FROM org_actions_values WHERE org_id=?1 AND kind='secret' AND (visibility='all' OR (?2 AND visibility='private')) ORDER BY name LIMIT 100) v")
+            .bind(org).bind(private).fetch_one(&mut *c).await?;
+        if bytes > crate::backend::db::secrets::MAX_REPOSITORY_SECRETS_BYTES as i64 { return Err(ValueError::SecretsSize); }
+    }
+    let invalid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=?1 AND COALESCE((SELECT SUM(i.bytes) FROM (SELECT v.name,length(CAST(v.name AS BLOB))+length(v.encrypted_value)-16 AS bytes FROM org_actions_values v WHERE v.org_id=?1 AND v.kind='secret' AND (v.visibility='all' OR (v.visibility='private' AND r.is_private) OR (v.visibility='selected' AND EXISTS(SELECT 1 FROM org_actions_value_repositories s WHERE s.org_id=v.org_id AND s.kind=v.kind AND s.name=v.name AND s.repo_id=r.id))) ORDER BY v.name LIMIT 100) i WHERE NOT EXISTS(SELECT 1 FROM repo_secrets s WHERE s.repo_id=r.id AND upper(s.name)=upper(i.name))),0) + COALESCE((SELECT SUM(length(CAST(s.name AS BLOB))+length(s.encrypted_value)-16) FROM repo_secrets s WHERE s.repo_id=r.id),0)>?2)")
+        .bind(org).bind(crate::backend::db::secrets::MAX_REPOSITORY_SECRETS_BYTES as i64).fetch_one(c).await?;
+    if invalid { return Err(ValueError::SecretsSize); }
     Ok(())
 }
 
@@ -183,6 +191,7 @@ pub async fn save(
     } else if let Some(ids) = input.repositories {
         replace_repositories(&mut tx, org, input.kind, input.name, ids).await?;
     }
+    if input.kind == Kind::Secret { delivery_budget(&mut tx, org).await?; }
     tx.commit().await?;
     Ok(old.is_none())
 }
@@ -206,6 +215,7 @@ pub async fn delete(
     if result.rows_affected() == 0 {
         return Err(ValueError::NotFound);
     }
+    if kind == Kind::Secret { delivery_budget(&mut tx, org).await?; }
     tx.commit().await?;
     Ok(())
 }
@@ -277,6 +287,7 @@ pub async fn select(
     .bind(chrono::Utc::now())
     .execute(&mut *tx)
     .await?;
+    if kind == Kind::Secret { delivery_budget(&mut tx, org).await?; }
     tx.commit().await?;
     Ok(())
 }

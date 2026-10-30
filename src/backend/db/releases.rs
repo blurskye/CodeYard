@@ -113,7 +113,7 @@ impl ReleaseChanges {
             // Publishing a draft makes it the latest release unless the edit says otherwise.
             make_latest: self
                 .make_latest
-                .unwrap_or(current.is_latest || (current.is_draft && !is_draft)),
+                .unwrap_or(current.is_latest || (current.is_draft && !is_draft) || (!is_draft && current.is_prerelease && self.is_prerelease == Some(false))),
         }
     }
 }
@@ -158,7 +158,7 @@ native_operation!(crate::backend::db::postgres::releases::delete_release,
 
 native_operation!(crate::backend::db::postgres::releases::add_release_asset,
     crate::backend::db::sqlite::releases::add_release_asset,
-    fn add_release_asset(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64, asset: &NewReleaseAsset<'_>) -> Result<ReleaseAsset>);
+    fn add_release_asset(pool: &DbPool, actor_id: i64, credential: &super::users::accounts::AccountCredential<'_>, repo_id: i64, release_id: i64, asset: &NewReleaseAsset<'_>) -> Result<ReleaseAsset>);
 
 // Removes an asset and its unused file, with durable object cleanup in the same transaction.
 native_operation!(crate::backend::db::postgres::releases::delete_release_asset,
@@ -222,6 +222,10 @@ native_operation!(crate::backend::db::postgres::releases::list_release_assets,
 native_operation!(crate::backend::db::postgres::releases::get_repository_release_asset,
     crate::backend::db::sqlite::releases::get_repository_release_asset,
     fn get_repository_release_asset(pool: &DbPool, repo_id: i64, asset_id: i64) -> Result<Option<ReleaseAsset>>);
+
+native_operation!(crate::backend::db::postgres::releases::download_asset,
+    crate::backend::db::sqlite::releases::download_asset,
+    fn download_asset(pool: &DbPool, viewer: Option<i64>, repo: i64, tag: Option<&str>, name: Option<&str>, asset: Option<i64>) -> Result<Option<ReleaseAsset>>);
 
 native_operation!(crate::backend::db::postgres::releases::get_release_asset_by_name,
     crate::backend::db::sqlite::releases::get_release_asset_by_name,

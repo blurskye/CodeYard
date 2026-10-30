@@ -117,7 +117,7 @@ async fn create(
     let key = keys::enroll_signing(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id),
+        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         input
             .title
             .as_deref()
@@ -149,7 +149,7 @@ async fn remove(
     keys::delete_signing(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id),
+        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         id,
     )
     .await

@@ -172,8 +172,9 @@ pub(crate) fn apply(current: Option<&str>, settings: &str) -> Result<String> {
 }
 
 /// Whether a configuration turns private vulnerability reporting on or off; `None` leaves it.
-pub(crate) fn private_reporting(configuration: &str) -> Result<Option<bool>> {
+pub(crate) fn private_reporting(configuration: &str, enforced_only: bool) -> Result<Option<bool>> {
     let value: Value = serde_json::from_str(configuration)?;
+    if enforced_only && value["enforcement"] != "enforced" { return Ok(None); }
     Ok(match value["private_vulnerability_reporting"].as_str() {
         Some("enabled") => Some(true),
         Some("disabled") => Some(false),

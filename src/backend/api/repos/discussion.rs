@@ -870,6 +870,7 @@ pub(crate) async fn discussion(
     let event_offset = (event_page as i64 - 1) * db::timeline::EVENT_LIMIT;
     let mut event_rows = db::timeline::list_events(
         &ctx.state.pool,
+        repo.record.id,
         subject.0.name(),
         subject.1,
         span.0,

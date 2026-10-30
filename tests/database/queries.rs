@@ -631,7 +631,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         .await
         .unwrap();
     assert_eq!(run.status, "queued");
-    let claimed = db::ci::claim_ci_run(&pool, "node-a/1", "podman", &[])
+    let claimed = db::ci::claim_ci_run(&pool, "node-a/1", "podman", &[], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
@@ -639,7 +639,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
     assert_eq!(claimed.status, "running");
     assert_eq!(claimed.worker.as_deref(), Some("node-a/1"));
     assert!(
-        db::ci::claim_ci_run(&pool, "node-b/1", "local", &[])
+        db::ci::claim_ci_run(&pool, "node-b/1", "local", &[], &codeyard::backend::ci::CiConfig::default().platform_labels())
             .await
             .unwrap()
             .is_none(),
@@ -747,7 +747,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
     let running = db::ci::enqueue_ci_run(&pool, new_run("ci", None), &[])
         .await
         .unwrap();
-    db::ci::claim_ci_run(&pool, "node-a/1", "podman", &[])
+    db::ci::claim_ci_run(&pool, "node-a/1", "podman", &[], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
@@ -982,7 +982,7 @@ async fn token_session_revocation_contract(pool: &DbPool) {
         Err(TokenError::Denied)
     ));
     assert!(
-        codeyard::backend::db::users::tokens::list_tokens(pool, user.id, 0)
+        codeyard::backend::db::users::tokens::list_tokens(pool, user.id, &crate::support::live_session(pool, user.id).await, 0)
             .await
             .unwrap()
             .is_empty()
@@ -1387,6 +1387,8 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         first.id,
         &sha('9'),
         &sha('6'),
+        first.head_repo_id,
+        &first.head_branch,
     )
     .await
     .unwrap());
@@ -1395,6 +1397,8 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         first.id,
         &sha('1'),
         &sha('6'),
+        first.head_repo_id,
+        &first.head_branch,
     )
     .await
     .unwrap());
@@ -1448,6 +1452,8 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         first.id,
         &sha('1'),
         &sha('8'),
+        first.head_repo_id,
+        &first.head_branch,
     )
     .await
     .unwrap());
@@ -1486,6 +1492,8 @@ async fn pull_request_revision_contract(pool: &DbPool) {
             pull.id,
             &pull.head_sha,
             &sha('8'),
+            pull.head_repo_id,
+            &pull.head_branch,
         )
         .await
         .unwrap());
@@ -1710,6 +1718,7 @@ async fn pull_request_merge_mark_contract(pool: &DbPool) {
             base: Some(NewBase {
                 branch: "develop",
                 sha: &"b".repeat(40),
+                automatic_reopen: false,
             }),
             maintainer_can_modify: None,
         },

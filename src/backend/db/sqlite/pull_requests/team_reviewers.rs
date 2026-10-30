@@ -18,10 +18,9 @@ pub async fn list(
         .bind(repo).bind(viewer).bind(pull).fetch_all(pool).await?)
 }
 
-pub async fn members(pool: &SqlitePool, repo: i64, team: i64) -> Result<Vec<i64>> {
-    let rows = sqlx::query_scalar("SELECT DISTINCT u.id FROM effective_team_memberships m JOIN teams t ON t.id=m.team_id JOIN org_memberships o ON o.org_id=t.org_id AND o.user_id=m.user_id JOIN users u ON u.id=m.user_id JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL WHERE r.id=?1 AND t.id=?2 AND m.role IN ('member','maintainer') AND o.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 3 AND 5) ORDER BY u.id LIMIT 5001")
-        .bind(repo).bind(team).fetch_all(pool).await?;
-    ensure!(rows.len() <= 5000, "Review team exceeds recipient limit");
+pub async fn members(pool: &SqlitePool, repo: i64, team: i64, after: i64) -> Result<Vec<i64>> {
+    let rows = sqlx::query_scalar("SELECT DISTINCT u.id FROM effective_team_memberships m JOIN teams t ON t.id=m.team_id JOIN org_memberships o ON o.org_id=t.org_id AND o.user_id=m.user_id JOIN users u ON u.id=m.user_id JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL WHERE r.id=?1 AND t.id=?2 AND m.role IN ('member','maintainer') AND o.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 3 AND 5) AND u.id>?3 ORDER BY u.id LIMIT 500")
+        .bind(repo).bind(team).bind(after).fetch_all(pool).await?;
     Ok(rows)
 }
 
@@ -75,7 +74,7 @@ pub async fn change(
             continue;
         }
         if expected.is_some() {
-            let reviewed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews v JOIN effective_team_memberships m ON m.user_id=v.author_id AND m.team_id=?2 WHERE v.pull_request_id=?1 AND v.state<>'pending')")
+            let reviewed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews v JOIN effective_team_memberships m ON m.user_id=v.author_id AND m.team_id=?2 WHERE v.pull_request_id=?1 AND v.state<>'pending' AND v.author_id<>(SELECT author_id FROM pull_requests WHERE id=?1))")
                 .bind(pull).bind(team.id).fetch_one(&mut *tx).await?;
             if reviewed {
                 continue;

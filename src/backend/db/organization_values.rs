@@ -68,14 +68,16 @@ pub enum ValueError {
     Repository,
     #[error("An organization can have at most 1000 values of each kind")]
     Limit,
+    #[error("Delivered Actions secrets exceed 1 MiB in total")]
+    SecretsSize,
 }
 
 pub fn validate(name: &str, value: &str) -> Result<(), ValueError> {
-    super::secrets::validate_repository_secret(name, "").map_err(|_| ValueError::InvalidName)?;
-    if value.len() > 48 * 1024 || value.contains('\0') {
-        return Err(ValueError::InvalidValue);
-    }
-    Ok(())
+    use codeyard_actions::values::InvalidValue;
+    codeyard_actions::values::validate(name, value).map_err(|error| match error {
+        InvalidValue::Name | InvalidValue::ReservedName => ValueError::InvalidName,
+        InvalidValue::Nul | InvalidValue::TooLarge => ValueError::InvalidValue,
+    })
 }
 
 native_operation!(crate::backend::db::postgres::organizations::action_values::key,

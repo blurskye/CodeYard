@@ -477,6 +477,7 @@ pub(crate) async fn native_review(
         ctx.state.cluster.as_ref(),
         &ctx.state.notification_broadcaster,
         user,
+        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
         (owner.clone(), name.clone(), number),
         request,
     )

@@ -38,6 +38,7 @@ pub async fn get_pins(
 pub async fn set_pin(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
     item: AssignedItem,
     comment: i64,
@@ -46,7 +47,8 @@ pub async fn set_pin(
     let s = scope(item);
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_write_authority(&mut tx, actor, repo).await?
+            && super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
         PinRefusal::Denied
     );
     let present: bool = sqlx::query_scalar(&format!(

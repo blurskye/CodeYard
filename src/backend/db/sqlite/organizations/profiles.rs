@@ -16,12 +16,12 @@ pub async fn create_organization(
     }
     // Writer serialization is sufficient only once ALL account insertion paths
     // check organizations in their write transaction. Parent owns those changes.
-    let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE username=?1 UNION ALL SELECT 1 FROM organizations WHERE name=?1)")
+    let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE lower(username)=lower(?1) UNION ALL SELECT 1 FROM organizations WHERE lower(name)=lower(?1))")
         .bind(&input.slug).fetch_one(&mut *tx).await?;
     if occupied {
         return Ok(Conflict);
     }
-    let id: Option<i64> = sqlx::query_scalar("INSERT INTO organizations(name,display_name,description) VALUES(?1,?2,?3) ON CONFLICT(name) DO NOTHING RETURNING id")
+    let id: Option<i64> = sqlx::query_scalar("INSERT INTO organizations(name,display_name,description) VALUES(?1,?2,?3) ON CONFLICT DO NOTHING RETURNING id")
         .bind(&input.slug).bind(input.profile.display_name.clone().flatten()).bind(input.profile.description.clone().flatten()).fetch_optional(&mut *tx).await?;
     let Some(id) = id else {
         return Ok(Conflict);

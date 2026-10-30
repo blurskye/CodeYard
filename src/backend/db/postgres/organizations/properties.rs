@@ -28,7 +28,7 @@ async fn compatible_on(
     old: Option<&Definition>,
     input: &DefinitionInput,
 ) -> Result<()> {
-    if let Some(old) = old {
+    if let Some(old) = old.filter(|old| !input.same_value_rules(&old.fields)) {
         let mut after = 0;
         loop {
             let rows:Vec<(i64,String)>=sqlx::query_as("SELECT repo_id,value FROM repository_property_values WHERE org_id=$1 AND definition_id=$2 AND repo_id>$3 ORDER BY repo_id LIMIT 500").bind(org).bind(old.id).bind(after).fetch_all(&mut *c).await?;
@@ -41,7 +41,7 @@ async fn compatible_on(
             }
         }
     }
-    if input.needs_explicit_value() {
+    if input.needs_explicit_value() && old.is_none_or(|old| !old.fields.needs_explicit_value()) {
         let missing:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL AND NOT EXISTS(SELECT 1 FROM repository_property_values v WHERE v.repo_id=r.id AND v.org_id=$1 AND v.definition_id=$2))").bind(org).bind(old.map(|old|old.id)).fetch_one(c).await?;
         ensure!(
             !missing,
@@ -213,30 +213,7 @@ pub(crate) async fn values_on(
     .await?
     .into_iter()
     .collect();
-    let mut result = Vec::new();
-    let mut bytes = 0;
-    for definition in definitions {
-        let value = match rows.get(&definition.id) {
-            Some(value) => Some(serde_json::from_str::<PropertyValue>(value)?),
-            None => {
-                if definition.fields.require_explicit_values {
-                    None
-                } else {
-                    definition.fields.default_value.clone()
-                }
-            }
-        };
-        if let Some(value) = &value {
-            definition.fields.validate_value(value)?;
-        }
-        bytes += serde_json::to_string(&value)?.len() + definition.fields.property_name.len() + 64;
-        ensure!(bytes <= 64 * 1024 * 1024, Refusal::TooLarge);
-        result.push(ValueInput {
-            property_name: definition.fields.property_name.clone(),
-            value,
-        });
-    }
-    Ok(result)
+    crate::backend::db::organizations::properties::effective_values(definitions, &rows)
 }
 pub async fn repository(
     pool: &PgPool,
@@ -483,10 +460,15 @@ pub async fn list_values(
         .build_query_as::<Repository>()
         .fetch_all(&mut *tx)
         .await?;
+    let ids: Vec<i64> = repositories.iter().map(|repository| repository.id).collect();
+    let rows: Vec<(i64, i64, String)> = sqlx::query_as("SELECT repo_id,definition_id,value FROM repository_property_values WHERE repo_id=ANY($1)")
+        .bind(&ids).fetch_all(&mut *tx).await?;
+    let mut values: std::collections::HashMap<i64, std::collections::HashMap<i64, String>> = std::collections::HashMap::new();
+    for (repo, definition, value) in rows { values.entry(repo).or_default().insert(definition, value); }
     let mut result = Vec::new();
     let mut bytes = 0;
     for repository in repositories {
-        let properties = values_on(&mut tx, repository.id, &definitions).await?;
+        let properties = crate::backend::db::organizations::properties::effective_values(&definitions, &values.remove(&repository.id).unwrap_or_default())?;
         for property in &properties {
             bytes +=
                 property.property_name.len() + serde_json::to_string(&property.value)?.len() + 64;

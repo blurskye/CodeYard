@@ -151,6 +151,7 @@ pub async fn save(
     encryptor: Option<&SecretEncryptor>,
     owner: HookOwner,
     actor: &User,
+    credential: &db::users::accounts::AccountCredential<'_>,
     id: Option<i64>,
     form: &HookForm,
 ) -> Result<i64, HookError> {
@@ -172,12 +173,12 @@ pub async fn save(
     let secret = seal(encryptor, &form.secret)?;
     match id {
         None => {
-            let id = hooks::insert_webhook(pool, owner, actor.id, &fields, secret.as_ref())
+            let id = hooks::insert_webhook(pool, owner, actor.id, credential, &fields, secret.as_ref())
                 .await
                 .map_err(unavailable)?
                 .ok_or(HookError::Denied)?;
             // A hook that was saved stays saved when its ping cannot be queued.
-            if ping(pool, owner, actor, id).await.is_err() {
+            if ping(pool, owner, actor, credential, id).await.is_err() {
                 tracing::warn!(webhook_id = id, "could not queue the webhook ping");
             }
             Ok(id)
@@ -191,7 +192,7 @@ pub async fn save(
             let mut patch = hooks::WebhookPatch::from(&fields);
             patch.clear_secret = form.clear_secret;
             patch.clear_password = form.clear_password;
-            let updated = hooks::patch_webhook(pool, owner, actor.id, id, &patch, secret.as_ref())
+            let updated = hooks::patch_webhook(pool, owner, actor.id, credential, id, &patch, secret.as_ref())
                 .await
                 .map_err(unavailable)?
                 .ok_or(HookError::Denied)?;
@@ -208,6 +209,7 @@ pub async fn update(
     encryptor: Option<&SecretEncryptor>,
     owner: HookOwner,
     actor: &User,
+    credential: &db::users::accounts::AccountCredential<'_>,
     id: i64,
     patch: &HookPatch,
 ) -> Result<(), HookError> {
@@ -245,7 +247,7 @@ pub async fn update(
         .map(|secret| seal(encryptor, secret))
         .transpose()?
         .flatten();
-    match hooks::patch_webhook(pool, owner, actor.id, id, &fields, secret.as_ref())
+    match hooks::patch_webhook(pool, owner, actor.id, credential, id, &fields, secret.as_ref())
         .await
         .map_err(unavailable)?
     {
@@ -259,10 +261,11 @@ pub async fn delete(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
+    credential: &db::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
     authorize(pool, actor, owner).await?;
-    let deleted = hooks::delete_webhook(pool, owner, actor.id, id)
+    let deleted = hooks::delete_webhook(pool, owner, actor.id, credential, id)
         .await
         .map_err(unavailable)?
         .ok_or(HookError::Denied)?;
@@ -274,12 +277,10 @@ pub async fn delete(
 }
 
 /// Queues a ping to one hook, as the Test button does.
-pub async fn ping(pool: &DbPool, owner: HookOwner, actor: &User, id: i64) -> Result<(), HookError> {
-    authorize(pool, actor, owner).await?;
-    let hook = hooks::get_webhook(pool, owner, id)
-        .await
-        .map_err(unavailable)?
-        .ok_or(HookError::NotFound)?;
+pub async fn ping(pool: &DbPool, owner: HookOwner, actor: &User, credential: &db::users::accounts::AccountCredential<'_>, id: i64) -> Result<(), HookError> {
+    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(id), None, 0, false)
+        .await.map_err(unavailable)?.ok_or(HookError::Denied)?;
+    let hook = snapshot.hook.ok_or(HookError::NotFound)?;
     let payload = ping_payload(pool, owner, actor, &hook).await?;
     let json = payload.to_string();
     let outgoing = outgoing(events::PING, None, &hook, &json);
@@ -295,18 +296,14 @@ pub async fn redeliver(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
+    credential: &db::users::accounts::AccountCredential<'_>,
     hook_id: i64,
     delivery_id: i64,
 ) -> Result<(), HookError> {
-    authorize(pool, actor, owner).await?;
-    let hook = hooks::get_webhook(pool, owner, hook_id)
-        .await
-        .map_err(unavailable)?
-        .ok_or(HookError::NotFound)?;
-    let recorded = hooks::get_delivery(pool, hook_id, delivery_id)
-        .await
-        .map_err(unavailable)?
-        .ok_or(HookError::NotFound)?;
+    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(hook_id), Some(delivery_id), 0, false)
+        .await.map_err(unavailable)?.ok_or(HookError::Denied)?;
+    let hook = snapshot.hook.ok_or(HookError::NotFound)?;
+    let recorded = snapshot.delivery.ok_or(HookError::NotFound)?;
     if enqueue(pool, hook, super::delivery::redelivery(&recorded)) {
         Ok(())
     } else {
@@ -320,13 +317,12 @@ pub async fn test_push(
     cluster: Option<&crate::backend::cluster::NodeContext>,
     owner: HookOwner,
     actor: &User,
+    credential: &db::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
-    authorize(pool, actor, owner).await?;
-    let hook = hooks::get_webhook(pool, owner, id)
-        .await
-        .map_err(unavailable)?
-        .ok_or(HookError::NotFound)?;
+    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(id), None, 0, false)
+        .await.map_err(unavailable)?.ok_or(HookError::Denied)?;
+    let hook = snapshot.hook.ok_or(HookError::NotFound)?;
     if !events::subscribes(&hook.events, events::PUSH) {
         return Err(HookError::Invalid("The webhook does not subscribe to push"));
     }

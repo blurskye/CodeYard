@@ -264,7 +264,7 @@ pub async fn set_lock(
         .bind(next)
         .execute(&mut *tx)
         .await?;
-        sqlx::query("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind,detail) VALUES (?1,?2,?3,?4,?5,?6)").bind(repo_id).bind(subject).bind(id).bind(actor_id).bind(if locked {"locked"} else {"unlocked"}).bind(reason.unwrap_or("")).execute(&mut *tx).await?;
+        super::timeline::append(&mut tx, repo_id, subject, id, actor_id, if locked {"locked"} else {"unlocked"}, reason.unwrap_or(""), "").await?;
     }
     tx.commit().await?;
     Ok(())

@@ -168,6 +168,7 @@ async fn contract(pg: bool) {
         "CALL_PASSWORD",
         "reusable-server-password",
         Some(actor),
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), actor).await),
     )
     .await
     .unwrap();
@@ -222,7 +223,7 @@ jobs:
         }
         // Engine selection is made at claim time.
         let claim = queue
-            .claim(&format!("reusable-{engine}"), CiExecutionMode::Local)
+            .claim(&format!("reusable-{engine}"), CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
             .await
             .unwrap()
             .unwrap();
@@ -312,7 +313,7 @@ jobs:
         assert_eq!(value["sha"], pinned);
     }
     queue
-        .claim("reusable-tag", CiExecutionMode::Local)
+        .claim("reusable-tag", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
@@ -347,7 +348,7 @@ jobs:
     )
     .await;
     assert!(queue
-        .claim("reusable-denied", CiExecutionMode::Local)
+        .claim("reusable-denied", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .is_err());
     let failed = db::ci::get_ci_run_by_run_id(f.pool(), revoked.run_id)

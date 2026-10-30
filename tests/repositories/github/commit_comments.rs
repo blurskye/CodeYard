@@ -41,6 +41,7 @@ pub(super) async fn run(
         pool,
         hook_owner,
         alice,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, alice).await),
         &db::webhooks::WebhookFields {
             username: None,
             password: None,
@@ -646,7 +647,7 @@ pub(super) async fn run(
     assert!(!notices
         .iter()
         .any(|notice| notice.metadata["commit_comment_id"] == second["id"]));
-    assert!(db::webhooks::delete_webhook(pool, hook_owner, alice, hook)
+    assert!(db::webhooks::delete_webhook(pool, hook_owner, alice, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, alice).await), hook)
         .await
         .unwrap()
         .unwrap());

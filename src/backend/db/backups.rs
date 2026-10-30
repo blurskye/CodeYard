@@ -10,6 +10,8 @@ pub struct PullRequestHead {
     pub number: i64,
     pub state: String,
     pub head_sha: String,
+    pub head_repo_id: Option<i64>,
+    pub head_branch: String,
     pub base_sha: String,
     pub fork_sha: Option<String>,
     pub merge_commit_sha: Option<String>,

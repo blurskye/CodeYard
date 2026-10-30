@@ -1,4 +1,4 @@
-use super::profiles::{validate_description, validate_name, validate_slug};
+use super::profiles::{validate_description, validate_name};
 use super::*;
 use crate::backend::db::{
     models::{Team, TeamMembership, TeamRepoAccess},
@@ -198,7 +198,8 @@ impl TeamProfile {
         notifications_enabled: Option<bool>,
     ) -> std::result::Result<Self, OrganizationInputError> {
         if let Some(slug) = slug {
-            validate_slug(slug)?;
+            crate::backend::identity::credentials::validate_namespace(slug, 1)
+                .map_err(|_| OrganizationInputError::Slug)?;
         }
         self.slug = slug.map(str::to_owned);
         self.default_permission = permission.map(|permission| permission.0);
@@ -221,7 +222,8 @@ impl NewTeam {
         slug: &str,
         profile: TeamProfile,
     ) -> std::result::Result<Self, OrganizationInputError> {
-        validate_slug(slug)?;
+        crate::backend::identity::credentials::validate_namespace(slug, 1)
+            .map_err(|_| OrganizationInputError::Slug)?;
         let name = profile.name.clone().ok_or(OrganizationInputError::Name)?;
         let privacy = profile.privacy.ok_or(OrganizationInputError::Privacy)?;
         Ok(Self {

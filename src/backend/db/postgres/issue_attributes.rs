@@ -575,7 +575,7 @@ pub(crate) async fn event(
     detail: &str,
     previous: &str,
 ) -> Result<i64> {
-    Ok(sqlx::query_scalar("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind,detail,previous) VALUES ($1,'issue',$2,$3,$4,$5,$6) RETURNING id").bind(repo).bind(issue).bind(actor).bind(kind).bind(detail).bind(previous).fetch_one(&mut **tx).await?)
+    super::timeline::append(tx, repo, "issue", issue, actor, kind, detail, previous).await
 }
 pub(crate) async fn touch(tx: &mut Transaction<'_, Postgres>, issue: i64) -> Result<()> {
     sqlx::query("UPDATE issues SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1").bind(issue).execute(&mut **tx).await?;

@@ -15,13 +15,14 @@ pub async fn read_settings(
     pool: &PgPool,
     owner: HookOwner,
     actor_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     hook: Option<i64>,
     delivery: Option<i64>,
     after: i64,
     full_deliveries: bool,
 ) -> Result<Option<crate::backend::db::webhooks::HookSettings>> {
     let mut tx = pool.begin().await?;
-    if !may_manage_hooks(&mut tx, owner, actor_id).await? {
+    if !may_manage_hooks(&mut tx, owner, actor_id, credential, false).await? {
         return Ok(None);
     }
     let mut settings = crate::backend::db::webhooks::HookSettings {
@@ -51,11 +52,12 @@ pub async fn list_managed_webhooks(
     pool: &PgPool,
     owner: HookOwner,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     offset: i64,
     limit: i64,
 ) -> Result<Option<Vec<Webhook>>> {
     let mut tx = pool.begin().await?;
-    if !may_manage_hooks(&mut tx, owner, actor).await? {
+    if !may_manage_hooks(&mut tx, owner, actor, credential, false).await? {
         return Ok(None);
     }
     let sql = format!(
@@ -132,15 +134,18 @@ async fn may_manage_hooks(
     tx: &mut Transaction<'_, Postgres>,
     owner: HookOwner,
     actor_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    write: bool,
 ) -> Result<bool> {
-    match owner {
+    let allowed = match owner {
         // Hooks stay manageable on archived repositories, like other settings.
-        HookOwner::Repository(repo_id) => lock_policy_authority(tx, actor_id, repo_id, false).await,
-        HookOwner::Organization(org) => Ok(matches!(
+        HookOwner::Repository(repo_id) => lock_policy_authority(tx, actor_id, repo_id, false).await?,
+        HookOwner::Organization(org) => matches!(
             authority(tx, actor_id, org).await?,
             OrganizationOutcome::Applied(OrgRole::Owner)
-        )),
-    }
+        ),
+    };
+    Ok(allowed && super::users::transitions::credential_live(tx, actor_id, credential, write).await?)
 }
 
 /// Inserts a hook. `None` means the actor may not manage the owner's hooks.
@@ -148,11 +153,12 @@ pub async fn insert_webhook(
     pool: &PgPool,
     owner: HookOwner,
     actor_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     fields: &WebhookFields,
     secret: Option<&SealedSecret>,
 ) -> Result<Option<i64>> {
     let mut tx = pool.begin().await?;
-    if !may_manage_hooks(&mut tx, owner, actor_id).await? {
+    if !may_manage_hooks(&mut tx, owner, actor_id, credential, true).await? {
         return Ok(None);
     }
     let sql = format!(
@@ -184,6 +190,7 @@ pub async fn update_webhook(
     pool: &PgPool,
     owner: HookOwner,
     actor_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     id: i64,
     fields: &WebhookFields,
     secret: Option<&SealedSecret>,
@@ -192,6 +199,7 @@ pub async fn update_webhook(
         pool,
         owner,
         actor_id,
+        credential,
         id,
         &WebhookPatch::from(fields),
         secret,
@@ -203,12 +211,13 @@ pub async fn patch_webhook(
     pool: &PgPool,
     owner: HookOwner,
     actor_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     id: i64,
     fields: &WebhookPatch,
     secret: Option<&SealedSecret>,
 ) -> Result<Option<bool>> {
     let mut tx = pool.begin().await?;
-    if !may_manage_hooks(&mut tx, owner, actor_id).await? {
+    if !may_manage_hooks(&mut tx, owner, actor_id, credential, true).await? {
         return Ok(None);
     }
     let sql = format!(
@@ -246,10 +255,11 @@ pub async fn delete_webhook(
     pool: &PgPool,
     owner: HookOwner,
     actor_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<Option<bool>> {
     let mut tx = pool.begin().await?;
-    if !may_manage_hooks(&mut tx, owner, actor_id).await? {
+    if !may_manage_hooks(&mut tx, owner, actor_id, credential, true).await? {
         return Ok(None);
     }
     let sql = format!(
@@ -268,12 +278,12 @@ pub async fn delete_webhook(
 // Deliveries expire by age even when their hook is idle; inserts only trim the newest 100.
 pub async fn prune_expired_deliveries(pool: &PgPool) -> Result<u64> {
     let hooks = sqlx::query(
-        "DELETE FROM webhook_deliveries WHERE delivered_at < NOW() - INTERVAL '30 days'",
+        "DELETE FROM webhook_deliveries WHERE id IN (SELECT id FROM webhook_deliveries WHERE delivered_at < clock_timestamp() - INTERVAL '30 days' ORDER BY delivered_at,id LIMIT 1000)",
     )
     .execute(pool)
     .await?
     .rows_affected();
-    let apps = sqlx::query("DELETE FROM github_app_deliveries WHERE delivered_at < clock_timestamp() - INTERVAL '30 days'")
+    let apps = sqlx::query("DELETE FROM github_app_deliveries WHERE id IN (SELECT id FROM github_app_deliveries WHERE delivered_at < clock_timestamp() - INTERVAL '30 days' ORDER BY delivered_at,id LIMIT 1000)")
         .execute(pool)
         .await?
         .rows_affected();

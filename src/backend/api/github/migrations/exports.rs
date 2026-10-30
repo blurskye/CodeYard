@@ -365,7 +365,7 @@ async fn download(
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
-    if row.state != "exported" || row.archive_deleted {
+    if !row.archive_available() {
         return Err(Error::missing());
     }
     if exports::by_guid(&state.pool, actor.user.id, &row.guid)
@@ -397,7 +397,7 @@ pub(in crate::backend::api::github) async fn archive(
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
-    if row.state != "exported" || row.archive_deleted {
+    if !row.archive_available() {
         return Err(Error::missing());
     }
     if let Some(org) = row.owner_org_id {

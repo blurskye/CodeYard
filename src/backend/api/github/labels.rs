@@ -278,7 +278,6 @@ pub(in crate::backend::api) async fn save_labels(
     ids: &[i64],
     replace: bool,
 ) -> Result<Vec<db::models::Label>> {
-    let before = assigned(pool, item).await?;
     match (item, replace) {
         (db::assignees::AssignedItem::Issue(id), true) => {
             db::labels::set_issue_labels(pool, actor_id, repo_id, id, ids).await
@@ -298,20 +297,7 @@ pub(in crate::backend::api) async fn save_labels(
         }
     }
     .map_err(write_error)?;
-    let after = assigned(pool, item).await?;
-    for label in before
-        .iter()
-        .filter(|label| !after.iter().any(|current| current.id == label.id))
-    {
-        db::timeline::record_for(pool, repo_id, item, actor_id, "unlabeled", &label.name).await;
-    }
-    for label in after
-        .iter()
-        .filter(|label| !before.iter().any(|previous| previous.id == label.id))
-    {
-        db::timeline::record_for(pool, repo_id, item, actor_id, "labeled", &label.name).await;
-    }
-    Ok(after)
+    assigned(pool, item).await
 }
 
 async fn add(
@@ -365,15 +351,6 @@ async fn remove_from_issue(
     if !removed {
         return Err(Error::missing());
     }
-    db::timeline::record_for(
-        &state.pool,
-        repo.id,
-        item,
-        actor.id,
-        "unlabeled",
-        &label.name,
-    )
-    .await;
     Ok(Json(
         assigned(&state.pool, item)
             .await?

@@ -332,12 +332,7 @@ fn about_column(repo: &RepoChrome, page: &TreePage) -> Element {
     let license = page.entries.iter().find(|entry| {
         entry.kind == "file" && entry.name.to_ascii_lowercase().starts_with("license")
     });
-    let has_scheme = |scheme: &str| {
-        repo.website
-            .get(..scheme.len())
-            .is_some_and(|head| head.eq_ignore_ascii_case(scheme))
-    };
-    let website_is_link = has_scheme("https://") || has_scheme("http://");
+    let website_is_link = crate::website::parse(&repo.website).is_some();
     rsx! {
         aside { class: "repo-about", "aria-label": "About",
             div { class: "repo-about-header",

@@ -81,7 +81,7 @@ pub async fn assign_users(
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
     let mut added = Vec::new();
     for &user_id in user_ids {
-        if assign_in_transaction(&mut tx, repo_id, item, user_id).await? {
+        if assign_in_transaction(&mut tx, actor_id, repo_id, item, user_id).await? {
             added.push(user_id);
         }
     }
@@ -109,6 +109,7 @@ pub(crate) async fn candidate(
 }
 pub(crate) async fn assign_in_transaction(
     tx: &mut Transaction<'_, Sqlite>,
+    actor_id: i64,
     repo_id: i64,
     item: AssignedItem,
     user_id: i64,
@@ -145,6 +146,9 @@ pub(crate) async fn assign_in_transaction(
     }
     if added {
         super::labels::touch_subject(tx, tables(item).0, item_id(item)).await?;
+        let name: String = sqlx::query_scalar("SELECT username FROM users WHERE id=?1").bind(user_id).fetch_one(&mut **tx).await?;
+        let (subject, id) = crate::backend::db::timeline::item_subject(item);
+        super::timeline::append(tx, repo_id, subject, id, actor_id, "assigned", &name, "").await?;
     }
     Ok(added)
 }
@@ -171,6 +175,8 @@ pub async fn unassign_users(
         .await?
         .rows_affected();
         if deleted > 0 {
+            let (subject, id) = crate::backend::db::timeline::item_subject(item);
+            super::timeline::append(&mut tx, repo_id, subject, id, actor_id, "unassigned", username, "").await?;
             removed.push(username.clone());
         }
     }

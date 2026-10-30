@@ -22,6 +22,15 @@ pub struct Discussion {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+pub(crate) const DEFAULT_CATEGORIES: &[(&str, &str, &str, &str, bool)] = &[
+    ("Announcements", "announcements", "📣", "Updates from maintainers", false),
+    ("General", "general", "💬", "Chat about the repository", false),
+    ("Ideas", "ideas", "💡", "Share ideas for new features", false),
+    ("Polls", "polls", "📊", "Ask the community", false),
+    ("Q&A", "q-a", "🙏", "Ask questions and find answers", true),
+    ("Show and tell", "show-and-tell", "🙌", "Show something you made", false),
+];
+
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Category {
     pub id: i64,
@@ -128,12 +137,16 @@ impl Filter {
                 words.push(word);
             }
         }
-        filter.query = Some(words.join(" "));
+        filter.query = (!words.is_empty()).then(|| words.join(" "));
         Ok(filter)
     }
-    pub(crate) fn statement(&self, postgres: bool, readable: &str) -> Result<Statement> {
+    pub(crate) fn statement(&self, postgres: bool, readable: &str, reader: &super::repositories::credentials::Reader<'_>) -> Result<Statement> {
         let mut sql = Statement::new(postgres);
-        let mut predicates = vec![readable.to_owned()];
+        let token = sql.bind(reader.token().unwrap_or(0).to_string());
+        let session = sql.bind(reader.session().unwrap_or(""));
+        let hash = sql.bind(reader.hash().unwrap_or(""));
+        let scope = super::repositories::credentials::repository_condition(postgres, "discussions", super::repositories::credentials::Access::PublicRead, &format!("NULLIF({token},'0')"), &format!("NULLIF({session},'')"), &format!("NULLIF({hash},'')"));
+        let mut predicates = vec![readable.to_owned(), scope];
         if let Some(repo) = self.repo {
             let value = sql.bind(repo.to_string());
             predicates.push(format!("i.repo_id=CAST({value} AS BIGINT)"));
@@ -188,9 +201,10 @@ fn search_expression(sql: &mut Statement, expr: &Expr) -> Result<String> {
         Expr::Not(e) => format!("NOT ({})", search_expression(sql, e)?),
         Expr::Term(key, value) => match (key.as_str(), value.as_str()) {
             ("text", _) => format!(
-                "({} OR {})",
+                "({} OR {} OR EXISTS(SELECT 1 FROM discussion_comments c WHERE c.discussion_id=i.id AND {}))",
                 sql.matches("i.title", value),
-                sql.matches("i.body", value)
+                sql.matches("i.body", value),
+                sql.matches("c.body", value)
             ),
             ("repo", _) => {
                 let p = sql.bind(value);
@@ -202,8 +216,8 @@ fn search_expression(sql: &mut Statement, expr: &Expr) -> Result<String> {
                 format!("i.author_id IN (SELECT id FROM users WHERE lower(username)=lower({p}))")
             }
             ("label", _) => {
-                let p = sql.bind(value);
-                format!("EXISTS(SELECT 1 FROM discussion_labels a JOIN labels l ON l.id=a.label_id WHERE a.discussion_id=i.id AND lower(l.name)=lower({p}))")
+                let predicate = sql.equals("l.name", value);
+                format!("EXISTS(SELECT 1 FROM discussion_labels a JOIN labels l ON l.id=a.label_id WHERE a.discussion_id=i.id AND {predicate})")
             }
             ("category", _) => {
                 let p = sql.bind(value);
@@ -235,9 +249,9 @@ native_operation!(super::postgres::repository_discussions::comments, super::sqli
 native_operation!(super::postgres::repository_discussions::labels, super::sqlite::repository_discussions::labels,
     fn labels(pool: &DbPool, discussion: i64) -> Result<Vec<super::models::Label>>);
 native_operation!(super::postgres::repository_discussions::list, super::sqlite::repository_discussions::list,
-    fn list(pool: &DbPool, viewer: i64, filter: &Filter, offset: i64, limit: i64) -> Result<(i64, Vec<Discussion>)>);
+    fn list(pool: &DbPool, viewer: i64, credential: &super::users::accounts::AccountCredential<'_>, filter: &Filter, offset: i64, limit: i64) -> Result<(i64, Vec<Discussion>)>);
 native_operation!(super::postgres::repository_discussions::write, super::sqlite::repository_discussions::write,
-    fn write(pool: &DbPool, actor: i64, repo: i64, discussion: Option<i64>, change: &Write<'_>) -> Result<i64>);
+    fn write(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, discussion: Option<i64>, change: &Write<'_>) -> Result<i64>);
 
 pub(crate) fn valid_body(body: &str) -> Result<()> {
     anyhow::ensure!(

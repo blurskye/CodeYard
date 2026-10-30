@@ -72,9 +72,9 @@ async fn repository(
     owner: &str,
     name: &str,
     write: bool,
-) -> Result<(i64, i64)> {
+) -> Result<(i64, auth::Authentication)> {
     let (repo, auth) = super::repository(state, headers, owner, name, write).await?;
-    Ok((repo.id, auth.ok_or_else(auth::required)?.user.id))
+    Ok((repo.id, auth.ok_or_else(auth::required)?))
 }
 
 async fn list(
@@ -86,7 +86,7 @@ async fn list(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, false).await?;
-    let secrets = db::secrets::list_secrets_for(&state.pool, kind, actor, repo)
+    let secrets = db::secrets::list_secrets_for(&state.pool, kind, actor.user.id, repo)
         .await
         .map_err(error)?;
     let (offset, limit) = page.window()?;
@@ -113,7 +113,7 @@ async fn public_key(
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
     let (key_id, key) =
-        db::secrets::repository_secret_key_for(&state.pool, kind, encryptor, actor, repo)
+        db::secrets::repository_secret_key_for(&state.pool, kind, encryptor, actor.user.id, repo, &actor.credential())
             .await
             .map_err(error)?;
     Ok(Json(
@@ -129,7 +129,7 @@ async fn secret(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, false).await?;
     let name = name.to_ascii_uppercase();
-    let secret = db::secrets::list_secrets_for(&state.pool, kind, actor, repo)
+    let secret = db::secrets::list_secrets_for(&state.pool, kind, actor.user.id, repo)
         .await
         .map_err(error)?
         .into_iter()
@@ -160,7 +160,7 @@ async fn save(
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
     let (key_id, key) =
-        db::secrets::repository_secret_key_for(&state.pool, kind, encryptor, actor, repo)
+        db::secrets::repository_secret_key_for(&state.pool, kind, encryptor, actor.user.id, repo, &actor.credential())
             .await
             .map_err(error)?;
     let value = open_value(&key, &key_id, &body.key_id, &body.encrypted_value)?;
@@ -170,7 +170,8 @@ async fn save(
         (repo, kind),
         &name,
         &value,
-        Some(actor),
+        Some(actor.user.id),
+        &actor.credential(),
     )
     .await
     .map_err(error)?;
@@ -207,7 +208,7 @@ async fn remove(
     Path((owner, repo, name)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, true).await?;
-    if !db::secrets::delete_secret_for(&state.pool, kind, actor, repo, &name.to_ascii_uppercase())
+    if !db::secrets::delete_secret_for(&state.pool, kind, actor.user.id, repo, &name.to_ascii_uppercase(), &actor.credential())
         .await
         .map_err(error)?
     {

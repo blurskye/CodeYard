@@ -193,7 +193,7 @@ native_operation!(crate::backend::db::postgres::users::ssh_keys::add_ssh_key,
 
 native_operation!(crate::backend::db::postgres::users::ssh_keys::add_ssh_key_for_token,
     crate::backend::db::sqlite::users::ssh_keys::add_ssh_key_for_token,
-    fn add_ssh_key_for_token(pool: &DbPool, user_id: i64, token: i64, name: &str, public_key: &str) -> Result<SshKey>);
+    fn add_ssh_key_for_token(pool: &DbPool, user_id: i64, token: i64, hash: &str, name: &str, public_key: &str) -> Result<SshKey>);
 
 native_operation!(crate::backend::db::postgres::users::ssh_keys::add_ssh_key_for_session,
     crate::backend::db::sqlite::users::ssh_keys::add_ssh_key_for_session,
@@ -231,7 +231,7 @@ native_operation!(crate::backend::db::postgres::users::ssh_keys::get_user_key,
 
 native_operation!(crate::backend::db::postgres::users::ssh_keys::delete_user_ssh_key_for_token,
     crate::backend::db::sqlite::users::ssh_keys::delete_user_ssh_key_for_token,
-    fn delete_user_ssh_key_for_token(pool: &DbPool, user_id: i64, token: i64, key_id: i64) -> Result<bool>);
+    fn delete_user_ssh_key_for_token(pool: &DbPool, user_id: i64, token: i64, hash: &str, key_id: i64) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::users::ssh_keys::delete_user_ssh_key,
     crate::backend::db::sqlite::users::ssh_keys::delete_user_ssh_key,

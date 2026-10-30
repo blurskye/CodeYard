@@ -17,12 +17,12 @@ pub async fn create_organization(
     if !active(&mut tx, actor).await? {
         return Ok(Denied);
     }
-    let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE username=$1 UNION ALL SELECT 1 FROM organizations WHERE name=$1)")
+    let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE lower(username COLLATE \"C\")=lower($1 COLLATE \"C\") UNION ALL SELECT 1 FROM organizations WHERE lower(name COLLATE \"C\")=lower($1 COLLATE \"C\"))")
         .bind(&input.slug).fetch_one(&mut *tx).await?;
     if occupied {
         return Ok(Conflict);
     }
-    let id: Option<i64> = sqlx::query_scalar("INSERT INTO organizations(name,display_name,description) VALUES($1,$2,$3) ON CONFLICT(name) DO NOTHING RETURNING id")
+    let id: Option<i64> = sqlx::query_scalar("INSERT INTO organizations(name,display_name,description) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING id")
         .bind(&input.slug).bind(input.profile.display_name.clone().flatten()).bind(input.profile.description.clone().flatten()).fetch_optional(&mut *tx).await?;
     let Some(id) = id else {
         return Ok(Conflict);

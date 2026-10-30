@@ -62,6 +62,7 @@ async fn contract(pg: bool) {
         "BASE_SECRET",
         "base-value",
         Some(alice),
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
     )
     .await
     .unwrap();
@@ -170,7 +171,7 @@ async fn contract(pg: bool) {
     assert_eq!(payload["pull_request"]["base"]["sha"], base);
     assert_eq!(payload["sender"]["id"], bob);
     let claim = queue
-        .claim("target-worker", CiExecutionMode::Local)
+        .claim("target-worker", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
@@ -221,7 +222,7 @@ async fn contract(pg: bool) {
         )
         .await;
     let claim = queue
-        .claim("fork-worker", CiExecutionMode::Local)
+        .claim("fork-worker", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
@@ -407,13 +408,13 @@ async fn dispatch_contract(pg: bool) {
     .await;
     // Claim the event run first, then the manual source that supplies the job credential.
     let first = queue
-        .claim("custom-worker", CiExecutionMode::Local)
+        .claim("custom-worker", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(first.run.event, "repository_dispatch");
     let source = queue
-        .claim("source-worker", CiExecutionMode::Local)
+        .claim("source-worker", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
@@ -573,14 +574,14 @@ async fn workflow_run_contract(pg: bool) {
     )
     .await;
     let source = queue
-        .claim("source-worker", CiExecutionMode::Local)
+        .claim("source-worker", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(source.run.event, "workflow_dispatch");
     // A repeated claim must not duplicate in_progress listeners.
     queue
-        .claim("source-worker", CiExecutionMode::Local)
+        .claim("source-worker", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();

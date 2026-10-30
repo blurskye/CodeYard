@@ -918,7 +918,7 @@ async fn a_ci_claim_moves_on_from_a_tcp_address_that_never_answers() {
     // With nothing queued, a claim is answered with `None`. Getting that answer proves the
     // request reached the core over the second address.
     let claimed = queue
-        .claim("slot-1", CiExecutionMode::Local)
+        .claim("slot-1", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .expect("the second TCP address answers");
     assert!(claimed.is_none());
@@ -955,7 +955,7 @@ async fn a_ci_claim_reaches_the_core_over_iroh_after_a_tcp_address_never_answers
         preferred: Default::default(),
     };
     let claimed = queue
-        .claim("slot-1", CiExecutionMode::Local)
+        .claim("slot-1", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .expect("iroh answers once TCP gives up");
     assert!(claimed.is_none());

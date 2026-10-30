@@ -493,8 +493,9 @@ pub async fn claim_ci_run(
     worker: &str,
     mode: &str,
     trusted_ids: &[i64],
+    platforms: &[String],
 ) -> Result<Option<CiRun>> {
-    claim_queued_run(pool, None, worker, mode, trusted_ids).await
+    claim_queued_run(pool, None, worker, mode, trusted_ids, platforms).await
 }
 
 /// `claim_ci_run` for a cluster node. The node row is locked `FOR SHARE` until the
@@ -505,8 +506,9 @@ pub async fn claim_ci_run_on_node(
     worker: &str,
     mode: &str,
     trusted_ids: &[i64],
+    platforms: &[String],
 ) -> Result<Option<CiRun>> {
-    claim_queued_run(pool, Some(node_key), worker, mode, trusted_ids).await
+    claim_queued_run(pool, Some(node_key), worker, mode, trusted_ids, platforms).await
 }
 
 /// The running run `worker` holds, if an earlier claim committed it and its reply was lost. A
@@ -562,6 +564,7 @@ async fn claim_queued_run(
     worker: &str,
     mode: &str,
     trusted_ids: &[i64],
+    platforms: &[String],
 ) -> Result<Option<CiRun>> {
     ensure!(
         matches!(mode, "local" | "podman"),
@@ -664,7 +667,7 @@ async fn claim_queued_run(
             }
             continue;
         }
-        if !super::runners::eligible(&mut tx, node_key, &run).await? {
+        if !super::runners::eligible(&mut tx, node_key, &run, mode, platforms).await? {
             tx.rollback().await?;
             continue;
         }
@@ -779,10 +782,10 @@ async fn finish_in_tx(
     // Only a failed run tells its starter. Successes and cancellations stay quiet.
     let notifications = if let Some(actor) = run.triggered_by_id.filter(|_| status == "failed") {
         let (title, body) = crate::backend::ci::failure_notification(run, message);
-        sqlx::query_as::<_, (i64, i64)>(r#"INSERT INTO notifications(user_id, repo_id, scope_repository_id, kind, title, body, link, metadata)
+        sqlx::query_as::<_, (i64, i64)>(r#"INSERT INTO notifications(user_id, repo_id, scope_repository_id, kind, title, body, link, metadata, created_at)
             SELECT $1, r.id, r.id, 'ci_completed', $2, $3,
                 '/' || COALESCE(u.username, o.name) || '/' || r.name || '/actions?job=' || $4,
-                jsonb_build_object('run_id', $4::TEXT, 'status', $5::TEXT)
+                jsonb_build_object('run_id', $4::TEXT, 'status', $5::TEXT), clock_timestamp()
             FROM repositories r LEFT JOIN users u ON r.owner_user_id = u.id AND r.owner_kind = 'user'
             LEFT JOIN organizations o ON r.owner_org_id = o.id AND r.owner_kind = 'org' WHERE r.id = $6
             AND NOT EXISTS (SELECT 1 FROM watches w WHERE w.user_id = $1 AND w.repo_id = r.id AND w.level = 'ignoring')

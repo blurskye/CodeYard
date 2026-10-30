@@ -44,7 +44,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[actor])
+    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[actor], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .filter(|claim| claim.id == run.id)

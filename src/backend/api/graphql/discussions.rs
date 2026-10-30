@@ -155,13 +155,14 @@ async fn list(
     filter: &Filter,
     search: bool,
 ) -> Result<Value> {
+    request.require_oauth_scope("repo")?;
     connection::validate(ctx)?;
     let pool = &request.state.pool;
-    let (count, _) = store::list(pool, request.auth.user.id, filter, 0, 0)
+    let (count, _) = store::list(pool, request.auth.user.id, &request.auth.credential(), filter, 0, 0)
         .await
         .map_err(operation)?;
     let page = connection::Page::new(ctx, if search { count.min(1000) } else { count })?;
-    let (_, rows) = store::list(pool, request.auth.user.id, filter, page.offset, page.limit)
+    let (_, rows) = store::list(pool, request.auth.user.id, &request.auth.credential(), filter, page.offset, page.limit)
         .await
         .map_err(operation)?;
     let mut nodes = Vec::new();
@@ -336,7 +337,7 @@ pub(super) async fn mutation(
             title: string("title")?,
             body: string("body")?,
         };
-        let saved = store::write(pool, request.auth.user.id, repo, None, &change)
+        let saved = store::write(pool, request.auth.user.id, &request.auth.credential(), repo, None, &change)
             .await
             .map_err(operation)?;
         payload["discussion"] = object(&load(saved, request).await?);
@@ -412,7 +413,7 @@ pub(super) async fn mutation(
         },
         _ => return Err(missing()),
     };
-    let saved = store::write(pool, request.auth.user.id, d.repo_id, Some(d.id), &change)
+    let saved = store::write(pool, request.auth.user.id, &request.auth.credential(), d.repo_id, Some(d.id), &change)
         .await
         .map_err(operation)?;
     let key = if field.ends_with("AsAnswer") {

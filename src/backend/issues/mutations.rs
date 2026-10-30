@@ -231,38 +231,6 @@ pub async fn update_issue(
                 .to_owned(),
     })?;
 
-    let subject = db::timeline::Subject::Issue;
-    if issue.title != existing.title {
-        db::timeline::record(
-            pool,
-            repository.id,
-            subject,
-            existing.id,
-            user.id,
-            "renamed",
-            &issue.title,
-            &existing.title,
-        )
-        .await;
-    }
-    if issue.state != existing.state {
-        let kind = if issue.state == "closed" {
-            "closed"
-        } else {
-            "reopened"
-        };
-        db::timeline::record(
-            pool,
-            repository.id,
-            subject,
-            existing.id,
-            user.id,
-            kind,
-            "",
-            "",
-        )
-        .await;
-    }
     if let Some(body) = req.body.as_deref() {
         let link = format!("/{owner}/{repo}/issues/{number}");
         notify_mentions(

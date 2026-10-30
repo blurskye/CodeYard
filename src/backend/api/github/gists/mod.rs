@@ -337,7 +337,7 @@ async fn create(
     let loaded = domain::create(
         state.clone(),
         actor.user.id,
-        GistCredential::Token(actor.token.id),
+        GistCredential::Token(actor.token.id, actor.token.token_hash.clone()),
         domain::CreateGist {
             description: input.description,
             is_public: input.public,
@@ -404,7 +404,7 @@ async fn update(
     let loaded = domain::update(
         state.clone(),
         actor.user.id,
-        GistCredential::Token(actor.token.id),
+        GistCredential::Token(actor.token.id, actor.token.token_hash.clone()),
         id,
         GistEdit {
             description: input.description,
@@ -429,7 +429,7 @@ async fn remove(
     domain::delete(
         state,
         actor.user.id,
-        GistCredential::Token(actor.token.id),
+        GistCredential::Token(actor.token.id, actor.token.token_hash.clone()),
         id,
     )
     .await
@@ -445,7 +445,7 @@ async fn fork(
     let loaded = domain::fork(
         state.clone(),
         actor.user.id,
-        GistCredential::Token(actor.token.id),
+        GistCredential::Token(actor.token.id, actor.token.token_hash.clone()),
         id,
     )
     .await
@@ -533,7 +533,7 @@ async fn change_star(
     db::gists::star(
         &state.pool,
         actor.user.id,
-        &db::users::accounts::AccountCredential::Token(actor.token.id),
+        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         loaded.repository.id,
         adding,
     )

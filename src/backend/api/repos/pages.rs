@@ -30,7 +30,12 @@ async fn render(
     error: Option<String>,
     status: StatusCode,
 ) -> Response {
-    let site = match pages::site(&ctx.state.pool, loaded.repository.id).await {
+    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers);
+    let reader = crate::backend::db::repositories::credentials::Reader {
+        user: ctx.user.as_ref().map(|user| user.id),
+        credential: session.as_deref().map(crate::backend::db::users::accounts::AccountCredential::Session),
+    };
+    let site = match pages::site(&ctx.state.pool, &reader, loaded.repository.id).await {
         Ok(site) => site,
         Err(_) => return chrome::unavailable(ctx),
     };
@@ -51,7 +56,7 @@ async fn render(
             ..Default::default()
         },
     });
-    let builds = match pages::builds(&ctx.state.pool, loaded.repository.id, 0, 30).await {
+    let builds = match pages::builds(&ctx.state.pool, &reader, loaded.repository.id, 0, 30).await {
         Ok(rows) => rows
             .into_iter()
             .map(|row| Build {
@@ -124,6 +129,12 @@ async fn submit(
         return ctx.error(StatusCode::FORBIDDEN, "Pages administration denied.");
     }
     let actor = ctx.user.as_ref().unwrap().id;
+    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
+    let reader = crate::backend::db::repositories::credentials::Reader {
+        user: Some(actor),
+        credential: Some(crate::backend::db::users::accounts::AccountCredential::Session(&session)),
+    };
     let settings = Settings {
         build_type: forms::field(&form, "build_type"),
         branch: forms::field(&form, "branch"),
@@ -134,20 +145,20 @@ async fn submit(
     };
     let operation=async {
         match forms::field(&form,"op").as_str() {
-            "delete"=>pages::delete(&ctx.state.pool,actor,loaded.repository.id).await?,
+            "delete"=>pages::delete(&ctx.state.pool,actor,&credential,loaded.repository.id).await?,
             "build"=>{
-                let site=pages::site(&ctx.state.pool,loaded.repository.id).await?.ok_or(pages::Refusal::Missing)?;
+                let site=pages::site(&ctx.state.pool,&reader,loaded.repository.id).await?.ok_or(pages::Refusal::Missing)?;
                 let branch=site.branch.ok_or(pages::Refusal::Invalid)?;
                 let commit=repo_store(&loaded.repository,ctx.state.cluster.as_ref()).commit(&format!("refs/heads/{branch}")).await?;
-                pages::request_build(&ctx.state.pool,actor,loaded.repository.id,&commit.sha).await?;
+                pages::request_build(&ctx.state.pool,actor,&credential,loaded.repository.id,&commit.sha).await?;
             }
             "save"=>{
-                let create=pages::site(&ctx.state.pool,loaded.repository.id).await?.is_none();
+                let create=pages::site(&ctx.state.pool,&reader,loaded.repository.id).await?.is_none();
                 let mut value=json!({"build_type":settings.build_type,"cname":if settings.cname.is_empty(){None}else{Some(&settings.cname)},"https_enforced":settings.https_enforced,"public":settings.public});
                 if !settings.branch.is_empty() {value["source"]=json!({"branch":settings.branch,"path":settings.path});}
                 let update=pages::Update::parse(&value,create)?;
                 if let Some(source)=&update.source {repo_store(&loaded.repository,ctx.state.cluster.as_ref()).commit(&format!("refs/heads/{}",source.branch)).await?;}
-                pages::save(&ctx.state.pool,actor,loaded.repository.id,&update,create).await?;
+                pages::save(&ctx.state.pool,actor,&credential,loaded.repository.id,&update,create).await?;
             }
             _=>anyhow::bail!(pages::Refusal::Invalid),
         }
@@ -163,6 +174,7 @@ async fn submit(
                 Some(pages::Refusal::Denied) => StatusCode::FORBIDDEN,
                 Some(pages::Refusal::Missing) => StatusCode::NOT_FOUND,
                 Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
+                None if error.is::<crate::backend::db::users::accounts::AccountRestricted>() => StatusCode::FORBIDDEN,
                 None => {
                     match error.downcast_ref::<crate::backend::repositories::store::RepoError>() {
                         Some(error)

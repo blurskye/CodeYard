@@ -252,6 +252,7 @@ async fn reactions(pg: bool) {
     assert!(db::reactions::create_reaction(
         f.pool(),
         bob,
+        &db::users::accounts::AccountCredential::Session(&outsider.session),
         db::reactions::Target {
             repo_id: repo.id,
             item_id: draft_id,

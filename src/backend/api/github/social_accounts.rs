@@ -119,7 +119,7 @@ async fn change(
     social_accounts::change_social_accounts(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id),
+        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         &accounts,
         add,
     )

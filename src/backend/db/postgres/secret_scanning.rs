@@ -15,7 +15,8 @@ pub async fn protection(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
-    let protected: bool = sqlx::query_scalar("SELECT COALESCE((SELECT push_protection FROM secret_scanning_settings WHERE repo_id=$1),false)").bind(repo).fetch_one(&mut *tx).await?;
+    // Serialize placeholder lookup and insertion for concurrent retries of a protected push.
+    let protected: bool = sqlx::query_scalar("SELECT push_protection FROM secret_scanning_settings WHERE repo_id=$1 FOR UPDATE").bind(repo).fetch_optional(&mut *tx).await?.unwrap_or(false);
     if !protected {
         return Ok(None);
     }
@@ -24,10 +25,20 @@ pub async fn protection(
     if granted {
         return Ok(None);
     }
-    let placeholder = sqlx::query_as("INSERT INTO secret_scanning_bypasses(id,repo_id,actor_id,secret_hash,token_type,expires_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING *")
-        .bind(uuid::Uuid::new_v4().to_string()).bind(repo).bind(actor).bind(hash).bind(kind).bind(now + chrono::Duration::hours(3)).fetch_one(&mut *tx).await?;
+    let existing: Option<Bypass> = sqlx::query_as("SELECT * FROM secret_scanning_bypasses WHERE repo_id=$1 AND actor_id=$2 AND secret_hash=$3 AND token_type=$4 AND reason IS NULL AND used_at IS NULL AND expires_at>$5 ORDER BY expires_at DESC,id LIMIT 1 FOR UPDATE")
+        .bind(repo).bind(actor).bind(hash).bind(kind).bind(now).fetch_optional(&mut *tx).await?;
+    let placeholder = match existing {
+        Some(placeholder) => placeholder,
+        None => sqlx::query_as("INSERT INTO secret_scanning_bypasses(id,repo_id,actor_id,secret_hash,token_type,expires_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING *")
+            .bind(uuid::Uuid::new_v4().to_string()).bind(repo).bind(actor).bind(hash).bind(kind).bind(now + chrono::Duration::hours(3)).fetch_one(&mut *tx).await?,
+    };
     tx.commit().await?;
     Ok(Some(placeholder))
+}
+
+pub async fn prune_expired_bypasses(pool: &PgPool) -> Result<u64> {
+    Ok(sqlx::query("DELETE FROM secret_scanning_bypasses WHERE id IN (SELECT id FROM secret_scanning_bypasses WHERE used_at IS NULL AND expires_at<=clock_timestamp() ORDER BY expires_at,id LIMIT 1000 FOR UPDATE SKIP LOCKED) AND used_at IS NULL")
+        .execute(pool).await?.rows_affected())
 }
 
 pub async fn bypass(

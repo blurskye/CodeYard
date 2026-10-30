@@ -15,6 +15,21 @@ pub struct Settings {
     pub base_url: String,
     pub ecosystems: String,
 }
+impl Settings {
+    pub(crate) fn validate(&self) -> Result<()> {
+        let url = url::Url::parse(&self.base_url).map_err(|_| Refusal::Invalid)?;
+        anyhow::ensure!(
+            matches!(url.scheme(), "http" | "https") && url.host_str().is_some()
+                && url.username().is_empty() && url.password().is_none()
+                && url.query().is_none() && url.fragment().is_none(),
+            Refusal::Invalid
+        );
+        let ecosystems: Vec<String> = serde_json::from_str(&self.ecosystems).map_err(|_| Refusal::Invalid)?;
+        anyhow::ensure!(ecosystems.len() <= 10 && ecosystems.iter().all(|e| crate::backend::vulnerabilities::ECOSYSTEMS.contains(&e.as_str())), Refusal::Invalid);
+        Ok(())
+    }
+}
+
 native_operation!(super::postgres::vulnerabilities::settings,super::sqlite::vulnerabilities::settings,
     fn settings(pool:&DbPool)->Result<Settings>);
 native_operation!(super::postgres::vulnerabilities::save_settings,super::sqlite::vulnerabilities::save_settings,

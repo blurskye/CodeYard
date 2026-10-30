@@ -60,7 +60,7 @@ async fn contract(pg: bool) {
     assert_eq!(empty, json!({"billable":{},"run_duration_ms":0}));
     let mut expected_jobs = Vec::new();
     for attempt in 0..2 {
-        let run = db::ci::claim_ci_run(f.pool(), "usage", "local", &[alice])
+        let run = db::ci::claim_ci_run(f.pool(), "usage", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
             .await
             .unwrap()
             .unwrap();

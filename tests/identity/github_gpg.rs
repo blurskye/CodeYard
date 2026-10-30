@@ -377,7 +377,7 @@ async fn contract(pg: bool) {
     let error = gpg::enroll(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Token(i64::MAX),
+        &db::users::accounts::AccountCredential::Token(i64::MAX, ""),
         None,
         &armored,
     )

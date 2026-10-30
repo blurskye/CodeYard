@@ -62,7 +62,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::GistWrite {
-                credential: codeyard::backend::repositories::store::GistCredential::Token(1),
+                credential: codeyard::backend::repositories::store::GistCredential::Token(1, String::new()),
             },
             false,
         ),

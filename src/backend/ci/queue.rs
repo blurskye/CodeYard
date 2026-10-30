@@ -177,6 +177,7 @@ pub(crate) fn prepare_logs(lines: &[LogLine]) -> Result<Vec<LogLine>> {
 pub(crate) enum Operation {
     Claim {
         mode: CiExecutionMode,
+        platforms: Vec<String>,
     },
     Heartbeat {
         id: i64,
@@ -358,8 +359,8 @@ impl RunQueue {
         Ok(store)
     }
 
-    pub async fn claim(&self, worker: &str, mode: CiExecutionMode) -> Result<Option<ClaimedRun>> {
-        self.claim_with_stop(worker, mode, None).await
+    pub async fn claim(&self, worker: &str, mode: CiExecutionMode, platforms: &[String]) -> Result<Option<ClaimedRun>> {
+        self.claim_with_stop(worker, mode, platforms, None).await
     }
 
     /// `claim` for a worker that may be shutting down. A remote claim that is still dialing when
@@ -370,10 +371,11 @@ impl RunQueue {
         &self,
         worker: &str,
         mode: CiExecutionMode,
+        platforms: &[String],
         stop: Option<&mut watch::Receiver<bool>>,
     ) -> Result<Option<ClaimedRun>> {
         match self {
-            Self::Remote { .. } => self.call(worker, Operation::Claim { mode }, stop).await,
+            Self::Remote { .. } => self.call(worker, Operation::Claim { mode, platforms: platforms.to_vec() }, stop).await,
             Self::Database {
                 pool,
                 config,
@@ -392,11 +394,12 @@ impl RunQueue {
                             worker,
                             mode.as_str(),
                             &trusted,
+                            platforms,
                         )
                         .await?
                     }
                     // A database without cluster membership has no node rows to check.
-                    None => db::ci::claim_ci_run(pool, worker, mode.as_str(), &trusted).await?,
+                    None => db::ci::claim_ci_run(pool, worker, mode.as_str(), &trusted, platforms).await?,
                 };
                 let Some(mut run) = claimed else {
                     return Ok(None);

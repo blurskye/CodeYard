@@ -136,8 +136,7 @@ impl Update {
         if let Some(source) = &self.source {
             anyhow::ensure!(
                 matches!(source.path.as_str(), "/" | "/docs")
-                    && git2::Reference::is_valid_name(&format!("refs/heads/{}", source.branch))
-                    && source.branch.len() <= 255,
+                    && crate::backend::git::branch_ref(&source.branch).is_some(),
                 Refusal::Invalid
             );
         }
@@ -182,25 +181,25 @@ pub struct Deployment {
 }
 
 native_operation!(crate::backend::db::postgres::pages::site,crate::backend::db::sqlite::pages::site,
-    fn site(pool:&DbPool,repo:i64)->Result<Option<Site>>);
+    fn site(pool:&DbPool,reader:&super::repositories::credentials::Reader<'_>,repo:i64)->Result<Option<Site>>);
 native_operation!(crate::backend::db::postgres::pages::save,crate::backend::db::sqlite::pages::save,
-    fn save(pool:&DbPool,actor:i64,repo:i64,update:&Update,create:bool)->Result<Site>);
+    fn save(pool:&DbPool,actor:i64,credential:&crate::backend::db::users::accounts::AccountCredential<'_>,repo:i64,update:&Update,create:bool)->Result<Site>);
 native_operation!(crate::backend::db::postgres::pages::delete,crate::backend::db::sqlite::pages::delete,
-    fn delete(pool:&DbPool,actor:i64,repo:i64)->Result<()>);
+    fn delete(pool:&DbPool,actor:i64,credential:&crate::backend::db::users::accounts::AccountCredential<'_>,repo:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::pages::builds,crate::backend::db::sqlite::pages::builds,
-    fn builds(pool:&DbPool,repo:i64,offset:i64,limit:i64)->Result<Vec<Build>>);
+    fn builds(pool:&DbPool,reader:&super::repositories::credentials::Reader<'_>,repo:i64,offset:i64,limit:i64)->Result<Vec<Build>>);
 native_operation!(crate::backend::db::postgres::pages::build,crate::backend::db::sqlite::pages::build,
-    fn build(pool:&DbPool,repo:i64,id:i64)->Result<Option<Build>>);
+    fn build(pool:&DbPool,reader:&super::repositories::credentials::Reader<'_>,repo:i64,id:i64)->Result<Option<Build>>);
 native_operation!(crate::backend::db::postgres::pages::request_build,crate::backend::db::sqlite::pages::request_build,
-    fn request_build(pool:&DbPool,actor:i64,repo:i64,sha:&str)->Result<Build>);
+    fn request_build(pool:&DbPool,actor:i64,credential:&super::users::accounts::AccountCredential<'_>,repo:i64,sha:&str)->Result<Build>);
 pub struct Attempt<'a> {
     pub sha: &'a str,
     pub environment: &'a str,
     pub artifact_id: Option<i64>,
 }
 native_operation!(crate::backend::db::postgres::pages::request_deployment,crate::backend::db::sqlite::pages::request_deployment,
-    fn request_deployment(pool:&DbPool,actor:i64,repo:i64,input:Attempt<'_>)->Result<Deployment>);
+    fn request_deployment(pool:&DbPool,actor:i64,credential:&super::users::accounts::AccountCredential<'_>,repo:i64,input:Attempt<'_>)->Result<Deployment>);
 native_operation!(crate::backend::db::postgres::pages::deployment,crate::backend::db::sqlite::pages::deployment,
-    fn deployment(pool:&DbPool,repo:i64,id:i64)->Result<Option<Deployment>>);
+    fn deployment(pool:&DbPool,reader:&super::repositories::credentials::Reader<'_>,repo:i64,id:i64)->Result<Option<Deployment>>);
 native_operation!(crate::backend::db::postgres::pages::cancel,crate::backend::db::sqlite::pages::cancel,
-    fn cancel(pool:&DbPool,actor:i64,repo:i64,id:i64)->Result<()>);
+    fn cancel(pool:&DbPool,actor:i64,credential:&super::users::accounts::AccountCredential<'_>,repo:i64,id:i64)->Result<()>);

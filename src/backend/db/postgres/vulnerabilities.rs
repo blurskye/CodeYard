@@ -1,7 +1,7 @@
 use crate::backend::{
     db::vulnerabilities::*,
     dependency_graph::Snapshot,
-    vulnerabilities::{self, Advisory},
+    vulnerabilities::Advisory,
 };
 use anyhow::{ensure, Result};
 use sqlx::PgPool;
@@ -19,24 +19,7 @@ pub async fn save_settings(
     session: &str,
     settings: &Settings,
 ) -> Result<()> {
-    let url = url::Url::parse(&settings.base_url)?;
-    ensure!(
-        matches!(url.scheme(), "http" | "https")
-            && url.host_str().is_some()
-            && url.username().is_empty()
-            && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none(),
-        Refusal::Invalid
-    );
-    let ecosystems: Vec<String> = serde_json::from_str(&settings.ecosystems)?;
-    ensure!(
-        ecosystems.len() <= 10
-            && ecosystems
-                .iter()
-                .all(|e| vulnerabilities::ECOSYSTEMS.contains(&e.as_str())),
-        Refusal::Invalid
-    );
+    settings.validate()?;
     let mut tx = pool.begin().await?;
     ensure!(
         super::users::transitions::active_admin(&mut tx, actor).await?
@@ -87,7 +70,7 @@ pub async fn upsert(pool: &PgPool, advisory: &Advisory) -> Result<bool> {
 }
 /// Moves every repository's scan forward after the advisory catalogue changed.
 pub async fn rescan_all(pool: &PgPool) -> Result<()> {
-    sqlx::query("UPDATE vulnerability_jobs SET generation=generation+1,next_scan=$1")
+    sqlx::query("UPDATE vulnerability_jobs SET generation=generation+1,lease_until=NULL,next_scan=$1")
         .bind(chrono::Utc::now())
         .execute(pool)
         .await?;
@@ -97,25 +80,29 @@ pub async fn advisories(pool: &PgPool, ecosystem: &str, name: &str) -> Result<Ve
     Ok(sqlx::query_scalar("SELECT a.data FROM osv_advisories a JOIN osv_packages p ON p.advisory=a.id WHERE p.ecosystem=$1 AND p.name=$2 ORDER BY a.id").bind(ecosystem).bind(name).fetch_all(pool).await?)
 }
 pub async fn enqueue(pool: &PgPool, repo: i64) -> Result<()> {
-    sqlx::query("INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) VALUES($1,1,$2) ON CONFLICT(repo_id) DO UPDATE SET generation=vulnerability_jobs.generation+1,next_scan=$2").bind(repo).bind(chrono::Utc::now()).execute(pool).await?;
+    sqlx::query("INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) SELECT $1,1,$2 WHERE EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND NOT is_gist) ON CONFLICT(repo_id) DO UPDATE SET generation=vulnerability_jobs.generation+1,lease_until=NULL,next_scan=$2").bind(repo).bind(chrono::Utc::now()).execute(pool).await?;
     Ok(())
 }
 pub async fn queue_changed(pool: &PgPool) -> Result<()> {
-    sqlx::query("INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) SELECT id,1,$1 FROM repositories WHERE true ON CONFLICT(repo_id) DO NOTHING").bind(chrono::Utc::now()).execute(pool).await?;
+    sqlx::query("DELETE FROM vulnerability_jobs WHERE repo_id IN (SELECT id FROM repositories WHERE is_gist)").execute(pool).await?;
+    sqlx::query("INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) SELECT id,1,$1 FROM repositories WHERE NOT is_gist ON CONFLICT(repo_id) DO NOTHING").bind(chrono::Utc::now()).execute(pool).await?;
     Ok(())
 }
 pub async fn claim(pool: &PgPool) -> Result<Option<(i64, i64)>> {
     let now = chrono::Utc::now();
     let mut tx = pool.begin().await?;
-    let row:Option<(i64,i64)>=sqlx::query_as("SELECT repo_id,generation FROM vulnerability_jobs WHERE next_scan<=$1 AND (lease_until IS NULL OR lease_until<$1) ORDER BY next_scan,repo_id LIMIT 1 FOR UPDATE SKIP LOCKED").bind(now).fetch_optional(&mut *tx).await?;
+    let mut row:Option<(i64,i64)>=sqlx::query_as("SELECT repo_id,generation FROM vulnerability_jobs WHERE EXISTS(SELECT 1 FROM repositories WHERE id=repo_id AND NOT is_gist) AND next_scan<=$1 AND (lease_until IS NULL OR lease_until<$1) ORDER BY next_scan,repo_id LIMIT 1 FOR UPDATE SKIP LOCKED").bind(now).fetch_optional(&mut *tx).await?;
     if let Some((repo, _)) = row {
         // Moving next_scan with the lease keeps a job that never completes from staying
         // first in line ahead of newer work.
-        sqlx::query("UPDATE vulnerability_jobs SET lease_until=$2,next_scan=$2 WHERE repo_id=$1")
+        sqlx::query("UPDATE vulnerability_jobs SET generation=generation+1,lease_until=$2,next_scan=$2 WHERE repo_id=$1")
             .bind(repo)
             .bind(now + chrono::Duration::minutes(10))
             .execute(&mut *tx)
             .await?;
+    }
+    if let Some((_, generation)) = row.as_mut() {
+        *generation += 1;
     }
     tx.commit().await?;
     Ok(row)

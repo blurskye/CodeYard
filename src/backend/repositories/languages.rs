@@ -151,7 +151,9 @@ async fn compute_local(
     } else {
         git::compute_language_stats(path, &tip).await?
     };
-    // Do not publish a scan if this copy moved while it was running. Its push queued a refresh.
+    // Standalone pushes need not change SQL's write_version. Retain the Git lock from the final
+    // tip check through publication so an older scan cannot overwrite a newer cache.
+    let _publication = git::locks::lock(path).await;
     if git::branch_tip(path, branch)?.unwrap_or_default() == tip {
         match store_rows(pool, source, &tip, &languages).await {
             Ok(true) => {}

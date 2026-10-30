@@ -63,6 +63,18 @@ pub const MAX_INLINE_COMMENTS: usize = 500;
 pub const MAX_REVIEW_COMMENTS_PAGE: usize = 100;
 pub const MAX_REVIEW_COMMENT_PAGE_BYTES: usize = 1024 * 1024;
 
+pub(crate) fn budgeted_comment_ids(rows: &[(i64, i64)], limit: usize) -> Result<Vec<i64>> {
+    let mut bytes = 0usize;
+    let mut ids = Vec::new();
+    for &(id, size) in rows.iter().take(limit) {
+        bytes = bytes.saturating_add(usize::try_from(size)?);
+        if bytes > MAX_REVIEW_COMMENT_PAGE_BYTES { break; }
+        ids.push(id);
+    }
+    anyhow::ensure!(rows.is_empty() || !ids.is_empty(), "Review comment exceeds its page limit");
+    Ok(ids)
+}
+
 // The comments before this one, and the page bytes through it, within these reviews.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::review_comment_position,
     crate::backend::db::sqlite::pull_requests::reviews::review_comment_position,
@@ -89,7 +101,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pen
     pool: &DbPool,
     pr_id: i64,
     author_id: i64,
-) -> Result<Vec<PullRequestCommentEntry>>);
+) -> Result<PullRequestInlineComments>);
 
 // The comments filed in any of `review_ids`, oldest first.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_review_comments,
@@ -217,7 +229,8 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::delete_p
     fn delete_pending_review_by_id(pool: &DbPool, pr_id: i64, author_id: i64, review_id: i64) -> Result<Option<PullRequestReview>>);
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::save_pull_request_review,
     crate::backend::db::sqlite::pull_requests::reviews::save_pull_request_review,
-    fn save_pull_request_review(pool: &DbPool, pr_id: i64, author_id: i64, state: &str, body: Option<&str>, commit_sha: Option<&str>, expected_pending: Option<i64>) -> Result<PullRequestReview>);
+    #[allow(clippy::too_many_arguments)]
+    fn save_pull_request_review(pool: &DbPool, pr_id: i64, author_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, state: &str, body: Option<&str>, commit_sha: Option<&str>, expected_pending: Option<i64>) -> Result<PullRequestReview>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull_request_review,
     crate::backend::db::sqlite::pull_requests::reviews::add_pull_request_review,
@@ -225,6 +238,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull
     pool: &DbPool,
     pr_id: i64,
     author_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     state: &str,
     body: Option<&str>,
     commit_sha: Option<&str>,
@@ -361,7 +375,7 @@ pub struct PullRequestCommentEntry {
     pub author: crate::backend::db::users::accounts::AuthorDisplay,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PullRequestInlineComments {
     pub comments: Vec<PullRequestCommentEntry>,
     pub truncated: bool,

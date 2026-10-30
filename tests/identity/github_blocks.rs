@@ -284,7 +284,7 @@ async fn contract(pg: bool) {
         subject: db::reactions::Subject::Issue,
         subject_id: issue.id,
     };
-    assert!(db::reactions::create_reaction(f.pool(), bob, target, "+1")
+    assert!(db::reactions::create_reaction(f.pool(), bob, &db::users::accounts::AccountCredential::Session(&other_session.session), target, "+1")
         .await
         .unwrap_err()
         .is::<db::discussions::DiscussionWriteRefusal>());

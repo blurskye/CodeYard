@@ -372,6 +372,7 @@ async fn contract(pg: bool) {
     db::reactions::create_reaction(
         f.pool(),
         alice,
+        &db::users::accounts::AccountCredential::Token(token_ids[0], &tokens::token_hash(token)),
         db::reactions::Target {
             repo_id: repo.id,
             item_id: stored.id,

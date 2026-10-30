@@ -357,6 +357,9 @@ async fn remove_item_label(
     .await?;
     if result.rows_affected() > 0 {
         touch_subject(&mut tx, subject, item_id).await?;
+        let name: String = sqlx::query_scalar("SELECT name FROM labels WHERE id=?1 AND repo_id=?2").bind(label_id).bind(repo_id).fetch_one(&mut *tx).await?;
+        let kind = match target { LabelTarget::Issue => "issue", LabelTarget::PullRequest => "pull_request" };
+        super::timeline::append(&mut tx, repo_id, kind, item_id, actor_id, "unlabeled", &name, "").await?;
     }
     tx.commit().await?;
     Ok(result.rows_affected() > 0)
@@ -460,15 +463,17 @@ async fn write_item_labels(
 ) -> Result<Vec<Label>> {
     let mut tx = begin_item_label_write(pool, actor_id, repo_id).await?;
     let labels =
-        write_item_labels_transaction(&mut tx, repo_id, target, item_id, label_ids, replace)
+        write_item_labels_transaction(&mut tx, actor_id, repo_id, target, item_id, label_ids, replace)
             .await?;
     tx.commit().await?;
     Ok(labels)
 }
 
 /// Caller retains live item-metadata authority until this transaction commits.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn write_item_labels_transaction(
     tx: &mut Transaction<'_, Sqlite>,
+    actor_id: i64,
     repo_id: i64,
     target: LabelTarget,
     item_id: i64,
@@ -477,6 +482,8 @@ pub(crate) async fn write_item_labels_transaction(
 ) -> Result<Vec<Label>> {
     let (subject, link, column) = target.tables();
     let ids = lock_item_labels(tx, repo_id, target, item_id, label_ids).await?;
+    let before: Vec<Label> = sqlx::query_as(&format!("SELECT l.* FROM labels l JOIN {link} il ON il.label_id=l.id WHERE il.{column}=?1 AND l.repo_id=?2"))
+        .bind(item_id).bind(repo_id).fetch_all(&mut **tx).await?;
     let mut changed = false;
     if replace {
         changed |= sqlx::query(&format!("DELETE FROM {link} WHERE {column}=?1"))
@@ -511,6 +518,13 @@ pub(crate) async fn write_item_labels_transaction(
         labels.len() <= crate::backend::db::labels::MAX_ISSUE_LABELS,
         LabelWriteRefusal::InvalidLabels
     );
+    let kind = match target { LabelTarget::Issue => "issue", LabelTarget::PullRequest => "pull_request" };
+    for label in before.iter().filter(|old| !labels.iter().any(|new| new.id == old.id)) {
+        super::timeline::append(tx, repo_id, kind, item_id, actor_id, "unlabeled", &label.name, "").await?;
+    }
+    for label in labels.iter().filter(|new| !before.iter().any(|old| old.id == new.id)) {
+        super::timeline::append(tx, repo_id, kind, item_id, actor_id, "labeled", &label.name, "").await?;
+    }
     Ok(labels)
 }
 

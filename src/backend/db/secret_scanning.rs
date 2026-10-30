@@ -1,5 +1,5 @@
 //! Stored alerts and durable scan work. Alert reads require live repository administration.
-use super::DbPool;
+use super::{users::accounts::AccountCredential, DbPool};
 use crate::backend::repositories::secret_scanning::patterns::{
     Create, Delete, Owner, Pattern, Update,
 };
@@ -31,19 +31,19 @@ pub struct ConfigUpdate {
 native_operation!(super::postgres::secret_scanning::patterns::list,super::sqlite::secret_scanning::patterns::list,
     fn list_patterns(pool:&DbPool,actor:i64,owner:Owner)->Result<Vec<Pattern>>);
 native_operation!(super::postgres::secret_scanning::patterns::create,super::sqlite::secret_scanning::patterns::create,
-    fn create_patterns(pool:&DbPool,actor:i64,owner:Owner,input:&[Create])->Result<Vec<Pattern>>);
+    fn create_patterns(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,owner:Owner,input:&[Create])->Result<Vec<Pattern>>);
 native_operation!(super::postgres::secret_scanning::patterns::update,super::sqlite::secret_scanning::patterns::update,
-    fn update_pattern(pool:&DbPool,actor:i64,owner:Owner,id:i64,input:&Update)->Result<Pattern>);
+    fn update_pattern(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,owner:Owner,id:i64,input:&Update)->Result<Pattern>);
 native_operation!(super::postgres::secret_scanning::patterns::delete,super::sqlite::secret_scanning::patterns::delete,
-    fn delete_patterns(pool:&DbPool,actor:i64,owner:Owner,input:&[Delete],resolve:bool)->Result<()>);
+    fn delete_patterns(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,owner:Owner,input:&[Delete],resolve:bool)->Result<()>);
 native_operation!(super::postgres::secret_scanning::patterns::publish,super::sqlite::secret_scanning::patterns::publish,
-    fn publish_pattern(pool:&DbPool,actor:i64,owner:Owner,id:i64)->Result<()>);
+    fn publish_pattern(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,owner:Owner,id:i64)->Result<()>);
 native_operation!(super::postgres::secret_scanning::patterns::effective,super::sqlite::secret_scanning::patterns::effective,
     fn effective_patterns(pool:&DbPool,repo:i64)->Result<(Vec<Pattern>,Vec<String>)>);
 native_operation!(super::postgres::secret_scanning::patterns::configs,super::sqlite::secret_scanning::patterns::configs,
     fn pattern_configs(pool:&DbPool,actor:i64,org:i64)->Result<serde_json::Value>);
 native_operation!(super::postgres::secret_scanning::patterns::configure,super::sqlite::secret_scanning::patterns::configure,
-    fn configure_patterns(pool:&DbPool,actor:i64,org:i64,input:&ConfigUpdate)->Result<String>);
+    fn configure_patterns(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,org:i64,input:&ConfigUpdate)->Result<String>);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
@@ -155,6 +155,9 @@ pub struct Bypass {
     pub expires_at: DateTime<Utc>,
     pub used_at: Option<DateTime<Utc>>,
 }
+
+native_operation!(super::postgres::secret_scanning::prune_expired_bypasses, super::sqlite::secret_scanning::prune_expired_bypasses,
+    fn prune_expired_bypasses(pool: &DbPool) -> Result<u64>);
 
 native_operation!(super::postgres::secret_scanning::protection, super::sqlite::secret_scanning::protection,
     fn protection(pool: &DbPool, actor: i64, repo: i64, hash: &str, kind: &str) -> Result<Option<Bypass>>);

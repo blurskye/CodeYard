@@ -28,6 +28,7 @@ pub async fn create_pull_request_review(
         state.cluster.as_ref(),
         &state.notification_broadcaster,
         current_actor.id,
+        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default()),
         (owner, repo, number),
         req,
     )

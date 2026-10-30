@@ -205,7 +205,7 @@ async fn contract(pg: bool) {
     )
     .await;
 
-    let before = db::users::tokens::list_tokens(f.pool(), owner, 0)
+    let before = db::users::tokens::list_tokens(f.pool(), owner, &crate::support::live_session(f.pool(), owner).await, 0)
         .await
         .unwrap();
     // Only owners manage token grants; with no fine-grained tokens the lists are empty and a
@@ -304,7 +304,7 @@ async fn contract(pg: bool) {
             }
         }
     }
-    let after = db::users::tokens::list_tokens(f.pool(), owner, 0)
+    let after = db::users::tokens::list_tokens(f.pool(), owner, &crate::support::live_session(f.pool(), owner).await, 0)
         .await
         .unwrap();
     assert_eq!(

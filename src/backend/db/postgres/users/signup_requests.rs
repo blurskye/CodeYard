@@ -113,6 +113,9 @@ pub async fn approve_signup_request(
         return Err(ReviewError::Denied.into());
     }
 
+    if super::transitions::email_owned(&mut tx, signup_request.email.as_deref(), -1).await? {
+        return Err(ReviewError::Conflict.into());
+    }
     let user = sqlx::query_as::<_, User>(
         r#"
         INSERT INTO users (username, email, password_hash, is_admin, must_change_password)

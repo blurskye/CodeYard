@@ -37,6 +37,7 @@ pub async fn create_issue_with_metadata(
     if !metadata.labels.is_empty() {
         super::labels::write_item_labels_transaction(
             &mut tx,
+            author_id,
             repo_id,
             LabelTarget::Issue,
             issue.id,
@@ -48,6 +49,7 @@ pub async fn create_issue_with_metadata(
     for &user in metadata.assignees {
         super::assignees::assign_in_transaction(
             &mut tx,
+            author_id,
             repo_id,
             AssignedItem::Issue(issue.id),
             user,
@@ -57,6 +59,7 @@ pub async fn create_issue_with_metadata(
     if let Some(number) = metadata.milestone {
         super::milestones::set_item_milestone_in_transaction(
             &mut tx,
+            author_id,
             repo_id,
             "issues",
             issue.id,
@@ -355,12 +358,12 @@ pub(crate) async fn update_issue_in_transaction(
     edit: crate::backend::db::discussions::DiscussionEdit<'_>,
     state_reason: Option<&str>,
 ) -> Result<Option<Issue>> {
-    let stored: Option<(String, String)> =
-        sqlx::query_as("SELECT state,updated_at FROM issues WHERE id=?1")
+    let stored: Option<(String, String, String)> =
+        sqlx::query_as("SELECT state,updated_at,title FROM issues WHERE id=?1")
             .bind(issue_id)
             .fetch_optional(&mut **tx)
             .await?;
-    let Some((state, stored_revision)) = stored else {
+    let Some((state, stored_revision, old_title)) = stored else {
         return Ok(None);
     };
     let previous = super::time::decode(&stored_revision)?;
@@ -372,7 +375,7 @@ pub(crate) async fn update_issue_in_transaction(
         r#"UPDATE issues SET
             title = COALESCE(?2, title), body = COALESCE(?3, body),
             state = COALESCE(?4, state),
-            state_reason = CASE WHEN ?4 IS NULL OR ?4=state THEN state_reason WHEN ?4='open' THEN 'reopened' WHEN ?4='closed' THEN COALESCE(?10,'completed') ELSE state_reason END,
+            state_reason = CASE WHEN ?4='closed' AND ?10 IS NOT NULL THEN ?10 WHEN ?4 IS NULL OR ?4=state THEN state_reason WHEN ?4='open' THEN 'reopened' WHEN ?4='closed' THEN COALESCE(?10,'completed') ELSE state_reason END,
             closed_at = CASE WHEN ?4 = 'open' THEN NULL WHEN ?4 = 'closed' AND state <> 'closed' THEN strftime('%Y-%m-%dT%H:%M:%f000Z','now') ELSE closed_at END,
             closed_by_id = CASE WHEN ?4 = 'open' THEN NULL WHEN ?4 = 'closed' AND state <> 'closed' THEN ?7 ELSE closed_by_id END,
             updated_at = ?8
@@ -382,6 +385,11 @@ pub(crate) async fn update_issue_in_transaction(
     ).bind(issue_id).bind(edit.title).bind(edit.body).bind(edit.state)
         .bind(edit.expected_state).bind(stored_revision).bind(edit.actor_id).bind(next).bind(repo).bind(state_reason)
         .fetch_optional(&mut **tx).await?;
+    if let Some(issue) = issue.as_ref() {
+        for (kind, detail, previous) in crate::backend::db::timeline::edit_events(&old_title, &state, &issue.title, &issue.state) {
+            super::timeline::append(tx, repo, "issue", issue_id, edit.actor_id, kind, detail, previous).await?;
+        }
+    }
     Ok(issue)
 }
 

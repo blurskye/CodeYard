@@ -11,6 +11,25 @@ pub const MAX_DEFINITIONS: usize = 100;
 pub const MAX_ALLOWED_VALUES: usize = 200;
 pub const MAX_VALUE_BYTES: usize = 1024;
 
+pub(crate) fn effective_values(
+    definitions: &[Definition], rows: &std::collections::HashMap<i64, String>,
+) -> Result<Vec<ValueInput>> {
+    let mut result = Vec::new();
+    let mut bytes = 0;
+    for definition in definitions {
+        let value = match rows.get(&definition.id) {
+            Some(value) => Some(serde_json::from_str::<PropertyValue>(value)?),
+            None if definition.fields.require_explicit_values => None,
+            None => definition.fields.default_value.clone(),
+        };
+        if let Some(value) = &value { definition.fields.validate_value(value)?; }
+        bytes += serde_json::to_string(&value)?.len() + definition.fields.property_name.len() + 64;
+        ensure!(bytes <= 64 * 1024 * 1024, Refusal::TooLarge);
+        result.push(ValueInput { property_name: definition.fields.property_name.clone(), value });
+    }
+    Ok(result)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
     #[error("{message}")]
@@ -148,6 +167,11 @@ pub fn valid_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
 }
 impl DefinitionInput {
+    pub(crate) fn same_value_rules(&self, other: &Self) -> bool {
+        self.value_type == other.value_type && self.allowed_values == other.allowed_values
+            && self.required == other.required && self.require_explicit_values == other.require_explicit_values
+    }
+
     pub fn validate(&self) -> Result<()> {
         ensure!(
             valid_name(&self.property_name),

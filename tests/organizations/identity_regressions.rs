@@ -303,6 +303,7 @@ async fn release_upload_cleanup(pg: bool) {
     db::releases::add_release_asset(
         f.pool(),
         owner,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), owner).await),
         repo.id,
         release.id,
         &db::releases::NewReleaseAsset {

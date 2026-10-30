@@ -225,6 +225,7 @@ pub(super) async fn react(
     if let Err(error) = db::reactions::toggle_reaction(
         &ctx.state.pool,
         actor,
+        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
         loaded.repository.id,
         row.id,
         db::reactions::Subject::CommitComment,

@@ -49,28 +49,27 @@ pub(super) async fn notify(
     let Ok(Some(owner)) = db::ci::ci_repository_owner(pool, repo.id).await else {
         return;
     };
-    let members = match db::pull_requests::team_reviewers::members(pool, repo.id, team.id).await {
-        Ok(members) => members,
-        Err(error) => {
-            tracing::warn!(%error, "Review team notification recipients unavailable");
-            return;
-        }
-    };
-    let mut sent = std::collections::HashSet::new();
-    for id in members {
-        if id == pull.author_id || !sent.insert(id) {
-            continue;
-        }
-        let Ok(Some(user)) = db::users::accounts::get_user_by_id(pool, id).await else {
-            continue;
+    let mut after = 0;
+    loop {
+        let members = match db::pull_requests::team_reviewers::members(pool, repo.id, team.id, after).await {
+            Ok(members) => members,
+            Err(error) => {
+                tracing::warn!(%error, "Review team notification recipients unavailable");
+                return;
+            }
         };
-        if !matches!(
-            crate::backend::repositories::access::can_write(pool, &user, repo).await,
-            Ok(true)
-        ) {
-            continue;
+        let Some(last) = members.last().copied() else { break; };
+        after = last;
+        for id in members {
+            if id == pull.author_id { continue; }
+            let Ok(Some(user)) = db::users::accounts::get_user_by_id(pool, id).await else {
+                continue;
+            };
+            if !matches!(
+                crate::backend::repositories::access::can_write(pool, &user, repo).await,
+                Ok(true)
+            ) { continue; }
+            super::reviews::notify_review_request(pool, broadcaster, actor, &owner, repo, pull, &user).await;
         }
-        super::reviews::notify_review_request(pool, broadcaster, actor, &owner, repo, pull, &user)
-            .await;
     }
 }

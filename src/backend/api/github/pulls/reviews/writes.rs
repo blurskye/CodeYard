@@ -53,7 +53,8 @@ async fn create(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let authentication = viewer.ok_or_else(auth::required)?;
+    let actor = &authentication.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Create = if body.is_empty() {
         Create::default()
@@ -91,6 +92,7 @@ async fn create(
             state.cluster.as_ref(),
             &state.notification_broadcaster,
             actor.id,
+            &authentication.credential(),
             (owner.clone(), name, number),
             domain::CreatePullRequestReviewRequest {
                 state: review_state,
@@ -143,6 +145,7 @@ async fn create(
             state.cluster.as_ref(),
             &state.notification_broadcaster,
             actor.id,
+            &authentication.credential(),
             (owner.clone(), name, number),
             domain::CreatePullRequestReviewRequest {
                 state: Some(review_state),
@@ -230,7 +233,8 @@ async fn submit(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let authentication = viewer.ok_or_else(auth::required)?;
+    let actor = &authentication.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Submit =
         serde_json::from_slice(&body).map_err(|_| Error::invalid_simple("event is required"))?;
@@ -247,6 +251,7 @@ async fn submit(
         state.cluster.as_ref(),
         &state.notification_broadcaster,
         actor.id,
+        &authentication.credential(),
         (owner.clone(), name, number),
         domain::CreatePullRequestReviewRequest {
             state: state_for(Some(&input.event))?,

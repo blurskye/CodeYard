@@ -32,8 +32,7 @@ pub async fn organization_key(
     org: i64,
 ) -> Result<(String, crypto_box::SecretKey), SecretsError> {
     let mut tx = authorized(pool, actor, org).await?;
-    let key = crypto_box::SecretKey::generate(&mut rand::thread_rng());
-    let (encrypted, nonce) = encryptor.encrypt(&key.to_bytes())?;
+    let (encrypted, nonce) = encryptor.generate_sealed_box_key()?;
     sqlx::query("INSERT INTO org_dependabot_keys(org_id,key_id,encrypted_key,nonce) VALUES($1,$2,$3,$4) ON CONFLICT(org_id) DO NOTHING")
         .bind(org).bind(uuid::Uuid::new_v4().simple().to_string()).bind(encrypted).bind(nonce.as_slice()).execute(&mut *tx).await?;
     let (id, encrypted, nonce): (String, Vec<u8>, Vec<u8>) = sqlx::query_as(
@@ -42,12 +41,9 @@ pub async fn organization_key(
     .bind(org)
     .fetch_one(&mut *tx)
     .await?;
-    let bytes: [u8; 32] = encryptor
-        .decrypt(&encrypted, &nonce)?
-        .try_into()
-        .map_err(|_| crate::backend::crypto::SecretError::DecryptionFailed)?;
+    let key = encryptor.sealed_box_key(&encrypted, &nonce)?;
     tx.commit().await?;
-    Ok((id, crypto_box::SecretKey::from(bytes)))
+    Ok((id, key))
 }
 
 pub async fn list_organization_secrets(

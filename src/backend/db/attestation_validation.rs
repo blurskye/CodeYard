@@ -23,6 +23,18 @@ pub enum AttestationError {
     InvalidPage,
 }
 
+pub(crate) fn page_ids(rows: &[(i64, i64)], limit: usize) -> Result<Vec<i64>, AttestationError> {
+    let mut bytes = 0usize;
+    let mut ids = Vec::new();
+    for &(id, size) in rows.iter().take(limit) {
+        bytes = bytes.saturating_add(usize::try_from(size).map_err(|_| AttestationError::Size)?);
+        if bytes > 8 * 1024 * 1024 { break; }
+        ids.push(id);
+    }
+    if !rows.is_empty() && ids.is_empty() { return Err(AttestationError::Size); }
+    Ok(ids)
+}
+
 pub fn subject_digest(value: &str) -> Result<String, AttestationError> {
     let Some(hex) = value.strip_prefix("sha256:") else {
         return Err(AttestationError::InvalidDigest);

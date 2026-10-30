@@ -1066,7 +1066,7 @@ async fn pending_review_holds_at_most_200_comments(pg: bool) {
     let held = db::pull_requests::reviews::list_pending_review_comments(pool, pr_id, world.bob_id)
         .await
         .unwrap();
-    assert_eq!(held.len(), 200);
+    assert_eq!(held.comments.len(), 200);
     world.database.finish().await;
 }
 
@@ -1128,6 +1128,7 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
         pool,
         pr_id,
         world.bob_id,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, world.bob_id).await),
         "commented",
         None,
         Some(head.as_str()),
@@ -1146,6 +1147,7 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
         pool,
         pr_id,
         world.bob_id,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, world.bob_id).await),
         "commented",
         Some("Summary"),
         Some(head.as_str()),
@@ -1275,6 +1277,7 @@ async fn reviews_past_the_old_limit_stay_on_the_conversation(pg: bool) {
             pool,
             pr_id,
             world.bob_id,
+            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, world.bob_id).await),
             "commented",
             Some(body.as_str()),
             Some(head.as_str()),

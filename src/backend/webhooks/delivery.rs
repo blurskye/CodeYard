@@ -7,7 +7,7 @@ use crate::backend::db::webhooks::{self as hooks, NewDelivery};
 use crate::backend::db::DbPool;
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use crate::backend::crypto::hmac_sha256;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use url::{Host, Url};
@@ -463,13 +463,6 @@ fn failed_record(outgoing: &Outgoing, duration_ms: i32, error: &str) -> NewDeliv
         response_headers: None,
         response_body: None,
     }
-}
-
-/// HMAC-SHA256 of `message`, the signature receivers check.
-pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
-    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
-    mac.update(message);
-    mac.finalize().into_bytes().into()
 }
 
 #[cfg(test)]

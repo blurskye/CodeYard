@@ -162,7 +162,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     })
                 })
                 .transpose()?
-                // A pending review is submitted on the commit it was drafted on, so a stale draft is refused below.
+                // Identified drafts keep the commit that was actually reviewed.
                 .or_else(|| {
                     (field == "submitPullRequestReview")
                         .then(|| existing.as_ref().and_then(|r| r.commit_sha.as_deref()))
@@ -170,7 +170,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 })
                 .unwrap_or(&pull.head_sha);
             if !crate::backend::git::is_full_commit_id(commit)
-                || !commit.eq_ignore_ascii_case(&pull.head_sha)
+                || (field != "submitPullRequestReview" && !commit.eq_ignore_ascii_case(&pull.head_sha))
             {
                 return Err(async_graphql::Error::new(
                     "Review the current pull request head",
@@ -185,6 +185,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     request.state.cluster.as_ref(),
                     &request.state.notification_broadcaster,
                     actor,
+                    &request.auth.credential(),
                     (owner, repo.name.clone(), pull.number),
                     reviews::CreatePullRequestReviewRequest {
                         state: Some(state),

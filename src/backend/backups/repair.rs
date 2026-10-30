@@ -5,10 +5,11 @@
 //! backup sits in `deleted/`. Verify finds these and, with `--repair`, brings the database and
 //! the pull request refs back in line with Git. Problems it cannot repair, such as a commit the
 //! database names that Git lacks, are listed and make the command fail.
-use crate::backend::{db, git::mirror, repositories};
+use crate::backend::{db, git::{self, mirror}, repositories};
 use anyhow::{ensure, Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 
 /// Repository checks read only the repositories this node stores. In cluster mode most of them
 /// live on other nodes, so the checks refuse to report success for repositories they did not read.
@@ -28,6 +29,31 @@ fn pull_number(reference: &str) -> Option<i64> {
         .0
         .parse()
         .ok()
+}
+
+/// A retained pull ref has no branch provenance. Hold the recorded head branch's publication
+/// lease through the SQL CAS, and accept its retained commit only while that live branch matches.
+async fn retain_matching_head(
+    pool: &db::DbPool,
+    pull: &db::backups::PullRequestHead,
+    candidate: &str,
+) -> Result<Option<Arc<git::locks::PublicationGuard>>> {
+    let Some(head_id) = pull.head_repo_id else { return Ok(None) };
+    let Some(head) = db::repositories::records::get_repository_by_id(pool, head_id).await? else {
+        return Ok(None);
+    };
+    if head.storage_node_id.is_some() || head.is_gist {
+        return Ok(None);
+    }
+    let Some(reference) = git::branch_ref(&pull.head_branch) else { return Ok(None) };
+    let path = Path::new(&head.disk_path);
+    if !path.join("HEAD").is_file() {
+        return Ok(None);
+    }
+    let held = git::locks::publication(path).await?;
+    let matches = mirror::refs(path, &reference).await?
+        .into_iter().any(|(name, sha)| name == reference && sha == candidate);
+    Ok(matches.then_some(held))
 }
 
 /// Checks every repository this node stores and returns how many problems remain.
@@ -107,24 +133,32 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
             let name = format!("refs/pull/{number}/head");
             match refs.get(&name) {
                 Some(sha) if *sha == pull.head_sha => {}
-                // A push after the backup moved the pull request; Git is newer.
+                // Git may be newer, but the retained ref alone does not identify its source.
                 Some(sha) if pull.state == "open" && mirror::has_commit(path, sha).await? => {
-                    if !repair {
-                        report(format!(
-                            "{label}: pull request #{number} records {}, Git has {sha}",
-                            pull.head_sha
-                        ));
-                    } else if db::pull_requests::records::move_open_pull_request_head(
-                        pool,
-                        pull.id,
-                        &pull.head_sha,
-                        sha,
-                    )
-                    .await?
-                    {
-                        println!("{label}: pull request #{number} now records {sha}");
+                    if let Some(_head) = retain_matching_head(pool, &pull, sha).await? {
+                        if !repair {
+                            report(format!(
+                                "{label}: pull request #{number} records {}, its live head branch has {sha}",
+                                pull.head_sha
+                            ));
+                        } else if db::pull_requests::records::move_open_pull_request_head(
+                            pool,
+                            pull.id,
+                            &pull.head_sha,
+                            sha,
+                            pull.head_repo_id,
+                            &pull.head_branch,
+                        )
+                        .await?
+                        {
+                            println!("{label}: pull request #{number} now records {sha}");
+                        } else {
+                            report(format!("{label}: pull request #{number} changed meanwhile"));
+                        }
                     } else {
-                        report(format!("{label}: pull request #{number} changed meanwhile"));
+                        report(format!(
+                            "{label}: pull request #{number} retains {sha}, which cannot be verified against its recorded head repository and branch"
+                        ));
                     }
                 }
                 // A pull request reopened after the backup moved its head in Git. A closed row

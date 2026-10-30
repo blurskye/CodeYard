@@ -110,17 +110,6 @@ pub(crate) async fn native_assign(
         .map_err(assignment_error),
         None => Err(assignment_error(AssignmentRefusal::Unassignable.into())),
     };
-    if matches!(outcome, Ok(Some(_))) {
-        db::timeline::record_for(
-            &ctx.state.pool,
-            repo.record.id,
-            subject,
-            ctx.require_user()?.id,
-            "assigned",
-            username.trim(),
-        )
-        .await;
-    }
     if let Ok(Some(assignee)) = &outcome {
         let link = format!(
             "/{owner}/{name}/{}/{number}",
@@ -173,16 +162,5 @@ pub(crate) async fn native_unassign(
     )
     .await
     .map_err(assignment_error);
-    if let Ok(true) = outcome {
-        db::timeline::record_for(
-            &ctx.state.pool,
-            repo.record.id,
-            subject,
-            ctx.require_user()?.id,
-            "unassigned",
-            &username,
-        )
-        .await;
-    }
     detail_outcome(&ctx, &repo, kind, &value, number, outcome.map(|_| ())).await
 }

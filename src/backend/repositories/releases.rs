@@ -173,6 +173,7 @@ fn unavailable<E>(_: E) -> ReleaseError {
 
 /// Maps a refusal the database raised inside a write to the error the caller shows.
 fn write_error(error: Error) -> ReleaseError {
+    if error.is::<db::users::accounts::AccountRestricted>() { return ReleaseError::Access(AccessError::WriteDenied); }
     match error.downcast_ref::<ReleaseRefusal>() {
         Some(ReleaseRefusal::Denied) => ReleaseError::Access(AccessError::WriteDenied),
         Some(ReleaseRefusal::NotFound) => ReleaseError::NotFound,
@@ -690,6 +691,7 @@ pub async fn add_asset(
     pool: &db::DbPool,
     store: &ObjectStore,
     actor: i64,
+    credential: &db::users::accounts::AccountCredential<'_>,
     owner: &str,
     name: &str,
     release_id: i64,
@@ -701,6 +703,7 @@ pub async fn add_asset(
         pool,
         store,
         actor,
+        credential,
         owner,
         name,
         release_id,
@@ -725,6 +728,7 @@ pub async fn upload_asset(
     pool: &db::DbPool,
     store: &ObjectStore,
     actor: i64,
+    credential: &db::users::accounts::AccountCredential<'_>,
     owner: &str,
     name: &str,
     release_id: i64,
@@ -786,6 +790,7 @@ pub async fn upload_asset(
     let linked = db::releases::add_release_asset(
         pool,
         actor,
+        credential,
         repository.id,
         release_id,
         &db::releases::NewReleaseAsset {
@@ -884,14 +889,7 @@ pub async fn download(
     count: bool,
 ) -> Result<files::AssetDownload, ReleaseError> {
     let repository = readable(pool, viewer, owner, name).await?;
-    let release = db::releases::get_release_by_tag(pool, repository.id, tag)
-        .await
-        .map_err(unavailable)?
-        .ok_or(ReleaseError::NotFound)?;
-    if release.release.is_draft && !can_write(pool, viewer, repository.id).await? {
-        return Err(ReleaseError::NotFound);
-    }
-    let asset = db::releases::get_release_asset_by_name(pool, release.release.id, asset_name)
+    let asset = db::releases::download_asset(pool, viewer, repository.id, Some(tag), Some(asset_name), None)
         .await
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
@@ -909,17 +907,10 @@ pub async fn download_by_id(
     count: bool,
 ) -> Result<files::AssetDownload, ReleaseError> {
     let repository = readable(pool, viewer, owner, name).await?;
-    let asset = db::releases::get_repository_release_asset(pool, repository.id, asset_id)
+    let asset = db::releases::download_asset(pool, viewer, repository.id, None, None, Some(asset_id))
         .await
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
-    let release = db::releases::get_release(pool, repository.id, asset.release_id)
-        .await
-        .map_err(unavailable)?
-        .ok_or(ReleaseError::NotFound)?;
-    if release.release.is_draft && !can_write(pool, viewer, repository.id).await? {
-        return Err(ReleaseError::NotFound);
-    }
     open_asset(pool, store, asset, count).await
 }
 

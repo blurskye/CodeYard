@@ -240,11 +240,13 @@ pub async fn delete_release(
 pub async fn add_release_asset(
     pool: &PgPool,
     actor_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo_id: i64,
     release_id: i64,
     asset: &NewReleaseAsset<'_>,
 ) -> Result<ReleaseAsset> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
+    anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?, ReleaseRefusal::Denied);
     let release = release_in_repo(&mut tx, repo_id, release_id).await?;
     anyhow::ensure!(!release.is_immutable, ReleaseRefusal::Immutable);
     let taken: Option<i64> =
@@ -486,6 +488,20 @@ pub async fn get_repository_release_asset(
 ) -> Result<Option<ReleaseAsset>> {
     Ok(sqlx::query_as("SELECT a.* FROM release_assets a JOIN releases r ON r.id=a.release_id WHERE r.repo_id=$1 AND a.id=$2")
         .bind(repo_id).bind(asset_id).fetch_optional(pool).await?)
+}
+
+pub async fn download_asset(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    repo: i64,
+    tag: Option<&str>,
+    name: Option<&str>,
+    asset: Option<i64>,
+) -> Result<Option<ReleaseAsset>> {
+    let readable = super::repositories::access::readable_condition();
+    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    Ok(sqlx::query_as(&format!("SELECT a.* FROM release_assets a JOIN releases rel ON rel.id=a.release_id JOIN repositories r ON r.id=rel.repo_id LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND {readable} AND (NOT rel.is_draft OR ({access})>=3 OR (r.owner_kind='user' AND u.is_admin)) AND ($3::text IS NULL OR rel.tag_name=$3) AND ($4::text IS NULL OR a.name=$4) AND ($5::bigint IS NULL OR a.id=$5)"))
+        .bind(viewer).bind(repo).bind(tag).bind(name).bind(asset).fetch_optional(pool).await?)
 }
 
 pub async fn get_release_asset_by_name(

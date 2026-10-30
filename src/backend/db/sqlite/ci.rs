@@ -492,8 +492,9 @@ pub async fn claim_ci_run(
     worker: &str,
     mode: &str,
     trusted_ids: &[i64],
+    platforms: &[String],
 ) -> Result<Option<CiRun>> {
-    claim_queued_run(pool, None, worker, mode, trusted_ids).await
+    claim_queued_run(pool, None, worker, mode, trusted_ids, platforms).await
 }
 
 /// `claim_ci_run` for a cluster node. The node is read inside the write transaction.
@@ -503,8 +504,9 @@ pub async fn claim_ci_run_on_node(
     worker: &str,
     mode: &str,
     trusted_ids: &[i64],
+    platforms: &[String],
 ) -> Result<Option<CiRun>> {
-    claim_queued_run(pool, Some(node_key), worker, mode, trusted_ids).await
+    claim_queued_run(pool, Some(node_key), worker, mode, trusted_ids, platforms).await
 }
 
 /// How many queued runs one write transaction of a claim looks at.
@@ -545,6 +547,7 @@ async fn claim_queued_run(
     worker: &str,
     mode: &str,
     trusted_ids: &[i64],
+    platforms: &[String],
 ) -> Result<Option<CiRun>> {
     ensure!(
         matches!(mode, "local" | "podman"),
@@ -629,7 +632,7 @@ async fn claim_queued_run(
             }
             continue;
         }
-        if !super::runners::eligible(&mut tx, node_key, &run).await? {
+        if !super::runners::eligible(&mut tx, node_key, &run, mode, platforms).await? {
             continue;
         }
         if !super::action_concurrency::eligible(&mut tx, &run).await? {

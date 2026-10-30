@@ -99,16 +99,27 @@ pub async fn move_open_pull_request_head(
     pull_request_id: i64,
     old_head: &str,
     new_head: &str,
+    head_repo: Option<i64>,
+    head_branch: &str,
 ) -> Result<bool> {
+    let mut tx = pool.begin().await?;
     let changed = sqlx::query(
-        "UPDATE pull_requests SET head_sha = $2, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE id = $1 AND state = 'open' AND head_sha = $3",
+        "UPDATE pull_requests SET head_sha = $2, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE id = $1 AND state = 'open' AND head_sha = $3 AND head_repo_id IS NOT DISTINCT FROM $4 AND head_branch=$5",
     )
     .bind(pull_request_id)
     .bind(new_head)
     .bind(old_head)
-    .execute(pool)
+    .bind(head_repo)
+    .bind(head_branch)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
+    if changed == 1 && old_head != new_head {
+        // Refresh callers do not attest the actual pusher's base write authority.
+        sqlx::query("DELETE FROM pull_request_auto_merges WHERE pull_request_id=$1")
+            .bind(pull_request_id).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
     Ok(changed == 1)
 }
 
@@ -671,7 +682,16 @@ pub async fn update_pull_request(
     let head_owner = head
         .as_ref()
         .is_some_and(|head| head.is_personal_owner(edit.actor_id));
-    let author_edit = author == edit.actor_id && base.is_none() && maintainer_can_modify.is_none();
+    let automatic_reopen = if let Some(base) = base.as_ref().filter(|base| base.automatic_reopen) {
+        if !reopening { return Ok(None); }
+        let current: PullRequest = sqlx::query_as("SELECT * FROM pull_requests WHERE id=$1 AND repo_id=$2 FOR UPDATE")
+            .bind(pr_id).bind(repo).fetch_one(&mut *tx).await?;
+        let members: Vec<PullRequest> = sqlx::query_as("SELECT * FROM pull_requests WHERE repo_id=$1 AND stack_id=$2 ORDER BY id")
+            .bind(repo).bind(current.stack_id).fetch_all(&mut *tx).await?;
+        if crate::backend::db::pull_requests::records::reopened_stack_base(&current, &members).as_deref() != Some(base.branch) { return Ok(None); }
+        true
+    } else { false };
+    let author_edit = author == edit.actor_id && (base.is_none() || automatic_reopen) && maintainer_can_modify.is_none();
     if !authority
         && (!((policy_only && (author == edit.actor_id || head_owner)) || author_edit)
             || !crate::backend::db::postgres::discussions::lock_contribution_authority(
@@ -691,8 +711,8 @@ pub async fn update_pull_request(
         return Ok(None);
     }
     // Lock the row so the checked update below sees the latest revision.
-    let stored: Option<(String,bool,chrono::DateTime<chrono::Utc>)> = sqlx::query_as("SELECT state,is_draft,updated_at FROM pull_requests WHERE id = $1 AND repo_id = $2 FOR UPDATE").bind(pr_id).bind(repo).fetch_optional(&mut *tx).await?;
-    let Some((state, draft, updated)) = stored else {
+    let stored: Option<(String,bool,chrono::DateTime<chrono::Utc>,String)> = sqlx::query_as("SELECT state,is_draft,updated_at,title FROM pull_requests WHERE id = $1 AND repo_id = $2 FOR UPDATE").bind(pr_id).bind(repo).fetch_optional(&mut *tx).await?;
+    let Some((state, draft, updated, old_title)) = stored else {
         return Ok(None);
     };
     if state != edit.expected_state || updated != edit.expected_updated {
@@ -737,6 +757,11 @@ pub async fn update_pull_request(
         .bind(base.as_ref().map(|base| base.branch)).bind(base.as_ref().map(|base| base.sha))
         .bind(maintainer_can_modify).bind(edit.actor_id)
         .fetch_optional(&mut *tx).await?;
+    if let Some(pr) = pr.as_ref() {
+        for (kind, detail, previous) in crate::backend::db::timeline::edit_events(&old_title, &state, &pr.title, &pr.state) {
+            super::super::timeline::append(&mut tx, repo, "pull_request", pr_id, edit.actor_id, kind, detail, previous).await?;
+        }
+    }
     tx.commit().await?;
     Ok(pr)
 }
@@ -783,6 +808,7 @@ pub async fn mark_pull_requests_merged(
         if changed != 1 {
             return Ok(false);
         }
+        super::super::timeline::append(&mut tx, pull.repo_id, "pull_request", pull.id, actor_id, "merged", &pull.base_branch, "").await?;
         sqlx::query("UPDATE repository_ref_activities SET activity_type='pr_merge' WHERE id=(SELECT id FROM repository_ref_activities WHERE repo_id=$1 AND reference='refs/heads/'||$2 AND after_sha=$3 ORDER BY id DESC LIMIT 1) AND activity_type IN ('push','force_push')")
             .bind(pull.repo_id).bind(&pull.base_branch).bind(merge_sha).execute(&mut *tx).await?;
     }

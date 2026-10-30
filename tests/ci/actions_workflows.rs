@@ -383,7 +383,7 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::OK);
     assert!(String::from_utf8(svg).unwrap().contains("queued"));
     for _ in 0..2 {
-        let run = db::ci::claim_ci_run(f.pool(), "badge-worker", "local", &[alice])
+        let run = db::ci::claim_ci_run(f.pool(), "badge-worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
             .await
             .unwrap()
             .unwrap();

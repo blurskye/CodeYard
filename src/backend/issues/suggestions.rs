@@ -18,12 +18,13 @@ pub async fn resolve(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: &User,
+    credential: &db::users::accounts::AccountCredential<'_>,
     (repo, owner): (&Repository, &str),
     (issue_id, suggestion_id): (i64, i64),
     approve: bool,
 ) -> Result<db::suggestions::Suggestion> {
     let outcome =
-        db::suggestions::resolve(pool, repo.id, actor.id, issue_id, suggestion_id, approve).await?;
+        db::suggestions::resolve(pool, repo.id, actor.id, credential, issue_id, suggestion_id, approve).await?;
     if outcome.invalidated {
         return Err(db::suggestions::Refusal::Invalidated.into());
     }
