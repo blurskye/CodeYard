@@ -1534,6 +1534,11 @@ pub async fn publish_prepared_merge(
         )
         .await;
     }
+    // As on GitHub, closing keywords in a description close the issues only when the pull
+    // request lands on the default branch.
+    if merge.base_branch == repository.default_branch {
+        close_linked_issues(pool, broadcaster, user.id, &repository, &owner, &chain).await;
+    }
 
     Ok(MergeResponse {
         sha: merge_sha,
@@ -1547,6 +1552,65 @@ pub async fn publish_prepared_merge(
             format!("Pull request #{} merged successfully", current.number)
         },
     })
+}
+
+/// The most issues one merged description closes, so a long list of keywords stays bounded.
+const MAX_CLOSED_ISSUES: usize = 50;
+
+/// Closes the open issues of this repository that a merged layer's description names with a
+/// closing keyword, through the ordinary issue update, so it checks the merger's access and
+/// sends the usual notifications and webhooks. The merge is already published, so a failure
+/// is logged and does not undo it.
+async fn close_linked_issues(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor_id: i64,
+    repository: &db::models::Repository,
+    owner: &str,
+    layers: &[db::models::PullRequest],
+) {
+    let base = crate::backend::api::http::config::link_origin();
+    let mut seen = HashSet::new();
+    for layer in layers {
+        let numbers = crate::backend::issues::closing::referenced_numbers(
+            &layer.body,
+            owner,
+            &repository.name,
+            &base,
+        );
+        for number in numbers.into_iter().take(MAX_CLOSED_ISSUES) {
+            if !seen.insert(number) {
+                continue;
+            }
+            let issue = match db::issues::get_issue(pool, repository.id, number).await {
+                Ok(Some(issue)) if issue.state == "open" => issue,
+                Ok(_) => continue,
+                Err(error) => {
+                    tracing::warn!(repo_id = repository.id, number, %error, "could not read an issue a merged pull request closes");
+                    continue;
+                }
+            };
+            let closed = crate::backend::issues::mutations::update_issue_latest(
+                pool,
+                broadcaster,
+                actor_id,
+                repository.id,
+                number,
+                crate::backend::issues::mutations::UpdateIssueRequest {
+                    expected_state: issue.state,
+                    expected_updated: issue.updated_at.to_rfc3339(),
+                    title: None,
+                    body: None,
+                    state: Some("closed".to_owned()),
+                    state_reason: Some("completed".to_owned()),
+                },
+            )
+            .await;
+            if let Err(error) = closed {
+                tracing::warn!(repo_id = repository.id, number, %error, "could not close an issue a merged pull request names");
+            }
+        }
+    }
 }
 
 pub async fn merge_pull_request(
