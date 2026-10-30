@@ -491,9 +491,7 @@ pub(super) async fn resolve(
                     request.authorize(repo.id, "contents", true).await?;
                     let method = merge_method(&input, &current)?;
                     pull_requests::merge::merge_pull_request(
-                        pool,
-                        &request.state.ci_runs,
-                        broadcaster,
+                        &request.state,
                         actor,
                         (owner, repo.name, current.number),
                         pull_requests::merge::MergeRequest {

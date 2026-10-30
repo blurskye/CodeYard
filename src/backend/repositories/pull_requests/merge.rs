@@ -1621,16 +1621,35 @@ async fn close_linked_issues(
     }
 }
 
+/// Merges a pull request for a request that can be cancelled, as when its client goes away or a
+/// GraphQL call times out. Publication and its bookkeeping run as a task that the server's
+/// shutdown waits for, so a cancelled request cannot leave a merged base with an open pull
+/// request.
 pub async fn merge_pull_request(
-    pool: &db::DbPool,
-    ci: &CiRuns,
-    broadcaster: &NotificationBroadcaster,
+    state: &crate::backend::app::AppState,
     actor_id: i64,
     repository: (String, String, i32),
     request: MergeRequest,
 ) -> Result<MergeResponse, OperationError> {
-    let prepared = prepare_pull_request_merge(pool, ci, actor_id, repository, request).await?;
-    publish_prepared_merge(pool, ci, broadcaster, prepared).await
+    let prepared =
+        prepare_pull_request_merge(&state.pool, &state.ci_runs, actor_id, repository, request)
+            .await?;
+    let unavailable = || OperationError::Unavailable {
+        code: "merge_worker_unavailable",
+        message: "The merge worker is unavailable".into(),
+    };
+    let (pool, ci, broadcaster) = (
+        state.pool.clone(),
+        state.ci_runs.clone(),
+        state.notification_broadcaster.clone(),
+    );
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    if !state.git_tasks.spawn(async move {
+        let _ = sender.send(publish_prepared_merge(&pool, &ci, &broadcaster, prepared).await);
+    }) {
+        return Err(unavailable());
+    }
+    receiver.await.unwrap_or_else(|_| Err(unavailable()))
 }
 
 #[cfg(test)]

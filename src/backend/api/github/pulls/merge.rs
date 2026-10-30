@@ -111,9 +111,7 @@ async fn merge_pull(
         ));
     }
     let result = pull_requests::merge::merge_pull_request(
-        &state.pool,
-        &state.ci_runs,
-        &state.notification_broadcaster,
+        &state,
         actor.id,
         (owner, name, number),
         pull_requests::merge::MergeRequest {
