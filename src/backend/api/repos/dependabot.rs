@@ -51,8 +51,8 @@ async fn open(
 }
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
     use db::advisories::Refusal;
-    if matches!(error.downcast_ref::<db::dependency_graph::GraphError>(), Some(db::dependency_graph::GraphError::Limit)) {
-        return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &db::dependency_graph::GraphError::Limit.to_string());
+    if let Some(graph @ (db::dependency_graph::GraphError::Limit | db::dependency_graph::GraphError::Disabled)) = error.downcast_ref::<db::dependency_graph::GraphError>() {
+        return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &graph.to_string());
     }
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => {

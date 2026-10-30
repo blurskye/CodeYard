@@ -6,6 +6,26 @@ use crate::backend::{
 };
 use sqlx::SqlitePool;
 
+pub(super) async fn enabled_in(connection: &mut sqlx::SqliteConnection, repo: i64) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(&format!("SELECT {}", dependency_graph::enabled_sql(false, "$1")))
+        .bind(repo).fetch_one(connection).await
+}
+
+async fn check_enabled_in(connection: &mut sqlx::SqliteConnection, repo: i64) -> Result<(), GraphError> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND NOT is_gist)")
+        .bind(repo).fetch_one(&mut *connection).await?;
+    if !exists { return Err(GraphError::Denied); }
+    if !enabled_in(connection, repo).await? { return Err(GraphError::Disabled); }
+    Ok(())
+}
+
+pub async fn check_enabled(pool: &SqlitePool, repo: i64) -> Result<(), GraphError> {
+    let mut tx = pool.begin().await?;
+    check_enabled_in(&mut tx, repo).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Only the newest snapshot of each replacement key is read, so older copies are dropped.
 /// Submissions and the background dependency scan both call this after saving a snapshot.
 pub(super) async fn drop_replaced_snapshots(
@@ -43,6 +63,7 @@ pub async fn submit(
     if !super::credentials::repository(&mut tx, &credential, repo, "contents", true).await.map_err(GraphError::Authority)? {
         return Err(GraphError::Denied);
     }
+    if !enabled_in(&mut tx, repo).await? { return Err(GraphError::Disabled); }
     let mut submission: Submission = sqlx::query_as("INSERT INTO dependency_snapshots(repo_id,sha,reference,correlator,detector,scanned,body) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,created_at")
         .bind(repo).bind(snapshot.sha.to_ascii_lowercase()).bind(&snapshot.reference)
         .bind(&snapshot.job.correlator).bind(&snapshot.detector.name).bind(snapshot.scanned)
@@ -81,6 +102,7 @@ pub async fn snapshots(
     sha: Option<&str>,
 ) -> Result<Vec<Snapshot>, GraphError> {
     let mut tx = pool.begin().await?;
+    check_enabled_in(&mut tx, repo).await?;
     let rows = snapshots_in(&mut tx, repo, reference, sha).await?;
     tx.commit().await?;
     Ok(rows)
@@ -93,6 +115,7 @@ pub async fn save_report(
     body: &str,
 ) -> Result<(), GraphError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !enabled_in(&mut tx, repo).await? { return Err(GraphError::Disabled); }
     sqlx::query("INSERT INTO dependency_sbom_reports(repo_id,id,body) VALUES($1,$2,$3)")
         .bind(repo)
         .bind(id)
@@ -119,12 +142,10 @@ pub async fn prune_expired_reports(pool: &SqlitePool) -> Result<u64, GraphError>
 }
 
 pub async fn report(pool: &SqlitePool, repo: i64, id: &str) -> Result<Option<String>, GraphError> {
-    Ok(
-        sqlx::query_scalar("SELECT body FROM dependency_sbom_reports WHERE repo_id=$1 AND id=$2 AND created_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-' || $3 || ' seconds')")
-            .bind(repo)
-            .bind(id)
-            .bind(SBOM_REPORT_LIFETIME_SECONDS)
-            .fetch_optional(pool)
-            .await?,
-    )
+    let mut tx = pool.begin().await?;
+    check_enabled_in(&mut tx, repo).await?;
+    let body = sqlx::query_scalar("SELECT body FROM dependency_sbom_reports WHERE repo_id=$1 AND id=$2 AND created_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-' || $3 || ' seconds')")
+        .bind(repo).bind(id).bind(SBOM_REPORT_LIFETIME_SECONDS).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(body)
 }

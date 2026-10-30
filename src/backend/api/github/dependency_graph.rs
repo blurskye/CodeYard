@@ -31,7 +31,7 @@ fn error(error: db::dependency_graph::GraphError) -> Error {
             "Must have write access to this repository",
         ),
         GraphError::Invalid => Error::validation("Snapshot", "snapshot", "invalid"),
-        GraphError::Limit => Error::new(StatusCode::UNPROCESSABLE_ENTITY, GraphError::Limit.to_string()),
+        error @ (GraphError::Limit | GraphError::Disabled) => Error::new(StatusCode::UNPROCESSABLE_ENTITY, error.to_string()),
         _ => Error::unavailable(error),
     }
 }
@@ -89,6 +89,7 @@ async fn compare(
         .split_once("...")
         .filter(|(base, head)| !base.is_empty() && !head.is_empty())
         .ok_or_else(|| Error::new(StatusCode::BAD_REQUEST, "Invalid comparison"))?;
+    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(error)?;
     let store = repo_store(&repo, state.cluster.as_ref());
     let comparison = store
         .comparison_from(&store, base, head, 0, 1)
@@ -134,6 +135,7 @@ async fn compare(
                 "advisory_url":format!("https://osv.dev/vulnerability/{}",crate::webui::encode_component(&a.id)),
             })).collect::<Vec<_>>());
     }
+    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(error)?;
     Ok((page.headers(&uri, has_more)?, Json(changes)).into_response())
 }
 
@@ -197,6 +199,7 @@ async fn append_inventory(
 }
 
 async fn current(state: &AppState, repo: &db::models::Repository, owner: &str) -> Result<Value> {
+    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(error)?;
     let (refs, branch) = repo_store(repo, state.cluster.as_ref())
         .refs_and_default()
         .await
@@ -205,20 +208,18 @@ async fn current(state: &AppState, repo: &db::models::Repository, owner: &str) -
     // One commit for both the saved snapshots and the live inventory, so a branch that moves
     // mid-request cannot mix versions.
     let Some(sha) = refs.get(&reference).cloned() else {
-        return Ok(dependency_graph::sbom(
-            &format!("{owner}/{}", repo.name),
-            &[],
-        ));
+        let value = dependency_graph::sbom(&format!("{owner}/{}", repo.name), &[]);
+        db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(error)?;
+        return Ok(value);
     };
     let mut snapshots =
         db::dependency_graph::snapshots(&state.pool, repo.id, Some(&reference), Some(&sha))
             .await
             .map_err(error)?;
     append_inventory(state, repo, &sha, &mut snapshots).await?;
-    Ok(dependency_graph::sbom(
-        &format!("{owner}/{}", repo.name),
-        &snapshots,
-    ))
+    let value = dependency_graph::sbom(&format!("{owner}/{}", repo.name), &snapshots);
+    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(error)?;
+    Ok(value)
 }
 
 #[derive(Deserialize)]
@@ -252,6 +253,7 @@ async fn generate(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
+    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(error)?;
     if method == Method::HEAD {
         return Ok(StatusCode::CREATED.into_response());
     }

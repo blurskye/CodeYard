@@ -6,6 +6,28 @@ use crate::backend::{
 };
 use sqlx::PgPool;
 
+pub(super) async fn enabled_in(connection: &mut sqlx::PgConnection, repo: i64) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(&format!("SELECT {}", dependency_graph::enabled_sql(true, "$1")))
+        .bind(repo).fetch_one(connection).await
+}
+
+async fn check_enabled_in(connection: &mut sqlx::PgConnection, repo: i64) -> Result<(), GraphError> {
+    super::repositories::access::lock_membership_shared(connection).await.map_err(GraphError::Authority)?;
+    super::repositories::records::lock_fork_ancestors(connection, repo, "FOR SHARE").await.map_err(GraphError::Authority)?;
+    let row: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE id=$1 AND NOT is_gist FOR SHARE")
+        .bind(repo).fetch_optional(&mut *connection).await?;
+    if row.is_none() { return Err(GraphError::Denied); }
+    if !enabled_in(connection, repo).await? { return Err(GraphError::Disabled); }
+    Ok(())
+}
+
+pub async fn check_enabled(pool: &PgPool, repo: i64) -> Result<(), GraphError> {
+    let mut tx = pool.begin().await?;
+    check_enabled_in(&mut tx, repo).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Only the newest snapshot of each replacement key is read, so older copies are dropped.
 /// Submissions and the background dependency scan both call this after saving a snapshot.
 pub(super) async fn drop_replaced_snapshots(
@@ -43,6 +65,7 @@ pub async fn submit(
     if !super::credentials::repository(&mut tx, &credential, repo, "contents", true).await.map_err(GraphError::Authority)? {
         return Err(GraphError::Denied);
     }
+    if !enabled_in(&mut tx, repo).await? { return Err(GraphError::Disabled); }
     let mut submission: Submission = sqlx::query_as("INSERT INTO dependency_snapshots(repo_id,sha,reference,correlator,detector,scanned,body) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,created_at")
         .bind(repo).bind(snapshot.sha.to_ascii_lowercase()).bind(&snapshot.reference)
         .bind(&snapshot.job.correlator).bind(&snapshot.detector.name).bind(snapshot.scanned)
@@ -82,6 +105,7 @@ pub async fn snapshots(
 ) -> Result<Vec<Snapshot>, GraphError> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
+    check_enabled_in(&mut tx, repo).await?;
     let rows = snapshots_in(&mut tx, repo, reference, sha).await?;
     tx.commit().await?;
     Ok(rows)
@@ -94,6 +118,7 @@ pub async fn save_report(pool: &PgPool, repo: i64, id: &str, body: &str) -> Resu
         .bind(repo)
         .execute(&mut *tx)
         .await?;
+    if !enabled_in(&mut tx, repo).await? { return Err(GraphError::Disabled); }
     sqlx::query("INSERT INTO dependency_sbom_reports(repo_id,id,body) VALUES($1,$2,$3)")
         .bind(repo)
         .bind(id)
@@ -125,12 +150,10 @@ pub async fn prune_expired_reports(pool: &PgPool) -> Result<u64, GraphError> {
 
 pub async fn report(pool: &PgPool, repo: i64, id: &str) -> Result<Option<String>, GraphError> {
     let cutoff = chrono::Utc::now() - chrono::Duration::seconds(SBOM_REPORT_LIFETIME_SECONDS);
-    Ok(sqlx::query_scalar(
-        "SELECT body FROM dependency_sbom_reports WHERE repo_id=$1 AND id=$2 AND created_at > $3",
-    )
-    .bind(repo)
-    .bind(id)
-    .bind(cutoff)
-    .fetch_optional(pool)
-    .await?)
+    let mut tx = pool.begin().await?;
+    check_enabled_in(&mut tx, repo).await?;
+    let body = sqlx::query_scalar("SELECT body FROM dependency_sbom_reports WHERE repo_id=$1 AND id=$2 AND created_at > $3")
+        .bind(repo).bind(id).bind(cutoff).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(body)
 }

@@ -28,6 +28,13 @@ fn unavailable(_: anyhow::Error) -> RepoError {
     )
 }
 
+fn graph_error(error: db::dependency_graph::GraphError) -> RepoError {
+    match error {
+        error @ (db::dependency_graph::GraphError::Disabled | db::dependency_graph::GraphError::Limit) => invalid(error.to_string()),
+        error => unavailable(error.into()),
+    }
+}
+
 async fn file(
     store: &super::store::RepoStore,
     sha: &str,
@@ -128,7 +135,7 @@ async fn snapshot_values(
     let branch = reference.starts_with("refs/heads/").then_some(reference);
     db::dependency_graph::snapshots(&state.pool, repo.id, branch, Some(sha))
         .await
-        .map_err(|error| unavailable(error.into()))?
+        .map_err(graph_error)?
         .iter()
         .map(|snapshot| serde_json::to_value(snapshot).map_err(|error| unavailable(error.into())))
         .collect()
@@ -141,6 +148,7 @@ pub(crate) async fn native_inventory(
     repo: &Repository,
     reference: &str,
 ) -> Result<(String, Vec<Package>), RepoError> {
+    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(graph_error)?;
     let store = repo_store(repo, state.cluster.as_ref());
     let sha = store.commit(reference).await?.sha;
     let listing = store.file_paths(&sha, MAX_LISTED_PATHS).await?;
@@ -156,7 +164,7 @@ pub(crate) async fn native_inventory(
     let covered: HashSet<String> =
         db::dependency_graph::snapshots(&state.pool, repo.id, branch, Some(&sha))
             .await
-            .map_err(|error| unavailable(error.into()))?
+            .map_err(graph_error)?
             .iter()
             .filter(|snapshot| !is_native(snapshot))
             .flat_map(|snapshot| snapshot.manifests.values())
@@ -205,6 +213,7 @@ pub(crate) async fn native_inventory(
             }
         }
     }
+    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
 }
 
@@ -269,6 +278,7 @@ pub async fn inventory(
             "Dependency inventory exceeds its limit",
         ));
     }
+    db::dependency_graph::check_enabled(&state.pool, repo.id).await.map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
 }
 

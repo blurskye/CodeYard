@@ -128,7 +128,7 @@ pub async fn import(pool: &SqlitePool, actor: i64, value: &Value) -> Result<Valu
 pub(crate) async fn refresh(tx: &mut Transaction<'_, Sqlite>, repo: i64, pinned_sha: Option<&str>) -> Result<()> {
     let (branch, archived): (String, bool) = sqlx::query_as("SELECT default_branch,is_archived FROM repositories WHERE id=$1")
         .bind(repo).fetch_one(&mut **tx).await?;
-    if archived {
+    if archived || !super::dependency_graph::enabled_in(tx, repo).await? {
         return Ok(());
     }
     let reference = format!("refs/heads/{branch}");

@@ -11,6 +11,12 @@ pub(crate) const SBOM_REPORTS_PER_REPOSITORY: i64 = 100;
 /// Callers bind the repository as $1; all detectors contributing alerts must use this SHA.
 pub(crate) const DEFAULT_SNAPSHOT_SHA_SQL: &str = "(SELECT d.sha FROM dependency_snapshots d JOIN repositories r ON r.id=d.repo_id WHERE d.repo_id=$1 AND d.reference='refs/heads/'||r.default_branch ORDER BY d.id DESC LIMIT 1)";
 
+/// Unspecified settings retain the existing enabled default; applied disables win.
+pub(crate) fn enabled_sql(pg: bool, repo: &str) -> String {
+    let status = if pg { "(g.security_and_analysis::jsonb)->'dependency_graph'->>'status'" } else { "json_extract(g.security_and_analysis,'$.dependency_graph.status')" };
+    format!("NOT EXISTS(SELECT 1 FROM repository_security_settings g WHERE g.repo_id={repo} AND {status}='disabled')")
+}
+
 pub(crate) const MAX_SNAPSHOT_SOURCES: usize = 100;
 pub(crate) const MAX_SNAPSHOT_BYTES: i64 = 4 * 1024 * 1024;
 
@@ -37,6 +43,8 @@ pub enum GraphError {
     Invalid,
     #[error("Dependency snapshot catalogue exceeds its limits")]
     Limit,
+    #[error("Dependency graph is disabled")]
+    Disabled,
     #[error("Dependency graph database unavailable")]
     Database(#[from] sqlx::Error),
     #[error("Dependency graph authority unavailable")]
@@ -52,6 +60,10 @@ pub struct Submission {
     #[sqlx(default)]
     pub updated: bool,
 }
+
+native_operation!(super::postgres::dependency_graph::check_enabled,
+    super::sqlite::dependency_graph::check_enabled,
+    fn check_enabled(pool: &DbPool, repo: i64) -> Result<(), GraphError>);
 
 native_operation!(super::postgres::dependency_graph::submit,
     super::sqlite::dependency_graph::submit,
