@@ -129,6 +129,21 @@ async fn prepare_application(
     ))
 }
 
+/// Closes `tracker` to new tasks and waits for its running ones until `deadline`.
+async fn drain(
+    tracker: &tokio_util::task::TaskTracker,
+    deadline: tokio::time::Instant,
+    name: &str,
+) {
+    tracker.close();
+    if tokio::time::timeout_at(deadline, tracker.wait())
+        .await
+        .is_err()
+    {
+        warn!("{name} shutdown grace expired");
+    }
+}
+
 async fn shutdown_signal() -> Result<()> {
     #[cfg(unix)]
     {
@@ -639,8 +654,8 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             let _ = replicas.await;
         }
     }
-    crate::backend::organizations::shutdown(deadline).await;
-    crate::backend::webhooks::shutdown(deadline).await;
+    drain(crate::backend::organizations::conversions(), deadline, "organization conversion").await;
+    drain(crate::backend::webhooks::tasks(), deadline, "webhook").await;
     let stopped = workers.shutdown().await;
     if let Some(member) = &member {
         member.shutdown().await;

@@ -49,14 +49,9 @@ pub async fn enqueue_outside_conversion(
     Ok(Applied(()))
 }
 
-pub(crate) async fn shutdown(deadline: tokio::time::Instant) {
-    CONVERSIONS.close();
-    if tokio::time::timeout_at(deadline, CONVERSIONS.wait())
-        .await
-        .is_err()
-    {
-        tracing::warn!("organization conversion shutdown grace expired");
-    }
+/// The queued organization conversions that shutdown waits for.
+pub(crate) fn conversions() -> &'static TaskTracker {
+    &CONVERSIONS
 }
 
 /// Deletes repositories first, then the organization. A partial failure leaves the remaining

@@ -34,14 +34,9 @@ pub const MAX_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
 static TASKS: LazyLock<TaskTracker> = LazyLock::new(TaskTracker::new);
 static BUILD_SLOTS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(4)));
 
-pub(crate) async fn shutdown(deadline: tokio::time::Instant) {
-    TASKS.close();
-    if tokio::time::timeout_at(deadline, TASKS.wait())
-        .await
-        .is_err()
-    {
-        tracing::warn!("webhook shutdown grace expired");
-    }
+/// The webhook sends that shutdown waits for.
+pub(crate) fn tasks() -> &'static TaskTracker {
+    &TASKS
 }
 
 static QUEUED: LazyLock<Mutex<Queue>> = LazyLock::new(|| Mutex::new(Queue::default()));
