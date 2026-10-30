@@ -35,13 +35,13 @@ pub async fn merge_branch(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     owner: &str,
     input: BranchMerge<'_>,
 ) -> Result<Option<CommitInfo>, RefError> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let (repository, user) = access::check_write(pool, repo_id, actor)
         .await
         .map_err(RefError::Access)?;

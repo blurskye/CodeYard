@@ -11,32 +11,32 @@ pub(super) async fn enabled_in(connection: &mut sqlx::PgConnection, repo: i64) -
         .bind(repo).fetch_one(connection).await
 }
 
-async fn authorize_in(connection: &mut sqlx::PgConnection, reader: &Reader, repo: i64, exclusive: bool) -> Result<(), GraphError> {
+async fn authorize_in(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, reader: &Reader, repo: i64, exclusive: bool) -> Result<(), GraphError> {
     match reader {
         Reader::Viewer(Some(actor)) => {
             use super::repositories::access::{lock_readable_repository_in_transaction, RepositoryRowLock};
             let lock = if exclusive { RepositoryRowLock::Exclusive } else { RepositoryRowLock::Shared };
-            if !lock_readable_repository_in_transaction(connection, actor.user_id, repo, lock).await.map_err(GraphError::Authority)?
-                || !super::credentials::repository(connection, actor, repo, "contents", false).await.map_err(GraphError::Authority)? {
+            if !lock_readable_repository_in_transaction(&mut **tx, actor.user_id, repo, lock).await.map_err(GraphError::Authority)?
+                || !super::credentials::repository(tx, actor, repo, "contents", false).await.map_err(GraphError::Authority)? {
                 return Err(GraphError::Denied);
             }
         }
         Reader::Viewer(None) | Reader::Scan(_) => {
-            super::repositories::access::lock_membership_shared(connection).await.map_err(GraphError::Authority)?;
+            super::users::transitions::lock_membership_shared(&mut **tx).await.map_err(GraphError::Authority)?;
             let source_lock = if exclusive { "FOR NO KEY UPDATE" } else { "FOR SHARE" };
-            super::repositories::records::lock_fork_ancestors(connection, repo, source_lock).await.map_err(GraphError::Authority)?;
+            super::repositories::records::lock_fork_ancestors(&mut **tx, repo, source_lock).await.map_err(GraphError::Authority)?;
             let lock = if exclusive { "FOR UPDATE" } else { "FOR SHARE" };
             let row: Option<i64> = sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived) {lock} OF r", super::repositories::access::readable_condition()))
-                .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_optional(&mut *connection).await?;
+                .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_optional(&mut **tx).await?;
             if row.is_none() { return Err(GraphError::Denied); }
         }
     }
     if let Reader::Scan(generation) = reader {
         let job: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM vulnerability_jobs WHERE repo_id=$1 AND generation=$2 FOR SHARE")
-            .bind(repo).bind(generation).fetch_optional(&mut *connection).await?;
+            .bind(repo).bind(generation).fetch_optional(&mut **tx).await?;
         if job.is_none() { return Err(GraphError::Denied); }
     }
-    if !enabled_in(connection, repo).await? { return Err(GraphError::Disabled); }
+    if !enabled_in(&mut **tx, repo).await? { return Err(GraphError::Disabled); }
     Ok(())
 }
 

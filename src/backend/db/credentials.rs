@@ -2,7 +2,8 @@
 use crate::backend::db::users::accounts::{AccountCredential, OwnedAccountCredential};
 
 /// Bare IDs are trusted in-process calls. HTTP adapters must retain their original credential.
-#[derive(Clone)]
+/// The credential's own `Debug` redacts the session and token secret.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Actor {
     pub(crate) user_id: i64,
     pub(crate) credential: Option<OwnedAccountCredential>,
@@ -27,6 +28,11 @@ impl From<(i64, &AccountCredential<'_>)> for Actor {
 impl From<(i64, &OwnedAccountCredential)> for Actor {
     fn from((user_id, credential): (i64, &OwnedAccountCredential)) -> Self {
         Self { user_id, credential: Some(credential.clone()) }
+    }
+}
+impl From<(i64, OwnedAccountCredential)> for Actor {
+    fn from((user_id, credential): (i64, OwnedAccountCredential)) -> Self {
+        Self { user_id, credential: Some(credential) }
     }
 }
 impl Actor {

@@ -9,7 +9,7 @@ use crate::backend::db::cluster::{
 use crate::backend::db::postgres::users::transitions::{
     active_admin, live_session, lock_membership_shared,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use sqlx::{PgConnection, PgPool};
 
 /// Turns the name-uniqueness failure into a message an operator can act on.

@@ -260,17 +260,22 @@ impl RemoteStore {
         path: &str,
         range: BlobRange,
     ) -> Result<BlobBytes, RepoError> {
+        self.blob_part(Operation::BlobBytes {
+            git_ref: git_ref.into(),
+            path: path.into(),
+            range,
+        })
+        .await
+    }
+
+    pub(super) async fn blob_by_id_range(&self, id: &str, range: BlobRange) -> Result<BlobBytes, RepoError> {
+        self.blob_part(Operation::BlobByIdRange { id: id.into(), range }).await
+    }
+
+    /// Blob bytes travel as the raw reply body beside their JSON metadata.
+    async fn blob_part(&self, operation: Operation) -> Result<BlobBytes, RepoError> {
         let (reply, bytes) = self
-            .exchange_with_actor_and_limit(
-                None,
-                Operation::BlobBytes {
-                    git_ref: git_ref.into(),
-                    path: path.into(),
-                    range,
-                },
-                b"",
-                MAX_BLOB_RESPONSE_BYTES,
-            )
+            .exchange_with_actor_and_limit(None, operation, b"", MAX_BLOB_RESPONSE_BYTES)
             .await?;
         match reply.result {
             Ok(value) => {

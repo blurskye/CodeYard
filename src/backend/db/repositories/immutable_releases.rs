@@ -62,7 +62,7 @@ pub async fn enabled(pool: &DbPool, repo: i64) -> Result<bool> {
     }
 }
 
-pub async fn set_enabled(pool: &DbPool, actor: impl Into<super::super::users::tokens::Actor>, repo: i64, enabled: bool) -> Result<()> {
+pub async fn set_enabled(pool: &DbPool, actor: impl Into<super::super::credentials::Actor>, repo: i64, enabled: bool) -> Result<()> {
     let actor = actor.into();
     match pool {
         DbPool::Sqlite(p) => {

@@ -76,13 +76,13 @@ native_operation!(crate::backend::db::postgres::organizations::external_properti
     fn installations(pool: &DbPool, actor: i64, org: i64) -> Result<OrganizationOutcome<Vec<Installation>>>);
 native_operation!(crate::backend::db::postgres::organizations::external_properties::register,
     crate::backend::db::sqlite::organizations::external_properties::register,
-    fn register(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, name: &str, installation: Option<i64>) -> Result<OrganizationOutcome<Installation>>);
+    fn register(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, name: &str, installation: Option<i64>) -> Result<OrganizationOutcome<Installation>>);
 native_operation!(crate::backend::db::postgres::organizations::external_properties::definitions,
     crate::backend::db::sqlite::organizations::external_properties::definitions,
     fn definitions(pool: &DbPool, actor: i64, org: i64) -> Result<OrganizationOutcome<Vec<String>>>);
 native_operation!(crate::backend::db::postgres::organizations::external_properties::set_values,
     crate::backend::db::sqlite::organizations::external_properties::set_values,
-    fn set_values(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, values: &[RepositoryValue]) -> Result<OrganizationOutcome<()>>);
+    fn set_values(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, values: &[RepositoryValue]) -> Result<OrganizationOutcome<()>>);
 native_operation!(crate::backend::db::postgres::organizations::external_properties::delete_values,
     crate::backend::db::sqlite::organizations::external_properties::delete_values,
-    fn delete_values(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, property: &str) -> Result<OrganizationOutcome<()>>);
+    fn delete_values(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, property: &str) -> Result<OrganizationOutcome<()>>);

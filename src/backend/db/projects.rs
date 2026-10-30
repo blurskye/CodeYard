@@ -496,7 +496,6 @@ native_operation!(super::postgres::projects::delete_field, super::sqlite::projec
     fn delete_field(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, field: i64) -> Result<()>);
 native_operation!(super::postgres::projects::add_item, super::sqlite::projects::add_item,
     fn add_item(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, content: &Content) -> Result<Item>);
-    fn add_item(pool: &DbPool, actor: i64, project: i64, content: &Content) -> Result<Item>);
 native_operation!(super::postgres::projects::item, super::sqlite::projects::item,
     fn item(pool: &DbPool, viewer: Option<i64>, project: i64, id: i64) -> Result<Option<Item>>);
 native_operation!(super::postgres::projects::items_page, super::sqlite::projects::items_page,

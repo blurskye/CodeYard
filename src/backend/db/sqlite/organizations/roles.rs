@@ -88,7 +88,7 @@ pub async fn teams(
 }
 pub async fn change(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: &RoleTarget,
     role: Option<i64>,

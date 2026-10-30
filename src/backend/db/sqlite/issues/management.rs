@@ -1,7 +1,8 @@
 use crate::backend::db::{
     issues::management::{LinkedBranch, Refusal},
     models::Issue,
-    users::accounts::{AccountActor, AccountRestricted},
+    credentials::Actor,
+    users::accounts::AccountRestricted,
 };
 use crate::backend::db::assignees::AssignmentRefusal;
 use anyhow::{ensure, Result};
@@ -41,12 +42,9 @@ pub async fn pinned(pool: &SqlitePool, repo: i64) -> Result<Vec<Issue>> {
     Ok(sqlx::query_as("SELECT i.* FROM pinned_issues p JOIN issues i ON i.id=p.issue_id AND i.repo_id=p.repo_id WHERE p.repo_id=$1 ORDER BY p.slot").bind(repo).fetch_all(pool).await?)
 }
 
-async fn require_actor(tx: &mut Transaction<'_, Sqlite>, actor: &AccountActor) -> Result<()> {
-    if let Some(credential) = actor.credential() {
-        super::super::users::transitions::require_account(tx, actor.user_id(), &credential).await
-            .map_err(|error| if error.is::<AccountRestricted>() { Refusal::Denied.into() } else { error })?;
-    }
-    Ok(())
+async fn require_actor(tx: &mut Transaction<'_, Sqlite>, actor: &Actor) -> Result<()> {
+    super::super::credentials::require_account(tx, actor).await
+        .map_err(|error| if error.is::<AccountRestricted>() { Refusal::Denied.into() } else { error })
 }
 
 async fn issue(tx: &mut Transaction<'_, Sqlite>, repo: i64, id: i64) -> Result<Issue> {
@@ -58,9 +56,9 @@ async fn issue(tx: &mut Transaction<'_, Sqlite>, repo: i64, id: i64) -> Result<I
         .ok_or_else(|| Refusal::Missing.into())
 }
 
-pub async fn pin(pool: &SqlitePool, actor: impl Into<AccountActor>, repo: i64, id: i64, pinned: bool) -> Result<()> {
+pub async fn pin(pool: &SqlitePool, actor: impl Into<Actor>, repo: i64, id: i64, pinned: bool) -> Result<()> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
         super::super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
@@ -100,9 +98,9 @@ pub async fn pin(pool: &SqlitePool, actor: impl Into<AccountActor>, repo: i64, i
     Ok(())
 }
 
-pub async fn delete(pool: &SqlitePool, actor: impl Into<AccountActor>, repo: i64, id: i64) -> Result<()> {
+pub async fn delete(pool: &SqlitePool, actor: impl Into<Actor>, repo: i64, id: i64) -> Result<()> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
         super::super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
@@ -131,14 +129,14 @@ pub async fn delete(pool: &SqlitePool, actor: impl Into<AccountActor>, repo: i64
 
 pub async fn transfer(
     pool: &SqlitePool,
-    actor: impl Into<AccountActor>,
+    actor: impl Into<Actor>,
     repo: i64,
     id: i64,
     destination: i64,
 ) -> Result<Issue> {
     ensure!(repo != destination, Refusal::Destination);
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     for repo in [repo.min(destination), repo.max(destination)] {
         ensure!(
@@ -242,14 +240,14 @@ pub async fn redirect(pool: &SqlitePool, repo: i64, number: i32) -> Result<Optio
 
 pub async fn close_duplicate_with_previous(
     pool: &SqlitePool,
-    actor: impl Into<AccountActor>,
+    actor: impl Into<Actor>,
     repo: i64,
     id: i64,
     duplicate: i64,
 ) -> Result<(Issue, Issue)> {
     ensure!(id != duplicate, Refusal::Duplicate);
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
         super::super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
@@ -286,14 +284,14 @@ pub async fn linked_branches(pool: &SqlitePool, issue: i64) -> Result<Vec<Linked
 
 pub async fn link_branch(
     pool: &SqlitePool,
-    actor: impl Into<AccountActor>,
+    actor: impl Into<Actor>,
     repo: i64,
     id: i64,
     branch_repo: i64,
     name: &str,
 ) -> Result<LinkedBranch> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     for repo in [repo.min(branch_repo), repo.max(branch_repo)] {
         ensure!(

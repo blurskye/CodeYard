@@ -112,7 +112,7 @@ async fn template(
     };
     db::oidc::save_settings(
         &state.pool,
-        (actor.user.id, actor.token.id),
+        actor.database_actor(),
         scope,
         &Settings {
             use_default,
@@ -168,7 +168,7 @@ async fn properties(
             .map_err(|_| Error::invalid("Invalid property inclusion"))?
             .custom_property_name
     };
-    db::oidc::change_inclusion(&state.pool, (actor.user.id, actor.token.id), org, &name, remove)
+    db::oidc::change_inclusion(&state.pool, actor.database_actor(), org, &name, remove)
         .await
         .map_err(error)?;
     if remove {

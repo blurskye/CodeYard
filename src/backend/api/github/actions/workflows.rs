@@ -140,7 +140,7 @@ async fn enabled(
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
     let authentication = authentication.ok_or_else(auth::required)?;
     let workflow = lookup(state, &repo, key).await?;
-    workflows::set_workflow_enabled(&state.pool, (authentication.user.id, authentication.token.id), repo.id, workflow.id, enable)
+    workflows::set_workflow_enabled(&state.pool, authentication.database_actor(), repo.id, workflow.id, enable)
         .await
         .map_err(|error| {
             if error

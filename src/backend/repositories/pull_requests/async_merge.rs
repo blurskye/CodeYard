@@ -11,7 +11,9 @@ use serde_json::{json, Value};
 pub struct Job {
     pub repo_id: i64,
     pub pull_request_id: i64,
-    pub token_id: i64,
+    /// The token the request came with. The job runs on this server, so the credential stays
+    /// in memory and is rechecked before preparation and publication.
+    pub authority: db::credentials::Actor,
     pub owner: String,
     pub name: String,
     pub number: i32,
@@ -27,13 +29,15 @@ fn denied() -> OperationError {
 async fn execute(
     pool: &db::DbPool,
     ci: &CiRuns,
-    broadcaster: &NotificationBroadcaster,
+    broadcaster: &std::sync::Arc<NotificationBroadcaster>,
     uuid: &str,
     job: Job,
 ) -> Result<merge::MergeResponse, OperationError> {
-    let actor = db::users::tokens::token_user(pool, job.token_id, true)
+    let token_id = job.authority.token_id().ok_or_else(denied)?;
+    let actor = db::users::tokens::token_user(pool, token_id, true)
         .await
         .map_err(database_error)?
+        .filter(|u| u.id == job.authority.user_id)
         .ok_or_else(denied)?;
     let repo = db::repositories::records::get_repository_by_id(pool, job.repo_id)
         .await
@@ -53,7 +57,7 @@ async fn execute(
     let mut prepared = merge::prepare_pull_request_merge(
         pool,
         ci,
-        actor.id,
+        job.authority.clone(),
         (owner, repo.name, job.number),
         job.merge,
     )
@@ -64,9 +68,9 @@ async fn execute(
             message: "The pull request's repository changed".into(),
         });
     }
-    prepared.bind_async_request(uuid, job.token_id);
+    prepared.bind_async_request(uuid, token_id);
     // Preparation can wait on Git. Recheck the original credential immediately before publication.
-    db::users::tokens::token_user(pool, job.token_id, true)
+    db::users::tokens::token_user(pool, token_id, true)
         .await
         .map_err(database_error)?
         .filter(|u| u.id == actor.id)
@@ -79,7 +83,7 @@ async fn execute(
             code: "merge_cancelled",
             message: "The merge request is no longer pending".into(),
         })?;
-    if row.token_id != Some(job.token_id) {
+    if row.token_id != Some(token_id) {
         return Err(denied());
     }
     merge::publish_prepared_merge(pool, ci, broadcaster, prepared).await
@@ -91,9 +95,11 @@ pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> 
             message: "Merge queues are not available".into(),
         });
     }
-    let actor = db::users::tokens::token_user(&state.pool, job.token_id, true)
+    let token_id = job.authority.token_id().ok_or_else(denied)?;
+    let actor = db::users::tokens::token_user(&state.pool, token_id, true)
         .await
         .map_err(database_error)?
+        .filter(|u| u.id == job.authority.user_id)
         .ok_or_else(denied)?;
     let repo = db::repositories::records::get_repository_by_id(&state.pool, job.repo_id)
         .await
@@ -132,7 +138,7 @@ pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> 
             uuid: &uuid,
             repo_id: job.repo_id,
             pull_request_id: job.pull_request_id,
-            token_id: job.token_id,
+            token_id,
             worker_node_id: state.cluster.as_ref().map(|n| n.node_id),
             owner: &job.owner,
             name: &job.name,

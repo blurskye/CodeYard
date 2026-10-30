@@ -52,7 +52,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
     let authentication = authentication.ok_or_else(auth::required)?;
-    if !db::ci::delete_ci_run_data(&state.pool, (authentication.user.id, authentication.token.id), repo.id, id, kind)
+    if !db::ci::delete_ci_run_data(&state.pool, authentication.database_actor(), repo.id, id, kind)
         .await
         .map_err(|error| admission_error(error.into()))?
     {

@@ -8,7 +8,7 @@ use crate::backend::{
         advisories::{self, Refusal},
         models::Repository,
         repositories::creation::{CreationAdmission, RepositoryCreationOwner},
-        users::accounts::AccountActor,
+        credentials::Actor,
     },
 };
 use anyhow::Result;
@@ -16,7 +16,7 @@ use std::path::Path;
 
 pub async fn private_fork(
     state: &AppState,
-    actor: impl Into<AccountActor>,
+    actor: impl Into<Actor>,
     repo: &Repository,
     ghsa: &str,
 ) -> Result<Repository> {
@@ -34,11 +34,11 @@ async fn private_fork_owned(
     pool: &db::DbPool,
     context: Option<&NodeContext>,
     path: &Path,
-    authority: AccountActor,
+    authority: Actor,
     repo: &Repository,
     ghsa: &str,
 ) -> Result<Repository> {
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     access::credential_user(pool, &authority, true).await?;
     anyhow::ensure!(advisories::can_administer(pool, actor, repo.id).await?, Refusal::Denied);
     let advisory = advisories::get(pool, Some(actor), repo.id, ghsa)

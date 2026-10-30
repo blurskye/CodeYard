@@ -229,7 +229,7 @@ async fn contributors(
         if let Some(user) = accounts.get(&author.email).filter(|_| index < 500) {
             if let Some(value) = values.iter_mut().find(|value| value["id"] == user.id) {
                 value["contributions"] =
-                    json!(value["contributions"].as_u64().unwrap() + author.commits);
+                    json!(value["contributions"].as_u64().unwrap_or_default() + u64::from(author.commits));
             } else {
                 let mut value = payloads::simple_person(&payloads::Person::of(user));
                 value["contributions"] = json!(author.commits);

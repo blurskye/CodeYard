@@ -46,10 +46,6 @@ pub struct MergeRequest {
     pub commit_message: Option<String>,
     #[serde(default)]
     pub author_email: Option<String>,
-    /// The token the request came with, so publication can check its workflows permission.
-    /// `None` for a browser session. Never read from a request body.
-    #[serde(skip)]
-    pub token: Option<i64>,
 }
 
 /// The default merge headline and body, also offered to clients editing the message.
@@ -972,7 +968,7 @@ fn same_revision(now: &db::models::PullRequest, prepared: &db::models::PullReque
 
 pub struct PreparedMerge {
     actor_id: i64,
-    authority: db::users::accounts::AccountActor,
+    authority: db::credentials::Actor,
     owner: String,
     repo: String,
     repository: db::models::Repository,
@@ -982,7 +978,6 @@ pub struct PreparedMerge {
     layers: Vec<db::models::PullRequest>,
     merge: StoreMerge,
     merge_sha: String,
-    token: Option<i64>,
     async_request: Option<(String, i64)>,
 }
 
@@ -998,7 +993,7 @@ impl PreparedMerge {
 pub async fn prepare_pull_request_merge(
     pool: &db::DbPool,
     ci: &CiRuns,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     repository: (String, String, i32),
     request: MergeRequest,
 ) -> Result<PreparedMerge, OperationError> {
@@ -1007,18 +1002,12 @@ pub async fn prepare_pull_request_merge(
 async fn prepare_pull_request_merge_checked(
     pool: &db::DbPool,
     ci: &CiRuns,
-    actor: db::users::accounts::AccountActor,
+    authority: db::credentials::Actor,
     (owner, repo, number): (String, String, i32),
     request: MergeRequest,
     expected: Option<(i64, i64)>,
 ) -> Result<PreparedMerge, OperationError> {
-    use db::users::accounts::AccountActor;
-    let authority = match (actor, request.token) {
-        (AccountActor::Trusted(user_id), Some(token_id)) => AccountActor::Token { user_id, token_id },
-        (actor, _) => actor,
-    };
-    let actor_id = authority.user_id();
-    let token = match &authority { AccountActor::Token { token_id, .. } => Some(*token_id), _ => None };
+    let actor_id = authority.user_id;
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
@@ -1242,7 +1231,6 @@ async fn prepare_pull_request_merge_checked(
         layers,
         merge,
         merge_sha,
-        token,
         async_request: None,
     })
 }
@@ -1283,10 +1271,11 @@ fn publish_failure(error: RepoError, method: MergeMethod) -> OperationError {
 pub async fn publish_prepared_merge(
     pool: &db::DbPool,
     ci: &CiRuns,
-    broadcaster: &NotificationBroadcaster,
+    broadcaster: &std::sync::Arc<NotificationBroadcaster>,
     prepared: PreparedMerge,
 ) -> Result<MergeResponse, OperationError> {
-    let (pool, ci, broadcaster) = (pool.clone(), ci.clone(), broadcaster.clone());
+    // A dropped request must not cancel a publication halfway, so it runs on its own task.
+    let (pool, ci, broadcaster) = (pool.clone(), ci.clone(), std::sync::Arc::clone(broadcaster));
     tokio::spawn(async move { publish_prepared_merge_owned(&pool, &ci, &broadcaster, prepared).await })
         .await.map_err(|_| OperationError::Unavailable { code: "merge_interrupted", message: "Merge publication was interrupted; check the branch before retrying.".into() })?
 }
@@ -1306,7 +1295,6 @@ async fn publish_prepared_merge_owned(
         layers,
         merge,
         merge_sha,
-        token,
         async_request,
     } = prepared;
     let repository = db::repositories::records::get_repository_by_id(pool, repository.id)
@@ -1380,7 +1368,6 @@ async fn publish_prepared_merge_owned(
                 &merge.base,
                 &merge_sha,
                 merge.method,
-                token,
             )
             .await
     } else {
@@ -1397,7 +1384,6 @@ async fn publish_prepared_merge_owned(
                 &merge.base_branch,
                 &merge.base,
                 &merge_sha,
-                token,
             )
             .await
     };
@@ -1563,8 +1549,8 @@ async fn publish_prepared_merge_owned(
 pub async fn merge_pull_request(
     pool: &db::DbPool,
     ci: &CiRuns,
-    broadcaster: &NotificationBroadcaster,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    broadcaster: &std::sync::Arc<NotificationBroadcaster>,
+    actor: impl Into<db::credentials::Actor>,
     repository: (String, String, i32),
     request: MergeRequest,
 ) -> Result<MergeResponse, OperationError> {
@@ -1573,8 +1559,8 @@ pub async fn merge_pull_request(
 pub async fn merge_pull_request_checked(
     pool: &db::DbPool,
     ci: &CiRuns,
-    broadcaster: &NotificationBroadcaster,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    broadcaster: &std::sync::Arc<NotificationBroadcaster>,
+    actor: impl Into<db::credentials::Actor>,
     repository: (String, String, i32),
     request: MergeRequest,
     expected: Option<(i64, i64)>,

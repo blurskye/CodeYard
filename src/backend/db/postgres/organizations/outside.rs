@@ -29,7 +29,7 @@ pub async fn list(
 }
 pub async fn remove(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {

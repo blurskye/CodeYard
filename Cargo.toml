@@ -50,6 +50,8 @@ subtle = "2.6"
 argon2 = { version = "=0.5.3", features = ["std"] }
 tokio.workspace = true
 tokio-util = { version = "0.7", features = ["io", "rt"] }
+# Classifies body length-limit errors from axum::body::to_bytes.
+http-body-util = "0.1"
 # The TLS provider iroh already uses (aws-lc-rs), so node connections over TCP share it.
 tokio-rustls = "0.26"
 # TCP keepalive on node connections; tokio does not expose the socket option.
@@ -118,7 +120,6 @@ features = ["sha2", "pem"]
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
-http-body-util = "0.1"
 jsonschema = { version = "=0.60.0", default-features = false }
 
 # The application binds the full generated schema; its debug graph is similarly large.

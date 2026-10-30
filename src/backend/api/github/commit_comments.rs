@@ -76,12 +76,12 @@ async fn writer(
     headers: &HeaderMap,
     owner: &str,
     name: &str,
-) -> Result<(Repository, crate::backend::db::users::tokens::Actor)> {
+) -> Result<(Repository, crate::backend::db::credentials::Actor)> {
     // Comment participation needs read access, not permission to push to the repository.
     let (repo, auth) = repository(state, headers, owner, name, false).await?;
     let auth = auth.ok_or_else(super::auth::required)?;
     auth.require_write()?;
-    Ok((repo, (auth.user.id, auth.token.id).into()))
+    Ok((repo, auth.database_actor()))
 }
 
 #[derive(Deserialize)]
@@ -149,7 +149,7 @@ async fn item(
     } else {
         let auth = authentication.ok_or_else(auth::required)?;
         auth.require_write()?;
-        Some(crate::backend::db::users::tokens::Actor::from((auth.user.id, auth.token.id)))
+        Some(auth.database_actor())
     };
     let comment = records::get_comment(&state.pool, repo.id, id)
         .await
@@ -180,7 +180,7 @@ async fn item(
         &state.notification_broadcaster,
         records::CommentEdit {
             actor_id: actor.user_id,
-            token_id: actor.token_id,
+            token_id: actor.token_id(),
             repo_id: repo.id,
             id,
             body: &input.body,

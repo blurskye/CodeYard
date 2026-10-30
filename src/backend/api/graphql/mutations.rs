@@ -496,7 +496,7 @@ pub(super) async fn resolve(
                         pool,
                         &request.state.ci_runs,
                         broadcaster,
-                        actor,
+                        request.auth.database_actor(),
                         (owner, repo.name, current.number),
                         pull_requests::merge::MergeRequest {
                             expected_head: current.head_sha,
@@ -507,7 +507,6 @@ pub(super) async fn resolve(
                             commit_title: optional_text(&input, "commitHeadline"),
                             commit_message: optional_text(&input, "commitBody"),
                             author_email: optional_text(&input, "authorEmail"),
-                            token: Some(request.auth.token.id),
                         },
                     )
                     .await

@@ -110,7 +110,7 @@ async fn save(
     }
     let milestone = db::milestones::save_milestone(
         &state.pool,
-        (actor.user.id, actor.token.id),
+        actor.database_actor(),
         repo.id,
         number,
         db::milestones::MilestoneInput {
@@ -163,7 +163,7 @@ async fn remove(
     let summary = find(&state.pool, repo.id, &p["milestone_number"]).await?;
     db::milestones::delete_milestone(
         &state.pool,
-        (actor.user.id, actor.token.id),
+        actor.database_actor(),
         repo.id,
         summary.milestone.number,
         summary.milestone.id,

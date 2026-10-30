@@ -6,9 +6,6 @@ use crate::backend::db::users::blocks::InteractionBlocked;
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
 
-/// Locks the repository before any watch or star row. Repository deletion locks the repository
-/// first and then the watch rows it cascades to, so a watch change must not hold a watch
-/// row while the counter trigger waits for the repository.
 /// Locks the repository row and checks, under that lock, that the user can still read it. The
 /// caller's earlier check may be stale by now.
 async fn lock_readable(
@@ -24,6 +21,9 @@ async fn lock_readable(
     Ok(())
 }
 
+/// Locks the repository before any watch or star row. Repository deletion locks the repository
+/// first and then the watch rows it cascades to, so a watch change must not hold a watch
+/// row while the counter trigger waits for the repository.
 async fn lock_repository(tx: &mut Transaction<'_, Postgres>, repo_id: i64) -> Result<bool> {
     let locked: Option<i64> =
         sqlx::query_scalar("SELECT id FROM repositories WHERE id = $1 FOR NO KEY UPDATE")
@@ -31,6 +31,8 @@ async fn lock_repository(tx: &mut Transaction<'_, Postgres>, repo_id: i64) -> Re
             .fetch_optional(&mut **tx)
             .await?;
     Ok(locked.is_some())
+}
+
 /// Removing one's own star or watch needs a live credential, not read access or interaction rights.
 async fn begin_removal(pool: &PgPool, actor: crate::backend::db::credentials::Actor, repo_id: i64) -> Result<Option<(Transaction<'_, Postgres>, i64)>> {
     let mut tx = pool.begin().await?;
@@ -52,7 +54,6 @@ async fn begin_change(pool: &PgPool, actor: crate::backend::db::credentials::Act
     }
     lock_readable(&mut tx, user_id, repo_id).await?;
     Ok((tx, user_id))
-}
 }
 
 pub async fn list_star_history(

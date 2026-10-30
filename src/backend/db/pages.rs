@@ -36,7 +36,6 @@ pub struct Source {
     pub branch: String,
     pub path: String,
 }
-#[derive(Default)]
 /// The repository role a Pages write needs. Maintainers configure the site, as on GitHub;
 /// deleting it stays with administrators.
 #[derive(Clone, Copy)]
@@ -46,6 +45,7 @@ pub(in crate::backend::db) enum Role {
     Admin,
 }
 
+#[derive(Default)]
 pub struct Update {
     pub build_type: Option<String>,
     pub source: Option<Source>,

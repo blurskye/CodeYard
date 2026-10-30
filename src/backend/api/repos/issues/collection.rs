@@ -47,10 +47,7 @@ pub async fn create_issue(
     let issue = crate::backend::issues::mutations::create_issue(
         &state.pool,
         &state.notification_broadcaster,
-        db::users::accounts::AccountActor::Session {
-            user_id: current_actor.id,
-            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
-        },
+        crate::backend::db::credentials::Actor::from((current_actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
         owner,
         repo,
         req,
@@ -1128,10 +1125,7 @@ pub(crate) async fn native_create(
             let created = crate::backend::issues::mutations::create_issue_with_metadata(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
-                db::users::accounts::AccountActor::Session {
-                    user_id: actor.id,
-                    session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-                },
+                ctx.database_actor(actor.id),
                 owner.clone(),
                 name.clone(),
                 crate::backend::issues::mutations::CreateIssueRequest {
@@ -1139,7 +1133,6 @@ pub(crate) async fn native_create(
                     body: Some(draft.body.clone()),
                     repository_id: Some(repo.record.id),
                     parent_issue_id: None,
-                    token: None,
                 },
                 db::issues::OwnedIssueMetadata {
                     labels, assignees,

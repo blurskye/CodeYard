@@ -330,17 +330,17 @@ pub(crate) async fn lock_fork_ancestors(
 
 async fn require_settings_actor(
     tx: &mut Transaction<'_, Postgres>,
-    actor: &crate::backend::db::users::accounts::AccountActor,
+    actor: &crate::backend::db::credentials::Actor,
 ) -> Result<()> {
     if let Some(credential) = actor.credential() {
-        super::super::users::transitions::require_account(tx, actor.user_id(), &credential).await?;
+        super::super::users::transitions::require_account(tx, actor.user_id, &credential).await?;
     }
     Ok(())
 }
 
 pub async fn update_repository(
     pool: &PgPool,
-    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     description: Option<&str>,
     is_private: impl Into<crate::backend::db::repositories::records::VisibilityUpdate>,
@@ -365,7 +365,7 @@ pub async fn update_repository(
 
 pub async fn patch_repository(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     changes: &crate::backend::db::repositories::records::RepositoryChanges<&str>,
 ) -> Result<Repository> {
@@ -373,7 +373,7 @@ pub async fn patch_repository(
 }
 pub async fn patch_repository_and_default(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     changes: &crate::backend::db::repositories::records::RepositoryChanges<&str>,
     name: &str,
@@ -383,7 +383,7 @@ pub async fn patch_repository_and_default(
 }
 async fn patch_core(
     pool: &PgPool,
-    authority: crate::backend::db::users::accounts::AccountActor,
+    authority: crate::backend::db::credentials::Actor,
     repo_id: i64,
     changes: &crate::backend::db::repositories::records::RepositoryChanges<&str>,
     default_branch: Option<&str>,
@@ -392,7 +392,7 @@ async fn patch_core(
     use crate::backend::db::repositories::records::{
         validate_repository_alias, RepositorySettingsRefusal as Refusal,
     };
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let mut tx = pool.begin().await?;
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
@@ -472,13 +472,13 @@ async fn patch_core(
 
 pub async fn set_merge_methods(
     pool: &PgPool,
-    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     update: MergeMethodUpdate,
 ) -> Result<()> {
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
     let authority = actor_id.into();
-    let actor_id = authority.user_id();
+    let actor_id = authority.user_id;
     let mut tx = pool.begin().await?;
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
@@ -593,10 +593,10 @@ pub async fn delete_unwritten_repository(
     Ok(deleted)
 }
 
-pub async fn delete_repository(pool: &PgPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo_id: i64) -> Result<Repository> {
+pub async fn delete_repository(pool: &PgPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64) -> Result<Repository> {
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
     let actor = actor.into();
-    let actor_id = actor.user_id();
+    let actor_id = actor.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_archive_authority(
@@ -634,7 +634,7 @@ pub async fn delete_repository(pool: &PgPool, actor: impl Into<crate::backend::d
 
 pub async fn rename_repository(
     pool: &PgPool,
-    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     new_name: &str,
 ) -> Result<Repository> {
@@ -642,7 +642,7 @@ pub async fn rename_repository(
         validate_repository_alias, RepositorySettingsRefusal as Refusal,
     };
     let authority = actor_id.into();
-    let actor_id = authority.user_id();
+    let actor_id = authority.user_id;
     let mut tx = pool.begin().await?;
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
@@ -700,7 +700,7 @@ async fn check_namespace(
 }
 pub async fn transfer_repository(
     pool: &PgPool,
-    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
 ) -> Result<Repository> {
@@ -713,7 +713,7 @@ pub async fn transfer_repository(
 
 pub async fn transfer_repository_checked(
     pool: &PgPool,
-    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
     expected_owner: &str,
@@ -727,7 +727,7 @@ pub async fn transfer_repository_checked(
 }
 async fn transfer_repository_once(
     pool: &PgPool,
-    authority: &crate::backend::db::users::accounts::AccountActor,
+    authority: &crate::backend::db::credentials::Actor,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
     expected: Option<(&str, &str)>,
@@ -737,7 +737,7 @@ async fn transfer_repository_once(
     let mut tx = pool.begin().await?;
     super::super::users::transitions::lock_membership_shared(&mut tx).await?;
     require_settings_actor(&mut tx, authority).await?;
-    let actor_id = authority.user_id();
+    let actor_id = authority.user_id;
     let original: (String, Option<i64>, Option<i64>) = sqlx::query_as(
         "SELECT owner_kind,owner_user_id,owner_org_id FROM repositories WHERE id=$1",
     )
@@ -978,13 +978,13 @@ pub async fn restore_repository_default_branch(
 /// Archives or unarchives under current administrator authority, including archived rows.
 pub async fn set_repository_archived(
     pool: &PgPool,
-    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     archived: bool,
 ) -> Result<bool> {
     use crate::backend::db::repositories::records::RepositorySettingsRefusal;
     let authority = actor_id.into();
-    let actor_id = authority.user_id();
+    let actor_id = authority.user_id;
     let mut tx = pool.begin().await?;
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(

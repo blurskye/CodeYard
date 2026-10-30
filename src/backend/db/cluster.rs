@@ -5,7 +5,6 @@ use super::models::{
 };
 use super::DbPool;
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 
 /// Retains a serving lease on a dedicated connection; closing it releases the advisory lock.
 pub struct ServingLock {

@@ -83,7 +83,7 @@ async fn set_value(
     engagement::set_subscription(
         &state.pool,
         &state.notification_broadcaster,
-        db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id },
+        actor.database_actor(),
         repo.id,
         subscribed,
         ignored,
@@ -103,7 +103,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer.ok_or_else(auth::required)?;
-    engagement::set_level(&state.pool, db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id }, repo.id, "participating", &[])
+    engagement::set_level(&state.pool, actor.database_actor(), repo.id, "participating", &[])
         .await
         .map_err(engagement_error)?;
     Ok(StatusCode::NO_CONTENT)

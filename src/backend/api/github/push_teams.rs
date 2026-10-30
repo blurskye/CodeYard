@@ -81,7 +81,7 @@ async fn teams(
         };
         rule = db::repositories::protection::update_branch_protection_rule(
             &state.pool,
-            actor,
+            actor.clone(),
             rule.repo_id,
             &rule.pattern,
             ProtectionUpdate::PushTeams(update),
@@ -89,7 +89,7 @@ async fn teams(
         .await
         .map_err(write_error)?;
     }
-    Ok(Json(documents(&state, &rule, actor).await?).into_response())
+    Ok(Json(documents(&state, &rule, actor.user_id).await?).into_response())
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

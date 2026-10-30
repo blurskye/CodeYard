@@ -33,7 +33,7 @@ const SUMMARY_SELECT: &str = "SELECT m.id, m.repo_id, m.number, m.title, m.descr
 
 async fn begin_write(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
 ) -> Result<Transaction<'_, Sqlite>> {
     let credential = actor.into();
@@ -43,7 +43,7 @@ async fn begin_write(
         super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?,
         MilestoneWriteRefusal::Denied
     );
-    if let Some(token) = credential.token_id {
+    if let Some(token) = credential.token_id() {
         anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor_id, token, Some(repo_id), None, "issues").await?, MilestoneWriteRefusal::Denied);
     }
     Ok(tx)
@@ -120,7 +120,7 @@ pub async fn update_milestone(
 
 pub async fn save_milestone(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     number: Option<i32>,
     input: MilestoneInput<'_>,
@@ -133,7 +133,7 @@ pub async fn save_milestone(
 /// did not show.
 pub async fn save_milestone_checked(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     number: Option<i32>,
     input: MilestoneInput<'_>,
@@ -145,7 +145,7 @@ pub async fn save_milestone_checked(
 /// Form dates are whole days (`calendar`): an unchanged day keeps the stored time of day.
 async fn save_milestone_in(
     pool: &SqlitePool,
-    credential: crate::backend::db::users::tokens::Actor,
+    credential: crate::backend::db::credentials::Actor,
     repo_id: i64,
     number: Option<i32>,
     input: MilestoneInput<'_>,
@@ -237,7 +237,7 @@ pub async fn set_milestone_state(
 
 pub async fn delete_milestone(
     pool: &SqlitePool,
-    actor_id: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     number: i32,
     expected_id: i64,

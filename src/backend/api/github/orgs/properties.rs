@@ -155,7 +155,7 @@ async fn define_one(
         input.map_err(super::super::json_error)?;
     let input = definition(input, Some(&property))?;
     let definitions = outcome(
-        properties::define(&state.pool, (actor.user.id, actor.token.id), org.id, &[input])
+        properties::define(&state.pool, actor.database_actor(), org.id, &[input])
             .await
             .map_err(error)?,
     )?;
@@ -185,7 +185,7 @@ async fn define_many(
         .map(|value| definition(value, None))
         .collect::<Result<Vec<_>>>()?;
     let definitions = outcome(
-        properties::define(&state.pool, (actor.user.id, actor.token.id), org.id, &inputs)
+        properties::define(&state.pool, actor.database_actor(), org.id, &inputs)
             .await
             .map_err(error)?,
     )?;
@@ -207,7 +207,7 @@ async fn remove(
     actor.require_write()?;
     let org = target(&state, &name).await?;
     outcome(
-        properties::remove(&state.pool, (actor.user.id, actor.token.id), org.id, &property)
+        properties::remove(&state.pool, actor.database_actor(), org.id, &property)
             .await
             .map_err(error)?,
     )?;
@@ -269,7 +269,7 @@ async fn set_values(
     outcome(
         properties::set_values(
             &state.pool,
-            (actor.user.id, actor.token.id),
+            actor.database_actor(),
             org.id,
             &input.repository_names,
             &input.properties,

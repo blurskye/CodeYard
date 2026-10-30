@@ -133,7 +133,7 @@ pub async fn update_invitation(
         .await
         .map_err(database_error)
 }
-pub async fn respond(pool: &db::DbPool, actor: impl Into<db::users::accounts::AccountActor>, id: i64, accept: bool) -> Result<(), Error> {
+pub async fn respond(pool: &db::DbPool, actor: impl Into<db::credentials::Actor>, id: i64, accept: bool) -> Result<(), Error> {
     records::respond(pool, actor, id, accept)
         .await
         .map_err(database_error)

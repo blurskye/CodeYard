@@ -278,9 +278,7 @@ async fn create(
             },
             properties: &properties,
             admission: creation::CreationAdmission {
-                authority: Some(&crate::backend::db::users::accounts::AccountActor::Token {
-                    user_id: actor.user.id, token_id: actor.token.id,
-                }),
+                authority: Some(&actor.database_actor()),
                 advisory: None,
             },
         },
@@ -341,7 +339,6 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(auth::required)?;
-    let actor = &auth.user;
     let input: Update = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid repository fields"))?;
     for (field, enabled) in [
@@ -423,14 +420,14 @@ async fn update(
             .patch_repository_as(
                 &state.pool,
                 repo.id,
-                db::users::accounts::AccountActor::Token { user_id: actor.id, token_id: auth.token.id },
+                auth.database_actor(),
                 input.default_branch.as_deref().unwrap(),
                 &changes,
             )
             .await
             .map_err(store_error)?
     } else {
-        records::patch_repository(&state.pool, db::users::accounts::AccountActor::Token { user_id: actor.id, token_id: auth.token.id }, repo.id, &changes)
+        records::patch_repository(&state.pool, auth.database_actor(), repo.id, &changes)
             .await
             .map_err(settings_error)?
     };
@@ -447,7 +444,7 @@ async fn remove(
     lifecycle::delete(
         &state.pool,
         state.cluster.as_ref(),
-        db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id },
+        actor.database_actor(),
         repo.id,
     )
     .await
@@ -467,13 +464,12 @@ async fn transfer(
     Path((owner, name)): Path<(String, String)>,
     Json(input): Json<Transfer>,
 ) -> Result<Response> {
-    let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = actor.ok_or_else(auth::required)?;
-    let actor = &auth.user;
+    let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
+    let auth = auth.ok_or_else(auth::required)?;
     let repo = lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
-        db::users::accounts::AccountActor::Token { user_id: actor.id, token_id: auth.token.id },
+        auth.database_actor(),
         repo.id,
         &input.new_owner,
     )
@@ -869,7 +865,7 @@ async fn set_property_values(
     let auth = auth.ok_or_else(auth::required)?;
     db::organizations::properties::set_repository_values(
         &state.pool,
-        (auth.user.id, auth.token.id),
+        auth.database_actor(),
         repo.id,
         &input.properties,
     )

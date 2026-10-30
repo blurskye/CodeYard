@@ -549,7 +549,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                     head_branch: Some("topic".into()),
                     head: sha.into(),
                     result: sha.into(),
-                    authority: codeyard::backend::db::users::accounts::AccountActor::Trusted(1),
+                    authority: codeyard::backend::db::credentials::Actor::from(1),
                 },
             },
             false,

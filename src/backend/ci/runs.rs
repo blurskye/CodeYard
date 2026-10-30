@@ -235,21 +235,16 @@ impl CiRuns {
         &self,
         repo: i64,
         id: i64,
-        actor: i64,
+        actor: impl Into<db::credentials::Actor>,
         debug: bool,
-        credential: Option<i64>,
     ) -> Result<db::models::CiRun, AdmissionError> {
-        let actor = match credential {
-            Some(token_id) => db::users::accounts::AccountActor::Token { user_id: actor, token_id },
-            None => actor.into(),
-        };
-        self.rerun_workflow_run_as(repo, id, actor, debug).await
+        self.rerun_workflow_run_as(repo, id, actor.into(), debug).await
     }
     pub async fn rerun_workflow_run_as(
         &self,
         repo: i64,
         id: i64,
-        actor: db::users::accounts::AccountActor,
+        actor: db::credentials::Actor,
         debug: bool,
     ) -> Result<db::models::CiRun, AdmissionError> {
         self.rerun_selected_workflow(repo, id, actor, debug, db::ci::CiReplaySelection::All).await
@@ -258,17 +253,13 @@ impl CiRuns {
         &self,
         repo: i64,
         id: i64,
-        actor: i64,
+        actor: impl Into<db::credentials::Actor>,
         debug: bool,
-        credential: Option<i64>,
     ) -> Result<db::models::CiRun, AdmissionError> {
         self.rerun_selected_workflow(
             repo,
             id,
-            match credential {
-                Some(token_id) => db::users::accounts::AccountActor::Token { user_id: actor, token_id },
-                None => actor.into(),
-            },
+            actor.into(),
             debug,
             db::ci::CiReplaySelection::Failed,
         )
@@ -278,10 +269,10 @@ impl CiRuns {
         &self,
         repo: i64,
         id: i64,
-        actor: i64,
+        actor: impl Into<db::credentials::Actor>,
         debug: bool,
-        credential: Option<i64>,
     ) -> Result<db::models::CiRun, AdmissionError> {
+        let actor = actor.into();
         let job = db::action_jobs::get(&self.pool, repo, id, false)
             .await?
             .ok_or(AdmissionError::Missing("Job not found"))?;
@@ -291,10 +282,7 @@ impl CiRuns {
         self.rerun_selected_workflow(
             repo,
             source.workflow_run_id.unwrap_or(source.id),
-            match credential {
-                Some(token_id) => db::users::accounts::AccountActor::Token { user_id: actor, token_id },
-                None => actor.into(),
-            },
+            actor,
             debug,
             db::ci::CiReplaySelection::Job(id),
         )
@@ -304,7 +292,7 @@ impl CiRuns {
         &self,
         repo: i64,
         id: i64,
-        actor: db::users::accounts::AccountActor,
+        actor: db::credentials::Actor,
         debug: bool,
         selection: db::ci::CiReplaySelection,
     ) -> Result<db::models::CiRun, AdmissionError> {
@@ -323,16 +311,13 @@ impl CiRuns {
     async fn rerun_run_options(
         &self,
         run_id: Uuid,
-        actor: db::users::accounts::AccountActor,
+        actor: db::credentials::Actor,
         debug: bool,
         selection: db::ci::CiReplaySelection,
         allow_active: bool,
     ) -> Result<db::models::CiRun, AdmissionError> {
-        let actor_id = actor.user_id();
-        let credential = match &actor {
-            db::users::accounts::AccountActor::Token { token_id, .. } => Some(*token_id),
-            _ => None,
-        };
+        let actor_id = actor.user_id;
+        let credential = actor.token_id();
         let run = db::ci::get_ci_run_by_run_id(&self.pool, run_id)
             .await?
             .ok_or(AdmissionError::Missing("Run not found"))?;

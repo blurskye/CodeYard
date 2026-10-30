@@ -24,15 +24,13 @@ native_operation!(crate::backend::db::postgres::organizations::membership::count
 
 // REST's admin role is an owner, not Codeyard's delegated administrator role.
 native_operation!(crate::backend::db::postgres::organizations::membership::update_organization_member_role_by_owner, crate::backend::db::sqlite::organizations::membership::update_organization_member_role_by_owner,
-    fn update_organization_member_role_by_owner(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, target: i64, role: OrgRole) -> Result<OrganizationOutcome<OrgMembership>>);
+    fn update_organization_member_role_by_owner(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, target: i64, role: OrgRole) -> Result<OrganizationOutcome<OrgMembership>>);
 // Ends the membership or, for a non-member, cancels the pending invitations, in one transaction.
 native_operation!(crate::backend::db::postgres::organizations::membership::remove_member_or_invitation_by_owner, crate::backend::db::sqlite::organizations::membership::remove_member_or_invitation_by_owner,
-    fn remove_member_or_invitation_by_owner(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
+    fn remove_member_or_invitation_by_owner(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
 
 native_operation!(crate::backend::db::postgres::organizations::membership::convert_to_outside_collaborator, crate::backend::db::sqlite::organizations::membership::convert_to_outside_collaborator,
-    fn convert_to_outside_collaborator(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
-native_operation!(crate::backend::db::postgres::organizations::membership::prepare_outside_conversion, crate::backend::db::sqlite::organizations::membership::prepare_outside_conversion,
-    fn prepare_outside_conversion(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
+    fn convert_to_outside_collaborator(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
 
 pub fn parse_organization_role(
     value: &str,

@@ -71,7 +71,7 @@ fn submitted(
     let expected = field(form, "expected").to_owned();
     anyhow::ensure!(
         id.is_none()
-            || crate::git_ids::is_full_commit_id(expected),
+            || crate::git_ids::is_full_commit_id(&expected),
         InvalidInput("Reload the gist before editing; its revision is missing.")
     );
     let too_large = bytes > 2 * EDITOR_BYTES || files.iter().filter_map(|file| file.content.as_ref()).map(|content| content.replace("\r\n", "\n").len()).sum::<usize>() > EDITOR_BYTES;

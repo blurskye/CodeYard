@@ -496,8 +496,8 @@ pub(crate) async fn native_update(
     match db::milestones::save_milestone_checked(
         &ctx.state.pool, actor, repo.record.id, Some(number),
         db::milestones::MilestoneInput {
-            title: &input.title, description: input.description.as_deref(),
-            due_on: db::milestones::due_on(input.due_date.as_deref()).map_err(|_| unavailable(&ctx))?, state: None,
+            title: Some(&input.title), description: Some(input.description.as_deref()),
+            due_on: Some(db::milestones::due_on(input.due_date.as_deref()).map_err(|_| unavailable(&ctx))?), state: None,
         }, Some(&draft.original),
     )
     .await

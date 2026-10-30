@@ -20,7 +20,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinSet;
-use tokio::time::timeout;
+use tokio::time::{timeout, Duration};
 
 const MAX_HEADERS: usize = 32;
 const MAX_CONTROLS: usize = 64;
@@ -235,7 +235,9 @@ async fn listen(
             break;
         }
         tokio::select! {
-            _ = stop.wait_for(|stopped| *stopped), if !draining => draining = true,
+            // The stop arm yields `()`, not a watch guard, so no guard is held while the
+            // accept arm waits out an accept failure.
+            _ = async { let _ = stop.wait_for(|stopped| *stopped).await; }, if !draining => draining = true,
             connection = listener.accept() => {
                 let (stream, _) = match connection {
                     Ok(connection) => connection,

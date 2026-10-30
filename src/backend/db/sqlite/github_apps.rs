@@ -252,7 +252,7 @@ async fn change_in_connection(
 }
 pub async fn change_repository(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     id: i64,
     repo: i64,
     add: bool,
@@ -265,7 +265,7 @@ pub async fn change_repository(
     let Some((all_repos, org)) = installation else {
         return Ok(RepositoryChange::Missing);
     };
-    if let Some(token) = credential.token_id {
+    if let Some(token) = credential.token_id() {
         if !super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "administration").await? {
             return Ok(RepositoryChange::Missing);
         }

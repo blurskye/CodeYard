@@ -187,7 +187,7 @@ pub async fn write_file(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::users::accounts::AccountActor>,
+    actor_id: impl Into<db::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -326,7 +326,7 @@ pub async fn write_file_bytes(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::users::accounts::AccountActor>,
+    actor_id: impl Into<db::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -359,7 +359,7 @@ pub async fn delete_file(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::users::accounts::AccountActor>,
+    actor_id: impl Into<db::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -390,7 +390,7 @@ pub async fn delete_file_web(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::users::accounts::AccountActor>,
+    actor_id: impl Into<db::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -496,7 +496,7 @@ async fn save_file(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::users::accounts::AccountActor>,
+    actor_id: impl Into<db::credentials::Actor>,
     _owner: &str,
     repository_id: i64,
     mut input: FileWrite,
@@ -505,7 +505,7 @@ async fn save_file(
     origin: CommitOrigin,
 ) -> Result<FileSave, WriteError> {
     let authority = actor_id.into();
-    let actor_id = authority.user_id();
+    let actor_id = authority.user_id;
     if input.message.trim().is_empty() {
         input.message = default_commit_message(&input);
     }
@@ -723,7 +723,7 @@ pub async fn upload_files(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::users::accounts::AccountActor>,
+    actor_id: impl Into<db::credentials::Actor>,
     _owner: &str,
     repository_id: i64,
     write: UploadWrite,
@@ -731,7 +731,7 @@ pub async fn upload_files(
     new_branch: Option<&str>,
 ) -> Result<FileSave, WriteError> {
     let authority = actor_id.into();
-    let actor_id = authority.user_id();
+    let actor_id = authority.user_id;
     let (guard_branch, guard_revision) = match new_branch {
         Some(name) => (name, "unborn"),
         None => (write.branch.as_str(), write.expected_revision.as_str()),

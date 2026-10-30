@@ -25,7 +25,6 @@ async fn catalog(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let authentication = auth::authenticate(&state, &headers, false).await?;
-    let deadline = tokio::time::Instant::now() + state.search_time_budget;
     let viewer = authentication.as_ref().map(|a| a.user.id);
     let kind = match uri.path().rsplit('/').next() {
         Some("repositories") => Kind::Repositories,
@@ -85,7 +84,7 @@ async fn catalog(
                     "Search is busy. Try again shortly.",
                 )
             })?;
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8);
+    let deadline = tokio::time::Instant::now() + state.search_time_budget;
     let (search, git_incomplete) = if search.needs_git() {
         crate::backend::repositories::catalog_search::prepare(
             &state.pool,

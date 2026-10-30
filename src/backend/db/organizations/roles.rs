@@ -56,4 +56,4 @@ native_operation!(crate::backend::db::postgres::organizations::roles::users,crat
 native_operation!(crate::backend::db::postgres::organizations::roles::teams,crate::backend::db::sqlite::organizations::roles::teams,
     fn teams(pool:&DbPool,actor:i64,org:i64,role:i64,after:i64,window:(i64,i64))->Result<OrganizationOutcome<Vec<Team>>>);
 native_operation!(crate::backend::db::postgres::organizations::roles::change,crate::backend::db::sqlite::organizations::roles::change,
-    fn change(pool:&DbPool,actor:impl Into<crate::backend::db::users::tokens::Actor>,org:i64,target:&RoleTarget,role:Option<i64>,assigned:bool)->Result<OrganizationOutcome<()>>);
+    fn change(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,org:i64,target:&RoleTarget,role:Option<i64>,assigned:bool)->Result<OrganizationOutcome<()>>);

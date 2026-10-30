@@ -118,7 +118,7 @@ async fn create(
     let invitation = outcome(
         organizations::create_organization_invitation(
             &state.pool,
-            (actor.user.id, actor.token.id),
+            actor.database_actor(),
             org.id,
             &input,
             true,
@@ -255,7 +255,7 @@ async fn cancel(
     outcome(
         organizations::cancel_invitation_id(
             &state.pool,
-            (actor.user.id, actor.token.id),
+            actor.database_actor(),
             org.id,
             invitation_id(&params)?,
             true,

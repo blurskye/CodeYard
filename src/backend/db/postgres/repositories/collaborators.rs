@@ -138,9 +138,9 @@ pub async fn update_invitation(
     Ok(invitation)
 }
 
-pub async fn respond(pool: &PgPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, id: i64, accept: bool) -> Result<()> {
+pub async fn respond(pool: &PgPool, actor: impl Into<crate::backend::db::credentials::Actor>, id: i64, accept: bool) -> Result<()> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let mut tx = pool.begin().await?;
     super::super::users::transitions::lock_membership_shared(&mut tx).await?;
     let invitation=sqlx::query_as::<_,Invitation>("SELECT * FROM repository_invitations WHERE id=$1 AND invitee_id=$2 AND state='pending' AND created_at>NOW()-INTERVAL '7 days'").bind(id).bind(actor).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;

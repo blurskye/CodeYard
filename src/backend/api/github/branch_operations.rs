@@ -29,7 +29,7 @@ async fn rename(
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(super::auth::required)?;
     let actor = auth.user.id;
-    let authority = db::users::accounts::AccountActor::Token { user_id: actor, token_id: auth.token_id() };
+    let authority = auth.database_actor();
     repo_store(&repo, state.cluster.as_ref())
         .rename_branch_as(&state.pool, repo.id, authority, &branch, &input.new_name)
         .await

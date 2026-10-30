@@ -66,7 +66,6 @@ async fn contract(pg: bool) {
             commit_title: None,
             commit_message: None,
             author_email: None,
-            token: None,
         },
     )
     .await

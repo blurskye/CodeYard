@@ -68,7 +68,7 @@ async fn change_star(
     engagement::change(
         &state.pool,
         &state.notification_broadcaster,
-        db::users::accounts::AccountActor::Token { user_id: auth.user.id, token_id: auth.token.id },
+        auth.database_actor(),
         repo.id,
         Engagement::Star,
         enabled,

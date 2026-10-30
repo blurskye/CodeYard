@@ -126,7 +126,6 @@ async fn divergent_merge_retains_both_contents_and_both_parents() {
             &base.to_string(),
             &result,
             MergeMethod::Merge,
-            None,
         )
         .await
         .unwrap();
@@ -189,8 +188,7 @@ async fn movement_after_preparation_cannot_publish_h2_or_overwrite_b2() {
                 &head.to_string(),
                 &base.to_string(),
                 &result,
-                MergeMethod::Merge,
-                None
+                MergeMethod::Merge
             )
             .await
             .is_err());
@@ -240,7 +238,6 @@ async fn competing_merge_publications_have_one_winner() {
                     &base.to_string(),
                     &result,
                     MergeMethod::Merge,
-                    None,
                 )
                 .await
         })
@@ -285,7 +282,6 @@ async fn up_to_date_merge_makes_a_merge_commit_and_conflicts_are_honest() {
             &base.to_string(),
             &result,
             MergeMethod::Merge,
-            None,
         )
         .await
         .unwrap();

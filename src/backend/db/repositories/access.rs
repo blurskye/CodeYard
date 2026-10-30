@@ -18,7 +18,7 @@ native_operation!(crate::backend::db::postgres::repositories::access::change_per
     crate::backend::db::sqlite::repositories::access::change_personal_repository_collaborator,
     fn change_personal_repository_collaborator(
     pool: &DbPool,
-    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: Option<AccessLevel>,

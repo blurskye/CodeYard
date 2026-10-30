@@ -22,7 +22,7 @@ pub async fn enabled(pool: &SqlitePool, repo: i64) -> Result<bool> {
         .fetch_one(pool)
         .await?)
 }
-pub async fn set_enabled(pool: &SqlitePool, actor: impl Into<crate::backend::db::users::tokens::Actor>, repo: i64, enabled: bool) -> Result<()> {
+pub async fn set_enabled(pool: &SqlitePool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, enabled: bool) -> Result<()> {
     let credential = actor.into();
     let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -31,7 +31,7 @@ pub async fn set_enabled(pool: &SqlitePool, actor: impl Into<crate::backend::db:
             .await?,
         Refusal::Denied
     );
-    if let Some(token) = credential.token_id {
+    if let Some(token) = credential.token_id() {
         ensure!(crate::backend::db::sqlite::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "administration").await?, Refusal::Denied);
     }
     let archived: bool = sqlx::query_scalar("SELECT is_archived FROM repositories WHERE id=?1")

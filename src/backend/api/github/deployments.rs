@@ -129,7 +129,7 @@ async fn create(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(auth::required)?;
-    let (actor, token) = (&auth.user, auth.token.id);
+    let actor = &auth.user;
     access::check_write(&state.pool, repo.id, actor.id)
         .await
         .map_err(|error| match error {
@@ -197,7 +197,7 @@ async fn create(
                     &state.pool,
                     state.cluster.as_ref(),
                     &state.ci_runs,
-                    db::users::accounts::AccountActor::Token { user_id: actor.id, token_id: token },
+                    auth.database_actor(),
                     repo.id,
                     &owner,
                     BranchMerge {

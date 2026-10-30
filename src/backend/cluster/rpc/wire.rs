@@ -20,29 +20,19 @@ fn is_zero(value: &usize) -> bool {
 }
 
 /// A retained credential uses the former numeric token slot, so an older storage peer
-/// rejects it instead of silently dropping a new optional authorization field.
+/// rejects it instead of silently dropping a new optional authorization field. A bare token
+/// number from an older peer carries no secret and fails to decode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum PublicationCredential {
-    LegacyToken(i64),
-    Actor(crate::backend::db::users::accounts::AccountActor),
-}
+#[serde(transparent)]
+pub struct PublicationCredential(crate::backend::db::credentials::Actor);
 impl PublicationCredential {
-    pub fn retain(actor: crate::backend::db::users::accounts::AccountActor, token: Option<i64>) -> Option<Self> {
-        use crate::backend::db::users::accounts::AccountActor;
-        match (actor, token) {
-            (AccountActor::Trusted(_), None) => None,
-            (AccountActor::Trusted(user_id), Some(token_id)) => Some(Self::Actor(AccountActor::Token { user_id, token_id })),
-            (actor, _) => Some(Self::Actor(actor)),
-        }
+    /// Trusted in-process callers carry no credential, and the receiving node uses the caller.
+    pub fn retain(actor: crate::backend::db::credentials::Actor) -> Option<Self> {
+        actor.credential.is_some().then(|| Self(actor))
     }
-    pub fn into_actor(self, expected: i64) -> Result<crate::backend::db::users::accounts::AccountActor, RepoError> {
-        use crate::backend::db::users::accounts::AccountActor;
-        let actor = match self {
-            Self::LegacyToken(token_id) => AccountActor::Token { user_id: expected, token_id },
-            Self::Actor(actor) => actor,
-        };
-        if actor.user_id() != expected { return Err(invalid("publication credential actor mismatch")); }
+    pub fn into_actor(self, expected: i64) -> Result<crate::backend::db::credentials::Actor, RepoError> {
+        let Self(actor) = self;
+        if actor.user_id != expected { return Err(invalid("publication credential actor mismatch")); }
         Ok(actor)
     }
 }
@@ -53,7 +43,7 @@ impl PublicationCredential {
 #[serde(untagged)]
 pub enum PublicationText {
     Legacy(String),
-    Retained { value: String, authority: crate::backend::db::users::accounts::AccountActor },
+    Retained { value: String, authority: crate::backend::db::credentials::Actor },
 }
 impl From<&str> for PublicationText {
     fn from(value: &str) -> Self { Self::Legacy(value.into()) }
@@ -62,16 +52,16 @@ impl From<String> for PublicationText {
     fn from(value: String) -> Self { Self::Legacy(value) }
 }
 impl PublicationText {
-    pub fn retain(value: &str, authority: crate::backend::db::users::accounts::AccountActor) -> Self {
-        match authority {
-            crate::backend::db::users::accounts::AccountActor::Trusted(_) => Self::Legacy(value.into()),
-            authority => Self::Retained { value: value.into(), authority },
+    pub fn retain(value: &str, authority: crate::backend::db::credentials::Actor) -> Self {
+        if authority.credential.is_none() {
+            return Self::Legacy(value.into());
         }
+        Self::Retained { value: value.into(), authority }
     }
-    pub fn into_parts(self, actor: i64) -> Result<(crate::backend::db::users::accounts::AccountActor, String), RepoError> {
+    pub fn into_parts(self, actor: i64) -> Result<(crate::backend::db::credentials::Actor, String), RepoError> {
         match self {
             Self::Legacy(value) => Ok((actor.into(), value)),
-            Self::Retained { value, authority } => Ok((PublicationCredential::Actor(authority).into_actor(actor)?, value)),
+            Self::Retained { value, authority } => Ok((PublicationCredential(authority).into_actor(actor)?, value)),
         }
     }
 }
@@ -624,6 +614,7 @@ impl Operation {
             | Self::ConfigureDependencySecurity { .. }
             | Self::CreateTag { .. }
             | Self::DeleteTag { .. }
+            | Self::RefreshStorageSize
             | Self::ReplicaPack { .. } => false,
         }
     }

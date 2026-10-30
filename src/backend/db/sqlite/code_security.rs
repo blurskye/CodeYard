@@ -104,7 +104,7 @@ pub async fn list(pool: &SqlitePool, actor: i64, org: i64) -> Result<Vec<Configu
 }
 pub async fn list_window(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     org: i64,
     after: i64,
     before: i64,

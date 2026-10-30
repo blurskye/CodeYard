@@ -143,9 +143,9 @@ pub async fn update_invitation(
     Ok(invitation)
 }
 
-pub async fn respond(pool: &SqlitePool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, id: i64, accept: bool) -> Result<()> {
+pub async fn respond(pool: &SqlitePool, actor: impl Into<crate::backend::db::credentials::Actor>, id: i64, accept: bool) -> Result<()> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let invitation=sqlx::query_as::<_,Invitation>("SELECT * FROM repository_invitations WHERE id=?1 AND invitee_id=?2 AND state='pending' AND created_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-7 days')").bind(id).bind(actor).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
     let live: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut *tx).await?;

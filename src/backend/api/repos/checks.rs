@@ -164,8 +164,7 @@ async fn submit(
         &ctx.state,
         &loaded.repository,
         &owner,
-        actor,
-        Credential::Session(&session),
+        (actor, session.clone()).into(),
         run.suite_id,
         None,
     ).await

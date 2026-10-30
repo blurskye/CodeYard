@@ -155,7 +155,7 @@ async fn change(
     outcome(
         roles::change(
             &state.pool,
-            (actor.user.id, actor.token.id),
+            actor.database_actor(),
             org.id,
             &RoleTarget::Team(team),
             Some(SECURITY_MANAGER_ROLE_ID),

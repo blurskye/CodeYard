@@ -68,7 +68,7 @@ async fn create(
 }
 #[derive(Deserialize, Default)]
 struct CursorQuery {
-    per_page: Option<u64>,
+    per_page: Option<usize>,
     before: Option<String>,
     after: Option<String>,
     predicate_type: Option<String>,

@@ -58,7 +58,7 @@ pub async fn get(
 }
 pub async fn create(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     value: &Value,
     report: bool,
@@ -69,7 +69,7 @@ pub async fn create(
     }
     let data = Data::parse(value, None, report)?;
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let report_id = if report {
         let input = crate::backend::db::repositories::security::NewReport::new(
@@ -122,14 +122,14 @@ pub(crate) async fn administration(
 }
 pub async fn update(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     ghsa: &str,
     patch: &Value,
 ) -> Result<Advisory> {
     anyhow::ensure!(patch.get("start_private_fork").is_none(), Refusal::Invalid);
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
     if let Some(credential) = authority.credential() {
@@ -192,9 +192,9 @@ pub async fn update(
     tx.commit().await?;
     Ok(updated)
 }
-pub async fn request_cve(pool: &SqlitePool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo: i64, ghsa: &str) -> Result<()> {
+pub async fn request_cve(pool: &SqlitePool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, ghsa: &str) -> Result<()> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
     if let Some(credential) = authority.credential() {
@@ -214,13 +214,13 @@ pub async fn request_cve(pool: &SqlitePool, actor: impl Into<crate::backend::db:
 }
 pub async fn attach_fork(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     ghsa: &str,
     fork: i64,
 ) -> Result<()> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
     if let Some(credential) = authority.credential() {

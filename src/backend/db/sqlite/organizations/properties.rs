@@ -55,7 +55,7 @@ async fn compatible_on(
 }
 pub async fn define(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     inputs: &[DefinitionInput],
 ) -> Result<OrganizationOutcome<Vec<Definition>>> {
@@ -87,7 +87,7 @@ pub async fn define(
 }
 pub async fn remove(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     name: &str,
 ) -> Result<OrganizationOutcome<()>> {
@@ -161,7 +161,7 @@ pub(crate) async fn creation_values_on(
 }
 pub async fn set_values(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     repositories: &[String],
     values: &[ValueInput],
@@ -266,7 +266,7 @@ pub async fn repository(
 }
 pub async fn set_repository_values(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     values: &[ValueInput],
 ) -> Result<()> {
@@ -275,7 +275,7 @@ pub async fn set_repository_values(
 /// Native forms bind the definition's immutable identity as well as the repository.
 pub async fn set_repository_value(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     definition: i64,
     value: &ValueInput,
@@ -291,7 +291,7 @@ pub async fn set_repository_value(
 }
 async fn change_repository_values(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     values: &[ValueInput],
     expected: Option<i64>,
@@ -308,7 +308,7 @@ async fn change_repository_values(
         read_authority(&mut tx, actor, org).await?,
         Applied(OrgRole::Owner)
     );
-    if let Some(token) = grant.token_id {
+    if let Some(token) = grant.token_id() {
         ensure!(super::super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "administration").await?, Refusal::Denied);
         // Account ownership cannot lend an organization-only capability to a repository token.
         if owner { owner = super::super::users::tokens::permits_write(&mut tx, actor, token, None, Some(org), "organization_custom_properties").await?; }

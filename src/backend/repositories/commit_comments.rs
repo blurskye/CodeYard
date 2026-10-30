@@ -335,7 +335,7 @@ pub async fn create(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
-    actor: impl Into<db::users::tokens::Actor>,
+    actor: impl Into<db::credentials::Actor>,
     repo: i64,
     reference: &str,
     mut input: CreateComment,
@@ -416,7 +416,7 @@ pub async fn create(
         pool,
         CommentCreate {
             actor_id: actor,
-            token_id: credential.token_id,
+            token_id: credential.token_id(),
             repo_id: repo,
             sha: &commit.sha,
             body: &input.body,
@@ -482,7 +482,7 @@ pub async fn edit(
 
 pub async fn delete(
     pool: &db::DbPool,
-    actor: impl Into<db::users::tokens::Actor>,
+    actor: impl Into<db::credentials::Actor>,
     repo: i64,
     id: i64,
     revision: Option<&str>,

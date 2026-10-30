@@ -173,7 +173,7 @@ async fn insert_kind(
     super::super::users::transitions::lock_membership_shared(&mut tx).await?;
     let creator = input.owner.actor_id;
     if let Some(authority) = admission.authority {
-        anyhow::ensure!(authority.user_id() == creator, RepositoryStorageRefusal::Denied);
+        anyhow::ensure!(authority.user_id == creator, RepositoryStorageRefusal::Denied);
     }
     // Organizations lock in ascending id order. Otherwise a fork from A into B and one from B
     // into A each hold one organization and wait for the other.

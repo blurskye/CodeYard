@@ -56,7 +56,7 @@ async fn merge_pull(
     auth.repository_scope(&state.pool, repo.id, "contents", true)
         .await
         .map_err(super::super::auth::scope_error)?;
-    let token = auth.token.id;
+    let authority = auth.database_actor();
     let actor = auth.user;
     if !access::can_write(&state.pool, &actor, &repo)
         .await
@@ -110,7 +110,7 @@ async fn merge_pull(
         &state.pool,
         &state.ci_runs,
         &state.notification_broadcaster,
-        actor.id,
+        authority,
         (owner, name, number),
         pull_requests::merge::MergeRequest {
             expected_head: pull.head_sha,
@@ -121,7 +121,6 @@ async fn merge_pull(
             commit_title: input.commit_title,
             commit_message: input.commit_message,
             author_email: None,
-            token: Some(token),
         },
     )
     .await

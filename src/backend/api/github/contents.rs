@@ -316,7 +316,6 @@ async fn save(
     let (repo, auth) = repository(&state, &headers, owner, name, true).await?;
     let auth = auth.ok_or_else(auth::required)?;
     let authority = auth.database_actor();
-    let actor = auth.user;
     let branch = input.branch.as_deref().unwrap_or(&repo.default_branch);
     let store = repo_store(&repo, state.cluster.as_ref());
     let refs = store.refs_from_primary().await.map_err(store_error)?;

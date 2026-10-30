@@ -27,7 +27,7 @@ pub async fn installations(
 
 pub async fn register(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     name: &str,
     installation: Option<i64>,
@@ -78,7 +78,7 @@ pub async fn definitions(
 
 pub async fn set_values(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     values: &[RepositoryValue],
 ) -> Result<OrganizationOutcome<()>> {
@@ -118,7 +118,7 @@ pub async fn set_values(
 
 pub async fn delete_values(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     property: &str,
 ) -> Result<OrganizationOutcome<()>> {

@@ -91,10 +91,7 @@ pub async fn add_collaborator(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     let target_user = crate::backend::repositories::access::change_collaborator(
         &state.pool,
-        db::users::accounts::AccountActor::Session {
-            user_id: user.id,
-            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
-        },
+        crate::backend::db::credentials::Actor::from((user.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
         repository.id,
         &req.username,
         Some(access_level),
@@ -122,10 +119,7 @@ pub async fn remove_collaborator(
 
     crate::backend::repositories::access::change_collaborator(
         &state.pool,
-        db::users::accounts::AccountActor::Session {
-            user_id: user.id,
-            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
-        },
+        crate::backend::db::credentials::Actor::from((user.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
         repository.id,
         &username,
         None,

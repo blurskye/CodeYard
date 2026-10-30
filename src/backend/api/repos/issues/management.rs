@@ -39,10 +39,7 @@ pub(crate) async fn native_change(
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
     let actor = ctx.require_user()?.id;
-    let authority = || db::users::accounts::AccountActor::Session {
-        user_id: actor,
-        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-    };
+    let authority = || ctx.database_actor(actor);
     let issue = db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
         .await
         .map_err(|_| unavailable(&ctx))?

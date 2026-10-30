@@ -44,7 +44,7 @@ pub async fn owned(pool: &PgPool, actor: i64, org: i64) -> Result<OrganizationOu
 }
 pub async fn change(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     input: &Changes,
 ) -> Result<OrganizationOutcome<Updated>> {

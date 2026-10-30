@@ -8,7 +8,7 @@ use axum::extract::{OriginalUri, Path, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 /// Content type for a raw blob.
 ///

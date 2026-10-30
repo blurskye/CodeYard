@@ -79,4 +79,4 @@ native_operation!(crate::backend::db::postgres::repositories::collaborators::upd
     fn update_invitation(pool: &DbPool, actor: i64, repo_id: i64, id: i64, permission: Option<AccessLevel>) -> Result<Invitation>);
 native_operation!(crate::backend::db::postgres::repositories::collaborators::respond,
     crate::backend::db::sqlite::repositories::collaborators::respond,
-    fn respond(pool: &DbPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, id: i64, accept: bool) -> Result<()>);
+    fn respond(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, id: i64, accept: bool) -> Result<()>);

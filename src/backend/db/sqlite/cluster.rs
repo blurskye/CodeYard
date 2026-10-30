@@ -3,7 +3,6 @@
 use super::models::{
     ClusterNode, HeldReplica, JoinInvite, JoinOutcome, NodeReplicaCounts, NodeStatusChange,
 };
-use super::time;
 use crate::backend::db::cluster::{
     Authority, DeclaredMember, FamilyOutcome, JoinRequest, NewJoinToken, PrimaryReplicaRow,
     PromoteOutcome,

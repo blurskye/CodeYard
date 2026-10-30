@@ -784,11 +784,11 @@ impl LocalStore {
         pool: &db::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        authority: db::users::accounts::AccountActor,
+        authority: db::credentials::Actor,
         source: &LocalStore,
         options: &super::CopyOptions,
     ) -> Result<(), RepoError> {
-        let actor = authority.user_id();
+        let actor = authority.user_id;
         let default_branch = options.default_branch.as_str();
         // The row is already discoverable. Keep copied objects outside its live path
         // until the source-access check, on the same filesystem for atomic publication.
@@ -880,10 +880,10 @@ impl LocalStore {
         .await?;
         // Retain the initiating credential through copying, lock waits and namespace checks.
         live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
-        if let db::users::accounts::AccountActor::Token { token_id, .. } = &authority {
+        if let Some(token_id) = authority.token_id() {
             let source_repository = access::current_repository(pool, source_repo_id).await
                 .map_err(|_| RepoError::authority_unavailable())?;
-            crate::backend::repositories::git_sessions::ReceiveCredential::Token(*token_id)
+            crate::backend::repositories::git_sessions::ReceiveCredential::Token(token_id)
                 .authorize(pool, &source_repository, false).await.map_err(RepoError::from)?;
         }
         if !destination.is_gist {
@@ -1540,11 +1540,11 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        authority: db::users::accounts::AccountActor,
+        authority: db::credentials::Actor,
         name: &str,
         sha: &str,
     ) -> Result<String, RepoError> {
-        let actor = authority.user_id();
+        let actor = authority.user_id;
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -1578,7 +1578,7 @@ impl LocalStore {
             pool, &repository, actor, self.path(), None, std::slice::from_ref(&target),
         ).await.map_err(RepoError::from)?;
         let _change = self
-            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, authority.token_id())
+            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
         access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
         publication
@@ -1613,12 +1613,12 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        authority: db::users::accounts::AccountActor,
+        authority: db::credentials::Actor,
         reference: &str,
         sha: &str,
         force: bool,
     ) -> Result<(String, String), RepoError> {
-        let actor = authority.user_id();
+        let actor = authority.user_id;
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -1683,7 +1683,7 @@ impl LocalStore {
         ).await.map_err(RepoError::from)?;
         let writes = write.as_ref().into_iter().collect::<Vec<_>>();
         let _change = self
-            .begin_branch_change(pool, repo_id, actor, &writes, &publication, authority.token_id())
+            .begin_branch_change(pool, repo_id, actor, &writes, &publication, None)
             .await?;
         access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
         publication
@@ -1726,10 +1726,10 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        authority: db::users::accounts::AccountActor,
+        authority: db::credentials::Actor,
         name: &str,
     ) -> Result<(), RepoError> {
-        let actor = authority.user_id();
+        let actor = authority.user_id;
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -1766,7 +1766,7 @@ impl LocalStore {
         .await?;
         let reference = git::branch_ref(name).ok_or_else(|| super::invalid_ref("branch"))?;
         let _change = self
-            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, authority.token_id())
+            .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
         access::check_publication_actor(pool, &authority, &repository).await.map_err(RepoError::from)?;
         publication
@@ -1790,14 +1790,14 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        authority: db::users::accounts::AccountActor,
+        authority: db::credentials::Actor,
         name: &str,
         sha: &str,
         message: Option<&str>,
         tagger_name: &str,
         tagger_email: &str,
     ) -> Result<TagInfo, RepoError> {
-        let actor = authority.user_id();
+        let actor = authority.user_id;
         if message.is_some_and(|message| message.len() > git::MAX_TAG_MESSAGE_BYTES) {
             return Err(RepoError::new(
                 ErrorKind::Invalid,
@@ -1872,10 +1872,10 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        authority: db::users::accounts::AccountActor,
+        authority: db::credentials::Actor,
         name: &str,
     ) -> Result<(), RepoError> {
-        let actor = authority.user_id();
+        let actor = authority.user_id;
         let publication = git::locks::publication(self.path()).await.map_err(RepoError::from)?;
         let owned_name = name.to_owned();
         let old = self
@@ -1942,20 +1942,23 @@ impl LocalStore {
         editor::prepare_upload(self.path(), write, content, author, email).await
     }
 
-    pub(super) async fn publish_file(
+    /// Boxed with an explicit `Send` bound for the same reason as `rename_branch`.
+    pub(super) fn publish_file(
         &self,
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
         prepared: &editor::PreparedFile,
         dependency_publication: Option<&db::repositories::dependencies::Publication>,
-    ) -> Result<CommitInfo, RepoError> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<CommitInfo, RepoError>> + Send>> {
         let (store, pool, prepared, dependency_publication) = (
             self.clone(), pool.clone(), prepared.clone(), dependency_publication.cloned(),
         );
-        tokio::spawn(async move {
-            store.publish_file_owned(&pool, repo_id, actor, &prepared, dependency_publication.as_ref()).await
-        }).await.map_err(|_| RepoError::applied_followup_failed())?
+        Box::pin(async move {
+            tokio::spawn(async move {
+                store.publish_file_owned(&pool, repo_id, actor, &prepared, dependency_publication.as_ref()).await
+            }).await.map_err(|_| RepoError::applied_followup_failed())?
+        })
     }
 
     async fn publish_file_owned(
@@ -2057,7 +2060,7 @@ impl LocalStore {
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, Some(prepared_path))
             .await?;
         if let Some(authority) = &prepared.authority {
-            if authority.user_id() != actor { return Err(RepoError::write_denied()); }
+            if authority.user_id != actor { return Err(RepoError::write_denied()); }
             self.check_publication_grant(pool, repo_id, actor, authority.token_id(), vec![(
                 prepared.expected.clone().unwrap_or_else(|| editor::ZERO.to_owned()),
                 prepared.commit.sha.clone(),
@@ -2459,7 +2462,7 @@ impl LocalStore {
         method: MergeMethod,
         via: WriteVia,
         token: Option<i64>,
-        credential: Option<&db::users::accounts::AccountActor>,
+        credential: Option<&db::credentials::Actor>,
     ) -> Result<(), RepoError> {
         self.publish_merge_authorized(
             pool,
@@ -2522,7 +2525,7 @@ impl LocalStore {
         via: WriteVia,
         token: Option<i64>,
         authority: Option<&AsyncMergePublication>,
-        credential: Option<&db::users::accounts::AccountActor>,
+        credential: Option<&db::credentials::Actor>,
     ) -> Result<(), RepoError> {
         let publication = git::locks::publication(self.path())
             .await
@@ -2591,7 +2594,7 @@ impl LocalStore {
         self.check_publication_grant(pool, repo_id, actor, token, vec![(base.to_owned(), result.to_owned())], None)
             .await?;
         if let Some(credential) = credential {
-            if credential.user_id() != actor { return Err(RepoError::write_denied()); }
+            if credential.user_id != actor { return Err(RepoError::write_denied()); }
             crate::backend::repositories::access::check_publication_actor(pool, credential, &repository).await?;
         }
         publication
@@ -2662,14 +2665,14 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        authority: db::users::accounts::AccountActor,
+        authority: db::credentials::Actor,
         stack_id: i64,
         versions: &[(i64, i64)],
         base_branch: &str,
         base: &str,
         moves: &[RestackMove],
     ) -> Result<(), RepoError> {
-        let actor = authority.user_id();
+        let actor = authority.user_id;
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -2991,7 +2994,7 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: db::users::accounts::AccountActor,
+        actor: db::credentials::Actor,
         name: &str,
     ) -> Result<(), RepoError> {
         self.patch_repository(pool, repo_id, actor, name, Default::default())
@@ -3005,10 +3008,10 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        authority: db::users::accounts::AccountActor,
+        authority: db::credentials::Actor,
         new_owner: &str,
     ) -> Result<db::models::Repository, RepoError> {
-        let actor = authority.user_id();
+        let actor = authority.user_id;
         let (store, pool, new_owner) = (self.clone(), pool.clone(), new_owner.to_owned());
         tokio::spawn(async move {
             let _lock = git::locks::lock(store.path()).await;
@@ -3254,7 +3257,7 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: db::users::accounts::AccountActor,
+        actor: db::credentials::Actor,
         name: &str,
         changes: db::repositories::records::RepositoryChanges<String>,
     ) -> Result<db::models::Repository, RepoError> {
@@ -3273,11 +3276,11 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        authority: db::users::accounts::AccountActor,
+        authority: db::credentials::Actor,
         name: &str,
         changes: &db::repositories::records::RepositoryChanges<String>,
     ) -> Result<db::models::Repository, RepoError> {
-        let actor = authority.user_id();
+        let actor = authority.user_id;
         let _lock = git::locks::lock(self.path()).await;
         let previous =
             access::check_admin(pool, repo_id, actor)

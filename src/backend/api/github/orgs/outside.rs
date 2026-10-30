@@ -91,7 +91,7 @@ async fn convert(
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let result = crate::backend::organizations::convert_to_outside(
-        &state.pool, (actor.user.id, actor.token.id), org.id, user.id,
+        &state.pool, actor.database_actor(), org.id, user.id,
     ).await.map_err(Error::unavailable)?;
     if matches!(result, OrganizationOutcome::Conflict) {
         return Err(Error::new(
@@ -120,7 +120,7 @@ async fn remove(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let result = organizations::outside::remove(&state.pool, (actor.user.id, actor.token.id), org.id, user.id)
+    let result = organizations::outside::remove(&state.pool, actor.database_actor(), org.id, user.id)
         .await
         .map_err(Error::unavailable)?;
     if matches!(result, OrganizationOutcome::Conflict) {

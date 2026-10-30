@@ -312,6 +312,10 @@ fn fixtures() -> Vec<Page> {
                 saved: false,
                 viewer: String::new(),
                 force_push_suggestions: Vec::new(),
+                immutable_enforced: false,
+                environment_page: 0,
+                environments_more: false,
+                git_unavailable: false,
             }),
         },
         Page::BranchMerge {
@@ -434,7 +438,6 @@ fn fixtures() -> Vec<Page> {
             page: 2,
             has_more: true,
             can_rerequest: true,
-            actions: Vec::new(),
         }),
     });
     pages.extend(insight_pages().into_iter().map(|page| Page::Insights {
@@ -514,6 +517,7 @@ fn fixtures() -> Vec<Page> {
         pages.push(Page::Advisories {
             repo: insights_repo.clone(),
             page: Box::new(super::advisories::Page {
+                can_administer: true,
                 rows: vec![row.clone()],
                 detail: detail.then(|| super::advisories::Detail {
                     row,

@@ -159,15 +159,21 @@ pub fn merge(current: Option<&str>, patch: &Value) -> Result<Value> {
     Ok(settings)
 }
 
+/// Whether a configuration turns `feature` on or off; `None` leaves it. With `enforced_only`,
+/// only an enforced configuration fixes a value.
+fn configured_toggle(configuration: &str, feature: &str, enforced_only: bool) -> Result<Option<bool>> {
+    let value: Value = serde_json::from_str(configuration)?;
+    if enforced_only && value["enforcement"] != "enforced" { return Ok(None); }
+    Ok(match value[feature].as_str() {
+        Some("enabled") => Some(true),
+        Some("disabled") => Some(false),
+        _ => None,
+    })
+}
+
 /// Enforced configurations fix only the toggles they explicitly configure.
 pub(crate) fn permits_toggle(configuration: &str, feature: &str, enabled: bool) -> Result<bool> {
-    let value: Value = serde_json::from_str(configuration)?;
-    if value["enforcement"] != "enforced" { return Ok(true); }
-    Ok(match value[feature].as_str() {
-        Some("enabled") => enabled,
-        Some("disabled") => !enabled,
-        _ => true,
-    })
+    Ok(configured_toggle(configuration, feature, true)?.is_none_or(|fixed| fixed == enabled))
 }
 
 pub(crate) fn with_toggle_status(current: Option<&str>, feature: &str, enabled: bool) -> Result<String> {
@@ -193,13 +199,7 @@ pub(crate) fn apply(current: Option<&str>, settings: &str) -> Result<String> {
 
 /// Whether a configuration turns private vulnerability reporting on or off; `None` leaves it.
 pub(crate) fn private_reporting(configuration: &str, enforced_only: bool) -> Result<Option<bool>> {
-    let value: Value = serde_json::from_str(configuration)?;
-    if enforced_only && value["enforcement"] != "enforced" { return Ok(None); }
-    Ok(match value["private_vulnerability_reporting"].as_str() {
-        Some("enabled") => Some(true),
-        Some("disabled") => Some(false),
-        _ => None,
-    })
+    configured_toggle(configuration, "private_vulnerability_reporting", enforced_only)
 }
 
 /// The secret scanning settings that an enforced configuration fixes for its repository, or

@@ -389,7 +389,7 @@ pub struct PreparedFile {
     #[serde(default)]
     pub staging: Option<String>,
     #[serde(default)]
-    pub authority: Option<crate::backend::db::users::accounts::AccountActor>,
+    pub authority: Option<crate::backend::db::credentials::Actor>,
     pub branch: String,
     pub reference: String,
     pub expected: Option<String>,

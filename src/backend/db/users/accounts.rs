@@ -39,49 +39,6 @@ impl From<&String> for OwnedAccountCredential {
     fn from(session: &String) -> Self { Self::Session(session.clone()) }
 }
 
-/// Identity plus the credential that admitted an operation. Numeric IDs are reserved for
-/// trusted internal callers; HTTP adapters must retain the original session or token.
-#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum AccountActor {
-    Trusted(i64),
-    Session { user_id: i64, session: String },
-    Token { user_id: i64, token_id: i64 },
-}
-
-impl std::fmt::Debug for AccountActor {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("AccountActor([redacted])")
-    }
-}
-
-impl From<i64> for AccountActor {
-    fn from(id: i64) -> Self { Self::Trusted(id) }
-}
-
-impl AccountActor {
-    pub fn user_id(&self) -> i64 {
-        match self {
-            Self::Trusted(id) => *id,
-            Self::Session { user_id, .. } | Self::Token { user_id, .. } => *user_id,
-        }
-    }
-
-    pub fn token_id(&self) -> Option<i64> {
-        match self {
-            Self::Token { token_id, .. } => Some(*token_id),
-            _ => None,
-        }
-    }
-
-    pub fn credential(&self) -> Option<AccountCredential<'_>> {
-        match self {
-            Self::Trusted(_) => None,
-            Self::Session { session, .. } => Some(AccountCredential::Session(session)),
-            Self::Token { token_id, .. } => Some(AccountCredential::Token(*token_id)),
-        }
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
 #[error("A live unrestricted account credential is required")]
 pub struct AccountRestricted;

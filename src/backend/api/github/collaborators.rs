@@ -244,7 +244,7 @@ async fn respond(
         .await?
         .ok_or_else(auth::required)?;
     actor.require_write()?;
-    members::respond(&state.pool, db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id }, id, method == Method::PATCH)
+    members::respond(&state.pool, actor.database_actor(), id, method == Method::PATCH)
         .await
         .map_err(member_error)?;
     Ok(StatusCode::NO_CONTENT)

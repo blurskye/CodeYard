@@ -39,11 +39,11 @@ pub(super) async fn protected(
     name: &str,
     branch: &str,
     write: bool,
-) -> Result<(BranchProtectionRule, (i64, i64), String)> {
+) -> Result<(BranchProtectionRule, crate::backend::db::credentials::Actor, String)> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
     let auth = auth.ok_or_else(super::auth::required)?;
-    let actor = auth.user;
-    if !access::can_admin(&state.pool, &actor, &repo)
+    let actor = &auth.user;
+    if !access::can_admin(&state.pool, actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {
@@ -80,7 +80,7 @@ pub(super) async fn protected(
         repo_url(owner, name),
         crate::webui::encode_component(branch)
     );
-    Ok((rule, (actor.id, auth.token.id), url))
+    Ok((rule, auth.database_actor(), url))
 }
 
 pub(super) fn check_documents(rule: &BranchProtectionRule) -> Vec<Value> {
@@ -177,7 +177,7 @@ async fn branch(
     if method == Method::DELETE {
         if !protection::delete_branch_protection_rule(
             &state.pool,
-            actor,
+            actor.clone(),
             rule.repo_id,
             &rule.pattern,
         )
@@ -188,7 +188,7 @@ async fn branch(
         }
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    Ok(Json(document(&state, &rule, &url, actor).await?).into_response())
+    Ok(Json(document(&state, &rule, &url, actor.user_id).await?).into_response())
 }
 
 async fn admin(
@@ -209,7 +209,7 @@ async fn admin(
     if !read_method(&method) {
         rule = protection::update_branch_protection_rule(
             &state.pool,
-            actor,
+            actor.clone(),
             rule.repo_id,
             &rule.pattern,
             ProtectionUpdate::EnforceAdmins(method == Method::POST),
@@ -270,7 +270,7 @@ async fn status_checks(
         }
         rule = protection::update_branch_protection_rule(
             &state.pool,
-            actor,
+            actor.clone(),
             rule.repo_id,
             &rule.pattern,
             ProtectionUpdate::StatusChecks {
@@ -284,7 +284,7 @@ async fn status_checks(
     } else if method == Method::DELETE {
         protection::update_branch_protection_rule(
             &state.pool,
-            actor,
+            actor.clone(),
             rule.repo_id,
             &rule.pattern,
             ProtectionUpdate::RemoveStatusChecks,
@@ -354,7 +354,7 @@ async fn contexts(
         };
         rule = protection::update_branch_protection_rule(
             &state.pool,
-            actor,
+            actor.clone(),
             rule.repo_id,
             &rule.pattern,
             update,
@@ -386,7 +386,7 @@ async fn review_requirements(
     if method == Method::DELETE {
         protection::update_branch_protection_rule(
             &state.pool,
-            actor,
+            actor.clone(),
             rule.repo_id,
             &rule.pattern,
             ProtectionUpdate::RemovePullRequestReviews,
@@ -419,7 +419,7 @@ async fn restrictions(
     if method == Method::DELETE {
         protection::update_branch_protection_rule(
             &state.pool,
-            actor,
+            actor.clone(),
             rule.repo_id,
             &rule.pattern,
             ProtectionUpdate::RemovePushRestrictions,
@@ -428,7 +428,7 @@ async fn restrictions(
         .map_err(write_error)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    Ok(Json(restriction_document(&state, &rule, &url, actor).await?).into_response())
+    Ok(Json(restriction_document(&state, &rule, &url, actor.user_id).await?).into_response())
 }
 
 #[derive(Deserialize)]
@@ -474,7 +474,7 @@ async fn users(
         };
         rule = protection::update_branch_protection_rule(
             &state.pool,
-            actor,
+            actor.clone(),
             rule.repo_id,
             &rule.pattern,
             ProtectionUpdate::PushUsers(update),
@@ -482,7 +482,7 @@ async fn users(
         .await
         .map_err(write_error)?;
     }
-    Ok(Json(restriction_document(&state, &rule, &url, actor).await?["users"].clone()).into_response())
+    Ok(Json(restriction_document(&state, &rule, &url, actor.user_id).await?["users"].clone()).into_response())
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

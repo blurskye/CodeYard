@@ -154,8 +154,22 @@ fn suite_value(repo: &Repository, owner: &str, suite: &Suite, count: i64, (statu
     json!({"id":suite.id,"node_id":super::node_id::encode("CSU",suite.id),"head_sha":suite.head_sha,"head_branch":suite.head_branch,"status":status,"conclusion":conclusion,"url":url,"before":null,"after":null,"created_at":suite.created_at,"updated_at":suite.updated_at,"repository":payloads::repository(repo,owner),"latest_check_runs_count":count,"check_runs_url":format!("{url}/check-runs"),"app":publisher,"head_commit":head_commit,"pull_requests":pull_requests,"rerequestable":true,"runs_rerequestable":true})
 }
 
-/// Uses the bounded head snapshot captured on the store that accepted the publication.
+/// Uses the bounded head snapshot captured on the store that accepted the publication. The
+/// push is already accepted, so a failure here is logged rather than returned.
 pub(crate) async fn requested_after_push(
+    pool: &db::DbPool,
+    repo: &Repository,
+    actor: i64,
+    sha: &str,
+    branch: &str,
+    head: &payloads::PushedCommit,
+) {
+    if let Err(error) = request_after_push(pool, repo, actor, sha, branch, head).await {
+        tracing::warn!(repo_id = repo.id, ?error, "Automatic check suites could not be requested");
+    }
+}
+
+async fn request_after_push(
     pool: &db::DbPool,
     repo: &Repository,
     actor: i64,
@@ -552,8 +566,7 @@ async fn rerequest(
         &state,
         &repo,
         &owner,
-        auth.user.id,
-        Credential::Token(auth.token.id),
+        auth.database_actor(),
         suite,
         run.as_ref(),
     )
@@ -564,21 +577,23 @@ pub(in crate::backend::api) async fn request_again(
     state: &AppState,
     repo: &Repository,
     owner: &str,
-    actor: i64,
-    credential: Credential<'_>,
+    authority: db::credentials::Actor,
     suite: i64,
     run: Option<&Run>,
 ) -> Result<()> {
+    use db::users::accounts::AccountCredential;
+    let actor = authority.user_id;
+    let credential = match authority.credential() {
+        Some(AccountCredential::Token(token_id, _)) => Credential::Token(token_id),
+        Some(AccountCredential::Session(session)) => Credential::Session(session),
+        None => return Err(super::auth::required()),
+    };
     let stored = checks::suite(&state.pool, repo.id, suite)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     if let Some(ci_run) = stored.ci_run_id {
         // An Actions suite shows its workflow run, so rerequesting it queues another attempt of that run.
-        let authority = match credential {
-            Credential::Token(token_id) => db::users::accounts::AccountActor::Token { user_id: actor, token_id },
-            Credential::Session(session) => db::users::accounts::AccountActor::Session { user_id: actor, session: session.to_owned() },
-        };
         // Each attempt has its own suite and CI run; reruns go through the shared workflow run.
         let workflow_run = db::ci::get_ci_run_by_id(&state.pool, repo.id, ci_run)
             .await
@@ -587,7 +602,7 @@ pub(in crate::backend::api) async fn request_again(
             .ok_or_else(Error::missing)?;
         state
             .ci_runs
-            .rerun_workflow_run_as(repo.id, workflow_run, authority, false)
+            .rerun_workflow_run_as(repo.id, workflow_run, authority.clone(), false)
             .await
             .map_err(super::actions::admission_error)?;
         return Ok(());

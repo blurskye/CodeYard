@@ -120,11 +120,11 @@ async fn fetch(
         biased;
         _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),
         guards = async {
-            let primary = crate::backend::git::repository::locks::lock(&primary_path).await;
-            let mirror = crate::backend::git::repository::locks::lock(mirror).await;
+            let primary_writers = crate::backend::git::repository::locks::lock(&primary_path).await;
+            let mirror_writers = crate::backend::git::repository::locks::lock(mirror).await;
             let primary_readers = crate::backend::git::repository::locks::exclusive(&primary_path).await;
             let mirror_readers = crate::backend::git::repository::locks::exclusive(mirror).await;
-            (primary, mirror, primary_readers, mirror_readers)
+            (primary_writers, mirror_writers, primary_readers, mirror_readers)
         } => guards,
     };
     // From here cancellation is deferred until installation has ended. Copying retains

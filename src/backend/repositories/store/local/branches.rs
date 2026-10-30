@@ -1,34 +1,39 @@
 use super::*;
 
 impl LocalStore {
-    pub(in crate::backend::repositories::store) async fn rename_branch(
+    /// Boxed with an explicit `Send` bound. This rename and `publish_file` each spawn a future
+    /// whose call graph reaches the other, so proving either one `Send` would need the other's
+    /// type, a cycle the compiler rejects.
+    pub(in crate::backend::repositories::store) fn rename_branch(
         &self,
         pool: &db::DbPool,
         repo: i64,
-        authority: db::users::accounts::AccountActor,
+        authority: db::credentials::Actor,
         old: &str,
         new: &str,
-    ) -> Result<String, RepoError> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, RepoError>> + Send>> {
         let (store, pool, old, new) = (self.clone(), pool.clone(), old.to_owned(), new.to_owned());
-        // Finish metadata and HEAD updates even if the HTTP client leaves after the ref moves.
-        tokio::spawn(async move {
-            store
-                .rename_branch_owned(&pool, repo, authority, &old, &new)
-                .await
+        Box::pin(async move {
+            // Finish metadata and HEAD updates even if the HTTP client leaves after the ref moves.
+            tokio::spawn(async move {
+                store
+                    .rename_branch_owned(&pool, repo, authority, &old, &new)
+                    .await
+            })
+            .await
+            .map_err(|_| RepoError::applied_followup_failed())?
         })
-        .await
-        .map_err(|_| RepoError::applied_followup_failed())?
     }
 
     async fn rename_branch_owned(
         &self,
         pool: &db::DbPool,
         repo: i64,
-        authority: db::users::accounts::AccountActor,
+        authority: db::credentials::Actor,
         old: &str,
         new: &str,
     ) -> Result<String, RepoError> {
-        let actor = authority.user_id();
+        let actor = authority.user_id;
         let old_ref = git::branch_ref(old).ok_or_else(|| super::super::invalid_ref("branch"))?;
         let new_ref = git::branch_ref(new).ok_or_else(|| super::super::invalid_ref("branch"))?;
         let publication = git::locks::publication(self.path())
@@ -120,11 +125,11 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo: i64,
-        authority: &db::users::accounts::AccountActor,
+        authority: &db::credentials::Actor,
         old: &str,
         new: &str,
     ) -> Result<db::models::User, RepoError> {
-        let actor = authority.user_id();
+        let actor = authority.user_id;
         let (repository, user) = access::check_write(pool, repo, actor)
             .await
             .map_err(|error| match error {

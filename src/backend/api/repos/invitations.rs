@@ -110,10 +110,7 @@ async fn respond(
         "decline" => false,
         _ => return ctx.error(StatusCode::NOT_FOUND, "Unknown invitation action."),
     };
-    let authority = db::users::accounts::AccountActor::Session {
-        user_id: actor,
-        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-    };
+    let authority = ctx.database_actor(actor);
     match collaborators::respond(&ctx.state.pool, authority, id, accept).await {
         Ok(()) => ctx.redirect("/settings/invitations"),
         Err(error) => refusal(&ctx, error),

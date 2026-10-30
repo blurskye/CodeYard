@@ -87,6 +87,7 @@ mod tests {
             name: "r".into(),
             signed_in: true,
             can_write: true,
+            can_triage: true,
             can_admin: false,
             csrf: String::new(),
             viewer: "u".into(),

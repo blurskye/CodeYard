@@ -39,8 +39,7 @@ pub(super) async fn side(
             return Err(Error::missing());
         }
         let source = candidates.remove(0);
-        let source_auth = auth::authenticate(state, headers, false).await?;
-        auth::revalidate_repository(state, source_auth.as_ref(), source.id, "contents").await?;
+        auth::recheck_repository_read(state, headers, source.id, "contents").await?;
         source
     };
     if !same_fork_network(&state.pool, base, &source)

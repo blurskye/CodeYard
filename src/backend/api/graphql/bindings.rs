@@ -456,7 +456,7 @@ impl Object {
                 Ok(authors.into_values().next()
                     .filter(|user| !user.is_banned).map_or(Value::Null, |row| user::object(&row, request.auth.user.id)))
             }
-            ("UpdateProjectV2ItemPositionPayload", "items") => boxed(|| projects::resolve("ProjectV2", field, arguments, request, &self.0)).await,
+            ("UpdateProjectV2ItemPositionPayload", "items") => boxed(|| super::projects::resolve("ProjectV2", field, arguments, request, &self.0)).await,
             (_, "repository")
                 if matches!(
                     ty,

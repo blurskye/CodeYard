@@ -82,6 +82,7 @@ pub async fn build(
         Some("new") => {
             panel.editing = Some(HookDraft {
                 id: None,
+                expected_updated: String::new(),
                 payload_url: String::new(),
                 content_type: JSON_CONTENT_TYPE.to_owned(),
                 events: vec![events::PUSH.to_owned()],
@@ -232,7 +233,7 @@ async fn with_saved_credentials(
     let Some(id) = draft.id else {
         return draft;
     };
-    if let Ok(Some(snapshot)) = hooks::read_settings(pool, owner, actor, credential, Some(id), None, 0, false).await {
+    if let Ok(Some(snapshot)) = hooks::read_settings(pool, owner, actor, credential, Some(id), None, 0, Default::default()).await {
         if let Some(hook) = snapshot.hook {
             draft.has_secret = hook.encrypted_secret.is_some();
             draft.has_password = hook.username.is_some();

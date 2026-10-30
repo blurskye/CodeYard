@@ -30,7 +30,7 @@ pub async fn invite_organization_member(
 }
 pub async fn set_organization_invitation_by_owner(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
     role: OrgRole,
@@ -47,7 +47,7 @@ pub async fn set_organization_invitation_by_owner(
 }
 pub async fn create_organization_invitation(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
@@ -56,7 +56,7 @@ pub async fn create_organization_invitation(
 }
 async fn save(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
@@ -78,7 +78,7 @@ async fn save(
 // The caller holds the membership transition lock and owns commit or rollback.
 pub(super) async fn save_in_transaction(
     mut tx: &mut PgConnection,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
@@ -302,7 +302,7 @@ pub async fn cancel_organization_invitation(
 }
 pub async fn cancel_invitation_id(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     id: i64,
     owner_only: bool,
@@ -311,7 +311,7 @@ pub async fn cancel_invitation_id(
 }
 async fn cancel(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
     by_id: bool,
@@ -398,7 +398,7 @@ pub async fn list_received_organization_invitations(
 /// organization ends once the account is a member.
 pub async fn accept_organization_invitation(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<OrgMembership>> {

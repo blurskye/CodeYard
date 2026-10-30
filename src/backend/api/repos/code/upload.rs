@@ -351,10 +351,7 @@ pub(in crate::backend::api::repos) async fn post(
         expected_revision: form.expected_revision.clone(),
         files,
     };
-    let actor = crate::backend::db::users::accounts::AccountActor::Session {
-        user_id: ctx.user.as_ref().expect("authenticated upload").id,
-        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-    };
+    let actor = ctx.database_actor(ctx.user.as_ref().expect("authenticated upload").id);
     let saved = files::upload_files(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),

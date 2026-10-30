@@ -199,7 +199,7 @@ pub async fn lock_repository(
         row.actor_id == Some(actor)
             && matches!(row.state.as_str(), "pending" | "exporting")
             && row.repository_ids()?.contains(&repo)
-            && selected(&mut tx, actor, row.owner_org_id, &[repo]).await?,
+            && selected(&mut tx, actor, row.owner_org_id, &[repo], false).await?,
         ExportRefusal::Invalid
     );
     let held: Option<i64> =

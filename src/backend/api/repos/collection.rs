@@ -77,10 +77,7 @@ pub async fn create_repo(
 ) -> Result<(StatusCode, Json<RepoResponse>), (StatusCode, Json<ApiError>)> {
     let pool = state.pool.clone();
     let user = get_current_user(&pool, &headers).await?;
-    let authority = db::users::accounts::AccountActor::Session {
-        user_id: user.id,
-        session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
-    };
+    let authority = crate::backend::db::credentials::Actor::from((user.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default()));
 
     let creation_owner = db::repositories::creation::RepositoryCreationOwner {
         actor_id: user.id,
@@ -540,10 +537,7 @@ pub(crate) async fn create_repository(
             return creation_error(&ctx, values, page, status, None, message).await
         }
     };
-    let authority = db::users::accounts::AccountActor::Session {
-        user_id: user.id,
-        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-    };
+    let authority = ctx.database_actor(user.id);
     let creation_owner = db::repositories::creation::RepositoryCreationOwner {
         actor_id: user.id,
         target: match target {
@@ -605,7 +599,7 @@ async fn create_selection(
     values: &NewRepositoryForm,
     files: InitialFiles,
     properties: &[db::organizations::properties::ValueInput],
-    authority: &db::users::accounts::AccountActor,
+    authority: &db::credentials::Actor,
 ) -> Result<db::models::Repository, lifecycle::StorageError> {
     let description = Some(values.description.as_str()).filter(|value| !value.is_empty());
     let source = source_name(&values.source).map_err(|(_, message)| lifecycle::StorageError {

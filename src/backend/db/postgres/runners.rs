@@ -330,7 +330,7 @@ async fn runner_rows(c: &mut Connection, scope: Scope, filter: &RunnerFilter<'_>
         .fetch_all(c).await?.into_iter().map(|row| row.into_runner()).collect())
 }
 pub async fn list_runners_page(pool: &Pool, actor: i64, scope: Scope, filter: &RunnerFilter<'_>) -> Result<(i64, Vec<Runner>)> {
-    ensure!((0..=100).contains(&filter.limit) && (0..=1_000_000).contains(&filter.offset), Refusal::Invalid("page"));
+    anyhow::ensure!((0..=100).contains(&filter.limit) && (0..=1_000_000).contains(&filter.offset), Refusal::Invalid("page"));
     let mut tx = pool.begin().await?;
     authorize(&mut tx, actor, scope).await?;
     let (org, repo) = scope.ids();

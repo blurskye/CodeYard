@@ -397,6 +397,7 @@ mod tests {
         let mut panel = panel();
         panel.editing = Some(HookDraft {
             id: Some(7),
+            expected_updated: "2026-01-01T00:00:00+00:00".into(),
             payload_url: "https://hooks.example/a".into(),
             content_type: "application/json".into(),
             events: vec!["*".into()],

@@ -196,10 +196,7 @@ pub async fn rename_repo(
     // DB alias; stable operation-owned storage is never moved or compensated.
     let updated = db::repositories::records::rename_repository(
         &state.pool,
-        db::users::accounts::AccountActor::Session {
-            user_id: user.id,
-            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
-        },
+        crate::backend::db::credentials::Actor::from((user.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
         repository.id,
         &req.new_name,
     )
@@ -226,10 +223,7 @@ pub async fn transfer_repo(
     let updated = lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
-        db::users::accounts::AccountActor::Session {
-            user_id: user.id,
-            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
-        },
+        crate::backend::db::credentials::Actor::from((user.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
         repository.id,
         &req.new_owner,
     )
@@ -320,10 +314,7 @@ pub async fn update_repo(
     // failed write leaves all of them unchanged.
     let updated = db::repositories::records::patch_repository(
         &state.pool,
-        db::users::accounts::AccountActor::Session {
-            user_id: user.id,
-            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
-        },
+        crate::backend::db::credentials::Actor::from((user.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
         repository.id,
         &db::repositories::records::RepositoryChanges {
             description: req.description.as_ref().map(|value| value.as_deref()),
@@ -348,10 +339,7 @@ pub async fn delete_repo(
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
-    lifecycle::delete(&state.pool, state.cluster.as_ref(), db::users::accounts::AccountActor::Session {
-        user_id: actor.id,
-        session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
-    }, repository.id)
+    lifecycle::delete(&state.pool, state.cluster.as_ref(), crate::backend::db::credentials::Actor::from((actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())), repository.id)
         .await
         .map_err(lifecycle_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -915,10 +903,7 @@ async fn protection_form(
         Ok(user) => user.id,
         Err(response) => return response,
     };
-    let actor_id = db::users::accounts::AccountActor::Session {
-        user_id: actor_id,
-        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-    };
+    let actor = ctx.database_actor(actor_id);
     let pool = &ctx.state.pool;
     let repository = &loaded.repository;
     let section = view::settings::settings_section(action).unwrap_or("general");
@@ -928,7 +913,7 @@ async fn protection_form(
             Ok(()) => {
                 branch_protection::delete_rule(
                     pool,
-                    actor_id,
+                    actor,
                     repository.id,
                     &field(form, "pattern"),
                 )
@@ -948,7 +933,7 @@ async fn protection_form(
     }
     let submitted = submitted_rule(form, pairs);
     let outcome = match rule_request(&submitted) {
-        Ok(request) => branch_protection::save_rule(pool, ctx.database_actor(actor_id), repository, request)
+        Ok(request) => branch_protection::save_rule(pool, actor, repository, request)
             .await
             .map(|_| ()),
         Err(refusal) => Err(refusal),
@@ -1503,10 +1488,7 @@ async fn mutate(
     let base = crate::webui::repository_path(owner, name);
     let cluster = ctx.state.cluster.as_ref();
     let ci = &ctx.state.ci_runs;
-    let authority = || db::users::accounts::AccountActor::Session {
-        user_id: actor.id,
-        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-    };
+    let authority = || ctx.database_actor(actor.id);
     match action {
         "star" | "unstar" | "watch" | "unwatch" => {
             use crate::backend::repositories::engagement::{change, Engagement};
@@ -1518,10 +1500,7 @@ async fn mutate(
             change(
                 pool,
                 &ctx.state.notification_broadcaster,
-                db::users::accounts::AccountActor::Session {
-                    user_id: actor.id,
-                    session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-                },
+                ctx.database_actor(actor.id),
                 repository.id,
                 kind,
                 !action.starts_with("un"),
@@ -1537,10 +1516,7 @@ async fn mutate(
                 .collect();
             crate::backend::repositories::engagement::set_level(
                 pool,
-                db::users::accounts::AccountActor::Session {
-                    user_id: actor.id,
-                    session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-                },
+                ctx.database_actor(actor.id),
                 repository.id,
                 &field(form, "level"),
                 &events,
@@ -1928,10 +1904,7 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "delete" => {
-            lifecycle::delete(pool, cluster, db::users::accounts::AccountActor::Session {
-                user_id: actor.id,
-                session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-            }, repository.id)
+            lifecycle::delete(pool, cluster, ctx.database_actor(actor.id), repository.id)
                 .await
                 .map_err(lifecycle_error)?;
             Ok(crate::webui::profile_path(owner))
@@ -2068,10 +2041,7 @@ async fn mutate(
             };
             crate::backend::repositories::access::change_collaborator(
                 pool,
-                db::users::accounts::AccountActor::Session {
-                    user_id: actor.id,
-                    session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-                },
+                ctx.database_actor(actor.id),
                 repository.id,
                 &field(form, "username"),
                 permission,

@@ -112,7 +112,9 @@ pub async fn run_details(pool: &PgPool, repo: i64, ids: &[i64]) -> Result<Vec<Ru
 pub async fn suite_details(pool: &PgPool, repo: i64, ids: &[i64]) -> Result<Vec<SuiteDetails>> {
     crate::backend::db::checks::projection_ids(ids)?;
     if ids.is_empty() { return Ok(Vec::new()); }
-    Ok(sqlx::query_as("SELECT s.id AS suite_id,(SELECT COUNT(DISTINCT r.name) FROM check_runs r WHERE r.suite_id=s.id AND r.repo_id=s.repo_id) AS run_count,c.status AS ci_status,COALESCE(c.approval_required,FALSE) AS ci_approval_required FROM check_suites s LEFT JOIN ci_runs c ON c.id=s.ci_run_id AND c.repo_id=s.repo_id WHERE s.repo_id=$1 AND s.id=ANY($2)").bind(repo).bind(ids).fetch_all(pool).await?)
+    // A run held by an approval or a deployment protection rule shows as waiting, as its run does.
+    let waiting = crate::backend::db::deployment_protection::waiting_sql(true, "c");
+    Ok(sqlx::query_as(&format!("SELECT s.id AS suite_id,(SELECT COUNT(DISTINCT r.name) FROM check_runs r WHERE r.suite_id=s.id AND r.repo_id=s.repo_id) AS run_count,c.status AS ci_status,(COALESCE(c.approval_required,FALSE) OR COALESCE({waiting},FALSE)) AS ci_approval_required FROM check_suites s LEFT JOIN ci_runs c ON c.id=s.ci_run_id AND c.repo_id=s.repo_id WHERE s.repo_id=$1 AND s.id=ANY($2)")).bind(repo).bind(ids).fetch_all(pool).await?)
 }
 
 pub async fn pulls_many(pool: &PgPool, repo: i64, heads: &[String]) -> Result<Vec<crate::backend::db::checks::Pull>> {
@@ -180,7 +182,7 @@ pub async fn automatic_suites(pool: &PgPool, repo: &crate::backend::db::models::
     if current.owner_kind != repo.owner_kind || current.owner_user_id != repo.owner_user_id || current.owner_org_id != repo.owner_org_id { return Ok(page); }
     lock_preferences(&mut tx, repo.id).await?;
     let access = super::repositories::access::USER_REPO_ACCESS_SQL;
-    let mut apps: Vec<i64> = sqlx::query_scalar(&format!("SELECT o.id FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN oauth_applications o ON o.client_id=a.client_id JOIN users owner ON owner.id=a.owner_id JOIN users u ON u.id=a.bot_id JOIN repositories r ON r.id=$1 LEFT JOIN check_suite_preferences p ON p.repo_id=r.id AND p.app_id=o.id WHERE o.id>$2 AND COALESCE(p.setting,TRUE) AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT u.is_banned AND NOT u.must_change_password AND (a.permissions::jsonb->>'checks') IN ('write','admin') AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ({access})>=3 ORDER BY o.id LIMIT 101 FOR SHARE OF i,a,o,owner,u"))
+    let mut apps: Vec<i64> = sqlx::query_scalar(&format!("SELECT a.id FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN oauth_applications o ON o.client_id=a.client_id JOIN users owner ON owner.id=a.owner_id JOIN users u ON u.id=a.bot_id JOIN repositories r ON r.id=$1 LEFT JOIN check_suite_preferences p ON p.repo_id=r.id AND p.app_id=a.id WHERE a.id>$2 AND COALESCE(p.setting,TRUE) AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT u.is_banned AND NOT u.must_change_password AND (a.permissions::jsonb->>'checks') IN ('write','admin') AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ({access})>=3 ORDER BY a.id LIMIT 101 FOR SHARE OF i,a,o,owner,u"))
         .bind(repo.id).bind(after).fetch_all(&mut *tx).await?;
     page.has_next = apps.len() > 100;
     apps.truncate(100);

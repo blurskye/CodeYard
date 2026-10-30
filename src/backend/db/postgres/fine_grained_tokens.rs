@@ -199,7 +199,8 @@ pub(crate) async fn repository_permission(
         .bind(token).fetch_optional(&mut **tx).await?;
     let bounds: Option<Bounds> = sqlx::query_as(BOUNDS).bind(token).fetch_optional(&mut **tx).await?;
     let Some(bounds) = bounds else {
-        return Ok(!sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM repositories r JOIN organization_token_policies p ON p.org_id=r.owner_org_id WHERE r.id=$2 AND NOT p.classic_allowed) AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)")
+        let allowed = crate::backend::db::fine_grained_tokens::classic_allowed_condition("$1", "r.owner_org_id");
+        return Ok(sqlx::query_scalar::<_, bool>(&format!("SELECT NOT EXISTS(SELECT 1 FROM repositories r WHERE r.id=$2 AND NOT ({allowed}))"))
             .bind(token).bind(repo).fetch_one(&mut **tx).await?);
     };
     let permissions: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&bounds.permissions)?;

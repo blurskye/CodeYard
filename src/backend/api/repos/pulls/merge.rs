@@ -33,7 +33,7 @@ pub async fn merge_pull_request(
         &state.pool,
         &state.ci_runs,
         &state.notification_broadcaster,
-        db::users::accounts::AccountActor::Session { user_id: actor.id, session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default() },
+        crate::backend::db::credentials::Actor::from((actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
         (owner, repo, number),
         request,
     )
@@ -143,7 +143,7 @@ pub(crate) async fn native_merge(
         &ctx.state.pool,
         &ctx.state.ci_runs,
         &ctx.state.notification_broadcaster,
-        db::users::accounts::AccountActor::Session { user_id: ctx.require_user()?.id, session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default() },
+        ctx.database_actor(ctx.require_user()?.id),
         (owner, name, number),
         crate::backend::repositories::pull_requests::merge::MergeRequest {
             expected_head: field(&form, "expected_head"),
@@ -160,7 +160,6 @@ pub(crate) async fn native_merge(
                 .get("commit_message")
                 .filter(|value| !value.is_empty())
                 .cloned(),
-            token: None,
         },
         Some((repo.record.id, value.id)),
     )

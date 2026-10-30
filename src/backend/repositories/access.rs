@@ -9,35 +9,35 @@ use anyhow::Result;
 /// Retained account identity, without substituting Git permissions for a metadata operation.
 pub(crate) async fn credential_user(
     pool: &db::DbPool,
-    actor: &db::users::accounts::AccountActor,
+    actor: &db::credentials::Actor,
     write: bool,
 ) -> Result<User> {
-    use db::users::accounts::{AccountActor, AccountRestricted};
-    let user = match actor {
-        AccountActor::Trusted(id) => db::users::accounts::get_user_by_id(pool, *id).await?,
-        AccountActor::Session { session, .. } => db::users::sessions::get_session_user(pool, session).await?,
-        AccountActor::Token { token_id, .. } => db::users::tokens::token_user(pool, *token_id, write).await?,
+    use db::users::accounts::{AccountRestricted, OwnedAccountCredential};
+    let user = match &actor.credential {
+        None => db::users::accounts::get_user_by_id(pool, actor.user_id).await?,
+        Some(OwnedAccountCredential::Session(session)) => db::users::sessions::get_session_user(pool, session).await?,
+        Some(OwnedAccountCredential::Token(token_id, _)) => db::users::tokens::token_user(pool, *token_id, write).await?,
     }.ok_or(AccountRestricted)?;
-    anyhow::ensure!(user.id == actor.user_id() && !user.is_banned && !user.must_change_password, AccountRestricted);
+    anyhow::ensure!(user.id == actor.user_id && !user.is_banned && !user.must_change_password, AccountRestricted);
     Ok(user)
 }
 
 /// Recheck the credential retained by a native publication, after preparation and lock waits.
 pub(crate) async fn check_publication_actor(
     pool: &db::DbPool,
-    actor: &db::users::accounts::AccountActor,
+    actor: &db::credentials::Actor,
     repository: &Repository,
 ) -> Result<()> {
-    use db::users::accounts::AccountActor;
+    use db::users::accounts::OwnedAccountCredential;
     let repository = db::repositories::records::get_repository_by_id(pool, repository.id).await?
         .ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
-    let user = match actor {
-        AccountActor::Trusted(id) => db::users::accounts::get_user_by_id(pool, *id).await?,
-        AccountActor::Session { session, .. } => db::users::sessions::get_session_user(pool, session).await?,
-        AccountActor::Token { token_id, .. } => Some(super::git_sessions::ReceiveCredential::Token(*token_id)
+    let user = match &actor.credential {
+        None => db::users::accounts::get_user_by_id(pool, actor.user_id).await?,
+        Some(OwnedAccountCredential::Session(session)) => db::users::sessions::get_session_user(pool, session).await?,
+        Some(OwnedAccountCredential::Token(token_id, _)) => Some(super::git_sessions::ReceiveCredential::Token(*token_id)
             .authorize(pool, &repository, true).await?.0),
     }.ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
-    anyhow::ensure!(user.id == actor.user_id() && can_write(pool, &user, &repository).await?,
+    anyhow::ensure!(user.id == actor.user_id && can_write(pool, &user, &repository).await?,
         db::users::accounts::AccountRestricted);
     Ok(())
 }
@@ -330,7 +330,7 @@ pub async fn check_write(
 /// Personal repository owners retain the existing collaborator policy.
 pub async fn change_collaborator(
     pool: &db::DbPool,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: Option<db::models::AccessLevel>,

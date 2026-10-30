@@ -6,7 +6,7 @@ use anyhow::{ensure, Result};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::collections::BTreeMap;
 
-async fn authorize(tx: &mut Transaction<'_, Sqlite>, actor: impl Into<crate::backend::db::users::tokens::Actor>, scope: Scope) -> Result<()> {
+async fn authorize(tx: &mut Transaction<'_, Sqlite>, actor: impl Into<crate::backend::db::credentials::Actor>, scope: Scope) -> Result<()> {
     let credential = actor.into();
     let actor = credential.user_id;
     let allowed = match scope {
@@ -18,7 +18,7 @@ async fn authorize(tx: &mut Transaction<'_, Sqlite>, actor: impl Into<crate::bac
         }
     };
     ensure!(allowed, Refusal::Denied);
-    if let Some(token) = credential.token_id {
+    if let Some(token) = credential.token_id() {
         let (repo, org, permission) = match scope {
             Scope::Repository(repo) => (Some(repo), None, "administration"),
             Scope::Organization(org) => (None, Some(org), "organization_administration"),
@@ -51,7 +51,7 @@ pub async fn get(pool: &SqlitePool, actor: i64, scope: Scope) -> Result<Settings
     Ok(result)
 }
 
-pub async fn save(pool: &SqlitePool, actor: impl Into<crate::backend::db::users::tokens::Actor>, scope: Scope, settings: &Settings) -> Result<()> {
+pub async fn save(pool: &SqlitePool, actor: impl Into<crate::backend::db::credentials::Actor>, scope: Scope, settings: &Settings) -> Result<()> {
     settings.validate()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, scope).await?;
@@ -88,7 +88,7 @@ pub async fn inclusions(pool: &SqlitePool, actor: i64, org: i64) -> Result<Vec<I
 
 pub async fn change_inclusion(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     name: &str,
     remove: bool,

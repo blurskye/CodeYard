@@ -320,7 +320,9 @@ async fn configure(
             &ctx.state.pool,
             ctx.state.cluster.as_ref(),
             ctx.user.as_ref().unwrap().id,
-            db::users::accounts::OwnedAccountCredential::Session(ctx.session.clone().unwrap_or_default()),
+            db::users::accounts::OwnedAccountCredential::Session(
+                crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+            ),
             loaded.repository.id,
             kind,
             enabled,

@@ -27,10 +27,10 @@ pub enum RefError {
 
 async fn writable(
     pool: &db::DbPool,
-    actor: &db::users::accounts::AccountActor,
+    actor: &db::credentials::Actor,
     repo_id: i64,
 ) -> Result<(db::models::Repository, db::models::User), RefError> {
-    let (repository, user) = access::check_write(pool, repo_id, actor.user_id())
+    let (repository, user) = access::check_write(pool, repo_id, actor.user_id)
         .await
         .map_err(RefError::Access)?;
     access::check_publication_actor(pool, actor, &repository).await
@@ -84,14 +84,14 @@ pub async fn create_branch(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     owner: &str,
     repo_id: i64,
     branch: &str,
     source: &str,
 ) -> Result<String, RefError> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let (repository, _) = writable(pool, &authority, repo_id).await?;
     if branch.is_empty() {
         return Err(RefError::Invalid("Branch name is required"));
@@ -144,7 +144,7 @@ pub async fn update_reference(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     owner: &str,
     repo_id: i64,
     reference: &str,
@@ -152,7 +152,7 @@ pub async fn update_reference(
     force: bool,
 ) -> Result<String, RefError> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let (repository, _) = writable(pool, &authority, repo_id).await?;
     let (old, sha) = repo_store(&repository, cluster)
         .update_reference_as(pool, repo_id, authority, reference, sha, force)
@@ -198,7 +198,7 @@ pub async fn update_reference(
 pub async fn set_default_branch(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     repository: &db::models::Repository,
     branch: &str,
 ) -> Result<(), RefError> {
@@ -215,12 +215,12 @@ pub async fn delete_branch(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     branch: &str,
 ) -> Result<(), RefError> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let (repository, user) = writable(pool, &authority, repo_id).await?;
     if git::branch_ref(branch).is_none() {
         return Err(invalid_ref("branch"));
@@ -268,7 +268,7 @@ pub async fn create_tag(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     owner: &str,
     repo_id: i64,
     tag: &str,
@@ -276,7 +276,7 @@ pub async fn create_tag(
     message: Option<&str>,
 ) -> Result<TagInfo, RefError> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let (repository, _) = writable(pool, &authority, repo_id).await?;
     if tag.is_empty() {
         return Err(RefError::Invalid("Tag name is required"));
@@ -318,7 +318,7 @@ pub async fn create_tag(
 pub async fn delete_tag(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     tag: &str,
 ) -> Result<(), RefError> {

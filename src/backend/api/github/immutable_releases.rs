@@ -46,7 +46,7 @@ async fn change(
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    immutable::set_enabled(&state.pool, (actor.user.id, actor.token.id), repo.id, enabled)
+    immutable::set_enabled(&state.pool, actor.database_actor(), repo.id, enabled)
         .await
         .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)

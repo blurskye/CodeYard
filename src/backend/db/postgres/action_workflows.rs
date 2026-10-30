@@ -40,7 +40,7 @@ pub async fn workflow_for_path(pool: &PgPool, repo: i64, path: &str) -> Result<O
 
 pub async fn set_workflow_enabled(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     id: i64,
     enabled: bool,
@@ -52,7 +52,7 @@ pub async fn set_workflow_enabled(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         RepositorySettingsRefusal::Denied
     );
-    if let Some(token) = credential.token_id {
+    if let Some(token) = credential.token_id() {
         anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "actions").await?, RepositorySettingsRefusal::Denied);
     }
     let workflow=sqlx::query_as("UPDATE actions_workflows SET state=$3,updated_at=NOW() WHERE repo_id=$1 AND id=$2 RETURNING *").bind(repo).bind(id).bind(if enabled {"active"} else {"disabled_manually"}).fetch_optional(&mut *tx).await?;

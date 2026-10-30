@@ -54,11 +54,11 @@ pub(crate) fn calendar_due_on(
 
 native_operation!(crate::backend::db::postgres::milestones::save_milestone,
     crate::backend::db::sqlite::milestones::save_milestone,
-    fn save_milestone(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>) -> Result<Milestone>);
+    fn save_milestone(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>) -> Result<Milestone>);
 
 native_operation!(crate::backend::db::postgres::milestones::save_milestone_checked,
     crate::backend::db::sqlite::milestones::save_milestone_checked,
-    fn save_milestone_checked(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>, expected: Option<&str>) -> Result<Milestone>);
+    fn save_milestone_checked(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>, expected: Option<&str>) -> Result<Milestone>);
 
 native_operation!(crate::backend::db::postgres::milestones::create_milestone,
     crate::backend::db::sqlite::milestones::create_milestone,
@@ -91,7 +91,7 @@ native_operation!(crate::backend::db::postgres::milestones::set_milestone_state,
 // Deletes the milestone and clears it from every issue that named it.
 native_operation!(crate::backend::db::postgres::milestones::delete_milestone,
     crate::backend::db::sqlite::milestones::delete_milestone,
-    fn delete_milestone(pool: &DbPool, actor_id: impl Into<crate::backend::db::users::tokens::Actor>, repo_id: i64, number: i32, expected_id: i64) -> Result<()>);
+    fn delete_milestone(pool: &DbPool, actor_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, number: i32, expected_id: i64) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::milestones::read_milestones,
     crate::backend::db::sqlite::milestones::read_milestones,

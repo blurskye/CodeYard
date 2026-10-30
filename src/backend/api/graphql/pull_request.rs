@@ -103,13 +103,14 @@ pub(super) async fn resolve(
                 .pull_request_commits(pull.diff_base(), &pull.head_sha, 0, 0)
                 .await
                 .map_err(unavailable)?;
-            for row in &rows { git::charge_commit(row, request)?; }
             let page = connection::Page::new(args, count as i64)?;
             let (offset, limit) = (page.offset as usize, page.limit as usize);
             // The store pages within the oldest 250 commits. A page past them, such as
             // `last: 1` for the head commit, reads from the newest end instead.
             let window: Vec<_> = if offset.saturating_add(limit) <= 250 {
-                store.pull_request_commits(pull.diff_base(), &pull.head_sha, offset, limit).await.map_err(unavailable)?.1
+                let rows = store.pull_request_commits(pull.diff_base(), &pull.head_sha, offset, limit).await.map_err(unavailable)?.1;
+                for row in &rows { git::charge_commit(row, request)?; }
+                rows
             } else {
                 let newest_offset = (count as usize).saturating_sub(offset.saturating_add(limit));
                 let mut rows = store.commits_between_page(pull.diff_base(), &pull.head_sha, newest_offset, limit)

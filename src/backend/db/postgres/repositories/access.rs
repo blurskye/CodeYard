@@ -442,13 +442,13 @@ pub(super) async fn revoke_repo_access_in_transaction(
 
 pub async fn change_personal_repository_collaborator(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: Option<AccessLevel>,
 ) -> Result<CollaboratorChange> {
     let admission = actor.into();
-    let actor = admission.user_id();
+    let actor = admission.user_id;
     let mut tx = pool.begin().await?;
     lock_membership_shared(&mut tx).await?;
     if let Some(credential) = admission.credential() {

@@ -23,7 +23,7 @@ pub async fn enabled(pool: &PgPool, repo: i64) -> Result<bool> {
         .fetch_one(pool)
         .await?)
 }
-pub async fn set_enabled(pool: &PgPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, repo: i64, enabled: bool) -> Result<()> {
+pub async fn set_enabled(pool: &PgPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, enabled: bool) -> Result<()> {
     let credential = actor.into();
     let actor = credential.user_id;
     let mut tx = pool.begin().await?;
@@ -32,7 +32,7 @@ pub async fn set_enabled(pool: &PgPool, actor: impl Into<crate::backend::db::use
             .await?,
         Refusal::Denied
     );
-    if let Some(token) = credential.token_id {
+    if let Some(token) = credential.token_id() {
         ensure!(crate::backend::db::postgres::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "administration").await?, Refusal::Denied);
     }
     let archived: bool = sqlx::query_scalar("SELECT is_archived FROM repositories WHERE id=$1")

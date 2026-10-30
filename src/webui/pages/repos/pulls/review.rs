@@ -809,6 +809,7 @@ mod draft_tests {
                 name: "r".into(),
                 signed_in: true,
                 can_write: false,
+                can_triage: false,
                 can_admin: false,
                 csrf: String::new(),
                 viewer: String::new(),
@@ -844,7 +845,7 @@ mod draft_tests {
         fn root(props: Harness) -> Element {
             let head = use_signal(|| "old-head".to_owned());
             *props.0.borrow_mut() = Some(head);
-            rsx! { LineComposer { repo: Repository { owner: "u".into(), name: "r".into(), signed_in: true, can_write: false, can_admin: false, csrf: String::new(), viewer: String::new(), chrome: Default::default() }, url: "/u/r/pulls/1", head: head(), base: format!("base-{}", head()), target: LineComment::default(), references: References::default(), split: false, review: None } }
+            rsx! { LineComposer { repo: Repository { owner: "u".into(), name: "r".into(), signed_in: true, can_write: false, can_triage: false, can_admin: false, csrf: String::new(), viewer: String::new(), chrome: Default::default() }, url: "/u/r/pulls/1", head: head(), base: format!("base-{}", head()), target: LineComment::default(), references: References::default(), split: false, review: None } }
         }
         let control = Rc::new(RefCell::new(None));
         let mut dom = VirtualDom::new_with_props(root, Harness(control.clone()));

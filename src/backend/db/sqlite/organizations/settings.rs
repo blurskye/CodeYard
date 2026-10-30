@@ -48,7 +48,7 @@ pub async fn owned(
 }
 pub async fn change(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     input: &Changes,
 ) -> Result<OrganizationOutcome<Updated>> {

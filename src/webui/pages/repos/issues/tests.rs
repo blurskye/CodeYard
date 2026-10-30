@@ -378,6 +378,7 @@ fn page_modes() -> Vec<Page> {
             kind,
             item: entry,
             comments: CommentPage {
+                can_triage: false,
                 issue_management: None,
                 suggestions: None,
                 attributes: None,
@@ -894,6 +895,7 @@ fn editor_preserves_text_and_has_native_csrf_forms() {
 fn discussion_pages_link_to_the_neighbouring_pages() {
     let render = |page, has_more| {
         let comments = CommentPage {
+            can_triage: false,
             issue_management: None,
             suggestions: None,
             attributes: None,
@@ -1074,6 +1076,7 @@ fn stack_card_marks_the_current_layer_and_puts_base_on_its_own_line() {
 fn timeline_rail_marks_only_discussion_entries() {
     crate::webui::tests::in_scope(|| {
         let comments = CommentPage {
+            can_triage: false,
             issue_management: None,
             suggestions: None,
             attributes: None,
@@ -2408,6 +2411,7 @@ fn comment_controls_show_only_the_rights_the_viewer_has() {
     moderated.can_delete = true;
     let other = comment_at(33, "today");
     let comments = CommentPage {
+        can_triage: false,
         issue_management: None,
         suggestions: None,
         attributes: None,
@@ -2553,6 +2557,7 @@ fn discussion_merges_reviews_by_time_and_marks_stale_and_dismissed_reviews() {
         dismissed.can_dismiss = true;
         dismissed.dismissed_reason = Some("Superseded".into());
         let comments = CommentPage {
+            can_triage: false,
             issue_management: None,
             suggestions: None,
             attributes: None,
@@ -3622,6 +3627,7 @@ fn timeline_events_show_a_badge_for_their_kind_and_threads_link_to_the_files_tab
             commit: "abc".into(),
         });
         let comments = CommentPage {
+            can_triage: false,
             issue_management: None,
             suggestions: None,
             attributes: None,
@@ -3796,6 +3802,7 @@ fn sidebar_lists_each_participant_once_and_skips_deleted_accounts() {
             edit: None,
         };
         let comments = CommentPage {
+            can_triage: false,
             issue_management: None,
             events_next: None,
             comments: vec![

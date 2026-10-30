@@ -554,7 +554,6 @@ impl Statement {
                 "author"=>if let Some(app)=value.strip_prefix("app/") {let p=self.bind(app);format!("i.author_id IN (SELECT bot_id FROM github_apps WHERE lower(slug)=lower({p}))")} else {self.person("i.author_id",value)},
                 "exact-base"|"exact-head"=>{let column=if key=="exact-base"{"base_branch"}else{"head_branch"};let p=self.bind(value);format!("i.pull_request AND EXISTS(SELECT 1 FROM pull_requests pr WHERE pr.id=i.id AND pr.{column}={p})")},
                 "base"=>{let p=self.bind(value);format!("i.pull_request AND EXISTS(SELECT 1 FROM pull_requests pr WHERE pr.id=i.id AND lower(pr.base_branch)=lower({p}))")},
-                "exact-head"|"exact-base"=>{let p=self.bind(value);let column=if key=="exact-head"{"head_branch"}else{"base_branch"};format!("i.pull_request AND i.{column}={p}")},
                 // As on GitHub, head matches the branches whose names begin with the value.
                 "head"=>{let p=self.bind(value);format!("i.pull_request AND EXISTS(SELECT 1 FROM pull_requests pr WHERE pr.id=i.id AND lower(substr(pr.head_branch,1,length({p})))=lower({p}))")},
                 "language"=>{let p=self.bind(value);format!("EXISTS(SELECT 1 FROM repo_languages l WHERE l.repo_id=r.id AND lower(l.language)=lower({p}))")},

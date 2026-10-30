@@ -1,4 +1,4 @@
-use super::{auth, labels, milestones, pagination::Pagination, repository, Error, Result};
+use super::{auth, labels, pagination::Pagination, repository, Error, Result};
 use crate::backend::{app::AppState, db, db::assignees::AssignedItem, webhooks::payloads};
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -869,7 +869,6 @@ async fn create(
         .transpose()?;
     let body = text(&input, "body")?;
     let metadata = metadata(&state.pool, &repo, &actor, &input).await?;
-    let assignees: Vec<i64> = metadata.assignees.as_deref().unwrap_or_default().iter().map(|user| user.id).collect();
     let issue = crate::backend::issues::mutations::create_issue_with_metadata(
         &state.pool,
         &state.notification_broadcaster,
@@ -881,14 +880,6 @@ async fn create(
             body,
             repository_id: Some(repo.id),
             parent_issue_id,
-            token: Some(authentication.token.id),
-        },
-        db::issues::IssueMetadata {
-            parent: parent_issue_id,
-            labels: metadata.labels.as_deref().unwrap_or_default(),
-            assignees: &assignees,
-            milestone: metadata.milestone.flatten(),
-            issue_type: metadata.issue_type.flatten(),
         },
         metadata.creation(),
     )

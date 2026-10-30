@@ -70,10 +70,7 @@ pub async fn post_rebase(
     restack::rebase_stack(
         &state.pool,
         &state.ci_runs,
-        crate::backend::db::users::accounts::AccountActor::Session {
-            user_id: current_actor.id,
-            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
-        },
+        crate::backend::db::credentials::Actor::from((current_actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
         (owner, repo, number),
     )
     .await
@@ -169,10 +166,7 @@ pub(crate) async fn native_rebase(
     let result = restack::rebase_stack(
         &ctx.state.pool,
         &ctx.state.ci_runs,
-        crate::backend::db::users::accounts::AccountActor::Session {
-            user_id: ctx.require_user()?.id,
-            session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-        },
+        ctx.database_actor(ctx.require_user()?.id),
         (owner, name, number),
     )
     .await

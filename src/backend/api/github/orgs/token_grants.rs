@@ -311,7 +311,7 @@ async fn repositories(
     uri: &Uri,
     status: &str,
 ) -> Result<Response> {
-    let (viewer, org) = context(state, headers, name, false).await?;
+    let (actor, org) = context(state, headers, name, false).await?;
     let token = db::fine_grained_tokens::get(&state.pool, id)
         .await
         .map_err(Error::unavailable)?

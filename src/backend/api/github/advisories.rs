@@ -322,7 +322,7 @@ async fn create(
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     let actor = actor.ok_or_else(auth::required)?;
     let report = uri.path().ends_with("/reports");
-    let mut row = advisories::create(&state.pool, crate::backend::db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id }, repo.id, &value, report)
+    let mut row = advisories::create(&state.pool, actor.database_actor(), repo.id, &value, report)
         .await
         .map_err(failure)?;
     if value["start_private_fork"] == true {
@@ -368,7 +368,7 @@ async fn update(
     let actor = actor.ok_or_else(auth::required)?;
     let row = advisories::update(
         &state.pool,
-        crate::backend::db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id },
+        actor.database_actor(),
         repo.id,
         &params["ghsa_id"],
         &value,
@@ -386,7 +386,7 @@ async fn cve(
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     advisories::request_cve(
         &state.pool,
-        { let actor = actor.ok_or_else(auth::required)?; crate::backend::db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id } },
+        { let actor = actor.ok_or_else(auth::required)?; actor.database_actor() },
         repo.id,
         &params["ghsa_id"],
     )
@@ -402,7 +402,7 @@ async fn fork(
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let fork = workflow::private_fork(&state, crate::backend::db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id }, &repo, &params["ghsa_id"])
+    let fork = workflow::private_fork(&state, actor.database_actor(), &repo, &params["ghsa_id"])
         .await
         .map_err(failure)?;
     Ok((

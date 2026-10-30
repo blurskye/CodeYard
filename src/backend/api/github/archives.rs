@@ -30,7 +30,7 @@ async fn archive(
     format: ArchiveFormat,
 ) -> Result<Response> {
     let (owner, name) = (&params["owner"], &params["repo"]);
-    let (repo, auth) = repository(&state, &headers, owner, name, false).await?;
+    let (repo, _) = repository(&state, &headers, owner, name, false).await?;
     let reference = params.get("ref").unwrap_or(&repo.default_branch);
     let store = repo_store(&repo, state.cluster.as_ref());
     let commit = store.commit(reference).await.map_err(store_error)?;
@@ -64,7 +64,7 @@ async fn archive(
         .archive(&commit.sha, &prefix, format)
         .await
         .map_err(store_error)?;
-    super::auth::revalidate_repository(&state, auth.as_ref(), repo.id, "contents").await?;
+    super::auth::recheck_repository_read(&state, &headers, repo.id, "contents").await?;
     Ok(archive_response(
         bytes,
         &format!("{prefix}.{extension}"),

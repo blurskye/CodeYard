@@ -71,7 +71,7 @@ pub async fn enabled(
     );
     records::enabled(pool, repository.id).await
 }
-pub async fn set_enabled(pool: &db::DbPool, actor: impl Into<db::users::tokens::Actor>, repo: i64, enabled: bool) -> Result<()> {
+pub async fn set_enabled(pool: &db::DbPool, actor: impl Into<db::credentials::Actor>, repo: i64, enabled: bool) -> Result<()> {
     records::set_enabled(pool, actor, repo, enabled).await
 }
 

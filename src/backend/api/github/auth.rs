@@ -268,27 +268,11 @@ pub(super) async fn referenced_repository(
     }
 }
 
-/// Recheck the immutable resource identity after a storage or admission wait.
-pub(super) async fn revalidate_repository(state: &AppState, auth: Option<&Authentication>, id: i64, permission: &str) -> Result<()> {
-    let repo = db::repositories::records::get_repository_by_id(&state.pool, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
-    if let Some(auth) = auth {
-        let live = db::users::tokens::token_user(&state.pool, auth.token.id, false).await.map_err(Error::unavailable)?;
-        if !live.is_some_and(|user| user.id == auth.user.id) {
-            return Err(Error::new(StatusCode::UNAUTHORIZED, "Bad credentials"));
-        }
-        auth.repository_scope(&state.pool, id, permission, false).await.map_err(scope_error)?;
-    }
-    if !crate::backend::repositories::access::can_read(&state.pool, auth.map(|auth| &auth.user), &repo).await.map_err(Error::unavailable)? {
-        return Err(Error::missing());
-    }
-    Ok(())
-}
-
 pub(super) fn required() -> Error {
     Error::new(StatusCode::UNAUTHORIZED, "Requires authentication")
 }
 
-pub(super) fn scope_error(error: ScopeError) -> Error {
+pub(in crate::backend::api) fn scope_error(error: ScopeError) -> Error {
     match error {
         ScopeError::Missing => Error::missing(),
         ScopeError::Denied => Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token"),

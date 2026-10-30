@@ -604,6 +604,7 @@ jobs:
             &[bob],
         )
         .await;
+    let hash = codeyard::backend::identity::tokens::token_hash(writer);
     f.execute(
         "DELETE FROM personal_access_tokens WHERE id=$1",
         &[credential],
@@ -611,7 +612,12 @@ jobs:
     .await;
     let denied = state
         .ci_runs
-        .rerun_workflow_run(repo.id, first.id, bob, false, Some(credential))
+        .rerun_workflow_run(
+            repo.id,
+            first.id,
+            (bob, codeyard::backend::db::users::accounts::OwnedAccountCredential::Token(credential, hash)),
+            false,
+        )
         .await
         .unwrap_err();
     assert!(denied.to_string().contains("credential"), "{denied}");

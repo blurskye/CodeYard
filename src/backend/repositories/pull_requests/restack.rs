@@ -32,7 +32,7 @@ pub struct RestackResponse {
 pub async fn rebase_stack(
     pool: &db::DbPool,
     ci: &CiRuns,
-    actor_id: impl Into<db::users::accounts::AccountActor>,
+    actor_id: impl Into<db::credentials::Actor>,
     target: (String, String, i32),
 ) -> Result<RestackResponse, OperationError> {
     match prepare_rebase(pool, ci, actor_id, target).await? {
@@ -43,7 +43,7 @@ pub async fn rebase_stack(
 
 /// The replayed layers of a rebase, ready to publish.
 pub struct PreparedRestack {
-    authority: db::users::accounts::AccountActor,
+    authority: db::credentials::Actor,
     owner: String,
     repository: db::models::Repository,
     stack_id: i64,
@@ -59,11 +59,11 @@ pub struct PreparedRestack {
 pub async fn prepare_rebase(
     pool: &db::DbPool,
     ci: &CiRuns,
-    authority: impl Into<db::users::accounts::AccountActor>,
+    authority: impl Into<db::credentials::Actor>,
     (owner, repo, number): (String, String, i32),
 ) -> Result<Option<PreparedRestack>, OperationError> {
     let authority = authority.into();
-    let actor_id = authority.user_id();
+    let actor_id = authority.user_id;
     let deadline = tokio::time::Instant::now() + RESTACK_PREPARE_DEADLINE;
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -185,7 +185,7 @@ pub async fn publish_rebase(
         base_tip,
         moves,
     } = prepared;
-    let actor_id = authority.user_id();
+    let actor_id = authority.user_id;
     // The replays can take a while. If a layer was unstacked, retargeted, closed or merged
     // meanwhile, or another layer joined, they were built for a stack that no longer exists.
     // The store compares the versions under the repository lock, just before the refs move.

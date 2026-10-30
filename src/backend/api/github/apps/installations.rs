@@ -10,7 +10,7 @@ use crate::backend::{
         github_apps::{App, Installation, InstallationFilter, RepositoryChange},
         models::PersonalAccessToken,
     },
-    identity::{github_apps as apps, oauth_apps, tokens::{installation_token, token_hash}},
+    identity::{github_apps as apps, oauth_apps, tokens::token_hash},
     webhooks::payloads,
 };
 use axum::{
@@ -364,7 +364,7 @@ async fn issue(
     let value = if actor.is_some() {
         format!("ghu_{}", oauth_apps::random())
     } else {
-        installation_token()
+        crate::backend::identity::tokens::installation_token()
     };
     let source = body
         .get("access_token")
@@ -632,7 +632,7 @@ async fn change_repository(
     if let Some(app) = user_app(state, &auth).await? {
         owned(state, app, id).await?;
     }
-    match db::github_apps::change_repository(&state.pool, (auth.user.id, auth.token.id), id, repo, add)
+    match db::github_apps::change_repository(&state.pool, auth.database_actor(), id, repo, add)
         .await
         .map_err(Error::unavailable)?
     {

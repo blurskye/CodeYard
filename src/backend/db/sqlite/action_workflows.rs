@@ -44,7 +44,7 @@ pub async fn workflow_for_path(
 
 pub async fn set_workflow_enabled(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     id: i64,
     enabled: bool,
@@ -56,7 +56,7 @@ pub async fn set_workflow_enabled(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         RepositorySettingsRefusal::Denied
     );
-    if let Some(token) = credential.token_id {
+    if let Some(token) = credential.token_id() {
         anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "actions").await?, RepositorySettingsRefusal::Denied);
     }
     let workflow=sqlx::query_as("UPDATE actions_workflows SET state=$3,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE repo_id=$1 AND id=$2 RETURNING *").bind(repo).bind(id).bind(if enabled {"active"} else {"disabled_manually"}).fetch_optional(&mut *tx).await?;

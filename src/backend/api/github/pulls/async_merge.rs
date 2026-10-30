@@ -135,14 +135,13 @@ async fn start(
         commit_title: input.commit_title,
         commit_message: input.commit_message,
         author_email: None,
-        token: Some(auth.token.id),
     };
     match native::start(
         &state,
         native::Job {
             repo_id: repo.id,
             pull_request_id: pull.id,
-            token_id: auth.token.id,
+            authority: auth.database_actor(),
             owner,
             name,
             number,

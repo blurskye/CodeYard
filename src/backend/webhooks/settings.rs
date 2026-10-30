@@ -295,7 +295,7 @@ pub async fn delete(
 
 /// Queues a ping to one hook, as the Test button does.
 pub async fn ping(pool: &DbPool, owner: HookOwner, actor: &User, credential: &db::users::accounts::AccountCredential<'_>, id: i64) -> Result<(), HookError> {
-    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(id), None, 0, false)
+    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(id), None, 0, Default::default())
         .await.map_err(unavailable)?.ok_or(HookError::Denied)?;
     let hook = snapshot.hook.ok_or(HookError::NotFound)?;
     let payload = ping_payload(pool, owner, actor, &hook).await?;
@@ -317,7 +317,7 @@ pub async fn redeliver(
     hook_id: i64,
     delivery_id: i64,
 ) -> Result<(), HookError> {
-    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(hook_id), Some(delivery_id), 0, false)
+    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(hook_id), Some(delivery_id), 0, Default::default())
         .await.map_err(unavailable)?.ok_or(HookError::Denied)?;
     let hook = snapshot.hook.ok_or(HookError::NotFound)?;
     let recorded = snapshot.delivery.ok_or(HookError::NotFound)?;
@@ -337,7 +337,7 @@ pub async fn test_push(
     credential: &db::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
-    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(id), None, 0, false)
+    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(id), None, 0, Default::default())
         .await.map_err(unavailable)?.ok_or(HookError::Denied)?;
     let hook = snapshot.hook.ok_or(HookError::NotFound)?;
     if !events::subscribes(&hook.events, events::PUSH) {

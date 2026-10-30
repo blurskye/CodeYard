@@ -101,7 +101,7 @@ pub async fn update_organization_member_role(
 
 pub async fn update_organization_member_role_by_owner(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
     role: OrgRole,
@@ -111,7 +111,7 @@ pub async fn update_organization_member_role_by_owner(
 
 async fn update_member_role(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
     role: OrgRole,
@@ -178,7 +178,7 @@ pub async fn remove_organization_member(
 /// not a member, in one transaction so an acceptance cannot slip between the two.
 pub async fn remove_member_or_invitation_by_owner(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
@@ -187,20 +187,11 @@ pub async fn remove_member_or_invitation_by_owner(
 
 pub async fn convert_to_outside_collaborator(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
     remove_member(pool, actor, org, target, true, Removal::Convert).await
-}
-
-pub async fn prepare_outside_conversion(
-    pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
-    org: i64,
-    target: i64,
-) -> Result<OrganizationOutcome<()>> {
-    remove_member(pool, actor, org, target, true, Removal::ValidateConversion).await
 }
 
 #[derive(PartialEq)]
@@ -208,12 +199,11 @@ enum Removal {
     Remove,
     RemoveOrCancel,
     Convert,
-    ValidateConversion,
 }
 
 async fn remove_member(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
     owner_only: bool,
@@ -241,7 +231,7 @@ async fn remove_member(
                 }
                 outcome
             }
-            Removal::Convert | Removal::ValidateConversion => Denied,
+            Removal::Convert => Denied,
         });
     };
     // A role this build does not recognize is refused; it cannot be removed here.
@@ -253,10 +243,6 @@ async fn remove_member(
     }
     if old == OrgRole::Owner && !remaining_active_owner(&mut tx, org, target).await? {
         return Ok(Conflict);
-    }
-    if mode == Removal::ValidateConversion {
-        tx.commit().await?;
-        return Ok(Applied(()));
     }
     if mode == Removal::Convert {
         sqlx::query("INSERT INTO repo_access(user_id,repo_id,access_level) SELECT ?1,r.id,MAX(role.base_level) FROM repositories r JOIN organization_role_assignments a ON a.org_id=r.owner_org_id AND a.user_id IS NULL JOIN organization_roles role ON role.id=a.role_id AND role.base_level BETWEEN 1 AND 5 JOIN teams t ON t.id=a.team_id AND t.org_id=a.org_id AND t.privacy IN ('visible','secret') JOIN effective_team_memberships m ON m.team_id=t.id AND m.user_id=?1 AND m.role IN ('member','maintainer') WHERE r.owner_kind='org' AND r.owner_org_id=?2 AND r.owner_user_id IS NULL GROUP BY r.id ON CONFLICT(user_id,repo_id) DO UPDATE SET access_level=CASE WHEN repo_access.access_level BETWEEN 1 AND 5 THEN MAX(repo_access.access_level,excluded.access_level) ELSE excluded.access_level END").bind(target).bind(org).execute(&mut *tx).await?;

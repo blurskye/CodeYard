@@ -247,14 +247,14 @@ pub struct AsyncMergePublication {
 
 /// A prepared, direct branch merge. Both mutable branches are pinned independently of the
 /// merge commit's identity. Unlike pull-request publication, this must pass direct-write policy.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BranchMergePublication {
     pub base_branch: String,
     pub base: String,
     pub head_branch: Option<String>,
     pub head: String,
     pub result: String,
-    pub authority: db::users::accounts::AccountActor,
+    pub authority: db::credentials::Actor,
 }
 
 /// One branch that a restack moves: the commit it must still be at, and the commit it moves to.

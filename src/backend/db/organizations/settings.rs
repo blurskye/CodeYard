@@ -303,7 +303,7 @@ native_operation!(crate::backend::db::postgres::organizations::settings::reposit
 native_operation!(crate::backend::db::postgres::organizations::settings::owned,crate::backend::db::sqlite::organizations::settings::owned,
     fn owned(pool:&DbPool,actor:i64,org:i64)->Result<OrganizationOutcome<Updated>>);
 native_operation!(crate::backend::db::postgres::organizations::settings::change,crate::backend::db::sqlite::organizations::settings::change,
-    fn change(pool:&DbPool,actor:impl Into<crate::backend::db::users::tokens::Actor>,org:i64,input:&Changes)->Result<OrganizationOutcome<Updated>>);
+    fn change(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,org:i64,input:&Changes)->Result<OrganizationOutcome<Updated>>);
 
 #[cfg(test)]
 mod tests {

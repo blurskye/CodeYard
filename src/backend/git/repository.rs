@@ -29,7 +29,7 @@ pub(crate) use checked::{
     publish_ref, publish_ref_create, publish_ref_delete, publish_restack, quarantined_command,
     quarantined_is_fast_forward, rewrite_template_history, validate_merge_revision, MergeConflict,
     Person, PreparedPullHead, PullHeadConflict, RefConflict, UnsupportedMerge,
-    walk_commits, run_ref_transaction, MAX_MERGE_MESSAGE_BYTES, NO_CHANGES,
+    walk_commits, MAX_MERGE_MESSAGE_BYTES, NO_CHANGES,
 };
 pub(crate) use release_notes::release_history;
 pub use release_notes::ReleaseHistory;
@@ -440,7 +440,6 @@ pub(crate) async fn read_blob_range(
     offset: u64,
     length: usize,
 ) -> Result<(Vec<u8>, bool)> {
-    use anyhow::Context;
     use tokio::io::AsyncReadExt;
 
     let end = offset
@@ -992,15 +991,19 @@ pub(crate) async fn list_sidebar_trees(
             for name in path.split('/').filter(|name| !name.is_empty()) {
                 let next = if prefix.is_empty() { name.to_owned() } else { format!("{prefix}/{name}") };
                 if !trees.contains_key(&next) {
-                    let parent = trees.get(&prefix).ok_or_else(|| anyhow!("Missing sidebar directory"))?;
-                    let entry = parent.get_name_bytes(&crate::git_paths::bytes(name)).ok_or_else(|| git2::Error::from_str("Missing sidebar directory"))?;
-                    ensure!(entry.kind() == Some(ObjectType::Tree), "Sidebar path is not a directory");
-                    let (size, kind) = odb.read_header(entry.id())?;
+                    // The entry borrows its parent tree, so take its ID before `trees` grows.
+                    let id = {
+                        let parent = trees.get(&prefix).ok_or_else(|| anyhow!("Missing sidebar directory"))?;
+                        let entry = parent.get_name_bytes(&crate::git_paths::bytes(name)).ok_or_else(|| git2::Error::from_str("Missing sidebar directory"))?;
+                        ensure!(entry.kind() == Some(ObjectType::Tree), "Sidebar path is not a directory");
+                        entry.id()
+                    };
+                    let (size, kind) = odb.read_header(id)?;
                     ensure!(kind == ObjectType::Tree, "Expected tree");
                     work_bytes = work_bytes.saturating_add(size);
                     if work_bytes > 2 * 1024 * 1024 { break 'paths; }
                     if size > MAX_TREE_OBJECT_BYTES { continue 'paths; }
-                    let tree = repo.find_tree(entry.id())?;
+                    let tree = repo.find_tree(id)?;
                     work += tree.len();
                     if work > 5_000 { break 'paths; }
                     trees.insert(next.clone(), tree);
@@ -1656,7 +1659,9 @@ pub(crate) async fn pull_request_commits(
     let (path, base, head) = (repo_path.to_owned(), base.to_owned(), head.to_owned());
     let (base, head) = process::blocking_until(Instant::now() + COMMIT_WALK_TIMEOUT, move || {
         let repo = Repository::open_bare(path)?;
-        Ok((peel_to_commit_checked(&repo, &base)?.id().to_string(), peel_to_commit_checked(&repo, &head)?.id().to_string()))
+        let base = peel_to_commit_checked(&repo, &base)?.id().to_string();
+        let head = peel_to_commit_checked(&repo, &head)?.id().to_string();
+        Ok((base, head))
     }).await?;
     let mut command = process::git_command()?;
     command
@@ -1687,7 +1692,9 @@ pub(crate) async fn range_commits(
     let (path, base, head) = (repo_path.to_owned(), base.to_owned(), head.to_owned());
     let (base, head) = process::blocking_until(deadline, move || {
         let repo = Repository::open_bare(path)?;
-        Ok((peel_to_commit_checked(&repo, &base)?.id(), peel_to_commit_checked(&repo, &head)?.id()))
+        let base = peel_to_commit_checked(&repo, &base)?.id();
+        let head = peel_to_commit_checked(&repo, &head)?.id();
+        Ok((base, head))
     }).await?;
     // Git prunes the excluded side of the range instead of loading all base ancestry.
     let count = limit.min(MAX_COMMIT_WALK_OBJECTS);

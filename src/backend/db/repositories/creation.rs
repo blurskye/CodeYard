@@ -34,7 +34,7 @@ pub enum RepositoryStorageRefusal {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CreationAdmission<'a> {
-    pub authority: Option<&'a crate::backend::db::users::accounts::AccountActor>,
+    pub authority: Option<&'a crate::backend::db::credentials::Actor>,
     /// Only draft advisory remediation may have multiple forks per personal owner.
     pub advisory: Option<&'a str>,
 }

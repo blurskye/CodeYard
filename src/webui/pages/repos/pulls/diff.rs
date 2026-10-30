@@ -184,7 +184,7 @@ pub fn diff_page(
         base,
         references,
         split,
-        review: (open && !repo.is_archived).then_some(pending_review.is_some()),
+        review: (open && !repo.chrome.is_archived).then_some(pending_review.is_some()),
         code_scanning,
     };
     // Approving and requesting changes need a vote, and the author of a pull request cannot cast one
@@ -228,8 +228,8 @@ pub fn diff_page(
                 }
                 div { class: "collaboration-diff-toolbar",
                     {view_toggle(&format!("{url}/diff"), split)}
-                    if repo.signed_in && ((open && !repo.is_archived) || pending_review.is_some()) {
-                        {review::review_changes(repo, &url, head, open && !repo.is_archived, author, vote, review, pending_comments, pending_review, references, split)}
+                    if repo.signed_in && ((open && !repo.chrome.is_archived) || pending_review.is_some()) {
+                        {review::review_changes(repo, &url, head, open && !repo.chrome.is_archived, author, vote, review, pending_comments, pending_review, references, split)}
                     }
                 }
                 // A review refused after the pull request closed has no form to return to, so its text

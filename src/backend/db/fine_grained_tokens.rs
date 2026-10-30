@@ -131,7 +131,6 @@ native_operation!(crate::backend::db::postgres::fine_grained_tokens::policy, cra
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::set_policy, crate::backend::db::sqlite::fine_grained_tokens::set_policy,
     /// Saves the policy while `actor` owns the organization; false when they do not.
     fn set_policy(pool: &DbPool, actor: impl Into<super::credentials::Actor>, org: i64, policy: &Policy) -> Result<bool>);
-    fn set_policy(pool: &DbPool, actor: i64, org: i64, policy: &Policy) -> Result<bool>);
 /// Which of an organization's tokens a listing shows: those in `status` whose users are still
 /// members and that pass every filter given, newest first unless `ascending`.
 #[derive(Default)]
@@ -157,7 +156,6 @@ native_operation!(crate::backend::db::postgres::fine_grained_tokens::review, cra
     /// Moves the organization's tokens in `from` to `status` while `reviewer` owns the
     /// organization, and returns how many changed.
     fn review(pool: &DbPool, org: i64, reviewer: impl Into<super::credentials::Actor>, tokens: &[i64], from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
-    fn review(pool: &DbPool, org: i64, reviewer: i64, tokens: &[i64], from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::review_all, crate::backend::db::sqlite::fine_grained_tokens::review_all,
     /// `review` for every token in `from` whose user is still a member, in one statement.
     fn review_all(pool: &DbPool, org: i64, reviewer: impl Into<super::credentials::Actor>, from: &str, status: &str, reason: Option<&str>) -> Result<u64>);

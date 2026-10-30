@@ -6,7 +6,7 @@ pub async fn enable(pool: &SqlitePool, request: &AutoMerge, expected_head: Optio
     use crate::backend::db::discussions::DiscussionWriteRefusal as Refusal;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM pull_requests WHERE id=$1").bind(request.pull_request_id).fetch_optional(&mut *tx).await?.ok_or(Refusal::Denied)?;
-    anyhow::ensure!(super::super::discussions::lock_exclusive_write_authority(&mut tx, request.enabled_by, repo).await?, Refusal::Denied);
+    anyhow::ensure!(super::super::discussions::lock_write_authority(&mut tx, request.enabled_by, repo).await?, Refusal::Denied);
     if let Some(token) = token {
         for scope in ["contents", "pull-requests"] {
             anyhow::ensure!(super::super::users::tokens::repository_write_on(&mut tx, token, request.enabled_by, repo, scope).await?, Refusal::Denied);

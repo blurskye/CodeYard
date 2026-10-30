@@ -35,7 +35,7 @@ async fn update(
     let org = target(&state, &name).await?;
     let input=Changes::parse(&input).map_err(|error|Error(StatusCode::UNPROCESSABLE_ENTITY,"Validation Failed".into(),Some(json!([{"resource":"Organization","field":error.field,"code":"invalid","message":error.message}]))))?;
     let updated = outcome(
-        settings::change(&state.pool, (actor.user.id, actor.token.id), org.id, &input)
+        settings::change(&state.pool, actor.database_actor(), org.id, &input)
             .await
             .map_err(Error::unavailable)?,
     )?;

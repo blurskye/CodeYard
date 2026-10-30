@@ -332,9 +332,10 @@ pub async fn resolve_owners<'a>(
         }
     }
     for emails in emails.chunks(500) {
-        for (email, id) in db::users::accounts::get_verified_email_owners(pool, emails).await? {
+        // The same verified-address attribution as commits; banned accounts own nothing.
+        for (email, user) in crate::backend::repositories::reads::commit_authors(pool, emails).await? {
             if let Some(ids) = resolved.get_mut(&email) {
-                ids.push(id);
+                ids.push(user.id);
             }
         }
     }

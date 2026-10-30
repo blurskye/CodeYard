@@ -41,10 +41,10 @@ native_operation!(crate::backend::db::postgres::repositories::discovery::compari
     crate::backend::db::sqlite::repositories::discovery::comparison_forks,
     fn comparison_forks(pool: &DbPool, repo: i64, owner: &str) -> Result<Vec<Repository>>);
 
-/// Displayed fork counts and pages share the repository-read predicate. Browser callers
-/// retain their session; a missing viewer always gets the anonymous/public projection.
 native_operation!(crate::backend::db::postgres::repositories::discovery::visible_fork_counts,
     crate::backend::db::sqlite::repositories::discovery::visible_fork_counts,
+    /// Displayed fork counts and pages share the repository-read predicate. Browser callers
+    /// retain their session; a missing viewer always gets the anonymous/public projection.
     fn visible_fork_counts(pool: &DbPool, viewer: Option<i64>, session: Option<&str>, ids: &[i64]) -> Result<std::collections::HashMap<i64, i32>>);
 
 native_operation!(crate::backend::db::postgres::repositories::discovery::list_visible_forks,

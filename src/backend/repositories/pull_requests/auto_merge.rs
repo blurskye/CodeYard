@@ -157,7 +157,6 @@ async fn run_due_until_stop(state: &AppState, stop: Option<&tokio::sync::watch::
                     commit_title: entry.commit_title,
                     commit_message: entry.commit_message,
                     author_email: entry.author_email,
-                    token: None,
                 },
             )
             .await;

@@ -376,7 +376,7 @@ pub(super) async fn mutation(
         let issue = issues::mutations::create_issue_with_metadata(
             pool,
             broadcaster,
-            db::users::accounts::AccountActor::Token { user_id: actor, token_id: request.auth.token.id },
+            request.auth.database_actor(),
             repository::owner(&repo, request).await?,
             repo.name.clone(),
             CreateIssueRequest {
@@ -384,7 +384,6 @@ pub(super) async fn mutation(
                 body: input["body"].as_str().map(str::to_owned),
                 repository_id: Some(repo.id),
                 parent_issue_id: None,
-                token: Some(request.auth.token.id),
             },
             metadata.creation(),
         )

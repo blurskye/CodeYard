@@ -91,7 +91,7 @@ async fn register(
     let row = outcome(
         data::register(
             &state.pool,
-            (actor.user.id, actor.token.id),
+            actor.database_actor(),
             org,
             &input.display_name,
             installation_id,
@@ -166,7 +166,7 @@ async fn set_values(
         }
     }
     outcome(
-        data::set_values(&state.pool, (actor.user.id, actor.token.id), org, &values)
+        data::set_values(&state.pool, actor.database_actor(), org, &values)
             .await
             .map_err(Error::unavailable)?,
     )?;
@@ -196,7 +196,7 @@ async fn set_property(
         })
         .collect::<Vec<_>>();
     outcome(
-        data::set_values(&state.pool, (actor.user.id, actor.token.id), org, &values)
+        data::set_values(&state.pool, actor.database_actor(), org, &values)
             .await
             .map_err(Error::unavailable)?,
     )?;
@@ -209,7 +209,7 @@ async fn delete_values(
 ) -> Result<StatusCode> {
     let (actor, org) = scope(&state, &headers, &name, true).await?;
     outcome(
-        data::delete_values(&state.pool, (actor.user.id, actor.token.id), org, &property)
+        data::delete_values(&state.pool, actor.database_actor(), org, &property)
             .await
             .map_err(Error::unavailable)?,
     )?;

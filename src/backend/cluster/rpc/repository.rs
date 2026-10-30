@@ -196,6 +196,20 @@ pub(super) struct ReadAdmission {
     pub guard: tokio::sync::OwnedRwLockReadGuard<()>,
 }
 
+/// Blob bytes go in the raw reply body; the JSON value carries only their metadata.
+fn blob_reply(blob: crate::backend::repositories::store::BlobBytes, output: &mut Vec<u8>) -> Result<Value, Failure> {
+    *output = blob.bytes;
+    serde_json::to_value(BlobMetadata {
+        id: blob.id,
+        is_binary: blob.is_binary,
+        size: blob.size,
+        offset: blob.offset,
+        mode: blob.mode,
+        preview: blob.preview,
+    })
+    .map_err(|_| Failure::Repository(unavailable()))
+}
+
 fn store_at(path: &Path, node_id: i64) -> Result<RepoStore, RepoError> {
     Ok(RepoStore::on_node(
         path.to_str().ok_or_else(unavailable)?,
@@ -208,7 +222,7 @@ impl RpcHandler {
         &self,
         store: &RepoStore,
         repo_id: Option<i64>,
-        actor: Option<crate::backend::db::users::accounts::AccountActor>,
+        actor: Option<crate::backend::db::credentials::Actor>,
         source: Uuid,
         options: &crate::backend::repositories::store::CopyOptions,
     ) -> Result<(), RepoError> {
@@ -721,23 +735,15 @@ impl RpcHandler {
                 path,
                 range,
             } => {
-                let blob = store.blob_range(&git_ref, &path, range).await?;
-                output = blob.bytes;
-                serde_json::to_value(BlobMetadata {
-                    id: blob.id,
-                    is_binary: blob.is_binary,
-                    size: blob.size,
-                    offset: blob.offset,
-                    mode: blob.mode,
-                    preview: blob.preview,
-                })
-                .map_err(|_| Failure::Repository(unavailable()))?
+                blob_reply(store.blob_range(&git_ref, &path, range).await?, &mut output)?
             }
             Operation::BlobById { id } => {
                 output = store.blob_by_id(&id).await?;
                 Value::Null
             }
-            Operation::BlobByIdRange { id, range } => json!(store.blob_by_id_range(&id, range).await?),
+            Operation::BlobByIdRange { id, range } => {
+                blob_reply(store.blob_by_id_range(&id, range).await?, &mut output)?
+            }
             Operation::Commits {
                 git_ref,
                 limit,
@@ -855,7 +861,7 @@ impl RpcHandler {
                 head_ref,
             } => {
                 self.check_repository(source, false, false).await?;
-                let source = store_at(&self.primary_path(source), self.context.node_id)?;
+                let source = store_at(&crate::backend::repositories::store::primary_path(&self.context.repos_path, source), self.context.node_id)?;
                 json!(store.diff_from(&source, &base_ref, &head_ref))
             }
             Operation::ComparisonFrom {
@@ -867,7 +873,7 @@ impl RpcHandler {
                 raw_json,
             } => {
                 self.check_repository(source, false, false).await?;
-                let source = store_at(&self.primary_path(source), self.context.node_id)?;
+                let source = store_at(&crate::backend::repositories::store::primary_path(&self.context.repos_path, source), self.context.node_id)?;
                 let comparison = store
                     .comparison_from(&source, &base_ref, &head_ref, offset, limit)
                     .await?;
@@ -957,7 +963,7 @@ impl RpcHandler {
                 token,
             } => {
                 let (source_id, _) = self.check_repository(source, false, false).await?;
-                let from = store_at(&self.primary_path(source), self.context.node_id)?;
+                let from = store_at(&crate::backend::repositories::store::primary_path(&self.context.repos_path, source), self.context.node_id)?;
                 json!(store.merge_upstream_as(
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,
@@ -1132,7 +1138,6 @@ impl RpcHandler {
                         &request.base,
                         &result,
                         request.method,
-                        None,
                     )
                     .await
                 {
@@ -1186,8 +1191,7 @@ impl RpcHandler {
                 &head,
                 &base,
                 &result,
-                method,
-                None
+                method
             )),
             Operation::PublishStackedMerge {
                 heads,
@@ -1206,7 +1210,6 @@ impl RpcHandler {
                 &base_branch,
                 &base,
                 &result,
-                None,
             )),
             Operation::PrepareRestack {
                 from,

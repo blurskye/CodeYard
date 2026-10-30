@@ -337,15 +337,15 @@ native_operation!(crate::backend::db::postgres::advisories::list,crate::backend:
 native_operation!(crate::backend::db::postgres::advisories::get,crate::backend::db::sqlite::advisories::get,
     fn get(pool:&DbPool,actor:Option<i64>,repo:i64,ghsa:&str)->Result<Option<Advisory>>);
 native_operation!(crate::backend::db::postgres::advisories::create,crate::backend::db::sqlite::advisories::create,
-    fn create(pool:&DbPool,actor:impl Into<super::users::accounts::AccountActor>,repo:i64,value:&Value,report:bool)->Result<Advisory>);
+    fn create(pool:&DbPool,actor:impl Into<super::credentials::Actor>,repo:i64,value:&Value,report:bool)->Result<Advisory>);
 native_operation!(crate::backend::db::postgres::advisories::discard_created,crate::backend::db::sqlite::advisories::discard_created,
     fn discard_created(pool:&DbPool,actor:i64,created:&Advisory)->Result<bool>);
 native_operation!(crate::backend::db::postgres::advisories::update,crate::backend::db::sqlite::advisories::update,
-    fn update(pool:&DbPool,actor:impl Into<super::users::accounts::AccountActor>,repo:i64,ghsa:&str,patch:&Value)->Result<Advisory>);
+    fn update(pool:&DbPool,actor:impl Into<super::credentials::Actor>,repo:i64,ghsa:&str,patch:&Value)->Result<Advisory>);
 native_operation!(crate::backend::db::postgres::advisories::request_cve,crate::backend::db::sqlite::advisories::request_cve,
-    fn request_cve(pool:&DbPool,actor:impl Into<super::users::accounts::AccountActor>,repo:i64,ghsa:&str)->Result<()>);
+    fn request_cve(pool:&DbPool,actor:impl Into<super::credentials::Actor>,repo:i64,ghsa:&str)->Result<()>);
 native_operation!(crate::backend::db::postgres::advisories::attach_fork,crate::backend::db::sqlite::advisories::attach_fork,
-    fn attach_fork(pool:&DbPool,actor:impl Into<super::users::accounts::AccountActor>,repo:i64,ghsa:&str,fork:i64)->Result<()>);
+    fn attach_fork(pool:&DbPool,actor:impl Into<super::credentials::Actor>,repo:i64,ghsa:&str,fork:i64)->Result<()>);
 
 #[cfg(test)]
 mod tests {

@@ -152,7 +152,7 @@ async fn refuse_unreadable_objects() -> Result<()> {
         ])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    process::read_stream_inherited(command, CONTROL_TIMEOUT, |stdout, _| async move {
+    process::read_stream_inherited(command, protocol::CONTROL_TIMEOUT, |stdout, _| async move {
         let mut lines = BufReader::new(stdout).lines();
         while let Some(line) = lines.next_line().await? {
             let size = match line.split_once(' ') {

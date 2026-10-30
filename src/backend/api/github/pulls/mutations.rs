@@ -167,10 +167,11 @@ async fn update_value(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(auth::required)?.user;
+    let viewer = viewer.ok_or_else(auth::required)?;
+    let actor = &viewer.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     if pull.head_repo_id.is_some()
-        && super::readable_head(&state, &headers, &pull)
+        && super::readable_head(&state, Some(&viewer), &pull)
             .await?
             .is_none()
     {

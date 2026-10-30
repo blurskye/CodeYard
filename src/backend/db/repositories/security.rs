@@ -73,8 +73,8 @@ native_operation!(crate::backend::db::postgres::repositories::security::list_rep
     fn list_reports(pool:&DbPool,actor:impl Into<super::super::credentials::Actor>,repo_id:i64,limit:i64,offset:i64)->Result<Vec<Report>>);
 native_operation!(crate::backend::db::postgres::repositories::security::report_thread,crate::backend::db::sqlite::repositories::security::report_thread,
     fn report_thread(pool:&DbPool,actor:impl Into<super::super::credentials::Actor>,repo_id:i64,report_id:i64,offset:i64)->Result<Thread>);
-/// Returns the new reply's zero-based position in the oldest-first thread.
 native_operation!(crate::backend::db::postgres::repositories::security::reply,crate::backend::db::sqlite::repositories::security::reply,
+    /// Returns the new reply's zero-based position in the oldest-first thread.
     fn reply(pool:&DbPool,actor:impl Into<super::super::credentials::Actor>,repo_id:i64,report_id:i64,body:&str)->Result<i64>);
 native_operation!(crate::backend::db::postgres::repositories::security::set_state,crate::backend::db::sqlite::repositories::security::set_state,
     fn set_state(pool:&DbPool,actor:impl Into<super::super::credentials::Actor>,repo_id:i64,report_id:i64,closed:bool)->Result<()>);

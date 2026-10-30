@@ -11,26 +11,26 @@ pub(super) async fn enabled_in(connection: &mut sqlx::SqliteConnection, repo: i6
         .bind(repo).fetch_one(connection).await
 }
 
-async fn authorize_in(connection: &mut sqlx::SqliteConnection, reader: &Reader, repo: i64) -> Result<(), GraphError> {
+async fn authorize_in(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, reader: &Reader, repo: i64) -> Result<(), GraphError> {
     match reader {
         Reader::Viewer(Some(actor)) => {
-            if !super::repositories::access::lock_readable_repository_in_transaction(connection, actor.user_id, repo).await.map_err(GraphError::Authority)?
-                || !super::credentials::repository(connection, actor, repo, "contents", false).await.map_err(GraphError::Authority)? {
+            if !super::repositories::access::lock_readable_repository_in_transaction(&mut **tx, actor.user_id, repo).await.map_err(GraphError::Authority)?
+                || !super::credentials::repository(tx, actor, repo, "contents", false).await.map_err(GraphError::Authority)? {
                 return Err(GraphError::Denied);
             }
         }
         Reader::Viewer(None) | Reader::Scan(_) => {
             let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived))", super::repositories::access::readable_condition()))
-                .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_one(&mut *connection).await?;
+                .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_one(&mut **tx).await?;
             if !visible { return Err(GraphError::Denied); }
         }
     }
     if let Reader::Scan(generation) = reader {
         let job: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM vulnerability_jobs WHERE repo_id=$1 AND generation=$2)")
-            .bind(repo).bind(generation).fetch_one(&mut *connection).await?;
+            .bind(repo).bind(generation).fetch_one(&mut **tx).await?;
         if !job { return Err(GraphError::Denied); }
     }
-    if !enabled_in(connection, repo).await? { return Err(GraphError::Disabled); }
+    if !enabled_in(&mut **tx, repo).await? { return Err(GraphError::Disabled); }
     Ok(())
 }
 

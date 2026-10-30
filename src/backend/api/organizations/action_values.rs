@@ -212,7 +212,7 @@ async fn change(
                 Err(_) => return organization::unavailable(&ctx),
             }
         } else { String::new() };
-        Some(crate::backend::repositories::files::native_text(field(&form, "value"), &original))
+        Some(crate::backend::repositories::files::native_text(field(&form, "value").to_owned(), &original))
     };
     let result = if action.ends_with("-delete") {
         values::delete(&ctx.state.pool, actor, org, kind, &name).await

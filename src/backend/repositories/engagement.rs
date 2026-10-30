@@ -35,13 +35,13 @@ pub enum Engagement {
 /// `watching`, `custom` or `ignoring`; `events` lists the kinds a `custom` watch wants.
 pub async fn set_level(
     pool: &db::DbPool,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     level: &str,
     events: &[&str],
 ) -> Result<(), EngagementError> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     access::check_read(pool, repo_id, Some(actor))
         .await
         .map_err(EngagementError::Access)?;
@@ -75,13 +75,13 @@ pub async fn set_level(
 pub async fn set_subscription(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     subscribed: bool,
     ignored: bool,
 ) -> Result<(), EngagementError> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     if subscribed && !ignored {
         change(pool, broadcaster, authority, repo_id, Engagement::Watch, true).await?;
     } else {
@@ -104,13 +104,13 @@ pub async fn set_subscription(
 pub async fn change(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     kind: Engagement,
     enabled: bool,
 ) -> Result<i32, EngagementError> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     access::check_read(pool, repo_id, Some(actor))
         .await
         .map_err(EngagementError::Access)?;

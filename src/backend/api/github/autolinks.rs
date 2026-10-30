@@ -48,7 +48,7 @@ async fn create(
         input.is_alphanumeric,
     )
     .map_err(|error| Error::invalid(error.to_string()))?;
-    let row = autolinks::create(&state.pool, (actor.user.id, actor.token.id), repo.id, &input)
+    let row = autolinks::create(&state.pool, actor.database_actor(), repo.id, &input)
         .await
         .map_err(failure)?;
     Ok((StatusCode::CREATED, Json(payloads::autolink(&row))).into_response())
@@ -95,7 +95,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    autolinks::remove(&state.pool, (actor.user.id, actor.token.id), repo.id, id)
+    autolinks::remove(&state.pool, actor.database_actor(), repo.id, id)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)

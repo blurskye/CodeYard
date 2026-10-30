@@ -202,6 +202,8 @@ pub fn DraftSelect(
 ) -> Element {
     let mut value = use_signal(move || initial_value);
     let mut enhanced = use_signal(|| false);
+    // Only the browser build writes it, when the select mounts.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
     let mut transfer_focus = use_signal(|| false);
     let enhance = options.len() <= 100;
     use_effect(move || enhanced.set(enhance));

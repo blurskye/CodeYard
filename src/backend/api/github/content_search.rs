@@ -1,7 +1,6 @@
 use super::{auth, pagination::Pagination, Error, Result};
 use crate::backend::{
     app::AppState,
-    db,
     repositories::content_search::{self, Entry, KindOfSearch, Query as SearchQuery, Sort},
 };
 use axum::{
@@ -29,7 +28,6 @@ async fn content(
         KindOfSearch::Commits
     };
     let authentication = auth::identity(&state, &headers, false).await?;
-    let deadline = tokio::time::Instant::now() + state.search_time_budget;
     let viewer = authentication.as_ref().map(|a| a.user.id);
     if kind == KindOfSearch::Code && viewer.is_none() {
         return Err(auth::required());
@@ -60,7 +58,7 @@ async fn content(
                     "Search is busy. Try again shortly.",
                 )
             })?;
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8);
+    let deadline = tokio::time::Instant::now() + state.search_time_budget;
     let mut results = content_search::search(
         &state.pool,
         state.cluster.as_ref(),

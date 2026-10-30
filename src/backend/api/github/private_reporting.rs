@@ -42,7 +42,7 @@ async fn set(
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    security::set_enabled(&state.pool, (actor.user.id, actor.token.id), repo.id, enabled)
+    security::set_enabled(&state.pool, actor.database_actor(), repo.id, enabled)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)

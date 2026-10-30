@@ -113,7 +113,7 @@ async fn open(
     }
     if pull.state == "open" {
         pull_requests::mutations::repair_open_pull(
-            pool, ci, &pinned.repository, &pinned.repository, actor, &pull, true,
+            pool, ci, &pinned.repository, &pinned.repository, actor.into(), &pull, true,
         )
         .await?;
     }

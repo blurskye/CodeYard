@@ -100,7 +100,7 @@ pub async fn list(pool: &PgPool, actor: i64, org: i64) -> Result<Vec<Configurati
 }
 pub async fn list_window(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     org: i64,
     after: i64,
     before: i64,

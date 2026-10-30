@@ -304,7 +304,7 @@ async fn provision_from(
     description: Option<&str>,
     options: ProvisionOptions<'_>,
     chosen: &[db::organizations::properties::ValueInput],
-    authority: Option<&db::users::accounts::AccountActor>,
+    authority: Option<&db::credentials::Actor>,
 ) -> Result<Repository, StorageError> {
     let mut properties = inherited_properties(node.0, owner, options.creation_source).await?;
     // Values chosen in the creation form replace inherited ones.
@@ -649,12 +649,12 @@ pub async fn provision_with_initial_properties(
 async fn commit_initial_files(
     pool: &db::DbPool,
     context: Option<&NodeContext>,
-    authority: db::users::accounts::AccountActor,
+    authority: db::credentials::Actor,
     repository: &Repository,
     description: Option<&str>,
     files: InitialFiles,
 ) -> Result<(), StorageError> {
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     let user = db::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| unavailable())?
@@ -775,11 +775,11 @@ pub fn validate_description(description: &str) -> Result<(), StorageError> {
 pub async fn delete(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
 ) -> Result<(), StorageError> {
     let actor = actor.into();
-    super::access::check_admin(pool, repo_id, actor.user_id())
+    super::access::check_admin(pool, repo_id, actor.user_id)
         .await
         .map_err(|error| StorageError {
             kind: if error == super::access::AccessError::Unavailable {
@@ -820,7 +820,7 @@ pub(crate) async fn remove_deleted_repository(
 pub async fn transfer(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     new_owner: &str,
 ) -> Result<Repository, StorageError> {
@@ -898,12 +898,12 @@ pub async fn fork(
     context: Option<&NodeContext>,
     repos_path: &Path,
     broadcaster: &crate::backend::notifications::NotificationBroadcaster,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     source_id: i64,
     owner: &str,
 ) -> Result<Repository, StorageError> {
     let authority = actor.into();
-    let actor = authority.user_id();
+    let actor = authority.user_id;
     fork_into(
         pool,
         context,
@@ -928,7 +928,7 @@ pub struct ForkOptions<'a> {
     pub default_branch_only: bool,
     /// Organization property values chosen for the copy.
     pub properties: &'a [db::organizations::properties::ValueInput],
-    pub authority: Option<&'a db::users::accounts::AccountActor>,
+    pub authority: Option<&'a db::credentials::Actor>,
 }
 
 pub async fn fork_into(
@@ -1091,10 +1091,10 @@ pub async fn fork_into(
 async fn live_creation_actor(
     pool: &db::DbPool,
     actor: i64,
-    authority: Option<&db::users::accounts::AccountActor>,
+    authority: Option<&db::credentials::Actor>,
 ) -> Result<(), StorageError> {
     if let Some(authority) = authority {
-        if authority.user_id() != actor {
+        if authority.user_id != actor {
             return Err(storage_error(db::users::accounts::AccountRestricted.into()));
         }
         super::access::credential_user(pool, authority, true).await.map_err(storage_error)?;
@@ -1142,7 +1142,7 @@ pub struct TemplateOptions<'a> {
     pub all_branches: bool,
     /// Organization property values chosen for the copy.
     pub properties: &'a [db::organizations::properties::ValueInput],
-    pub authority: Option<&'a db::users::accounts::AccountActor>,
+    pub authority: Option<&'a db::credentials::Actor>,
 }
 
 pub async fn generate(

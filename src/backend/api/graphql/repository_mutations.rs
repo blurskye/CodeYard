@@ -164,9 +164,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         } else {
             None
         };
-        let authority = db::users::accounts::AccountActor::Token {
-            user_id: actor, token_id: request.auth.token.id,
-        };
+        let authority = request.auth.database_actor();
         let creation = RepositoryCreationOwner {
             actor_id: actor,
             target: owner,

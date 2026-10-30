@@ -14,8 +14,6 @@ pub struct CreateIssueRequest {
     pub repository_id: Option<i64>,
     #[serde(default)]
     pub parent_issue_id: Option<i64>,
-    #[serde(skip)]
-    pub token: Option<i64>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -61,14 +59,14 @@ async fn emit_issue_event(
 pub async fn close_duplicate(
     pool: &db::DbPool,
     broadcaster: &Arc<NotificationBroadcaster>,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     repo: i64,
     issue: i64,
     duplicate: i64,
 ) -> Result<db::models::Issue, OperationError> {
     let (pool, broadcaster, actor) = (pool.clone(), broadcaster.clone(), actor.into());
     tokio::spawn(async move {
-        let user = super::actor(&pool, actor.user_id()).await?;
+        let user = super::actor(&pool, actor.user_id).await?;
         let (repository, owner) = super::repository(&pool, repo).await?;
         let (previous, saved) = db::issues::management::close_duplicate_with_previous(&pool, actor, repo, issue, duplicate)
             .await
@@ -96,7 +94,7 @@ pub async fn close_duplicate(
 pub async fn create_issue(
     pool: &db::DbPool,
     broadcaster: &Arc<NotificationBroadcaster>,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     owner: String,
     repo: String,
     req: CreateIssueRequest,
@@ -107,7 +105,7 @@ pub async fn create_issue(
 pub async fn create_issue_with_metadata(
     pool: &db::DbPool,
     broadcaster: &Arc<NotificationBroadcaster>,
-    actor: impl Into<db::users::accounts::AccountActor>,
+    actor: impl Into<db::credentials::Actor>,
     owner: String,
     repo: String,
     req: CreateIssueRequest,
@@ -125,13 +123,13 @@ pub async fn create_issue_with_metadata(
 async fn create_issue_owned(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: db::users::accounts::AccountActor,
+    actor: db::credentials::Actor,
     owner: String,
     repo: String,
     req: CreateIssueRequest,
     mut metadata: db::issues::IssueMetadata<'_>,
 ) -> Result<db::models::Issue, OperationError> {
-    let user = super::actor(pool, actor.user_id()).await?;
+    let user = super::actor(pool, actor.user_id).await?;
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await

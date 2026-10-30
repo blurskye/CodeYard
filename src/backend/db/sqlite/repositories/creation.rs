@@ -161,7 +161,7 @@ async fn insert_kind(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let creator = input.owner.actor_id;
     if let Some(authority) = admission.authority {
-        anyhow::ensure!(authority.user_id() == creator, RepositoryStorageRefusal::Denied);
+        anyhow::ensure!(authority.user_id == creator, RepositoryStorageRefusal::Denied);
     }
     let admin = creation_authority(&mut tx, input.owner).await?;
     let (kind, user, org) = match input.owner.target {

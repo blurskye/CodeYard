@@ -12,7 +12,7 @@ use crate::backend::{
 use axum::{
     body::Bytes,
     extract::{rejection::QueryRejection, OriginalUri, Path, Query, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
+    http::{HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{delete, get, patch, put, MethodRouter},
     Json,

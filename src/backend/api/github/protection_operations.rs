@@ -60,7 +60,7 @@ struct Checks {
 
 #[derive(Deserialize)]
 pub(super) struct Check {
-    context: String,
+    pub(super) context: String,
     app_id: Option<i64>,
 }
 
@@ -209,8 +209,8 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(super::auth::required)?;
-    let actor = auth.user;
-    if !access::can_admin(&state.pool, &actor, &repo)
+    let actor = &auth.user;
+    if !access::can_admin(&state.pool, actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {
@@ -247,7 +247,7 @@ async fn update(
     };
     let mut upsert = BranchProtectionRuleUpsert {
         actor_id: actor.id,
-        token_id: Some(auth.token.id),
+        credential: Some(auth.credential()),
         repo_id: repo.id,
         pattern: &branch,
         require_pull_request: input.required_pull_request_reviews.is_some(),
@@ -548,7 +548,7 @@ pub(super) async fn check_bindings(
             bindings.push(json!({"context": context, "app_id": app}));
         }
     }
-    protection::normalize_check_bindings(&mut bindings).map_err(write_error)?;
+    protection::normalize_check_bindings(&mut bindings).map_err(|refusal| write_error(refusal.into()))?;
     Ok(bindings)
 }
 

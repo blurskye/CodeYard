@@ -74,7 +74,7 @@ pub async fn edit_comment(pool: &PgPool, input: CommentEdit<'_>) -> Result<Optio
 
 pub async fn delete_comment(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::tokens::Actor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     id: i64,
     expected_revision: Option<&str>,
@@ -89,7 +89,7 @@ pub async fn delete_comment(
         .await?,
         CommentRefusal::Denied
     );
-    if let Some(token) = credential.token_id {
+    if let Some(token) = credential.token_id() {
         anyhow::ensure!(crate::backend::db::postgres::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "contents").await?, CommentRefusal::Denied);
     }
     let Some(comment) = sqlx::query_as::<_, CommitComment>(
