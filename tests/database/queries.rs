@@ -1726,6 +1726,7 @@ async fn pull_request_merge_mark_contract(pool: &DbPool) {
             base: Some(NewBase {
                 branch: "develop",
                 sha: &"b".repeat(40),
+                reopen_retarget: false,
             }),
             maintainer_can_modify: None,
         },

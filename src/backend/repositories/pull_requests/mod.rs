@@ -59,6 +59,48 @@ pub(crate) fn webhook_payload(
     payload
 }
 
+/// Sends one `pull_request` webhook for `pull` and returns its document, which is also the
+/// workflow event document. `extra` adds top-level fields such as `changes` or
+/// `requested_reviewer`. Without the cluster context a storage node's repository is sent
+/// without its diff counts.
+pub(crate) async fn emit_pull_request_event(
+    pool: &db::DbPool,
+    cluster: Option<&crate::backend::cluster::NodeContext>,
+    repository: &db::models::Repository,
+    pull: &db::models::PullRequest,
+    action: &'static str,
+    sender_id: i64,
+    extra: serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Value {
+    let (pull_for_hook, repository_for_hook) = (pull.clone(), repository.clone());
+    let author_id = pull.author_id;
+    let store = crate::backend::repositories::store::repo_store(repository, cluster);
+    crate::backend::webhooks::emit(
+        pool,
+        repository,
+        crate::backend::webhooks::events::PULL_REQUEST,
+        vec![author_id, sender_id],
+        move |owner, people| {
+            let mut payload = webhook_payload(
+                action,
+                &pull_for_hook,
+                &people.get(author_id),
+                crate::backend::webhooks::payloads::Scope {
+                    repo: &repository_for_hook,
+                    owner,
+                    sender: &people.get(sender_id),
+                },
+                &store,
+            );
+            if let Some(document) = payload.as_object_mut() {
+                document.extend(extra);
+            }
+            payload
+        },
+    )
+    .await
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum OperationError {
     #[error("{message}")]

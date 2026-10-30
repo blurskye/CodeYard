@@ -126,16 +126,19 @@ async fn contract(pg: bool) {
     let upstream = alice.save("main", "upstream.txt", &first).await;
     // Consent never grants general repository mutation, nor weakens the native metadata gate.
     alice.expect("POST", "/api/repos/bob/proj/contents/unscoped.txt", json!({"content":base64::engine::general_purpose::STANDARD.encode("Not scoped"),"message":"Unscoped","branch":"main","expected_revision":fork_sha}), StatusCode::FORBIDDEN).await;
-    call(
+    // The author without base write access may change ordinary fields and the consent together.
+    let retitled = call(
         &router,
         "pulls/update",
         "PATCH",
         &url,
         author,
-        json!({"title":"Must not change","maintainer_can_modify":false}),
-        StatusCode::FORBIDDEN,
+        json!({"title":"Retitled with consent","maintainer_can_modify":true}),
+        StatusCode::OK,
     )
     .await;
+    assert_eq!(retitled["title"], "Retitled with consent");
+    assert_eq!(retitled["maintainer_can_modify"], true);
     call(
         &router,
         "pulls/update",
@@ -304,7 +307,7 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap();
     assert_eq!(current.state, "open");
-    assert_eq!(current.title, "Consented fork");
+    assert_eq!(current.title, "Retitled with consent");
     call(
         &router,
         "pulls/get",
