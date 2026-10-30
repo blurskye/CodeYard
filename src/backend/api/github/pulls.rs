@@ -349,14 +349,11 @@ async fn files(
 ) -> Result<Response> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
     let (offset, limit) = page.window()?;
-    let diff = repo_store(&repo, state.cluster.as_ref())
-        .diff(pull.diff_base(), &pull.head_sha)
-        .await
-        .map_err(store_error)?;
-    let has_next = diff.files.len().min(3000) > offset + limit;
-    let files: Vec<_> = diff.files.into_iter().take(3000).skip(offset).take(limit).collect();
+    let store = repo_store(&repo, state.cluster.as_ref());
+    let page_files = super::commits::file_page(&store, pull.diff_base(), &pull.head_sha, offset, limit).await?;
+    let has_next = page_files.has_next;
+    let files = page_files.files;
     let base = if files.iter().any(|file| file.status == "removed") {
-        let store = repo_store(&repo, state.cluster.as_ref());
         store.comparison_from(&store, pull.diff_base(), &pull.head_sha, 0, 0).await.map_err(store_error)?.merge_base_commit.sha
     } else {
         pull.diff_base().to_owned()

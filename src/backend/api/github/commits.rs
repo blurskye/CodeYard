@@ -6,7 +6,7 @@ use super::{
 use crate::backend::{
     app::AppState,
     db,
-    repositories::store::{repo_store, CommitFilter, CommitInfo, DiffFileInfo},
+    repositories::store::{repo_store, CommitFilter, CommitInfo, DiffFileInfo, DiffInfo, RepoStore},
     webhooks::payloads::{self, Person},
 };
 use axum::{
@@ -122,6 +122,66 @@ pub(super) async fn read_document(
         .ok_or_else(|| Error::unavailable(()))
 }
 
+/// One page of a comparison's files with their patches; the totals cover every file.
+pub(super) struct FilePage {
+    pub additions: i32,
+    pub deletions: i32,
+    pub files: Vec<DiffFileInfo>,
+    pub has_next: bool,
+}
+
+/// GitHub lists at most this many files of one comparison.
+const MAX_LISTED_FILES: usize = 3000;
+
+fn file_page_of(diff: DiffInfo, offset: usize, limit: usize) -> FilePage {
+    FilePage {
+        additions: diff.additions,
+        deletions: diff.deletions,
+        has_next: diff.files.len().min(MAX_LISTED_FILES) > offset.saturating_add(limit),
+        files: diff
+            .files
+            .into_iter()
+            .take(MAX_LISTED_FILES)
+            .skip(offset)
+            .take(limit)
+            .collect(),
+    }
+}
+
+/// The page of files `base_ref...head_ref` changes. When the patches together are too large to
+/// read, only the page's patches are read, file by file, and a patch that is itself too large is
+/// left out, as GitHub leaves out patches it cannot show.
+pub(super) async fn file_page(
+    store: &RepoStore,
+    base_ref: &str,
+    head_ref: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<FilePage> {
+    match store.diff(base_ref, head_ref).await {
+        Ok(diff) => Ok(file_page_of(diff, offset, limit)),
+        Err(error) if error.is_response_too_large() => {
+            let stats = store.diff_stats(base_ref, head_ref).await.map_err(store_error)?;
+            let mut page = file_page_of(stats, offset, limit);
+            for file in &mut page.files {
+                match store.diff_file(base_ref, head_ref, &file.filename).await {
+                    Ok(one) => {
+                        if let Some(found) =
+                            one.files.into_iter().find(|found| found.filename == file.filename)
+                        {
+                            file.patch = found.patch;
+                        }
+                    }
+                    Err(error) if error.is_response_too_large() => {}
+                    Err(error) => return Err(store_error(error)),
+                }
+            }
+            Ok(page)
+        }
+        Err(error) => Err(store_error(error)),
+    }
+}
+
 pub(super) fn diff_files(
     files: Vec<DiffFileInfo>,
     owner: &str,
@@ -134,11 +194,13 @@ pub(super) fn diff_files(
         let mut value = json!({
             "sha": file.blob_sha, "filename": file.filename, "status": file.status,
             "additions": file.additions, "deletions": file.deletions, "changes": file.additions + file.deletions,
-            "patch": file.patch,
             "blob_url": format!("{}/{owner}/{name}/blob/{sha}/{}", crate::backend::api::http::config::link_origin(), path_url(&file.filename)),
             "raw_url": format!("{}/{owner}/{name}/raw/{sha}/{}", crate::backend::api::http::config::link_origin(), path_url(&file.filename)),
             "contents_url": format!("{}/contents/{}?ref={sha}", repo_url(owner, name), path_url(&file.filename)),
         });
+        if !file.patch.is_empty() {
+            value["patch"] = json!(file.patch);
+        }
         if let Some(previous) = file.previous_filename {
             value["previous_filename"] = json!(previous);
         }
@@ -161,17 +223,25 @@ async fn read(
     if route.as_str().contains("/git/commits/") {
         return Ok(Json(git_document(&state, &commit, owner, name, repo.id).await?).into_response());
     }
-    let diff = store.commit_diff(&commit.sha).await.map_err(store_error)?;
     if let Some(media) = super::diff_media::requested(&headers) {
+        let diff = store.commit_diff(&commit.sha).await.map_err(store_error)?;
         return Ok(super::diff_media::response(media, &commit, &diff.files));
     }
     let mut value = read_document(&state, repo.id, &commit, owner, name).await?;
-    value["stats"] = json!({"additions":diff.additions,"deletions":diff.deletions,"total":diff.additions + diff.deletions});
     let (offset, limit) = page.window()?;
-    let has_next = diff.files.len() > offset + limit;
-    let files = diff.files.into_iter().skip(offset).take(limit).collect();
-    value["files"] = json!(diff_files(files, owner, name, &commit.sha, commit.parents.first().map(|sha| (owner.as_str(), name.as_str(), sha.as_str()))));
-    Ok((page.headers(&uri, has_next)?, Json(value)).into_response())
+    // The first parent is where `commit_diff` compares from, and a three-dot comparison with it
+    // is the same diff.
+    let files = match commit.parents.first() {
+        Some(parent) => file_page(&store, parent, &commit.sha, offset, limit).await?,
+        None => file_page_of(
+            store.commit_diff(&commit.sha).await.map_err(store_error)?,
+            offset,
+            limit,
+        ),
+    };
+    value["stats"] = json!({"additions":files.additions,"deletions":files.deletions,"total":files.additions + files.deletions});
+    value["files"] = json!(diff_files(files.files, owner, name, &commit.sha, commit.parents.first().map(|sha| (owner.as_str(), name.as_str(), sha.as_str()))));
+    Ok((page.headers(&uri, files.has_next)?, Json(value)).into_response())
 }
 
 #[derive(Deserialize)]
