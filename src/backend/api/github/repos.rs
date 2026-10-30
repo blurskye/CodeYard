@@ -880,9 +880,10 @@ async fn set_property_values(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let Json(input) = input.map_err(|_| Error::invalid("Invalid repository property values"))?;
+    let auth = auth.ok_or_else(auth::required)?;
     db::organizations::properties::set_repository_values(
         &state.pool,
-        auth.ok_or_else(auth::required)?.user.id,
+        (auth.user.id, auth.token.id),
         repo.id,
         &input.properties,
     )
