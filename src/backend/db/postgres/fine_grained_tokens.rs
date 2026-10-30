@@ -1,5 +1,5 @@
 use crate::backend::db::{
-    fine_grained_tokens::{Bounds, NewToken, Policy, Token},
+    fine_grained_tokens::{Bounds, NewToken, OwnerTokens, Policy, Token},
     models::OrgRole,
     organizations::OrganizationOutcome,
 };
@@ -179,9 +179,54 @@ pub async fn set_policy(pool: &PgPool, actor: i64, org: i64, policy: &Policy) ->
     Ok(true)
 }
 
+/// The organization's tokens in `status` below the `before` cursor whose users are still members.
+async fn tokens_page(
+    connection: &mut PgConnection,
+    org: i64,
+    status: &str,
+    before: i64,
+    limit: i64,
+) -> Result<Vec<Token>> {
+    Ok(sqlx::query_as(&format!("{TOKEN} WHERE f.owner_org_id=$1 AND f.status=$2 AND ($3<=0 OR f.token_id<$3) AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=$1 AND m.user_id=t.user_id) ORDER BY f.token_id DESC LIMIT $4"))
+        .bind(org).bind(status).bind(before).bind(limit).fetch_all(connection).await?)
+}
+
 pub async fn organization_tokens(pool: &PgPool, org: i64, status: &str) -> Result<Vec<Token>> {
-    Ok(sqlx::query_as(&format!("{TOKEN} WHERE f.owner_org_id=$1 AND f.status=$2 AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=$1 AND m.user_id=t.user_id) ORDER BY f.token_id DESC LIMIT 1000"))
-        .bind(org).bind(status).fetch_all(pool).await?)
+    tokens_page(&mut *pool.acquire().await?, org, status, 0, 1000).await
+}
+
+pub async fn owner_tokens(
+    pool: &PgPool,
+    actor: i64,
+    session: &str,
+    org: i64,
+    before: (i64, i64),
+    limit: i64,
+) -> Result<Option<OwnerTokens>> {
+    // One snapshot for the owner check and every list.
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let owner: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id JOIN sessions s ON s.user_id=u.id WHERE m.org_id=$1 AND m.user_id=$2 AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password AND s.id=$3 AND s.expires_at>clock_timestamp())")
+        .bind(org).bind(actor).bind(session).fetch_one(&mut *tx).await?;
+    if !owner {
+        return Ok(None);
+    }
+    let policy: Policy = sqlx::query_as("SELECT fine_grained_allowed,fine_grained_approval,classic_allowed,max_lifetime_days FROM organization_token_policies WHERE org_id=$1")
+        .bind(org).fetch_optional(&mut *tx).await?.unwrap_or_default();
+    let pending = tokens_page(&mut tx, org, "pending", before.0, limit).await?;
+    let approved = tokens_page(&mut tx, org, "approved", before.1, limit).await?;
+    let ids: Vec<i64> = pending.iter().chain(&approved).filter(|token| token.repository_access == "selected").map(|token| token.token_id).collect();
+    let readable = super::repositories::access::readable_condition();
+    let repositories: Vec<(i64, String)> = sqlx::query_as(&format!("SELECT token_id,name FROM (SELECT selected.token_id,r.name,ROW_NUMBER() OVER (PARTITION BY selected.token_id ORDER BY r.name,r.id) AS row_position
+        FROM fine_grained_token_repositories selected JOIN fine_grained_tokens g ON g.token_id=selected.token_id
+        JOIN repositories r ON r.id=selected.repo_id JOIN users u ON u.id=$2
+        WHERE selected.token_id=ANY($1) AND g.owner_org_id=$3
+        AND r.owner_kind='org' AND r.owner_org_id=$3 AND {readable}) listed WHERE row_position<=100 ORDER BY token_id,row_position"))
+        .bind(ids.as_slice()).bind(actor).bind(org).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Some(OwnerTokens { policy, pending, approved, repositories }))
 }
 
 pub async fn review(

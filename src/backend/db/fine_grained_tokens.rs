@@ -138,6 +138,21 @@ native_operation!(crate::backend::db::postgres::fine_grained_tokens::set_policy,
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::organization_tokens, crate::backend::db::sqlite::fine_grained_tokens::organization_tokens,
     /// The organization's newest 1000 tokens with `status` whose users are still members.
     fn organization_tokens(pool: &DbPool, org: i64, status: &str) -> Result<Vec<Token>>);
+
+/// One page of the owners' token tab, read in one snapshot.
+pub struct OwnerTokens {
+    pub policy: Policy,
+    pub pending: Vec<Token>,
+    pub approved: Vec<Token>,
+    /// The listed tokens' selected repositories as (token id, name), at most 100 per token.
+    pub repositories: Vec<(i64, String)>,
+}
+
+native_operation!(crate::backend::db::postgres::fine_grained_tokens::owner_tokens, crate::backend::db::sqlite::fine_grained_tokens::owner_tokens,
+    /// None unless `actor` is an active owner of `org` through the live `session`. Each list
+    /// holds at most `limit` tokens, newest first, below its cursor in `before` (pending,
+    /// approved); a cursor of 0 starts at the newest.
+    fn owner_tokens(pool: &DbPool, actor: i64, session: &str, org: i64, before: (i64, i64), limit: i64) -> Result<Option<OwnerTokens>>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::review, crate::backend::db::sqlite::fine_grained_tokens::review,
     /// Moves the organization's tokens in `from` to `status` while `reviewer` owns the
     /// organization, and returns how many changed.

@@ -711,7 +711,7 @@ pub(super) async fn respond_with_hook_draft(
             };
         }
         if model.tab == "personal-access-tokens" {
-            model.tokens = match super::tokens::panel(ctx, org).await {
+            model.tokens = match super::tokens::panel(ctx, actor, org).await {
                 Ok(panel) => Some(Box::new(panel)),
                 Err(response) => return response,
             };
