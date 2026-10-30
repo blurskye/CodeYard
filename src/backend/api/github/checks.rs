@@ -20,6 +20,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
+mod documents;
 
 pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
     match error.downcast_ref::<checks::Refusal>() {
@@ -33,22 +34,13 @@ pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
 }
 
 async fn app(pool: &db::DbPool, id: Option<i64>) -> Result<Value> {
-    let Some(id) = id else {
-        return Ok(Value::Null);
-    };
-    let Some(app) = checks::application(pool, id)
-        .await
-        .map_err(Error::unavailable)?
-    else {
-        return Ok(Value::Null);
-    };
-    let owner = db::users::accounts::get_user_by_id(pool, app.owner_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    Ok(
-        json!({"id":app.id,"node_id":super::node_id::encode("A", app.id),"client_id":app.client_id,"name":app.name,"description":null,"owner":payloads::person(&payloads::Person::of(&owner)),"external_url":app.homepage,"html_url":app.homepage,"created_at":app.created_at,"updated_at":app.created_at,"permissions":{"checks":"write","metadata":"read"},"events":["check_run","check_suite"]}),
-    )
+    let Some(id) = id else { return Ok(Value::Null); };
+    Ok(checks::publishers(pool, &[id]).await.map_err(Error::unavailable)?.first().map(app_value).unwrap_or(Value::Null))
+}
+
+fn app_value(app: &checks::Publisher) -> Value {
+    let owner = payloads::Person { id: app.owner_id, login: app.owner_login.clone(), site_admin: app.owner_is_admin };
+    json!({"id":app.id,"node_id":super::node_id::encode("A", app.id),"client_id":app.client_id,"name":app.name,"description":null,"owner":payloads::person(&owner),"external_url":app.homepage,"html_url":app.homepage,"created_at":app.created_at,"updated_at":app.created_at,"permissions":{"checks":"write","metadata":"read"},"events":["check_run","check_suite"]})
 }
 
 /// The app that publishes workflow run check suites, acting as the Actions bot account.
@@ -74,11 +66,12 @@ async fn pulls(pool: &db::DbPool, repo: &Repository, owner: &str, sha: &str) -> 
     let rows = checks::pulls(pool, repo.id, sha)
         .await
         .map_err(Error::unavailable)?;
-    Ok(json!(rows.into_iter().map(|pull| {
-        let checks::Pull { id, number, head_branch:head_ref, base_branch:base_ref, head_sha, base_sha } = pull;
-        let branch = |reference, sha| json!({"ref":reference,"sha":sha,"repo":{"id":repo.id,"name":repo.name,"url":repo_url(owner,&repo.name)}});
-        json!({"id":id,"number":number,"url":format!("{}/pulls/{number}",repo_url(owner,&repo.name)),"head":branch(head_ref,head_sha),"base":branch(base_ref,base_sha)})
-    }).collect::<Vec<_>>()))
+    Ok(json!(rows.iter().map(|pull| pull_value(repo, owner, pull)).collect::<Vec<_>>()))
+}
+
+fn pull_value(repo: &Repository, owner: &str, pull: &checks::Pull) -> Value {
+    let branch = |reference: &str, sha: &str| json!({"ref":reference,"sha":sha,"repo":{"id":repo.id,"name":repo.name,"url":repo_url(owner,&repo.name)}});
+    json!({"id":pull.id,"number":pull.number,"url":format!("{}/pulls/{}",repo_url(owner,&repo.name),pull.number),"head":branch(&pull.head_branch,&pull.head_sha),"base":branch(&pull.base_branch,&pull.base_sha)})
 }
 
 async fn run_document(
@@ -87,17 +80,12 @@ async fn run_document(
     owner: &str,
     run: &Run,
 ) -> Result<Value> {
-    let suite = checks::suite(&state.pool, repo.id, run.suite_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    documents::runs(state, repo, owner, std::slice::from_ref(run)).await?.pop().ok_or_else(Error::missing)
+}
+
+fn run_value(repo: &Repository, owner: &str, run: &Run, suite: &Suite, count: i64, publisher: &Value, pull_requests: &Value) -> Value {
     let url = format!("{}/check-runs/{}", repo_url(owner, &repo.name), run.id);
-    let count = checks::annotation_count(&state.pool, run.id)
-        .await
-        .map_err(Error::unavailable)?;
-    Ok(
-        json!({"id":run.id,"node_id":super::node_id::encode("CR",run.id),"head_sha":suite.head_sha,"name":run.name,"url":url,"html_url":format!("{}/{}/{}/runs/{}",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(&repo.name),run.id),"details_url":run.data.details_url,"external_id":run.data.external_id,"status":run.status,"conclusion":run.conclusion,"started_at":run.data.started_at,"completed_at":run.data.completed_at,"check_suite":{"id":suite.id},"output":{"title":run.data.title,"summary":run.data.summary,"text":run.data.text,"annotations_count":count,"annotations_url":format!("{url}/annotations"),"images":run.data.images},"app":app(&state.pool,suite.app_id).await?,"pull_requests":pulls(&state.pool,repo,owner,&suite.head_sha).await?}),
-    )
+    json!({"id":run.id,"node_id":super::node_id::encode("CR",run.id),"head_sha":suite.head_sha,"name":run.name,"url":url,"html_url":format!("{}/{}/{}/runs/{}",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(&repo.name),run.id),"details_url":run.data.details_url,"external_id":run.data.external_id,"status":run.status,"conclusion":run.conclusion,"started_at":run.data.started_at,"completed_at":run.data.completed_at,"check_suite":{"id":suite.id},"output":{"title":run.data.title,"summary":run.data.summary,"text":run.data.text,"annotations_count":count,"annotations_url":format!("{url}/annotations"),"images":run.data.images},"app":publisher,"pull_requests":pull_requests})
 }
 
 async fn suite_document(
@@ -130,7 +118,6 @@ async fn suite_document_at(
     )
     .await
     .map_err(Error::unavailable)?;
-    let url = format!("{}/check-suites/{}", repo_url(owner, &repo.name), suite.id);
     // A workflow run's suite has the run's state and is published by Actions.
     let (status, conclusion, publisher) = match suite.ci_run_id {
         Some(id) => {
@@ -151,9 +138,20 @@ async fn suite_document_at(
             app(pool, suite.app_id).await?,
         ),
     };
-    Ok(
-        json!({"id":suite.id,"node_id":super::node_id::encode("CSU",suite.id),"head_sha":suite.head_sha,"head_branch":suite.head_branch,"status":status,"conclusion":conclusion,"url":url,"before":null,"after":null,"created_at":suite.created_at,"updated_at":suite.updated_at,"repository":payloads::repository(repo,owner),"latest_check_runs_count":count,"check_runs_url":format!("{url}/check-runs"),"app":publisher,"head_commit":head_commit,"pull_requests":pulls(pool,repo,owner,&suite.head_sha).await?,"rerequestable":true,"runs_rerequestable":true}),
-    )
+    let pull_requests = pulls(pool, repo, owner, &suite.head_sha).await?;
+    Ok(suite_value(repo, owner, suite, count, (&status, conclusion.as_deref()), SuiteDocuments { publisher: &publisher, head_commit, pull_requests: &pull_requests }))
+}
+
+struct SuiteDocuments<'a> {
+    publisher: &'a Value,
+    head_commit: &'a Value,
+    pull_requests: &'a Value,
+}
+
+fn suite_value(repo: &Repository, owner: &str, suite: &Suite, count: i64, (status, conclusion): (&str, Option<&str>), documents: SuiteDocuments<'_>) -> Value {
+    let SuiteDocuments { publisher, head_commit, pull_requests } = documents;
+    let url = format!("{}/check-suites/{}", repo_url(owner, &repo.name), suite.id);
+    json!({"id":suite.id,"node_id":super::node_id::encode("CSU",suite.id),"head_sha":suite.head_sha,"head_branch":suite.head_branch,"status":status,"conclusion":conclusion,"url":url,"before":null,"after":null,"created_at":suite.created_at,"updated_at":suite.updated_at,"repository":payloads::repository(repo,owner),"latest_check_runs_count":count,"check_runs_url":format!("{url}/check-runs"),"app":publisher,"head_commit":head_commit,"pull_requests":pull_requests,"rerequestable":true,"runs_rerequestable":true})
 }
 
 /// Uses the bounded head snapshot captured on the store that accepted the publication.
@@ -178,8 +176,8 @@ pub(crate) async fn requested_after_push(
             owner = Some(db::repositories::records::repository_owner_name(pool, repo.id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?);
         }
         if let Some(owner) = &owner {
-            for suite in page.suites {
-                let doc = suite_document_at(pool, repo, owner, &suite, &head_commit).await?;
+            let mut heads = std::collections::HashMap::from([(sha.to_ascii_lowercase(), head_commit.clone())]);
+            for doc in documents::suites_at(pool, repo, owner, &page.suites, &mut heads).await? {
                 emit_for_pool(pool, repo, actor, "check_suite", "requested", doc).await;
             }
         }
@@ -464,29 +462,24 @@ async fn list(
     suites: bool,
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
-    let mut docs = Vec::new();
-    let (count, key) = if suites {
+    let (count, key, docs) = if suites {
         let count = checks::suite_count(&state.pool, repo.id, filter)
             .await
             .map_err(Error::unavailable)?;
-        for suite in checks::suites(&state.pool, repo.id, filter, offset as i64, limit as i64)
+        let rows = checks::suites(&state.pool, repo.id, filter, offset as i64, limit as i64)
             .await
-            .map_err(Error::unavailable)?
-        {
-            docs.push(suite_document(state, repo, owner, &suite).await?);
-        }
-        (count, "check_suites")
+            .map_err(Error::unavailable)?;
+        let docs = documents::suites(state, repo, owner, &rows).await?;
+        (count, "check_suites", docs)
     } else {
         let count = checks::run_count(&state.pool, repo.id, filter)
             .await
             .map_err(Error::unavailable)?;
-        for run in checks::runs(&state.pool, repo.id, filter, offset as i64, limit as i64)
+        let rows = checks::runs(&state.pool, repo.id, filter, offset as i64, limit as i64)
             .await
-            .map_err(Error::unavailable)?
-        {
-            docs.push(run_document(state, repo, owner, &run).await?);
-        }
-        (count, "check_runs")
+            .map_err(Error::unavailable)?;
+        let docs = documents::runs(state, repo, owner, &rows).await?;
+        (count, "check_runs", docs)
     };
     Ok((
         page.headers(uri, count > (offset + limit) as i64)?,

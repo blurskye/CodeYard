@@ -71,10 +71,14 @@ pub fn state(value: &str) -> (&'static str, Option<&'static str>) {
 }
 /// A run's GitHub status and conclusion. A queued run held for approval is waiting.
 pub fn run_state(run: &CiRun) -> (&'static str, Option<&'static str>) {
-    if run.approval_required && run.status == "queued" {
+    state_with_approval(&run.status, run.approval_required)
+}
+
+pub fn state_with_approval(status: &str, approval_required: bool) -> (&'static str, Option<&'static str>) {
+    if approval_required && status == "queued" {
         ("waiting", None)
     } else {
-        state(&run.status)
+        state(status)
     }
 }
 pub fn native_statuses(value: &str) -> Vec<String> {

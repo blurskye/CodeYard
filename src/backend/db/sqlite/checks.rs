@@ -1,5 +1,5 @@
 use crate::backend::db::checks::{
-    Annotation, AutomaticSuites, Credential, Filter, Preference, Refusal, Run, RunChange, RunData, RunPatch, Suite,
+    Annotation, AutomaticSuites, Credential, Filter, Preference, Publisher, Refusal, Run, RunChange, RunData, RunDetails, RunPatch, Suite, SuiteDetails,
 };
 use anyhow::{ensure, Result};
 use sqlx::{types::Json, Sqlite, SqlitePool, Transaction};
@@ -74,23 +74,36 @@ pub async fn recent_app(pool: &SqlitePool, repo: i64, name: &str) -> Result<Opti
         .flatten())
 }
 
-pub async fn application(
-    pool: &SqlitePool,
-    id: i64,
-) -> Result<Option<crate::backend::db::oauth_apps::Application>> {
-    Ok(
-        sqlx::query_as("SELECT * FROM oauth_applications WHERE id=?1")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?,
-    )
+pub async fn publishers(pool: &SqlitePool, ids: &[i64]) -> Result<Vec<Publisher>> {
+    crate::backend::db::checks::projection_ids(ids)?;
+    if ids.is_empty() { return Ok(Vec::new()); }
+    Ok(sqlx::query_as("SELECT a.id,a.client_id,a.name,a.homepage,a.created_at,a.owner_id,u.username AS owner_login,u.is_admin AS owner_is_admin FROM oauth_applications a JOIN users u ON u.id=a.owner_id WHERE a.id IN (SELECT value FROM json_each(?1))").bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
 }
+
+pub async fn run_details(pool: &SqlitePool, repo: i64, ids: &[i64]) -> Result<Vec<RunDetails>> {
+    crate::backend::db::checks::projection_ids(ids)?;
+    if ids.is_empty() { return Ok(Vec::new()); }
+    Ok(sqlx::query_as("SELECT r.id AS run_id,s.*,(SELECT COUNT(*) FROM check_annotations a WHERE a.run_id=r.id) AS annotation_count FROM check_runs r JOIN check_suites s ON s.id=r.suite_id AND s.repo_id=r.repo_id WHERE r.repo_id=?1 AND r.id IN (SELECT value FROM json_each(?2))").bind(repo).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
+}
+
+pub async fn suite_details(pool: &SqlitePool, repo: i64, ids: &[i64]) -> Result<Vec<SuiteDetails>> {
+    crate::backend::db::checks::projection_ids(ids)?;
+    if ids.is_empty() { return Ok(Vec::new()); }
+    Ok(sqlx::query_as("SELECT s.id AS suite_id,(SELECT COUNT(DISTINCT r.name) FROM check_runs r WHERE r.suite_id=s.id AND r.repo_id=s.repo_id) AS run_count,c.status AS ci_status,COALESCE(c.approval_required,FALSE) AS ci_approval_required FROM check_suites s LEFT JOIN ci_runs c ON c.id=s.ci_run_id AND c.repo_id=s.repo_id WHERE s.repo_id=?1 AND s.id IN (SELECT value FROM json_each(?2))").bind(repo).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
+}
+
+pub async fn pulls_many(pool: &SqlitePool, repo: i64, heads: &[String]) -> Result<Vec<crate::backend::db::checks::Pull>> {
+    crate::backend::db::checks::projection_heads(heads)?;
+    if heads.is_empty() { return Ok(Vec::new()); }
+    Ok(sqlx::query_as("WITH heads AS (SELECT DISTINCT value AS sha FROM json_each(?2)) SELECT p.id,p.number,p.head_branch,p.base_branch,p.head_sha,p.base_sha FROM heads h CROSS JOIN pull_requests p WHERE p.id IN (SELECT id FROM pull_requests WHERE repo_id=?1 AND head_sha=h.sha AND state='open' AND head_repo_id=repo_id ORDER BY number LIMIT 100) ORDER BY p.head_sha,p.number").bind(repo).bind(serde_json::to_string(heads)?).fetch_all(pool).await?)
+}
+
 pub async fn pulls(
     pool: &SqlitePool,
     repo: i64,
     sha: &str,
 ) -> Result<Vec<crate::backend::db::checks::Pull>> {
-    Ok(sqlx::query_as("SELECT id,number,head_branch,base_branch,head_sha,base_sha FROM pull_requests WHERE repo_id=?1 AND head_sha=?2 AND state='open' AND head_repo_id=?1 ORDER BY number LIMIT 100").bind(repo).bind(sha).fetch_all(pool).await?)
+    pulls_many(pool, repo, &[sha.to_owned()]).await
 }
 pub async fn suite(pool: &SqlitePool, repo: i64, id: i64) -> Result<Option<Suite>> {
     Ok(
