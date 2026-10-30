@@ -1,4 +1,5 @@
-//! A checked merge retains its policy epoch and cancellation record through Git publication.
+//! A checked merge confirms, right before Git publication, that its policy epoch and auto-merge
+//! consent are still the ones it was judged under.
 use crate::backend::db::DbPool;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -15,20 +16,6 @@ pub struct Snapshot {
     pub auto_merge: Option<AutoMergeIdentity>,
 }
 
-pub enum Lease {
-    Postgres(sqlx::Transaction<'static, sqlx::Postgres>),
-    Sqlite(sqlx::Transaction<'static, sqlx::Sqlite>),
-}
-impl Lease {
-    pub async fn release(self) -> Result<()> {
-        match self {
-            Self::Postgres(tx) => tx.rollback().await?,
-            Self::Sqlite(tx) => tx.rollback().await?,
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
 #[error("Merge policy or auto-merge consent changed before publication")]
 pub struct Changed;
@@ -36,6 +23,9 @@ pub struct Changed;
 native_operation!(crate::backend::db::postgres::pull_requests::merge_policy::revision,
     crate::backend::db::sqlite::pull_requests::merge_policy::revision,
     fn revision(pool: &DbPool, repo: i64) -> Result<i64>);
-native_operation!(crate::backend::db::postgres::pull_requests::merge_policy::retain,
-    crate::backend::db::sqlite::pull_requests::merge_policy::retain,
-    fn retain(pool: &DbPool, repo: i64, expected: &Snapshot) -> Result<Lease>);
+native_operation!(crate::backend::db::postgres::pull_requests::merge_policy::check,
+    crate::backend::db::sqlite::pull_requests::merge_policy::check,
+    /// Fails with [`Changed`] when the repository's policy epoch or the auto-merge consent moved
+    /// since `expected` was read. It holds nothing afterwards: the caller publishes outside any
+    /// transaction.
+    fn check(pool: &DbPool, repo: i64, expected: &Snapshot) -> Result<()>);

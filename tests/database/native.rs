@@ -4841,3 +4841,54 @@ async fn primary_emails_differing_only_in_case_conflict_on_both_engines() {
     postgres.pool.close().await;
     sqlite.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_merge_policy_check_holds_nothing_and_refuses_a_moved_policy_on_both_engines() {
+    use db::pull_requests::merge_policy::{AutoMergeIdentity, Changed, Snapshot};
+    let postgres = PostgresDatabase::new().await;
+    let sqlite = NativeDatabase::new().await;
+    for pool in [&postgres.pool, &sqlite.pool] {
+        let owner = setup(pool, "public").await;
+        let repo = repository(pool, owner.id, "policy").await;
+        let pull = new_pr(pool, repo.id, owner.id, "feature").await;
+        let expected = Snapshot {
+            revision: db::pull_requests::merge_policy::revision(pool, repo.id)
+                .await
+                .unwrap(),
+            auto_merge: None,
+        };
+        db::pull_requests::merge_policy::check(pool, repo.id, &expected)
+            .await
+            .unwrap();
+        // Nothing stays open after the check, so a policy write made while the branch moves
+        // does not wait for Git.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            execute_sql(
+                pool,
+                &format!("UPDATE pull_requests SET is_draft=TRUE WHERE id={}", pull.id),
+            ),
+        )
+        .await
+        .expect("a policy write waited for the merge check");
+        let error = db::pull_requests::merge_policy::check(pool, repo.id, &expected)
+            .await
+            .unwrap_err();
+        assert!(error.is::<Changed>(), "{error:#}");
+        let current = Snapshot {
+            revision: db::pull_requests::merge_policy::revision(pool, repo.id)
+                .await
+                .unwrap(),
+            auto_merge: Some(AutoMergeIdentity {
+                pull_request_id: pull.id,
+                generation: "withdrawn".into(),
+            }),
+        };
+        let error = db::pull_requests::merge_policy::check(pool, repo.id, &current)
+            .await
+            .unwrap_err();
+        assert!(error.is::<Changed>(), "auto-merge consent without a record: {error:#}");
+    }
+    postgres.pool.close().await;
+    sqlite.close().await;
+}

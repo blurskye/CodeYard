@@ -2599,16 +2599,17 @@ impl LocalStore {
             if credential.user_id != actor { return Err(RepoError::write_denied()); }
             crate::backend::repositories::access::check_publication_actor(pool, credential, &repository).await?;
         }
-        // No pool reads while this transaction is retained: in-memory SQLite has one connection.
-        let policy_lease = if let Some(expected) = &policy {
-            Some(db::pull_requests::merge_policy::retain(pool, repo_id, expected).await.map_err(|error| {
+        // The policy the merge was judged under must still hold as the last step before the ref
+        // moves. No transaction is held across the Git process.
+        if let Some(expected) = &policy {
+            db::pull_requests::merge_policy::check(pool, repo_id, expected).await.map_err(|error| {
                 if error.is::<db::pull_requests::merge_policy::Changed>() {
                     RepoError::new(ErrorKind::Conflict, error.to_string())
                 } else {
                     RepoError::authority_unavailable()
                 }
-            })?)
-        } else { None };
+            })?;
+        }
         publication
             .scope(git::publish_merge(
                 self.path(),
@@ -2619,9 +2620,6 @@ impl LocalStore {
             ))
             .await
             .map_err(RepoError::from)?;
-        if let Some(lease) = policy_lease {
-            lease.release().await.map_err(|_| RepoError::applied_followup_failed())?;
-        }
         let followup = self
             .after_ref_change(
                 pool,

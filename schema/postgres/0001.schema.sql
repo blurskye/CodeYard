@@ -4003,7 +4003,8 @@ CREATE INDEX package_blobs_deleting ON package_blobs(digest) WHERE deleting;
 CREATE INDEX package_registry_tokens_expiry ON package_registry_tokens(expires_at);
 CREATE INDEX package_uploads_expiry ON package_uploads(expires_at);
 
--- A publication retains this row after checking the policy revision it evaluated.
+-- Bumped by every write that can change a merge decision. A merge compares it with the revision
+-- it was judged under right before the branch moves.
 CREATE TABLE repository_merge_epochs (
     repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
     version BIGINT NOT NULL DEFAULT 0 CHECK(version>=0)
