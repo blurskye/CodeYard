@@ -111,7 +111,7 @@ async fn candidates(
                 OR EXISTS(SELECT 1 FROM issues i WHERE i.repo_id=t.scope_repository_id AND CAST(i.number AS TEXT)=t.subject_key AND i.author_id=?1)
                 OR EXISTS(SELECT 1 FROM pr_reviews v JOIN pull_requests p ON p.id=v.pull_request_id WHERE p.repo_id=t.scope_repository_id AND CAST(p.number AS TEXT)=t.subject_key AND v.author_id=?1 AND v.state<>'pending')
                 OR EXISTS(SELECT 1 FROM pr_comments c JOIN pull_requests p ON p.id=c.pull_request_id WHERE p.repo_id=t.scope_repository_id AND CAST(p.number AS TEXT)=t.subject_key AND c.author_id=?1 AND NOT EXISTS(SELECT 1 FROM pr_reviews v WHERE v.id=c.review_id AND v.state='pending'))
-                OR EXISTS(SELECT 1 FROM issue_comments c JOIN issues i ON i.id=c.issue_id WHERE i.repo_id=t.scope_repository_id AND CAST(i.number AS TEXT)=t.subject_key AND c.author_id=?1))) OR (t.subject_type='Commit' AND EXISTS(SELECT 1 FROM commit_comments c WHERE c.repo_id=t.scope_repository_id AND c.commit_sha=t.subject_key AND c.author_id=?1)))
+                OR EXISTS(SELECT 1 FROM issue_comments c JOIN issues i ON i.id=c.issue_id WHERE i.repo_id=t.scope_repository_id AND CAST(i.number AS TEXT)=t.subject_key AND c.author_id=?1))) OR (t.subject_type='Commit' AND EXISTS(SELECT 1 FROM commit_comments c WHERE c.repo_id=t.scope_repository_id AND c.sha=t.subject_key AND c.author_id=?1)))
         ORDER BY updated_at DESC,t.id DESC LIMIT ?10 OFFSET ?11
     ) SELECT t.id AS thread_id,t.scope_repository_id,MAX(n.id) AS latest_id,t.updated_at,MAX(n.read_at) AS last_read_at,
              MAX(n.read_at IS NULL AND n.done_at IS NULL)>0 AS unread

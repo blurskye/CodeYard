@@ -44,7 +44,8 @@ pub(super) async fn document(response: Response, operation: &str, expected: u16)
     let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
         .await
         .unwrap();
-    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    let body: Value = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("{operation}: {status} without a JSON body: {error}"));
     assert_eq!(status.as_u16(), expected, "{operation}: {body}");
     assert_github_schema(operation, expected, &body);
     body
