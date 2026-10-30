@@ -228,7 +228,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
 
     // The ban holds the admin and target user locks while waiting for the writer's
     // run. Notifications for either user must still be able to take FK key-share.
-    let (finished_admin, admin_notifications) = tokio::time::timeout(
+    let (finished_admin, admin_notifications, _) = tokio::time::timeout(
         Duration::from_secs(30),
         db::ci::finish_ci_run(
             &fixture.pool,
@@ -247,7 +247,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
     assert_eq!(admin_notifications[0].0, admin);
     gate.commit().await.unwrap();
 
-    let (finished_writer, writer_notifications) =
+    let (finished_writer, writer_notifications, _) =
         tokio::time::timeout(Duration::from_secs(30), finishing)
             .await
             .expect("the target lock must not deadlock CI finish")
@@ -317,7 +317,7 @@ async fn postgres_repository_lock_holder_takes_run_while_ci_finish_waits() {
         .await
         .expect("the run lock must not deadlock with CI finish");
     gate.commit().await.unwrap();
-    let (finished, _) = tokio::time::timeout(Duration::from_secs(30), finishing)
+    let (finished, _, _) = tokio::time::timeout(Duration::from_secs(30), finishing)
         .await
         .expect("CI finish must complete")
         .unwrap()

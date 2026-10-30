@@ -2634,7 +2634,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
     let activity = db::users::accounts::list_admin_activity_points(pool, 7)
         .await
         .unwrap();
-    let emails = db::users::accounts::get_users_by_emails(
+    let mut emails: Vec<_> = db::users::accounts::commit_authors(
         pool,
         &[
             "reader@fixture.invalid".into(),
@@ -2642,7 +2642,11 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
         ],
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_iter()
+    .map(|author| (author.address, author.user.username))
+    .collect();
+    emails.sort();
     let ids = db::users::accounts::get_users_by_ids(pool, &[reader.id, i64::MAX])
         .await
         .unwrap();
@@ -2652,7 +2656,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
         "social":[repo.stars_count,repo.watchers_count,repo.forks_count],"followers":db::following::count_user_followers(pool,owner.id).await.unwrap(),"rule":[rule.required_status_checks,rule.push_allowances],
         "notification":db::notifications::records::list_notifications_for_user(pool,owner.id,10,false).await.unwrap()[0].metadata,"storage":[stats.total_files,stats.total_bytes,stats.avatar_count,stats.uploads_24h,stats.bytes_24h,stats.downloads_24h],
         "summaries":summaries.into_iter().map(|s|(s.username,s.total_files,s.total_bytes,s.commits_total,s.pushes_total,s.contributions_total)).collect::<Vec<_>>(),
-        "activity":activity.into_iter().map(|a|(a.commits,a.pulls_opened,a.pulls_merged,a.issues_opened,a.issues_closed,a.runs,a.daily_storage_bytes,a.cumulative_storage_bytes)).collect::<Vec<_>>(),"emails":emails.into_iter().map(|u|u.username).collect::<Vec<_>>(),"ids":ids.into_iter().map(|u|u.username).collect::<Vec<_>>()})
+        "activity":activity.into_iter().map(|a|(a.commits,a.pulls_opened,a.pulls_merged,a.issues_opened,a.issues_closed,a.runs,a.daily_storage_bytes,a.cumulative_storage_bytes)).collect::<Vec<_>>(),"emails":emails,"ids":ids.into_iter().map(|u|u.username).collect::<Vec<_>>()})
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

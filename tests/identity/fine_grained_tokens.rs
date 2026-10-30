@@ -256,10 +256,15 @@ async fn contract(pg: bool) {
         .permissions
         .contains(&("Repository".into(), "Issues".into(), "write".into())));
     assert!(detail.row.last_used.is_some(), "use is recorded");
-    let View::List { tokens } = model(&browser, BASE).await.view else {
+    let View::List {
+        tokens,
+        next_before,
+    } = model(&browser, BASE).await.view
+    else {
         panic!("the token list");
     };
     assert_eq!(tokens.len(), 1);
+    assert_eq!(next_before, None, "one token fits on the first page");
     assert_eq!(
         (tokens[0].owner.as_str(), tokens[0].status.as_str()),
         ("alice", "approved")

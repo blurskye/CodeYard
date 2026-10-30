@@ -166,6 +166,7 @@ fn collaboration_chrome_refresh_preserves_controlled_values_and_complete_edit_sn
         name: "fixture-repository".into(),
         signed_in: true,
         can_write: true,
+        can_triage: true,
         can_admin: false,
         csrf: "initial-csrf".into(),
         viewer: "fixture-owner".into(),

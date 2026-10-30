@@ -92,12 +92,13 @@ async fn insights_flow(pg: bool) {
     assert!(html.contains("Commits pushed"), "{html}");
 
     // The editor's commits belong to alice's account.
-    let Insights::Contributors { rows } =
+    let Insights::Contributors { rows, omitted } =
         insights(&anonymous, "/alice/proj/insights/contributors").await
     else {
         panic!("not the contributors page");
     };
     assert_eq!(rows.len(), 1);
+    assert_eq!(omitted, 0);
     assert_eq!(
         (rows[0].username.as_deref(), rows[0].commits),
         (Some("alice"), 2)

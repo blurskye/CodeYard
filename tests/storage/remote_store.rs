@@ -237,7 +237,7 @@ async fn direct_branch_merges(
         head_branch: Some("direct-head".into()),
         head: head.into(),
         result: result.clone(),
-        token: None,
+        authority: actor.into(),
     };
     db::repositories::protection::upsert_branch_protection_rule(
         pool,
@@ -1514,6 +1514,7 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
+            None,
             git::objects::ObjectWrite::Blob,
             b"remote object\0",
         )
@@ -1526,6 +1527,7 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
+            None,
             git::objects::ObjectWrite::Blob,
             &large_blob,
         )
@@ -1543,6 +1545,7 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
+            None,
             git::objects::ObjectWrite::Blob,
             &vec![0; git::objects::MAX_BLOB_WRITE_BYTES + 1]
         )
@@ -1554,6 +1557,7 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
+            None,
             git::objects::ObjectWrite::Tree {
                 base_tree: Some(initial.tree_sha.clone()),
                 tree: vec![git::objects::TreeChange {
@@ -1582,6 +1586,7 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
+            None,
             git::objects::ObjectWrite::Commit {
                 message: "Remote detached commit".into(),
                 tree,
@@ -1599,6 +1604,7 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
+            None,
             git::objects::ObjectWrite::Tag {
                 tag: "detached".into(),
                 message: "Remote tag object".into(),
@@ -1633,6 +1639,7 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
+            None,
             git::objects::ObjectWrite::Commit {
                 message: "Signed remote\n".into(),
                 tree: unsigned.tree_sha,
@@ -1666,6 +1673,7 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
+            None,
             git::objects::ObjectWrite::Tag {
                 tag: "signed-remote".into(),
                 message: format!("Signed remote tag\n{signature}"),
@@ -2045,6 +2053,7 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             late_writer.id,
+            None,
             git::objects::ObjectWrite::Blob,
             b"revoked object writer"
         )

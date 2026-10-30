@@ -35,7 +35,7 @@ async fn contract(postgres: bool) {
     let bob_credential = db::users::accounts::OwnedAccountCredential::from(&bob_session);
     let configure = |actor, feature, enabled, consent| {
         let credential = if actor == alice { &alice_credential } else { &bob_credential };
-        records::configure(f.pool(), actor, credential, repo.id, feature, enabled, consent)
+        records::configure(f.pool(), (actor, credential), repo.id, feature, enabled, consent)
     };
     let state = || records::state(f.pool(), repo.id);
     assert!(state().await.unwrap().is_none());

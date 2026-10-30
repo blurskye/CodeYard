@@ -1722,7 +1722,10 @@ async fn deploy_keys_contract(pg: bool) {
         remove_key(
             f.pool(),
             &actor,
-            db::deploy_keys::Credential::Token(read_id),
+            db::deploy_keys::Credential::Token(
+                read_id,
+                tokens::token_hash(reader.strip_prefix("Bearer ").unwrap())
+            ),
             &repo,
             id
         )
@@ -1738,7 +1741,10 @@ async fn deploy_keys_contract(pg: bool) {
         remove_key(
             f.pool(),
             &actor,
-            db::deploy_keys::Credential::Token(token_id),
+            db::deploy_keys::Credential::Token(
+                token_id,
+                tokens::token_hash(writer.strip_prefix("Bearer ").unwrap())
+            ),
             &repo,
             id
         )

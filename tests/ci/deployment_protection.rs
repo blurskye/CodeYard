@@ -61,14 +61,13 @@ async fn app(
     db::github_app_hooks::save(
         f.pool(),
         app.id,
-        &db::webhooks::WebhookFields {
-            username: None,
-            password: None,
-            payload_url: "http://127.0.0.1:1/blocked".into(),
-            content_type: "application/json".into(),
-            events: "deployment_protection_rule".into(),
-            active: true,
-            ssl_verify: true,
+        &db::webhooks::WebhookPatch {
+            payload_url: Some("http://127.0.0.1:1/blocked".into()),
+            content_type: Some("application/json".into()),
+            events: Some("deployment_protection_rule".into()),
+            active: Some(true),
+            ssl_verify: Some(true),
+            ..Default::default()
         },
         None,
         false,
@@ -118,7 +117,6 @@ async fn enqueue(f: &Database, repo: i64, actor: i64, attempt: Option<&CiRun>) -
                 source: source.id,
                 source_uuid: source.run_id,
                 credential: None,
-                authority: None,
                 allow_active: false,
                 selection: db::ci::CiReplaySelection::All,
                 definition: None,

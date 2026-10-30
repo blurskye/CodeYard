@@ -116,6 +116,7 @@ async fn main() {
             &pool,
             Some(&encryptor),
             owner,
+            &credential,
             org.id,
             &db::organization_values::Save {
                 kind,

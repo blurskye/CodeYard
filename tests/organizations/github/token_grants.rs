@@ -291,8 +291,10 @@ async fn contract(pg: bool) {
     );
     assert!(!db::fine_grained_tokens::set_policy(
         f.pool(),
-        erin,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), erin).await),
+        (
+            erin,
+            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), erin).await),
+        ),
         org,
         &db::fine_grained_tokens::policy(f.pool(), org).await.unwrap()
     )

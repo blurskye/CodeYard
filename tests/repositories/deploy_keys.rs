@@ -282,7 +282,7 @@ async fn keys_api_and_forms(pg: bool) {
         )
         .await;
     assert!(reply.status.is_redirection(), "{}", reply.text());
-    let rows = db::deploy_keys::list_deploy_keys(database.pool(), owner, repo, &alice.session, 0, 100)
+    let rows = db::deploy_keys::list_deploy_keys(database.pool(), owner.id, repo, &alice.session, 0, 100)
         .await
         .unwrap();
     assert!(rows.is_empty(), "the form deleted the key");

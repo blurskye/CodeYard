@@ -187,7 +187,7 @@ async fn proposals(pg: bool) {
         &w.ci,
         &w.broadcaster,
         w.owner,
-        ("alice".into(), "deps".into(), actual.number),
+        (actual.repo_id, actual.number),
         UpdatePullRequestRequest {
             expected_state: actual.state.clone(),
             expected_updated: actual.updated_at.to_rfc3339(),

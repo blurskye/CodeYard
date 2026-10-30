@@ -593,8 +593,8 @@ async fn vulnerability_contract(pg: bool) {
     vulnerabilities::scan(&state, &f.repository(repo_id).await, generation)
         .await
         .unwrap();
-    let reader = db::dependency_graph::Reader::Viewer(Some(owner.into()));
-    let saved = db::dependency_graph::snapshots(f.pool(), &reader, repo_id, None, Some(&initial_commit))
+    let viewer = db::dependency_graph::Reader::Viewer(Some(owner.into()));
+    let saved = db::dependency_graph::snapshots(f.pool(), &viewer, repo_id, None, Some(&initial_commit))
         .await
         .unwrap();
     assert_eq!(saved.len(), 1);
@@ -609,7 +609,7 @@ async fn vulnerability_contract(pg: bool) {
     db::vulnerabilities::save_snapshot(f.pool(), repo_id, generation, &stale)
         .await
         .unwrap();
-    let latest = db::dependency_graph::snapshots(f.pool(), &reader, repo_id, None, Some(&initial_commit))
+    let latest = db::dependency_graph::snapshots(f.pool(), &viewer, repo_id, None, Some(&initial_commit))
         .await
         .unwrap();
     assert_eq!(latest[0].manifests["Cargo.lock"].resolved.len(), 1);

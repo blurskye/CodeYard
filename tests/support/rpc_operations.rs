@@ -17,7 +17,6 @@ fn prepared(sha: &str) -> codeyard::backend::repositories::store::PreparedFile {
         reference: "refs/heads/main".into(),
         expected: Some(sha.into()),
         web_commit: false,
-        token_id: None,
         new_branch: false,
         commit: CommitInfo {
             sha: sha.into(),
@@ -153,10 +152,17 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::GitTree {
                 revision: sha.into(),
                 recursive: true,
+                raw_json: false,
             },
             false,
         ),
-        (Operation::GitTag { sha: sha.into() }, false),
+        (
+            Operation::GitTag {
+                sha: sha.into(),
+                raw_json: false,
+            },
+            false,
+        ),
         (Operation::GitObjectKind { sha: sha.into() }, false),
         (Operation::IntroducedBlobs { sha: sha.into() }, false),
         (
@@ -186,6 +192,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::TemplateTexts {
                 revision: "main".into(),
                 paths: vec![".github/ISSUE_TEMPLATE.md".into()],
+                raw_json: false,
             },
             false,
         ),
@@ -250,7 +257,6 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 head_ref: "main".into(),
                 offset: 0,
                 limit: 10,
-                offset: 0,
                 raw_json: false,
                 pull_request: false,
             },
@@ -425,7 +431,6 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                     reference: "refs/heads/main".into(),
                     expected: Some(sha.into()),
                     web_commit: false,
-                    token_id: None,
                     new_branch: false,
                     commit: codeyard::backend::repositories::store::CommitInfo {
                         sha: sha.into(),
@@ -538,7 +543,8 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 base: sha.into(),
                 result: sha.into(),
                 method: MergeMethod::Merge,
-                authorization: Default::default(),
+                token: None,
+                policy: None,
             },
             false,
         ),
@@ -561,7 +567,8 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 base_branch: "main".into(),
                 base: sha.into(),
                 result: sha.into(),
-                authorization: Default::default(),
+                token: None,
+                policy: None,
             },
             false,
         ),

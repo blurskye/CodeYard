@@ -1562,6 +1562,7 @@ async fn object_names_cannot_leave_the_object_directory() {
     let local = LocalStore::open(&fixture.state_path().join("objects"))
         .await
         .unwrap();
+    let objects = ObjectStore::open(&fixture.state_path(), None).await.unwrap();
     for key in [
         "../outside",
         "uploads/../../outside",
@@ -1580,8 +1581,8 @@ async fn object_names_cannot_leave_the_object_directory() {
         assert!(local.delete(key).await.is_err(), "delete {key:?}");
         assert!(local.verify(&upload).await.is_err(), "verify {key:?}");
         assert!(
-            local
-                .put(&upload, Cursor::new(b"do not change"))
+            objects
+                .put_bytes(&upload, b"do not change".to_vec())
                 .await
                 .is_err(),
             "put {key:?}"
