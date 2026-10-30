@@ -3346,7 +3346,7 @@ async fn postgres_list_projections_and_owned_notification_listener() {
         .unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            if listener.recv().await.unwrap() == payload {
+            if listener.recv().await.unwrap().as_deref() == Some(payload.as_str()) {
                 break;
             }
         }
