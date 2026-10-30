@@ -94,10 +94,10 @@ native_operation!(crate::backend::db::postgres::organizations::invitations::set_
 native_operation!(crate::backend::db::postgres::organizations::invitations::list_organization_invitations, crate::backend::db::sqlite::organizations::invitations::list_organization_invitations,
     fn list_organization_invitations(pool: &DbPool, actor: i64, org: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<OrgInvitation>>>);
 native_operation!(crate::backend::db::postgres::organizations::invitations::cancel_organization_invitation, crate::backend::db::sqlite::organizations::invitations::cancel_organization_invitation,
-    fn cancel_organization_invitation(pool: &DbPool, actor: i64, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
+    fn cancel_organization_invitation(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
 native_operation!(crate::backend::db::postgres::organizations::invitations::list_received_organization_invitations, crate::backend::db::sqlite::organizations::invitations::list_received_organization_invitations,
     fn list_received_organization_invitations(pool: &DbPool, actor: i64, page: OrganizationPage) -> Result<Vec<ReceivedInvitation>>);
 native_operation!(crate::backend::db::postgres::organizations::invitations::accept_organization_invitation, crate::backend::db::sqlite::organizations::invitations::accept_organization_invitation,
     fn accept_organization_invitation(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, invitation: Option<i64>) -> Result<OrganizationOutcome<OrgMembership>>);
 native_operation!(crate::backend::db::postgres::organizations::invitations::decline_organization_invitation, crate::backend::db::sqlite::organizations::invitations::decline_organization_invitation,
-    fn decline_organization_invitation(pool: &DbPool, actor: i64, org: i64, invitation: Option<i64>) -> Result<OrganizationOutcome<()>>);
+    fn decline_organization_invitation(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, invitation: Option<i64>) -> Result<OrganizationOutcome<()>>);

@@ -161,7 +161,7 @@ async fn mutate(
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     let result = match changes(&form) {
-        Ok(input) => data::change(&ctx.state.pool, actor, org, &input).await,
+        Ok(input) => data::change(&ctx.state.pool, ctx.database_actor(actor), org, &input).await,
         Err(error) => {
             return organization::respond(
                 &ctx,

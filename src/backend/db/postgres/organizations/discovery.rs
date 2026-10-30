@@ -66,12 +66,17 @@ pub async fn list_membership_states(
 
 pub async fn set_membership_public(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     public: bool,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     require_org!(tx, actor, org);
+    if !credential(&mut tx, &grant, org, "members").await? {
+        return Ok(Denied);
+    }
     sqlx::query("UPDATE org_memberships SET is_public=$3 WHERE org_id=$1 AND user_id=$2")
         .bind(org)
         .bind(actor)

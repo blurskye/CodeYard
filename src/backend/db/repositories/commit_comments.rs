@@ -13,8 +13,8 @@ pub enum CommentRefusal {
 }
 
 pub struct CommentCreate<'a> {
-    pub actor_id: i64,
-    pub token_id: Option<i64>,
+    /// The caller and the session or token it signed in with.
+    pub actor: crate::backend::db::credentials::Actor,
     pub repo_id: i64,
     pub sha: &'a str,
     pub body: &'a str,
@@ -24,8 +24,8 @@ pub struct CommentCreate<'a> {
 }
 
 pub struct CommentEdit<'a> {
-    pub actor_id: i64,
-    pub token_id: Option<i64>,
+    /// The caller and the session or token it signed in with.
+    pub actor: crate::backend::db::credentials::Actor,
     pub repo_id: i64,
     pub id: i64,
     pub body: &'a str,

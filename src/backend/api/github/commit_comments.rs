@@ -179,8 +179,7 @@ async fn item(
         state.cluster.as_ref(),
         &state.notification_broadcaster,
         records::CommentEdit {
-            actor_id: actor.user_id,
-            token_id: actor.token_id(),
+            actor,
             repo_id: repo.id,
             id,
             body: &input.body,

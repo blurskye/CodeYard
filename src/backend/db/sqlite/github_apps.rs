@@ -294,10 +294,8 @@ pub async fn change_repository(
     let Some((all_repos, org)) = installation else {
         return Ok(RepositoryChange::Missing);
     };
-    if let Some(token) = credential.token_id() {
-        if !super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "administration").await? {
-            return Ok(RepositoryChange::Missing);
-        }
+    if !super::credentials::writes(&mut tx, &credential, Some(repo), None, "administration").await? {
+        return Ok(RepositoryChange::Missing);
     }
     if all_repos {
         return Ok(RepositoryChange::AllRepositories);

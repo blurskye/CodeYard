@@ -147,16 +147,16 @@ pub(super) async fn apply(
     use super::{membership::target, organization::unit};
     let pool = &ctx.state.pool;
     let result = match command {
-        Command::Create(input) => organizations::create_organization_team(pool, actor, org, &input)
+        Command::Create(input) => organizations::create_organization_team(pool, ctx.database_actor(actor), org, &input)
             .await
             .map(unit),
         Command::Edit { team, profile } => {
-            organizations::update_organization_team(pool, actor, org, team, &profile)
+            organizations::update_organization_team(pool, ctx.database_actor(actor), org, team, &profile)
                 .await
                 .map(unit)
         }
         Command::Delete { team } => {
-            organizations::delete_organization_team(pool, actor, org, team).await
+            organizations::delete_organization_team(pool, ctx.database_actor(actor), org, team).await
         }
         Command::AddMember {
             team,
@@ -168,13 +168,13 @@ pub(super) async fn apply(
             };
             match organizations::get_organization_role(pool, user, org).await {
                 Ok(OrganizationOutcome::Applied(_)) => {
-                    organizations::add_organization_team_member(pool, actor, org, team, user, role)
+                    organizations::add_organization_team_member(pool, ctx.database_actor(actor), org, team, user, role)
                         .await
                         .map(unit)
                 }
                 Ok(_) => {
                     let result =
-                        organizations::invite_team_member(pool, actor, org, team, user, role).await;
+                        organizations::invite_team_member(pool, ctx.database_actor(actor), org, team, user, role).await;
                     if let Ok(OrganizationOutcome::Applied(invitation)) = &result {
                         crate::backend::notifications::create::organization_invitation(
                             pool,
@@ -190,19 +190,19 @@ pub(super) async fn apply(
             }
         }
         Command::RemoveMember { team, user } => {
-            organizations::remove_organization_team_member(pool, actor, org, team, user).await
+            organizations::remove_organization_team_member(pool, ctx.database_actor(actor), org, team, user).await
         }
         Command::Grant {
             team,
             repo,
             permission,
         } => organizations::grant_organization_team_repository(
-            pool, actor, org, team, repo, permission,
+            pool, ctx.database_actor(actor), org, team, repo, permission,
         )
         .await
         .map(unit),
         Command::Revoke { team, repo } => {
-            organizations::revoke_organization_team_repository(pool, actor, org, team, repo).await
+            organizations::revoke_organization_team_repository(pool, ctx.database_actor(actor), org, team, repo).await
         }
     };
     result.map_err(|error| if error.is::<InvalidTeamParent>() {

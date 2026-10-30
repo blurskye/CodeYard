@@ -58,14 +58,19 @@ pub async fn check(
 }
 pub async fn change(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
     blocked: bool,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
+        return Ok(Denied);
+    }
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE id=$1 FOR UPDATE")

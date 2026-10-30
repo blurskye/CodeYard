@@ -84,13 +84,15 @@ async fn manages_team(c: &mut sqlx::SqliteConnection, actor: i64, org: i64, team
 
 pub async fn create_organization_team(
     pool: &SqlitePool,
-    actor: impl Into<TeamActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     input: &NewTeam,
 ) -> Result<OrganizationOutcome<Team>> {
-    let TeamActor { user: actor, token } = actor.into();
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
     if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
     if !administers(role) {
         return Ok(Denied);
@@ -134,14 +136,16 @@ pub async fn create_organization_team(
 }
 pub async fn update_organization_team(
     pool: &SqlitePool,
-    actor: impl Into<TeamActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     team: i64,
     input: &TeamProfile,
 ) -> Result<OrganizationOutcome<Team>> {
-    let TeamActor { user: actor, token } = actor.into();
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
     if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
     if !manages_team(&mut tx, actor, org, team, role).await? { return Ok(Denied); }
     let Some(current) = scoped_team(&mut tx, org, team).await? else {
@@ -205,13 +209,15 @@ pub async fn update_organization_team(
 }
 pub async fn delete_organization_team(
     pool: &SqlitePool,
-    actor: impl Into<TeamActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     team: i64,
 ) -> Result<OrganizationOutcome<()>> {
-    let TeamActor { user: actor, token } = actor.into();
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
     if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
     if !manages_team(&mut tx, actor, org, team, role).await? { return Ok(Denied); }
     if scoped_team(&mut tx, org, team).await?.is_none() {
@@ -310,15 +316,17 @@ async fn list_members(pool: &SqlitePool, actor: i64, org: i64, team: i64, page: 
 }
 pub async fn add_organization_team_member(
     pool: &SqlitePool,
-    actor: impl Into<TeamActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     team: i64,
     target: i64,
     role: TeamRole,
 ) -> Result<OrganizationOutcome<TeamMembership>> {
-    let TeamActor { user: actor, token } = actor.into();
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let actor_role = require_org!(tx, actor, org);
+    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
     if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
     if !manages_team(&mut tx, actor, org, team, actor_role).await? { return Ok(Denied); }
     if !active(&mut tx, target).await? {
@@ -341,14 +349,16 @@ pub async fn add_organization_team_member(
 }
 pub async fn remove_organization_team_member(
     pool: &SqlitePool,
-    actor: impl Into<TeamActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     team: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
-    let TeamActor { user: actor, token } = actor.into();
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
     if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
     if !manages_team(&mut tx, actor, org, team, role).await? { return Ok(Denied); }
     // Exact scoped cleanup, not a grant: target activity/org role is irrelevant.
@@ -378,15 +388,17 @@ pub async fn remove_organization_team_member(
 }
 pub async fn grant_organization_team_repository(
     pool: &SqlitePool,
-    actor: impl Into<TeamActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     team: i64,
     repo: i64,
     permission: TeamRepositoryPermission,
 ) -> Result<OrganizationOutcome<TeamRepoAccess>> {
-    let TeamActor { user: actor, token } = actor.into();
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
     if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? || !super::super::users::tokens::repository_write_on(&mut tx, token, actor, repo, "administration").await? { return Ok(Denied); } }
     if !administers(role) {
         return Ok(Denied);
@@ -414,14 +426,16 @@ pub async fn grant_organization_team_repository(
 }
 pub async fn revoke_organization_team_repository(
     pool: &SqlitePool,
-    actor: impl Into<TeamActor>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     team: i64,
     repo: i64,
 ) -> Result<OrganizationOutcome<()>> {
-    let TeamActor { user: actor, token } = actor.into();
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
     if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? || !super::super::users::tokens::repository_write_on(&mut tx, token, actor, repo, "administration").await? { return Ok(Denied); } }
     if !administers(role) {
         return Ok(Denied);

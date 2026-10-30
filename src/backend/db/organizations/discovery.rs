@@ -24,4 +24,4 @@ native_operation!(crate::backend::db::postgres::organizations::discovery::list_v
 native_operation!(crate::backend::db::postgres::organizations::discovery::list_membership_states, crate::backend::db::sqlite::organizations::discovery::list_membership_states,
     fn list_membership_states(pool: &DbPool, actor: i64, org: Option<i64>, target: i64, state: Option<&str>, window: (i64, i64)) -> Result<Vec<MembershipState>>);
 native_operation!(crate::backend::db::postgres::organizations::discovery::set_membership_public, crate::backend::db::sqlite::organizations::discovery::set_membership_public,
-    fn set_membership_public(pool: &DbPool, actor: i64, org: i64, public: bool) -> Result<OrganizationOutcome<()>>);
+    fn set_membership_public(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, public: bool) -> Result<OrganizationOutcome<()>>);

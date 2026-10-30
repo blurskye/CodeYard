@@ -3,11 +3,11 @@ use crate::backend::db::labels::{bounded_label_ids, ItemLabel, LabelTarget, Labe
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
 
-async fn begin_label_write(
-    pool: &PgPool,
+async fn begin_label_write<'a>(
+    pool: &'a PgPool,
     actor: &crate::backend::db::credentials::Actor,
     repo_id: i64,
-) -> Result<Transaction<'_, Postgres>> {
+) -> Result<Transaction<'a, Postgres>> {
     let mut tx = pool.begin().await?;
     // CI singleton FIRST, before any issue/label lock. Retain authority to commit. Catalog
     // writers queue on the repository row, so a name check holds until the commit.
@@ -39,11 +39,11 @@ async fn ensure_name_free(
 }
 
 /// Labels on an issue or pull request need triage authority; the label catalog needs write.
-async fn begin_item_label_write(
-    pool: &PgPool,
+async fn begin_item_label_write<'a>(
+    pool: &'a PgPool,
     actor: &crate::backend::db::credentials::Actor,
     repo_id: i64,
-) -> Result<Transaction<'_, Postgres>> {
+) -> Result<Transaction<'a, Postgres>> {
     let mut tx = pool.begin().await?;
     // CI singleton FIRST, before any issue/label lock. Retain authority to commit.
     anyhow::ensure!(

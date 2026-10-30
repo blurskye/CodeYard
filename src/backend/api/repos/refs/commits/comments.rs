@@ -365,7 +365,7 @@ pub(super) async fn submit(
             if route.as_str().ends_with("/delete") {
                 comments::delete(
                     &ctx.state.pool,
-                    actor,
+                    ctx.database_actor(actor),
                     loaded.repository.id,
                     id,
                     Some(&draft.revision),
@@ -378,8 +378,7 @@ pub(super) async fn submit(
                     ctx.state.cluster.as_ref(),
                     &ctx.state.notification_broadcaster,
                     records::CommentEdit {
-                        actor_id: actor,
-                        token_id: None,
+                        actor: ctx.database_actor(actor),
                         repo_id: loaded.repository.id,
                         id,
                         body: &draft.body,
@@ -394,7 +393,7 @@ pub(super) async fn submit(
                 &ctx.state.pool,
                 ctx.state.cluster.as_ref(),
                 &ctx.state.notification_broadcaster,
-                actor,
+                ctx.database_actor(actor),
                 loaded.repository.id,
                 sha,
                 comments::CreateComment {

@@ -415,8 +415,7 @@ pub async fn create(
     let comment = records::create_comment(
         pool,
         CommentCreate {
-            actor_id: actor,
-            token_id: credential.token_id(),
+            actor: credential,
             repo_id: repo,
             sha: &commit.sha,
             body: &input.body,
@@ -449,7 +448,7 @@ pub async fn edit(
     broadcaster: &NotificationBroadcaster,
     input: CommentEdit<'_>,
 ) -> Result<CommentDetails> {
-    let (user, repository, owner) = writable(pool, input.actor_id, input.repo_id).await?;
+    let (user, repository, owner) = writable(pool, input.actor.user_id, input.repo_id).await?;
     let previous = records::get_comment(pool, input.repo_id, input.id)
         .await
         .map_err(|_| CommentError::Unavailable)?

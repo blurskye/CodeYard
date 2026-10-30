@@ -181,7 +181,7 @@ pub(super) async fn apply(
 ) -> anyhow::Result<OrganizationOutcome<()>> {
     roles::change(
         &ctx.state.pool,
-        actor,
+        ctx.database_actor(actor),
         org,
         &command.target,
         command.role,

@@ -348,7 +348,7 @@ pub async fn invitation_team_counts(
 
 pub async fn cancel_organization_invitation(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
@@ -510,11 +510,16 @@ pub async fn accept_organization_invitation(
 /// Declines `invitation`, or every offer from the organization when it is `None`.
 pub async fn decline_organization_invitation(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
     let sql = format!("DELETE FROM email_outbox WHERE organization_invitation_id IN (SELECT i.id FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=?2 AND (?3 IS NULL OR i.id=?3))");
     sqlx::query(&sql)
         .bind(actor)

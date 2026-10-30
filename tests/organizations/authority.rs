@@ -3070,7 +3070,54 @@ async fn removal_and_acceptance_race_leaves_no_member(database: &Database) {
     }
 }
 
+/// Native organization writes recheck the browser session inside their transaction, so a
+/// signed-out session cannot finish a membership, team, block or invitation change.
+async fn ended_sessions_cannot_manage_the_organization(database: &Database) {
+    use db::credentials::Actor;
+    let owner = database.actor("ended_session_owner").await;
+    let member = database.actor("ended_session_member").await;
+    let invitee = database.actor("ended_session_invitee").await;
+    let outsider = database.actor("ended_session_outsider").await;
+    let org = database.org(owner, "ended_session_org").await;
+    applied(add_organization_member(&database.pool, owner, org.id, member, OrgRole::Member).await.unwrap());
+    applied(invite_organization_member(&database.pool, owner, org.id, invitee, OrgRole::Member).await.unwrap());
+    let team = database.team(owner, org.id, "ended-session-team", TeamPrivacy::Visible).await;
+    let expires = chrono::Utc::now() + chrono::Duration::hours(1);
+    for (id, user) in [("ended_owner", owner), ("ended_invitee", invitee), ("live_owner", owner)] {
+        db::users::sessions::create_session(&database.pool, id, user, None, None, expires).await.unwrap();
+    }
+    for id in ["ended_owner", "ended_invitee"] {
+        db::users::sessions::delete_session(&database.pool, id).await.unwrap();
+    }
+    let ended = || Actor::from((owner, "ended_owner".to_string()));
+    let pool = &database.pool;
+    assert!(matches!(update_organization_member_role(pool, ended(), org.id, member, OrgRole::Admin).await.unwrap(), Denied));
+    assert!(matches!(remove_organization_member(pool, ended(), org.id, member).await.unwrap(), Denied));
+    assert!(matches!(discovery::set_membership_public(pool, ended(), org.id, true).await.unwrap(), Denied));
+    assert!(matches!(blocks::change(pool, ended(), org.id, outsider, true).await.unwrap(), Denied));
+    assert!(matches!(add_organization_team_member(pool, ended(), org.id, team.id, member, TeamRole::Member).await.unwrap(), Denied));
+    assert!(matches!(invite_team_member(pool, ended(), org.id, team.id, outsider, TeamRole::Member).await.unwrap(), Denied));
+    assert!(matches!(cancel_organization_invitation(pool, ended(), org.id, invitee).await.unwrap(), Denied));
+    assert!(matches!(
+        decline_organization_invitation(pool, Actor::from((invitee, "ended_invitee".to_string())), org.id, None).await.unwrap(),
+        Denied
+    ));
+    for (sql, ids, expected) in [
+        ("SELECT COUNT(*) FROM org_memberships WHERE org_id=$1 AND user_id=$2 AND role='member'", [org.id, member], 1),
+        ("SELECT COUNT(*) FROM org_memberships WHERE org_id=$1 AND user_id=$2 AND is_public", [org.id, owner], 0),
+        ("SELECT COUNT(*) FROM organization_blocks WHERE org_id=$1 AND user_id=$2", [org.id, outsider], 0),
+        ("SELECT COUNT(*) FROM team_memberships WHERE team_id=$1 AND user_id=$2", [team.id, member], 0),
+        ("SELECT COUNT(*) FROM organization_invitations WHERE org_id=$1 AND user_id=$2", [org.id, invitee], 1),
+        ("SELECT COUNT(*) FROM organization_invitations WHERE org_id=$1 AND user_id=$2", [org.id, outsider], 0),
+    ] {
+        assert_eq!(database.count(sql, &ids).await, expected, "{sql}");
+    }
+    // The owner's other, live session still works.
+    applied(discovery::set_membership_public(pool, Actor::from((owner, "live_owner".to_string())), org.id, true).await.unwrap());
+}
+
 async fn native_suite(database: &Database) {
+    ended_sessions_cannot_manage_the_organization(database).await;
     removal_and_acceptance_race_leaves_no_member(database).await;
     atomic_creation_safe_metadata_namespace_and_validation(database).await;
     owner_admin_member_rules_and_inactive_actors(database).await;

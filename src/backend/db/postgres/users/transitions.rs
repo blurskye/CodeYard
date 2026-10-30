@@ -153,7 +153,7 @@ async fn require_account_with_mode(
 
 /// The caller retains account/role authority before locking its originating credential.
 pub(crate) async fn credential_live(
-    tx: &mut Transaction<'_, Postgres>, actor: i64,
+    tx: &mut sqlx::PgConnection, actor: i64,
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>, write: bool,
 ) -> Result<bool> {
     use crate::backend::db::users::accounts::AccountCredential;
@@ -162,17 +162,17 @@ pub(crate) async fn credential_live(
         AccountCredential::Token(id, hash) => {
             // Installation revocation takes this row before deleting its personal tokens.
             let _: Option<i64> = sqlx::query_scalar("SELECT i.id FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id WHERE t.token_id=$1 FOR SHARE OF i")
-                .bind(id).fetch_optional(&mut **tx).await?;
+                .bind(id).fetch_optional(&mut *tx).await?;
             // A token issued to an OAuth app ends with that app's availability.
             let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "$5");
             let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar(&format!("SELECT t.expires_at FROM personal_access_tokens t WHERE t.id=$1 AND t.user_id=$2 AND (NOT $4 OR t.scope='write') AND t.token_hash=$3 AND {issuer} FOR SHARE OF t"))
-                .bind(id).bind(actor).bind(hash).bind(write).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(&mut **tx).await?;
+                .bind(id).bind(actor).bind(hash).bind(write).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(&mut *tx).await?;
             match expiry {
                 Some(None) => true,
                 Some(Some(expiry)) => {
                     sqlx::query_scalar("SELECT $1::timestamptz>clock_timestamp()")
                         .bind(expiry)
-                        .fetch_one(&mut **tx)
+                        .fetch_one(&mut *tx)
                         .await?
                 }
                 None => false,

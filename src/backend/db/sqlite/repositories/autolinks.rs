@@ -11,9 +11,7 @@ async fn admin(tx: &mut Transaction<'_, Sqlite>, actor: impl Into<crate::backend
     };
     anyhow::ensure!(allowed, Refusal::Denied);
     if write {
-        if let Some(token) = credential.token_id() {
-            anyhow::ensure!(super::super::users::tokens::permits_write(&mut *tx, actor, token, Some(repo), None, "administration").await?, Refusal::Denied);
-        }
+        anyhow::ensure!(super::super::credentials::writes(tx, &credential, Some(repo), None, "administration").await?, Refusal::Denied);
     }
     Ok(())
 }

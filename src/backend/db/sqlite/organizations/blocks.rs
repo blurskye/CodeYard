@@ -58,13 +58,18 @@ pub async fn check(
 }
 pub async fn change(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
     blocked: bool,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
+        return Ok(Denied);
+    }
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1)")

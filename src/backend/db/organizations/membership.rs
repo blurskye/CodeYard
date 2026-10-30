@@ -11,9 +11,9 @@ native_operation!(crate::backend::db::postgres::organizations::membership::add_o
     fn add_organization_member(pool: &DbPool, actor: i64, org: i64, target: i64, role: OrgRole) -> Result<OrganizationOutcome<OrgMembership>>);
 // Inactive owners and admins may only be downgraded to member, and only by an active owner.
 native_operation!(crate::backend::db::postgres::organizations::membership::update_organization_member_role, crate::backend::db::sqlite::organizations::membership::update_organization_member_role,
-    fn update_organization_member_role(pool: &DbPool, actor: i64, org: i64, target: i64, role: OrgRole) -> Result<OrganizationOutcome<OrgMembership>>);
+    fn update_organization_member_role(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, target: i64, role: OrgRole) -> Result<OrganizationOutcome<OrgMembership>>);
 native_operation!(crate::backend::db::postgres::organizations::membership::remove_organization_member, crate::backend::db::sqlite::organizations::membership::remove_organization_member,
-    fn remove_organization_member(pool: &DbPool, actor: i64, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
+    fn remove_organization_member(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, target: i64) -> Result<OrganizationOutcome<()>>);
 
 // The viewer's own role, which chooses the controls a page shows. Every write rechecks it.
 native_operation!(crate::backend::db::postgres::organizations::membership::get_organization_role, crate::backend::db::sqlite::organizations::membership::get_organization_role,

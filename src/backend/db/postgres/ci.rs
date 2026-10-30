@@ -1123,9 +1123,7 @@ pub async fn delete_ci_run_data(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         CiAdmissionRefusal::Denied("CI run deletion permission denied")
     );
-    if let Some(token) = credential.token_id() {
-        ensure!(super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "actions").await?, CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
-    }
+    ensure!(super::credentials::writes(&mut tx, &credential, Some(repo), None, "actions").await?, CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
     let statuses: Vec<(i64, String)> = sqlx::query_as("SELECT id,status FROM ci_runs WHERE repo_id=$1 AND COALESCE(workflow_run_id,id)=$2 ORDER BY id FOR UPDATE").bind(repo).bind(id).fetch_all(&mut *tx).await?;
     if statuses.is_empty() {
         return Ok(false);

@@ -8,10 +8,7 @@ use OrganizationOutcome::{Applied, Denied, Missing, Suspended};
 
 /// Revalidate the initiating credential inside the same immediate transaction as the write.
 pub(super) async fn credential(connection: &mut SqliteConnection, actor: &crate::backend::db::credentials::Actor, org: i64, permission: &str) -> Result<bool> {
-    match actor.token_id() {
-        Some(token) => super::super::users::tokens::permits_write(connection, actor.user_id, token, None, Some(org), permission).await,
-        None => Ok(true),
-    }
+    super::super::credentials::writes(connection, actor, None, Some(org), permission).await
 }
 
 pub(super) async fn begin(pool: &SqlitePool) -> Result<Transaction<'_, Sqlite>> {

@@ -91,7 +91,7 @@ pub async fn add_organization_member(
 }
 pub async fn update_organization_member_role(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
     role: OrgRole,
@@ -167,7 +167,7 @@ async fn update_member_role(
 }
 pub async fn remove_organization_member(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {

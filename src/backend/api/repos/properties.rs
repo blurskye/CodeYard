@@ -175,7 +175,7 @@ pub(super) async fn form(
         value,
     };
     let outcome =
-        data::set_repository_value(&ctx.state.pool, actor, loaded.repository.id, id, &input).await;
+        data::set_repository_value(&ctx.state.pool, ctx.database_actor(actor), loaded.repository.id, id, &input).await;
     let (status, message) = match outcome {
         Ok(()) => {
             return ctx.redirect(&format!(

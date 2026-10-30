@@ -88,7 +88,7 @@ async fn require_account_with_mode(
 }
 
 pub(crate) async fn credential_live(
-    tx: &mut Transaction<'_, Sqlite>, actor: i64,
+    tx: &mut sqlx::SqliteConnection, actor: i64,
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>, write: bool,
 ) -> Result<bool> {
     use crate::backend::db::users::accounts::AccountCredential;
@@ -98,7 +98,7 @@ pub(crate) async fn credential_live(
             // A token issued to an OAuth app ends with that app's availability.
             let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "?5");
             sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM personal_access_tokens t WHERE t.id=?1 AND t.user_id=?2 AND (NOT ?4 OR t.scope='write') AND t.token_hash=?3 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND {issuer})"))
-                .bind(id).bind(actor).bind(hash).bind(write).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_one(&mut **tx).await?
+                .bind(id).bind(actor).bind(hash).bind(write).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_one(&mut *tx).await?
         }
     })
 }

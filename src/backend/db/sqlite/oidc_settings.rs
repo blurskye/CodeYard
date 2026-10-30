@@ -18,13 +18,11 @@ async fn authorize(tx: &mut Transaction<'_, Sqlite>, actor: impl Into<crate::bac
         }
     };
     ensure!(allowed, Refusal::Denied);
-    if let Some(token) = credential.token_id() {
-        let (repo, org, permission) = match scope {
-            Scope::Repository(repo) => (Some(repo), None, "administration"),
-            Scope::Organization(org) => (None, Some(org), "organization_administration"),
-        };
-        ensure!(super::users::tokens::permits_write(tx, actor, token, repo, org, permission).await?, Refusal::Denied);
-    }
+    let (repo, org, permission) = match scope {
+        Scope::Repository(repo) => (Some(repo), None, "administration"),
+        Scope::Organization(org) => (None, Some(org), "organization_administration"),
+    };
+    ensure!(super::credentials::writes(tx, &credential, repo, org, permission).await?, Refusal::Denied);
     Ok(())
 }
 

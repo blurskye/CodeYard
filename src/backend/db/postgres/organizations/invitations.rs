@@ -337,7 +337,7 @@ pub async fn invitation_team_counts(
 
 pub async fn cancel_organization_invitation(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
@@ -510,11 +510,16 @@ pub async fn accept_organization_invitation(
 /// Declines `invitation`, or every offer from the organization when it is `None`.
 pub async fn decline_organization_invitation(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
     // Serialize consumption with acceptance before either path locks the recipient.
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     let _ = active(&mut tx, actor).await?;

@@ -345,10 +345,10 @@ async fn change_repository_values(
         read_authority(&mut tx, actor, org).await?,
         Applied(OrgRole::Owner)
     );
-    if let Some(token) = grant.token_id() {
-        ensure!(super::super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "administration").await?, Refusal::Denied);
-        // Account ownership cannot lend an organization-only capability to a repository token.
-        if owner { owner = super::super::users::tokens::permits_write(&mut tx, actor, token, None, Some(org), "organization_custom_properties").await?; }
+    ensure!(super::super::credentials::writes(&mut tx, &grant, Some(repo), None, "administration").await?, Refusal::Denied);
+    // Account ownership cannot lend an organization-only capability to a repository token.
+    if owner && grant.token_id().is_some() {
+        owner = super::super::credentials::writes(&mut tx, &grant, None, Some(org), "organization_custom_properties").await?;
     }
     let definitions = definitions_on(&mut tx, org).await?;
     if let Some(id) = expected {

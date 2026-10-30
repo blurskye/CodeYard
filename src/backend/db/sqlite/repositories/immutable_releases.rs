@@ -31,9 +31,7 @@ pub async fn set_enabled(pool: &SqlitePool, actor: impl Into<crate::backend::db:
             .await?,
         Refusal::Denied
     );
-    if let Some(token) = credential.token_id() {
-        ensure!(crate::backend::db::sqlite::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "administration").await?, Refusal::Denied);
-    }
+    ensure!(crate::backend::db::sqlite::credentials::writes(&mut tx, &credential, Some(repo), None, "administration").await?, Refusal::Denied);
     let archived: bool = sqlx::query_scalar("SELECT is_archived FROM repositories WHERE id=?1")
         .bind(repo)
         .fetch_one(&mut *tx)

@@ -608,8 +608,7 @@ pub(super) async fn run(
             records::create_comment(
                 pool,
                 records::CommentCreate {
-                    actor_id: alice,
-                    token_id: None,
+                    actor: alice.into(),
                     repo_id: repo,
                     sha,
                     body: &format!("page-marker-{number}"),
@@ -658,11 +657,31 @@ pub(super) async fn run(
     let refused = records::create_comment(
         pool,
         records::CommentCreate {
-            actor_id: bob,
-            token_id: None,
+            actor: bob.into(),
             repo_id: repo,
             sha,
             body: "revoked read access",
+            path: None,
+            position: None,
+            line: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        refused.downcast_ref::<records::CommentRefusal>(),
+        Some(records::CommentRefusal::Denied)
+    ));
+    // The owner still has access, but the session that sent the comment has ended.
+    let ended = crate::support::live_session(pool, alice).await;
+    db::users::sessions::delete_session(pool, &ended).await.unwrap();
+    let refused = records::create_comment(
+        pool,
+        records::CommentCreate {
+            actor: (alice, ended).into(),
+            repo_id: repo,
+            sha,
+            body: "ended session",
             path: None,
             position: None,
             line: None,

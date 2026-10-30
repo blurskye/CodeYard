@@ -4,10 +4,20 @@ use crate::backend::db::users::accounts::{AccountRestricted, OwnedAccountCredent
 use anyhow::Result;
 use sqlx::{Sqlite, Transaction};
 
-pub(crate) async fn live(tx: &mut Transaction<'_, Sqlite>, actor: &Actor, write: bool) -> Result<bool> {
+pub(crate) async fn live(tx: &mut sqlx::SqliteConnection, actor: &Actor, write: bool) -> Result<bool> {
     match actor.credential() {
         None => Ok(true),
         Some(credential) => super::users::transitions::credential_live(tx, actor.user_id, &credential, write).await,
+    }
+}
+
+/// The caller's own session or token is still live and, for a token, may still write
+/// `permission` on the repository or organization. Call it in the transaction that writes.
+pub(crate) async fn writes(tx: &mut sqlx::SqliteConnection, actor: &Actor, repo: Option<i64>, org: Option<i64>, permission: &str) -> Result<bool> {
+    if !live(tx, actor, true).await? { return Ok(false); }
+    match actor.token_id() {
+        Some(token) => super::users::tokens::permits_write(tx, actor.user_id, token, repo, org, permission).await,
+        None => Ok(true),
     }
 }
 

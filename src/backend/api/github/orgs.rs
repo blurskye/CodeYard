@@ -457,7 +457,7 @@ async fn visibility(
     }
     let org = target(state, name).await?;
     outcome(
-        discovery::set_membership_public(&state.pool, actor.user.id, org.id, public)
+        discovery::set_membership_public(&state.pool, actor.database_actor(), org.id, public)
             .await
             .map_err(Error::unavailable)?,
     )?;

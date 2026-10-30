@@ -14,17 +14,15 @@ pub async fn create_comment(pool: &SqlitePool, input: CommentCreate<'_>) -> Resu
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_contribution_authority(
             &mut tx,
-            input.actor_id,
+            input.actor.user_id,
             input.repo_id
         )
         .await?,
         CommentRefusal::Denied
     );
-    if let Some(token) = input.token_id {
-        anyhow::ensure!(crate::backend::db::sqlite::users::tokens::permits_write(&mut tx, input.actor_id, token, Some(input.repo_id), None, "contents").await?, CommentRefusal::Denied);
-    }
+    anyhow::ensure!(crate::backend::db::sqlite::credentials::writes(&mut tx, &input.actor, Some(input.repo_id), None, "contents").await?, CommentRefusal::Denied);
     let comment = sqlx::query_as("INSERT INTO commit_comments(repo_id,author_id,sha,body,path,position,line) VALUES(?1,?2,?3,?4,?5,?6,?7) RETURNING *")
-        .bind(input.repo_id).bind(input.actor_id).bind(input.sha.to_ascii_lowercase()).bind(input.body).bind(input.path).bind(input.position).bind(input.line).fetch_one(&mut *tx).await?;
+        .bind(input.repo_id).bind(input.actor.user_id).bind(input.sha.to_ascii_lowercase()).bind(input.body).bind(input.path).bind(input.position).bind(input.line).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(comment)
 }
@@ -38,15 +36,13 @@ pub async fn edit_comment(
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_contribution_authority(
             &mut tx,
-            input.actor_id,
+            input.actor.user_id,
             input.repo_id
         )
         .await?,
         CommentRefusal::Denied
     );
-    if let Some(token) = input.token_id {
-        anyhow::ensure!(crate::backend::db::sqlite::users::tokens::permits_write(&mut tx, input.actor_id, token, Some(input.repo_id), None, "contents").await?, CommentRefusal::Denied);
-    }
+    anyhow::ensure!(crate::backend::db::sqlite::credentials::writes(&mut tx, &input.actor, Some(input.repo_id), None, "contents").await?, CommentRefusal::Denied);
     let Some(previous) = sqlx::query_as::<_, CommitComment>(
         "SELECT * FROM commit_comments WHERE repo_id=?1 AND id=?2",
     )
@@ -58,7 +54,7 @@ pub async fn edit_comment(
         return Ok(None);
     };
     anyhow::ensure!(
-        previous.author_id == Some(input.actor_id),
+        previous.author_id == Some(input.actor.user_id),
         CommentRefusal::Denied
     );
     anyhow::ensure!(
@@ -90,9 +86,7 @@ pub async fn delete_comment(
             .await?,
         CommentRefusal::Denied
     );
-    if let Some(token) = credential.token_id() {
-        anyhow::ensure!(crate::backend::db::sqlite::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "contents").await?, CommentRefusal::Denied);
-    }
+    anyhow::ensure!(crate::backend::db::sqlite::credentials::writes(&mut tx, &credential, Some(repo), None, "contents").await?, CommentRefusal::Denied);
     let Some(comment) = sqlx::query_as::<_, CommitComment>(
         "SELECT * FROM commit_comments WHERE repo_id=?1 AND id=?2",
     )

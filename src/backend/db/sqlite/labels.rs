@@ -3,11 +3,11 @@ use crate::backend::db::labels::{bounded_label_ids, ItemLabel, LabelTarget, Labe
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
-async fn begin_label_write(
-    pool: &SqlitePool,
+async fn begin_label_write<'a>(
+    pool: &'a SqlitePool,
     actor: &crate::backend::db::credentials::Actor,
     repo_id: i64,
-) -> Result<Transaction<'_, Sqlite>> {
+) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor.user_id, repo_id).await?,
@@ -37,11 +37,11 @@ async fn ensure_name_free(
 }
 
 /// Labels on an issue or pull request need triage authority; the label catalog needs write.
-async fn begin_item_label_write(
-    pool: &SqlitePool,
+async fn begin_item_label_write<'a>(
+    pool: &'a SqlitePool,
     actor: &crate::backend::db::credentials::Actor,
     repo_id: i64,
-) -> Result<Transaction<'_, Sqlite>> {
+) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         super::discussions::lock_triage_authority(&mut tx, actor.user_id, repo_id).await?,

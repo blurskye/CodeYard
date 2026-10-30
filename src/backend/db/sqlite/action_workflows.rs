@@ -56,9 +56,7 @@ pub async fn set_workflow_enabled(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         RepositorySettingsRefusal::Denied
     );
-    if let Some(token) = credential.token_id() {
-        anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "actions").await?, RepositorySettingsRefusal::Denied);
-    }
+    anyhow::ensure!(super::credentials::writes(&mut tx, &credential, Some(repo), None, "actions").await?, RepositorySettingsRefusal::Denied);
     let workflow=sqlx::query_as("UPDATE actions_workflows SET state=$3,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE repo_id=$1 AND id=$2 RETURNING *").bind(repo).bind(id).bind(if enabled {"active"} else {"disabled_manually"}).fetch_optional(&mut *tx).await?;
     if workflow.is_some() {
         sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES($1,'repository.actions_workflow','repository',$2,$3)").bind(actor).bind(repo).bind(serde_json::json!({"workflow_id":id,"enabled":enabled})).execute(&mut *tx).await?;

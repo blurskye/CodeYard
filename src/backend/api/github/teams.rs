@@ -46,8 +46,8 @@ fn denied() -> Error {
     Error::new(StatusCode::FORBIDDEN, "Team mutation denied")
 }
 
-fn writer(auth: &auth::Authentication) -> orgs::TeamActor {
-    orgs::TeamActor { user: auth.user.id, token: Some(auth.token.id) }
+fn writer(auth: &auth::Authentication) -> crate::backend::db::credentials::Actor {
+    auth.database_actor()
 }
 
 async fn actor(
@@ -695,7 +695,7 @@ async fn team_member(
             let invitation = outcome(
                 orgs::invite_team_member(
                     &state.pool,
-                    auth.user.id,
+                    writer(&auth),
                     org.id,
                     public.team.id,
                     user.id,
