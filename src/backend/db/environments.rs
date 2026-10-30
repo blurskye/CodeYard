@@ -52,15 +52,8 @@ pub struct Update {
     pub prevent_self_review: Option<bool>,
     pub reviewers: Option<Vec<Reviewer>>,
     /// Omitted leaves the stored policy alone; an explicit null clears it.
-    #[serde(default, deserialize_with = "present_or_null")]
+    #[serde(default, deserialize_with = "super::repositories::records::nullable_change")]
     pub deployment_branch_policy: Option<Option<BranchPolicy>>,
-}
-
-fn present_or_null<'de, D>(deserializer: D) -> Result<Option<Option<BranchPolicy>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<BranchPolicy>::deserialize(deserializer).map(Some)
 }
 
 impl Update {

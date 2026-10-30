@@ -104,7 +104,7 @@ native_operation!(crate::backend::db::postgres::labels::update_label,
     label_id: i64,
     name: Option<&str>,
     color: Option<&str>,
-    description: Option<&str>,
+    description: Option<Option<&str>>,
 ) -> Result<Label>);
 
 native_operation!(crate::backend::db::postgres::labels::update_label_checked,

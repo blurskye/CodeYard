@@ -93,7 +93,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 old.id,
                 input["name"].as_str(),
                 color.as_deref(),
-                input["description"].as_str(),
+                input["description"].as_str().map(Some),
             )
             .await
         } else {

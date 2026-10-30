@@ -247,6 +247,20 @@ async fn labels(pg: bool) {
         .as_str()
         .unwrap()
         .ends_with("/labels/bug%20fix"));
+    // A left-out description is kept, and an explicit null clears it.
+    for (body, expected) in [
+        (json!({"description":"notes"}), json!("notes")),
+        (json!({"color":"123456"}), json!("notes")),
+        (json!({"description":null}), Value::Null),
+    ] {
+        let changed = document(
+            request(&router, "PATCH", &format!("{labels}/bug%20fix"), Some(write), body).await,
+            "issues/update-label",
+            200,
+        )
+        .await;
+        assert_eq!(changed["description"], expected);
+    }
     for method in ["PATCH", "DELETE"] {
         assert_eq!(
             request(

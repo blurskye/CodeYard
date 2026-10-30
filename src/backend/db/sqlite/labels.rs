@@ -212,12 +212,12 @@ pub async fn update_label(
     label_id: i64,
     name: Option<&str>,
     color: Option<&str>,
-    description: Option<&str>,
+    description: Option<Option<&str>>,
 ) -> Result<Label> {
     update_label_checked(pool, actor, repo_id, label_id, (name, color, description), None).await
 }
 
-pub async fn update_label_checked(pool: &SqlitePool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, label_id: i64, (name, color, description): (Option<&str>, Option<&str>, Option<&str>), expected: Option<&str>) -> Result<Label> {
+pub async fn update_label_checked(pool: &SqlitePool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, label_id: i64, (name, color, description): (Option<&str>, Option<&str>, Option<Option<&str>>), expected: Option<&str>) -> Result<Label> {
     let actor = actor.into();
     let mut tx = begin_label_write(pool, &actor, repo_id).await?;
     if let Some(expected) = expected {
@@ -232,7 +232,7 @@ pub async fn update_label_checked(pool: &SqlitePool, actor: impl Into<crate::bac
         UPDATE labels SET
             name = COALESCE(?3, name),
             color = COALESCE(?4, color),
-            description = COALESCE(?5, description)
+            description = CASE WHEN ?5 THEN ?6 ELSE description END
         WHERE id = ?1 AND repo_id = ?2
         "#,
     )
@@ -240,7 +240,8 @@ pub async fn update_label_checked(pool: &SqlitePool, actor: impl Into<crate::bac
     .bind(repo_id)
     .bind(name)
     .bind(color)
-    .bind(description)
+    .bind(description.is_some())
+    .bind(description.flatten())
     .execute(&mut *tx)
     .await
     .map_err(crate::backend::db::labels::label_database_error)?;

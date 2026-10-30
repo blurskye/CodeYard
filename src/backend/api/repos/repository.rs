@@ -2070,7 +2070,7 @@ async fn mutate(
             db::labels::update_label_checked(
                 pool, ctx.database_actor(actor.id), repository.id, id,
                 (Some(&name), Some(&color),
-                    (serde_json::to_string(&description).unwrap_or_default() != field(form, "original_description")).then_some(description.as_str())),
+                    (serde_json::to_string(&description).unwrap_or_default() != field(form, "original_description")).then_some(Some(description.as_str()))),
                 Some(&field(form, "original")),
             )
             .await

@@ -38,11 +38,6 @@ fn supplied<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
 ) -> std::result::Result<Option<T>, D::Error> {
     T::deserialize(d).map(Some)
 }
-fn nullable<'de, D: Deserializer<'de>>(
-    d: D,
-) -> std::result::Result<Option<Option<String>>, D::Error> {
-    Option::<String>::deserialize(d).map(Some)
-}
 #[derive(Deserialize)]
 struct SelectOption {
     id: Option<i64>,
@@ -75,7 +70,7 @@ struct Create {
 struct Update {
     #[serde(default, deserialize_with = "supplied")]
     name: Option<String>,
-    #[serde(default, deserialize_with = "nullable")]
+    #[serde(default, deserialize_with = "crate::backend::db::repositories::records::nullable_change")]
     description: Option<Option<String>>,
     #[serde(default, deserialize_with = "supplied")]
     visibility: Option<String>,

@@ -125,7 +125,9 @@ async fn get_label(
 struct Update {
     new_name: Option<String>,
     color: Option<String>,
-    description: Option<String>,
+    /// Left out keeps the description; `null` clears it.
+    #[serde(default, deserialize_with = "db::repositories::records::nullable_change")]
+    description: Option<Option<String>>,
 }
 
 async fn update(
@@ -139,7 +141,7 @@ async fn update(
     let existing = find(&state.pool, repo.id, &p["name"]).await?;
     crate::backend::issues::validate_label(
         input.new_name.as_deref().unwrap_or(&existing.name),
-        input.description.as_deref(),
+        input.description.as_ref().and_then(Option::as_deref),
     )
     .map_err(Error::invalid)?;
     let color = input.color.as_deref().map(color).transpose()?;
@@ -150,7 +152,7 @@ async fn update(
         existing.id,
         input.new_name.as_deref(),
         color.as_deref(),
-        input.description.as_deref(),
+        input.description.as_ref().map(Option::as_deref),
     )
     .await
     .map_err(write_error)?;

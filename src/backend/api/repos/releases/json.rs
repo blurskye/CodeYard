@@ -63,19 +63,13 @@ pub struct ReleaseResponse {
 pub struct ReleaseRequest {
     tag_name: Option<String>,
     target_commitish: Option<String>,
-    #[serde(default, deserialize_with = "nullable_text")]
+    #[serde(default, deserialize_with = "crate::backend::db::repositories::records::nullable_change")]
     name: Option<Option<String>>,
-    #[serde(default, deserialize_with = "nullable_text")]
+    #[serde(default, deserialize_with = "crate::backend::db::repositories::records::nullable_change")]
     body: Option<Option<String>>,
     draft: Option<bool>,
     prerelease: Option<bool>,
     make_latest: Option<bool>,
-}
-
-fn nullable_text<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<Option<String>>, D::Error> {
-    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 fn json_error(error: ReleaseError) -> Failure {

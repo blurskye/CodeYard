@@ -382,7 +382,7 @@ async fn contract(pg: bool) {
         label.id,
         None,
         None,
-        Some("Changed"),
+        Some(Some("Changed")),
     )
     .await
     .unwrap();
