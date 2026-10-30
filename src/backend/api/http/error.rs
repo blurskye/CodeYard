@@ -51,6 +51,9 @@ pub(crate) fn repository_settings_error(
 ) -> (axum::http::StatusCode, axum::Json<ApiError>) {
     use crate::backend::db::repositories::RepositorySettingsRefusal as Refusal;
     use axum::{http::StatusCode, Json};
+    if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+        return ApiError::failure(StatusCode::FORBIDDEN, "forbidden", "A live unrestricted credential is required.");
+    }
     let (status, code, message) = match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => (
             StatusCode::FORBIDDEN,

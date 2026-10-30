@@ -292,9 +292,19 @@ pub async fn public_languages(pool: &SqlitePool, limit: i64) -> Result<Vec<Strin
     .await?)
 }
 
+async fn require_settings_actor(
+    tx: &mut Transaction<'_, Sqlite>,
+    actor: &crate::backend::db::users::accounts::AccountActor,
+) -> Result<()> {
+    if let Some(credential) = actor.credential() {
+        super::super::users::transitions::require_account(tx, actor.user_id(), &credential).await?;
+    }
+    Ok(())
+}
+
 pub async fn update_repository(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     description: Option<&str>,
     is_private: impl Into<crate::backend::db::repositories::records::VisibilityUpdate>,
@@ -319,25 +329,25 @@ pub async fn update_repository(
 
 pub async fn patch_repository(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     changes: &crate::backend::db::repositories::records::RepositoryChanges<&str>,
 ) -> Result<Repository> {
-    patch_core(pool, actor, repo_id, changes, None, None).await
+    patch_core(pool, actor.into(), repo_id, changes, None, None).await
 }
 pub async fn patch_repository_and_default(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     changes: &crate::backend::db::repositories::records::RepositoryChanges<&str>,
     name: &str,
     expected_owner: Option<&str>,
 ) -> Result<Repository> {
-    patch_core(pool, actor, repo_id, changes, Some(name), expected_owner).await
+    patch_core(pool, actor.into(), repo_id, changes, Some(name), expected_owner).await
 }
 async fn patch_core(
     pool: &SqlitePool,
-    actor: i64,
+    authority: crate::backend::db::users::accounts::AccountActor,
     repo_id: i64,
     changes: &crate::backend::db::repositories::records::RepositoryChanges<&str>,
     default_branch: Option<&str>,
@@ -346,7 +356,9 @@ async fn patch_core(
     use crate::backend::db::repositories::records::{
         validate_repository_alias, RepositorySettingsRefusal as Refusal,
     };
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_archive_authority(&mut tx, actor, repo_id)
             .await?,
@@ -417,12 +429,15 @@ async fn patch_core(
 
 pub async fn set_merge_methods(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     update: MergeMethodUpdate,
 ) -> Result<()> {
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
+    let authority = actor_id.into();
+    let actor_id = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
             .await?,
@@ -576,14 +591,17 @@ pub async fn delete_repository(
 
 pub async fn rename_repository(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     new_name: &str,
 ) -> Result<Repository> {
     use crate::backend::db::repositories::records::{
         validate_repository_alias, RepositorySettingsRefusal as Refusal,
     };
+    let authority = actor_id.into();
+    let actor_id = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
             .await?,
@@ -862,11 +880,14 @@ pub async fn restore_repository_default_branch(
 /// Archives or unarchives under current administrator authority, including archived rows.
 pub async fn set_repository_archived(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     archived: bool,
 ) -> Result<bool> {
+    let authority = actor_id.into();
+    let actor_id = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_archive_authority(&mut tx, actor_id, repo_id)
             .await?,

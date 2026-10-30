@@ -931,12 +931,12 @@ impl RpcHandler {
                     &sha
                 ))
             },
-            Operation::SetDefaultBranch { name } => json!(store.set_default_branch_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                &name
-            )),
+            Operation::SetDefaultBranch { name } => {
+                let (authority, name) = name.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.set_default_branch_as(
+                    pool, repo_id.ok_or_else(|| invalid("repository unavailable"))?, authority, &name
+                ))
+            },
             Operation::TransferRepository { new_owner } => json!(store.transfer_repository_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
@@ -974,13 +974,13 @@ impl RpcHandler {
             Operation::PatchRepository {
                 default_branch,
                 changes,
-            } => json!(store.patch_repository_as(
-                pool,
-                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
-                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
-                &default_branch,
-                &changes.borrowed()
-            )),
+            } => {
+                let (authority, default_branch) = default_branch.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
+                json!(store.patch_repository_as(
+                    pool, repo_id.ok_or_else(|| invalid("repository unavailable"))?, authority,
+                    &default_branch, &changes.borrowed()
+                ))
+            },
             Operation::DeleteBranch { name } => {
                 let (authority, name) = name.into_parts(actor.ok_or_else(|| invalid("repository mutation requires an actor"))?)?;
                 json!(store.delete_branch_as(

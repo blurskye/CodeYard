@@ -187,7 +187,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::update_re
     /// failed write leaves all three unchanged.
     fn update_repository(
     pool: &DbPool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     description: Option<&str>,
     is_private: impl Into<VisibilityUpdate>,
@@ -279,12 +279,12 @@ impl<T> RepositoryChanges<T> {
 
 native_operation!(crate::backend::db::postgres::repositories::records::patch_repository,
     crate::backend::db::sqlite::repositories::records::patch_repository,
-    fn patch_repository(pool: &DbPool, actor: i64, repo_id: i64, changes: &RepositoryChanges<&str>) -> Result<Repository>);
+    fn patch_repository(pool: &DbPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo_id: i64, changes: &RepositoryChanges<&str>) -> Result<Repository>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::patch_repository_and_default,
     crate::backend::db::sqlite::repositories::records::patch_repository_and_default,
     /// Called under the repository Git lock, after HEAD was changed successfully.
-    fn patch_repository_and_default(pool:&DbPool,actor:i64,repo_id:i64,changes:&RepositoryChanges<&str>,name:&str,expected_owner:Option<&str>)->Result<Repository>);
+    fn patch_repository_and_default(pool:&DbPool,actor:impl Into<crate::backend::db::users::accounts::AccountActor>,repo_id:i64,changes:&RepositoryChanges<&str>,name:&str,expected_owner:Option<&str>)->Result<Repository>);
 
 /// Unconfirmed native saves may keep visibility, but must not change it concurrently.
 pub struct VisibilityUpdate {
@@ -314,7 +314,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::set_merge
     crate::backend::db::sqlite::repositories::records::set_merge_methods,
     fn set_merge_methods(
     pool: &DbPool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     update: MergeMethodUpdate,
 ) -> Result<()>);
@@ -329,7 +329,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::set_repos
 
 native_operation!(crate::backend::db::postgres::repositories::records::set_repository_archived,
     crate::backend::db::sqlite::repositories::records::set_repository_archived,
-    fn set_repository_archived(pool: &DbPool, actor_id: i64, repo_id: i64, archived: bool) -> Result<bool>);
+    fn set_repository_archived(pool: &DbPool, actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>, repo_id: i64, archived: bool) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::update_repo_default_branch,
     crate::backend::db::sqlite::repositories::records::update_repo_default_branch,
@@ -364,7 +364,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::rename_re
     crate::backend::db::sqlite::repositories::records::rename_repository,
     fn rename_repository(
     pool: &DbPool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     new_name: &str,
 ) -> Result<Repository>);

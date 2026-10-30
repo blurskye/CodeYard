@@ -37,6 +37,9 @@ pub(in crate::backend::api) fn lifecycle_error(error: lifecycle::StorageError) -
 
 pub(in crate::backend::api) fn settings_error(error: anyhow::Error) -> Error {
     use records::RepositorySettingsRefusal::*;
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return Error::new(StatusCode::FORBIDDEN, "A live unrestricted credential is required");
+    }
     match error.downcast_ref::<records::RepositorySettingsRefusal>() {
         Some(Denied | VisibilityLocked) => {
             Error::new(StatusCode::FORBIDDEN, "Repository mutation denied")
@@ -453,14 +456,14 @@ async fn update(
             .patch_repository_as(
                 &state.pool,
                 repo.id,
-                actor.id,
+                db::users::accounts::AccountActor::Token { user_id: actor.id, token_id: auth.token.id },
                 input.default_branch.as_deref().unwrap(),
                 &changes,
             )
             .await
             .map_err(store_error)?
     } else {
-        records::patch_repository(&state.pool, actor.id, repo.id, &changes)
+        records::patch_repository(&state.pool, db::users::accounts::AccountActor::Token { user_id: actor.id, token_id: auth.token.id }, repo.id, &changes)
             .await
             .map_err(settings_error)?
     };

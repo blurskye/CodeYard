@@ -368,7 +368,7 @@ pub enum Operation {
         name: PublicationText,
     },
     SetDefaultBranch {
-        name: String,
+        name: PublicationText,
     },
     TransferRepository {
         new_owner: String,
@@ -385,7 +385,7 @@ pub enum Operation {
         attestation: Option<crate::backend::repositories::releases::integrity::Attestation>,
     },
     PatchRepository {
-        default_branch: String,
+        default_branch: PublicationText,
         changes: crate::backend::db::repositories::records::RepositoryChanges<String>,
     },
     CreateTag {
