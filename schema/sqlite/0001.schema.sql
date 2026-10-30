@@ -956,7 +956,7 @@ CREATE INDEX idx_repositories_forked_from_id ON repositories(forked_from_id);
 CREATE INDEX idx_repositories_created_at ON repositories(created_at);
 
 CREATE INDEX idx_repositories_updated_at ON repositories(updated_at);
-CREATE INDEX idx_repositories_created_by ON repositories(created_by_id);
+CREATE INDEX idx_repositories_created_by ON repositories(created_by_id, created_at);
 CREATE INDEX idx_repositories_public_stars
     ON repositories(stars_count DESC, created_at DESC, id DESC) WHERE is_private = false;
 CREATE INDEX idx_repositories_search_order
@@ -972,7 +972,7 @@ CREATE INDEX idx_repo_storage_history_repo_time ON repo_storage_history(repo_id,
 
 CREATE INDEX idx_repo_storage_history_recorded_at ON repo_storage_history(recorded_at);
 
-CREATE INDEX idx_issues_author_id ON issues(author_id);
+CREATE INDEX idx_issues_author_id ON issues(author_id, created_at);
 
 CREATE INDEX idx_issues_state ON issues(state);
 
@@ -985,11 +985,11 @@ CREATE INDEX idx_issues_milestone_id ON issues(milestone_id);
 
 CREATE INDEX idx_issue_comments_issue_id ON issue_comments(issue_id);
 
-CREATE INDEX idx_issue_comments_author_id ON issue_comments(author_id);
+CREATE INDEX idx_issue_comments_author_id ON issue_comments(author_id, created_at);
 
 CREATE INDEX idx_issue_comments_created_at ON issue_comments(created_at);
 
-CREATE INDEX idx_pull_requests_author_id ON pull_requests(author_id);
+CREATE INDEX idx_pull_requests_author_id ON pull_requests(author_id, created_at);
 
 CREATE INDEX idx_pull_requests_state ON pull_requests(state);
 
@@ -1003,7 +1003,7 @@ CREATE INDEX idx_pull_requests_milestone_id ON pull_requests(milestone_id);
 
 CREATE INDEX idx_pr_comments_pr_id ON pr_comments(pull_request_id);
 
-CREATE INDEX idx_pr_comments_author_id ON pr_comments(author_id);
+CREATE INDEX idx_pr_comments_author_id ON pr_comments(author_id, created_at);
 
 CREATE INDEX idx_pr_comments_created_at ON pr_comments(created_at);
 

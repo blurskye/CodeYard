@@ -348,7 +348,7 @@ CREATE INDEX IF NOT EXISTS idx_repositories_is_private ON repositories(is_privat
 CREATE INDEX IF NOT EXISTS idx_repositories_forked_from_id ON repositories(forked_from_id);
 CREATE INDEX IF NOT EXISTS idx_repositories_created_at ON repositories(created_at);
 CREATE INDEX IF NOT EXISTS idx_repositories_updated_at ON repositories(updated_at);
-CREATE INDEX IF NOT EXISTS idx_repositories_created_by ON repositories(created_by_id);
+CREATE INDEX IF NOT EXISTS idx_repositories_created_by ON repositories(created_by_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_repositories_public_stars
     ON repositories(stars_count DESC, created_at DESC, id DESC) WHERE is_private = false;
 CREATE INDEX IF NOT EXISTS idx_repositories_search_order
@@ -538,7 +538,7 @@ CREATE TABLE IF NOT EXISTS issues (
     closed_at TIMESTAMPTZ,
     UNIQUE(repo_id, number)
 );
-CREATE INDEX IF NOT EXISTS idx_issues_author_id ON issues(author_id);
+CREATE INDEX IF NOT EXISTS idx_issues_author_id ON issues(author_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_issues_state ON issues(state);
 CREATE INDEX IF NOT EXISTS idx_issues_repo_state ON issues(repo_id, state);
 CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at);
@@ -567,7 +567,7 @@ CREATE TABLE IF NOT EXISTS issue_comments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_issue_comments_issue_id ON issue_comments(issue_id);
-CREATE INDEX IF NOT EXISTS idx_issue_comments_author_id ON issue_comments(author_id);
+CREATE INDEX IF NOT EXISTS idx_issue_comments_author_id ON issue_comments(author_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_issue_comments_created_at ON issue_comments(created_at);
 
 --------------------------------------------------------------------------------
@@ -613,7 +613,7 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     head_publisher_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     UNIQUE(repo_id, number)
 );
-CREATE INDEX IF NOT EXISTS idx_pull_requests_author_id ON pull_requests(author_id);
+CREATE INDEX IF NOT EXISTS idx_pull_requests_author_id ON pull_requests(author_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_state ON pull_requests(state);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_repo_state ON pull_requests(repo_id, state);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_head_repo_state ON pull_requests(head_repo_id, state);
@@ -712,7 +712,7 @@ CREATE TABLE IF NOT EXISTS pr_comments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pr_comments_pr_id ON pr_comments(pull_request_id);
-CREATE INDEX IF NOT EXISTS idx_pr_comments_author_id ON pr_comments(author_id);
+CREATE INDEX IF NOT EXISTS idx_pr_comments_author_id ON pr_comments(author_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_pr_comments_created_at ON pr_comments(created_at);
 
 CREATE INDEX IF NOT EXISTS idx_pr_comments_reply_to ON pr_comments(in_reply_to_comment_id);

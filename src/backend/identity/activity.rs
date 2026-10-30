@@ -5,7 +5,6 @@ use anyhow::Result;
 pub const PAGE_SIZE: usize = 30;
 /// Later pages are not served, so one request reads a bounded number of rows.
 pub const MAX_PAGE: i64 = 100;
-const SCAN_ROWS: i64 = 100;
 /// Most rows one request reads while it looks for items the viewer can read. A page the scan does
 /// not fill is served short, with no next page, so a long private history is not read in full.
 pub const MAX_SCAN_ROWS: i64 = 1_000;
@@ -28,33 +27,10 @@ pub async fn profile_activity(
     // Visible rows before this page, and one row beyond it to learn whether there is a next page.
     let skip = (page - 1) as usize * PAGE_SIZE;
     let wanted = PAGE_SIZE + 1;
-    let mut visible_before = 0usize;
-    let mut items = Vec::with_capacity(wanted);
-    let mut offset = 0i64;
-    'scan: while offset < MAX_SCAN_ROWS {
-        let batch = db::activity::list_user_activity(
-            pool,
-            user_id,
-            viewer,
-            SCAN_ROWS,
-            offset,
-        )
-        .await?;
-        let exhausted = batch.scanned < SCAN_ROWS as usize;
-        for row in batch.rows {
-            if visible_before >= skip {
-                items.push(row);
-                if items.len() == wanted {
-                    break 'scan;
-                }
-            }
-            visible_before += 1;
-        }
-        if exhausted {
-            break;
-        }
-        offset += SCAN_ROWS;
-    }
+    // One read of the newest rows; the batch keeps only those the viewer can read.
+    let batch =
+        db::activity::list_user_activity(pool, user_id, viewer, MAX_SCAN_ROWS, 0).await?;
+    let mut items: Vec<ActivityRow> = batch.rows.into_iter().skip(skip).take(wanted).collect();
     let next_page = (items.len() == wanted).then_some(page + 1);
     items.truncate(PAGE_SIZE);
     Ok(ActivityPage { items, next_page })
