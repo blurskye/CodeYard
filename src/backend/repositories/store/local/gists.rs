@@ -42,8 +42,20 @@ impl LocalStore {
         }
         Ok(repo)
     }
-    /// The per-repository Git lock covers recovery and publication, never a SQL transaction.
+    /// Finishes a write that was admitted but not recorded as done. Readers take the
+    /// publication lease only when one is pending, so reads of a settled gist never wait on it.
     async fn recover_gist(&self, pool: &db::DbPool, id: i64) -> Result<(), RepoError> {
+        if gists::pending(pool, id).await.map_err(failure)?.is_none() {
+            return Ok(());
+        }
+        let _publication = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
+        self.finish_pending(pool, id).await
+    }
+    /// The caller holds the publication lease, which also covers a git child that outlived a
+    /// restart. It is never held across a SQL transaction.
+    async fn finish_pending(&self, pool: &db::DbPool, id: i64) -> Result<(), RepoError> {
         if let Some(pending) = gists::pending(pool, id).await.map_err(failure)? {
             let head = self.refs().await?.remove("refs/heads/main");
             let published = match head {
@@ -63,6 +75,10 @@ impl LocalStore {
             gists::finish(pool, id, &pending.sha, published, self.node_id)
                 .await
                 .map_err(failure)?;
+            if published {
+                git::maintenance::after_push(id, self.path().to_owned());
+                refresh_storage_size(pool.clone(), id, self.clone());
+            }
         }
         Ok(())
     }
@@ -72,7 +88,6 @@ impl LocalStore {
         id: i64,
         revision: Option<&str>,
     ) -> Result<GistSnapshot, RepoError> {
-        let _lock = git::locks::lock(self.path()).await;
         self.gist_location(pool, id).await?;
         self.recover_gist(pool, id).await?;
         let revision = revision.map(str::to_owned);
@@ -87,7 +102,6 @@ impl LocalStore {
         offset: usize,
         limit: usize,
     ) -> Result<Vec<GistRevision>, RepoError> {
-        let _lock = git::locks::lock(self.path()).await;
         self.gist_location(pool, id).await?;
         self.recover_gist(pool, id).await?;
         let revision = revision.map(str::to_owned);
@@ -103,12 +117,14 @@ impl LocalStore {
         input: GistEdit,
     ) -> Result<GistSnapshot, RepoError> {
         input.validate()?;
-        let _lock = git::locks::lock(self.path()).await;
+        let publication = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
         let repo = self.gist_location(pool, id).await?;
         if repo.owner_user_id != Some(actor) {
             return Err(RepoError::write_denied());
         }
-        self.recover_gist(pool, id).await?;
+        self.finish_pending(pool, id).await?;
         let user = db::users::accounts::get_user_by_id(pool, actor)
             .await
             .map_err(failure)?
@@ -136,18 +152,19 @@ impl LocalStore {
         .await
         .map_err(failure)?;
         // Admission is durable and single-use. A lost response is reconciled from the actual ref.
-        if git::publish_ref(
-            self.path(),
-            "update gist",
-            "refs/heads/main",
-            Some(&prepared.sha),
-            prepared
-                .base
-                .as_deref()
-                .unwrap_or("0000000000000000000000000000000000000000"),
-        )
-        .await
-        .is_err()
+        if publication
+            .scope(git::publish_ref(
+                self.path(),
+                "update gist",
+                "refs/heads/main",
+                Some(&prepared.sha),
+                prepared
+                    .base
+                    .as_deref()
+                    .unwrap_or("0000000000000000000000000000000000000000"),
+            ))
+            .await
+            .is_err()
         {
             let published = self.refs().await?.get("refs/heads/main") == Some(&prepared.sha);
             if !published {

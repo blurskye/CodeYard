@@ -141,7 +141,7 @@ fn validate_path(path: &str) -> Result<(), RepoError> {
 
 /// `.git` in any case, with the trailing spaces and dots and the short name `git~1` that
 /// Windows file systems treat as the same directory.
-fn is_git_dir_name(part: &str) -> bool {
+pub(super) fn is_git_dir_name(part: &str) -> bool {
     let name = part.trim_end_matches([' ', '.']);
     name.eq_ignore_ascii_case(".git") || name.eq_ignore_ascii_case("git~1")
 }

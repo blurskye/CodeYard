@@ -79,7 +79,7 @@ pub fn valid_gist_filename(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= MAX_GIST_FILENAME_BYTES
         && !matches!(name, "." | "..")
-        && !name.eq_ignore_ascii_case(".git")
+        && !super::editor::is_git_dir_name(name)
         && !name
             .chars()
             .any(|c| c.is_control() || matches!(c, '/' | '\\'))

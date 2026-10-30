@@ -626,7 +626,8 @@ impl LocalStore {
         if bytes.len() > limit {
             return Err(RepoError::response_too_large());
         }
-        let _lock = git::locks::lock(self.path()).await;
+        // The publication guard includes the process lock; taking both would wait on itself.
+        let _lock = git::locks::publication(self.path()).await.map_err(RepoError::from)?;
         let repository = live_write(
             pool,
             repo_id,
@@ -646,7 +647,6 @@ impl LocalStore {
         // accepted write. A single server keeps it until Git prunes unreachable objects.
         let reference = format!("refs/codeyard/objects/{sha}");
         if repository.storage_node_id.is_some() {
-            let _publication = git::locks::publication(self.path()).await.map_err(RepoError::from)?;
             let retained_ref = reference.clone();
             if !self.blocking(move |path| git::repository::retained::exists(path, &retained_ref)).await? {
                 let held = self.blocking(git::retained_objects_in_use).await?;
