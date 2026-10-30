@@ -268,6 +268,11 @@ pub async fn list_pending_review_comments(
     Ok(comments)
 }
 
+pub async fn has_pending_review_comments(pool: &PgPool, pr_id: i64, author_id: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews v JOIN pr_comments i ON i.review_id=v.id JOIN users u ON u.id=i.author_id WHERE v.pull_request_id=$1 AND i.pull_request_id=$1 AND v.state='pending' AND v.author_id=$2)")
+        .bind(pr_id).bind(author_id).fetch_one(pool).await?)
+}
+
 /// Every comment filed in one of `review_ids`, oldest first.
 pub async fn list_review_comments(
     pool: &PgPool,

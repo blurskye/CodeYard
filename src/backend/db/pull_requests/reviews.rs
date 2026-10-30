@@ -95,6 +95,10 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pen
     author_id: i64,
 ) -> Result<Vec<PullRequestCommentEntry>>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::has_pending_review_comments,
+    crate::backend::db::sqlite::pull_requests::reviews::has_pending_review_comments,
+    fn has_pending_review_comments(pool: &DbPool, pr_id: i64, author_id: i64) -> Result<bool>);
+
 // The comments filed in any of `review_ids`, oldest first.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_review_comments,
     crate::backend::db::sqlite::pull_requests::reviews::list_review_comments,
