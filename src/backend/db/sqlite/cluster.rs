@@ -201,6 +201,19 @@ pub async fn upsert_declared_nodes(
 ) -> Result<Vec<ClusterNode>> {
     // BEGIN IMMEDIATE: one writer at a time. Every early return drops the transaction.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // Names are unique and checked at once, so a swap of two names would fail on the first
+    // update. Every renamed node first moves to a name of its own, and the entries below then
+    // take their final names.
+    for node in nodes {
+        sqlx::query(
+            "UPDATE nodes SET name = 'swap.' || substr(public_key, 1, 40)
+             WHERE public_key = ?1 AND name <> ?2",
+        )
+        .bind(node.public_key.as_str())
+        .bind(node.name.as_str())
+        .execute(&mut *tx)
+        .await?;
+    }
     let mut rows = Vec::with_capacity(nodes.len());
     for node in nodes {
         let row = sqlx::query_as::<_, ClusterNode>(&format!(
