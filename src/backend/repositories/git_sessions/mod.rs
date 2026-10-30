@@ -190,7 +190,7 @@ impl ReceiveCredential {
             {
                 let granted = bounds.repository(pool, identity.id, repo.id).await?;
                 if !granted.as_ref().is_some_and(|granted| crate::backend::identity::github_apps::allows(granted, "contents", write)) {
-                    if bounds.personal().is_some() && (granted.is_none() || !access::user_git_access(pool, &identity, repo).await?.can_read()) {
+                    if bounds.personal().is_some() && (granted.is_none() || !db::repositories::access::git_access(pool, identity.id, repo.id, false).await?.can_read()) {
                         anyhow::bail!(CredentialRefusal::Missing);
                     }
                     anyhow::bail!(CredentialRefusal::Integration);

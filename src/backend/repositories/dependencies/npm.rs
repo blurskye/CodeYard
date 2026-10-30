@@ -1,5 +1,5 @@
 //! Bounded npm lockfiles and conservative registry patch updates, without running npm.
-use crate::backend::npm::package_name;
+use crate::backend::npm::dependency_name;
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use semver::{Version, VersionReq};
@@ -86,7 +86,7 @@ fn package(path: String, location: Vec<String>, value: &Value) -> Option<Package
         .get("name")
         .and_then(Value::as_str)
         .unwrap_or(inferred);
-    if !package_name(name) {
+    if !dependency_name(name) {
         return None;
     }
     let raw_version = value.get("version")?.as_str()?;
@@ -188,7 +188,7 @@ impl Lockfile {
                         .as_object()
                         .context("Invalid nested npm dependencies")?;
                     for (name, child) in children {
-                        ensure!(package_name(name), "Invalid npm dependency name");
+                        ensure!(dependency_name(name), "Invalid npm dependency name");
                         let mut nested = location.clone();
                         nested.extend(["dependencies".into(), name.clone()]);
                         pending.push((
@@ -217,7 +217,7 @@ impl Lockfile {
                     declared += 1;
                     ensure!(
                         declared <= MAX_PACKAGES
-                            && package_name(name)
+                            && dependency_name(name)
                             && requirement.as_str().is_some_and(
                                 |s| s.len() <= 4096 && !s.chars().any(char::is_control)
                             ),
@@ -440,7 +440,7 @@ fn legacy_graph(entry: &Value, document: &Value) -> Result<()> {
                 .context("Invalid npm package dependencies")?;
             for (name, requirement) in map {
                 ensure!(
-                    package_name(name) && requirement.as_str().is_some_and(|s| s.len() <= 2048),
+                    dependency_name(name) && requirement.as_str().is_some_and(|s| s.len() <= 2048),
                     "Invalid npm dependency requirement"
                 );
                 expected.insert(name.clone(), requirement.clone());
@@ -582,7 +582,7 @@ impl Archive {
             .and_then(Value::as_str)
             .context("Missing npm package name")?;
         ensure!(
-            package_name(name) && metadata.get("name").and_then(Value::as_str) == Some(name),
+            dependency_name(name) && metadata.get("name").and_then(Value::as_str) == Some(name),
             "Npm package name mismatch"
         );
         let version = Version::parse(

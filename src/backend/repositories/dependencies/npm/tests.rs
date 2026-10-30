@@ -115,11 +115,12 @@ fn formatted_output_is_bounded_before_allocating_an_expanded_document() {
 }
 #[test]
 fn registry_urls_and_package_names_are_not_arbitrary_targets() {
-    assert!(package_name("@scope/pkg"));
-    assert!(package_name("foo-bar"));
-    assert!(package_name("Foo"));
+    assert!(dependency_name("@scope/pkg"));
+    assert!(dependency_name("foo-bar"));
+    assert!(dependency_name("Foo"));
+    assert!(!crate::backend::npm::package_name("Foo"));
     for name in ["../x", "@scope/a/b", "_private", ""] {
-        assert!(!package_name(name));
+        assert!(!dependency_name(name));
     }
     for url in [
         "http://registry.npmjs.org/x",

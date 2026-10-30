@@ -57,7 +57,7 @@ async fn require_admin(
         && access.is_some_and(|access| {
             access.access.can_admin() || (!access.organization && access.is_admin)
         });
-    let live = super::users::transitions::live_credential(tx, actor, &credential.as_credential()).await?;
+    let live = super::users::transitions::credential_live(tx, actor, &credential.as_credential(), true).await?;
     anyhow::ensure!(
         allowed && live,
         crate::backend::repositories::deploy_keys::DeployKeyError::Denied

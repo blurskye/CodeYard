@@ -329,11 +329,16 @@ fn history_metadata(
     }
     Ok(result)
 }
-pub(crate) async fn history(path: &Path, revision: Option<&str>, offset: usize, limit: usize) -> Result<Vec<GistRevision>> {
+/// `lock` stays held until the walk and the change counts finish, and until the blocking walk
+/// ends even when the request is cancelled.
+pub(crate) async fn history(path: &Path, revision: Option<&str>, offset: usize, limit: usize, lock: tokio::sync::OwnedMutexGuard<()>) -> Result<Vec<GistRevision>> {
     use super::repository::process;
+    let lock = std::sync::Arc::new(lock);
+    let walk_lock = lock.clone();
     let owned_path = path.to_owned();
     let revision = revision.map(str::to_owned);
     let entries = process::blocking_until(Instant::now() + super::COMMIT_WALK_TIMEOUT, move || {
+        let _lock = walk_lock;
         history_metadata(&owned_path, revision.as_deref(), offset, limit)
     }).await?;
     let mut result = Vec::new();
@@ -354,6 +359,7 @@ pub(crate) async fn history(path: &Path, revision: Option<&str>, offset: usize, 
         }
         result.push(revision);
     }
+    drop(lock);
     Ok(result)
 }
 

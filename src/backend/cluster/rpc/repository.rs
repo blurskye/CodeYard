@@ -813,7 +813,6 @@ impl RpcHandler {
                 head_ref,
                 offset,
                 limit,
-                offset,
                 raw_json,
                 pull_request,
             } => {

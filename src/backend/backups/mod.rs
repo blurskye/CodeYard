@@ -173,7 +173,7 @@ fn check_destination(dir: &Path, places: &Places<'_>) -> Result<()> {
         resolved(&dir.join(mirror::DELETED_DIR))?,
         resolved(&dir.join(UPLOADS_DIR))?,
     ];
-    for name in [REPOSITORIES_DIR, mirror::DELETED_DIR, UPLOADS_DIR, SQLITE_FILE, POSTGRES_FILE, NODE_KEY, "database.sqlite.partial", "database.pgdump.partial", "backup.lock"] {
+    for name in [REPOSITORIES_DIR, mirror::DELETED_DIR, UPLOADS_DIR, SQLITE_FILE, POSTGRES_FILE, NODE_KEY, "release.key", "database.sqlite.partial", "database.pgdump.partial", "backup.lock"] {
         reject_symlink(&dir.join(name))?;
     }
     if !places.database_url.is_empty() {
@@ -182,7 +182,7 @@ fn check_destination(dir: &Path, places: &Places<'_>) -> Result<()> {
                 let mut path = database.as_os_str().to_owned();
                 path.push(suffix);
                 let source = resolved(Path::new(&path))?;
-                for target in targets.iter().cloned().chain([dir.join(SQLITE_FILE), dir.join("database.sqlite.partial"), dir.join(POSTGRES_FILE), dir.join("database.pgdump.partial"), dir.join(NODE_KEY), dir.join("backup.lock")]) {
+                for target in targets.iter().cloned().chain([dir.join(SQLITE_FILE), dir.join("database.sqlite.partial"), dir.join(POSTGRES_FILE), dir.join("database.pgdump.partial"), dir.join(NODE_KEY), dir.join("release.key"), dir.join("backup.lock")]) {
                     ensure!(!source.starts_with(&target), "backup destination collides with the live SQLite database or its sidecars");
                 }
             }
@@ -447,13 +447,18 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
         }
     }
     let mut repositories = Vec::new();
+    let mut deleted = std::collections::HashMap::new();
     for repository in &after {
         let mut path = PathBuf::from(&repository.disk_path);
         let name = directory_name(&path)?;
         if !path.is_dir() {
             // Deleted after the snapshot: the newest kept copy, `deleted/<seconds>-<name>`.
             let parent = path.parent().context("repository path has no parent")?;
-            path = mirror::deleted_copy(parent, &name)?.unwrap_or_default();
+            let copies = match deleted.entry(parent.to_owned()) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::hash_map::Entry::Vacant(entry) => entry.insert(mirror::deleted_copies(parent)?),
+            };
+            path = copies.get(&name).cloned().unwrap_or_default();
         }
         ensure!(path.is_dir(), "snapshot repository {} is missing; backup not published", repository.id);
         reject_symlink(&path)?;

@@ -452,9 +452,8 @@ impl Object {
         match (ty, field) {
             ("GitActor", "user") => {
                 let email = self.0["_email"].as_str().ok_or_else(missing)?;
-                let owners = db::users::accounts::get_verified_email_owners(&request.state.pool, &[email.to_owned()]).await.map_err(unavailable)?;
-                let Some((_, id)) = owners.into_iter().next() else { return Ok(Value::Null); };
-                Ok(db::users::accounts::get_user_by_id(&request.state.pool, id).await.map_err(unavailable)?
+                let authors = crate::backend::repositories::reads::commit_authors(&request.state.pool, &[email.to_owned()]).await.map_err(unavailable)?;
+                Ok(authors.into_values().next()
                     .filter(|user| !user.is_banned).map_or(Value::Null, |row| user::object(&row, request.auth.user.id)))
             }
             ("UpdateProjectV2ItemPositionPayload", "items") => boxed(|| projects::resolve("ProjectV2", field, arguments, request, &self.0)).await,

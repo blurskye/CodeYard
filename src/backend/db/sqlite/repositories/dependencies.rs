@@ -77,7 +77,7 @@ pub async fn configure(
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let repository = admin(&mut tx, actor, repo, true).await?;
-    ensure!(super::super::users::transitions::live_credential(&mut tx, actor, &credential.as_credential()).await?, Refusal::Denied);
+    ensure!(super::super::users::transitions::credential_live(&mut tx, actor, &credential.as_credential(), true).await?, Refusal::Denied);
     let current = state_in(&mut tx, repo).await?;
     let Some(policy) = Policy::change(
         current.as_ref(),

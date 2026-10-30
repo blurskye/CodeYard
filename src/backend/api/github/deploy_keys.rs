@@ -113,7 +113,7 @@ async fn create(
     let key = keys::add_key(
         &state.pool,
         &auth.user,
-        db::deploy_keys::Credential::Token(auth.token.id),
+        db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()),
         &repo,
         &title,
         &input.key,
@@ -138,7 +138,7 @@ async fn remove(
     keys::remove_key(
         &state.pool,
         &auth.user,
-        db::deploy_keys::Credential::Token(auth.token.id),
+        db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()),
         &repo,
         id,
     )

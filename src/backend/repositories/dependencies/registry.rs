@@ -88,7 +88,7 @@ impl Client {
         expected: Option<&str>,
     ) -> Result<npm::Archive> {
         ensure!(
-            crate::backend::npm::package_name(name) && version.to_string().len() <= 256,
+            crate::backend::npm::dependency_name(name) && version.to_string().len() <= 256,
             "Invalid npm package request"
         );
         let mut url = self.registry.clone();

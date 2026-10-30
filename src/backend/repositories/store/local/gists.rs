@@ -98,12 +98,12 @@ impl LocalStore {
         offset: usize,
         limit: usize,
     ) -> Result<Vec<GistRevision>, RepoError> {
-        let _lock = git::locks::lock(self.path()).await;
+        let lock = git::locks::lock(self.path()).await;
         let repo = self.gist_location(pool, id, true).await?;
         if super::repository_matches_path(&repo, self.path(), self.node_id) {
             self.recover_gist(pool, id).await?;
         }
-        git::gists::history(self.path(), revision, offset, limit).await.map_err(RepoError::from)
+        git::gists::history(self.path(), revision, offset, limit, lock).await.map_err(RepoError::from)
     }
     pub(in crate::backend::repositories::store) async fn gist_write(
         &self,

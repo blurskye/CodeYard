@@ -622,7 +622,7 @@ pub struct AuthorWeek {
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
-pub enum StatisticsMode { #[default] Full, Counts, Contributors }
+pub enum StatisticsMode { #[default] Full, Counts }
 
 static COMMIT_STATISTICS_CACHES: LazyLock<RefCaches<CommitStatistics>> =
     LazyLock::new(Mutex::default);
@@ -642,8 +642,7 @@ pub(crate) async fn get_commit_statistics(
                 return parse_commit_statistics(b"");
             };
             let mut command = process::git_command()?;
-            command.arg("log");
-            if !matches!(mode, StatisticsMode::Contributors) { command.arg("--no-merges"); }
+            command.args(["log", "--no-merges"]);
             if matches!(mode, StatisticsMode::Full) { command.arg("--numstat"); }
             command
                 .arg("--format=%x00%at %aI%x00%aN%x00%aE%x00")
