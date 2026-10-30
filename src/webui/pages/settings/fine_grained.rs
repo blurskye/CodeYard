@@ -208,7 +208,6 @@ fn list(tokens: &[Row], next_before: Option<i64>) -> Element {
                 p { "Each token reaches one owner's repositories with only the permissions you choose, and never more than your own access." }
                 NavLink { href: format!("{BASE}/new"), class: SUBMIT, "Generate new token" }
                 NavLink { href: BASE.to_owned(), "First page" }
-                if tokens.len() == 100 { if let Some(last) = tokens.last() { NavLink { href: format!("{BASE}?before={}", last.id), "Older tokens" } } }
             }
             div { class: "identity-row-list",
                 if tokens.is_empty() {
