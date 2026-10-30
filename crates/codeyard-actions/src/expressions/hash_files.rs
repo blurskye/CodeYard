@@ -225,7 +225,7 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
     {
         pattern_bytes = pattern_bytes.saturating_add(line.len());
-        if patterns.len() >= 256 || pattern_bytes > 1_048_576 || Instant::now() > deadline {
+        if patterns.len() >= 256 || pattern_bytes > 1_048_576 || super::execution_expired(deadline) {
             return Err(Error::Evaluation("hashFiles pattern budget exceeded".into()));
         }
         patterns.push(Pattern::parse(line, &workspace)?);
@@ -267,7 +267,7 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
             if visited > 100_000 || ancestors.len() > 256 {
                 return Err(Error::Evaluation("hashFiles traversal budget exceeded".into()));
             }
-            if Instant::now() > deadline {
+            if super::execution_expired(deadline) {
                 return Err(Error::Evaluation(
                     "hashFiles couldn't finish within 120 seconds".into(),
                 ));
@@ -304,7 +304,7 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
                 }
                 let mut children = Vec::new();
                 for entry in fs::read_dir(&path).map_err(|e| io_error(&path, e))? {
-                    if children.len() + stack.len() >= 100_000 || Instant::now() > deadline {
+                    if children.len() + stack.len() >= 100_000 || super::execution_expired(deadline) {
                         return Err(Error::Evaluation("hashFiles traversal budget exceeded".into()));
                     }
                     children.push(entry.map_err(|e| io_error(&path, e))?.path());
@@ -349,7 +349,7 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
                 let mut hash = Sha256::new();
                 let mut buffer = [0; 65536];
                 loop {
-                    if Instant::now() > deadline {
+                    if super::execution_expired(deadline) {
                         return Err(Error::Evaluation(
                             "hashFiles couldn't finish within 120 seconds".into(),
                         ));

@@ -72,6 +72,26 @@ impl Value {
     }
 }
 
+struct ExecutionLimits { deadline: std::time::Instant, cancel: tokio::sync::watch::Receiver<bool> }
+thread_local! {
+    static EXECUTION_LIMITS: std::cell::RefCell<Option<ExecutionLimits>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Used only inside a bounded blocking evaluation, never across an async suspension.
+pub(crate) fn with_execution_limits<T>(deadline: std::time::Instant, cancel: tokio::sync::watch::Receiver<bool>, evaluate: impl FnOnce() -> T) -> T {
+    struct Restore(Option<ExecutionLimits>);
+    impl Drop for Restore {
+        fn drop(&mut self) { EXECUTION_LIMITS.with(|limits| { limits.replace(self.0.take()); }); }
+    }
+    let _restore = Restore(EXECUTION_LIMITS.with(|limits| limits.replace(Some(ExecutionLimits { deadline, cancel }))));
+    evaluate()
+}
+
+pub(super) fn execution_expired(deadline: std::time::Instant) -> bool {
+    std::time::Instant::now() >= deadline || EXECUTION_LIMITS.with(|limits| limits.borrow().as_ref()
+        .is_some_and(|limits| std::time::Instant::now() >= limits.deadline || *limits.cancel.borrow()))
+}
+
 /// The named contexts an expression can read. Lookups ignore case.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Contexts {

@@ -205,10 +205,10 @@ impl Job {
         depth: usize,
         outputs: &mut BTreeMap<String, String>,
     ) -> Result<bool> {
-        let mut supplied = supplied
-            .iter()
-            .map(|(key, template)| Ok((key.clone(), text(template, &self.contexts, self.status)?)))
-            .collect::<Result<BTreeMap<_, _>>>()?;
+        let templates = supplied.clone();
+        let mut supplied = self.evaluate(deadline, move |contexts, status| templates.iter()
+            .map(|(key, template)| Ok((key.clone(), text(template, contexts, status)?)))
+            .collect::<Result<BTreeMap<_, _>>>()).await?;
         if reference.starts_with("docker://") {
             for (key, value) in &supplied {
                 env.insert(format!("INPUT_{}", key.replace(' ', "_").to_ascii_uppercase()), value.clone());
@@ -296,7 +296,7 @@ impl Job {
         let mut inputs = BTreeMap::new();
         for (key, input) in metadata.inputs {
             if !supplied.keys().any(|name| name.eq_ignore_ascii_case(&key)) {
-                inputs.insert(key, text(&input.default, &self.contexts, self.status)?);
+                inputs.insert(key, self.text(&input.default, deadline).await?);
             }
         }
         // Input names compare without case, so a supplied value replaces any default.
@@ -339,7 +339,7 @@ impl Job {
                         for (key, output) in &metadata.outputs {
                             if let Some(value) = &output.value {
                                 outputs
-                                    .insert(key.clone(), text(value, &self.contexts, self.status)?);
+                                    .insert(key.clone(), self.text(value, deadline).await?);
                             }
                         }
                         Ok(!self.status.failed)
@@ -386,11 +386,8 @@ impl Job {
                         None => None,
                     };
                     if let Some(pre) = &metadata.runs.pre {
-                        if expressions::evaluate_condition(
-                            metadata.runs.pre_if.as_deref().unwrap_or("always()"),
-                            &self.contexts,
-                            self.status,
-                        )? {
+                        let condition = metadata.runs.pre_if.clone().unwrap_or_else(|| "always()".into());
+                        if self.evaluate(deadline, move |contexts, status| Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await? {
                             self.prepare_files()?;
                             if let Some(index) = post { self.posts[index].main_files = Some(self.active_files.clone()); }
                             let result = self.node((&directory, pre, &runtime), (env.clone(), &exported), deadline, outputs, &mut state).await;
@@ -424,11 +421,14 @@ impl Job {
                 }
                 "docker" => {
                     for (key, value) in &metadata.runs.env {
-                        env.insert(key.clone(), text(value, &self.contexts, self.status)?);
+                        env.insert(key.clone(), self.text(value, deadline).await?);
                     }
                     let args = match &docker_args {
                         Some(args) => commands::words(args)?,
-                        None => metadata.runs.args.iter().map(|value| text(value, &self.contexts, self.status)).collect::<Result<Vec<_>>>()?,
+                        None => {
+                            let args = metadata.runs.args.clone();
+                            self.evaluate(deadline, move |contexts, status| args.iter().map(|value| text(value, contexts, status)).collect::<Result<Vec<_>>>()).await?
+                        },
                     };
                     let entrypoint = docker_entrypoint.or(metadata.runs.entrypoint.clone());
                     let image = metadata
@@ -587,7 +587,8 @@ impl Job {
             if post.exported.get(key) != Some(value) { post_env.insert(key.clone(), value.clone()); }
         }
         self.contexts.values.insert("env".into(), object(&post_env));
-        match expressions::evaluate_condition(&post.condition, &self.contexts, self.status) {
+        let condition = post.condition.clone();
+        match self.evaluate(self.deadline, move |contexts, status| Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await {
             Ok(true) => {}
             condition => {
                 self.contexts = outer_contexts;

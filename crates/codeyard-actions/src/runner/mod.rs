@@ -1470,6 +1470,23 @@ async fn run_job(
 }
 
 impl Job {
+    async fn evaluate<T: Send + 'static>(
+        &self, deadline: Instant, evaluate: impl FnOnce(&Contexts, Status) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        anyhow::ensure!(Instant::now() < deadline && !*self.cancel.borrow(), "Expression evaluation interrupted");
+        let contexts = self.contexts.clone();
+        let status = self.status;
+        let cancel = self.cancel.clone();
+        tokio::time::timeout_at(deadline.into(), tokio::task::spawn_blocking(move ||
+            expressions::with_execution_limits(deadline, cancel, || evaluate(&contexts, status))
+        )).await.context("Expression evaluation timed out")??
+    }
+
+    async fn text(&self, template: &str, deadline: Instant) -> Result<String> {
+        let template = template.to_owned();
+        self.evaluate(deadline, move |contexts, status| text(&template, contexts, status)).await
+    }
+
     fn sync_status(&mut self) {
         if let Some(Value::Object(job)) = self.contexts.values.get_mut("job") {
             job.insert("status".into(), Value::String(if self.status.cancelled { "cancelled" } else if self.status.failed { "failure" } else { "success" }.into()));
@@ -1732,17 +1749,16 @@ impl Job {
             let mut env = self.env.clone();
             env.extend(self.saved_env.clone());
             self.contexts.values.insert("env".into(), object(&env));
-            env.extend(step.env.resolve(&self.contexts, self.status)?);
+            let template = step.env.clone();
+            env.extend(self.evaluate(self.deadline, move |contexts, status| template.resolve(contexts, status)).await?);
             self.contexts.values.insert("env".into(), object(&env));
-            let name = text(&name, &self.contexts, self.status)?;
+            let name = self.text(&name, self.deadline).await?;
             let name = commands::bounded(&self.log.masker.mask(&name), 1024);
             let step_started = Instant::now();
             if depth == 0 { self.log.start_step(self.public_step, &name); }
-            let condition = expressions::evaluate_condition(
-                step.condition.as_deref().unwrap_or("success()"),
-                &self.contexts,
-                self.status,
-            )?;
+            let condition = step.condition.clone().unwrap_or_else(|| "success()".into());
+            let condition = self.evaluate(self.deadline, move |contexts, status|
+                Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await?;
             let mut outputs = BTreeMap::new();
             let outcome;
             let conclusion;
@@ -1753,7 +1769,7 @@ impl Job {
             } else {
                 self.log.line(&format!("Step started: {name}"));
                 let deadline = if let Some(template) = &step.timeout_minutes {
-                    let value = text(template, &self.contexts, self.status)?
+                    let value = self.text(template, self.deadline).await?
                         .parse::<f64>()
                         .context("timeout-minutes must be a number")?;
                     self.deadline.min(Instant::now() + minutes(value)?)
@@ -1761,7 +1777,8 @@ impl Job {
                     self.deadline
                 };
                 let continued = if let Some(template) = &step.continue_on_error {
-                    boolean(template, &self.contexts, self.status)?
+                    let template = template.clone();
+                    self.evaluate(deadline, move |contexts, status| boolean(&template, contexts, status)).await?
                 } else { false };
                 let result = self
                     .action(&step.action, env, deadline, depth, &mut outputs)
@@ -1825,13 +1842,13 @@ impl Job {
                     shell,
                     working_directory,
                 } => {
-                    let script = text(script, &self.contexts, self.status)?;
+                    let script = self.text(script, deadline).await?;
                     let shell = match shell {
-                        Some(value) => Some(text(value, &self.contexts, self.status)?),
+                        Some(value) => Some(self.text(value, deadline).await?),
                         None => self.default_shell.clone(),
                     };
                     let directory = match working_directory {
-                        Some(value) => text(value, &self.contexts, self.status)?,
+                        Some(value) => self.text(value, deadline).await?,
                         None => self.default_working_directory.clone().unwrap_or_default(),
                     };
                     let directory = self.options.directory.join(directory);
