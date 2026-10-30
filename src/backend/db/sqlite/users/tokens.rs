@@ -15,6 +15,7 @@ pub async fn create_token(
     scope: &str,
     expires_at: Option<DateTime<Utc>>,
 ) -> Result<Option<PersonalAccessToken>> {
+    anyhow::ensure!(crate::backend::db::users::tokens::supported_expiry(expires_at), "Token expiry is outside the supported calendar range");
     // One statement is atomic: its session and account checks read the same state as
     // its insert. A password change that committed first makes the checks fail.
     Ok(sqlx::query_as("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope,expires_at) SELECT id,?2,?3,?4,?5 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password AND EXISTS(SELECT 1 FROM sessions WHERE id=?6 AND user_id=?1 AND expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) RETURNING id,user_id,name,scope,expires_at,created_at")

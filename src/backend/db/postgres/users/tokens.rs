@@ -12,6 +12,7 @@ pub async fn create_token(
     scope: &str,
     expires_at: Option<DateTime<Utc>>,
 ) -> Result<Option<PersonalAccessToken>> {
+    anyhow::ensure!(crate::backend::db::users::tokens::supported_expiry(expires_at), "Token expiry is outside the supported calendar range");
     let mut tx = pool.begin().await?;
     // Serialize creation with account suspension and password-reset revocation.
     let active = sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR UPDATE")

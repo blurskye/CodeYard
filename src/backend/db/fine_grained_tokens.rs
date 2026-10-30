@@ -58,6 +58,9 @@ impl Bounds {
 /// An expiry fits a maximum of `days` when it is no later than the end of the day `days`
 /// after `from`, which is how the token form picks dates. `None` days allow no expiry.
 pub fn within(expires_at: Option<DateTime<Utc>>, from: DateTime<Utc>, days: Option<i64>) -> bool {
+    if !super::users::tokens::supported_expiry(expires_at) {
+        return false;
+    }
     match (days, expires_at) {
         (None, _) => true,
         (Some(_), None) => false,

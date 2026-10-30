@@ -3,7 +3,12 @@ use crate::backend::db::{
     DbPool,
 };
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
+
+/// Token timestamps must round-trip through SQLite's four-digit calendar representation.
+pub(crate) fn supported_expiry(expiry: Option<DateTime<Utc>>) -> bool {
+    expiry.is_none_or(|expiry| (1..=9999).contains(&expiry.year()))
+}
 
 native_operation!(crate::backend::db::postgres::users::tokens::create_token,
     crate::backend::db::sqlite::users::tokens::create_token,
