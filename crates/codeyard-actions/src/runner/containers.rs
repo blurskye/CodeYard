@@ -565,6 +565,34 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn a_docker_action_entrypoint_that_starts_with_a_dash_stays_the_entrypoint() {
+        let options = Options::try_parse_from(["codeyard-actions", "push", "-W", "unused"]).unwrap();
+        let mut podman = Podman::new(&options, "test".into()).unwrap();
+        // A resolved image needs no Podman call.
+        podman.action_images.insert(
+            (Path::new("/action").to_path_buf(), "docker://alpine:3.21".into()),
+            "resolved".into(),
+        );
+        let (command, _) = podman
+            .docker_action(
+                "docker://alpine:3.21",
+                Path::new("/action"),
+                Path::new("/work"),
+                Path::new("/temp"),
+                &BTreeMap::new(),
+                Some("-x"),
+                &[],
+                std::time::Instant::now() + Duration::from_secs(60),
+            )
+            .await
+            .unwrap();
+        let args = arguments(&command);
+        assert!(args.contains(&"--entrypoint=-x".to_string()), "{args:?}");
+        let image = args.iter().position(|arg| arg == "--").unwrap();
+        assert_eq!(args[image + 1], "resolved", "{args:?}");
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn docker_actions_refuse_option_images_outside_dockerfiles_and_colon_paths() {

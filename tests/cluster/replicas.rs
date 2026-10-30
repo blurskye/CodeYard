@@ -854,6 +854,26 @@ async fn only_nodes_holding_a_copy_may_ask_for_its_packs() {
         .await
         .unwrap();
     assert!(status.success(), "the copy holder gets its pack");
+    // A tip the primary no longer has is left out of the pack instead of failing it.
+    let (_, status) = holder
+        .context
+        .git_session(
+            primary.context.node_id,
+            Request {
+                operation: Operation::ReplicaPack {
+                    have: vec!["1".repeat(40)],
+                },
+                ..pack_request()
+            },
+            GitStreams {
+                input: &mut tokio::io::empty(),
+                output: &mut tokio::io::sink(),
+                errors: &mut tokio::io::sink(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(status.success(), "an unknown have tip still gets a pack");
 
     outsider.shutdown().await;
     holder.shutdown().await;

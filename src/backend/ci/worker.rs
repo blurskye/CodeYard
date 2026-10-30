@@ -2744,6 +2744,8 @@ mod tests {
             .collect::<BTreeMap<_, _>>();
         assert_eq!(env["ACTIONS_RUNTIME_TOKEN"], "runtime-test-token");
         assert_eq!(env["ACTIONS_RUNTIME_URL"], "https://results.example");
+        // act adds the run's ID to the names of its containers, networks and volumes.
+        assert_eq!(env["CODEYARD_ACT_INSTANCE"], claim.run.run_id.simple().to_string());
         claim.github_tokens.oidc_jobs.clear();
         let command = act_command(
             &service,

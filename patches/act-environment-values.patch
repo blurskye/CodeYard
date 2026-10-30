@@ -1,0 +1,424 @@
+--- a/cmd/input.go
++++ b/cmd/input.go
+@@ -29,0 +30 @@
++	environmentfile                    string
+--- a/cmd/root.go
++++ b/cmd/root.go
+@@ -108,0 +109 @@
++	rootCmd.PersistentFlags().StringVar(&input.environmentfile, "environment-values-file", "", "file with job-scoped environment secrets and variables")
+@@ -446,0 +448,10 @@
++		environmentValues, err := runner.LoadEnvironmentValues(input.environmentfile)
++		if err != nil {
++			return err
++		}
++		if input.environmentfile != "" {
++			info, err := os.Stat(input.WorkflowsPath())
++			if err != nil || !info.Mode().IsRegular() {
++				return fmt.Errorf("environment values require one workflow file")
++			}
++		}
+@@ -623,0 +635 @@
++			EnvironmentValues:                  environmentValues,
+--- /dev/null
++++ b/pkg/runner/environment_values.go
+@@ -0,0 +1,196 @@
++package runner
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"errors"
++	"io"
++	"os"
++	"strconv"
++	"strings"
++	"unicode/utf8"
++)
++
++// EnvironmentValues are bound to admitted job IDs, never merged into Config.Secrets.
++type EnvironmentValues struct {
++	Jobs         map[string]string           `json:"jobs"`
++	Environments map[string]EnvironmentScope `json:"environments"`
++}
++
++type EnvironmentScope struct {
++	Secrets   map[string]string `json:"secrets"`
++	Variables map[string]string `json:"variables"`
++}
++
++func validEnvironmentValues(values map[string]string, budget int) bool {
++	if values == nil || len(values) > 100 {
++		return false
++	}
++	names := make(map[string]bool)
++	total := 0
++	for name, value := range values {
++		upper := strings.ToUpper(name)
++		if len(name) == 0 || len(name) > 255 || names[upper] || strings.HasPrefix(upper, "GITHUB_") || len(value) > 48*1024 || strings.ContainsRune(value, 0) {
++			return false
++		}
++		names[upper] = true
++		for i := 0; i < len(name); i++ {
++			b := name[i]
++			if !((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '_' || (i > 0 && b >= '0' && b <= '9')) {
++				return false
++			}
++		}
++		total += len(name) + len(value)
++	}
++	return total <= budget
++}
++
++// LoadEnvironmentValues deliberately discards decoder errors which could quote a value.
++func LoadEnvironmentValues(path string) (EnvironmentValues, error) {
++	var values EnvironmentValues
++	if path == "" {
++		return values, nil
++	}
++	file, err := os.Open(path)
++	if err != nil {
++		return values, errors.New("unable to read environment values file")
++	}
++	defer file.Close()
++	data, err := io.ReadAll(io.LimitReader(file, 16*1024*1024+1))
++	if err != nil || len(data) > 16*1024*1024 || !utf8.Valid(data) {
++		return values, errors.New("invalid environment values file")
++	}
++	decoder := json.NewDecoder(bytes.NewReader(data))
++	decoder.DisallowUnknownFields()
++	if decoder.Decode(&values) != nil {
++		return EnvironmentValues{}, errors.New("invalid environment values file")
++	}
++	var extra interface{}
++	if decoder.Decode(&extra) != io.EOF || values.Jobs == nil || values.Environments == nil || len(values.Jobs) > 1024 || len(values.Environments) > 1024 {
++		return EnvironmentValues{}, errors.New("invalid environment values file")
++	}
++	for job, scope := range values.Jobs {
++		if _, exists := values.Environments[scope]; job == "" || len(job) > 1024 || !exists {
++			return EnvironmentValues{}, errors.New("invalid environment value binding")
++		}
++	}
++	for name, scope := range values.Environments {
++		if name == "" || len(name) > 2048 || !validEnvironmentValues(scope.Secrets, 1024*1024) || !validEnvironmentValues(scope.Variables, 256*1024) {
++			return EnvironmentValues{}, errors.New("invalid environment value scope")
++		}
++	}
++	return values, nil
++}
++
++func (values EnvironmentValues) forJob(job string) EnvironmentScope {
++	scope, exists := values.Jobs[job]
++	if !exists {
++		return EnvironmentScope{}
++	}
++	return values.Environments[scope]
++}
++
++func (rc *RunContext) environmentScope() EnvironmentScope {
++	owner := rc
++	for owner.Parent != nil {
++		owner = owner.Parent
++	}
++	if owner.Run == nil {
++		return EnvironmentScope{}
++	}
++	job := owner.Run.JobID
++	for caller := owner.caller; caller != nil; caller = owner.caller {
++		owner = caller.runContext
++		job = owner.Run.JobID + "/" + job
++	}
++	return rc.Config.EnvironmentValues.forJob(job)
++}
++
++func overlayEnvironmentValues(base, overlay map[string]string) map[string]string {
++	if len(overlay) == 0 {
++		return base
++	}
++	result := make(map[string]string, len(base)+len(overlay))
++	for key, value := range base {
++		result[key] = value
++	}
++	for key, value := range overlay {
++		for existing := range result {
++			if strings.EqualFold(existing, key) {
++				delete(result, existing)
++			}
++		}
++		result[key] = value
++	}
++	return result
++}
++
++func (config *Config) maskedSecrets() map[string]string {
++	result := make(map[string]string)
++	seen := make(map[string]bool)
++	add := func(value string) {
++		for _, part := range append([]string{value}, strings.Split(value, "\n")...) {
++			part = strings.TrimRight(part, "\r\n")
++			if strings.TrimSpace(part) != "" && !seen[part] {
++				seen[part] = true
++				result[strconv.Itoa(len(result))] = part
++			}
++		}
++	}
++	for _, value := range config.Secrets {
++		add(value)
++	}
++	for _, scope := range config.EnvironmentValues.Environments {
++		for _, value := range scope.Secrets {
++			add(value)
++		}
++	}
++	return result
++}
++
++// Match the original text and redact the union, never matching replacement stars.
++func maskSecretValues(text string, secrets map[string]string, requested []string) string {
++	values := make([]string, 0, len(secrets)+len(requested))
++	for _, value := range secrets {
++		values = append(values, value)
++	}
++	for _, value := range requested {
++		values = append(values, value)
++		values = append(values, strings.Fields(value)...)
++	}
++	covered := make([]bool, len(text))
++	for _, value := range values {
++		if value == "" {
++			continue
++		}
++		for start := 0; start < len(text); {
++			index := strings.Index(text[start:], value)
++			if index < 0 {
++				break
++			}
++			index += start
++			for end := index; end < index+len(value); end++ {
++				covered[end] = true
++			}
++			start = index + 1
++		}
++	}
++	var result strings.Builder
++	for index := 0; index < len(text); {
++		if !covered[index] {
++			result.WriteByte(text[index])
++			index++
++			continue
++		}
++		result.WriteString("***")
++		for index < len(text) && covered[index] {
++			index++
++		}
++	}
++	return result.String()
++}
++
++func (rc *RunContext) outputContainsSecret(ctx context.Context, value string) bool {
++	return maskSecretValues(value, rc.Config.maskedSecrets(), *Masks(ctx)) != value
++}
+--- /dev/null
++++ b/pkg/runner/environment_values_test.go
+@@ -0,0 +1,87 @@
++package runner
++
++import (
++	"context"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func TestCompositeSecretsContextIsEmpty(t *testing.T) {
++	parent := &RunContext{Config: &Config{Secrets: map[string]string{"TOKEN": "caller-private"}}}
++	child := &RunContext{Config: parent.Config, Parent: parent}
++	if len(getWorkflowSecrets(context.Background(), child)) != 0 {
++		t.Fatal("composite action acquired its caller's secrets context")
++	}
++}
++
++func TestEnvironmentValuesFollowJobBindings(t *testing.T) {
++	base := map[string]string{"token": "repository-secret", "GITHUB_TOKEN": "job-token"}
++	values := EnvironmentValues{Jobs: map[string]string{"deploy": "i\u0307"}, Environments: map[string]EnvironmentScope{"i\u0307": {Secrets: map[string]string{"TOKEN": "environment-secret"}, Variables: map[string]string{"COLOR": "visible-variable"}}}}
++	for _, test := range []struct{ job, want string }{{"ordinary", "repository-secret"}, {"deploy", "environment-secret"}} {
++		actual := overlayEnvironmentValues(base, values.forJob(test.job).Secrets)
++		found := ""
++		for name, value := range actual {
++			if strings.EqualFold(name, "TOKEN") {
++				found = value
++			}
++		}
++		if found != test.want || actual["GITHUB_TOKEN"] != "job-token" || base["token"] != "repository-secret" {
++			t.Fatal("environment values escaped their job binding or mutated the base context")
++		}
++	}
++	if values.forJob("ordinary").Variables != nil || values.forJob("deploy").Variables["COLOR"] != "visible-variable" {
++		t.Fatal("variables escaped their job binding")
++	}
++}
++
++func TestEnvironmentValuesMalformedFilesDoNotDiscloseValues(t *testing.T) {
++	for _, content := range []string{
++		`{"jobs":{},"environments":{"prod":{"secrets":"private-marker","variables":{}}}}`,
++		`{"jobs":{},"environments":{}} {}`,
++		`{"jobs":{},"environments":{},"unknown":"private-marker"}`,
++		`{"jobs":{"deploy":"missing"},"environments":{}}`,
++		`{"jobs":{"deploy":"prod"},"environments":{"prod":{"secrets":{"GITHUB_TOKEN":"private-marker"},"variables":{}}}}`,
++		`{"jobs":{},"environments":{"prod":{"secrets":{"TOKEN":`,
++	} {
++		path := filepath.Join(t.TempDir(), "values.json")
++		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
++			t.Fatal(err)
++		}
++		_, err := LoadEnvironmentValues(path)
++		if err == nil || strings.Contains(err.Error(), "private-marker") {
++			t.Fatal("invalid values must be rejected without their contents")
++		}
++	}
++}
++
++func TestEnvironmentValuesValidFilesAndLimits(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "values.json")
++	content := `{"jobs":{"deploy":"prod"},"environments":{"prod":{"secrets":{"TOKEN":"environment-secret"},"variables":{"COLOR":"visible-variable"}}}}`
++	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
++		t.Fatal(err)
++	}
++	values, err := LoadEnvironmentValues(path)
++	if err != nil || values.forJob("deploy").Secrets["TOKEN"] != "environment-secret" {
++		t.Fatal("valid values were not loaded")
++	}
++	if validEnvironmentValues(map[string]string{"TOKEN": strings.Repeat("x", 48*1024+1)}, 1024*1024) || validEnvironmentValues(map[string]string{"TOKEN": "nul\x00value"}, 1024*1024) {
++		t.Fatal("invalid values were accepted")
++	}
++}
++
++func TestEnvironmentValuesMaskBothShadowedAndEnvironmentSecrets(t *testing.T) {
++	config := Config{Secrets: map[string]string{"TOKEN": "repository-secret"}, EnvironmentValues: EnvironmentValues{Environments: map[string]EnvironmentScope{"prod": {Secrets: map[string]string{"TOKEN": "environment-secret"}}}}}
++	want := map[string]bool{"repository-secret": true, "environment-secret": true}
++	actual := config.maskedSecrets()
++	if len(actual) != len(want) {
++		t.Fatal("a shadowed secret was dropped")
++	}
++	for _, value := range actual {
++		delete(want, value)
++	}
++	if len(want) != 0 {
++		t.Fatal("both scopes must be masked")
++	}
++}
+--- a/pkg/runner/expression.go
++++ b/pkg/runner/expression.go
+@@ -569,0 +570,7 @@
++	if rc.Parent != nil {
++		return nil
++	}
++	return overlayEnvironmentValues(getBaseWorkflowSecrets(ctx, rc), rc.environmentScope().Secrets)
++}
++
++func getBaseWorkflowSecrets(ctx context.Context, rc *RunContext) map[string]string {
+@@ -575 +582 @@
+-			secrets = rc.caller.runContext.Config.Secrets
++			return getWorkflowSecrets(ctx, rc.caller.runContext)
+@@ -585,0 +593,3 @@
++		if _, ok := secrets["GITHUB_TOKEN"]; !ok {
++			secrets["GITHUB_TOKEN"] = getWorkflowSecrets(ctx, rc.caller.runContext)["GITHUB_TOKEN"]
++		}
+@@ -593,2 +603,2 @@
+-	return rc.Config.Vars
+-}
++	return overlayEnvironmentValues(rc.Config.Vars, rc.environmentScope().Variables)
++}
+--- a/pkg/runner/logger.go
++++ b/pkg/runner/logger.go
+@@ -101 +101 @@
+-		masker:    valueMasker(config.InsecureSecrets, config.Secrets),
++		masker:    valueMasker(config.InsecureSecrets, config.maskedSecrets()),
+@@ -147,4 +147,0 @@
+-	ssecrets := []string{}
+-	for _, v := range secrets {
+-		ssecrets = append(ssecrets, v)
+-	}
+@@ -158,12 +154,1 @@
+-		for _, v := range ssecrets {
+-			if v != "" {
+-				entry.Message = strings.ReplaceAll(entry.Message, v, "***")
+-			}
+-		}
+-
+-		for _, v := range *masks {
+-			if v != "" {
+-				entry.Message = strings.ReplaceAll(entry.Message, v, "***")
+-			}
+-		}
+-
++		entry.Message = maskSecretValues(entry.Message, secrets, *masks)
+--- a/pkg/runner/run_context.go
++++ b/pkg/runner/run_context.go
+@@ -93 +93 @@
+-	return createContainerName("act", rc.String())
++	return createContainerName("act", os.Getenv("CODEYARD_ACT_INSTANCE"), rc.String())
+@@ -655,0 +656,5 @@
++			if rc.outputContainsSecret(ctx, interpolated) {
++				delete(rc.Run.Job().Outputs, k)
++				common.Logger(ctx).Warn("Skipped job output containing a secret")
++				continue
++			}
+--- a/pkg/runner/job_executor.go
++++ b/pkg/runner/job_executor.go
+@@ -193 +193,6 @@
+-			callerOutputs[k] = ee.Interpolate(ctx, ee.Interpolate(ctx, v.Value))
++			value := ee.Interpolate(ctx, ee.Interpolate(ctx, v.Value))
++			if rc.outputContainsSecret(ctx, value) {
++				common.Logger(ctx).Warn("Skipped workflow output containing a secret")
++				continue
++			}
++			callerOutputs[k] = value
+--- a/pkg/runner/runner.go
++++ b/pkg/runner/runner.go
+@@ -23,18 +23,19 @@
+-	Actor                              string                       // the user that triggered the event
+-	Workdir                            string                       // path to working directory
+-	ActionCacheDir                     string                       // path used for caching action contents
+-	ActionOfflineMode                  bool                         // when offline, use caching action contents
+-	BindWorkdir                        bool                         // bind the workdir to the job container
+-	EventName                          string                       // name of event to run
+-	EventPath                          string                       // path to JSON file to use for event.json in containers
+-	DefaultBranch                      string                       // name of the main branch for this repository
+-	ReuseContainers                    bool                         // reuse containers to maintain state
+-	ForcePull                          bool                         // force pulling of the image, even if already present
+-	ForceRebuild                       bool                         // force rebuilding local docker image action
+-	LogOutput                          bool                         // log the output from docker run
+-	JSONLogger                         bool                         // use json or text logger
+-	LogPrefixJobID                     bool                         // switches from the full job name to the job id
+-	Env                                map[string]string            // env for containers
+-	Inputs                             map[string]string            // manually passed action inputs
+-	Secrets                            map[string]string            // list of secrets
+-	Vars                               map[string]string            // list of vars
++	Actor                              string            // the user that triggered the event
++	Workdir                            string            // path to working directory
++	ActionCacheDir                     string            // path used for caching action contents
++	ActionOfflineMode                  bool              // when offline, use caching action contents
++	BindWorkdir                        bool              // bind the workdir to the job container
++	EventName                          string            // name of event to run
++	EventPath                          string            // path to JSON file to use for event.json in containers
++	DefaultBranch                      string            // name of the main branch for this repository
++	ReuseContainers                    bool              // reuse containers to maintain state
++	ForcePull                          bool              // force pulling of the image, even if already present
++	ForceRebuild                       bool              // force rebuilding local docker image action
++	LogOutput                          bool              // log the output from docker run
++	JSONLogger                         bool              // use json or text logger
++	LogPrefixJobID                     bool              // switches from the full job name to the job id
++	Env                                map[string]string // env for containers
++	Inputs                             map[string]string // manually passed action inputs
++	Secrets                            map[string]string // list of secrets
++	Vars                               map[string]string // list of vars
++	EnvironmentValues                  EnvironmentValues
+--- a/pkg/container/docker_run.go
++++ b/pkg/container/docker_run.go
+@@ -218,1 +218,4 @@
+ func GetDockerClient(_ context.Context) (cli client.APIClient, err error) {
++	if os.Getenv("CODEYARD_DENY_DOCKER") == "1" {
++		return nil, fmt.Errorf("Docker actions require CI_EXECUTION_MODE=podman")
++	}

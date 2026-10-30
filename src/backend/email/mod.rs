@@ -266,6 +266,12 @@ mod tests {
             )
         };
         notify_user(&f.pool, &notification(None, None).await.unwrap()).await;
+        let early = db::users::signup_requests::create_signup_request(&f.pool, "carol", Some("carol@example.com"), "hash")
+            .await
+            .unwrap();
+        db::users::signup_requests::reject_signup_request(&f.pool, early.id, f.admin)
+            .await
+            .unwrap();
         assert!(db::email::claim_due_email(&f.pool, 5, 600)
             .await
             .unwrap()
@@ -277,7 +283,17 @@ mod tests {
             .unwrap();
         let mail = notification(Some("Body"), Some("/x")).await.unwrap();
         notify_user(&f.pool, &mail).await;
+        let later = db::users::signup_requests::create_signup_request(&f.pool, "dave", Some("dave@example.com"), "hash")
+            .await
+            .unwrap();
+        db::users::signup_requests::reject_signup_request(&f.pool, later.id, f.admin)
+            .await
+            .unwrap();
         let first = db::email::claim_due_email(&f.pool, 5, 600)
+            .await
+            .unwrap()
+            .unwrap();
+        let second = db::email::claim_due_email(&f.pool, 5, 600)
             .await
             .unwrap()
             .unwrap();
@@ -291,6 +307,8 @@ mod tests {
                 .await
                 .unwrap()
         );
+        // The signup decision mail is queued with the decision once a mail server is set up.
+        assert_eq!(second.to_address, "dave@example.com");
     }
 
     #[tokio::test]
