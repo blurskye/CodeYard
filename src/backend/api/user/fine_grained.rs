@@ -577,6 +577,9 @@ async fn regenerate(
     match detail(&ctx, &user, id).await {
         Ok(token) => respond(&ctx, status, View::Show { token, value }, message),
         Err(error) => {
+            if let Some(value) = value {
+                return respond(&ctx, StatusCode::OK, View::Revealed { id, value }, Some("Token regenerated. Details could not be loaded; copy the token before leaving this page."));
+            }
             let (status, message) = refusal(error);
             ctx.error(status, message)
         }
