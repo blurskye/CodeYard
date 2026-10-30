@@ -1294,6 +1294,7 @@ struct Job {
     contexts: Contexts,
     env: BTreeMap<String, String>,
     saved_env: BTreeMap<String, String>,
+    job_exports: BTreeMap<String, String>,
     paths: Vec<String>,
     log: Log,
     cancel: watch::Receiver<bool>,
@@ -1313,6 +1314,10 @@ struct Job {
     next_step: usize,
     active_files: PathBuf,
     posts: Vec<actions::Post>,
+    prepared_actions: BTreeMap<Vec<usize>, actions::PreparedAction>,
+    action_path: Vec<usize>,
+    scope: Option<JobScope>,
+    action_bytes: usize,
     matchers: matchers::Matchers,
     summaries: BTreeMap<u32, String>,
     summary_bytes: usize,
@@ -1361,6 +1366,7 @@ async fn run_job(
             contexts,
             env,
             saved_env: BTreeMap::new(),
+            job_exports: BTreeMap::new(),
             paths: Vec::new(),
             log: log.clone(),
             cancel,
@@ -1380,6 +1386,10 @@ async fn run_job(
             next_step: 0,
             active_files: PathBuf::new(),
             posts: Vec::new(),
+            prepared_actions: BTreeMap::new(),
+            action_path: Vec::new(),
+            scope: None,
+            action_bytes: 0,
             matchers: matchers::Matchers::default(),
             summaries: BTreeMap::new(),
             summary_bytes: 0,
@@ -1390,6 +1400,12 @@ async fn run_job(
             _ = tokio::time::sleep_until(deadline.into()) => {interrupted=Some(Conclusion::TimedOut);Err(anyhow::anyhow!("The job has timed out."))},
             _ = cancellation.wait_for(|cancelled| *cancelled) => {interrupted=Some(Conclusion::Cancelled);Err(anyhow::anyhow!("The job was cancelled."))},
         };
+        if interrupted.is_none() && result.as_ref().map_or(true, |result| result.result != "success") {
+            if *job.cancel.borrow() { interrupted = Some(Conclusion::Cancelled); }
+            else if Instant::now() >= deadline { interrupted = Some(Conclusion::TimedOut); }
+        }
+        job.restore_scope();
+        job.action_path.clear();
         job.status.cancelled = *job.cancel.borrow();
         job.status.failed |= result.is_err() && !job.status.cancelled;
         job.sync_status();
@@ -1404,11 +1420,13 @@ async fn run_job(
         if interrupted.is_some() && !containment.load(std::sync::atomic::Ordering::Acquire) {
             let remaining = job.plan.steps[job.next_step..].to_vec();
             let mut outputs = BTreeMap::new();
-            for step in remaining {
+            for (index, step) in remaining.into_iter().enumerate() {
                 if Instant::now() >= job.deadline { break; }
                 job.public_step += 1;
                 let deadline = job.deadline;
-                let _ = tokio::time::timeout_at(deadline.into(), job.step(&step, 0, &mut outputs)).await;
+                let _ = tokio::time::timeout_at(deadline.into(), job.step(&step, job.next_step + index, 0, &mut outputs)).await;
+                job.restore_scope();
+                job.action_path.clear();
             }
         }
         while let Some(post) = job.posts.pop() {
@@ -1472,7 +1490,44 @@ async fn run_job(
     result
 }
 
+struct JobScope {
+    contexts: Contexts,
+    env: BTreeMap<String, String>,
+    shell: Option<String>,
+    directory: Option<String>,
+    planned_shell: Option<String>,
+    planned_directory: Option<String>,
+    deadline: Instant,
+    status: Status,
+}
+
 impl Job {
+    fn checkpoint_scope(&mut self) {
+        self.scope = Some(JobScope {
+            contexts: self.contexts.clone(), env: self.env.clone(),
+            shell: self.default_shell.clone(), directory: self.default_working_directory.clone(),
+            planned_shell: self.plan.default_shell.clone(), planned_directory: self.plan.default_working_directory.clone(),
+            deadline: self.deadline, status: self.status,
+        });
+    }
+
+    fn restore_scope(&mut self) {
+        if let Some(scope) = self.scope.take() {
+            self.contexts = scope.contexts; self.env = scope.env;
+            self.saved_env = self.job_exports.clone();
+            self.default_shell = scope.shell; self.default_working_directory = scope.directory;
+            self.plan.default_shell = scope.planned_shell; self.plan.default_working_directory = scope.planned_directory;
+            self.deadline = scope.deadline; self.status = scope.status;
+        }
+    }
+
+    fn export_env(&mut self, values: impl IntoIterator<Item = (String, String)>) {
+        for (key, value) in values {
+            self.job_exports.insert(key.clone(), value.clone());
+            self.saved_env.insert(key, value);
+        }
+    }
+
     async fn evaluate<T: Send + 'static>(
         &self, deadline: Instant, evaluate: impl FnOnce(&Contexts, Status) -> Result<T> + Send + 'static,
     ) -> Result<T> {
@@ -1593,16 +1648,19 @@ impl Job {
         self.contexts.values.insert("job".into(), Value::from_json(&serde_json::json!({"status":"success","services":services,"container":{"id":self.podman.job,"network":self.podman.network}})));
         self.default_shell = self.plan.default_shell.as_ref().map(|value| text(value, &self.contexts, self.status)).transpose()?;
         self.default_working_directory = self.plan.default_working_directory.as_ref().map(|value| text(value, &self.contexts, self.status)).transpose()?;
-        self.log.finish_step(1, Conclusion::Success, setup);
         let steps = self.plan.steps.clone();
+        for (index, step) in steps.iter().enumerate() { self.prepare_step(step, index, 0).await?; }
+        self.log.finish_step(1, Conclusion::Success, setup);
         let mut outputs = BTreeMap::new();
         for (index, step) in steps.iter().enumerate() {
+            anyhow::ensure!(!*self.cancel.borrow(), "The job was cancelled.");
+            anyhow::ensure!(Instant::now() < self.deadline, "The job has timed out.");
             self.next_step = index + 1;
             anyhow::ensure!(!self.options.containment_lost.load(std::sync::atomic::Ordering::Acquire),
                 "Container cleanup failed; refusing further execution");
             self.public_step += 1;
             let started = Instant::now();
-            if let Err(error) = self.step(step, 0, &mut outputs).await {
+            if let Err(error) = self.step(step, index, 0, &mut outputs).await {
                 self.status.failed = true;
                 self.log.line(&format!("Error evaluating step: {error:#}"));
                 self.log.finish_step(self.public_step, Conclusion::Failure, started);
@@ -1721,10 +1779,13 @@ impl Job {
     fn step<'a>(
         &'a mut self,
         step: &'a Step,
+        index: usize,
         depth: usize,
         parent_outputs: &'a mut BTreeMap<String, String>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
+            if depth == 0 { self.checkpoint_scope(); }
+            let result = async {
             if depth > 20 {
                 bail!("Composite actions nested more than 20 levels");
             }
@@ -1783,9 +1844,11 @@ impl Job {
                     let template = template.clone();
                     self.evaluate(deadline, move |contexts, status| boolean(&template, contexts, status)).await?
                 } else { false };
+                self.action_path.push(index);
                 let result = self
                     .action(&step.action, env, deadline, depth, &mut outputs)
                     .await;
+                self.action_path.pop();
                 let ok = match result {
                     Ok(ok) => ok,
                     Err(error) => {
@@ -1827,6 +1890,9 @@ impl Job {
             parent_outputs.extend(outputs);
             self.sync_status();
             Ok(())
+            }.await;
+            if depth == 0 { self.scope = None; }
+            result
         })
     }
 
@@ -1866,7 +1932,7 @@ impl Job {
                     .await
                 }
                 StepAction::Uses { reference, with } => {
-                    self.uses(reference, with, env, deadline, depth, outputs)
+                    self.uses(reference, with, env, deadline, depth, outputs, actions::ActionStage::Main)
                         .await
                 }
             }
@@ -2040,7 +2106,7 @@ impl Job {
         .await;
         self.command_stopped = commands.stopped.take();
         self.matchers = commands.matchers;
-        self.saved_env.extend(commands.env);
+        self.export_env(commands.env);
         self.paths.extend(commands.paths);
         commands::update_outputs(outputs, commands.outputs);
         // The deprecated ::save-state command feeds the same STATE_ values as GITHUB_STATE.
@@ -2062,7 +2128,7 @@ impl Job {
                 self.log
                     .line("Error: Can't store NODE_OPTIONS using '$GITHUB_ENV' command.");
             } else if !key.starts_with("GITHUB_") && !key.starts_with("RUNNER_") {
-                self.saved_env.insert(key, value);
+                self.export_env([(key, value)]);
             }
         }
         commands::update_outputs(outputs, commands::entries(&read_command_file(&files.join("OUTPUT"))?)?);
