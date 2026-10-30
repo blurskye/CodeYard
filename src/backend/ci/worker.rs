@@ -520,22 +520,7 @@ async fn run_workflows(
         };
         all_labels.extend(labels);
     }
-    let mut runtime_env = Vec::new();
-    if !native && claim.github_tokens.oidc_jobs.contains("act") {
-        runtime_env.extend([
-            ("ACTIONS_ID_TOKEN_REQUEST_URL".to_owned(), claim.github_tokens.oidc_url.clone()),
-            ("ACTIONS_ID_TOKEN_REQUEST_TOKEN".to_owned(), claim.github_tokens.act.clone()),
-        ]);
-    }
-    if !claim.runtime.token.is_empty() {
-        runtime_env.extend([
-            ("ACTIONS_RUNTIME_TOKEN".to_owned(), claim.runtime.token.clone()),
-            ("ACTIONS_RESULTS_URL".to_owned(), claim.runtime.results_url.clone()),
-            ("ACTIONS_CACHE_URL".to_owned(), claim.runtime.results_url.clone()),
-            ("ACTIONS_CACHE_SERVICE_V2".to_owned(), "True".to_owned()),
-        ]);
-    }
-    let runtime_file = workspace.write_values("runtime.env", &runtime_env, !native)?;
+    let runtime_file = workspace.write_values("runtime.env", &runtime_values(claim, native), !native)?;
     for workflow in run.workflow_path.split(',').filter(|path| !path.is_empty()) {
         workspace.restore_called_workflows(run)?;
         let definition = workspace.definition(workflow);
@@ -811,6 +796,27 @@ fn write_admission(directory: &Path, job: &str, variant: u32, granted: bool) -> 
     std::io::Write::write_all(file.as_file_mut(), answer.as_bytes())?;
     file.persist(directory.join(format!("{job}.{variant}")))?;
     Ok(())
+}
+
+/// The OIDC and results credentials a job gets. They go to act in a private `--env-file`,
+/// never on its command line, where other local users could read them.
+fn runtime_values(claim: &ClaimedRun, native: bool) -> Vec<(String, String)> {
+    let mut values = Vec::new();
+    if !native && claim.github_tokens.oidc_jobs.contains("act") {
+        values.extend([
+            ("ACTIONS_ID_TOKEN_REQUEST_URL".to_owned(), claim.github_tokens.oidc_url.clone()),
+            ("ACTIONS_ID_TOKEN_REQUEST_TOKEN".to_owned(), claim.github_tokens.act.clone()),
+        ]);
+    }
+    if !claim.runtime.token.is_empty() {
+        values.extend([
+            ("ACTIONS_RUNTIME_TOKEN".to_owned(), claim.runtime.token.clone()),
+            ("ACTIONS_RESULTS_URL".to_owned(), claim.runtime.results_url.clone()),
+            ("ACTIONS_CACHE_URL".to_owned(), claim.runtime.results_url.clone()),
+            ("ACTIONS_CACHE_SERVICE_V2".to_owned(), "True".to_owned()),
+        ]);
+    }
+    values
 }
 
 /// The ref GitHub reports for a run. The checkout is detached and a database-free worker has
@@ -2723,6 +2729,11 @@ mod tests {
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
+        // The credentials reach act through its private env file, not its command line.
+        let values = runtime_values(&claim, false)
+            .into_iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>();
         for value in [
             "ACTIONS_ID_TOKEN_REQUEST_TOKEN=oidc-test-token",
             "ACTIONS_ID_TOKEN_REQUEST_URL=https://issuer.example/api/ci/oidc/token?",
@@ -2730,7 +2741,8 @@ mod tests {
             "ACTIONS_RESULTS_URL=https://results.example",
             "ACTIONS_CACHE_SERVICE_V2=True",
         ] {
-            assert!(args.windows(2).any(|pair| pair == ["--env", value]));
+            assert!(values.iter().any(|entry| entry == value), "{value}");
+            assert!(!args.iter().any(|arg| arg == value), "{value}");
         }
         let repository_id = format!("GITHUB_REPOSITORY_ID={}", claim.run.repo_id);
         for value in [repository_id.as_str(), "GITHUB_REPOSITORY_OWNER_ID=1"] {
@@ -2753,18 +2765,9 @@ mod tests {
         // act adds the run's ID to the names of its containers, networks and volumes.
         assert_eq!(env["CODEYARD_ACT_INSTANCE"], claim.run.run_id.simple().to_string());
         claim.github_tokens.oidc_jobs.clear();
-        let command = act_command(
-            &service,
-            &claim,
-            &secret_workspace(),
-            Path::new("workflow.yml"),
-            &BTreeSet::new(),
-            None,
-            None,
-        );
-        assert!(!command.as_std().get_args().any(|arg| arg
-            .to_string_lossy()
-            .starts_with("ACTIONS_ID_TOKEN_REQUEST_")));
+        assert!(!runtime_values(&claim, false)
+            .iter()
+            .any(|(name, _)| name.starts_with("ACTIONS_ID_TOKEN_REQUEST_")));
     }
 
     #[test]

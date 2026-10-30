@@ -266,10 +266,14 @@ mod tests {
             )
         };
         notify_user(&f.pool, &notification(None, None).await.unwrap()).await;
+        // Signup review needs a finished setup and a live administrator session.
+        db::node_config::upsert_node_configuration(&f.pool, "public", true)
+            .await
+            .unwrap();
         let early = db::users::signup_requests::create_signup_request(&f.pool, "carol", Some("carol@example.com"), "hash")
             .await
             .unwrap();
-        db::users::signup_requests::reject_signup_request(&f.pool, early.id, f.admin)
+        db::users::signup_requests::reject_signup_request(&f.pool, early.id, (f.admin, "live".to_owned()))
             .await
             .unwrap();
         assert!(db::email::claim_due_email(&f.pool, 5, 600)
@@ -286,7 +290,7 @@ mod tests {
         let later = db::users::signup_requests::create_signup_request(&f.pool, "dave", Some("dave@example.com"), "hash")
             .await
             .unwrap();
-        db::users::signup_requests::reject_signup_request(&f.pool, later.id, f.admin)
+        db::users::signup_requests::reject_signup_request(&f.pool, later.id, (f.admin, "live".to_owned()))
             .await
             .unwrap();
         let first = db::email::claim_due_email(&f.pool, 5, 600)
