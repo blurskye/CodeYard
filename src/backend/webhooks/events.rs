@@ -24,6 +24,7 @@ pub const PULL_REQUEST_REVIEW: &str = "pull_request_review";
 pub const PULL_REQUEST_REVIEW_COMMENT: &str = "pull_request_review_comment";
 pub const CHECK_RUN: &str = "check_run";
 pub const CHECK_SUITE: &str = "check_suite";
+pub const STATUS: &str = "status";
 pub const REPOSITORY_DISPATCH: &str = "repository_dispatch";
 pub const WORKFLOW_RUN: &str = "workflow_run";
 pub const WORKFLOW_JOB: &str = "workflow_job";
@@ -105,6 +106,7 @@ mod tests {
             PULL_REQUEST_REVIEW_COMMENT,
             CHECK_RUN,
             CHECK_SUITE,
+            STATUS,
             REPOSITORY_DISPATCH,
             WORKFLOW_RUN,
             WORKFLOW_JOB,

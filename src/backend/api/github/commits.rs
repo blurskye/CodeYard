@@ -44,26 +44,6 @@ pub(super) async fn git_document(
     Ok(value)
 }
 
-fn document(
-    commit: &CommitInfo,
-    mut detail: Value,
-    owner: &str,
-    name: &str,
-    count: i64,
-    people: &HashMap<String, Person>,
-) -> Value {
-    let parents = detail["parents"].take();
-    detail["comment_count"] = json!(count);
-    json!({
-        "sha": commit.sha, "node_id": super::node_id::git("C", &commit.sha),
-        "url": format!("{}/commits/{}", repo_url(owner, name), commit.sha),
-        "html_url": detail["html_url"],
-        "comments_url": format!("{}/commits/{}/comments", repo_url(owner, name), commit.sha),
-        "commit": detail, "author": people.get(&commit.author_email).map(payloads::person),
-        "committer": people.get(&commit.committer_email).map(payloads::person), "parents": parents,
-    })
-}
-
 pub(super) async fn documents(
     state: &AppState,
     repo: i64,
@@ -89,20 +69,21 @@ pub(super) async fn documents(
     let users = crate::backend::repositories::reads::commit_authors(&state.pool, &emails)
         .await
         .map_err(Error::unavailable)?;
-    let people = users
+    let people: HashMap<String, Person> = users
         .into_iter()
         .map(|(email, user)| (email, Person::of(&user)))
         .collect();
     let mut values = Vec::with_capacity(commits.len());
     let mut signers = crate::backend::identity::signatures::Signers::default();
     for commit in commits {
-        values.push(document(
+        values.push(payloads::commit(
             commit,
             git_document(state, &mut signers, commit, owner, name).await?,
             owner,
             name,
             counts.get(&commit.sha).copied().unwrap_or(0),
-            &people,
+            people.get(&commit.author_email),
+            people.get(&commit.committer_email),
         ));
     }
     Ok(values)

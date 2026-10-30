@@ -10,6 +10,7 @@ pub mod panel;
 pub mod payloads;
 pub mod ref_changes;
 pub mod settings;
+pub mod statuses;
 
 use crate::backend::db::models::{Repository, Webhook};
 use crate::backend::db::webhooks::HookOwner;

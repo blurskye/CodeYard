@@ -4,7 +4,7 @@ use crate::backend::{
     app::AppState,
     db::{self, models::CommitStatus, repositories::protection},
     repositories::store::repo_store,
-    webhooks::payloads,
+    webhooks::{self, payloads},
 };
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -68,10 +68,8 @@ async fn create(
         ));
     }
     let sha = sha.to_ascii_lowercase();
-    repo_store(&repo, state.cluster.as_ref())
-        .commit(&sha)
-        .await
-        .map_err(store_error)?;
+    let store = repo_store(&repo, state.cluster.as_ref());
+    let commit = store.commit(&sha).await.map_err(store_error)?;
     let saved = protection::upsert_commit_status(
         &state.pool,
         protection::CommitStatusUpsert {
@@ -94,6 +92,7 @@ async fn create(
             None => Error::unavailable(()),
         },
     )?;
+    webhooks::statuses::emit_status(&state.pool, &store, &repo, &saved, &commit, actor).await;
     Ok((
         StatusCode::CREATED,
         Json(document(&state, &owner, &name, saved).await?),

@@ -894,6 +894,58 @@ pub fn git_commit(commit: &CommitInfo, owner: &str, repo: &str) -> Value {
     })
 }
 
+/// GitHub's commit object: the Git commit `detail` with its comment count, and the accounts
+/// its author and committer emails belong to.
+pub fn commit(
+    commit: &CommitInfo,
+    mut detail: Value,
+    owner: &str,
+    name: &str,
+    comment_count: i64,
+    author: Option<&Person>,
+    committer: Option<&Person>,
+) -> Value {
+    let parents = detail["parents"].take();
+    detail["comment_count"] = json!(comment_count);
+    json!({
+        "sha": commit.sha, "node_id": node_id::git("C", &commit.sha),
+        "url": format!("{}/commits/{}", repo_url(owner, name), commit.sha),
+        "html_url": detail["html_url"],
+        "comments_url": format!("{}/commits/{}/comments", repo_url(owner, name), commit.sha),
+        "commit": detail, "author": author.map(person),
+        "committer": committer.map(person), "parents": parents,
+    })
+}
+
+/// A `status` event. `commit` is the commit object, and `branches` the branches whose tip it is.
+pub fn status(
+    status: &crate::backend::db::models::CommitStatus,
+    commit: Value,
+    branches: &[String],
+    scope: Scope<'_>,
+) -> Value {
+    let Scope {
+        repo,
+        owner,
+        sender,
+    } = scope;
+    let api = repo_url(owner, &repo.name);
+    let sender = person(sender);
+    json!({
+        "id": status.id, "sha": status.sha, "name": format!("{owner}/{}", repo.name),
+        "target_url": status.target_url, "context": status.context,
+        "description": status.description, "state": status.state,
+        "avatar_url": sender["avatar_url"], "commit": commit,
+        "branches": branches.iter().map(|branch| json!({
+            "name": branch,
+            "commit": {"sha": status.sha, "url": format!("{api}/commits/{}", status.sha)},
+            "protected": false,
+        })).collect::<Vec<_>>(),
+        "created_at": time(status.created_at), "updated_at": time(status.updated_at),
+        "repository": repository(repo, owner), "sender": sender,
+    })
+}
+
 pub fn reaction_rollup(
     url: &str,
     counts: &[crate::backend::db::reactions::ReactionCount],
