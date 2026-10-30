@@ -10,7 +10,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
-use url::{Host, Url};
+use url::Url;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 /// Waits before the first, second and third retry.
@@ -382,16 +382,11 @@ fn client(
     addresses: &[SocketAddr],
     ssl_verify: bool,
 ) -> reqwest::Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder()
+    outbound::pinned_client(url, addresses)
         .timeout(TIMEOUT)
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
         .danger_accept_invalid_certs(!ssl_verify)
-        .user_agent(user_agent());
-    if let Some(Host::Domain(name)) = url.host() {
-        builder = builder.resolve_to_addrs(name, addresses);
-    }
-    builder.build()
+        .user_agent(user_agent())
+        .build()
 }
 
 async fn read_limited(response: &mut reqwest::Response) -> Result<Vec<u8>, reqwest::Error> {

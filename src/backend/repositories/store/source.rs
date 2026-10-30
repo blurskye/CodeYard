@@ -179,16 +179,11 @@ pub(crate) async fn fetch(
     )
     .await?
     .map_err(|_| anyhow::anyhow!("Source address refused"))?;
-    let mut builder = Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
+    let client = outbound::pinned_client(&url, &addresses)
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(600))
-        .user_agent("Codeyard repository importer");
-    if let Some(url::Host::Domain(name)) = url.host() {
-        builder = builder.resolve_to_addrs(name, &addresses);
-    }
-    let client = builder.build()?;
+        .user_agent("Codeyard repository importer")
+        .build()?;
     let mut discovery = endpoint(&url, "info/refs");
     discovery.set_query(Some("service=git-upload-pack"));
     let response = request(
