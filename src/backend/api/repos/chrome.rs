@@ -189,7 +189,9 @@ pub(crate) async fn load_database(
         let effective_access = access::user_access(&ctx.state.pool, user, &repository)
             .await
             .map_err(|_| unavailable(ctx))?;
-        chrome.can_write = !repository.is_archived && effective_access.can_write();
+        chrome.can_write = access::can_write(&ctx.state.pool, user, &repository)
+            .await
+            .map_err(|_| unavailable(ctx))?;
         chrome.can_admin = effective_access.can_admin();
         chrome.can_view_traffic = effective_access.can_write();
         chrome.can_manage_invitations = chrome.can_admin;

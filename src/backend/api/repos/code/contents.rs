@@ -1,5 +1,5 @@
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 use crate::backend::api::repos::chrome::{resolve, store_error, Loaded};
 use crate::backend::api::repos::forms::{field, with_status};
 use crate::backend::api::repos::refs::references::resolve_references;
@@ -64,15 +64,9 @@ fn commit_response(saved: files::FileSave) -> Json<UpdateFileResponse> {
     })
 }
 
-type Failure = (StatusCode, Json<ApiError>);
-
-fn failure(status: StatusCode, code: &str, message: &str) -> Failure {
-    (status, Json(ApiError::new(code, message)))
-}
-
-fn decode_content(content: &str) -> Result<Vec<u8>, Failure> {
+fn decode_content(content: &str) -> Result<Vec<u8>, ApiFailure> {
     if content.len() > MAX_EDITOR_BYTES.div_ceil(3) * 4 {
-        return Err(failure(
+        return Err(ApiError::failure(
             StatusCode::PAYLOAD_TOO_LARGE,
             "too_large",
             "File writes support at most 1 MiB.",
@@ -80,14 +74,14 @@ fn decode_content(content: &str) -> Result<Vec<u8>, Failure> {
     }
     let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content)
         .map_err(|_| {
-            failure(
+            ApiError::failure(
                 StatusCode::BAD_REQUEST,
                 "validation_error",
                 "Invalid base64 content.",
             )
         })?;
     if bytes.len() > MAX_EDITOR_BYTES {
-        return Err(failure(
+        return Err(ApiError::failure(
             StatusCode::PAYLOAD_TOO_LARGE,
             "too_large",
             "File writes support at most 1 MiB.",
@@ -103,11 +97,11 @@ async fn write_file(
     (owner, repo, path): (String, String, String),
     req: WriteFileRequest,
     creating: bool,
-) -> Result<files::FileSave, Failure> {
+) -> Result<files::FileSave, ApiFailure> {
     let actor = crate::backend::api::http::session::get_current_user(&state.pool, headers).await?;
     let repository_id = files::ensure_readable(&state.pool, &actor, &owner, &repo)
         .await
-        .map_err(|error| failure(write_status(&error), "file_write_rejected", &error.message))?;
+        .map_err(|error| ApiError::failure(write_status(&error), "file_write_rejected", &error.message))?;
     let content = decode_content(&req.content)?;
     files::write_file_bytes(
         &state.pool,
@@ -130,7 +124,7 @@ async fn write_file(
         content,
     )
     .await
-    .map_err(|error| failure(write_status(&error), "file_write_rejected", &error.message))
+    .map_err(|error| ApiError::failure(write_status(&error), "file_write_rejected", &error.message))
 }
 
 pub async fn update_file_content(
@@ -138,7 +132,7 @@ pub async fn update_file_content(
     headers: HeaderMap,
     Path(target): Path<(String, String, String)>,
     Json(req): Json<WriteFileRequest>,
-) -> Result<Json<UpdateFileResponse>, Failure> {
+) -> Result<Json<UpdateFileResponse>, ApiFailure> {
     let saved = write_file(&state, &headers, target, req, false).await?;
     Ok(commit_response(saved))
 }
@@ -149,11 +143,11 @@ pub async fn delete_file_content(
     headers: HeaderMap,
     Path((owner, repo, path)): Path<(String, String, String)>,
     Json(req): Json<DeleteFileRequest>,
-) -> Result<Json<UpdateFileResponse>, Failure> {
+) -> Result<Json<UpdateFileResponse>, ApiFailure> {
     let actor = crate::backend::api::http::session::get_current_user(&state.pool, &headers).await?;
     let repository = files::named_repository(&state.pool, &owner, &repo)
         .await
-        .map_err(|error| failure(write_status(&error), "file_write_rejected", &error.message))?;
+        .map_err(|error| ApiError::failure(write_status(&error), "file_write_rejected", &error.message))?;
     let saved = files::delete_file(
         &state.pool,
         state.cluster.as_ref(),
@@ -175,7 +169,7 @@ pub async fn delete_file_content(
         None,
     )
     .await
-    .map_err(|error| failure(write_status(&error), "file_write_rejected", &error.message))?;
+    .map_err(|error| ApiError::failure(write_status(&error), "file_write_rejected", &error.message))?;
     Ok(commit_response(saved))
 }
 
@@ -184,7 +178,7 @@ pub async fn create_file(
     headers: HeaderMap,
     Path(target): Path<(String, String, String)>,
     Json(req): Json<WriteFileRequest>,
-) -> Result<(StatusCode, Json<CreateFileResponse>), Failure> {
+) -> Result<(StatusCode, Json<CreateFileResponse>), ApiFailure> {
     let path = target.2.clone();
     let saved = write_file(&state, &headers, target, req, true).await?;
     Ok((

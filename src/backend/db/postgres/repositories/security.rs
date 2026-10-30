@@ -155,7 +155,7 @@ pub async fn report_thread(
     tx.commit().await?;
     Ok(Thread { report, replies })
 }
-pub async fn reply(pool: &PgPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo: i64, id: i64, body: &str) -> Result<()> {
+pub async fn reply(pool: &PgPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo: i64, id: i64, body: &str) -> Result<i64> {
     crate::backend::db::repositories::security::validate_body(body)?;
     let retained = actor.into();
     let actor = retained.user_id();
@@ -186,7 +186,7 @@ pub async fn reply(pool: &PgPool, actor: impl Into<crate::backend::db::users::ac
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(())
+    Ok(count)
 }
 pub async fn set_state(pool: &PgPool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo: i64, id: i64, closed: bool) -> Result<()> {
     let retained = actor.into();
