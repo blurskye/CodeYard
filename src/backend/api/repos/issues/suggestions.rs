@@ -225,15 +225,18 @@ async fn native_propose(
             }
             Some(a.id)
         }
-        Action::AddLabel => Some(
-            db::labels::list_repo_labels(&ctx.state.pool, repo.id)
+        Action::AddLabel => {
+            let labels = db::labels::list_repo_labels(&ctx.state.pool, repo.id)
                 .await
-                .map_err(|_| unavailable(ctx))?
-                .into_iter()
-                .find(|l| l.name.to_lowercase() == target.to_lowercase())
-                .ok_or_else(invalid)?
-                .id,
-        ),
+                .map_err(|_| unavailable(ctx))?;
+            // The exact name wins; names that differ only in case are distinct labels.
+            let label = labels
+                .iter()
+                .find(|l| l.name == target)
+                .or_else(|| labels.iter().find(|l| l.name.to_lowercase() == target.to_lowercase()))
+                .ok_or_else(invalid)?;
+            Some(label.id)
+        }
         Action::AddAssignee => Some(
             db::users::accounts::get_user_by_username(
                 &ctx.state.pool,
