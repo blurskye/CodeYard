@@ -1040,12 +1040,24 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(body["permissions"]["admin"], true);
+    // A revoke form for a team that no longer exists is refused, not reported as done.
     let (status, page) = browser
         .form(
             &ui,
             &[
                 ("action", "revoke-all-team-roles"),
-                ("team_slug", "builders"),
+                ("team_id", "999999"),
+                ("confirm", "true"),
+            ],
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{page}");
+    let (status, page) = browser
+        .form(
+            &ui,
+            &[
+                ("action", "revoke-all-team-roles"),
+                ("team_id", &team.id.to_string()),
                 ("confirm", "true"),
             ],
         )

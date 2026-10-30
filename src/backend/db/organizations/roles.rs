@@ -31,6 +31,8 @@ pub struct UserAssignment {
 pub enum RoleTarget {
     User(String),
     Team(String),
+    /// A team a native revoke form showed; a rename or replacement does not redirect it.
+    TeamId(i64),
 }
 
 // Read projection only. Security mutations must pin tenant, account and membership authority.

@@ -133,13 +133,20 @@ pub async fn change(
             }
             (id, None)
         }
-        RoleTarget::Team(slug) => {
-            let team: Option<(i64, String)> =
-                sqlx::query_as("SELECT id,privacy FROM teams WHERE org_id=?1 AND slug=?2")
-                    .bind(org)
-                    .bind(slug)
-                    .fetch_optional(&mut *tx)
-                    .await?;
+        RoleTarget::Team(_) | RoleTarget::TeamId(_) => {
+            let (slug, id) = match target {
+                RoleTarget::Team(slug) => (Some(slug.as_str()), None),
+                RoleTarget::TeamId(id) => (None, Some(*id)),
+                RoleTarget::User(_) => (None, None),
+            };
+            let team: Option<(i64, String)> = sqlx::query_as(
+                "SELECT id,privacy FROM teams WHERE org_id=?1 AND (slug=?2 OR id=?3)",
+            )
+            .bind(org)
+            .bind(slug)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
             if assigned
                 && team
                     .as_ref()
@@ -153,6 +160,10 @@ pub async fn change(
     if user.is_none() && team.is_none() {
         if assigned {
             return Ok(Missing);
+        }
+        // The team the revoke form showed is gone: report the stale form instead of success.
+        if matches!(target, RoleTarget::TeamId(_)) {
+            return Ok(Conflict);
         }
         tx.commit().await?;
         return Ok(Applied(()));

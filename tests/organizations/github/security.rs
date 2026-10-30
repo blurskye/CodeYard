@@ -328,7 +328,7 @@ async fn contract(pg: bool) {
             &native,
             &[
                 ("action", "revoke-team-role"),
-                ("team_slug", "managers"),
+                ("team_id", &parent.id.to_string()),
                 ("role_id", "6"),
                 ("confirm", "true"),
             ],
