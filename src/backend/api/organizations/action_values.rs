@@ -103,6 +103,25 @@ fn repositories(form: &HashMap<String, String>) -> Result<Option<Vec<i64>>, Valu
         .collect::<Result<Vec<_>, _>>()
         .map(Some)
 }
+/// The rejected variable form, so its input comes back. Secret forms are never drafted.
+fn variable_draft(action: &str, form: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut draft: HashMap<String, String> = [
+        ("name", 1024),
+        ("previous", 1024),
+        ("value", 49_152),
+        ("visibility", 32),
+        ("repositories", 8192),
+    ]
+    .into_iter()
+    .filter_map(|(key, limit)| {
+        form.get(key)
+            .filter(|value| value.len() <= limit)
+            .map(|value| (key.to_owned(), value.clone()))
+    })
+    .collect();
+    draft.insert("action".to_owned(), action.to_owned());
+    draft
+}
 async fn change(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -231,7 +250,12 @@ async fn change(
                 _ => (StatusCode::UNPROCESSABLE_ENTITY, error.to_string()),
             };
             // Never echo a secret into a refusal page or hydration payload.
-            organization::respond(&ctx, Some(org), status, Some(message), Default::default()).await
+            let draft = if matches!(action.as_str(), "variable-create" | "variable-save") {
+                variable_draft(&action, &form)
+            } else {
+                HashMap::new()
+            };
+            organization::respond(&ctx, Some(org), status, Some(message), draft).await
         }
     }
 }

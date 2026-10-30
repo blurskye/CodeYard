@@ -266,7 +266,7 @@ pub fn render(page: Page) -> Element {
                         if page.tab == "dependabot" { {super::dependabot::panel(&page)} }
                         if page.tab == "private-registries" { {super::private_registries::panel(&page)} }
                         if page.tab == "actions" {
-                            if let Some(panel) = &page.actions { {super::actions::section(panel)} }
+                            if let Some(panel) = &page.actions { {super::actions::section(panel, &page.draft)} }
                         }
                         if page.tab == "roles" { {roles::panel(&page)} }
                         if page.tab == "properties" { {properties::panel(&page)} }
