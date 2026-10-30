@@ -1,6 +1,6 @@
 use crate::backend::db::{
     models::Repository,
-    repositories::github::{list_sql, RepositoryListQuery},
+    repositories::github::{count_sql, list_sql, RepositoryListQuery},
 };
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -38,7 +38,7 @@ pub async fn repository_teams(
         return Ok(Some(vec![]));
     };
     let OrganizationOutcome::Applied(role) =
-        crate::backend::db::sqlite::organizations::authority::authority(&mut tx, actor, org)
+        crate::backend::db::sqlite::organizations::authority::read_authority(&mut tx, actor, org)
             .await?
     else {
         return Ok(None);
@@ -88,21 +88,18 @@ pub async fn list_repositories(
 }
 
 pub async fn count_repositories(pool: &SqlitePool, query: RepositoryListQuery<'_>) -> Result<i64> {
-    let sql = list_sql(
+    let sql = count_sql(
         &query,
         super::access::USER_REPO_ACCESS_SQL,
         &super::access::readable_condition(),
     )
     .replace('$', "?");
-    let sql = format!("SELECT COUNT(*) FROM ({sql}) readable_repositories");
     Ok(sqlx::query_scalar(&sql)
         .bind(query.viewer)
         .bind(query.target_id())
         .bind(query.since)
         .bind(query.visibility)
         .bind(query.kind)
-        .bind(i64::MAX)
-        .bind(0_i64)
         .fetch_one(pool)
         .await?)
 }
