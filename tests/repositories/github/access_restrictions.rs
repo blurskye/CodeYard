@@ -397,7 +397,8 @@ pub(super) async fn run(
         "POST",
         &users,
         writer,
-        json!({"users":["BOB","bob"]}),
+        // Usernames are exact, as everywhere in Codeyard; a repeated name is added once.
+        json!({"users":["bob","bob"]}),
         ("repos/add-user-access-restrictions", 200),
     )
     .await;
