@@ -347,6 +347,7 @@ async fn contract(pg: bool) {
         (&reader, &outsider),
     )
     .await;
+    summaries(&f, (run.id, job, repo.id, other.id), &generation).await;
     let mut state = State::default();
     state.jobs.insert(
         "unobserved".into(),
@@ -555,6 +556,43 @@ pub(super) fn assert_gh_job(
     } else {
         assert_eq!(value["completed_at"], Value::Null);
     }
+}
+
+async fn summaries(f: &Database, (run, job, repo, other): (i64, i64, i64, i64), generation: &str) {
+    let send = |worker: &'static str, number: u32, markdown: &str| {
+        let update = Update::Summary {
+            number,
+            markdown: markdown.into(),
+        };
+        async move {
+            db::action_jobs::apply(
+                f.pool(),
+                worker,
+                run,
+                generation,
+                ".github/workflows/ci.yml",
+                &event(0, update),
+            )
+            .await
+        }
+    };
+    assert!(send("unowned", 1, "### Stolen").await.is_err());
+    assert!(send("jobs", 0, "### Zero").await.is_err());
+    assert!(send("jobs", 1, "### Nul\0").await.is_err());
+    assert!(send("jobs", 1, "x".repeat(codeyard_actions::progress::MAX_STEP_SUMMARY_BYTES + 1).as_str())
+        .await
+        .is_err());
+    assert_eq!(send("jobs", 1, "### First").await.unwrap().id, job);
+    // A later report for the same step replaces the earlier one.
+    assert_eq!(send("jobs", 1, "### Build\nall green").await.unwrap().id, job);
+    let stored = db::action_jobs::summaries(f.pool(), repo, run).await.unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].number, 1);
+    assert_eq!(stored[0].markdown, "### Build\nall green");
+    assert!(db::action_jobs::summaries(f.pool(), other, run)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 async fn annotations(

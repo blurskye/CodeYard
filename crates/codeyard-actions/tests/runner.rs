@@ -1034,6 +1034,54 @@ fn authenticated_progress_reports_the_observed_timeout() {
 }
 
 #[test]
+fn step_summaries_are_masked_published_and_may_be_deleted() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(
+        workspace.path().join("workflow.yml"),
+        r#"on: push
+jobs:
+  report:
+    runs-on: self-hosted
+    steps:
+      - run: |
+          echo '::add-mask::summary-secret'
+          echo '### Report summary-secret' >> "$GITHUB_STEP_SUMMARY"
+      - run: |
+          echo removed >> "$GITHUB_STEP_SUMMARY"
+          rm "$GITHUB_STEP_SUMMARY"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.path().join("tokens.json"),
+        r#"{"tokens":{"report":"report-token"},"completion_secret":"summary-nonce"}"#,
+    )
+    .unwrap();
+    let output = command(workspace.path())
+        .arg("--job-token-file")
+        .arg(workspace.path().join("tokens.json"))
+        .output()
+        .unwrap();
+    success(&output);
+    let text = raw_log(&output);
+    let summaries: Vec<(u32, String)> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("::codeyard-progress::summary-nonce:"))
+        .map(|line| serde_json::from_str::<codeyard_actions::progress::Event>(line).unwrap())
+        .filter_map(|event| match event.update {
+            codeyard_actions::progress::Update::Summary { number, markdown } => {
+                Some((number, markdown))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(summaries.len(), 1, "{text}");
+    assert_eq!(summaries[0].0, 2, "{text}");
+    assert!(summaries[0].1.contains("### Report"), "{text}");
+    assert!(!summaries[0].1.contains("summary-secret"), "{text}");
+}
+
+#[test]
 fn job_timeout_covers_the_whole_job() {
     let started = std::time::Instant::now();
     let output = run("on: push\njobs:\n  test:\n    runs-on: self-hosted\n    timeout-minutes: 0.01\n    steps:\n      - run: sleep 30\n", &[], &[]);
