@@ -1132,7 +1132,8 @@ fn safe_submission(action: &str, values: &HashMap<String, String>) -> HashMap<St
         "autolink-delete" => &["autolink_id"],
         "remove-collaborator" | "remove-invited-collaborator" => &["username"],
         "label" => &["name", "color", "description"],
-        "edit-label" => &["label_id", "name", "color", "description"],
+        "edit-label" => &["label_id", "name", "color", "description", "original_description"],
+        "secret-pattern-publish" => &["pattern_id", "organization"],
         "delete-label" => &["label_id"],
         "delete" => &["confirmation"],
         _ => &[],
@@ -1200,7 +1201,7 @@ const FORM_ACTIONS: &[FormAction] = &[
     form_action("watch", "", 0),
     form_action("unwatch", "", 0),
     form_action("watch-level", "", 0),
-    form_action("fork", "", GIT),
+    form_action("fork", "", GIT | BOUND),
     form_action("create-branch", "/branches", GIT | BOUND | WRITE),
     form_action("delete-branch", "/branches", GIT | BOUND | WRITE | CONFIRM),
     form_action("create-tag", "/tags", GIT | BOUND | WRITE),
@@ -1567,11 +1568,7 @@ async fn mutate(
             )
             .await
             .map_err(lifecycle_error)?;
-            Ok(format!(
-                "/{}/{}",
-                crate::webui::encode_component(&actor.username),
-                crate::webui::encode_component(&fork.name)
-            ))
+            Ok(crate::webui::repository_path(&actor.username, &fork.name))
         }
         "create-branch" => {
             crate::backend::repositories::refs::create_branch(
@@ -1719,10 +1716,13 @@ async fn mutate(
             } else {
                 Owner::Repository(repository.id)
             };
-            db::secret_scanning::publish_pattern(pool, actor.id, scope, id)
+            db::secret_scanning::publish_pattern(pool, authority(), scope, id)
                 .await
                 .map_err(
                     |error| match error.downcast_ref::<db::secret_scanning::Refusal>() {
+                        _ if error.is::<db::users::accounts::AccountRestricted>() => ApiError::failure(
+                            StatusCode::FORBIDDEN, "forbidden", "A live unrestricted credential is required.",
+                        ),
                         Some(db::secret_scanning::Refusal::Denied) => ApiError::failure(
                             StatusCode::FORBIDDEN,
                             "forbidden",

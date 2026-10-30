@@ -97,6 +97,8 @@ pub(super) async fn populate(
         Ok(_) => return Ok(()),
         Err(_) => return Err(StatusCode::SERVICE_UNAVAILABLE),
     };
+    data::checked_catalog_bytes(definitions.iter().map(|definition| &definition.fields))
+        .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
     let owner = matches!(
         orgs::get_organization_role(&ctx.state.pool, actor, org).await
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
@@ -138,6 +140,14 @@ pub(super) async fn populate(
         .collect();
     Ok(())
 }
+pub(super) fn failure_message(status: StatusCode) -> &'static str {
+    if status == StatusCode::PAYLOAD_TOO_LARGE {
+        "The property catalog exceeds the native form limit. Ask an organization owner to reduce it before continuing."
+    } else {
+        "Repository properties are temporarily unavailable."
+    }
+}
+
 pub(super) async fn values(
     ctx: &PageContext,
     actor: i64,

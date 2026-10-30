@@ -394,7 +394,7 @@ pub(crate) async fn new_repository(
         }
     }
     if let Err(status) = properties::populate(&ctx, &choices, &mut form).await {
-        return ctx.error(status, "Repository properties are temporarily unavailable.");
+        return ctx.error(status, properties::failure_message(status));
     }
     ctx.page_model(
         "Create a new repository",
@@ -431,7 +431,7 @@ async fn creation_error(
             RepositoryCreationChoices::default()),
     };
     if let Err(status) = properties::populate(ctx, &choices, &mut form).await {
-        return ctx.error(status, "Repository properties are temporarily unavailable.");
+        return ctx.error(status, properties::failure_message(status));
     }
     ctx.page_model_status(
         status,
@@ -514,7 +514,7 @@ pub(crate) async fn create_repository(
             .await;
         }
         if let Err(status) = properties::populate(&ctx, &choices, &mut values).await {
-            return ctx.error(status, "Repository properties are temporarily unavailable.");
+            return ctx.error(status, properties::failure_message(status));
         }
         return ctx.page_model(
             "Create a new repository",
