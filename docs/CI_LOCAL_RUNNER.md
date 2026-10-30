@@ -355,7 +355,11 @@ mode, `act`, concurrency and run timeout are worker settings.
 Failed claims retry with backoff. If the core disappears, an executing workflow
 finishes or times out; logs that cannot be delivered are dropped. Core nodes fail
 runs that stop heartbeating. Cancelling a run sends act SIGINT, as Ctrl+C would, so the
-steps that clean up still run, for up to a minute before SIGTERM and SIGKILL. Stopping
+steps that clean up still run, for up to a minute before SIGTERM and SIGKILL. The
+codeyard-actions engine does the same within that minute: a cancelled or timed-out job runs
+its `always()` and `cancelled()` steps, where `success()` and `failure()` are false as on
+GitHub, lets a running step whose condition still holds finish, and keeps the outputs its
+steps set. Stopping
 the worker with SIGTERM cancels its runs the same way within its 30-second shutdown,
 force-stops remaining local processes, removes only that run's labeled Podman containers, and then records the result. Revoking the worker refuses its next request.
 

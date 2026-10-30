@@ -1337,6 +1337,10 @@ struct Job {
     /// The job's own cgroup under the worker's, so processes a step leaves running survive until
     /// the job ends and no longer.
     processes: Option<crate::process::Cgroup>,
+    /// How long cleanup, and a step whose condition still holds, may run once the job stops.
+    cancel_grace: Duration,
+    /// Set while a top-level step runs that keeps running when the job is cancelled or times out.
+    surviving: Arc<std::sync::atomic::AtomicBool>,
 }
 
 async fn run_job(
@@ -1417,13 +1421,30 @@ async fn run_job(
             summaries: BTreeMap::new(),
             summary_bytes: 0,
             processes,
+            cancel_grace: grace,
+            surviving: Arc::default(),
         };
         let mut cancellation = job.cancel.clone();
-        let result = tokio::select! {
-            result = job.execute() => result,
-            _ = tokio::time::sleep_until(deadline.into()) => {interrupted=Some(Conclusion::TimedOut);Err(anyhow::anyhow!("The job has timed out."))},
-            _ = cancellation.wait_for(|cancelled| *cancelled) => {interrupted=Some(Conclusion::Cancelled);Err(anyhow::anyhow!("The job was cancelled."))},
+        let surviving = job.surviving.clone();
+        let (result, stopped) = {
+            let execution = job.execute();
+            tokio::pin!(execution);
+            let result = tokio::select! {
+                result = &mut execution => result,
+                _ = tokio::time::sleep_until(deadline.into()) => {interrupted=Some(Conclusion::TimedOut);Err(anyhow::anyhow!("The job has timed out."))},
+                _ = cancellation.wait_for(|cancelled| *cancelled) => {interrupted=Some(Conclusion::Cancelled);Err(anyhow::anyhow!("The job was cancelled."))},
+            };
+            let stopped = Instant::now();
+            // A running step whose condition still holds once the job stops, such as
+            // `if: always()`, finishes within the cancel timeout, as on GitHub. It records its
+            // own outcome; the job stays cancelled or timed out.
+            if interrupted.is_some() && surviving.load(std::sync::atomic::Ordering::Acquire) {
+                let _ = tokio::time::timeout(grace, &mut execution).await;
+            }
+            (result, stopped)
         };
+        // A step stopped while it survived the stop leaves its own cancel channel behind.
+        job.cancel = cancellation;
         if interrupted.is_none() && result.as_ref().map_or(true, |result| result.result != "success") {
             if *job.cancel.borrow() { interrupted = Some(Conclusion::Cancelled); }
             else if Instant::now() >= deadline { interrupted = Some(Conclusion::TimedOut); }
@@ -1440,7 +1461,7 @@ async fn run_job(
         }
         if result.is_err(){job.log.interrupt_step(interrupted.unwrap_or(Conclusion::Failure));}
         let mut result = result;
-        job.deadline = Instant::now() + grace;
+        job.deadline = stopped + grace;
         let (_cleanup_tx, cleanup_cancel) = watch::channel(false);
         job.cancel = cleanup_cancel;
         if interrupted.is_some() && !job.podman.cleanup_active_actions().await {
@@ -1492,7 +1513,14 @@ async fn run_job(
         }
         job.log.finish_step(job.public_step,if cleaned{Conclusion::Success}else{Conclusion::Failure},cleanup);
         anyhow::ensure!(cleaned, "Job cleanup failed");
-        result
+        // A stopped job still reports the outputs its steps set, cleanup steps included.
+        match result {
+            Err(error) if interrupted.is_some() => {
+                job.log.line(&format!("Error: {error:#}"));
+                Ok(JobResult { result: "failure".into(), outputs: job.job_outputs()? })
+            }
+            result => result,
+        }
     }
     .await;
     let result = match result {
@@ -1571,7 +1599,7 @@ impl Job {
     ) -> Result<T> {
         anyhow::ensure!(Instant::now() < deadline && !*self.cancel.borrow(), "Expression evaluation interrupted");
         let contexts = self.contexts.clone();
-        let status = self.status;
+        let status = self.visible_status();
         let cancel = self.cancel.clone();
         tokio::time::timeout_at(deadline.into(), tokio::task::spawn_blocking(move ||
             expressions::with_execution_limits(deadline, cancel, || evaluate(&contexts, status))
@@ -1581,6 +1609,18 @@ impl Job {
     async fn text(&self, template: &str, deadline: Instant) -> Result<String> {
         let template = template.to_owned();
         self.evaluate(deadline, move |contexts, status| text(&template, contexts, status)).await
+    }
+
+    /// Whether a step's condition still holds once the job is cancelled or times out, as GitHub
+    /// tests a running step's condition again then.
+    async fn holds_when_stopped(&mut self, condition: String) -> bool {
+        let previous = self.status;
+        self.status.cancelled = true;
+        self.sync_status();
+        let holds = self.evaluate(self.deadline, move |contexts, status| Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await.unwrap_or(false);
+        self.status = previous;
+        self.sync_status();
+        holds
     }
 
     /// The step that was running when the job was cancelled or timed out ends cancelled.
@@ -1604,6 +1644,12 @@ impl Job {
                         if values.get("ACTIONS_STEP_DEBUG").is_some_and(|value| enabled(&value.to_text()))
                 )
             })
+    }
+
+    /// The status expressions see. GitHub reports a cancelled or timed-out job as cancelled, so
+    /// `success()` and `failure()` are false then and only `always()` and `cancelled()` hold.
+    fn visible_status(&self) -> Status {
+        Status { failed: self.status.failed && !self.status.cancelled, cancelled: self.status.cancelled }
     }
 
     fn sync_status(&mut self) {
@@ -1735,19 +1781,7 @@ impl Job {
                 }
             }
         }
-        let mut env = self.env.clone();
-        env.extend(self.saved_env.clone());
-        self.contexts.values.insert("env".into(), object(&env));
-        let mut outputs = BTreeMap::new();
-        for (key, template) in &self.plan.outputs {
-            let value = text(template, &self.contexts, self.status)?;
-            if self.log.masker.contains(&value) {
-                self.log
-                    .line(&format!("Skip output '{key}' since it may contain secret."));
-            } else {
-                outputs.insert(key.clone(), value);
-            }
-        }
+        let outputs = self.job_outputs()?;
         let result = if *self.cancel.borrow() {
             "cancelled"
         } else if self.status.failed {
@@ -1759,6 +1793,25 @@ impl Job {
             result: result.into(),
             outputs,
         })
+    }
+
+    /// The job's outputs from its `outputs` templates. A value that may hold a secret is left out.
+    fn job_outputs(&mut self) -> Result<BTreeMap<String, String>> {
+        let mut env = self.env.clone();
+        env.extend(self.saved_env.clone());
+        self.contexts.values.insert("env".into(), object(&env));
+        let mut outputs = BTreeMap::new();
+        let status = self.visible_status();
+        for (key, template) in &self.plan.outputs {
+            let value = text(template, &self.contexts, status)?;
+            if self.log.masker.contains(&value) {
+                self.log
+                    .line(&format!("Skip output '{key}' since it may contain secret."));
+            } else {
+                outputs.insert(key.clone(), value);
+            }
+        }
+        Ok(outputs)
     }
 
     fn container(&self, container: &Container) -> Result<Container> {
@@ -1938,6 +1991,7 @@ impl Job {
         outputs: &mut BTreeMap<String, String>,
     ) -> Result<(&'static str, &'static str)> {
         let condition = step.condition.clone().unwrap_or_else(|| "success()".into());
+        let template = condition.clone();
         let condition = self.evaluate(self.deadline, move |contexts, status|
             Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await?;
         if !condition {
@@ -1945,20 +1999,38 @@ impl Job {
             return Ok(("skipped", "skipped"));
         }
         self.log.line(&format!("Step started: {name}"));
+        // GitHub tests a running top-level step's condition again when the job is cancelled or
+        // times out. One that still holds, such as `if: always()`, ignores the stop and may run
+        // past the job's deadline within the cancel timeout.
+        let survives = depth == 0 && step.condition.is_some() && !self.status.cancelled
+            && self.holds_when_stopped(template).await;
+        let limit = if survives { self.deadline + self.cancel_grace } else { self.deadline };
         let deadline = if let Some(template) = &step.timeout_minutes {
             let value = self.text(template, self.deadline).await?
                 .parse::<f64>()
                 .context("timeout-minutes must be a number")?;
-            self.deadline.min(Instant::now() + minutes(value)?)
+            limit.min(Instant::now() + minutes(value)?)
         } else {
-            self.deadline
+            limit
         };
         let continued = if let Some(template) = &step.continue_on_error {
             let template = template.clone();
             self.evaluate(deadline, move |contexts, status| boolean(&template, contexts, status)).await?
         } else { false };
         self.action_path.push(index);
+        let stop = if survives {
+            self.surviving.store(true, std::sync::atomic::Ordering::Release);
+            let (quiet_sender, quiet) = watch::channel(false);
+            Some((quiet_sender, std::mem::replace(&mut self.cancel, quiet), std::mem::replace(&mut self.deadline, limit)))
+        } else {
+            None
+        };
         let result = self.action(&step.action, env, deadline, depth, outputs).await;
+        if let Some((_quiet_sender, cancel, deadline)) = stop {
+            self.surviving.store(false, std::sync::atomic::Ordering::Release);
+            self.cancel = cancel;
+            self.deadline = deadline;
+        }
         self.action_path.pop();
         let ok = match result {
             Ok(ok) => ok,
@@ -1967,7 +2039,7 @@ impl Job {
                 false
             }
         };
-        let outcome = if *self.cancel.borrow() {
+        let outcome = if !survives && *self.cancel.borrow() {
             "cancelled"
         } else if ok {
             "success"
@@ -2612,25 +2684,82 @@ mod tests {
     #[tokio::test]
     async fn a_timed_out_job_still_runs_always_and_cancelled_steps() {
         let started = Instant::now();
-        // A timed-out job keeps no outputs, so the cleanup step reports through a file.
-        let marker = tempfile::tempdir().unwrap();
-        let cleaned = marker.path().join("cleaned");
-        let script = "test '${{ steps.slow.outcome }}' = cancelled\ntest '${{ steps.later.outcome }}' = skipped\ntest '${{ steps.failed.outcome }}' = skipped\ntest '${{ job.status }}' = cancelled\ntest '${{ cancelled() }}' = true\n".to_owned()
-            + &format!("echo cleaned > '{}'\n", cleaned.display());
         let (_tx, cancel) = watch::channel(false);
         let result = planned_job(
             vec![
                 step("slow", "sleep 30"),
                 step("later", "echo never"),
                 conditional("failed", "failure()", "echo never"),
-                conditional("two", "always()", &script),
+                conditional("two", "always()", "test '${{ steps.slow.outcome }}' = cancelled\ntest '${{ steps.later.outcome }}' = skipped\ntest '${{ steps.failed.outcome }}' = skipped\ntest '${{ job.status }}' = cancelled\ntest '${{ cancelled() }}' = true\necho 'value=cleaned' >> \"$GITHUB_OUTPUT\""),
             ],
             0.01,
             cancel,
         )
         .await;
         assert_eq!(result.result, "failure");
-        assert_eq!(std::fs::read_to_string(&cleaned).unwrap(), "cleaned\n");
+        assert_eq!(result.outputs["value"], "cleaned");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_job_keeps_running_steps_whose_condition_still_holds() {
+        // The step cancels the job once it runs, and checks that it started before the stop.
+        let marker = tempfile::tempdir().unwrap();
+        let running = marker.path().join("running");
+        let script = format!("test '${{{{ job.status }}}}' = success\ntouch '{}'\nsleep 2\necho 'value=finished' >> \"$GITHUB_OUTPUT\"", running.display());
+        let (tx, cancel) = watch::channel(false);
+        tokio::spawn(async move {
+            while !running.exists() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let _ = tx.send(true);
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let result = planned_job(
+            vec![
+                conditional("two", "always()", &script),
+                step("later", "exit 1"),
+            ],
+            1.0,
+            cancel,
+        )
+        .await;
+        assert_eq!(result.result, "cancelled");
+        assert_eq!(result.outputs["value"], "finished");
+    }
+
+    #[tokio::test]
+    async fn a_timed_out_job_lets_a_running_always_step_finish() {
+        let started = Instant::now();
+        let (_tx, cancel) = watch::channel(false);
+        let result = planned_job(
+            vec![conditional("two", "always()", "test '${{ job.status }}' = success\nsleep 3\necho 'value=finished' >> \"$GITHUB_OUTPUT\"")],
+            0.02,
+            cancel,
+        )
+        .await;
+        assert_eq!(result.result, "failure");
+        assert_eq!(result.outputs["value"], "finished");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[tokio::test]
+    async fn a_stopped_job_reports_neither_success_nor_failure() {
+        let started = Instant::now();
+        let (_tx, cancel) = watch::channel(false);
+        let result = planned_job(
+            vec![
+                step("broken", "exit 1"),
+                conditional("slow", "failure()", "sleep 30"),
+                conditional("failed", "failure()", "echo never"),
+                conditional("two", "always()", "test '${{ steps.slow.outcome }}' = cancelled\ntest '${{ steps.failed.outcome }}' = skipped\ntest '${{ failure() }}' = false\ntest '${{ success() }}' = false\necho 'value=cleaned' >> \"$GITHUB_OUTPUT\""),
+            ],
+            0.05,
+            cancel,
+        )
+        .await;
+        assert_eq!(result.result, "failure");
+        assert_eq!(result.outputs["value"], "cleaned");
         assert!(started.elapsed() < Duration::from_secs(10));
     }
 
