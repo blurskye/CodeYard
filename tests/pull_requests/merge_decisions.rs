@@ -139,6 +139,7 @@ async fn contract(pg: bool) {
                 commit_message: None,
                 author_email: None,
                 token: None,
+                session: None,
             },
         )
         .await
@@ -196,6 +197,7 @@ async fn contract(pg: bool) {
                 commit_message: None,
                 author_email: None,
                 token: None,
+                session: None,
             },
         )
         .await

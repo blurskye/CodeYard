@@ -563,7 +563,7 @@ async fn stack_changed_contract(pg: bool) {
         .await;
     join(&app.alice, 2).await;
     join(&app.alice, 3).await;
-    let refused = restack::publish_rebase(f.pool(), &app.state.ci_runs, prepared).await;
+    let refused = restack::publish_rebase(f.pool(), &app.state.ci_runs, prepared, None).await;
     assert!(
         matches!(
             refused,

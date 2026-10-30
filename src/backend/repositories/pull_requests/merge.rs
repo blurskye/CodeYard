@@ -50,6 +50,10 @@ pub struct MergeRequest {
     /// `None` for a browser session. Never read from a request body.
     #[serde(skip)]
     pub token: Option<i64>,
+    /// The browser session the request came with, which must still be signed in when the merge
+    /// publishes. `None` for a token. Never read from a request body or stored with it.
+    #[serde(skip)]
+    pub session: Option<String>,
 }
 
 /// The default merge headline and body, also offered to clients editing the message.
@@ -1005,6 +1009,7 @@ pub struct PreparedMerge {
     merge: StoreMerge,
     merge_sha: String,
     token: Option<i64>,
+    session: Option<String>,
     async_request: Option<(String, i64)>,
     auto_merge: Option<db::pull_requests::merge_policy::AutoMergeIdentity>,
 }
@@ -1029,6 +1034,7 @@ pub async fn prepare_pull_request_merge(
     request: MergeRequest,
 ) -> Result<PreparedMerge, OperationError> {
     let token = request.token;
+    let session = request.session.clone();
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
@@ -1180,6 +1186,7 @@ pub async fn prepare_pull_request_merge(
         merge,
         merge_sha,
         token,
+        session,
         async_request: None,
         auto_merge: None,
     })
@@ -1279,6 +1286,7 @@ pub async fn publish_prepared_merge(
         merge,
         merge_sha,
         token,
+        session,
         async_request,
         auto_merge,
     } = prepared;
@@ -1358,7 +1366,7 @@ pub async fn publish_prepared_merge(
                 &merge.base,
                 &merge_sha,
                 merge.method,
-                crate::backend::repositories::store::MergeAuthorization { token, policy: Some(policy) },
+                crate::backend::repositories::store::MergeAuthorization { token, session, policy: Some(policy) },
             )
             .await
     } else {
@@ -1375,7 +1383,7 @@ pub async fn publish_prepared_merge(
                 &merge.base_branch,
                 &merge.base,
                 &merge_sha,
-                crate::backend::repositories::store::MergeAuthorization { token, policy: Some(policy) },
+                crate::backend::repositories::store::MergeAuthorization { token, session, policy: Some(policy) },
             )
             .await
     };

@@ -506,6 +506,7 @@ pub(super) async fn resolve(
                             commit_message: optional_text(&input, "commitBody"),
                             author_email: optional_text(&input, "authorEmail"),
                             token: Some(request.auth.token.id),
+                            session: None,
                         },
                     )
                     .await

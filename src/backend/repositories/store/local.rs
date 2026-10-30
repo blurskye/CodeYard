@@ -2314,7 +2314,11 @@ impl LocalStore {
             &request.result,
             request.method,
             WriteVia::Merge,
-            MergeAuthorization { token: Some(request.token_id), policy: request.policy.clone() },
+            MergeAuthorization {
+                token: Some(request.token_id),
+                session: None,
+                policy: request.policy.clone(),
+            },
             Some(request),
         )
         .await
@@ -2337,7 +2341,7 @@ impl LocalStore {
         authorization: MergeAuthorization,
         authority: Option<&AsyncMergePublication>,
     ) -> Result<(), RepoError> {
-        let MergeAuthorization { token, policy } = authorization;
+        let MergeAuthorization { token, session, policy } = authorization;
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -2372,6 +2376,14 @@ impl LocalStore {
                 .map_err(|_| RepoError::authority_unavailable())? {
                 return Err(RepoError::write_denied());
             }
+        }
+        // A merge from a browser session publishes only while that session is still signed in.
+        if let Some(session) = session.as_deref() {
+            db::users::sessions::get_session_user(pool, session)
+                .await
+                .map_err(|_| RepoError::authority_unavailable())?
+                .filter(|user| user.id == actor)
+                .ok_or_else(RepoError::write_denied)?;
         }
         self.check_workflow_grant(pool, token, vec![(base.to_owned(), result.to_owned())], None)
             .await?;

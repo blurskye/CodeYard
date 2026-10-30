@@ -581,6 +581,7 @@ async fn stack_publish_order_contract(pg: bool) {
             expected_target: None,
             merge_method: Default::default(),
             token: None,
+            session: None,
         },
     )
     .await
@@ -1348,6 +1349,7 @@ async fn prepare_merge(
             expected_target: None,
             merge_method: Default::default(),
             token: None,
+            session: None,
         },
     )
     .await

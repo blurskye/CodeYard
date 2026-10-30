@@ -28,15 +28,17 @@ pub struct RestackResponse {
 /// Rebases the open line of the stack that pull request `number` is in. The rebase starts at the
 /// lowest layer of the line that is not on top of its base branch, and moves every open layer above
 /// it, so any layer of the stack can ask for it. Layers below that layer do not move. When nothing
-/// needs to move, nothing is written and the answer is zero.
+/// needs to move, nothing is written and the answer is zero. `session` is the browser session the
+/// rebase was asked for from, if any.
 pub async fn rebase_stack(
     pool: &db::DbPool,
     ci: &CiRuns,
     actor_id: i64,
     target: (String, String, i32),
+    session: Option<&str>,
 ) -> Result<RestackResponse, OperationError> {
     match prepare_rebase(pool, ci, actor_id, target).await? {
-        Some(prepared) => publish_rebase(pool, ci, prepared).await,
+        Some(prepared) => publish_rebase(pool, ci, prepared, session).await,
         None => Ok(RestackResponse { rebased: 0 }),
     }
 }
@@ -180,6 +182,7 @@ pub async fn publish_rebase(
     pool: &db::DbPool,
     ci: &CiRuns,
     prepared: PreparedRestack,
+    session: Option<&str>,
 ) -> Result<RestackResponse, OperationError> {
     let PreparedRestack {
         actor_id,
@@ -191,6 +194,19 @@ pub async fn publish_rebase(
         base_tip,
         moves,
     } = prepared;
+    // The replays can take minutes. A rebase asked for from a browser session moves branches
+    // only while that session is still signed in.
+    if let Some(session) = session {
+        let live = db::users::sessions::get_session_user(pool, session)
+            .await
+            .map_err(database_error)?;
+        if !live.is_some_and(|user| user.id == actor_id) {
+            return Err(OperationError::Denied {
+                code: "write_denied",
+                message: "Your session ended while the stack was rebasing; nothing moved.".into(),
+            });
+        }
+    }
     // The replays can take a while. If a layer was unstacked, retargeted, closed or merged
     // meanwhile, or another layer joined, they were built for a stack that no longer exists.
     // The store compares the versions under the repository lock, just before the refs move.

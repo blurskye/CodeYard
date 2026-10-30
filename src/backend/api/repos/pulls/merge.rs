@@ -26,9 +26,11 @@ pub async fn merge_pull_request(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, repo, number)): Path<(String, String, i32)>,
-    Json(request): Json<MergeRequest>,
+    Json(mut request): Json<MergeRequest>,
 ) -> Result<Json<MergeResponse>, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
+    // The merge publishes only while the session that asked for it is still signed in.
+    request.session = crate::backend::api::http::session::extract_session_id(&headers);
     pull_requests::merge::merge_pull_request(
         &state.pool,
         &state.ci_runs,
@@ -161,6 +163,7 @@ pub(crate) async fn native_merge(
                 .filter(|value| !value.is_empty())
                 .cloned(),
             token: None,
+            session: ctx.session_id.clone(),
         },
     )
     .await

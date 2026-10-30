@@ -136,6 +136,7 @@ async fn start(
         commit_message: input.commit_message,
         author_email: None,
         token: Some(auth.token.id),
+        session: None,
     };
     match native::start(
         &state,

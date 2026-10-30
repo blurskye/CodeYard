@@ -67,11 +67,13 @@ pub async fn post_rebase(
     Path((owner, repo, number)): Path<(String, String, i32)>,
 ) -> Result<Json<restack::RestackResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
+    let session = crate::backend::api::http::session::extract_session_id(&headers);
     restack::rebase_stack(
         &state.pool,
         &state.ci_runs,
         current_actor.id,
         (owner, repo, number),
+        session.as_deref(),
     )
     .await
     .map(Json)
@@ -168,6 +170,7 @@ pub(crate) async fn native_rebase(
         &ctx.state.ci_runs,
         ctx.require_user()?.id,
         (owner, name, number),
+        ctx.session_id.as_deref(),
     )
     .await
     .map(|_| ())

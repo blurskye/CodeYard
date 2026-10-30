@@ -126,6 +126,7 @@ async fn merge_pull(
             commit_message: input.commit_message,
             author_email: None,
             token: Some(token),
+            session: None,
         },
     )
     .await

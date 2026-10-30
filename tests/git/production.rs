@@ -125,6 +125,7 @@ async fn divergent_merge_retains_both_contents_and_both_parents() {
         &result, MergeMethod::Merge,
         codeyard::backend::repositories::store::MergeAuthorization {
             token: None,
+            session: None,
             policy: Some(db::pull_requests::merge_policy::Snapshot { revision, auto_merge: None }),
         },
     ).await.unwrap_err();

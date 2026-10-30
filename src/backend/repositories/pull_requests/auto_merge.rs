@@ -150,6 +150,7 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
                     commit_message: entry.commit_message,
                     author_email: entry.author_email,
                     token: entry.token_id,
+                    session: None,
                 },
             )
             .await;
