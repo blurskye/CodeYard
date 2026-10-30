@@ -1179,6 +1179,13 @@ impl Drop for BackgroundTask {
     fn drop(&mut self) { self.0.abort(); }
 }
 
+/// Resolves once the signal is raised. A signal whose sender is gone can never be raised.
+async fn raised(signal: &mut watch::Receiver<bool>) {
+    if signal.wait_for(|raised| *raised).await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+
 const RUNNER_NAME: &str = "codeyard-actions";
 
 const ADMISSION_POLL: Duration = Duration::from_millis(500);
@@ -1313,6 +1320,8 @@ struct Job {
     default_working_directory: Option<String>,
     sequence: usize,
     anonymous_action: usize,
+    /// The shown name of the top-level step that runs now. Post steps of its actions show it.
+    step_name: String,
     command_stopped: Option<String>,
     public_step: u32,
     next_step: usize,
@@ -1394,6 +1403,7 @@ async fn run_job(
             default_working_directory: None,
             sequence: 0,
             anonymous_action: 0,
+            step_name: String::new(),
             command_stopped: None,
             public_step:1,
             next_step: 0,
@@ -1454,7 +1464,7 @@ async fn run_job(
             job.public_step+=1;
             let number=job.public_step;
             let started=Instant::now();
-            job.log.start_step(number,"Post action");
+            job.log.start_step(number, &commands::bounded(&format!("Post {}", post.name), 1024));
             let post=job.post(post).await;
             job.log.finish_step(number,match &post{Ok(true)=>Conclusion::Success,Ok(false)=>Conclusion::Skipped,Err(_)=>Conclusion::Failure},started);
             if let Err(error) = post {
@@ -1615,6 +1625,11 @@ impl Job {
     async fn execute(&mut self) -> Result<JobResult> {
         let setup = Instant::now();
         self.log.start_step(1, "Set up job");
+        if self.plan.snapshot {
+            self.log.line(
+                "Warning: This runner does not create custom images, so the job's snapshot is ignored.",
+            );
+        }
         let event = self.restore_event()?;
         if let Some(Value::Object(github)) = self.contexts.values.get_mut("github") {
             github.insert("job".into(), Value::String(self.plan.job_id.clone()));
@@ -1853,14 +1868,6 @@ impl Job {
             if let Some(Value::Object(github)) = self.contexts.values.get_mut("github") {
                 github.insert("action".into(), Value::String(action));
             }
-            let name = step
-                .name
-                .clone()
-                .or_else(|| step.id.clone())
-                .unwrap_or_else(|| match &step.action {
-                    StepAction::Run { .. } => "Run script".into(),
-                    StepAction::Uses { reference, .. } => reference.clone(),
-                });
             let mut env = self.env.clone();
             env.extend(self.saved_env.clone());
             self.contexts.values.insert("env".into(), object(&env));
@@ -1870,12 +1877,18 @@ impl Job {
                 env.extend(values.clone());
                 self.contexts.values.insert("env".into(), object(&env));
             }
-            // A name that does not evaluate is shown as written, as GitHub does.
-            let name = match self.text(&name, self.deadline).await {
-                Ok(evaluated) => evaluated,
-                Err(_) => name,
+            // As GitHub does, a step without a name shows "Run" and its script or the action it
+            // uses, every name shows only its first line, and text that does not evaluate is
+            // shown as written.
+            let (prefix, shown) = match (&step.name, &step.action) {
+                (Some(name), _) => ("", self.text(name, self.deadline).await.unwrap_or_else(|_| name.clone())),
+                (None, StepAction::Run { script, .. }) => ("Run ", self.text(script, self.deadline).await.unwrap_or_else(|_| script.clone())),
+                (None, StepAction::Uses { reference, .. }) => ("Run ", reference.clone()),
             };
-            let name = commands::bounded(&self.log.masker.mask(&name), 1024);
+            let shown = shown.trim_start_matches([' ', '\t', '\r', '\n']);
+            let shown = shown.split(['\r', '\n']).next().unwrap_or_default();
+            let name = commands::bounded(&self.log.masker.mask(&format!("{prefix}{shown}")), 1024);
+            if depth == 0 { self.step_name.clone_from(&name); }
             let step_started = Instant::now();
             if depth == 0 { self.log.start_step(self.public_step, &name); }
             let mut outputs = BTreeMap::new();
@@ -2430,6 +2443,7 @@ mod tests {
             outputs: BTreeMap::from([("value".into(), "${{ steps.two.outputs.value }}".into())]),
             call: None,
             concurrency: None,
+            snapshot: false,
         };
         let mut contexts = Contexts::default();
         for name in [

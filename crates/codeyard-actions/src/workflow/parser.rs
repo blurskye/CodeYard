@@ -788,6 +788,7 @@ fn validate_job(job: &Mapping, path: &str) -> Result<()> {
                 "continue-on-error",
                 "permissions",
                 "concurrency",
+                "snapshot",
             ]
         },
         path,
@@ -891,6 +892,26 @@ fn validate_job(job: &Mapping, path: &str) -> Result<()> {
                 boolean(v, &p)?;
                 templates(v, MATRIX, &[], &p)?;
             }
+            // A custom image to create from the runner when the job ends.
+            "snapshot" => match v {
+                Value::Mapping(map) => {
+                    keys(map, &["image-name", "version", "if"], &p)?;
+                    let name = required(map, "image-name", &p)?;
+                    nonempty(name, &p)?;
+                    templates(name, MATRIX, &[], &p)?;
+                    if let Some(version) = map.get("version") {
+                        nonempty(version, &p)?;
+                        templates(version, MATRIX, &[], &p)?;
+                    }
+                    if let Some(condition) = map.get("if") {
+                        self::condition(condition, MATRIX, false, &p)?;
+                    }
+                }
+                _ => {
+                    nonempty(v, &p)?;
+                    templates(v, MATRIX, &[], &p)?;
+                }
+            },
             "with" => {
                 string_map(Some(v), &p)?;
                 templates(v, MATRIX, &[], &p)?;

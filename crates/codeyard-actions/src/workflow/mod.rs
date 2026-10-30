@@ -97,6 +97,8 @@ pub struct PlannedJob {
     pub call: Option<serde_yaml::Mapping>,
     /// The job's `concurrency`, evaluated with this run's matrix and dependency contexts.
     pub concurrency: Option<Concurrency>,
+    /// Whether the job asks for a custom image, which only GitHub-hosted runners create.
+    pub snapshot: bool,
 }
 
 /// A job's concurrency group. At most one job in a group runs and one waits; a newer job

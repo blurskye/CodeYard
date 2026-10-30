@@ -694,6 +694,7 @@ pub(super) fn expand(
             outputs: string_map(job.get("outputs"), "outputs")?,
             call: job.contains_key("uses").then(|| job.clone()),
             concurrency,
+            snapshot: job.contains_key("snapshot"),
         });
     }
     Ok(Some(result))

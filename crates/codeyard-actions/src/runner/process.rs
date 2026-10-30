@@ -29,6 +29,9 @@ pub(crate) async fn read_lines(
     }
 }
 
+/// The most output kept from a process the runner reads itself, such as Git or Podman.
+const OUTPUT_LIMIT: usize = 1024 * 1024;
+
 pub(crate) async fn output(
     command: &mut Command,
     timeout: Duration,
@@ -44,11 +47,19 @@ pub(crate) async fn output(
     let mut group = ProcessGroup::new(child.id(), Duration::ZERO);
     let stdout = child.stdout.take().context("No stdout")?;
     let stderr = child.stderr.take().context("No stderr")?;
-    async fn capture(reader: impl AsyncRead + Unpin) -> Result<Vec<u8>> {
-        let mut bytes = Vec::new();
-        reader.take(1024 * 1024 + 1).read_to_end(&mut bytes).await?;
-        anyhow::ensure!(bytes.len() <= 1024 * 1024, "Process output exceeds the capture limit");
-        Ok(bytes)
+    /// Reads a stream to its end and keeps its first MiB. The rest is dropped, so a process
+    /// cannot grow the runner's memory and a long image build log does not fail the build.
+    async fn capture(mut reader: impl AsyncRead + Unpin) -> Result<Vec<u8>> {
+        let mut kept = Vec::new();
+        let mut piece = [0; 8192];
+        loop {
+            let read = reader.read(&mut piece).await?;
+            if read == 0 {
+                return Ok(kept);
+            }
+            let room = OUTPUT_LIMIT - kept.len();
+            kept.extend_from_slice(&piece[..read.min(room)]);
+        }
     }
     let result = tokio::time::timeout(timeout, async {
         let (status, stdout, stderr) = tokio::try_join!(
@@ -106,13 +117,12 @@ pub(super) async fn execute(
     loop {
         tokio::select! {
             biased;
-            _ = cancel.changed() => {
-                if *cancel.borrow() {
-                    log.line("Cancelled: stopping child processes");
-                    let _ = child.kill().await;
-                    stdout.abort(); stderr.abort();
-                    return Ok(false);
-                }
+            // A closed channel never cancels, rather than waking the loop again and again.
+            _ = super::raised(cancel) => {
+                log.line("Cancelled: stopping child processes");
+                let _ = child.kill().await;
+                stdout.abort(); stderr.abort();
+                return Ok(false);
             }
             _ = &mut end => {
                 log.line("Error: The operation has timed out.");
@@ -159,6 +169,36 @@ pub(super) async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn output_keeps_only_the_start_of_a_long_stream() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "head -c 3000000 /dev/zero; echo done >&2"]);
+        let output = output(&mut command, Duration::from_secs(30)).await.unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), OUTPUT_LIMIT);
+        assert_eq!(output.stderr, b"done\n");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_closed_cancel_channel_lets_the_process_finish() {
+        let task = tokio::spawn(async {
+            let temp = tempfile::tempdir().unwrap();
+            let log = Log { prefix: "test".into(), ..Default::default() };
+            let mut commands = Commands::new(temp.path().into(), Default::default(), false);
+            let (sender, mut cancel) = watch::channel(false);
+            drop(sender);
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 0.2; echo finished"]);
+            execute(&mut command, &log, &mut commands, &mut cancel, Instant::now() + Duration::from_secs(30), false, false)
+                .await
+                .unwrap()
+        });
+        let ok = tokio::time::timeout(Duration::from_secs(20), task).await.expect("the process finishes").unwrap();
+        assert!(ok);
+    }
 
     #[tokio::test]
     async fn over_long_lines_are_dropped_and_the_rest_is_drained() {

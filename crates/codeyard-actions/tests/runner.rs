@@ -39,12 +39,30 @@ fn run(yaml: &str, files: &[(&str, &str)], args: &[&str]) -> Output {
     command(workspace.path()).args(args).output().unwrap()
 }
 
-fn log(output: &Output) -> String {
+/// Everything the run printed, for checks that nothing leaked anywhere.
+fn raw_log(output: &Output) -> String {
     format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     )
+}
+
+/// What the run printed, without the runner's step status lines. Those show each step's name,
+/// which by default is the first line of its script, so a check for what a step printed must
+/// not match them.
+fn log(output: &Output) -> String {
+    raw_log(output)
+        .lines()
+        .filter(|line| {
+            !line.split_once("] ").is_some_and(|(_, rest)| {
+                ["Step started: ", "Step skipped: ", "Step completed: "]
+                    .iter()
+                    .any(|status| rest.starts_with(status))
+            })
+        })
+        .map(|line| format!("{line}\n"))
+        .collect()
 }
 
 fn success(output: &Output) {
@@ -108,7 +126,7 @@ jobs:
         .output()
         .unwrap();
     success(&output);
-    let text = log(&output);
+    let text = raw_log(&output);
     for secret in ["first-secret", "second-secret", "skipped-secret"] {
         assert!(!text.contains(secret), "{text}");
     }
@@ -304,6 +322,70 @@ jobs:
         log(&refused)
     );
     assert!(!log(&refused).contains("Job started"), "{}", log(&refused));
+}
+
+#[test]
+fn steps_without_a_name_are_named_after_their_script_or_action() {
+    let output = run(
+        r#"
+on: push
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - id: first
+        run: |
+
+          echo ${{ github.event_name }}-name
+          echo second line
+      - name: Named ${{ github.event_name }}
+        run: "true"
+      - if: false
+        uses: ./missing
+"#,
+        &[],
+        &[],
+    );
+    success(&output);
+    let raw = raw_log(&output);
+    assert!(raw.contains("] Step started: Run echo push-name\n"), "{raw}");
+    assert!(raw.contains("] Step started: Named push\n"), "{raw}");
+    assert!(raw.contains("] Step skipped: Run ./missing\n"), "{raw}");
+}
+
+#[test]
+fn a_snapshot_is_accepted_with_a_warning() {
+    let output = run(
+        "on: push\njobs:\n  test:\n    runs-on: self-hosted\n    snapshot: my-image\n    steps:\n      - run: echo snapshot-job-ran\n",
+        &[],
+        &[],
+    );
+    success(&output);
+    assert!(log(&output).contains("snapshot-job-ran"));
+    assert!(log(&output).contains("the job's snapshot is ignored"));
+}
+
+#[cfg(unix)]
+#[test]
+fn action_metadata_that_links_outside_the_action_is_refused() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(workspace.path().join("action")).unwrap();
+    std::fs::create_dir_all(workspace.path().join("outside")).unwrap();
+    std::fs::write(
+        workspace.path().join("outside/action.yml"),
+        "runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: echo SHOULD-NOT-RUN\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("../outside/action.yml", workspace.path().join("action/action.yml")).unwrap();
+    std::fs::write(
+        workspace.path().join("workflow.yml"),
+        "on: push\njobs:\n  test:\n    runs-on: self-hosted\n    steps:\n      - uses: ./action\n",
+    )
+    .unwrap();
+    let output = command(workspace.path()).output().unwrap();
+    assert!(!output.status.success());
+    assert!(log(&output).contains("metadata file must be inside the action"), "{}", log(&output));
+    assert!(!log(&output).contains("SHOULD-NOT-RUN"));
 }
 
 #[test]
@@ -617,7 +699,7 @@ jobs:
         .output()
         .unwrap();
     success(&output);
-    let text = log(&output);
+    let text = raw_log(&output);
     assert!(!text.contains("top-secret-value"), "{text}");
     assert!(!text.contains("runtime-secret"), "{text}");
     assert!(text.contains("***"), "{text}");
@@ -921,7 +1003,7 @@ fn authenticated_progress_reports_the_observed_timeout() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let text = log(&output);
+    let text = raw_log(&output);
     assert!(!text.contains("deadline-token"));
     let events: Vec<codeyard_actions::progress::Event> = text
         .lines()

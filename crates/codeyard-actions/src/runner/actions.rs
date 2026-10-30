@@ -91,6 +91,8 @@ fn docker_args(configured: Option<Vec<String>>, inputs: &BTreeMap<String, String
 }
 
 pub(super) struct Post {
+    /// The shown name of the step that used the action.
+    pub(super) name: String,
     directory: PathBuf,
     script: String,
     runtime: PostRuntime,
@@ -356,14 +358,19 @@ impl Job {
             .into_iter()
             .map(|name| directory.join(name))
             .find(|path| path.exists());
+        // A metadata file that leads outside the action is refused, so an action cannot make the
+        // runner read, and show in an error, another file of the host.
+        let root = directory.canonicalize();
         let metadata: Metadata = match file {
             Some(file) => until_deadline(deadline, async move {
                 tokio::task::spawn_blocking(move || -> Result<Metadata> {
                     use std::io::Read;
+                    let file = file.canonicalize()?;
+                    anyhow::ensure!(file.starts_with(root?), "The action's metadata file must be inside the action");
                     let mut options = std::fs::OpenOptions::new();
                     options.read(true);
                     #[cfg(unix)]
-                    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+                    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK | libc::O_NOFOLLOW);
                     let file = options.open(file)?;
                     anyhow::ensure!(file.metadata()?.is_file(), "Action metadata must be a regular file");
                     let mut content = String::new();
@@ -522,9 +529,9 @@ impl Job {
                         }
                         None => match metadata.runs.post.as_ref() {
                             Some(script) => {
-                                self.retain_post(&env, script.len() + runtime.len() + metadata.runs.post_if.as_ref().map_or(8, String::len))?;
+                                self.retain_post(&env, self.step_name.len() + script.len() + runtime.len() + metadata.runs.post_if.as_ref().map_or(8, String::len))?;
                                 self.posts.push(Post {
-                                    directory: directory.clone(), script: script.clone(), runtime: PostRuntime::Node(runtime.clone()),
+                                    name: self.step_name.clone(), directory: directory.clone(), script: script.clone(), runtime: PostRuntime::Node(runtime.clone()),
                                     condition: metadata.runs.post_if.clone().unwrap_or_else(|| "always()".into()),
                                     env: env.clone(), exported: exported.clone(), state: state.clone(),
                                     main_files: None, contexts: self.contexts.clone(),
@@ -602,9 +609,9 @@ impl Job {
                             Some(index)
                         }
                         None => metadata.runs.post_entrypoint.as_ref().map(|script| -> Result<usize> {
-                            self.retain_post(&env, script.len() + image.len() + args_bytes + metadata.runs.post_if.as_ref().map_or(8, String::len))?;
+                            self.retain_post(&env, self.step_name.len() + script.len() + image.len() + args_bytes + metadata.runs.post_if.as_ref().map_or(8, String::len))?;
                             self.posts.push(Post {
-                                directory: directory.clone(), script: script.clone(), runtime: PostRuntime::Docker { image: image.into(), args: args.clone() },
+                                name: self.step_name.clone(), directory: directory.clone(), script: script.clone(), runtime: PostRuntime::Docker { image: image.into(), args: args.clone() },
                                 condition: metadata.runs.post_if.clone().unwrap_or_else(|| "always()".into()),
                                 env: env.clone(), exported: self.saved_env.clone(), state: BTreeMap::new(),
                                 main_files: None, contexts: self.contexts.clone(),
@@ -853,20 +860,24 @@ impl Job {
         }
         env.insert("GITHUB_EVENT_PATH".into(), self.restore_event()?.display().to_string());
         let files = self.active_files.clone();
-        let (mut command, container) = until_deadline(
-            deadline,
-            self.podman.docker_action(
-                image,
-                directory,
-                &self.options.directory,
-                self.temp.path(),
-                &env,
-                entrypoint,
-                args,
+        // Building the action's image stops with the step: on its deadline or a cancellation.
+        let mut cancel = self.cancel.clone();
+        let (mut command, container) = tokio::select! {
+            command = until_deadline(
                 deadline,
-            ),
-        )
-        .await?;
+                self.podman.docker_action(
+                    image,
+                    directory,
+                    &self.options.directory,
+                    self.temp.path(),
+                    &env,
+                    entrypoint,
+                    args,
+                    deadline,
+                ),
+            ) => command?,
+            _ = raised(&mut cancel) => bail!("The operation was canceled."),
+        };
         let mut commands = Commands::new(
             self.options.directory.clone(),
             std::mem::take(&mut self.matchers),

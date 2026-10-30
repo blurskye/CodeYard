@@ -60,13 +60,7 @@ impl Podman {
     }
 
     async fn output(&self, args: &[String]) -> Result<String> {
-        let output = super::process::output(self.command().args(args), Duration::from_secs(120))
-            .await
-            .context("Podman operation failed")?;
-        if !output.status.success() {
-            bail!("Podman: {}", String::from_utf8_lossy(&output.stderr).trim());
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().into())
+        podman_output(self.command().args(args)).await
     }
 
     pub async fn setup(
@@ -197,9 +191,6 @@ impl Podman {
                 name.into(),
             ]);
         }
-        for key in container.env.keys() {
-            args.extend(["--env".into(), key.clone()]);
-        }
         for port in &container.ports {
             args.extend(["--publish".into(), port.clone()]);
         }
@@ -208,10 +199,7 @@ impl Podman {
         }
         if job {
             for path in [workspace, temp, cache] {
-                args.extend([
-                    "--volume".into(),
-                    format!("{}:{}:rw", path.display(), path.display()),
-                ]);
+                args.extend(["--volume".into(), bind(path, path)?]);
             }
             args.extend([
                 "--workdir".into(),
@@ -220,16 +208,14 @@ impl Podman {
                 "tail".into(),
             ]);
         }
-        args.push(container.image.clone());
-        if job {
-            args.extend(["-f".into(), "/dev/null".into()]);
-        }
         let mut command = self.command();
-        command.args(&args).envs(&container.env);
-        let output = super::process::output(&mut command, Duration::from_secs(120)).await?;
-        if !output.status.success() {
-            bail!("Podman: {}", String::from_utf8_lossy(&output.stderr).trim());
+        command.args(&args);
+        add_env(&mut command, &container.env);
+        command.arg(&container.image);
+        if job {
+            command.args(["-f", "/dev/null"]);
         }
+        podman_output(&mut command).await?;
         drop(auth_directory);
         Ok(id)
     }
@@ -243,9 +229,7 @@ impl Podman {
     ) -> Command {
         let mut command = self.command();
         command.args(["exec", "--workdir"]).arg(directory);
-        for (key, value) in env {
-            command.arg("--env").arg(key).env(key, value);
-        }
+        add_env(&mut command, env);
         if let Some(job) = &self.job {
             command.arg(job);
         }
@@ -266,13 +250,17 @@ impl Podman {
         deadline: std::time::Instant,
     ) -> Result<(Command, String)> {
         anyhow::ensure!(!self.deny_docker, "Docker actions require CI_EXECUTION_MODE=podman");
-        let built = directory.join(image).is_file() || image == "Dockerfile"
-            || image.ends_with("/Dockerfile")
-            || image.ends_with(".dockerfile");
+        let built = builds_image(directory, image);
         let key = (directory.to_owned(), image.to_owned());
         let image = if let Some(image) = self.action_images.get(&key) {
             image.clone()
         } else if built {
+            // The Dockerfile must be the action's own, not another file of the host.
+            let dockerfile = directory.join(image).canonicalize().context("The action's Dockerfile does not exist")?;
+            anyhow::ensure!(
+                dockerfile.starts_with(directory.canonicalize()?) && dockerfile.is_file(),
+                "The action's Dockerfile must be inside the action"
+            );
             let tag = format!("{}-action-image-{}", self.prefix, self.images.len());
             self.images.push(tag.clone());
             let mut args: Vec<String> = vec!["build".into()];
@@ -283,7 +271,7 @@ impl Podman {
                 "--tag".into(),
                 tag.clone(),
                 "--file".into(),
-                directory.join(image).display().to_string(),
+                dockerfile.display().to_string(),
                 directory.display().to_string(),
             ]);
             let output = super::process::output(self.command().args(&args), deadline.saturating_duration_since(std::time::Instant::now())).await?;
@@ -292,6 +280,8 @@ impl Podman {
             tag
         } else {
             let image = image.strip_prefix("docker://").unwrap_or(image);
+            // A leading dash would make Podman read the image as an option.
+            anyhow::ensure!(!image.is_empty() && !image.starts_with('-'), "Invalid Docker image '{image}'");
             if self.pull { self.output(&["pull".into(), "--".into(), image.into()]).await?; }
             let inspect = ["image".into(), "inspect".into(), "--format".into(), "{{.Id}}".into(), "--".into(), image.into()];
             let resolved = match self.output(&inspect).await {
@@ -319,21 +309,18 @@ impl Podman {
         for path in [workspace, temp, directory] {
             if !mounted.contains(&path) {
                 mounted.push(path);
-                command
-                    .arg("--volume")
-                    .arg(format!("{}:{}:rw", path.display(), path.display()));
+                command.arg("--volume").arg(bind(path, path)?);
             }
         }
         if workspace != Path::new("/github/workspace") {
-            command.arg("--volume").arg(format!("{}:/github/workspace:rw", workspace.display()));
+            command.arg("--volume").arg(bind(workspace, Path::new("/github/workspace"))?);
         }
         command.arg("--workdir").arg("/github/workspace");
-        for (key, value) in env {
-            command.arg("--env").arg(key).env(key, value);
-        }
+        add_env(&mut command, env);
         command.arg("--env").arg("GITHUB_WORKSPACE").env("GITHUB_WORKSPACE", "/github/workspace");
         if let Some(entrypoint) = entrypoint {
-            command.args(["--entrypoint", entrypoint]);
+            // One argument, so an entrypoint that starts with a dash stays the entrypoint.
+            command.arg(format!("--entrypoint={entrypoint}"));
         }
         command.arg("--").arg(image).args(args);
         Ok((command, id))
@@ -416,6 +403,93 @@ impl Cleanup {
     }
 }
 
+/// Whether a Docker action's image is built from a Dockerfile in the action. A registry image is
+/// never built, whatever its name ends with.
+fn builds_image(directory: &Path, image: &str) -> bool {
+    !image.starts_with("docker://")
+        && (directory.join(image).is_file()
+            || image == "Dockerfile"
+            || image.ends_with("/Dockerfile")
+            || image.ends_with(".dockerfile"))
+}
+
+/// A `--volume` value that mounts a host directory at `target` in the container. A path with a
+/// colon would be read as more than one field, so it is refused.
+fn bind(source: &Path, target: &Path) -> Result<String> {
+    let (source, target) = (source.display().to_string(), target.display().to_string());
+    for path in [&source, &target] {
+        anyhow::ensure!(!path.contains(':'), "Cannot mount '{path}' into a container: the path contains ':'");
+    }
+    Ok(format!("{source}:{target}:rw"))
+}
+
+async fn podman_output(command: &mut Command) -> Result<String> {
+    let output = super::process::output(command, Duration::from_secs(120))
+        .await
+        .context("Podman operation failed")?;
+    if !output.status.success() {
+        bail!("Podman: {}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().into())
+}
+
+/// Whether the Podman client or the system loader reads this variable itself. A container's
+/// value for it must not change how the client runs, find its helpers or reach its registry.
+/// Only names the client is known to read are listed, so a secret such as DOCKER_PASSWORD
+/// still keeps its value out of the arguments.
+fn client_variable(key: &str) -> bool {
+    const NAMES: [&str; 30] = [
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TMPDIR",
+        "TZ",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "ALL_PROXY",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REGISTRY_AUTH_FILE",
+        "STORAGE_DRIVER",
+        "STORAGE_OPTS",
+        "NOTIFY_SOCKET",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "GODEBUG",
+        "GOGC",
+        "GOMAXPROCS",
+        "GOTRACEBACK",
+        "CONTAINER_HOST",
+        "CONTAINER_CONNECTION",
+        "CONTAINER_SSHKEY",
+        "CONTAINER_PASSPHRASE",
+        "DOCKER_CONFIG",
+        "DOCKER_CERT_PATH",
+        "DOCKER_HOST",
+        "DOCKER_TLS_VERIFY",
+    ];
+    const PREFIXES: [&str; 5] = ["LD_", "XDG_", "CONTAINERS_", "BUILDAH_", "PODMAN_"];
+    let key = key.to_ascii_uppercase();
+    NAMES.contains(&key.as_str()) || PREFIXES.iter().any(|prefix| key.starts_with(prefix))
+}
+
+/// Passes variables into a container. As GitHub's runner does with Docker, the arguments name
+/// each variable and its value travels in the client's environment, so secrets never show in
+/// the process list. A variable the client reads itself, or a name that cannot be an
+/// environment variable, keeps its value in the arguments.
+fn add_env(command: &mut Command, env: &BTreeMap<String, String>) {
+    for (key, value) in env {
+        command.arg("--env");
+        if key.is_empty() || key.contains(['=', '\0']) || client_variable(key) {
+            command.arg(format!("{key}={value}"));
+        } else {
+            command.arg(key).env(key, value);
+        }
+    }
+}
+
 impl Drop for Podman {
     fn drop(&mut self) {
         let mut pending = Cleanup {
@@ -430,5 +504,106 @@ impl Drop for Podman {
                 if !runtime.block_on(pending.run()) { eprintln!("Container cleanup failed"); }
             }
         }).join();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn arguments(command: &Command) -> Vec<String> {
+        command.as_std().get_args().map(|arg| arg.to_string_lossy().into_owned()).collect()
+    }
+
+    fn variable(command: &Command, key: &str) -> Option<String> {
+        command
+            .as_std()
+            .get_envs()
+            .find(|(name, _)| *name == key)
+            .and_then(|(_, value)| value)
+            .map(|value| value.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn container_variables_keep_their_values_out_of_the_arguments() {
+        let env = BTreeMap::from([
+            ("SECRET".to_string(), "hunter2".to_string()),
+            ("PATH".to_string(), "/container/bin".to_string()),
+            ("LD_PRELOAD".to_string(), "/tmp/hook.so".to_string()),
+            ("DOCKER_PASSWORD".to_string(), "hunter2".to_string()),
+        ]);
+        let podman = Podman {
+            url: None,
+            options: Vec::new(),
+            pull: false,
+            prefix: "test".into(),
+            containers: Vec::new(),
+            images: Vec::new(),
+            action_images: BTreeMap::new(),
+            network: None,
+            deny_docker: false,
+            job: Some("job".into()),
+            path: None,
+        };
+        let exec = podman.exec(&env, Path::new("/work"), "sh", &["-c".into(), "true".into()]);
+        // Container creation and Docker actions pass their variables through the same function.
+        let mut run = Command::new("podman");
+        add_env(&mut run, &env);
+        for command in [&exec, &run] {
+            let args = arguments(command);
+            assert!(!args.iter().any(|arg| arg.contains("hunter2")), "{args:?}");
+            for secret in ["SECRET", "DOCKER_PASSWORD"] {
+                assert!(args.windows(2).any(|pair| pair == ["--env", secret]));
+                assert_eq!(variable(command, secret).as_deref(), Some("hunter2"));
+            }
+            // The client keeps its own PATH and loader, so it still finds its helpers.
+            assert!(args.windows(2).any(|pair| pair == ["--env", "PATH=/container/bin"]));
+            assert!(args.windows(2).any(|pair| pair == ["--env", "LD_PRELOAD=/tmp/hook.so"]));
+            assert_eq!(variable(command, "PATH"), None);
+            assert_eq!(variable(command, "LD_PRELOAD"), None);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn docker_actions_refuse_option_images_outside_dockerfiles_and_colon_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let action = root.path().join("action");
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(&action).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("Dockerfile"), "FROM scratch\n").unwrap();
+        std::os::unix::fs::symlink(outside.join("Dockerfile"), action.join("Dockerfile")).unwrap();
+        let options = Options::try_parse_from(["codeyard-actions", "push", "-W", "unused"]).unwrap();
+        // Each image is refused before Podman runs.
+        for (image, refusal) in [
+            ("docker://--privileged", "Invalid Docker image"),
+            ("-v=/:/host", "Invalid Docker image"),
+            ("docker://", "Invalid Docker image"),
+            ("Dockerfile", "must be inside the action"),
+            ("../outside/Dockerfile", "must be inside the action"),
+        ] {
+            let mut podman = Podman::new(&options, "test".into()).unwrap();
+            let error = podman
+                .docker_action(
+                    image,
+                    &action,
+                    Path::new("/work"),
+                    Path::new("/temp"),
+                    &BTreeMap::new(),
+                    None,
+                    &[],
+                    std::time::Instant::now() + Duration::from_secs(60),
+                )
+                .await
+                .unwrap_err();
+            assert!(format!("{error:#}").contains(refusal), "{image}: {error:#}");
+        }
+        assert!(!builds_image(&action, "docker://example/Dockerfile"));
+        assert!(builds_image(&action, "Dockerfile"));
+        assert!(bind(&root.path().join("a:b"), Path::new("/github/workspace")).is_err());
+        assert!(bind(Path::new("/work"), Path::new("/a:b")).is_err());
+        assert_eq!(bind(Path::new("/work"), Path::new("/work")).unwrap(), "/work:/work:rw");
     }
 }
