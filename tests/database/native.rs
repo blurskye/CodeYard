@@ -4892,3 +4892,95 @@ async fn the_merge_policy_check_holds_nothing_and_refuses_a_moved_policy_on_both
     postgres.pool.close().await;
     sqlite.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn only_columns_that_can_decide_a_merge_move_the_merge_policy_on_both_engines() {
+    // Every other column of these tables moves the policy revision, including any added later.
+    const IGNORED: [(&str, &[&str]); 3] = [
+        (
+            "pull_requests",
+            &[
+                "title",
+                "body",
+                "updated_at",
+                "additions",
+                "deletions",
+                "changed_files",
+                "milestone_id",
+                "mergeable",
+                "locked",
+                "lock_reason",
+            ],
+        ),
+        ("pr_reviews", &["body"]),
+        ("pr_comments", &["body", "updated_at"]),
+    ];
+    let postgres = PostgresDatabase::new().await;
+    let sqlite = NativeDatabase::new().await;
+    for pool in [&postgres.pool, &sqlite.pool] {
+        let owner = setup(pool, "public").await;
+        let repo = repository(pool, owner.id, "epochs").await;
+        let pull = new_pr(pool, repo.id, owner.id, "feature").await;
+        execute_sql(
+            pool,
+            &format!(
+                "INSERT INTO pr_reviews(pull_request_id,author_id,body) VALUES({},{},'Looks good')",
+                pull.id, owner.id
+            ),
+        )
+        .await;
+        execute_sql(
+            pool,
+            &format!(
+                "INSERT INTO pr_comments(pull_request_id,author_id,body) VALUES({},{},'A thought')",
+                pull.id, owner.id
+            ),
+        )
+        .await;
+        for (table, ignored) in IGNORED {
+            let columns: Vec<String> = match pool {
+                db::DbPool::Postgres(raw) => sqlx::query_scalar(
+                    "SELECT column_name::text FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1",
+                )
+                .bind(table)
+                .fetch_all(raw)
+                .await
+                .unwrap(),
+                db::DbPool::Sqlite(raw) => {
+                    sqlx::query_scalar("SELECT name FROM pragma_table_info(?1)")
+                        .bind(table)
+                        .fetch_all(raw)
+                        .await
+                        .unwrap()
+                }
+            };
+            for column in ignored {
+                assert!(columns.iter().any(|name| name == column), "{table}.{column}");
+            }
+            let key = if table == "pull_requests" { "id" } else { "pull_request_id" };
+            for column in &columns {
+                let before = db::pull_requests::merge_policy::revision(pool, repo.id)
+                    .await
+                    .unwrap();
+                execute_sql(
+                    pool,
+                    &format!(
+                        "UPDATE {table} SET \"{column}\"=\"{column}\" WHERE {key}={}",
+                        pull.id
+                    ),
+                )
+                .await;
+                let after = db::pull_requests::merge_policy::revision(pool, repo.id)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    after != before,
+                    !ignored.contains(&column.as_str()),
+                    "{table}.{column}"
+                );
+            }
+        }
+    }
+    postgres.pool.close().await;
+    sqlite.close().await;
+}

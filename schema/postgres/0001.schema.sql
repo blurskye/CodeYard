@@ -4040,9 +4040,12 @@ END;
 $$;
 CREATE TRIGGER merge_policy_repository AFTER UPDATE OF is_archived,is_private,allow_merge_commit,allow_squash_merge,allow_rebase_merge,owner_kind,owner_user_id,owner_org_id,storage_node_id,default_branch ON repositories FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
 CREATE TRIGGER merge_policy_rules AFTER INSERT OR UPDATE OR DELETE ON branch_protection_rules FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
-CREATE TRIGGER merge_policy_pulls AFTER INSERT OR UPDATE OR DELETE ON pull_requests FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
-CREATE TRIGGER merge_policy_reviews AFTER INSERT OR UPDATE OR DELETE ON pr_reviews FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
-CREATE TRIGGER merge_policy_threads AFTER INSERT OR UPDATE OR DELETE ON pr_comments FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
+-- Text, counts, milestones, mergeability and lock state never decide a merge, so editing them
+-- does not bump the epoch. A new pull request, review or comment column joins these lists unless
+-- it is just as irrelevant; tests/database/native.rs checks every column.
+CREATE TRIGGER merge_policy_pulls AFTER INSERT OR UPDATE OF id,repo_id,number,author_id,state,head_repo_id,workflows_approved_sha,head_branch,head_sha,base_branch,base_sha,fork_sha,is_draft,merged,merged_by_id,closed_by_id,merge_commit_sha,stack_id,stack_version,created_at,merged_at,closed_at,maintainer_can_modify,maintainer_edit_granted_by_id,source_issue_id,head_publisher_id OR DELETE ON pull_requests FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
+CREATE TRIGGER merge_policy_reviews AFTER INSERT OR UPDATE OF id,pull_request_id,author_id,state,commit_sha,dismissed_by_id,dismissed_reason,dismissed_at,created_at OR DELETE ON pr_reviews FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
+CREATE TRIGGER merge_policy_threads AFTER INSERT OR UPDATE OF id,pull_request_id,author_id,path,line,side,commit_sha,diff_base_sha,in_reply_to_comment_id,resolved_at,resolved_by_id,review_id,created_at,start_line,start_side,source_issue_comment_id OR DELETE ON pr_comments FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
 CREATE TRIGGER merge_policy_statuses AFTER INSERT OR UPDATE OR DELETE ON commit_statuses FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
 CREATE TRIGGER merge_policy_checks AFTER INSERT OR UPDATE OR DELETE ON check_runs FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
 CREATE TRIGGER merge_policy_suites AFTER INSERT OR UPDATE OR DELETE ON check_suites FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
