@@ -130,16 +130,11 @@ pub(super) fn input_field(
             }
         }
         InputKind::Text | InputKind::Choice | InputKind::Environment => {
-            let original = serde_json::to_string(&default).expect("text input default serializes");
             let current = typed.unwrap_or(default);
             rsx! {
                 label { "{label_text}"
                     if show_required_label { small { " (required)" } }
                     if !description.is_empty() { small { " {description}" } }
-                    if input.kind == InputKind::Text {
-                        // JSON keeps the rendered default's newline bytes out of HTML normalization.
-                        input { r#type: "hidden", name: format!("input-default:{path}:{}", input.name), value: original }
-                    }
                     DraftTextarea { name: name.clone(), initial_value: current, maxlength: Some(2048), required: required, rows: 3 }
                 }
             }

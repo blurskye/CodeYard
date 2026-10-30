@@ -228,36 +228,19 @@ async fn dispatch(
             > if key == "inputs" {
                 MAX_INPUT_LINES_BYTES
             } else if key.starts_with("input:") {
+                // Browsers send a textarea's line breaks as CRLF.
                 2 * MAX_VALUE_BYTES
-            } else if key.starts_with("input-default:") {
-                6 * MAX_VALUE_BYTES + 2
             } else {
                 MAX_VALUE_BYTES
             }
     }) {
         return ctx.error(StatusCode::BAD_REQUEST, "Dispatch form value is too long.");
     }
-    // Defaults are presentation data, not authority. They restore exactly what the form
-    // rendered; admission still validates the resulting bytes against its pinned definition.
-    let mut defaults = HashMap::new();
-    for (key, value) in &form {
-        if let Some(name) = key.strip_prefix("input-default:") {
-            let original = match serde_json::from_str::<String>(value) {
-                Ok(original) if original.len() <= MAX_VALUE_BYTES => original,
-                _ => return ctx.error(StatusCode::BAD_REQUEST, "Invalid workflow input default."),
-            };
-            defaults.insert(name.to_owned(), original);
-        }
-    }
+    // Workflow files give their defaults LF line breaks, as YAML does, so an unchanged
+    // multiline default reaches the run with its own bytes.
     for (key, value) in &mut form {
-        if let Some(name) = key.strip_prefix("input:") {
-            let original = defaults.get(name).map_or("", String::as_str);
-            let normalized = crate::backend::repositories::files::native_text(std::mem::take(value), "");
-            *value = if normalized == crate::backend::repositories::files::native_text(original.to_owned(), "") {
-                original.to_owned()
-            } else {
-                crate::backend::repositories::files::native_text(normalized, original)
-            };
+        if key.starts_with("input:") {
+            *value = value.replace("\r\n", "\n");
             if value.len() > MAX_VALUE_BYTES {
                 return ctx.error(StatusCode::BAD_REQUEST, "Dispatch form value is too long.");
             }
