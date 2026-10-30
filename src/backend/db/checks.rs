@@ -30,6 +30,13 @@ pub struct Suite {
 
 pub const ACTIONS_APP_ID: i64 = 15368;
 
+#[derive(Default)]
+pub struct AutomaticSuites {
+    pub after: i64,
+    pub has_next: bool,
+    pub suites: Vec<Suite>,
+}
+
 pub struct RunChange {
     pub run: Run,
     pub completed_suite: Option<Suite>,
@@ -309,6 +316,11 @@ impl RunPatch {
     }
 }
 
+pub(crate) fn validate_automatic(sha: &str, branch: &str, after: i64) -> Result<()> {
+    ensure!(crate::backend::git::is_full_commit_id(sha) && !branch.is_empty() && text(branch, 1024) && after >= 0, Refusal::Invalid);
+    Ok(())
+}
+
 native_operation!(crate::backend::db::postgres::checks::application, crate::backend::db::sqlite::checks::application,
     fn application(pool: &DbPool, id: i64) -> Result<Option<super::oauth_apps::Application>>);
 native_operation!(crate::backend::db::postgres::checks::recent_app, crate::backend::db::sqlite::checks::recent_app,
@@ -320,6 +332,10 @@ native_operation!(crate::backend::db::postgres::checks::suite, crate::backend::d
     fn suite(pool: &DbPool, repo: i64, id: i64) -> Result<Option<Suite>>);
 native_operation!(crate::backend::db::postgres::checks::run, crate::backend::db::sqlite::checks::run,
     fn run(pool: &DbPool, repo: i64, id: i64) -> Result<Option<Run>>);
+native_operation!(crate::backend::db::postgres::checks::automatic_suites, crate::backend::db::sqlite::checks::automatic_suites,
+    /// Newly requested suites for at most 100 active installed Apps. The cursor advances over
+    /// eligible Apps even when their suite already exists; a repeated push never requests it twice.
+    fn automatic_suites(pool: &DbPool, repo: &super::models::Repository, sha: &str, branch: &str, after: i64) -> Result<AutomaticSuites>);
 native_operation!(crate::backend::db::postgres::checks::create_suite, crate::backend::db::sqlite::checks::create_suite,
     fn create_suite(pool: &DbPool, credential: Credential<'_>, repo: i64, sha: &str, branch: Option<&str>) -> Result<(Suite, bool)>);
 native_operation!(crate::backend::db::postgres::checks::create_run, crate::backend::db::sqlite::checks::create_run,

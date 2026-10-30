@@ -1,5 +1,5 @@
 use crate::backend::db::checks::{
-    Annotation, Credential, Filter, Preference, Refusal, Run, RunChange, RunData, RunPatch, Suite,
+    Annotation, AutomaticSuites, Credential, Filter, Preference, Refusal, Run, RunChange, RunData, RunPatch, Suite,
 };
 use anyhow::{ensure, Result};
 use sqlx::{types::Json, Sqlite, SqlitePool, Transaction};
@@ -27,25 +27,17 @@ async fn authority(
     let mut publisher = format!("user:{actor}");
     let mut app = None;
     if let Credential::Token(id) = credential {
-        let live: Option<i64> = sqlx::query_scalar("SELECT id FROM personal_access_tokens WHERE id=?1 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))")
+        ensure!(super::users::tokens::permits_write(tx, actor, id, Some(repo), None, "checks").await?, Refusal::Denied);
+        let oauth: Option<i64> = sqlx::query_scalar("SELECT a.id FROM oauth_app_tokens t JOIN oauth_applications a ON a.client_id=t.client_id WHERE t.token_id=?1")
             .bind(id).fetch_optional(&mut **tx).await?;
-        ensure!(live.is_some(), Refusal::Denied);
-        let oauth: Option<(String, String, Option<i64>)> = sqlx::query_as("SELECT o.client_id,o.scopes,a.id FROM oauth_app_tokens o LEFT JOIN oauth_applications a ON a.client_id=o.client_id WHERE o.token_id=?1")
+        let installed: Option<Option<i64>> = sqlx::query_scalar("SELECT o.id FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id JOIN github_apps g ON g.id=i.app_id LEFT JOIN oauth_applications o ON o.client_id=g.client_id WHERE t.token_id=?1")
             .bind(id).fetch_optional(&mut **tx).await?;
-        if let Some((client, scopes, app_id)) = oauth {
-            ensure!(
-                (app_id.is_some() || client == crate::backend::identity::oauth_apps::CLI_CLIENT)
-                    && crate::backend::identity::oauth_apps::allows(
-                        &scopes,
-                        "/repos/owner/repo/check-runs",
-                        true
-                    ),
-                Refusal::Denied
-            );
-            if let Some(app_id) = app_id {
-                publisher = format!("app:{app_id}");
-                app = Some(app_id);
-            }
+        app = match installed {
+            Some(id) => Some(id.ok_or(Refusal::Denied)?),
+            None => oauth,
+        };
+        if let Some(app_id) = app {
+            publisher = format!("app:{app_id}");
         }
         let bot: bool = sqlx::query_scalar("SELECT username=?2 FROM users WHERE id=?1")
             .bind(actor)
@@ -144,6 +136,29 @@ async fn insert_suite(
         false,
     ))
 }
+pub async fn automatic_suites(pool: &SqlitePool, repo: &crate::backend::db::models::Repository, sha: &str, branch: &str, after: i64) -> Result<AutomaticSuites> {
+    crate::backend::db::checks::validate_automatic(sha, branch, after)?;
+    let mut page = AutomaticSuites { after, ..Default::default() };
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let current: Option<crate::backend::db::models::Repository> = sqlx::query_as("SELECT * FROM repositories WHERE id=?1 AND NOT is_archived AND NOT is_gist")
+        .bind(repo.id).fetch_optional(&mut *tx).await?;
+    let Some(current) = current else { return Ok(page); };
+    if current.owner_kind != repo.owner_kind || current.owner_user_id != repo.owner_user_id || current.owner_org_id != repo.owner_org_id { return Ok(page); }
+    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let mut apps: Vec<i64> = sqlx::query_scalar(&format!("SELECT o.id FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN oauth_applications o ON o.client_id=a.client_id JOIN users owner ON owner.id=a.owner_id JOIN users u ON u.id=a.bot_id JOIN repositories r ON r.id=?1 LEFT JOIN check_suite_preferences p ON p.repo_id=r.id AND p.app_id=o.id WHERE o.id>?2 AND COALESCE(p.setting,1) AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT u.is_banned AND NOT u.must_change_password AND json_extract(a.permissions,'$.checks') IN ('write','admin') AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ({access})>=3 ORDER BY o.id LIMIT 101"))
+        .bind(repo.id).bind(after).fetch_all(&mut *tx).await?;
+    page.has_next = apps.len() > 100;
+    apps.truncate(100);
+    page.after = apps.last().copied().unwrap_or(after);
+    let sha = sha.to_ascii_lowercase();
+    for app in apps {
+        let (suite, created) = insert_suite(&mut tx, &format!("app:{app}"), Some(app), repo.id, &sha, Some(branch)).await?;
+        if created { page.suites.push(suite); }
+    }
+    tx.commit().await?;
+    Ok(page)
+}
+
 /// The check suite GitHub Actions publishes for a workflow run. Each run attempt has its own,
 /// as on GitHub; its publisher names the run, so no credential can write to it.
 pub(super) async fn insert_workflow_suite(
