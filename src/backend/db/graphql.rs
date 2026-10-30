@@ -16,7 +16,7 @@ pub(crate) fn node_repository_sql(kind: &str) -> Option<&'static str> {
         "CC" => "SELECT repo_id FROM commit_comments WHERE id=$1",
         "M" => "SELECT repo_id FROM milestones WHERE id=$1",
         "REA" => "SELECT repo_id FROM reactions WHERE id=$1",
-        "CS" => "SELECT repo_id FROM commit_statuses WHERE id=$1",
+        "CS" => "SELECT repo_id FROM commit_status_history WHERE id=$1",
         "RE" => "SELECT repo_id FROM releases WHERE id=$1",
         "RA" => "SELECT r.repo_id FROM release_assets a JOIN releases r ON r.id=a.release_id WHERE a.id=$1",
         "PRR" => "SELECT p.repo_id FROM pr_reviews e JOIN pull_requests p ON p.id=e.pull_request_id WHERE e.id=$1",
