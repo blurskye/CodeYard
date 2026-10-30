@@ -891,6 +891,8 @@ fn act_command(
         // act reads `.actrc` from its working directory; keep the repository's out of it.
         .current_dir(workspace.root())
         .env("HOME", &home)
+        // The runner's temporary bind sources must share the host-visible workspace root.
+        .env("TMPDIR", workspace.root().join("tmp"))
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_CACHE_HOME", home.join(".cache"))
         .env("DOCKER_CONFIG", home.join(".docker"))
@@ -1563,7 +1565,7 @@ impl Workspace {
                 .await
                 .context("could not secure the CI workspace")?;
         }
-        for dir in ["home/.docker", "definitions"] {
+        for dir in ["home/.docker", "definitions", "tmp"] {
             tokio::fs::create_dir_all(workspace.root().join(dir)).await?;
         }
         let store = queue.checkout(claim, &workspace.checkout()).await?;

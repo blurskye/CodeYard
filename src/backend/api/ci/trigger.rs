@@ -207,7 +207,7 @@ async fn dispatch(
     state: Arc<AppState>,
     headers: HeaderMap,
     uri: Uri,
-    form: HashMap<String, String>,
+    mut form: HashMap<String, String>,
     scope: Option<(String, String)>,
 ) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
@@ -227,11 +227,41 @@ async fn dispatch(
         value.len()
             > if key == "inputs" {
                 MAX_INPUT_LINES_BYTES
+            } else if key.starts_with("input:") {
+                2 * MAX_VALUE_BYTES
+            } else if key.starts_with("input-default:") {
+                6 * MAX_VALUE_BYTES + 2
             } else {
                 MAX_VALUE_BYTES
             }
     }) {
         return ctx.error(StatusCode::BAD_REQUEST, "Dispatch form value is too long.");
+    }
+    // Defaults are presentation data, not authority. They restore exactly what the form
+    // rendered; admission still validates the resulting bytes against its pinned definition.
+    let mut defaults = HashMap::new();
+    for (key, value) in &form {
+        if let Some(name) = key.strip_prefix("input-default:") {
+            let original = match serde_json::from_str::<String>(value) {
+                Ok(original) if original.len() <= MAX_VALUE_BYTES => original,
+                _ => return ctx.error(StatusCode::BAD_REQUEST, "Invalid workflow input default."),
+            };
+            defaults.insert(name.to_owned(), original);
+        }
+    }
+    for (key, value) in &mut form {
+        if let Some(name) = key.strip_prefix("input:") {
+            let original = defaults.get(name).map_or("", String::as_str);
+            let normalized = crate::backend::repositories::files::native_text(std::mem::take(value), "");
+            *value = if normalized == crate::backend::repositories::files::native_text(original.to_owned(), "") {
+                original.to_owned()
+            } else {
+                crate::backend::repositories::files::native_text(normalized, original)
+            };
+            if value.len() > MAX_VALUE_BYTES {
+                return ctx.error(StatusCode::BAD_REQUEST, "Dispatch form value is too long.");
+            }
+        }
     }
     let draft = draft(&form, scope.as_ref());
     let base_path = scope
