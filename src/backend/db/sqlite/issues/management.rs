@@ -2,6 +2,7 @@ use crate::backend::db::{
     issues::management::{LinkedBranch, Refusal},
     models::Issue,
 };
+use crate::backend::db::assignees::AssignmentRefusal;
 use anyhow::{ensure, Result};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
@@ -95,6 +96,11 @@ pub async fn delete(pool: &SqlitePool, actor: i64, repo: i64, id: i64) -> Result
     );
     issue(&mut tx, repo, id).await?;
     sqlx::query("DELETE FROM reactions WHERE subject_kind='issue' AND subject_id=$1 OR subject_kind='issue_comment' AND subject_id IN (SELECT id FROM issue_comments WHERE issue_id=$1)").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM notifications WHERE repo_id=$1 AND kind IN ('issue_comment','mention') AND json_extract(metadata,'$.comment_id') IN (SELECT id FROM issue_comments WHERE issue_id=$2)")
+        .bind(repo)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM timeline_events WHERE subject_kind='issue' AND subject_id=$1")
         .bind(id)
         .execute(&mut *tx)
@@ -175,13 +181,37 @@ pub async fn transfer(
         .bind(id)
         .execute(&mut *tx)
         .await?;
+    // Assignees who cannot be assigned in the destination would be left on a task they cannot see.
+    let assignees: Vec<i64> = sqlx::query_scalar("SELECT user_id FROM issue_assignees WHERE issue_id=$1")
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+    for user in assignees {
+        match super::super::assignees::candidate(&mut tx, destination, user).await {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<AssignmentRefusal>(),
+                    Some(AssignmentRefusal::Unassignable)
+                ) =>
+            {
+                sqlx::query("DELETE FROM issue_assignees WHERE issue_id=$1 AND user_id=$2")
+                    .bind(id)
+                    .bind(user)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
     let result = sqlx::query_as(
-        "UPDATE issues SET repo_id=$1,number=$2,milestone_id=$3 WHERE id=$4 RETURNING *",
+        "UPDATE issues SET repo_id=$1,number=$2,milestone_id=$3,updated_at=$5 WHERE id=$4 RETURNING *",
     )
     .bind(destination)
     .bind(number)
     .bind(milestone)
     .bind(id)
+    .bind(super::super::time::next_revision(old.updated_at)?)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
