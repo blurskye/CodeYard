@@ -26,13 +26,16 @@ pub async fn installations(
 
 pub async fn register(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     name: &str,
     installation: Option<i64>,
 ) -> Result<OrganizationOutcome<Installation>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner {
+    if require_org!(tx, actor, org) != OrgRole::Owner
+        || !credential(&mut tx, grant, org, "organization_custom_properties").await? {
         return Ok(Denied);
     }
     let Some(installation) = installation else { return Ok(Conflict); };
@@ -71,12 +74,15 @@ pub async fn definitions(
 
 pub async fn set_values(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     values: &[RepositoryValue],
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner {
+    if require_org!(tx, actor, org) != OrgRole::Owner
+        || !credential(&mut tx, grant, org, "organization_custom_properties").await? {
         return Ok(Denied);
     }
     if values.len() > 3000 {
@@ -100,12 +106,15 @@ pub async fn set_values(
 
 pub async fn delete_values(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     org: i64,
     property: &str,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner {
+    if require_org!(tx, actor, org) != OrgRole::Owner
+        || !credential(&mut tx, grant, org, "organization_custom_properties").await? {
         return Ok(Denied);
     }
     if !external_properties::valid_name(property) {
