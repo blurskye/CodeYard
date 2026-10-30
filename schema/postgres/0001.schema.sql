@@ -3846,6 +3846,7 @@ CREATE TABLE pull_request_auto_merges (
     commit_title TEXT,
     commit_message TEXT,
     author_email TEXT,
+    generation TEXT NOT NULL DEFAULT(gen_random_uuid()::text),
     enabled_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

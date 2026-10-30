@@ -3682,6 +3682,7 @@ CREATE TABLE pull_request_auto_merges (
     commit_title TEXT,
     commit_message TEXT,
     author_email TEXT,
+    generation TEXT NOT NULL DEFAULT(lower(hex(randomblob(16)))),
     enabled_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 

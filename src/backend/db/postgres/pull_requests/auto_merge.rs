@@ -1,10 +1,10 @@
-use crate::backend::db::pull_requests::auto_merge::AutoMerge;
+use crate::backend::db::pull_requests::auto_merge::{AutoMerge, AutoMergeRequest};
 use anyhow::Result;
 use sqlx::PgPool;
 
-pub async fn enable(pool: &PgPool, request: &AutoMerge) -> Result<()> {
+pub async fn enable(pool: &PgPool, request: &AutoMergeRequest) -> Result<()> {
     sqlx::query(
-        "INSERT INTO pull_request_auto_merges(pull_request_id,enabled_by,merge_method,commit_title,commit_message,author_email,enabled_at,token_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(pull_request_id) DO UPDATE SET enabled_by=excluded.enabled_by,token_id=excluded.token_id,merge_method=excluded.merge_method,commit_title=excluded.commit_title,commit_message=excluded.commit_message,author_email=excluded.author_email,enabled_at=excluded.enabled_at",
+        "INSERT INTO pull_request_auto_merges(pull_request_id,enabled_by,merge_method,commit_title,commit_message,author_email,enabled_at,token_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(pull_request_id) DO UPDATE SET enabled_by=excluded.enabled_by,token_id=excluded.token_id,merge_method=excluded.merge_method,commit_title=excluded.commit_title,commit_message=excluded.commit_message,author_email=excluded.author_email,enabled_at=excluded.enabled_at,generation=excluded.generation",
     )
     .bind(request.pull_request_id)
     .bind(request.enabled_by)
@@ -24,6 +24,12 @@ pub async fn disable(pool: &PgPool, pull_request_id: i64) -> Result<bool> {
         .bind(pull_request_id)
         .execute(pool)
         .await?;
+    Ok(done.rows_affected() > 0)
+}
+
+pub async fn retire(pool: &PgPool, pull_request_id: i64, generation: &str) -> Result<bool> {
+    let done = sqlx::query("DELETE FROM pull_request_auto_merges WHERE pull_request_id=$1 AND generation=$2")
+        .bind(pull_request_id).bind(generation).execute(pool).await?;
     Ok(done.rows_affected() > 0)
 }
 

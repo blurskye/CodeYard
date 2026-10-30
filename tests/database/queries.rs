@@ -1381,7 +1381,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
     );
 
     // Consent cannot survive a head without a known base-writer publisher.
-    db::pull_requests::auto_merge::enable_auto_merge(pool, &db::pull_requests::auto_merge::AutoMerge {
+    db::pull_requests::auto_merge::enable_auto_merge(pool, &db::pull_requests::auto_merge::AutoMergeRequest {
         pull_request_id: first.id,
         enabled_by: owner.id,
         token_id: None,

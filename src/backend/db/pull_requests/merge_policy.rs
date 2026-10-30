@@ -1,13 +1,12 @@
 //! A checked merge retains its policy epoch and cancellation record through Git publication.
 use crate::backend::db::DbPool;
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AutoMergeIdentity {
     pub pull_request_id: i64,
-    pub enabled_at: DateTime<Utc>,
+    pub generation: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
