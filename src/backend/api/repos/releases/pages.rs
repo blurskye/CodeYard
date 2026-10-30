@@ -32,7 +32,8 @@ use std::sync::Arc;
 
 const PER_PAGE: i64 = 30;
 
-fn release_item(row: &ReleaseRow) -> ReleaseItem {
+/// The list shows no notes, so it asks for the item without them.
+fn release_item(row: &ReleaseRow, with_body: bool) -> ReleaseItem {
     let release = &row.release;
     ReleaseItem {
         id: release.id,
@@ -42,7 +43,11 @@ fn release_item(row: &ReleaseRow) -> ReleaseItem {
             .clone()
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| release.tag_name.clone()),
-        body: release.body.clone().unwrap_or_default(),
+        body: if with_body {
+            release.body.clone().unwrap_or_default()
+        } else {
+            String::new()
+        },
         author: row.author.clone(),
         target: release.target_commitish.clone(),
         archive_revision: super::json::archive_revision(release),
@@ -193,7 +198,7 @@ async fn new_form(
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to publish a release.");
     };
-    let (tags, branches, default_branch) = match releases::form_choices(
+    let (tags, mut branches, default_branch) = match releases::form_choices(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         actor,
@@ -203,11 +208,16 @@ async fn new_form(
     .await
     {
         Ok(choices) => (choices.tags, choices.branches, choices.default_branch),
-        Err(ReleaseError::Git(_)) if error.is_some() => {
+        Err(ReleaseError::Git(_) | ReleaseError::Unavailable) if error.is_some() => {
             (Vec::new(), Vec::new(), draft.target.clone())
         }
         Err(error) => return refusal(ctx, repo, error),
     };
+    // A target that vanished stays the selected option, so a retry fails again instead of
+    // quietly tagging another branch.
+    if !draft.target.is_empty() && !branches.is_empty() && !branches.contains(&draft.target) {
+        branches.push(draft.target.clone());
+    }
     ctx.page_model(
         "New release",
         repo_page(
@@ -316,11 +326,7 @@ pub(crate) async fn list(
             let items = listing
                 .releases
                 .iter()
-                .map(|row| {
-                    let mut item = release_item(row);
-                    item.body.clear();
-                    item
-                })
+                .map(|row| release_item(row, false))
                 .collect();
             ctx.page_model(
                 "Releases",
@@ -358,7 +364,7 @@ pub(crate) async fn detail(
     match releases::detail_by_tag(&ctx.state.pool, viewer, repo.id, &tag).await {
         Ok(found) => {
             let base = repo.base();
-            let release = release_item(&found.release);
+            let release = release_item(&found.release, true);
             let assets = found
                 .assets
                 .iter()
