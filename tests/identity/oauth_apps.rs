@@ -730,6 +730,12 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .unwrap();
+    // Alice's application can issue a credential to a different, unrestricted account.
+    let bob_browser = Client::login(&router, f.pool(), bob).await;
+    let bob_token = db::users::tokens::create_token(f.pool(), bob, &bob_browser.session, "Issued OAuth", &token_hash("borrowed-oauth"), "read", None)
+        .await.unwrap().unwrap();
+    f.execute(&format!("INSERT INTO oauth_app_tokens(token_id,client_id,scopes) VALUES($1,'{owned_id}','repo')"), &[bob_token.id]).await;
+    assert!(db::users::tokens::token_user(f.pool(), bob_token.id, false).await.unwrap().is_some());
     let owned_basic = format!(
         "Basic {}",
         base64::engine::general_purpose::STANDARD.encode(format!("{owned_id}:owned-secret"))
@@ -747,6 +753,7 @@ async fn contract(pg: bool) {
     // Suspending an account invalidates OAuth tokens just like personal tokens.
     f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[actor])
         .await;
+    assert!(db::users::tokens::token_user(f.pool(), bob_token.id, false).await.unwrap().is_none());
     super::github::request(
         &router,
         "users/get-authenticated",

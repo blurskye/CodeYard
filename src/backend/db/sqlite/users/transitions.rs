@@ -50,8 +50,11 @@ pub(crate) async fn retain_write_credential(
     Ok(match credential {
         AccountCredential::Trusted => true,
         AccountCredential::Session(session) => live_session(tx, actor, session).await?,
-        AccountCredential::Token(id) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=?1 AND user_id=?2 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))")
-            .bind(id).bind(actor).fetch_one(&mut **tx).await?,
+        AccountCredential::Token(id) => {
+            let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "?3");
+            sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM personal_access_tokens t WHERE t.id=?1 AND t.user_id=?2 AND t.scope='write' AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND {issuer})"))
+                .bind(id).bind(actor).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_one(&mut **tx).await?
+        },
     })
 }
 

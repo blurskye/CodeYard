@@ -42,7 +42,7 @@ pub(super) async fn register_in_connection(
 /// Whether a client's owner, and a GitHub App's bot, may still use it. A missing client is
 /// not active.
 pub async fn client_active(pool: &SqlitePool, client: &str) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM oauth_applications c JOIN users owner ON owner.id=c.owner_id WHERE c.client_id=$1 AND NOT owner.is_banned AND NOT owner.must_change_password AND (NOT c.is_github_app OR EXISTS(SELECT 1 FROM github_apps a JOIN users bot ON bot.id=a.bot_id WHERE a.client_id=c.client_id AND NOT bot.is_banned AND NOT bot.must_change_password)))").bind(client).fetch_one(pool).await?)
+    Ok(sqlx::query_scalar(&format!("SELECT {}", crate::backend::db::oauth_apps::client_condition("$1"))).bind(client).fetch_one(pool).await?)
 }
 pub async fn app(pool: &SqlitePool, key: &str) -> Result<Option<App>> {
     Ok(sqlx::query_as("SELECT a.* FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE (a.slug=$1 OR a.client_id=$1 OR CAST(a.id AS TEXT)=$1) AND NOT u.is_banned AND NOT u.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password").bind(key).fetch_optional(pool).await?)

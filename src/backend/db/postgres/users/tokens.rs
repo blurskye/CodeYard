@@ -67,8 +67,14 @@ pub async fn find_token(pool: &PgPool, hash: &str) -> Result<Option<PersonalAcce
 }
 
 pub async fn token_user(pool: &PgPool, token_id: i64, write: bool) -> Result<Option<User>> {
-    // A removed OAuth client invalidates its tokens in every transport, including feeds.
-    let user: Option<User> = sqlx::query_as("SELECT u.* FROM users u JOIN personal_access_tokens t ON t.user_id=u.id WHERE t.id=$1 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND (NOT $2 OR t.scope='write') AND NOT u.is_banned AND NOT u.must_change_password AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens o WHERE o.token_id=t.id AND o.client_id<>$3 AND NOT EXISTS(SELECT 1 FROM oauth_applications a WHERE a.client_id=o.client_id)) AND NOT EXISTS(SELECT 1 FROM github_app_tokens g WHERE g.token_id=t.id AND NOT EXISTS(SELECT 1 FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN users owner ON owner.id=a.owner_id WHERE i.id=g.installation_id AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password)) AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens o JOIN oauth_applications c ON c.client_id=o.client_id WHERE o.token_id=t.id AND c.is_github_app AND NOT EXISTS(SELECT 1 FROM github_apps a JOIN users owner ON owner.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE a.client_id=c.client_id AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password))")
+    // Missing or restricted OAuth issuers invalidate tokens in every transport, including feeds.
+    let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "$3");
+    let user: Option<User> = sqlx::query_as(&format!("SELECT u.* FROM users u JOIN personal_access_tokens t ON t.user_id=u.id
+        WHERE t.id=$1 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND (NOT $2 OR t.scope='write')
+        AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}
+        AND NOT EXISTS(SELECT 1 FROM github_app_tokens g WHERE g.token_id=t.id AND NOT EXISTS(
+            SELECT 1 FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN users owner ON owner.id=a.owner_id
+            WHERE i.id=g.installation_id AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password))"))
         .bind(token_id).bind(write).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(pool).await?;
     if user.as_ref().is_some_and(|user| {
         user.username.ends_with("[bot]") && user.username != crate::backend::db::ci_tokens::BOT

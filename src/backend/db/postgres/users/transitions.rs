@@ -91,8 +91,9 @@ pub(crate) async fn retain_write_credential(
         AccountCredential::Trusted => true,
         AccountCredential::Session(session) => live_session(tx, actor, session).await?,
         AccountCredential::Token(id) => {
-            let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar("SELECT expires_at FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' FOR SHARE")
-                .bind(id).bind(actor).fetch_optional(&mut **tx).await?;
+            let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "$3");
+            let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar(&format!("SELECT t.expires_at FROM personal_access_tokens t WHERE t.id=$1 AND t.user_id=$2 AND t.scope='write' AND {issuer} FOR SHARE OF t"))
+                .bind(id).bind(actor).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(&mut **tx).await?;
             match expiry {
                 Some(None) => true,
                 Some(Some(expiry)) => {
