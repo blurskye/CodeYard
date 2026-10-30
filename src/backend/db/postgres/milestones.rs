@@ -372,7 +372,7 @@ pub async fn milestone_choice_by_title(
     title: &str,
 ) -> Result<Option<Milestone>> {
     Ok(sqlx::query_as(&format!(
-        "SELECT {} FROM milestones WHERE repo_id=$1 AND title=$2 ORDER BY number LIMIT 1",
+        "SELECT {} FROM milestones WHERE repo_id=$1 AND translate(title,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')=translate($2,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz') ORDER BY number LIMIT 1",
         MILESTONE_COLUMNS.replace("description", "NULL::TEXT AS description")
     ))
     .bind(repo_id)
