@@ -16,10 +16,48 @@ pub async fn change(
         db::pull_requests::team_reviewers::change(pool, actor.id, pull.id, slugs, action, None)
             .await
             .map_err(error)?;
-    if action != db::pull_requests::team_reviewers::ReviewTeamAction::Remove {
+    if action == db::pull_requests::team_reviewers::ReviewTeamAction::Remove {
+        emit_events(pool, None, repo, pull, "review_request_removed", actor.id, &changed).await;
+    } else {
         notify(pool, broadcaster, actor, repo, pull, &changed).await;
+        emit_events(pool, None, repo, pull, "review_requested", actor.id, &changed).await;
     }
     Ok(changed)
+}
+
+/// Sends one `pull_request` event for each team whose review request was added or removed.
+pub(super) async fn emit_events(
+    pool: &db::DbPool,
+    cluster: Option<&crate::backend::cluster::NodeContext>,
+    repo: &Repository,
+    pull: &PullRequest,
+    action: &'static str,
+    sender_id: i64,
+    teams: &[Team],
+) {
+    if teams.is_empty() {
+        return;
+    }
+    let Ok(Some(org)) = db::ci::ci_repository_owner(pool, repo.id).await else {
+        tracing::warn!(repo_id = repo.id, "review team events skipped: owner unavailable");
+        return;
+    };
+    // A team that lost its access since is sent without a permission.
+    let access = db::pull_requests::team_reviewers::list(pool, repo.id, None, None)
+        .await
+        .unwrap_or_default();
+    for team in teams {
+        let permission = access
+            .iter()
+            .find(|row| row.team.id == team.id)
+            .map_or(0, |row| row.permission);
+        let mut extra = serde_json::Map::new();
+        extra.insert(
+            "requested_team".into(),
+            crate::backend::webhooks::payloads::team_document(team, &org, permission),
+        );
+        super::emit_pull_request_event(pool, cluster, repo, pull, action, sender_id, extra).await;
+    }
 }
 
 pub(super) fn error(error: anyhow::Error) -> OperationError {

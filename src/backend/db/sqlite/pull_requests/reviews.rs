@@ -668,7 +668,9 @@ pub async fn add_pull_request_review(
     body: Option<&str>,
     commit_sha: Option<&str>,
 ) -> Result<PullRequestReview> {
-    save_pull_request_review(pool, pr_id, author_id, state, body, commit_sha, None).await
+    save_pull_request_review(pool, pr_id, author_id, state, body, commit_sha, None)
+        .await
+        .map(|(review, _)| review)
 }
 
 pub async fn save_pull_request_review(
@@ -679,7 +681,7 @@ pub async fn save_pull_request_review(
     body: Option<&str>,
     commit_sha: Option<&str>,
     expected_pending: Option<i64>,
-) -> Result<PullRequestReview> {
+) -> Result<(PullRequestReview, Vec<i64>)> {
     let commit_sha = commit_sha.map(str::to_ascii_lowercase);
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     // A plain comment needs read access; a vote needs write access.
@@ -689,10 +691,27 @@ pub async fn save_pull_request_review(
     } else {
         discussions::lock_pull_request_review_authority(&mut tx, author_id, pr_id).await?
     };
+    // A draft submitted by its id may stay on the commit it was started on after a push.
+    let draft_commit: Option<String> = match expected_pending {
+        Some(expected) => sqlx::query_scalar::<_, Option<String>>(
+            "SELECT commit_sha FROM pr_reviews WHERE id=?1 AND pull_request_id=?2 AND author_id=?3 AND state='pending'",
+        )
+        .bind(expected)
+        .bind(pr_id)
+        .bind(author_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .flatten(),
+        None => None,
+    };
+    let on_draft_commit = draft_commit
+        .as_deref()
+        .zip(commit_sha.as_deref())
+        .is_some_and(|(draft, submitted)| draft.eq_ignore_ascii_case(submitted));
     anyhow::ensure!(
         current_state == "open"
             && matches!(state, "approved" | "changes_requested" | "commented")
-            && commit_sha.as_deref() == Some(current_head.as_str())
+            && (commit_sha.as_deref() == Some(current_head.as_str()) || on_draft_commit)
             && (state == "commented" || author != author_id),
         crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview
     );
@@ -786,9 +805,15 @@ pub async fn save_pull_request_review(
         .bind(author_id)
         .execute(&mut *tx)
         .await?;
+    let published: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM pr_comments WHERE review_id=?1 ORDER BY id",
+    )
+    .bind(review.id)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
 
-    Ok(review)
+    Ok((review, published))
 }
 
 pub async fn create_pending_review(

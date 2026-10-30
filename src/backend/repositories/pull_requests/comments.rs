@@ -151,6 +151,37 @@ async fn in_pending_review(
     Ok(review.is_none_or(|review| review.state == "pending"))
 }
 
+/// Whether `commit` is one of this pull request's own commits: reachable from its head and not
+/// from the base its diff starts at.
+async fn is_pull_request_commit(
+    cluster: Option<&NodeContext>,
+    repository: &db::models::Repository,
+    pull_request: &db::models::PullRequest,
+    commit: &str,
+) -> Result<bool, OperationError> {
+    let store = repo_store(repository, cluster);
+    let unavailable = |error: crate::backend::repositories::store::RepoError| {
+        if error.kind == crate::backend::repositories::store::ErrorKind::Unavailable {
+            Err(OperationError::Unavailable {
+                code: "git_unavailable",
+                message: "The pull request commits are temporarily unavailable".to_owned(),
+            })
+        } else {
+            // A commit this repository does not have is not one of the pull request's.
+            Ok(false)
+        }
+    };
+    match store.is_ancestor(commit, &pull_request.head_sha).await {
+        Ok(true) => {}
+        Ok(false) => return Ok(false),
+        Err(error) => return unavailable(error),
+    }
+    match store.is_ancestor(commit, pull_request.diff_base()).await {
+        Ok(in_base) => Ok(!in_base),
+        Err(error) => unavailable(error),
+    }
+}
+
 /// Sends the webhook for a saved comment. A comment on a file is a review comment. A conversation
 /// comment is sent as an issue comment, which is how GitHub sends those on pull requests.
 pub(super) async fn emit_comment_webhook(
@@ -224,11 +255,17 @@ pub(super) async fn emit_comment_webhook(
 }
 
 /// The file must be one this pull request changes, and the line must be a line of its diff on the
-/// side named, or on either side when none is. The diff is the one the diff page shows.
+/// side named, or on either side when none is. The diff is the one the diff page shows, up to
+/// `head`: the pull request head, or the earlier commit of it that the comment names.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "An anchor is a revision, a file, a line and an optional range start."
+)]
 async fn check_diff_anchor(
     cluster: Option<&NodeContext>,
     repository: &db::models::Repository,
     pull_request: &db::models::PullRequest,
+    head: &str,
     path: &str,
     line: Option<i32>,
     side: Option<&str>,
@@ -245,7 +282,7 @@ async fn check_diff_anchor(
     // Only the selected file's patch is read, so another file's size cannot block this comment.
     // It starts where the diff page starts, at a retargeted stack layer's fork point.
     let diff = repo_store(repository, cluster)
-        .diff_file(pull_request.diff_base(), &pull_request.head_sha, path)
+        .diff_file(pull_request.diff_base(), head, path)
         .await
         .map_err(|error| {
             if error.is_response_too_large() {
@@ -499,9 +536,9 @@ pub async fn create_pull_request_comment(
     }
 
     // A new conversation must sit on the diff. A reply takes its thread root's place, so it is
-    // not checked again. The lines are checked against the head this pull request was loaded
-    // with, so a commit the caller names must be that head: otherwise the stored commit and the
-    // checked lines would describe different revisions.
+    // not checked again. The lines are checked against the commit the comment is stored with:
+    // the head this pull request was loaded with, or an earlier commit of the pull request that
+    // the caller names, as GitHub allows. Any other commit is refused.
     if req.in_reply_to_comment_id.is_none() {
         if let Some(path) = path.as_deref() {
             if req
@@ -514,18 +551,20 @@ pub async fn create_pull_request_comment(
                     message: "The pull request base changed after this comment was started. Reload the diff before commenting.".to_owned(),
                 });
             }
-            if let Some(submitted) = req.commit_sha.as_deref() {
-                if !submitted.eq_ignore_ascii_case(&pull_request.head_sha) {
-                    return Err(OperationError::Conflict {
-                        code: "revision_conflict",
-                        message: "The pull request head changed after this comment was started. Reload the diff before commenting.".to_owned(),
-                    });
-                }
+            let anchor = commit_sha.as_deref().unwrap_or(&pull_request.head_sha);
+            if !anchor.eq_ignore_ascii_case(&pull_request.head_sha)
+                && !is_pull_request_commit(cluster, &repository, &pull_request, anchor).await?
+            {
+                return Err(OperationError::Conflict {
+                    code: "revision_conflict",
+                    message: "The pull request head changed after this comment was started. Reload the diff before commenting.".to_owned(),
+                });
             }
             let inferred = check_diff_anchor(
                 cluster,
                 &repository,
                 &pull_request,
+                anchor,
                 path,
                 line,
                 side.as_deref(),
@@ -833,7 +872,9 @@ pub async fn edit_pull_request_comment(
 
     // Only the names the edit adds notify; the others were notified when first written. The
     // author's notice for the comment is not a mention, so the author is not excluded here.
-    if !in_pending_review(pool, &comment).await? && mentions_anyone(&body) {
+    // The edit is saved: a failed visibility read keeps the mentions private instead of
+    // reporting the saved edit as failed.
+    if !in_pending_review(pool, &comment).await.unwrap_or(true) && mentions_anyone(&body) {
         let link = pull_request_comment_link(&owner, &repo, &pull_request, &comment);
         notify_mentions(
             pool,

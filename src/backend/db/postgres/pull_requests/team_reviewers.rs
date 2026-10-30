@@ -66,8 +66,10 @@ pub async fn change(
             continue;
         }
         if expected.is_some() {
-            let reviewed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews v JOIN effective_team_memberships m ON m.user_id=v.author_id AND m.team_id=$2 WHERE v.pull_request_id=$1 AND v.state<>'pending')")
-                .bind(pull).bind(team.id).fetch_one(&mut *tx).await?;
+            // A member's decision on the current head stands in for the team; an older or
+            // dismissed one does not.
+            let reviewed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM effective_team_memberships m WHERE m.team_id=$2 AND COALESCE((SELECT v.state IN ('approved','changes_requested') AND v.commit_sha=$3 FROM pr_reviews v WHERE v.pull_request_id=$1 AND v.author_id=m.user_id AND v.state NOT IN ('commented','pending') ORDER BY v.created_at DESC,v.id DESC LIMIT 1),FALSE))")
+                .bind(pull).bind(team.id).bind(&current.head_sha).fetch_one(&mut *tx).await?;
             if reviewed {
                 continue;
             }

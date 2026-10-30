@@ -188,9 +188,17 @@ async fn update(
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Body =
         serde_json::from_slice(&body).map_err(|_| Error::invalid_simple("body is required"))?;
-    let review = domain::edit_review(&state.pool, actor.id, &repo, &pull, id, &input.body)
-        .await
-        .map_err(failure)?;
+    let review = domain::edit_review(
+        &state.pool,
+        &state.notification_broadcaster,
+        actor.id,
+        &repo,
+        &pull,
+        id,
+        &input.body,
+    )
+    .await
+    .map_err(failure)?;
     Ok(Json(document(&state, &owner, &repo, &pull, &review).await?))
 }
 async fn remove(

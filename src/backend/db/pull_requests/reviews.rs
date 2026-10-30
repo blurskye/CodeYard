@@ -223,9 +223,13 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::edit_rev
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::delete_pending_review_by_id,
     crate::backend::db::sqlite::pull_requests::reviews::delete_pending_review_by_id,
     fn delete_pending_review_by_id(pool: &DbPool, pr_id: i64, author_id: i64, review_id: i64) -> Result<Option<PullRequestReview>>);
+// Saves a review, submitting the author's pending review when there is one. Returns the review
+// and the ids of the comments it published, read in the same transaction, so a reply saved after
+// the submission is not published twice. With `expected_pending`, the review may be on the commit
+// that draft was started on instead of the current head.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::save_pull_request_review,
     crate::backend::db::sqlite::pull_requests::reviews::save_pull_request_review,
-    fn save_pull_request_review(pool: &DbPool, pr_id: i64, author_id: i64, state: &str, body: Option<&str>, commit_sha: Option<&str>, expected_pending: Option<i64>) -> Result<PullRequestReview>);
+    fn save_pull_request_review(pool: &DbPool, pr_id: i64, author_id: i64, state: &str, body: Option<&str>, commit_sha: Option<&str>, expected_pending: Option<i64>) -> Result<(PullRequestReview, Vec<i64>)>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull_request_review,
     crate::backend::db::sqlite::pull_requests::reviews::add_pull_request_review,

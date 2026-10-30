@@ -1,7 +1,7 @@
 //! Code owners on pull requests: the review requests a pull request gets when it opens or its head
 //! moves, and the approvals that a branch rule with `require_code_owner_review` waits for.
 
-use super::reviews::notify_review_request;
+use super::reviews::{emit_reviewer_event, notify_review_request};
 use crate::backend::ci::CiRuns;
 use crate::backend::db;
 use crate::backend::db::models::{PullRequest, Repository};
@@ -142,6 +142,16 @@ pub async fn request_code_owner_reviews(
         }
     }
     super::team_reviewers::notify(pool, ci.notifications(), &requester, repository, pull, &requested).await;
+    super::team_reviewers::emit_events(
+        pool,
+        ci.cluster.as_ref(),
+        repository,
+        pull,
+        "review_requested",
+        actor_id,
+        &requested,
+    )
+    .await;
     let mut wanted: Vec<i64> = files
         .iter()
         .flat_map(|file| file.individual_writers.iter().copied())
@@ -175,6 +185,16 @@ pub async fn request_code_owner_reviews(
             &owner,
             repository,
             pull,
+            &target,
+        )
+        .await;
+        emit_reviewer_event(
+            pool,
+            ci.cluster.as_ref(),
+            repository,
+            pull,
+            "review_requested",
+            actor_id,
             &target,
         )
         .await;

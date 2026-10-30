@@ -209,6 +209,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         }
         "updatePullRequestReview" => reviews::edit_review(
             pool,
+            &request.state.notification_broadcaster,
             actor,
             &repo,
             &pull,
