@@ -1,7 +1,11 @@
 use super::{
     auth, contents::store_error, pagination::Pagination, repo_url, repository, Error, Result,
 };
-use crate::backend::{app::AppState, db, dependency_graph, repositories::store::repo_store};
+use crate::backend::{
+    app::AppState,
+    db, dependency_graph,
+    repositories::{dependency_graph as inventory, store::repo_store},
+};
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{header, HeaderMap, Method, StatusCode},
@@ -105,8 +109,11 @@ async fn compare(
         db::dependency_graph::snapshots(&state.pool, repo.id, None, Some(&comparison.head_sha))
             .await
             .map_err(error)?;
-    append_inventory(&state, &repo, &comparison.merge_base_commit.sha, &mut base).await?;
-    append_inventory(&state, &repo, &comparison.head_sha, &mut head).await?;
+    for (sha, snapshots) in [(&comparison.merge_base_commit.sha, &mut base), (&comparison.head_sha, &mut head)] {
+        inventory::append_native_snapshot(&state, &repo, sha, None, snapshots)
+            .await
+            .map_err(store_error)?;
+    }
     let changes = dependency_graph::diff(&base, &head, query.name.as_deref());
     let page = Pagination {
         page: query.page,
@@ -136,65 +143,6 @@ async fn compare(
     Ok((page.headers(&uri, has_more)?, Json(changes)).into_response())
 }
 
-// Feed pinned native observations through the same typed SPDX and comparison projections as
-// submitted detector snapshots, retaining the latter's dependency relationships and metadata.
-async fn append_inventory(
-    state: &AppState,
-    repo: &db::models::Repository,
-    reference: &str,
-    snapshots: &mut Vec<dependency_graph::Snapshot>,
-) -> Result<()> {
-    use crate::backend::repositories::{dependency_graph as inventory, store::ErrorKind};
-    let (sha, packages) = match inventory::native_inventory(state, repo, reference).await {
-        Ok(inventory) => inventory,
-        // Submitted detector snapshots also support repositories with no native commits yet.
-        Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
-            return Ok(())
-        }
-        Err(error) => return Err(store_error(error)),
-    };
-    let mut manifests = std::collections::BTreeMap::new();
-    for package in packages {
-        let manifest = manifests
-            .entry(package.manifest.clone())
-            .or_insert_with(|| dependency_graph::Manifest {
-                name: package.manifest.clone(),
-                file: None,
-                metadata: None,
-                resolved: Default::default(),
-            });
-        manifest.resolved.insert(
-            package.package_url.clone(),
-            dependency_graph::Dependency {
-                package_url: Some(package.package_url),
-                metadata: None,
-                relationship: None,
-                scope: Some(package.scope),
-                dependencies: Vec::new(),
-            },
-        );
-    }
-    snapshots.push(dependency_graph::Snapshot {
-        version: 0,
-        sha,
-        reference: reference.to_owned(),
-        job: dependency_graph::Job {
-            id: "native-inventory".into(),
-            correlator: "native-inventory".into(),
-            html_url: None,
-        },
-        detector: dependency_graph::Detector {
-            name: "Codeyard native inventory".into(),
-            version: env!("CARGO_PKG_VERSION").into(),
-            url: crate::backend::api::http::config::link_origin(),
-        },
-        scanned: chrono::Utc::now(),
-        metadata: None,
-        manifests,
-    });
-    Ok(())
-}
-
 async fn current(state: &AppState, repo: &db::models::Repository, owner: &str) -> Result<Value> {
     let (refs, branch) = repo_store(repo, state.cluster.as_ref())
         .refs_and_default()
@@ -213,7 +161,11 @@ async fn current(state: &AppState, repo: &db::models::Repository, owner: &str) -
         db::dependency_graph::snapshots(&state.pool, repo.id, Some(&reference), Some(&sha))
             .await
             .map_err(error)?;
-    append_inventory(state, repo, &sha, &mut snapshots).await?;
+    // The native scan keeps the branch that selected the submitted snapshots, so snapshots of
+    // other branches at the same commit neither hide nor join its manifests.
+    inventory::append_native_snapshot(state, repo, &reference, Some(&sha), &mut snapshots)
+        .await
+        .map_err(store_error)?;
     Ok(dependency_graph::sbom(
         &format!("{owner}/{}", repo.name),
         &snapshots,

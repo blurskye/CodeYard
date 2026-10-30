@@ -1,6 +1,11 @@
 use super::chrome;
 use crate::backend::{
-    api::http::context::PageContext, app::AppState, repositories::dependency_graph as graph,
+    api::http::context::PageContext,
+    app::AppState,
+    repositories::{
+        dependency_graph as graph,
+        store::{ErrorKind, RepoError},
+    },
 };
 use crate::webui::{
     app::Page,
@@ -29,6 +34,13 @@ pub fn page_router() -> Router<Arc<AppState>> {
         )
 }
 
+fn inventory_failure(ctx: &PageContext, loaded: &chrome::Loaded, error: RepoError) -> Response {
+    if error.kind == ErrorKind::Invalid {
+        return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &error.message);
+    }
+    chrome::store_error(ctx, Some(&loaded.chrome), error)
+}
+
 async fn respond(
     state: Arc<AppState>,
     headers: HeaderMap,
@@ -46,20 +58,26 @@ async fn respond(
         Err(response) => return response,
     };
     let reference = format!("refs/heads/{}", loaded.default_branch);
-    let (sha, packages) =
-        match graph::inventory(&ctx.state, &loaded.repository, &reference).await {
-            Ok(inventory) => inventory,
-            Err(error) if error.kind == crate::backend::repositories::store::ErrorKind::Invalid => {
-                return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &error.message);
-            }
-            Err(error) => return chrome::store_error(&ctx, Some(&loaded.chrome), error),
+    if download {
+        // The same typed document as the REST export, so submitted relationships survive.
+        let snapshots = match graph::pinned_snapshots(&ctx.state, &loaded.repository, &reference).await {
+            Ok(snapshots) => snapshots,
+            Err(error) => return inventory_failure(&ctx, &loaded, error),
         };
+        if let Err((status, _)) = super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers).await {
+            return ctx.error(status, "Repository not found.");
+        }
+        let mut document = crate::backend::dependency_graph::sbom(&format!("{owner}/{name}"), &snapshots);
+        return Json(document["sbom"].take()).into_response();
+    }
+    let (sha, packages) = match graph::inventory(&ctx.state, &loaded.repository, &reference).await {
+        Ok(inventory) => inventory,
+        // A repository without commits has no dependencies yet.
+        Err(error) if error.kind == ErrorKind::NotFound => (String::new(), Vec::new()),
+        Err(error) => return inventory_failure(&ctx, &loaded, error),
+    };
     if let Err((status, _)) = super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers).await {
         return ctx.error(status, "Repository not found.");
-    }
-    if download {
-        let mut document = graph::sbom(&owner, &name, &sha, &packages);
-        return Json(document["sbom"].take()).into_response();
     }
     let number = match super::paging::number(&ctx, "page", 1, 1..=super::paging::MAX_PAGE) {
         Ok(number) => number,

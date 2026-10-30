@@ -8,7 +8,6 @@ use crate::backend::{
     db::{self, models::Repository},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -148,6 +147,19 @@ pub(crate) async fn native_inventory(
     } else {
         store.commit_from_primary(reference).await?
     }.sha;
+    native_inventory_at(state, repo, reference, &sha).await
+}
+
+/// The same scan of an already pinned commit. `reference` still decides which submitted
+/// snapshots cover a manifest, so a branch that shares the commit cannot hide another's files.
+pub(crate) async fn native_inventory_at(
+    state: &AppState,
+    repo: &Repository,
+    reference: &str,
+    sha: &str,
+) -> Result<(String, Vec<Package>), RepoError> {
+    let store = repo_store(repo, state.cluster.as_ref());
+    let sha = sha.to_owned();
     let listing = store.file_paths(&sha, MAX_LISTED_PATHS).await?;
     // A partial listing could hide a lockfile, and a scan that saved it would mark its alerts fixed.
     if listing.truncated {
@@ -340,17 +352,47 @@ pub fn snapshot(
     }
 }
 
-pub fn sbom(owner: &str, name: &str, sha: &str, packages: &[Package]) -> Value {
-    let namespace = format!(
-        "{}/dependency-graph/sbom/{}",
-        crate::backend::api::github::repo_url(owner, name),
-        uuid::Uuid::new_v4()
-    );
-    let packages: Vec<_> = packages.iter().enumerate().map(|(index, package)| json!({
-        "SPDXID":format!("SPDXRef-Package-{index}"),"name":package.name,"versionInfo":package.version,
-        "downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION","licenseDeclared":"NOASSERTION",
-        "externalRefs":[{"referenceCategory":"PACKAGE-MANAGER","referenceType":"purl","referenceLocator":package.package_url}]
-    })).collect();
-    let relationships:Vec<_> = packages.iter().map(|package|json!({"relationshipType":"DESCRIBES","spdxElementId":"SPDXRef-DOCUMENT","relatedSpdxElement":package["SPDXID"]})).collect();
-    json!({"sbom":{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","creationInfo":{"created":chrono::Utc::now().to_rfc3339(),"creators":["Tool: Codeyard"]},"name":format!("{owner}/{name}"),"documentNamespace":namespace,"comment":format!("Dependency inventory at commit {sha}"),"packages":packages,"relationships":relationships}})
+/// The default branch's submitted snapshots and Codeyard's own scan, pinned to one commit.
+/// A repository without commits has none.
+pub(crate) async fn pinned_snapshots(
+    state: &AppState,
+    repo: &Repository,
+    reference: &str,
+) -> Result<Vec<crate::backend::dependency_graph::Snapshot>, RepoError> {
+    let sha = match repo_store(repo, state.cluster.as_ref())
+        .commit_from_primary(reference)
+        .await
+    {
+        Ok(commit) => commit.sha,
+        Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
+            return Ok(Vec::new())
+        }
+        Err(error) => return Err(error),
+    };
+    let mut snapshots = db::dependency_graph::snapshots(&state.pool, repo.id, Some(reference), Some(&sha))
+        .await
+        .map_err(|error| unavailable(error.into()))?;
+    append_native_snapshot(state, repo, reference, Some(&sha), &mut snapshots).await?;
+    Ok(snapshots)
+}
+
+/// Adds Codeyard's own scan to the submitted snapshots already chosen for the same reference and
+/// commit, so every export shares one typed projection. A repository without commits has none.
+pub(crate) async fn append_native_snapshot(
+    state: &AppState,
+    repo: &Repository,
+    reference: &str,
+    pinned: Option<&str>,
+    snapshots: &mut Vec<crate::backend::dependency_graph::Snapshot>,
+) -> Result<(), RepoError> {
+    let scanned = match pinned {
+        Some(sha) => native_inventory_at(state, repo, reference, sha).await,
+        None => native_inventory(state, repo, reference).await,
+    };
+    match scanned {
+        Ok((sha, packages)) => snapshots.push(snapshot(sha, reference.to_owned(), packages)),
+        Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {}
+        Err(error) => return Err(error),
+    }
+    Ok(())
 }
