@@ -128,14 +128,24 @@ pub async fn import(pool: &SqlitePool, actor: i64, value: &Value) -> Result<Valu
     tx.commit().await?;
     Ok(value)
 }
-pub(crate) async fn refresh(tx: &mut Transaction<'_, Sqlite>, repo: i64) -> Result<()> {
+pub(crate) async fn refresh(tx: &mut Transaction<'_, Sqlite>, repo: i64, pinned_sha: Option<&str>) -> Result<()> {
     let (branch, archived): (String, bool) = sqlx::query_as("SELECT default_branch,is_archived FROM repositories WHERE id=$1")
         .bind(repo).fetch_one(&mut **tx).await?;
     if archived {
         return Ok(());
     }
-    let bodies: Vec<String> = sqlx::query_scalar("SELECT body FROM (SELECT body,ROW_NUMBER() OVER(PARTITION BY detector,correlator ORDER BY scanned DESC,id DESC) AS position FROM dependency_snapshots WHERE repo_id=$1 AND reference=$2) ranked WHERE position=1 ORDER BY body")
-        .bind(repo).bind(format!("refs/heads/{branch}")).fetch_all(&mut **tx).await?;
+    let reference = format!("refs/heads/{branch}");
+    let sha: Option<String> = sqlx::query_scalar(&format!("SELECT {}", crate::backend::db::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL))
+        .bind(repo).fetch_one(&mut **tx).await?;
+    if let (Some(pinned), Some(current)) = (pinned_sha, sha.as_ref()) {
+        if !pinned.eq_ignore_ascii_case(current) {
+            return Ok(());
+        }
+    }
+    // No inventory is not evidence of a fix. All contributing detectors share one revision.
+    let Some(sha) = sha else { return Ok(()) };
+    let bodies: Vec<String> = sqlx::query_scalar("SELECT body FROM (SELECT body,ROW_NUMBER() OVER(PARTITION BY detector,correlator ORDER BY scanned DESC,id DESC) AS position FROM dependency_snapshots WHERE repo_id=$1 AND reference=$2 AND sha=$3) ranked WHERE position=1 ORDER BY body")
+        .bind(repo).bind(reference).bind(sha).fetch_all(&mut **tx).await?;
     let snapshots: Vec<Snapshot> = bodies
         .into_iter()
         .map(|s| serde_json::from_str(&s))
@@ -219,7 +229,7 @@ pub async fn alerts(pool: &SqlitePool, actor: impl Into<Actor>, repo: i64) -> Re
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, &actor, repo, false).await?;
-    refresh(&mut tx, repo).await?;
+    refresh(&mut tx, repo, None).await?;
     let rows =
         sqlx::query_as("SELECT * FROM dependabot_alerts WHERE repo_id=$1 ORDER BY number DESC")
             .bind(repo)
@@ -239,7 +249,7 @@ pub async fn update(
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, &actor, repo, true).await?;
-    refresh(&mut tx, repo).await?;
+    refresh(&mut tx, repo, None).await?;
     let previous: Alert =
         sqlx::query_as("SELECT * FROM dependabot_alerts WHERE repo_id=$1 AND number=$2")
             .bind(repo)

@@ -7,6 +7,10 @@ use chrono::{DateTime, Utc};
 pub(crate) const SBOM_REPORT_LIFETIME_SECONDS: i64 = 24 * 60 * 60;
 pub(crate) const SBOM_REPORTS_PER_REPOSITORY: i64 = 100;
 
+/// One reported default-branch revision, ordered by server receipt rather than detector clocks.
+/// Callers bind the repository as $1; all detectors contributing alerts must use this SHA.
+pub(crate) const DEFAULT_SNAPSHOT_SHA_SQL: &str = "(SELECT d.sha FROM dependency_snapshots d JOIN repositories r ON r.id=d.repo_id WHERE d.repo_id=$1 AND d.reference='refs/heads/'||r.default_branch ORDER BY d.id DESC LIMIT 1)";
+
 #[derive(Debug, thiserror::Error)]
 pub enum GraphError {
     #[error("Dependency graph access denied")]

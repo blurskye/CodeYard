@@ -2543,6 +2543,7 @@ CREATE TABLE dependency_snapshots (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 CREATE INDEX dependency_snapshots_reference ON dependency_snapshots(repo_id,reference,detector,correlator,scanned DESC,id DESC);
+CREATE INDEX dependency_snapshots_head ON dependency_snapshots(repo_id,reference,id DESC,sha);
 CREATE INDEX dependency_snapshots_sha ON dependency_snapshots(repo_id,sha,detector,correlator,scanned DESC,id DESC);
 
 CREATE TABLE dependency_sbom_reports (
