@@ -335,17 +335,11 @@ pub(crate) async fn native_detail(
         kind,
         &value,
         &DetailDraft::default(),
-        ctx.query
-            .contains_key("creation_warning")
-            .then_some(CREATION_WARNING),
+        None,
         StatusCode::OK,
     )
     .await
 }
-
-/// Shown on the page of a new issue when its assignees, labels or milestone could not be saved.
-/// The redirect only names the warning, so a link cannot carry text of its own.
-pub(super) const CREATION_WARNING: &str = "Issue created, but some details could not be applied. Check the sidebar and choose the assignees, labels and milestone again.";
 
 pub(crate) async fn native_edit(
     State(state): State<Arc<AppState>>,
