@@ -1,4 +1,5 @@
 # https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+# https://docs.github.com/en/actions/sharing-automations/creating-actions/metadata-syntax-for-github-actions#runs-for-docker-container-actions
 name: compat
 on: workflow_dispatch
 jobs:
@@ -11,3 +12,6 @@ jobs:
       - run: |
           test "$(cat docker-result.txt)" = hello
           echo compat:ok
+      - uses: ./.github/actions/stages
+        with:
+          args: one two

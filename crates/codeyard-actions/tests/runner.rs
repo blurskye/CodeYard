@@ -1166,10 +1166,17 @@ jobs:
       - shell: sh
         run: wget -qO- http://web/ | grep nginx
       - uses: ./docker
+      # Without action metadata, the step's entrypoint and args inputs start the container.
+      - uses: docker://alpine:3.21
+        with:
+          Entrypoint: /bin/sh
+          ARGS: -c "echo docker-url-$INPUT_EXTRA"
+          extra: value
 "#, &[
         ("docker/action.yml", "runs:\n  using: docker\n  image: Dockerfile\n"),
         ("docker/Dockerfile", "FROM alpine:3.21\nENTRYPOINT [\"sh\", \"-c\", \"test -d \\\"$GITHUB_WORKSPACE\\\" && echo docker-ok\"]\n"),
     ], &["--container-options", "--label codeyard-actions-test=yes", "--pull=false"]);
     success(&output);
     assert!(log(&output).contains("docker-ok"));
+    assert!(log(&output).contains("docker-url-value"));
 }

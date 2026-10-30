@@ -40,7 +40,8 @@ The small examples exercise the behavior described in GitHub's documentation:
   `local-node` checks pre/main/post, inputs, outputs and state.
 - [Docker actions](https://docs.github.com/en/actions/creating-actions/creating-a-docker-container-action)
   and [service containers](https://docs.github.com/en/actions/using-containerized-services/about-service-containers):
-  `local-docker`, `job-container`, `services`.
+  `local-docker` (also pre/post entrypoints and the `args` input), `job-container`,
+  `services`.
 
 Timeout workflows use a real one-minute timeout, rather than a fractional timeout
 that GitHub's integer fields do not support. They run concurrently in the test

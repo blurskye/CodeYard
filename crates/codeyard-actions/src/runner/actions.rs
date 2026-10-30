@@ -39,8 +39,7 @@ struct Runs {
     entrypoint: Option<String>,
     pre_entrypoint: Option<String>,
     post_entrypoint: Option<String>,
-    #[serde(default)]
-    args: Vec<String>,
+    args: Option<Vec<String>>,
     #[serde(default)]
     env: BTreeMap<String, String>,
 }
@@ -53,7 +52,43 @@ pub(super) struct PreparedAction {
     post: Option<usize>,
 }
 
-enum PostRuntime { Node(String), Docker(String) }
+enum PostRuntime { Node(String), Docker { image: String, args: Vec<String> } }
+
+/// Looks up an input. Input names compare without case, as on GitHub.
+fn input<'a>(inputs: &'a BTreeMap<String, String>, name: &str) -> Option<&'a str> {
+    inputs
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
+fn export_inputs(env: &mut BTreeMap<String, String>, inputs: &BTreeMap<String, String>) {
+    for (key, value) in inputs {
+        env.insert(
+            format!("INPUT_{}", key.replace(' ', "_").to_ascii_uppercase()),
+            value.clone(),
+        );
+    }
+}
+
+/// A Docker action's main entrypoint: `runs.entrypoint`, else the `entrypoint` input, which is
+/// how `docker://` steps and actions without one set it on GitHub.
+fn docker_entrypoint(configured: Option<&str>, inputs: &BTreeMap<String, String>) -> Option<String> {
+    [configured, input(inputs, "entrypoint")]
+        .into_iter()
+        .flatten()
+        .find(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+/// A Docker action's arguments for every stage: the evaluated `runs.args` when the action sets
+/// them, even as an empty list, else the `args` input split like a command line.
+fn docker_args(configured: Option<Vec<String>>, inputs: &BTreeMap<String, String>) -> Result<Vec<String>> {
+    match configured {
+        Some(args) => Ok(args),
+        None => Ok(input(inputs, "args").map(commands::words).transpose()?.unwrap_or_default()),
+    }
+}
 
 pub(super) struct Post {
     directory: PathBuf,
@@ -299,15 +334,9 @@ impl Job {
                 .collect::<Result<BTreeMap<_, _>>>()).await?
         };
         if reference.starts_with("docker://") {
-            for (key, value) in &supplied {
-                env.insert(format!("INPUT_{}", key.replace(' ', "_").to_ascii_uppercase()), value.clone());
-            }
-            let args = supplied
-                .remove("args")
-                .map(|args| commands::words(&args))
-                .transpose()?
-                .unwrap_or_default();
-            let entrypoint = supplied.remove("entrypoint");
+            export_inputs(&mut env, &supplied);
+            let entrypoint = docker_entrypoint(None, &supplied);
+            let args = docker_args(None, &supplied)?;
             let directory = self.options.directory.clone();
             return self
                 .docker(
@@ -322,8 +351,6 @@ impl Job {
                 )
                 .await;
         }
-        let docker_args = supplied.get("args").cloned();
-        let docker_entrypoint = supplied.get("entrypoint").cloned();
         let directory = until_deadline(deadline, self.action_directory(reference)).await?;
         let file = ["action.yml", "action.yaml"]
             .into_iter()
@@ -412,12 +439,7 @@ impl Job {
             inputs.retain(|name: &String, _| !name.eq_ignore_ascii_case(key));
         }
         inputs.extend(supplied);
-        for (key, value) in &inputs {
-            env.insert(
-                format!("INPUT_{}", key.replace(' ', "_").to_ascii_uppercase()),
-                value.clone(),
-            );
-        }
+        export_inputs(&mut env, &inputs);
         env.insert("GITHUB_ACTION_PATH".into(), directory.display().to_string());
         self.contexts
             .values
@@ -559,27 +581,30 @@ impl Job {
                     for (key, value) in &metadata.runs.env {
                         env.insert(key.clone(), self.text(value, deadline).await?);
                     }
-                    let args = if setup { Vec::new() } else if !metadata.runs.args.is_empty() {
-                        let args = metadata.runs.args.clone();
-                        self.evaluate(deadline, move |contexts, status| args.iter().map(|value| text(value, contexts, status)).collect::<Result<Vec<_>>>()).await?
-                    } else { docker_args.as_ref().map(|args| commands::words(args)).transpose()?.unwrap_or_default() };
-                    let entrypoint = metadata.runs.entrypoint.clone().or(docker_entrypoint);
+                    let configured = match metadata.runs.args.clone() {
+                        Some(args) => Some(self.evaluate(deadline, move |contexts, status| args.iter().map(|value| text(value, contexts, status)).collect::<Result<Vec<_>>>()).await?),
+                        None => None,
+                    };
+                    let args = docker_args(configured, &inputs)?;
+                    let args_bytes = args.iter().fold(0usize, |bytes, arg| bytes.saturating_add(arg.len() + 8));
+                    let entrypoint = docker_entrypoint(metadata.runs.entrypoint.as_deref(), &inputs);
                     let image = metadata.runs.image.as_deref().context("Docker action is missing runs.image")?;
                     let prepared = self.prepared_actions.remove(&self.action_path);
                     let already = prepared.is_some();
                     let mut state = prepared.as_ref().map(|prepared| prepared.state.clone()).unwrap_or_default();
                     let post = match prepared.and_then(|prepared| prepared.post) {
                         Some(index) => {
-                            self.retain_post(&env, 0)?;
+                            self.retain_post(&env, args_bytes)?;
                             self.posts[index].env = env.clone();
                             self.posts[index].exported = self.saved_env.clone();
                             self.posts[index].contexts = self.contexts.clone();
+                            if let PostRuntime::Docker { args: post_args, .. } = &mut self.posts[index].runtime { post_args.clone_from(&args); }
                             Some(index)
                         }
                         None => metadata.runs.post_entrypoint.as_ref().map(|script| -> Result<usize> {
-                            self.retain_post(&env, script.len() + image.len() + metadata.runs.post_if.as_ref().map_or(8, String::len))?;
+                            self.retain_post(&env, script.len() + image.len() + args_bytes + metadata.runs.post_if.as_ref().map_or(8, String::len))?;
                             self.posts.push(Post {
-                                directory: directory.clone(), script: script.clone(), runtime: PostRuntime::Docker(image.into()),
+                                directory: directory.clone(), script: script.clone(), runtime: PostRuntime::Docker { image: image.into(), args: args.clone() },
                                 condition: metadata.runs.post_if.clone().unwrap_or_else(|| "always()".into()),
                                 env: env.clone(), exported: self.saved_env.clone(), state: BTreeMap::new(),
                                 main_files: None, contexts: self.contexts.clone(),
@@ -594,7 +619,7 @@ impl Job {
                             if self.evaluate(deadline, move |contexts, status| Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await? {
                                 self.prepare_files()?;
                                 if let Some(index) = post { self.posts[index].main_files = Some(self.active_files.clone()); }
-                                let result = self.docker(image, &directory, env.clone(), Some(pre), &[], deadline, outputs, Some(&mut state)).await;
+                                let result = self.docker(image, &directory, env.clone(), Some(pre), &args, deadline, outputs, Some(&mut state)).await;
                                 if let Some(index) = post { self.retain_state(&state)?; self.posts[index].state = state.clone(); }
                                 ok = result?;
                             }
@@ -794,8 +819,8 @@ impl Job {
                     (&post.directory, &post.script, &runtime),
                     (post.env, &post.exported), deadline, &mut outputs, &mut post.state,
                 ).await,
-                PostRuntime::Docker(image) => self.docker(
-                    &image, &post.directory, post_env, Some(&post.script), &[],
+                PostRuntime::Docker { image, args } => self.docker(
+                    &image, &post.directory, post_env, Some(&post.script), &args,
                     deadline, &mut outputs, Some(&mut post.state),
                 ).await,
             }
@@ -871,5 +896,45 @@ impl Job {
         anyhow::ensure!(cleaned, "Docker action cleanup failed; refusing further execution");
         self.read_files(&files, outputs, state)?;
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inputs(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn docker_actions_take_entrypoint_and_args_from_inputs_without_runs_values() {
+        let supplied = inputs(&[("Entrypoint", "/bin/sh"), ("ARGS", "-c 'echo \"a b\"'")]);
+        assert_eq!(
+            docker_entrypoint(None, &supplied).as_deref(),
+            Some("/bin/sh")
+        );
+        assert_eq!(
+            docker_args(None, &supplied).unwrap(),
+            ["-c", "echo \"a b\""]
+        );
+        assert_eq!(
+            docker_entrypoint(Some("/main.sh"), &supplied).as_deref(),
+            Some("/main.sh")
+        );
+        assert_eq!(
+            docker_entrypoint(Some(""), &inputs(&[("entrypoint", "")])),
+            None
+        );
+        // `runs.args`, even an empty list, replaces the input.
+        assert!(docker_args(Some(Vec::new()), &supplied).unwrap().is_empty());
+        assert!(docker_args(None, &BTreeMap::new()).unwrap().is_empty());
+        let mut env = BTreeMap::new();
+        export_inputs(&mut env, &inputs(&[("my input", "x"), ("args", "y")]));
+        assert_eq!(env.get("INPUT_MY_INPUT").map(String::as_str), Some("x"));
+        assert_eq!(env.get("INPUT_ARGS").map(String::as_str), Some("y"));
     }
 }
