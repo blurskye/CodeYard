@@ -19,7 +19,12 @@ pub async fn finish(pool: &PgPool, uuid: &str, status: &str, details: &Value) ->
     Ok(())
 }
 pub async fn recover(pool: &PgPool, node_id: Option<i64>, details: &Value) -> Result<u64> {
-    Ok(sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=$2,expires_at=NOW()+INTERVAL '1 day' WHERE worker_node_id IS NOT DISTINCT FROM $1 AND status='pending'").bind(node_id).bind(details).execute(pool).await?.rows_affected())
+    let mut tx = pool.begin().await?;
+    // The merge may have been recorded before the server stopped; that request succeeded.
+    let merged = sqlx::query("UPDATE pull_request_async_merges a SET status='merged',details=jsonb_build_object('message','Pull request #'||p.number||' merged successfully','sha',p.merge_commit_sha),expires_at=NOW()+INTERVAL '1 day' FROM pull_requests p WHERE p.id=a.pull_request_id AND p.merged AND p.merge_commit_sha IS NOT NULL AND a.worker_node_id IS NOT DISTINCT FROM $1 AND a.status='pending'").bind(node_id).execute(&mut *tx).await?.rows_affected();
+    let failed = sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=$2,expires_at=NOW()+INTERVAL '1 day' WHERE worker_node_id IS NOT DISTINCT FROM $1 AND status='pending'").bind(node_id).bind(details).execute(&mut *tx).await?.rows_affected();
+    tx.commit().await?;
+    Ok(merged + failed)
 }
 pub async fn prune(pool: &PgPool) -> Result<u64> {
     Ok(

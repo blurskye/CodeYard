@@ -162,14 +162,34 @@ pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> 
             Err(OperationError::BranchMerged{sha})=>("merged",json!({"message":"The branch merged, but pull request bookkeeping failed","sha":sha})),
             Err(error)=>("failed",json!({"message":error.to_string()})),
         };
-        if let Err(error)=records::finish(&pool,&task_uuid,status,&details).await {tracing::error!(%error,uuid=%task_uuid,"could not persist asynchronous merge result");}
+        finish_with_retry(&pool, &task_uuid, status, &details).await;
     }) {
         records::finish(&state.pool,&uuid,"failed",&json!({"message":"The merge worker is unavailable"})).await.map_err(database_error)?;
         return Err(OperationError::Unavailable{code:"merge_worker_unavailable",message:"The merge worker is unavailable".into()});
     }
     Ok(json!({"status":"pending","details":details}))
 }
+/// Records the result, retrying a failed write with backoff. The update only changes a pending
+/// row, so repeating it is safe. When every attempt fails, restart recovery settles the row.
+async fn finish_with_retry(pool: &db::DbPool, uuid: &str, status: &str, details: &Value) {
+    const ATTEMPTS: u32 = 8;
+    let mut delay = std::time::Duration::from_millis(250);
+    for attempt in 1..=ATTEMPTS {
+        match records::finish(pool, uuid, status, details).await {
+            Ok(()) => return,
+            Err(error) if attempt == ATTEMPTS => {
+                tracing::error!(%error, uuid, "could not persist asynchronous merge result")
+            }
+            Err(error) => {
+                tracing::warn!(%error, uuid, attempt, "asynchronous merge result not saved; retrying");
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(std::time::Duration::from_secs(10));
+            }
+        }
+    }
+}
 /// Only this node's abandoned requests fail; starting another web node never cancels live work.
+/// A request whose pull request is already recorded as merged reports that merge instead.
 pub async fn recover(pool: &db::DbPool, node_id: Option<i64>) -> anyhow::Result<u64> {
     records::recover(
         pool,
