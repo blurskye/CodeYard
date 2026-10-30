@@ -131,15 +131,15 @@ native_operation!(crate::backend::db::postgres::users::accounts::create_user_fro
 pub enum UserAvatarOutcome {
     Applied(Option<uuid::Uuid>),
     NotUsable,
-    /// The account was banned after the request authenticated.
-    Banned,
 }
 
 native_operation!(crate::backend::db::postgres::users::accounts::set_user_avatar,
     crate::backend::db::sqlite::users::accounts::set_user_avatar,
+    /// Fails with `AccountRestricted` when the account or `credential` is no longer live.
     fn set_user_avatar(
     pool: &DbPool,
     user_id: i64,
+    credential: &AccountCredential<'_>,
     avatar_file_id: Option<uuid::Uuid>,
 ) -> Result<UserAvatarOutcome>);
 

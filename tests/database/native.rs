@@ -2571,7 +2571,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
         .await
         .unwrap());
     assert!(matches!(
-        db::users::accounts::set_user_avatar(pool, owner.id, Some(avatar.id))
+        db::users::accounts::set_user_avatar(pool, owner.id, &db::users::accounts::AccountCredential::Trusted, Some(avatar.id))
             .await
             .unwrap(),
         db::users::accounts::UserAvatarOutcome::Applied(None)

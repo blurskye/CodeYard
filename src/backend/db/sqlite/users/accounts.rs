@@ -203,22 +203,19 @@ pub async fn create_user_from_oauth(
 pub async fn set_user_avatar(
     pool: &SqlitePool,
     user_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     avatar_file_id: Option<uuid::Uuid>,
 ) -> Result<crate::backend::db::users::accounts::UserAvatarOutcome> {
     use crate::backend::db::users::accounts::UserAvatarOutcome;
 
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let account: Option<(Option<uuid::Uuid>, bool)> =
-        sqlx::query_as("SELECT avatar_file_id,is_banned FROM users WHERE id=?1")
-            .bind(user_id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let Some((previous, banned)) = account else {
-        return Ok(UserAvatarOutcome::NotUsable);
-    };
-    if banned {
-        return Ok(UserAvatarOutcome::Banned);
-    }
+    // The account and the requesting session must still be live when the picture changes,
+    // which happens after the upload's storage work.
+    super::transitions::require_account(&mut tx, user_id, credential).await?;
+    let previous: Option<uuid::Uuid> = sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id=?1")
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
     if let Some(file) = avatar_file_id {
         let usable: Option<uuid::Uuid> = sqlx::query_scalar(
             "UPDATE files SET is_active=TRUE,upload_expires_at=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND user_id=?2 AND (is_active OR (confirmed_at IS NOT NULL AND upload_expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))) AND reason='avatar' AND content_type IN ('image/png','image/jpeg','image/gif','image/webp') RETURNING id",
