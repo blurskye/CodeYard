@@ -8,6 +8,19 @@ pub mod hydration;
 pub mod navigation;
 pub mod pages;
 
+/// The rule for a repository name, for creation, rename and the form's own feedback: 1 to 100
+/// bytes of letters, numbers, `-`, `_` and `.`, not `.` or `..`, and not ending in `.git`
+/// (Git URLs strip one trailing `.git`, so such a name would resolve to another repository).
+pub fn valid_repository_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 100
+        && !matches!(name, "." | "..")
+        && !name.ends_with(".git")
+        && name
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
 /// The first `limit` characters of `text`, with an ellipsis when more follow.
 pub fn excerpt(text: &str, limit: usize) -> String {
     let mut chars = text.chars();

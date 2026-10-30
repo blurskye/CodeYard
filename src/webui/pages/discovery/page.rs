@@ -8,6 +8,7 @@ use crate::webui::{
     navigation::NavLink,
     pages::repos::issues::{item_icon, state_class, Kind},
     pages::users::{profile_icon, ProfileIcon},
+    valid_repository_name,
 };
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -1107,17 +1108,6 @@ pub fn new_repository(
     error: Option<FormError>,
 ) -> Element {
     rsx! { NewRepositoryView { owner, csrf_token, choices, form, error } }
-}
-
-// Browser feedback never replaces server validation or authorization.
-pub fn valid_repository_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 100
-        && !matches!(name, "." | "..")
-        && !name.ends_with(".git")
-        && name
-            .chars()
-            .all(|ch| ch.is_alphanumeric() || matches!(ch, '-' | '_' | '.'))
 }
 
 /// The options of a template select: an empty choice for none, then each listed name.
