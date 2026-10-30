@@ -14,4 +14,6 @@ jobs:
           test -f /etc/alpine-release
           test "$CONTAINER_VALUE" = visible
           test -f "$GITHUB_WORKSPACE/compat-seed.txt"
+          test -n '${{ job.container.id }}'
+          test -n '${{ job.container.network }}'
           echo compat:ok

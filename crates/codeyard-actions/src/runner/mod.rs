@@ -589,6 +589,21 @@ async fn run_workflow(
         .cloned()
         .unwrap_or_else(|| "https://github.com".into());
     let (api_url, graphql_url) = api_endpoints(&server, &env);
+    // Values the worker passes win; otherwise they come from the event, as GitHub fills them.
+    let given = |name: &str, pointer: &str| {
+        env.get(name).cloned().or_else(|| {
+            event.pointer(pointer).and_then(|value| match value {
+                serde_json::Value::String(text) => Some(text.clone()),
+                serde_json::Value::Number(number) => Some(number.to_string()),
+                _ => None,
+            })
+        })
+    };
+    let workflow_file = options.workflow.file_name().and_then(|name| name.to_str()).unwrap_or("workflow");
+    let workflow_ref = env
+        .get("GITHUB_WORKFLOW_REF")
+        .cloned()
+        .unwrap_or_else(|| format!("{repository}/.github/workflows/{workflow_file}@{reference}"));
     let run_id = env
         .get("GITHUB_RUN_ID")
         .cloned()
@@ -599,13 +614,19 @@ async fn run_workflow(
         .cloned()
         .unwrap_or_else(|| "1".into());
     let github = serde_json::json!({
-        "event":event, "event_name":options.event, "actor":options.actor, "triggering_actor":env.get("GITHUB_TRIGGERING_ACTOR").unwrap_or(&options.actor), "actor_id":env.get("GITHUB_ACTOR_ID"),
+        "event":event, "event_name":options.event, "actor":options.actor, "triggering_actor":env.get("GITHUB_TRIGGERING_ACTOR").unwrap_or(&options.actor), "actor_id":given("GITHUB_ACTOR_ID", "/sender/id"),
         "repository":repository, "repository_owner":repository.split('/').next().unwrap_or(""),
         "ref":reference,"ref_name":ref_name(&reference),
         "ref_type":if reference.starts_with("refs/tags/") {"tag"} else {"branch"},
         "sha":sha,"head_ref":event.pointer("/pull_request/head/ref").and_then(serde_json::Value::as_str).unwrap_or(""),"base_ref":event.pointer("/pull_request/base/ref").and_then(serde_json::Value::as_str).unwrap_or(""),"workspace":options.directory,"run_id":run_id,"run_number":number,"run_attempt":env.get("GITHUB_RUN_ATTEMPT").cloned().unwrap_or_else(||"1".into()),
         "server_url":server,"api_url":api_url,"graphql_url":graphql_url,
-        "workflow":workflow_name,"workflow_ref":env.get("GITHUB_WORKFLOW_REF"),"workflow_sha":env.get("GITHUB_WORKFLOW_SHA"),"job":"", "action":"", "token":secrets.get("GITHUB_TOKEN").cloned().unwrap_or_default()
+        "workflow":workflow_name,"workflow_ref":workflow_ref,"workflow_sha":env.get("GITHUB_WORKFLOW_SHA").unwrap_or(&sha),"job":"", "action":"", "token":secrets.get("GITHUB_TOKEN").cloned().unwrap_or_default(),
+        "repository_id":given("GITHUB_REPOSITORY_ID", "/repository/id"),
+        "repository_owner_id":given("GITHUB_REPOSITORY_OWNER_ID", "/repository/owner/id"),
+        "ref_protected":env.get("GITHUB_REF_PROTECTED").is_some_and(|value| value == "true"),
+        "retention_days":env.get("GITHUB_RETENTION_DAYS").cloned().unwrap_or_else(|| "90".into()),
+        "secret_source":"Actions",
+        "repositoryUrl":event.pointer("/repository/git_url").and_then(serde_json::Value::as_str).map_or_else(|| format!("git://{}/{repository}.git", server.trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/')), str::to_owned),
     });
     let mut contexts = Contexts::default();
     contexts
@@ -1158,6 +1179,8 @@ impl Drop for BackgroundTask {
     fn drop(&mut self) { self.0.abort(); }
 }
 
+const RUNNER_NAME: &str = "codeyard-actions";
+
 const ADMISSION_POLL: Duration = Duration::from_millis(500);
 
 /// The worker's answer to a job's concurrency request, once it has answered.
@@ -1607,7 +1630,7 @@ impl Job {
             strategy.insert("fail-fast".into(), Value::Bool(self.plan.fail_fast));
             strategy.entry("max-parallel".into()).or_insert_with(|| Value::Number(self.plan.max_parallel.unwrap_or(self.options.concurrent_jobs) as f64));
         }
-        self.contexts.values.insert("runner".into(), Value::from_json(&serde_json::json!({"os":runner_os(),"arch":runner_arch(),"name":"codeyard-actions","temp":self.temp.path(),"tool_cache":self.cache.join("tool_cache"),"environment":"self-hosted","debug":self.env.get("RUNNER_DEBUG").cloned().unwrap_or_default()})));
+        self.contexts.values.insert("runner".into(), Value::from_json(&serde_json::json!({"os":runner_os(),"arch":runner_arch(),"name":RUNNER_NAME,"temp":self.temp.path(),"tool_cache":self.cache.join("tool_cache"),"environment":"self-hosted","debug":self.env.get("RUNNER_DEBUG").cloned().unwrap_or_default()})));
         std::fs::create_dir_all(self.cache.join("tool_cache"))?;
         for scope in &self.plan.env {
             self.env.extend(scope.resolve(&self.contexts, self.status)?);
@@ -2061,7 +2084,8 @@ impl Job {
     fn environment(&self, mut env: BTreeMap<String, String>) -> BTreeMap<String, String> {
         if let Some(Value::Object(github)) = self.contexts.values.get("github") {
             for (key, value) in github {
-                if key != "token"
+                // These context values have no GITHUB_ variable on GitHub.
+                if !["token", "secret_source", "repositoryUrl"].contains(&key.as_str())
                     && !matches!(value, Value::Object(_) | Value::Array(_) | Value::Null)
                 {
                     env.insert(
@@ -2080,6 +2104,9 @@ impl Job {
             env.insert(key.into(), value.into());
         }
         env.insert("RUNNER_TEMP".into(), self.temp.path().display().to_string());
+        env.insert("RUNNER_TRACKING_ID".into(), self.podman.prefix.clone());
+        env.insert("RUNNER_NAME".into(), RUNNER_NAME.into());
+        env.insert("RUNNER_ENVIRONMENT".into(), "self-hosted".into());
         env.insert(
             "RUNNER_TOOL_CACHE".into(),
             self.cache.join("tool_cache").display().to_string(),

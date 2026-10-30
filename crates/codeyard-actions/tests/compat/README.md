@@ -29,7 +29,8 @@ The small examples exercise the behavior described in GitHub's documentation:
 - [Matrices](https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs):
   `matrix`, `dynamic-matrix`.
 - [Workflow syntax](https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions):
-  `defaults`, `shells`, `step-timeout`, `job-timeout`.
+  `defaults`, `shells`, `step-timeout`, `job-timeout`, `cancellation` (cleanup steps
+  after a fail-fast cancel).
 - [Reusable workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows):
   `reusable-workflows`, `reusable-validation` check typed inputs, secrets, outputs,
   matrices, four-level nesting and refused contracts.

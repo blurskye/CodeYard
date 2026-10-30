@@ -12,7 +12,8 @@ pub(super) struct Podman {
     url: Option<String>,
     options: Vec<String>,
     pull: bool,
-    prefix: String,
+    /// Unique to this job run; it also serves as the job's `RUNNER_TRACKING_ID`.
+    pub(super) prefix: String,
     containers: Vec<String>,
     images: Vec<String>,
     action_images: BTreeMap<(std::path::PathBuf, String), String>,

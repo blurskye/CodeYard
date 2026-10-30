@@ -815,6 +815,55 @@ jobs:
 }
 
 #[test]
+fn github_context_has_ids_the_workflow_ref_and_runner_names() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(
+        workspace.path().join("event.json"),
+        r#"{"repository":{"full_name":"owner/project","id":42,"owner":{"id":7}},"sender":{"id":9}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.path().join("workflow.yml"),
+        r#"
+on: push
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - run: |
+          test "$GITHUB_REPOSITORY_ID" = 42
+          test "$GITHUB_REPOSITORY_OWNER_ID" = 7
+          test "$GITHUB_ACTOR_ID" = 9
+          test "$GITHUB_WORKFLOW_REF" = owner/project/.github/workflows/workflow.yml@refs/heads/topic
+          test "$GITHUB_WORKFLOW_SHA" = given-sha
+          test "$GITHUB_REF_PROTECTED" = false
+          test "$GITHUB_RETENTION_DAYS" = 90
+          test '${{ github.secret_source }}' = Actions
+          test '${{ github.repositoryUrl }}' = git://github.com/owner/project.git
+          test -z "${GITHUB_SECRET_SOURCE-}"
+          test "$RUNNER_NAME" = '${{ runner.name }}'
+          test "$RUNNER_ENVIRONMENT" = self-hosted
+          test -n "$RUNNER_TRACKING_ID"
+          echo context-ids-ok
+"#,
+    )
+    .unwrap();
+    let output = command(workspace.path())
+        .args([
+            "--env",
+            "GITHUB_REF=refs/heads/topic",
+            "--env",
+            "GITHUB_SHA=given-sha",
+        ])
+        .arg("--eventpath")
+        .arg(workspace.path().join("event.json"))
+        .output()
+        .unwrap();
+    success(&output);
+    assert!(log(&output).contains("context-ids-ok"), "{}", log(&output));
+}
+
+#[test]
 fn offline_remote_action_from_cache() {
     let workspace = tempfile::tempdir().unwrap();
     let cached = workspace
@@ -968,6 +1017,34 @@ jobs:
     assert!(!text.contains("cancelled-fail"), "{text}");
     assert!(text.contains("Job completed: cancelled"), "{text}");
     assert!(started.elapsed() < std::time::Duration::from_secs(20));
+}
+
+#[test]
+fn a_step_cannot_redirect_the_event_file_through_a_link() {
+    let output = run(
+        r#"
+on: push
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - run: |
+          printf keep > outside.txt
+          ln -sf "$PWD/outside.txt" "$GITHUB_EVENT_PATH"
+      - run: |
+          test "$(cat outside.txt)" = keep
+          test ! -L "$GITHUB_EVENT_PATH"
+          echo event-file-replaced
+"#,
+        &[],
+        &[],
+    );
+    success(&output);
+    assert!(
+        log(&output).contains("event-file-replaced"),
+        "{}",
+        log(&output)
+    );
 }
 
 #[test]
