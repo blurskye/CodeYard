@@ -2561,21 +2561,23 @@ fn discarding_a_review_from_the_split_view_returns_to_the_split_view() {
     let mut repo = repository_at(Kind::Pull, "/7/diff");
     repo.viewer = "bob".into();
     // Discarding names the pending review it deletes.
-    let html = dioxus_ssr::render_element(diff_page(
-        &repo,
-        &item(),
-        &files_diff(),
-        &[],
-        false,
-        None,
-        None,
-        2,
-        Some(41),
-        None,
-        &Default::default(),
-        true,
-        &[],
-    ));
+    let html = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(diff_page(
+            &repo,
+            &item(),
+            &files_diff(),
+            &[],
+            false,
+            None,
+            None,
+            2,
+            Some(41),
+            None,
+            &Default::default(),
+            true,
+            &[],
+        ))
+    });
     assert!(html.contains("action=\"/alice/repo/pulls/7/reviews/pending/discard?view=split\""));
     // Cancel returns to the same view.
     let dialog = &html[html.find("aria-label=\"Discard review\"").unwrap()..];
