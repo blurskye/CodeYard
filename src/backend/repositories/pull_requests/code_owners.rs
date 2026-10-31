@@ -159,6 +159,11 @@ pub async fn request_code_owner_reviews(
         .collect();
     wanted.sort_unstable();
     wanted.dedup();
+    // An owner who is already requested needs no write, so a refresh with nothing new does not
+    // take the write lock. The insertion decides every other case.
+    if let Ok(existing) = db::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id).await {
+        wanted.retain(|id| !existing.iter().any(|reviewer| reviewer.id == *id));
+    }
     if wanted.is_empty() {
         return;
     }
