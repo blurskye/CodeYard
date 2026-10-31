@@ -433,6 +433,8 @@ async fn native_pages(f: &Database, router: &Router, alice: &Client, actor: i64,
         .unwrap()
         .remove(0);
     let key = format!("value_{}", field.id);
+    // The editor also sends the value it showed, which for the new field is empty.
+    let was = format!("was_{}", field.id);
     let item_id = item.id.to_string();
     let reply = alice
         .form_reply(
@@ -441,6 +443,7 @@ async fn native_pages(f: &Database, router: &Router, alice: &Client, actor: i64,
                 ("action", "update-item"),
                 ("item_id", &item_id),
                 (&key, "8.5"),
+                (&was, "\"\""),
             ],
         )
         .await;
