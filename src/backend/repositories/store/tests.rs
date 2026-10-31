@@ -1269,7 +1269,8 @@ async fn reads_return_owned_values_that_survive_json() {
     assert!(archive.starts_with(b"PK"));
     let languages = round_trip(&f.store.languages("main").await.unwrap());
     let names: Vec<_> = languages.iter().map(|l| l.language.as_str()).collect();
-    assert!(names.contains(&"Rust") && names.contains(&"Markdown"));
+    // Prose such as Markdown stays out of the language totals, as on GitHub.
+    assert!(names.contains(&"Rust") && !names.contains(&"Markdown"));
     let contributors = round_trip(&f.store.contributors().await.unwrap());
     assert_eq!(contributors[0].email, "tester@example.invalid");
     assert_eq!(contributors[0].commits, 2);
