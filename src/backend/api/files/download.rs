@@ -258,11 +258,11 @@ mod tests {
     fn attachment_names_never_become_paths_or_raw_headers() {
         assert_eq!(
             attachment_disposition("../../owned.txt"),
-            "attachment; filename*=UTF-8''owned.txt"
+            "attachment; filename=\"owned.txt\"; filename*=UTF-8''owned.txt"
         );
         assert_eq!(
             attachment_disposition(".."),
-            "attachment; filename*=UTF-8''download"
+            "attachment; filename=\"download\"; filename*=UTF-8''download"
         );
         let header = attachment_disposition("bad\r\n\"é.txt");
         assert!(!header.contains('\r') && !header.contains('\n'));
