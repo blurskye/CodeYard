@@ -1,5 +1,9 @@
 use super::request;
-use crate::support::{database::Database, http_client::Client, organizations::applied};
+use crate::support::{
+    database::Database,
+    http_client::{field_value, hidden_value, Client},
+    organizations::applied,
+};
 use axum::http::StatusCode;
 use codeyard::backend::{
     db::{
@@ -352,6 +356,17 @@ async fn contract(pg: bool) {
     assert!(page.contains("New option description"));
     assert!(page.contains("New option priority"));
     let id_text = id.to_string();
+    // The field's definition form carries the revision and owner the page was drawn from.
+    let definition = page
+        .split("<form")
+        .find(|form| {
+            field_value(form, "action").as_deref() == Some("configure")
+                && field_value(form, "attribute_id").as_deref() == Some(id_text.as_str())
+        })
+        .expect("the issue page has the field's definition form");
+    let expected_revision = hidden_value(definition, "expected_revision");
+    let expected_updated = hidden_value(definition, "expected_updated");
+    let owner_key = hidden_value(definition, "owner_key");
     let name_key = format!("option_{low}_name");
     let color_key = format!("option_{low}_color");
     let description_key = format!("option_{low}_description");
@@ -363,6 +378,9 @@ async fn contract(pg: bool) {
                 ("action", "configure"),
                 ("kind", "field"),
                 ("attribute_id", &id_text),
+                ("expected_revision", &expected_revision),
+                ("expected_updated", &expected_updated),
+                ("owner_key", &owner_key),
                 ("name", "Urgency"),
                 ("description", "Native field notes"),
                 ("data_type", "single_select"),
