@@ -411,7 +411,8 @@ impl Gateway {
         // This comes first, so no later bookkeeping failure can leave them current.
         db::repositories::records::advance_contribution_version(&self.pool, repo.id).await?;
         if let Some(actor) = db::users::accounts::get_user_by_id(&self.pool, operation.actor_id).await? {
-            let history = History::Push { repository: &path, quarantine: None };
+            // Git has moved the pushed objects out of quarantine by now.
+            let history = History::Stored { repository: &path };
             if let Err(error) = crate::backend::repositories::rule_suites::record_push(&self.pool, &repo, &actor, updates, &history, Some(operation.credential)).await {
                 tracing::warn!(%error, "could not record accepted rule suites");
             }
