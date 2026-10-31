@@ -16,7 +16,8 @@ fn secret_scanning_rules_and_locations() {
             alert.end_line,
             alert.end_column
         ),
-        (2, 6, 2, 45)
+        // GitHub counts columns in bytes ("interpreted as 8BIT ASCII"), so π takes two.
+        (2, 7, 2, 46)
     );
     assert!(!found
         .iter()
@@ -121,7 +122,8 @@ fn secret_scanning_re2_character_classes() {
     )
     .unwrap();
     assert_eq!(found.len(), 1);
-    assert_eq!((found[0].start_column, found[0].end_column), (1, 18));
+    // Columns count bytes, as GitHub documents, so the two-byte π ends the match at 19.
+    assert_eq!((found[0].start_column, found[0].end_column), (1, 19));
     assert_eq!(
         scan_with_patterns(
             "keys.txt",
