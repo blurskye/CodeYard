@@ -1290,6 +1290,17 @@ async fn watch_count_transitions(pool: &db::DbPool) {
         .unwrap();
     let repo = repository(pool, owner.id, "watched").await;
     let empty = repository(pool, owner.id, "empty").await;
+    // The repository is private, and only readers may watch it.
+    for reader in [&ignored, &custom] {
+        db::repositories::access::grant_repo_access(
+            pool,
+            reader.id,
+            repo.id,
+            db::models::AccessLevel::Read,
+        )
+        .await
+        .unwrap();
+    }
     // A repository with no active watches is covered by the empty repository below;
     // participating and ignoring rows do not count.
     execute_sql(pool, &format!(
@@ -1422,6 +1433,15 @@ async fn postgres_watch_change_and_repository_deletion_do_not_deadlock() {
             .await
             .unwrap();
         let repo = repository(pool, owner.id, &format!("race{round}")).await;
+        // The repository is private, and only readers may watch it.
+        db::repositories::access::grant_repo_access(
+            pool,
+            watcher.id,
+            repo.id,
+            db::models::AccessLevel::Read,
+        )
+        .await
+        .unwrap();
         execute_sql(
             pool,
             &format!(
@@ -1441,7 +1461,13 @@ async fn postgres_watch_change_and_repository_deletion_do_not_deadlock() {
         })
         .await
         .expect("watch change and repository deletion must not wait on each other");
-        watched.expect("watch change must not fail");
+        // A watch that waits for the deletion finds no repository left to read.
+        if let Err(error) = watched {
+            assert!(
+                error.downcast_ref::<db::users::blocks::InteractionBlocked>().is_some(),
+                "watch change must not fail otherwise: {error:#}"
+            );
+        }
         deleted.expect("repository deletion must not fail");
         assert!(repositories::records::get_repository_by_id(pool, repo.id)
             .await
