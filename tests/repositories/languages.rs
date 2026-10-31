@@ -167,11 +167,12 @@ async fn languages_contract(pool: &db::DbPool) {
         "the private repository's owner can read languages"
     );
 
-    // Stored rows answer without Git, so the repository directory being gone changes nothing.
+    // Stored rows are served only for Git's current revision, so with the repository directory
+    // gone the reader is told storage is unavailable instead of getting rows it cannot check.
     std::fs::rename(&disk_path, directory.path().join("unavailable.git")).unwrap();
     let (status, body) = get_json(&router, Some(&session)).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body, expected, "stored languages are served without Git");
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.to_string().contains("git_error"), "{body}");
 
     // A cache entry for another revision cannot hide unavailable Git.
     db::repository_stats::upsert_repo_languages(
