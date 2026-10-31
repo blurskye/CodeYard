@@ -88,7 +88,9 @@ pub(super) async fn document(
     let mut value = payloads::pull_request_json(pull, &payloads::Person::of(&author), repo, owner);
     value["user"] = payloads::user(&author);
     value["author_association"] = json!(association(&state.pool, repo, author.id).await?);
-    value["base"] = json!({"label": format!("{owner}:{}", pull.base_branch), "ref": pull.base_branch, "sha": pull.base_sha, "repo": payloads::repository(repo, owner), "user": person(state, repo.owner_id()).await?});
+    let mut base_repo = payloads::repository(repo, owner);
+    payloads::set_fork_counts(&mut base_repo, super::repos::public_fork_count(state, repo.id).await?);
+    value["base"] = json!({"label": format!("{owner}:{}", pull.base_branch), "ref": pull.base_branch, "sha": pull.base_sha, "repo": base_repo, "user": person(state, repo.owner_id()).await?});
     if repo.owner_kind == "org" {
         value["base"]["user"] = value["base"]["repo"]["owner"].clone();
     }
@@ -98,7 +100,8 @@ pub(super) async fn document(
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        let head_value = payloads::repository(&head, &head_owner);
+        let mut head_value = payloads::repository(&head, &head_owner);
+        payloads::set_fork_counts(&mut head_value, super::repos::public_fork_count(state, head.id).await?);
         (
             format!("{head_owner}:{}", pull.head_branch),
             head_value["owner"].clone(),
