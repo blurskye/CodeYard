@@ -752,23 +752,43 @@ async fn concurrent_refresh_converges(pg: bool) {
         "first refresh must be waiting on its CAS"
     );
     // A publish writes the database before it moves a ref, and the SQLite blocker holds the whole
-    // database, so there the refs are moved with Git itself, as a push from outside would.
-    for prepared in [&second_head, &second_base] {
+    // database, so there the commits are written and the refs moved with Git itself, as a push
+    // from outside would. A prepared commit's objects stay staged until it is published, so the
+    // repository cannot point a ref at one.
+    let mut moved = Vec::new();
+    for (prepared, parent, path, bytes) in [
+        (&second_head, &first_head.sha, "two.txt", &b"two\n"[..]),
+        (&second_base, &first_base.sha, "base-two.txt", &b"base two\n"[..]),
+    ] {
         match &f {
             Database::Postgres(_) => {
                 store
                     .publish_file_as(f.pool(), repository.id, actor, prepared)
                     .await
                     .unwrap();
+                moved.push(prepared.commit.sha.clone());
             }
             Database::Sqlite(_) => {
-                let status = std::process::Command::new("git")
-                    .arg("-C")
-                    .arg(&repository.disk_path)
-                    .args(["update-ref", &prepared.reference, &prepared.commit.sha])
-                    .status()
+                let git = git2::Repository::open_bare(&repository.disk_path).unwrap();
+                let parent = git
+                    .find_commit(git2::Oid::from_str(parent).unwrap())
                     .unwrap();
-                assert!(status.success());
+                let blob = git.blob(bytes).unwrap();
+                let mut tree = git.treebuilder(Some(&parent.tree().unwrap())).unwrap();
+                tree.insert(path, blob, 0o100644).unwrap();
+                let tree = git.find_tree(tree.write().unwrap()).unwrap();
+                let author = git2::Signature::now("Refresh", "refresh@example.invalid").unwrap();
+                let commit = git
+                    .commit(
+                        Some(&prepared.reference),
+                        &author,
+                        &author,
+                        &prepared.commit.message,
+                        &tree,
+                        &[&parent],
+                    )
+                    .unwrap();
+                moved.push(commit.to_string());
             }
         }
     }
@@ -791,8 +811,8 @@ async fn concurrent_refresh_converges(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(stored.head_sha, second_head.commit.sha);
-    assert_eq!(stored.base_sha, second_base.commit.sha);
+    assert_eq!(stored.head_sha, moved[0]);
+    assert_eq!(stored.base_sha, moved[1]);
     f.finish().await;
 }
 
