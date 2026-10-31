@@ -166,7 +166,10 @@ async fn compute_local(
     let Some(current) = db::repository_stats::language_source(pool, source.repo_id).await? else {
         return Ok(languages);
     };
-    if current.default_branch == branch && current.storage_node_id == source.storage_node_id
+    // Languages follow Git's default branch, which an adopted repository may name
+    // differently from the stored default.
+    let git_default = git::default_branch(path).await?.unwrap_or_else(|| "main".into());
+    if git_default == branch && current.storage_node_id == source.storage_node_id
         && git::branch_tip(path, branch)?.unwrap_or_default() == tip
     {
         match store_rows(pool, &current, &tip, &languages).await? {
