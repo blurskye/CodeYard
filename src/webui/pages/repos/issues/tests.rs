@@ -2535,6 +2535,7 @@ fn review_changes_menu_keeps_a_refused_review_and_counts_pending_comments() {
 fn discarding_a_review_from_the_split_view_returns_to_the_split_view() {
     let mut repo = repository_at(Kind::Pull, "/7/diff");
     repo.viewer = "bob".into();
+    // Discarding names the pending review it deletes.
     let html = dioxus_ssr::render_element(diff_page(
         &repo,
         &item(),
@@ -2544,7 +2545,7 @@ fn discarding_a_review_from_the_split_view_returns_to_the_split_view() {
         None,
         None,
         2,
-        None,
+        Some(41),
         None,
         &Default::default(),
         true,
