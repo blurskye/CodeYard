@@ -1,6 +1,6 @@
 mod exports;
 use crate::backend::db::projects::{
-    validate_project, Field, NewField, NewView, Owner, Project, Refusal, SelectOption, Settings,
+    validate_project, Field, NewField, NewView, Owner, Project, ProjectContents, Refusal, SelectOption, Settings,
 };
 use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
@@ -186,19 +186,18 @@ pub async fn save(
     Ok(project)
 }
 
-pub async fn delete(pool: &SqlitePool, actor: i64, credential: &AccountCredential<'_>, project: i64) -> Result<Vec<Field>> {
+pub async fn delete(pool: &SqlitePool, actor: i64, credential: &AccountCredential<'_>, project: i64) -> Result<ProjectContents> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     write_project(&mut tx, actor, credential, project).await?;
-    for table in ["project_items", "project_views"] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE project_id=$1")).bind(project).execute(&mut *tx).await?;
-    }
-    // The removed fields come back so the deletion's answer can still describe the project.
-    let mut fields: Vec<Field> = sqlx::query_as("DELETE FROM project_fields WHERE project_id=$1 RETURNING *")
-        .bind(project)
-        .fetch_all(&mut *tx)
-        .await?;
-    fields.sort_by_key(|field| field.id);
-    for table in ["project_repositories", "project_teams"] {
+    // What the actor could see comes back, so the deletion's answer can still describe it.
+    let removed = ProjectContents {
+        fields: sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1 ORDER BY id")
+            .bind(project)
+            .fetch_all(&mut *tx)
+            .await?,
+        items: items::readable_items(&mut tx, Some(actor), project).await?,
+    };
+    for table in ["project_items", "project_views", "project_fields", "project_repositories", "project_teams"] {
         sqlx::query(&format!("DELETE FROM {table} WHERE project_id=$1")).bind(project).execute(&mut *tx).await?;
     }
     sqlx::query("UPDATE projects SET title='',description=NULL,readme='',public=FALSE,deleted_at=$2,updated_at=$2 WHERE id=$1")
@@ -207,7 +206,7 @@ pub async fn delete(pool: &SqlitePool, actor: i64, credential: &AccountCredentia
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(fields)
+    Ok(removed)
 }
 
 pub async fn fields(pool: &SqlitePool, viewer: Option<i64>, project: i64) -> Result<Vec<Field>> {

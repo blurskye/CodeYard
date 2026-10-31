@@ -338,6 +338,14 @@ pub(super) async fn content_items(
     Ok(page.finish(nodes))
 }
 
+/// What a project deleted in this request held, kept in its answer since deletion purges it.
+fn removed_contents(parent: &Value) -> Result<Option<store::ProjectContents>> {
+    parent
+        .get("_removed")
+        .map(|removed| serde_json::from_value(removed.clone()).map_err(unavailable))
+        .transpose()
+}
+
 async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value) -> Result<Value> {
     connection::validate(ctx)?;
     let pool = &request.state.pool;
@@ -354,7 +362,8 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
     };
     let query = ctx.args.get("query").filter(|value| !value.is_null()).map(|value| value.string()).transpose()?.unwrap_or("");
     let descending = if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) { order.object()?.try_get("direction")?.enum_name()? == "DESC" } else { false };
-    let (page, rows) = if query.trim().is_empty() {
+    let removed = removed_contents(parent)?;
+    let (page, rows) = if query.trim().is_empty() && removed.is_none() {
         let mut window = store::ItemWindow { project, include_deleted, archived, descending, offset: 0, limit: 0, count: true };
         let total = store::items_window(pool, viewer, &window).await.map_err(operation)?.0;
         let page = connection::Page::new(ctx, total)?;
@@ -362,9 +371,14 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
         let rows = if page.limit == 0 { Vec::new() } else { store::items_window(pool, viewer, &window).await.map_err(operation)?.1 };
         (page, rows)
     } else {
-        let fields = store::fields_at(pool, viewer, project, include_deleted).await.map_err(operation)?;
+        let (fields, rows) = match removed {
+            Some(removed) => (removed.fields, removed.items),
+            None => (
+                store::fields_at(pool, viewer, project, include_deleted).await.map_err(operation)?,
+                store::items_at(pool, viewer, project, include_deleted).await.map_err(operation)?,
+            ),
+        };
         charge_fields(&fields, request)?;
-        let rows = store::items_at(pool, viewer, project, include_deleted).await.map_err(operation)?;
         for item in &rows { charge_item(item, request)?; }
         let rows = rows.into_iter().filter(|item| archived.is_none_or(|value| value == item.archived)).collect();
         let mut rows = domain::filter_items(rows, &fields, query, None).map_err(operation)?;
@@ -624,13 +638,12 @@ async fn resolve_at(
             .map_err(operation)?))
         }
         ("ProjectV2", "fields" | "field") => {
-            let mut values = if let Some(Value::Array(removed)) = parent.get("_fields") {
-                removed.clone()
-            } else {
-                let fields = store::fields_at(pool, viewer, parent["_project"].as_i64().ok_or_else(missing)?, parent["_deleted"] == true).await.map_err(operation)?;
-                charge_fields(&fields, request)?;
-                project_fields(parent, &fields)?
+            let fields = match removed_contents(parent)? {
+                Some(removed) => removed.fields,
+                None => store::fields_at(pool, viewer, parent["_project"].as_i64().ok_or_else(missing)?, parent["_deleted"] == true).await.map_err(operation)?,
             };
+            charge_fields(&fields, request)?;
+            let mut values = project_fields(parent, &fields)?;
             if field == "field" {
                 let name = arg(ctx, "name")?;
                 return Ok(values
@@ -844,11 +857,10 @@ pub(super) async fn mutation(
             );
         }
         "deleteProjectV2" => {
-            let fields = store::delete(pool, actor, &request.auth.credential(), project.id).await.map_err(operation)?;
-            charge_fields(&fields, request)?;
+            let removed = store::delete(pool, actor, &request.auth.credential(), project.id).await.map_err(operation)?;
             let mut object = project_object(&project);
-            // Deletion purges the fields, so the answer keeps the ones it removed.
-            object["_fields"] = Value::Array(project_fields(&object, &fields)?);
+            // Deletion purges the fields and items, so the answer keeps what it removed.
+            object["_removed"] = serde_json::to_value(&removed).map_err(unavailable)?;
             object["_deleted"] = json!(true);
             payload["projectV2"] = object;
         }

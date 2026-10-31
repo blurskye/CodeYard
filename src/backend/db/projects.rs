@@ -333,7 +333,7 @@ native_operation!(super::postgres::projects::get, super::sqlite::projects::get,
 native_operation!(super::postgres::projects::save, super::sqlite::projects::save,
     fn save(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64, settings: &Settings) -> Result<Project>);
 native_operation!(super::postgres::projects::delete, super::sqlite::projects::delete,
-    fn delete(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64) -> Result<Vec<Field>>);
+    fn delete(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, project: i64) -> Result<ProjectContents>);
 native_operation!(super::postgres::projects::fields, super::sqlite::projects::fields,
     fn fields(pool: &DbPool, viewer: Option<i64>, project: i64) -> Result<Vec<Field>>);
 native_operation!(super::postgres::projects::add_field, super::sqlite::projects::add_field,
@@ -394,6 +394,13 @@ pub enum Content {
     PullRequest(i64),
     Draft { title: String, body: Option<String> },
 }
+/// The fields and the readable items a project held when it was deleted.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProjectContents {
+    pub fields: Vec<Field>,
+    pub items: Vec<Item>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct FieldUpdate {
     pub id: i64,

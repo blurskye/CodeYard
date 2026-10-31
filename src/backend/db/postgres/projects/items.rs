@@ -234,11 +234,16 @@ pub async fn items(pool: &PgPool, viewer: Option<i64>, project: i64) -> Result<V
     items_at(pool, viewer, project, false).await
 }
 
+/// The project's items that `viewer` may read, in board order.
+pub(super) async fn readable_items(tx: &mut Transaction<'_, Postgres>, viewer: Option<i64>, project: i64) -> Result<Vec<Item>> {
+    Ok(sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {}) ORDER BY i.position,i.id", super::super::repositories::access::readable_condition()))
+        .bind(project).bind(viewer).fetch_all(&mut **tx).await?)
+}
+
 pub async fn items_at(pool: &PgPool, viewer: Option<i64>, project: i64, include_deleted: bool) -> Result<Vec<Item>> {
     let mut tx = pool.begin().await?;
     readable_at(&mut tx, viewer, project, include_deleted).await?;
-    let items = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {}) ORDER BY i.position,i.id", super::super::repositories::access::readable_condition()))
-        .bind(project).bind(viewer).fetch_all(&mut *tx).await?;
+    let items = readable_items(&mut tx, viewer, project).await?;
     tx.commit().await?;
     Ok(items)
 }
