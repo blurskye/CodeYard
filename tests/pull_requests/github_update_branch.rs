@@ -111,7 +111,8 @@ async fn contract(pg: bool) {
         StatusCode::UNPROCESSABLE_ENTITY,
     )
     .await;
-    update(&router, &url, owner, "{", StatusCode::UNPROCESSABLE_ENTITY).await;
+    // A body that is not JSON is a 400, as GitHub answers "Problems parsing JSON".
+    update(&router, &url, owner, "{", StatusCode::BAD_REQUEST).await;
     // Updating a head is a direct push, not a bypass of its PR/linear-history rules.
     db::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
