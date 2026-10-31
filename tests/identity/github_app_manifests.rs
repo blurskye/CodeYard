@@ -452,12 +452,13 @@ async fn contract(pg: bool) {
         .unwrap();
     let outgoing = webhooks::outgoing("issues", Some("opened"), &current, &payload.to_string());
     webhooks::delivery::send(f.pool(), &current, &outgoing).await;
+    // The three sent deliveries and the two inserted failures; the removed repository adds none.
     assert_eq!(
         db::github_app_hooks::deliveries(f.pool(), id)
             .await
             .unwrap()
             .len(),
-        3
+        5
     );
     assert!(timeout(Duration::from_millis(100), rx.recv())
         .await
