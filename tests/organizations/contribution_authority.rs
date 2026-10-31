@@ -149,9 +149,15 @@ fn comment(
 }
 async fn contributions(d: &Database, repo: i64, actor: i64, issue: i64, pr: i64, allowed: bool) {
     let before = d.snapshot(repo, issue, pr).await;
+    // A missing account cannot hold a session, so it presents one that does not exist.
+    let session = if db::users::accounts::get_user_by_id(d.pool(), actor).await.unwrap().is_some() {
+        crate::support::live_session(d.pool(), actor).await
+    } else {
+        "0".repeat(64)
+    };
     let i = db::issues::create_issue(d.pool(), repo, actor, "Contribution", "Fixture").await;
     let p = new_pr(d.pool(), repo, actor).await;
-    let ic = db::issues::add_issue_comment(d.pool(), repo, issue, actor, "Contribution", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(d.pool(), actor).await)).await;
+    let ic = db::issues::add_issue_comment(d.pool(), repo, issue, actor, "Contribution", &codeyard::backend::db::users::accounts::AccountCredential::Session(&session)).await;
     let pc =
         db::pull_requests::reviews::add_pull_request_comment(d.pool(), comment(pr, actor, None))
             .await;
