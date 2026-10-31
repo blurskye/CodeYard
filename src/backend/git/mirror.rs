@@ -278,7 +278,7 @@ pub(crate) async fn check(path: &Path) -> Result<Option<String>> {
 pub(crate) async fn existing_commits(path: &Path, ids: &[String]) -> Result<std::collections::HashSet<String>> {
     let mut found = std::collections::HashSet::new();
     for batch in ids.chunks(1024) {
-        anyhow::ensure!(batch.iter().all(|id| crate::backend::git::is_full_commit_id(id)), "invalid commit ID");
+        anyhow::ensure!(batch.iter().all(crate::backend::git::is_full_commit_id), "invalid commit ID");
         let input = batch.iter().map(|id| format!("{id}^{{commit}}\n")).collect::<String>();
         let mut command = git(path)?;
         command.args(["cat-file", "--batch-check"]);

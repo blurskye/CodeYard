@@ -28,7 +28,7 @@ pub struct PublicationCredential(crate::backend::db::credentials::Actor);
 impl PublicationCredential {
     /// Trusted in-process callers carry no credential, and the receiving node uses the caller.
     pub fn retain(actor: crate::backend::db::credentials::Actor) -> Option<Self> {
-        actor.credential.is_some().then(|| Self(actor))
+        actor.credential.is_some().then_some(Self(actor))
     }
     pub fn into_actor(self, expected: i64) -> Result<crate::backend::db::credentials::Actor, RepoError> {
         let Self(actor) = self;

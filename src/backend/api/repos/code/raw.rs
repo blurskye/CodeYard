@@ -125,7 +125,7 @@ pub(crate) fn raw_response(
         format!(
             "bytes {}-{}/{}",
             offset,
-            offset + length.saturating_sub(1) as u64,
+            offset + length.saturating_sub(1),
             size
         )
     });

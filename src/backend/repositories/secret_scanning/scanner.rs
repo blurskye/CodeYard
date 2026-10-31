@@ -210,7 +210,7 @@ impl Scanner {
                 0,
                 Rule {
                     id: id.into(),
-                    regex: Some(regex.into()),
+                    regex: Some(regex),
                     path: None,
                     keywords: vec![keyword.into()],
                     entropy: 0.0,

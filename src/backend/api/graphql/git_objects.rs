@@ -361,8 +361,9 @@ pub(super) async fn resolve(
                 ));
             }
             let refs = loaded_refs(repo, request).await?;
-            let mut names = refs.keys().cloned()
+            let mut names = refs.keys()
                 .filter(|name| name.starts_with(&prefix) && name[prefix.len()..].contains(query))
+                .cloned()
                 .collect::<Vec<_>>();
             names.sort();
             let direction = order.as_ref().and_then(|v| v["direction"].as_str()).or(args

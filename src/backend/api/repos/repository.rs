@@ -491,7 +491,7 @@ pub(super) async fn settings_model(
     }
     if tab == "secrets" {
         let per_page = db::environment_values::ENVIRONMENTS_PER_PAGE;
-        settings.environment_page = super::paging::number(ctx, "environment_page", 1, 1..=usize::MAX.min(i64::MAX as usize) / per_page)?;
+        settings.environment_page = super::paging::number(ctx, "environment_page", 1, 1..=i64::MAX as usize / per_page)?;
         settings.environments = db::environment_values::environments(
             &ctx.state.pool, viewer.id, loaded.repository.id, ((settings.environment_page - 1) * per_page) as i64,
         ).await.map_err(|_| unavailable(ctx))?;
