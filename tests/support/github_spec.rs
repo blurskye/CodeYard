@@ -57,15 +57,25 @@ fn resolve(value: &Value) -> &Value {
     }
 }
 
-type Validators = HashMap<(String, u16), Arc<jsonschema::Validator>>;
+/// One cell per operation and status. The map's lock is held only to find a cell, so tests
+/// build different validators at the same time and wait only for one they share; a test that
+/// panics while building leaves the others able to continue.
+type Validators = HashMap<(String, u16), Arc<OnceLock<Arc<jsonschema::Validator>>>>;
 
 fn validator(operation_id: &str, status: u16) -> Arc<jsonschema::Validator> {
     static VALIDATORS: OnceLock<Mutex<Validators>> = OnceLock::new();
-    let key = (operation_id.to_owned(), status);
-    let mut validators = VALIDATORS.get_or_init(Default::default).lock().unwrap();
-    if let Some(validator) = validators.get(&key) {
-        return validator.clone();
-    }
+    let cell = VALIDATORS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .entry((operation_id.to_owned(), status))
+        .or_default()
+        .clone();
+    cell.get_or_init(|| Arc::new(build_validator(operation_id, status)))
+        .clone()
+}
+
+fn build_validator(operation_id: &str, status: u16) -> jsonschema::Validator {
     let operation = spec()["paths"]
         .as_object()
         .unwrap()
@@ -104,14 +114,10 @@ fn validator(operation_id: &str, status: u16) -> Arc<jsonschema::Validator> {
         "GitHub documents no JSON body for {operation_id} {status}"
     );
     let root = json!({"allOf": [schema], "components": spec()["components"]});
-    let validator = Arc::new(
-        jsonschema::options()
-            .with_draft(jsonschema::Draft::Draft4)
-            .build(&root)
-            .unwrap_or_else(|error| panic!("{operation_id} {status}: {error}")),
-    );
-    validators.insert(key, validator.clone());
-    validator
+    jsonschema::options()
+        .with_draft(jsonschema::Draft::Draft4)
+        .build(&root)
+        .unwrap_or_else(|error| panic!("{operation_id} {status}: {error}"))
 }
 
 /// One line per failure, with the failures of each `oneOf`/`anyOf` branch listed beneath it, so
