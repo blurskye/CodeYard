@@ -3848,9 +3848,11 @@ fn blame_page_gives_each_run_one_hunk_cell_and_a_linkable_line_per_row() {
     assert!(html.contains("href=\"/alice/project/commit/abcdef1234567890\""));
     assert!(html.contains(">abcdef1</a>"));
     assert!(html.contains("title=\"Shout the second line\""));
-    // Each run names its author with the author's picture, and its date sits on the second line.
-    assert!(html.contains("src=\"/avatars/Alice\""));
-    assert!(html.contains("src=\"/avatars/Bob\""));
+    // Each run names its author beside the name's first letter, since a Git author name is not
+    // an account and so has no picture, and its date sits on the second line.
+    assert!(!html.contains("src=\"/avatars/"));
+    assert!(html.contains(">A</span>"));
+    assert!(html.contains(">B</span>"));
     assert!(html.contains("class=\"repo-blame-author\">Alice<"));
     assert!(html.contains("class=\"repo-blame-meta\""));
     assert!(html.contains("href=\"/alice/project/blob/refs/heads/main/docs/a.txt\""));
