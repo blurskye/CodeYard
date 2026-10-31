@@ -356,10 +356,12 @@ async fn default_collision(pg: bool) {
         fixed_versions: vec!["1.2.1".into()],
     }
     .key();
+    // The proposal branch is named by the update it carries: path, package, both versions and
+    // the scanned commit.
     let digest = hex::encode(Sha256::digest(
-        format!("{}\0{}\0{base}", "1.2.0", "1.2.1").as_bytes(),
+        serde_json::to_vec(&("node_modules/fixture", "fixture", "1.2.0", "1.2.1", &base)).unwrap(),
     ));
-    let branch = format!("codeyard/security/{key}-{digest}");
+    let branch = format!("codeyard/security/{digest}");
     repo_store(&w.repo, None)
         .create_branch_as(w.f.pool(), w.repo.id, w.owner, &branch, &base)
         .await
