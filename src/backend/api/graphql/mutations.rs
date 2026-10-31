@@ -449,9 +449,14 @@ pub(super) async fn resolve(
                             "Codeyard can update a pull request branch by merge, not rebase",
                         ));
                     }
+                    // The head may be a fork the actor cannot read but may update through
+                    // the maintainer grant, which update_branch checks. The credential needs
+                    // contents write there, as on REST.
                     request
-                        .authorize(current.head_repo_id.ok_or_else(missing)?, "contents", true)
-                        .await?;
+                        .auth
+                        .repository_scope(pool, current.head_repo_id.ok_or_else(missing)?, "contents", true)
+                        .await
+                        .map_err(|error| super::auth::scope_error(error).graphql())?;
                     let expected = input
                         .get("expectedHeadOid")
                         .filter(|v| !v.is_null())
