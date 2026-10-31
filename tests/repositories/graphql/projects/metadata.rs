@@ -446,7 +446,8 @@ async fn metadata_contract(pg: bool) {
         .await;
         assert_eq!(body["errors"].as_array().unwrap().len(), 4, "{body}");
     }
-    // Revoking content visibility must refuse both add and delete, even on Alice's projects.
+    // Revoking content visibility refuses adding it, even to Alice's projects. Her projects'
+    // existing items stay hers to remove, as ad1516496 lets a project writer do.
     f.execute(
         "UPDATE repositories SET is_private=true WHERE id=$1",
         &[repo.id],
@@ -456,10 +457,24 @@ async fn metadata_contract(pg: bool) {
         &router,
         Some(token),
         document!("UpdateProjectV2Items"),
-        denied_inputs,
+        denied_inputs.clone(),
     )
     .await;
-    assert_eq!(body["errors"].as_array().unwrap().len(), 4, "{body}");
+    let errors = body["errors"].as_array().unwrap();
+    assert_eq!(errors.len(), 2, "{body}");
+    assert!(
+        errors
+            .iter()
+            .all(|error| error["path"][0] == "add_000" || error["path"][0] == "add_001"),
+        "{body}"
+    );
+    for alias in ["002", "003"] {
+        assert_eq!(
+            body["data"][format!("delete_{alias}")]["deletedItemId"],
+            denied_inputs[format!("input_{alias}")]["itemId"],
+            "{body}"
+        );
+    }
     for text in [
         document!("RepositoryProjectV2List"),
         document!("RepositoryProjectList"),
@@ -481,10 +496,11 @@ async fn metadata_contract(pg: bool) {
     )
     .await;
     for (project, (item, _)) in [projects[0].id, projects[4].id].into_iter().zip(new_items) {
-        assert_eq!(
-            store::items(f.pool(), Some(alice), project).await.unwrap()[0].id,
-            item
-        );
+        assert!(store::items(f.pool(), Some(alice), project)
+            .await
+            .unwrap()
+            .iter()
+            .all(|row| row.id != item));
     }
 }
 
