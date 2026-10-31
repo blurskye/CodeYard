@@ -1119,6 +1119,7 @@ jobs:
 // The worker gives each run a delegated cgroup; this test makes one below its own.
 #[cfg(target_os = "linux")]
 #[test]
+#[ignore = "needs a delegated cgroup v2 (the builder has none); run with --ignored on a host that has one"]
 fn background_processes_outlive_their_step_but_not_the_job() {
     let workspace = tempfile::tempdir().unwrap();
     std::fs::write(
