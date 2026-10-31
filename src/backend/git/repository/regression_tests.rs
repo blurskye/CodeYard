@@ -496,7 +496,7 @@ async fn search_refuses_a_blob_larger_than_its_child_memory_limit() {
         .await
         .unwrap_err();
     assert!(
-        error.to_string().contains("Git could not search"),
+        error.to_string().contains("Git streamed read failed"),
         "{error:#}"
     );
 }
