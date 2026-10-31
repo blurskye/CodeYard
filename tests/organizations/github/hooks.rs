@@ -562,11 +562,14 @@ async fn contract(pg: bool) {
     assert!(page.contains("clear_password"));
     assert!(page.contains("clear_secret"));
     let hook_id = hook.to_string();
+    // The edit form carries the revision it was rendered from.
+    let revision = crate::support::http_client::hidden_value(&page, "expected_updated");
     let (status, page) = browser
         .form(
             &format!("/settings/organizations/{}/webhooks/webhook-save", org.id),
             &[
                 ("hook_id", &hook_id),
+                ("expected_updated", &revision),
                 ("payload_url", &url),
                 ("content_type", "application/json"),
                 ("events", "issues"),
@@ -590,11 +593,19 @@ async fn contract(pg: bool) {
         .unwrap(),
         b"rotated-password"
     );
+    let page = browser
+        .page_ok(&format!(
+            "/settings/organizations/{}?tab=webhooks&hook={hook}&edit=1",
+            org.id
+        ))
+        .await;
+    let revision = crate::support::http_client::hidden_value(&page, "expected_updated");
     let (status, page) = browser
         .form(
             &format!("/settings/organizations/{}/webhooks/webhook-save", org.id),
             &[
                 ("hook_id", &hook_id),
+                ("expected_updated", &revision),
                 ("payload_url", &url),
                 ("content_type", "application/json"),
                 ("events", "issues"),
