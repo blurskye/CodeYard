@@ -282,20 +282,21 @@ fn fixed_choices_are_selects_with_human_labels() {
     );
     let access = selects(&page, "permission");
     assert_eq!(access.len(), 2, "one grant row and the grant form");
-    for block in &access {
-        assert_labels(
-            block,
-            &[
-                ("1", "Read"),
-                ("2", "Triage"),
-                ("3", "Write"),
-                ("4", "Maintain"),
-                ("5", "Admin"),
-            ],
-        );
-    }
-    // A grant row starts at the level it already has, and the edit form at the stored privacy.
-    assert!(selected(access[0], "3"));
+    let levels = [
+        ("1", "Read"),
+        ("2", "Triage"),
+        ("3", "Write"),
+        ("4", "Maintain"),
+        ("5", "Admin"),
+    ];
+    // A grant row asks for a deliberate direct grant, since its effective level may be
+    // inherited. The edit form starts at the stored privacy.
+    let row: Vec<_> = std::iter::once(("", "Choose an explicit direct grant"))
+        .chain(levels)
+        .collect();
+    assert_labels(access[0], &row);
+    assert!(selected(access[0], ""));
+    assert_labels(access[1], &levels);
     assert!(selected(privacy[1], "visible"));
 }
 
