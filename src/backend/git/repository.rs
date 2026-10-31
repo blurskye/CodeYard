@@ -2431,16 +2431,23 @@ pub(crate) async fn get_file_diff(
     Ok(diff)
 }
 
-/// Literal pathspecs: the `:(literal)` magic makes every character of a path an ordinary one.
+/// Pathspecs for exactly these paths: the `:(literal)` magic makes every character of a path an
+/// ordinary one, and an escaped `path/**` exclusion leaves out what lies under a path that is a
+/// directory on the other side. A literal `path/` exclusion would also drop a gitlink at the path.
 fn literal_pathspecs(paths: &[&[u8]]) -> Vec<OsString> {
     paths
         .iter()
         .flat_map(|path| {
             let mut spec = b":(literal)".to_vec();
             spec.extend_from_slice(path);
-            let mut descendants = b":(literal,exclude)".to_vec();
-            descendants.extend_from_slice(path);
-            descendants.push(b'/');
+            let mut descendants = b":(exclude,glob)".to_vec();
+            for byte in path.iter() {
+                if matches!(*byte, b'*' | b'?' | b'[' | b']' | b'\\') {
+                    descendants.push(b'\\');
+                }
+                descendants.push(*byte);
+            }
+            descendants.extend_from_slice(b"/**");
             [OsString::from_vec(spec), OsString::from_vec(descendants)]
         })
         .collect()
