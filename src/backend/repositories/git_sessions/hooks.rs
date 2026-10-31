@@ -627,10 +627,7 @@ impl Gateway {
                 .trusted_actor_ids
                 .contains(&current_identity.id)
         {
-            ensure!(
-                !failed,
-                "accepted Git writes have post-push bookkeeping failures"
-            );
+            ensure!(!failed, super::PostReceiveFailed);
             return Ok(());
         }
 
@@ -749,10 +746,7 @@ impl Gateway {
                 }
             }
         }
-        ensure!(
-            !failed,
-            "accepted Git writes have post-push dispatch failures"
-        );
+        ensure!(!failed, super::PostReceiveFailed);
         Ok(())
     }
 
