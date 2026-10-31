@@ -24,7 +24,7 @@ impl Cgroup {
             ensure!(Path::new(relative).components().all(|part| matches!(part, Component::Normal(_) | Component::CurDir)), "Invalid current cgroup path");
             let root = Path::new("/sys/fs/cgroup").join(relative);
             check_root(&root)?;
-            return Ok(root);
+            Ok(root)
         }
         #[cfg(not(target_os = "linux"))]
         bail!("Process-tree containment requires Linux cgroup v2")
@@ -55,8 +55,8 @@ impl Cgroup {
                 Ok(std::fs::OpenOptions::new().read(!write).write(write)
                     .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path.join(name))?)
             };
-            return Ok(Self { path: path.to_owned(), procs: open("cgroup.procs", true)?,
-                kill: open("cgroup.kill", true)?, events: open("cgroup.events", false)? });
+            Ok(Self { path: path.to_owned(), procs: open("cgroup.procs", true)?,
+                kill: open("cgroup.kill", true)?, events: open("cgroup.events", false)? })
         }
         #[cfg(not(target_os = "linux"))]
         bail!("Process-tree containment requires Linux cgroup v2")
@@ -75,7 +75,7 @@ impl Cgroup {
                 let written = libc::write(procs.as_raw_fd(), b"0".as_ptr().cast(), 1);
                 if written == 1 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
             }); }
-            return Ok(());
+            Ok(())
         }
         #[cfg(not(target_os = "linux"))] {
             let _ = command;
@@ -87,7 +87,7 @@ impl Cgroup {
         #[cfg(target_os = "linux")] {
             use std::os::unix::fs::FileExt;
             ensure!(self.kill.write_at(b"1", 0)? == 1, "Unable to terminate execution cgroup");
-            return Ok(());
+            Ok(())
         }
         #[cfg(not(target_os = "linux"))]
         bail!("Process-tree containment requires Linux cgroup v2")
@@ -100,9 +100,9 @@ impl Cgroup {
             let length = self.events.read_at(&mut bytes, 0)?;
             ensure!(length < bytes.len(), "Oversized cgroup state");
             let text = std::str::from_utf8(&bytes[..length])?;
-            return match text.lines().find_map(|line| line.strip_prefix("populated ")) {
+            match text.lines().find_map(|line| line.strip_prefix("populated ")) {
                 Some("0") => Ok(false), Some("1") => Ok(true), _ => bail!("Invalid cgroup state"),
-            };
+            }
         }
         #[cfg(not(target_os = "linux"))]
         bail!("Process-tree containment requires Linux cgroup v2")
@@ -159,7 +159,7 @@ fn check_root(path: &Path) -> Result<()> {
         ensure!(unsafe { libc::fstatfs(directory.as_raw_fd(), stat.as_mut_ptr()) } == 0, "Unable to inspect cgroup filesystem");
         // SAFETY: fstatfs succeeded, so it filled `stat`.
         ensure!(unsafe { stat.assume_init() }.f_type as u64 == 0x6367_7270, "Execution containment requires cgroup v2");
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(target_os = "linux"))] {
         let _ = path;

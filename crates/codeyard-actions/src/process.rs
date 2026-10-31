@@ -105,9 +105,9 @@ fn group_alive(id: u32) -> std::io::Result<bool> {
         // SAFETY: signal zero checks group existence without changing it.
         if unsafe { libc::kill(-id, 0) } == 0 { return Ok(true); }
         let error = std::io::Error::last_os_error();
-        return match error.raw_os_error() {
+        match error.raw_os_error() {
             Some(libc::ESRCH) => Ok(false), Some(libc::EPERM) => Ok(true), _ => Err(error),
-        };
+        }
     }
     #[cfg(not(unix))] { let _ = id; Ok(false) }
 }
