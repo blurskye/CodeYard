@@ -551,8 +551,9 @@ pub async fn stale_settings_forms(f: &Fixture) {
         shown += page.body.matches(hidden.as_str()).count();
     }
     // The danger zone carries archive and private-reporting forms; general settings also
-    // include template status. Header star/watch forms carry the ID on every tab.
-    assert_eq!(shown, 11 + 2 * 5);
+    // include template status. The header star and watch-level forms carry the ID on every
+    // tab, drawn twice: beside the tab strip and in the phone's More menu.
+    assert_eq!(shown, 11 + 4 * 5);
     let rename = [
         ("repository_id", id.as_str()),
         ("name", "settings_new"),
@@ -865,7 +866,10 @@ pub async fn repository_pages(f: &Fixture) {
     let own_title = "title=\"Cannot fork your own repository\"";
     assert!(!owner_area.contains("/_forms/fork"), "{owner_area}");
     assert!(owner_area.contains(own_title), "{owner_area}");
-    let forked = f.form(&f.member, fork_path, &[], false).await;
+    // Repository forms name the repository they were rendered for.
+    let source_id = source.id.to_string();
+    let bound = [("repository_id", source_id.as_str())];
+    let forked = f.form(&f.member, fork_path, &bound, false).await;
     forked.redirect("/ordinary_member/fork_private");
     let fork = db::repositories::records::get_repository(pool, "ordinary_member", "fork_private")
         .await
@@ -883,7 +887,7 @@ pub async fn repository_pages(f: &Fixture) {
     let staff = f.get(&f.staff, issues, false).await;
     let staff_area = action_area(&staff.body);
     assert!(staff_area.contains(fork_form), "{staff_area}");
-    let forked = f.form(&f.staff, fork_path, &[], false).await;
+    let forked = f.form(&f.staff, fork_path, &bound, false).await;
     forked.redirect("/siteadmin_only/fork_private");
     let staff_fork =
         db::repositories::records::get_repository(pool, "siteadmin_only", "fork_private")
@@ -962,7 +966,10 @@ pub async fn repository_pages(f: &Fixture) {
         .body
         .contains("Git storage is temporarily unavailable."));
     let star = "/personal_owner/offline_store/_forms/star";
-    let starred = f.form(&f.owner, star, &[], false).await;
+    let offline_id = offline.id.to_string();
+    let starred = f
+        .form(&f.owner, star, &[("repository_id", offline_id.as_str())], false)
+        .await;
     starred.redirect("/personal_owner/offline_store");
     let stars = db::repositories::engagement::is_repo_starred(pool, f.owner.id, offline.id);
     assert!(stars.await.unwrap());
