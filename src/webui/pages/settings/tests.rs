@@ -10,6 +10,16 @@ fn html(element: Element) -> String {
 }
 
 #[test]
+fn rejected_key_drafts_keep_a_malformed_public_key_but_never_a_private_one() {
+    let draft = |key: &str| {
+        preserved_values(&HashMap::from([("public_key".into(), key.into())])).public_key
+    };
+    assert_eq!(draft("ssh-ed25519 AAAA"), "ssh-ed25519 AAAA");
+    assert!(draft("-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA").is_empty());
+    assert!(draft("PuTTY-User-Key-File-3: ssh-ed25519\nPrivate-Lines: 1\nAAAA").is_empty());
+}
+
+#[test]
 fn rejected_settings_preserve_nonsecret_fields_but_not_passwords_or_private_keys() {
     crate::webui::tests::in_scope(|| {
         let form = HashMap::from([

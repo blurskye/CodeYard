@@ -32,6 +32,11 @@ pub struct FormValues {
     pub mode: String,
 }
 
+/// Whether a pasted key may be a private key, which a refused form never echoes back.
+pub fn may_be_private_key(value: &str) -> bool {
+    value.contains("PRIVATE KEY") || value.contains("PuTTY-User-Key-File")
+}
+
 /// Only explicitly non-secret values may survive a failed submission.
 pub fn preserved_values(form: &HashMap<String, String>) -> FormValues {
     let get = |name: &str| form.get(name).cloned().unwrap_or_default();
@@ -51,8 +56,10 @@ pub fn preserved_values(form: &HashMap<String, String>) -> FormValues {
         scope: get("scope"),
         expiry: get("expiry"),
         expires_at: get("expires_at"),
-        // The enrollment adapter may restore only a successfully parsed public key.
-        public_key: String::new(),
+        // A malformed public key stays in the draft so it can be corrected; a private one never.
+        public_key: Some(get("public_key"))
+            .filter(|key| !may_be_private_key(key))
+            .unwrap_or_default(),
         redirect: get("redirect"),
         mode: get("mode"),
     }

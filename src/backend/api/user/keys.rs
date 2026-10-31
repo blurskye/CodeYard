@@ -7,6 +7,7 @@ use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::identity::keys;
 use crate::backend::identity::keys::KeyError;
+use crate::webui::pages::fields::may_be_private_key;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -88,16 +89,14 @@ async fn save_key_form(
         .await;
     }
     let public_key = field(&form, "public_key").trim();
-    if db::users::ssh_keys::parse_public_key(public_key).is_err() {
-        // Do not echo a mistakenly pasted private key back to the browser.
-        let mut safe = form.clone();
-        safe.remove("public_key");
+    if may_be_private_key(public_key) {
+        // The refused page keeps the rest of the draft; preserved_values drops the private key.
         return settings_response(
             &ctx,
             "keys",
-            Some(&safe),
+            Some(&form),
             StatusCode::BAD_REQUEST,
-            Some("Paste one valid OpenSSH public key, never a private key."),
+            Some("Paste only your public key, never a private key."),
         )
         .await;
     }

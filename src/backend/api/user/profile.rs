@@ -294,9 +294,7 @@ pub(crate) async fn load_settings(
         )
     })?;
     let values = if let Some(form) = submitted {
-        let mut values = preserved_values(form);
-        values.public_key = form.get("public_key").filter(|key| db::users::ssh_keys::parse_public_key(key).is_ok()).cloned().unwrap_or_default();
-        values
+        preserved_values(form)
     } else {
         FormValues {
             display_name: profile.display_name.clone(),
