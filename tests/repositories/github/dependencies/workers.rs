@@ -68,11 +68,17 @@ async fn scan(w: &World) {
     db::vulnerabilities::enqueue(w.f.pool(), w.repo.id)
         .await
         .unwrap();
-    let (id, generation) = db::vulnerabilities::claim(w.f.pool())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(id, w.repo.id);
+    // Every new repository queues its first scan, so the PostgreSQL fixture's repository may
+    // come first; it is claimed and left alone.
+    let (id, generation) = loop {
+        let (id, generation) = db::vulnerabilities::claim(w.f.pool())
+            .await
+            .unwrap()
+            .unwrap();
+        if id == w.repo.id {
+            break (id, generation);
+        }
+    };
     let repo = w.f.repository(id).await;
     codeyard::backend::vulnerabilities::scan(&w.state, &repo, generation)
         .await

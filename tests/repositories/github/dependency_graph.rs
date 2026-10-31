@@ -585,11 +585,17 @@ async fn vulnerability_contract(pg: bool) {
     let initial_commit = created["commit"]["sha"].as_str().unwrap().to_owned();
     let blob = created["content"]["sha"].as_str().unwrap().to_owned();
     // Run the same durable job the scheduler claims, with no external network.
-    let (claimed, generation) = db::vulnerabilities::claim(f.pool())
-        .await
-        .unwrap()
-        .expect("a Git publication must queue a scan");
-    assert_eq!(claimed, repo_id);
+    // Every new repository queues its first scan, so the PostgreSQL fixture's repository may
+    // come first; it is claimed and left alone.
+    let generation = loop {
+        let (claimed, generation) = db::vulnerabilities::claim(f.pool())
+            .await
+            .unwrap()
+            .expect("a Git publication must queue a scan");
+        if claimed == repo_id {
+            break generation;
+        }
+    };
     vulnerabilities::scan(&state, &f.repository(repo_id).await, generation)
         .await
         .unwrap();
