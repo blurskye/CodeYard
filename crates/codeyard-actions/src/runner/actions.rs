@@ -129,7 +129,7 @@ impl<'a> ActionReference<'a> {
         ensure!(components.len() >= 2 && components.iter().all(|part| {
             !part.is_empty() && *part != "." && *part != ".."
                 && part.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
-        }) && !version.is_empty() && !version.starts_with('-') && !version.contains(['\0', '\n', '\r']), "Invalid action reference '{reference}'");
+        }) && !version.is_empty() && !version.starts_with('-') && !version.contains(['@', '\0', '\n', '\r']), "Invalid action reference '{reference}'");
         Ok(Self { components, version })
     }
 }
