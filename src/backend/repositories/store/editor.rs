@@ -211,12 +211,21 @@ static STAGED: LazyLock<Mutex<std::collections::HashMap<String, Arc<StagedFile>>
 static STAGING_SLOTS: LazyLock<Arc<tokio::sync::Semaphore>> =
     LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(64)));
 
+/// The staged objects of `prepared`. They stay staged until a publication succeeds, so a refused
+/// one can be tried again until the preparation expires.
 pub(super) fn claim_staged(path: &Path, prepared: &PreparedFile) -> Result<Option<Arc<StagedFile>>, RepoError> {
     let Some(key) = &prepared.staging else { return Ok(None); };
-    let mut staged = STAGED.lock().map_err(|_| unavailable())?;
+    let staged = STAGED.lock().map_err(|_| unavailable())?;
     let entry = staged.get(key).ok_or_else(|| invalid("The prepared file expired; reopen the editor."))?;
     if entry.destination != path { return Err(invalid("Invalid prepared file publication.")); }
-    Ok(staged.remove(key))
+    Ok(Some(entry.clone()))
+}
+
+/// Drops the staged objects of a published file; the branch now holds them.
+pub(super) fn release_staged(prepared: &PreparedFile) {
+    if let (Some(key), Ok(mut staged)) = (&prepared.staging, STAGED.lock()) {
+        staged.remove(key);
+    }
 }
 
 /// A bare repository on disk that editor commands run against.
@@ -758,7 +767,9 @@ mod tests {
     /// Moves the branch to the prepared commit; `Conflict` if it moved meanwhile.
     async fn publish(path: &Path, prepared: &PreparedFile) -> Result<CommitInfo, RepoError> {
         let staged = claim_staged(path, prepared)?;
-        publish_staged(path, prepared, staged.as_deref()).await
+        let commit = publish_staged(path, prepared, staged.as_deref()).await?;
+        release_staged(prepared);
+        Ok(commit)
     }
 
     fn input(path: &str) -> FileWrite {

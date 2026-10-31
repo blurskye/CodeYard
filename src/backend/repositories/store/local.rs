@@ -2068,6 +2068,7 @@ impl LocalStore {
         let commit = publication
             .scope(editor::publish_staged(self.path(), prepared, staged.as_deref()))
             .await?;
+        editor::release_staged(prepared);
         let bypass_followup = record_secret_bypasses(pool, repo_id, actor, bypasses).await;
         let followup = self
             .after_ref_change(
