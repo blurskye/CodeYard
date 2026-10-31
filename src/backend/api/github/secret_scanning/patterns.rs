@@ -85,8 +85,6 @@ struct Filters {
     push_protection: Option<String>,
     sort: Option<String>,
     direction: Option<String>,
-    #[serde(flatten)]
-    pagination: super::super::pagination::CursorPagination,
 }
 async fn list(
     State(state): State<Arc<AppState>>,
@@ -94,6 +92,7 @@ async fn list(
     Path(params): Path<HashMap<String, String>>,
     OriginalUri(uri): OriginalUri,
     Query(query): Query<Filters>,
+    Query(pagination): Query<super::super::pagination::CursorPagination>,
 ) -> Result<Response> {
     let (owner, actor) = scope(&state, &headers, &params, false).await?;
     if query
@@ -139,7 +138,6 @@ async fn list(
     if query.direction.as_deref() != Some("asc") {
         patterns.reverse();
     }
-    let pagination = &query.pagination;
     let (offset, limit) = pagination.window()?;
     let has_next = patterns.len() > offset + limit;
     pagination.response(

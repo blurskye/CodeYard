@@ -108,8 +108,6 @@ struct Filters {
     sort: Option<String>,
     #[serde(default)]
     hide_secret: bool,
-    #[serde(flatten)]
-    pagination: super::pagination::CursorPagination,
 }
 impl Filters {
     fn validate(&self) -> Result<()> {
@@ -176,13 +174,13 @@ async fn list_org(
     Path(org): Path<String>,
     OriginalUri(uri): OriginalUri,
     Query(query): Query<Filters>,
+    Query(pagination): Query<super::pagination::CursorPagination>,
 ) -> Result<Response> {
     let actor = auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(auth::required)?;
     let org = super::orgs::target(&state, &org).await?;
     query.validate()?;
-    let pagination = &query.pagination;
     let (offset, limit) = pagination.window()?;
     let alerts = records::org_alerts(
         &state.pool,
@@ -226,11 +224,11 @@ async fn list(
     Path((owner, name)): Path<(String, String)>,
     OriginalUri(uri): OriginalUri,
     Query(query): Query<Filters>,
+    Query(pagination): Query<super::pagination::CursorPagination>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor.ok_or_else(auth::required)?;
     query.validate()?;
-    let pagination = &query.pagination;
     let (offset, limit) = pagination.window()?;
     let alerts = records::alerts(
         &state.pool,
