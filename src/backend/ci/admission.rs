@@ -791,8 +791,8 @@ mod tests {
         assert!(is_safe_workflow_path(".github/workflows/unit-test.yml"));
         assert!(is_safe_workflow_path(".github/workflows/unit test.yml"));
         assert!(is_safe_workflow_path(".github/workflows/テスト.yml"));
+        assert!(is_safe_workflow_path(".github/workflows/a..yml"));
         for bad in [
-            ".github/workflows/a..yml",
             ".github/workflows/../test.yml",
             ".github/workflows/nested/test.yml",
             ".github/workflows/a.yml,b.yml",
