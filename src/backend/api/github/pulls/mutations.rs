@@ -26,8 +26,9 @@ pub(in crate::backend::api::github) fn operation_error(error: pull_requests::Ope
         Missing { .. } => Error::missing(),
         Unauthenticated { .. } => auth::required(),
         Denied { message, .. } => Error::new(StatusCode::FORBIDDEN, message),
-        Invalid { message, .. } => Error::invalid(message),
-        Conflict { message, .. } => Error::new(StatusCode::CONFLICT, message),
+        // GitHub answers a pull request write it refuses with 422 (an open duplicate, a stale
+        // revision, a refused stack); merges map their own 405 and 409 first.
+        Invalid { message, .. } | Conflict { message, .. } => Error::invalid(message),
         TooLarge { message, .. } => Error::new(StatusCode::PAYLOAD_TOO_LARGE, message),
         _ => Error::unavailable(()),
     }
