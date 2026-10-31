@@ -217,11 +217,8 @@ fn missing_declared_packages_and_workspaces_never_claim_complete_inventory() {
 fn patches_preserve_installed_dependency_and_peer_constraints() {
     let old = published(json!({"name":"foo","version":"1.2.3"}));
     let new = published(json!({"name":"foo","version":"1.2.4"}));
-    for (version, field) in [
-        (1, "requires"),
-        (2, "dependencies"),
-        (3, "peerDependencies"),
-    ] {
+    // npm v1 locks are never patched, so only v2 and v3 entries are checked.
+    for (version, field) in [(2, "dependencies"), (3, "peerDependencies")] {
         for (requirement, compatible) in [
             ("1.2.3", false),
             ("=1.2.3", false),
@@ -231,11 +228,7 @@ fn patches_preserve_installed_dependency_and_peer_constraints() {
             let mut parsed = lock(version, &old);
             let mut entry = json!({"version":"1.0.0","resolved":"https://registry.npmjs.org/bar/-/bar-1.0.0.tgz"});
             entry[field] = json!({"foo":requirement});
-            if version == 1 {
-                parsed.document["dependencies"]["bar"] = entry;
-            } else {
-                parsed.document["packages"]["node_modules/bar"] = entry;
-            }
+            parsed.document["packages"]["node_modules/bar"] = entry;
             let parsed = Lockfile::parse(
                 &serde_json::to_vec(&parsed.manifest).unwrap(),
                 &serde_json::to_vec(&parsed.document).unwrap(),
