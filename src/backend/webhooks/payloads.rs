@@ -925,6 +925,7 @@ pub fn git_commit(commit: &CommitInfo, owner: &str, repo: &str, repo_id: i64) ->
 
 /// GitHub's commit object: the Git commit `detail` with its comment count, and the accounts
 /// its author and committer emails belong to.
+#[expect(clippy::too_many_arguments, reason = "Each argument is one part of GitHub's commit object.")]
 pub fn commit(
     commit: &CommitInfo,
     mut detail: Value,

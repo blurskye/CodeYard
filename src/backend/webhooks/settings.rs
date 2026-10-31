@@ -178,6 +178,7 @@ pub async fn save(
     save_with_revision(pool, encryptor, owner, actor, credential, id, form, None).await
 }
 
+#[expect(clippy::too_many_arguments, reason = "Explicit actor and resources keep operations HTTP-free.")]
 pub async fn save_with_revision(
     pool: &DbPool, encryptor: Option<&SecretEncryptor>, owner: HookOwner, actor: &User,
     credential: &db::users::accounts::AccountCredential<'_>,

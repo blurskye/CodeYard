@@ -609,6 +609,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for IssueCommentEntry {
 }
 
 /// The author or a live repository writer may edit. Only writers may change locked threads.
+#[expect(clippy::too_many_arguments, reason = "Each argument is one ID, body or check of the edit.")]
 pub async fn edit_issue_comment(
     pool: &SqlitePool,
     actor_id: i64,

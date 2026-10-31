@@ -12,6 +12,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 const COLUMNS: &str = "id, repo_id, org_id, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, created_at, updated_at, username, encrypted_password, password_nonce";
 const DELIVERY_COLUMNS: &str = "id, webhook_id, guid, event, action, status_code, duration_ms, error, request_headers, request_body, response_headers, response_body, delivered_at, redelivery";
 
+#[expect(clippy::too_many_arguments, reason = "Each argument is one filter or page bound of the settings read.")]
 pub async fn read_settings(
     pool: &PgPool,
     owner: HookOwner,

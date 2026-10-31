@@ -35,6 +35,7 @@ pub async fn list(pool: &SqlitePool, actor: i64, org: i64, name: Option<&str>, o
     Ok((total, registries))
 }
 
+#[expect(clippy::too_many_arguments, reason = "Saving binds the actor's credential, the registry's fields and its secret.")]
 pub async fn save(
     pool: &SqlitePool,
     encryptor: Option<&SecretEncryptor>,

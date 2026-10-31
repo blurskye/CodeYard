@@ -1655,6 +1655,7 @@ impl RepoStore {
         }
     }
 
+    #[expect(clippy::too_many_arguments, reason = "The store forwards the dependency-security request's explicit fields.")]
     pub(crate) async fn configure_dependency_security_as(
         &self,
         pool: &db::DbPool,

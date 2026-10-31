@@ -35,6 +35,7 @@ pub async fn list(pool: &PgPool, actor: i64, org: i64, name: Option<&str>, offse
     Ok((total, registries))
 }
 
+#[expect(clippy::too_many_arguments, reason = "Saving binds the actor's credential, the registry's fields and its secret.")]
 pub async fn save(
     pool: &PgPool,
     encryptor: Option<&SecretEncryptor>,

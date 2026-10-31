@@ -162,6 +162,7 @@ pub async fn get_browser_session(pool: &SqlitePool, id: &str) -> Result<Option<B
         .bind(id).fetch_optional(pool).await.map_err(Into::into)
 }
 
+#[expect(clippy::too_many_arguments, reason = "Each argument is one column or check of the rotated session.")]
 pub async fn rotate_authenticated_session(
     pool: &SqlitePool,
     old: Option<&str>,

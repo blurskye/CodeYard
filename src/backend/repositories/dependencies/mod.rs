@@ -84,6 +84,7 @@ pub async fn status(
     }
     Ok(Status { enabled, paused })
 }
+#[expect(clippy::too_many_arguments, reason = "Explicit actor and resources keep operations HTTP-free.")]
 pub async fn set_enabled(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,

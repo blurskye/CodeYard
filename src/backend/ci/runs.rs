@@ -429,6 +429,7 @@ impl CiRuns {
             .await
     }
 
+    #[expect(clippy::too_many_arguments, reason = "Admission takes the request, its access, attempt, payloads and credential separately.")]
     async fn enqueue_run(
         &self,
         request: CiRunRequest,

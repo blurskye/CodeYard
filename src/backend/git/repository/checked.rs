@@ -491,6 +491,7 @@ pub(crate) async fn commit_tree(
 }
 
 /// Legacy authors need not be UTF-8; the environment carries their original bytes.
+#[expect(clippy::too_many_arguments, reason = "Each argument is one input of git commit-tree.")]
 pub(super) async fn commit_tree_bytes(
     path: &Path,
     tree: &str,

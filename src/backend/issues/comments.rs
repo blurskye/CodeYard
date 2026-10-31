@@ -89,6 +89,7 @@ async fn require_change(
     Ok(())
 }
 
+#[expect(clippy::too_many_arguments, reason = "Explicit actor and resources keep operations HTTP-free.")]
 pub async fn create_issue_comment(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,

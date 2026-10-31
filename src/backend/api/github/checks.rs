@@ -575,6 +575,7 @@ async fn rerequest(
     .await?;
     Ok((StatusCode::CREATED, Json(json!({}))).into_response())
 }
+#[expect(clippy::too_many_arguments, reason = "Rerequesting a suite needs the caller's repository, both credentials and the suite's run.")]
 pub(in crate::backend::api) async fn request_again(
     state: &AppState,
     repo: &Repository,

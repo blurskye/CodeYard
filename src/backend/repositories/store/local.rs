@@ -3072,6 +3072,7 @@ impl LocalStore {
         .map_err(|_| unavailable("Repository transfer failed"))?
     }
 
+    #[expect(clippy::too_many_arguments, reason = "The store forwards the dependency-security request's explicit fields.")]
     pub(super) async fn configure_dependency_security(
         &self,
         pool: &db::DbPool,

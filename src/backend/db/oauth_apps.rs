@@ -76,7 +76,6 @@ pub enum Exchange {
 
 native_operation!(crate::backend::db::postgres::oauth_apps::register,
     crate::backend::db::sqlite::oauth_apps::register,
-    #[expect(clippy::too_many_arguments, reason = "Registration stores the explicit validated application fields.")]
     fn register(pool: &DbPool, actor: i64, session: &str, client_id: &str, secret_hash: &str, name: &str, homepage: &str, redirect_uri: &str) -> Result<Option<Application>>);
 native_operation!(crate::backend::db::postgres::oauth_apps::application,
     crate::backend::db::sqlite::oauth_apps::application,
@@ -95,7 +94,6 @@ native_operation!(crate::backend::db::postgres::oauth_apps::approve,
     fn approve(pool: &DbPool, code: &str, actor: i64, session: &str, denied: bool) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::oauth_apps::exchange,
     crate::backend::db::sqlite::oauth_apps::exchange,
-    #[expect(clippy::too_many_arguments, reason = "OAuth exchange binds each credential to the original authorization request.")]
     fn exchange(pool: &DbPool, hash: &str, client_id: &str, kind: &str, redirect_uri: Option<&str>, verifier: &str, state: Option<&str>, value: &str) -> Result<Exchange>);
 native_operation!(crate::backend::db::postgres::oauth_apps::token,
     crate::backend::db::sqlite::oauth_apps::token,

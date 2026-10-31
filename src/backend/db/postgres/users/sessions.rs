@@ -172,6 +172,7 @@ pub async fn get_browser_session(pool: &PgPool, id: &str) -> Result<Option<Brows
         .bind(id).fetch_optional(pool).await.map_err(Into::into)
 }
 
+#[expect(clippy::too_many_arguments, reason = "Each argument is one column or check of the rotated session.")]
 pub async fn rotate_authenticated_session(
     pool: &PgPool,
     old: Option<&str>,

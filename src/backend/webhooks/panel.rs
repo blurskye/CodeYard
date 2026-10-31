@@ -280,6 +280,7 @@ pub fn draft_from_form(pairs: &[(String, String)]) -> HookDraft {
 /// Runs one posted webhook action: `webhook-save`, `webhook-delete`, `webhook-ping` or
 /// `webhook-redeliver`. Returns the notice that names what was done. A refused save also returns
 /// the draft, so its form can be shown again with what was typed.
+#[expect(clippy::too_many_arguments, reason = "Explicit actor and resources keep operations HTTP-free.")]
 pub async fn apply(
     pool: &DbPool,
     encryptor: Option<&SecretEncryptor>,

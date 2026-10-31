@@ -3,6 +3,7 @@
 
 macro_rules! native_operation {
     ($postgres:path, $sqlite:path, $(#[$attr:meta])* fn $name:ident($pool:ident: &DbPool $(, $arg:ident: $ty:ty)* $(,)?) -> $result:ty) => {
+        #[allow(clippy::too_many_arguments, reason = "The dispatcher repeats its engine functions' signature, and they give the reason.")]
         $(#[$attr])*
         pub async fn $name($pool: &DbPool, $($arg: $ty),*) -> $result {
             match $pool {

@@ -5,6 +5,7 @@ use sqlx::{Sqlite, SqlitePool, Transaction};
 /// Adds the reaction, or removes it when the user already gave it. Returns whether it is now set.
 /// BEGIN IMMEDIATE holds the write lock, so the checks and the change see the same state: a revoked
 /// grant, an archived repository or a pending comment refuses the write.
+#[expect(clippy::too_many_arguments, reason = "Each argument is one ID, subject or check of the reaction.")]
 pub async fn toggle_reaction(
     pool: &SqlitePool,
     actor_id: i64,

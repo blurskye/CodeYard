@@ -608,6 +608,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for IssueCommentEntry {
 }
 
 /// The author or a live repository writer may edit. Only writers may change locked threads.
+#[expect(clippy::too_many_arguments, reason = "Each argument is one ID, body or check of the edit.")]
 pub async fn edit_issue_comment(
     pool: &PgPool,
     actor_id: i64,

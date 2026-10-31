@@ -119,6 +119,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    #[expect(clippy::too_many_arguments, reason = "A called workflow's snapshot takes its source, contents, depth and calling ref.")]
     pub fn snapshot<'b>(
         &'b mut self,
         repository: db::models::Repository,

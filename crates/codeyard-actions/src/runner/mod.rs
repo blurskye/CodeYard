@@ -709,6 +709,7 @@ struct WorkflowRun {
 }
 
 impl WorkflowRun {
+    #[expect(clippy::too_many_arguments, reason = "A leaf job takes its plan, contexts, environment, log and cancel signal as the scheduler owns them.")]
     async fn run_leaf(
         &self, job: PlannedJob, index: usize, options: Arc<Options>, mut contexts: Contexts,
         env: BTreeMap<String, String>, log: Log, mut cancel: watch::Receiver<bool>,
@@ -745,6 +746,7 @@ impl WorkflowRun {
         }
     }
 
+    #[expect(clippy::too_many_arguments, reason = "Each job carries its workflow, dependencies, saved state, contexts, environment and name and token prefixes.")]
     fn execute_job(
         &self,
         raw: Arc<serde_yaml::Value>,

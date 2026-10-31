@@ -79,6 +79,7 @@ pub(crate) async fn append(
 }
 
 /// The events from `after` up to `before`, each bound optional, oldest first.
+#[expect(clippy::too_many_arguments, reason = "Each argument is one filter or page bound of the query.")]
 pub async fn list_events(
     pool: &SqlitePool,
     repo: i64,

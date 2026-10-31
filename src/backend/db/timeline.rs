@@ -74,7 +74,6 @@ impl Subject {
 
 native_operation!(crate::backend::db::postgres::timeline::record_event,
     crate::backend::db::sqlite::timeline::record_event,
-    #[allow(clippy::too_many_arguments, reason = "Each argument is one column of the timeline event.")]
     fn record_event(pool: &DbPool, repo_id: i64, subject: &str, subject_id: i64, actor_id: i64, kind: &str, detail: &str, previous: &str) -> Result<()>);
 
 // The events of a subject from `after` up to `before`, each bound optional, oldest first.

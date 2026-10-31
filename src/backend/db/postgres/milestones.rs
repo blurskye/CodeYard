@@ -274,6 +274,7 @@ pub async fn delete_milestone(
     Ok(())
 }
 
+#[expect(clippy::too_many_arguments, reason = "Each argument is one filter or page bound of the query.")]
 pub async fn read_milestones(pool: &PgPool, viewer: Option<i64>, repo: i64, number: Option<i32>, state: Option<&str>, sort: &str, limit: i64, offset: i64) -> Result<Vec<MilestoneSummary>> {
     let order = crate::backend::db::milestones::milestone_order(sort);
     let readable = super::repositories::access::readable_condition();

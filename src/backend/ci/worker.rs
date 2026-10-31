@@ -443,6 +443,7 @@ where
 
 /// Clones the repository at the run's commit and runs each workflow in turn.
 /// Returns whether every workflow succeeded.
+#[expect(clippy::too_many_arguments, reason = "The run owns its claim, cancel and force signals, cleanup sender, workspace and cgroup.")]
 async fn run_workflows(
     service: &CiWorkers,
     worker: &str,

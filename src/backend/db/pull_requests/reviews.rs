@@ -264,7 +264,6 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::delete_p
 // that draft was started on instead of the current head.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::save_pull_request_review,
     crate::backend::db::sqlite::pull_requests::reviews::save_pull_request_review,
-    #[allow(clippy::too_many_arguments, reason = "Each argument is one field or check of the saved review.")]
     fn save_pull_request_review(pool: &DbPool, pr_id: i64, author_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, state: &str, body: Option<&str>, commit_sha: Option<&str>, expected_pending: Option<Option<i64>>) -> Result<PullRequestReview>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull_request_review,

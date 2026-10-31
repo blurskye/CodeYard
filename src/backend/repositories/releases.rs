@@ -734,6 +734,7 @@ pub struct AssetUpload<'a> {
     pub bytes: Vec<u8>,
 }
 
+#[expect(clippy::too_many_arguments, reason = "Explicit actor and resources keep operations HTTP-free.")]
 pub async fn upload_asset(
     pool: &db::DbPool,
     store: &ObjectStore,

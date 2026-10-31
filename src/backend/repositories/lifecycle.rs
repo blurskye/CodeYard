@@ -288,6 +288,7 @@ impl<'a> CreationSource<'a> {
     }
 }
 
+#[expect(clippy::too_many_arguments, reason = "Provisioning takes the owner, the form's choices and the creating authority separately.")]
 async fn provision_from(
     node: (&db::DbPool, Option<&NodeContext>),
     repos_path: &Path,
