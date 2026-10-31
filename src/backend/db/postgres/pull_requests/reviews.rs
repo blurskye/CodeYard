@@ -710,7 +710,7 @@ pub async fn save_review_batch(pool: &PgPool, input: crate::backend::db::pull_re
         .await?;
         anyhow::ensure!(
             inline > 0,
-            crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview
+            crate::backend::db::discussions::DiscussionWriteRefusal::EmptyReview
         );
     }
     // The author's pending review, if any, is submitted with its comments by this review. It keeps

@@ -35,6 +35,9 @@ pub enum DiscussionWriteRefusal {
     InvalidReview,
     #[error("discussion_review_full")]
     ReviewFull,
+    /// A review other than an approval with neither a body nor inline comments.
+    #[error("discussion_review_empty")]
+    EmptyReview,
     #[error("discussion_revision_changed")]
     RevisionChanged,
 }

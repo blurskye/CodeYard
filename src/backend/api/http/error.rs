@@ -217,6 +217,11 @@ pub(crate) fn discussion_write_error(error: anyhow::Error) -> (StatusCode, Json<
             "validation_error",
             "A review holds at most 200 comments.",
         ),
+        Some(DiscussionWriteRefusal::EmptyReview) => (
+            StatusCode::BAD_REQUEST,
+            "validation_error",
+            "A review body is required unless the review is approved",
+        ),
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
             "database_error",

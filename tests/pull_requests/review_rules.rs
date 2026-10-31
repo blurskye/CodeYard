@@ -1138,7 +1138,7 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
     assert!(
         matches!(
             refusal(&error),
-            Some(db::discussions::DiscussionWriteRefusal::InvalidReview)
+            Some(db::discussions::DiscussionWriteRefusal::EmptyReview)
         ),
         "{error:#}"
     );

@@ -740,7 +740,7 @@ pub async fn save_review_batch(pool: &SqlitePool, input: crate::backend::db::pul
         .await?;
         anyhow::ensure!(
             inline > 0,
-            crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview
+            crate::backend::db::discussions::DiscussionWriteRefusal::EmptyReview
         );
     }
     // The author's pending review, if any, is submitted with its comments by this review. It keeps

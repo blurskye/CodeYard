@@ -276,6 +276,10 @@ pub(crate) fn write_error(error: anyhow::Error) -> OperationError {
             code: "validation_error",
             message: "A review holds at most 200 comments.".into(),
         },
+        Some(DiscussionWriteRefusal::EmptyReview) => OperationError::Invalid {
+            code: "validation_error",
+            message: "A review body is required unless the review is approved".into(),
+        },
         None => OperationError::Unavailable {
             code: "database_error",
             message: "Discussion storage is unavailable; no success was confirmed".into(),
