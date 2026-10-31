@@ -1032,6 +1032,16 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .await
         .unwrap());
 
+    // A private repository runs workflows from fork pull requests only once its settings allow it.
+    db::action_settings::settings(
+        pool,
+        owner.id,
+        &db::action_settings::Scope::Repository(repo.id),
+        db::action_settings::Setting::ForkWorkflows,
+        Some(&serde_json::json!({"run_workflows_from_fork_pull_requests": true})),
+    )
+    .await
+    .unwrap();
     let fork = enqueue(pool, repo.id, owner.id, &revision.sha, &blob).await;
     if let db::DbPool::Postgres(pg) = pool {
         sqlx::query("UPDATE ci_runs SET is_fork = TRUE WHERE id = $1")
