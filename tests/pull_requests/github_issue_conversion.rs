@@ -880,6 +880,8 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     assert_eq!(published.sha, next["sha"].as_str().unwrap());
+    // The fork's own writer may still update the branch on purpose, and publishes the new head
+    // on their own authority, as efe68f63c made it.
     call(
         &router,
         "pulls/update-branch",
@@ -887,9 +889,19 @@ async fn contract(pg: bool) {
         &format!("{collection}/{}/update-branch", source.number),
         reader,
         json!({}),
-        StatusCode::FORBIDDEN,
+        StatusCode::ACCEPTED,
     )
     .await;
+    let updated = db::pull_requests::records::get_pull_request(f.pool(), repo.id, source.number)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(updated.head_sha, frozen.head_sha);
+    let published = codeyard::backend::repositories::store::repo_store(&repo, None)
+        .commit_from_primary(&format!("refs/pull/{}/head", source.number))
+        .await
+        .unwrap();
+    assert_eq!(published.sha, updated.head_sha);
     f.finish().await;
 }
 
