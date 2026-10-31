@@ -4222,10 +4222,25 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
     let heartbeat = json!({"worker": "slot-1", "operation": {"Heartbeat": {"id": 1}}});
     let body = serde_json::to_vec(&heartbeat).unwrap();
     // Sixteen requests take every slot: each sends the length of its frame and keeps the body back.
+    // One peer may only have four requests waiting for their frames, so four runners hold them.
+    let mut runners = Vec::new();
+    for index in 0..4 {
+        let key = cluster::NodeKey::generate();
+        db::cluster::upsert_declared_nodes(
+            fixture.pool(),
+            &[db::cluster::DeclaredMember {
+                public_key: key.public_hex(),
+                name: format!("busy-runner-{index}"),
+                roles: vec!["runner".into()],
+            }],
+        )
+        .await
+        .unwrap();
+        runners.push(client(&key).await);
+    }
     let mut held = Vec::new();
-    for _ in 0..16 {
-        let connection = fixture
-            .worker
+    for runner in runners.iter().cycle().take(16) {
+        let connection = runner
             .iroh
             .endpoint()
             .await
@@ -4275,6 +4290,9 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
     let reply = stream_request(&connection, heartbeat).await;
     assert!(reply["result"].get("Ok").is_some(), "{reply}");
     connection.close(0u32.into(), b"test complete");
+    for runner in runners {
+        runner.iroh.close().await;
+    }
     fixture.close().await;
 }
 
