@@ -12,7 +12,7 @@ pub async fn item_links(pool: &PgPool, viewer: Option<i64>, project: i64, items:
     Ok(links)
 }
 
-pub(super) const ITEM: &str = "SELECT i.id,i.project_id,i.creator_id,COALESCE(issues.repo_id,pr.repo_id,i.repo_id) AS repo_id,i.issue_id,i.pull_request_id,i.draft_title,i.draft_body,i.field_values,i.archived,i.position,i.created_at,i.updated_at,COALESCE(issues.title,pr.title,i.draft_title) AS title,COALESCE(issues.state,pr.state,'open') AS state FROM project_items i LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id";
+pub(super) const ITEM: &str = "SELECT i.id,i.project_id,i.creator_id,COALESCE(issues.repo_id,pr.repo_id,i.repo_id) AS repo_id,i.issue_id,i.pull_request_id,i.draft_title,i.draft_body,i.field_values,i.archived,i.archived_at,i.position,i.created_at,i.updated_at,COALESCE(issues.title,pr.title,i.draft_title) AS title,COALESCE(issues.state,pr.state,'open') AS state FROM project_items i LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id";
 
 pub(super) async fn repository_read(
     tx: &mut Transaction<'_, Postgres>,
