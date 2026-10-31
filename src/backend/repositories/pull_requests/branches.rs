@@ -317,6 +317,21 @@ async fn refresh_one(
 
         let mut head_ready = true;
         let mut head_failed = false;
+        if head.is_none() {
+            // With the fork deleted, the pull ref the server last published from it is the pull
+            // request's head, as on GitHub; the row takes it when the update after a push was lost.
+            match base_store.commit_from_primary(&format!("refs/pull/{}/head", pull.number)).await {
+                Ok(commit) if commit.sha != pull.head_sha => {
+                    if move_head(pool, ci, &base, pull.id, &pull.head_sha, &commit.sha, pull.head_repo_id, &pull.head_branch, actor_id, ci_access).await? {
+                        changed = true;
+                        retry = true;
+                    }
+                }
+                Ok(_) => {}
+                Err(error) if error.kind == ErrorKind::NotFound => {}
+                Err(_) => return Err(RefreshError::Storage),
+            }
+        }
         if let Some(head) = &head {
             // The pull request may have been closed while the refs were read. A closed
             // one takes no new commits from its fork.
