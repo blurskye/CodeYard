@@ -569,10 +569,11 @@ async fn contract(pg: bool) {
     }
     let(_,scoped)=request(&router,"apps/scope-token","POST",&format!("/api/v3/applications/{}/token/scoped",app.client_id),Some(&basic),json!({"access_token":"user-app-token","target":"alice","repository_ids":[excluded],"permissions":{"contents":"read"}}),200).await;
     assert!(scoped["token"].as_str().unwrap().starts_with("ghu_"));
-    // The response names the installation with the scoped token's own bounds.
+    // The response names the installation with the scoped token's own bounds, which always
+    // hold the metadata read that every GitHub App token carries.
     assert_eq!(
         scoped["installation"]["permissions"],
-        json!({"contents":"read"})
+        json!({"contents":"read","metadata":"read"})
     );
     assert_eq!(scoped["installation"]["repository_selection"], "selected");
     assert_eq!(scoped["installation"]["account"]["login"], "alice");
