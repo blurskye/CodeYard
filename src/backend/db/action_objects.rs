@@ -4,6 +4,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const MAX_CACHE_ENTRIES: usize = 1024;
+/// The site, repository and organization cache settings: size and retention days for each.
+pub(crate) type CacheSettings = (Option<i32>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, Option<i32>);
 
 #[derive(Clone, sqlx::FromRow)]
 pub struct RuntimeRun {

@@ -26,12 +26,15 @@ const MAX_REMEMBERED_SIGNERS: usize = 64;
 /// Signer lookups shared by one batch of verifications, such as a commit list or a protected
 /// push, so commits signed by one key load that key, its primary key and its owner's
 /// addresses once. Keep one value per request; it does not see key changes made meanwhile.
+/// An account's email addresses, each with whether it is verified.
+type Addresses = Arc<[(String, bool)]>;
+
 #[derive(Default)]
 pub struct Signers {
     gpg: HashMap<String, Arc<[Arc<GpgKey>]>>,
     primaries: HashMap<(i64, i64), Option<Arc<GpgKey>>>,
     ssh: HashMap<String, Option<SigningKeyOwner>>,
-    owners: HashMap<i64, Option<Arc<[(String, bool)]>>>,
+    owners: HashMap<i64, Option<Addresses>>,
 }
 
 fn remember<K: Eq + Hash, V>(map: &mut HashMap<K, V>, key: K, value: V) {
@@ -73,11 +76,11 @@ impl Signers {
     }
 
     /// The owner's addresses, or None when the account no longer exists.
-    async fn owner_addresses(&mut self, pool: &DbPool, owner: i64) -> Result<Option<Arc<[(String, bool)]>>> {
+    async fn owner_addresses(&mut self, pool: &DbPool, owner: i64) -> Result<Option<Addresses>> {
         if let Some(addresses) = self.owners.get(&owner) {
             return Ok(addresses.clone());
         }
-        let found: Option<Arc<[(String, bool)]>> =
+        let found: Option<Addresses> =
             match db::users::accounts::get_user_by_id(pool, owner).await? {
                 Some(user) => Some(addresses(pool, &user).await?.into()),
                 None => None,

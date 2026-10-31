@@ -253,11 +253,16 @@ pub struct Actor {
     pub repo: Option<i64>,
 }
 
+/// An artifact target lookup: organization, digest, named repository and result limit.
+pub(crate) type TargetKey = (i64, String, Option<String>, usize);
+/// The repositories an artifact target resolves to, or why it was refused.
+pub(crate) type TargetVerdict = std::result::Result<Vec<(i64, Option<i64>)>, Refusal>;
+
 /// These verdicts are valid only in the transaction that retains their authority locks.
 pub(crate) struct Admission {
     pub actor: Actor,
     pub repositories: BTreeMap<(i64, i64), std::result::Result<(), Refusal>>,
-    pub targets: BTreeMap<(i64, String, Option<String>, usize), std::result::Result<Vec<(i64, Option<i64>)>, Refusal>>,
+    pub targets: BTreeMap<TargetKey, TargetVerdict>,
 }
 impl Admission {
     pub fn new(actor: Actor) -> Self {
