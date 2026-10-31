@@ -129,7 +129,8 @@ async fn statistics(
         "punch_card" => json!(stats.punch_card),
         "participation" => {
             let accounts = accounts(&state, &stats).await?;
-            let end = chrono::Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+            // The 52 weeks end with today, so today's commits count in the last one.
+            let end = chrono::Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp() + 86400;
             let start = end - 52 * 604800;
             let mut all = vec![0u64; 52];
             let mut own = vec![0u64; 52];
