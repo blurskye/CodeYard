@@ -1031,7 +1031,8 @@ mod shell_tests {
         assert!(!anonymous.contains("href=\"/pulls\""));
         assert!(!anonymous.contains("href=\"/new\""));
         assert!(!anonymous.contains("action=\"/logout\""));
-        assert!(!anonymous.contains("action=\"/_forms/theme\""));
+        // Signed-out visitors can switch the theme too; a same-origin form keeps it in a cookie.
+        assert!(anonymous.contains("action=\"/_forms/theme\""));
     }
 
     #[test]
