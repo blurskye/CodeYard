@@ -293,11 +293,16 @@ async fn primitive_paths_and_case_policy(database: &Database, actor: i64) {
             .unwrap(),
         OrganizationOutcome::Conflict
     ));
-    // Keep exact policy in BOTH directions; no lowercasing/renaming.
-    database.org(actor, "User_first").await;
-    db::users::accounts::create_user(&database.pool, "Primitive_occupied", None)
-        .await
-        .unwrap();
+    // A name is taken in every ASCII case, in both directions, as on GitHub.
+    assert!(matches!(
+        create_organization(&database.pool, actor, &organization("User_first"))
+            .await
+            .unwrap(),
+        OrganizationOutcome::Conflict
+    ));
+    namespace_refusal(
+        db::users::accounts::create_user(&database.pool, "Primitive_occupied", None).await,
+    );
     let password = db::users::accounts::create_user_with_password(
         &database.pool,
         "password_free",
