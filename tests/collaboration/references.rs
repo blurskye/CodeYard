@@ -84,8 +84,16 @@ async fn references(pg: bool) {
             )
             .await;
     }
-    let body = "See #1, @bob and @nobody. Private: alice/vault#1. Missing: alice/nothing#1. \
-        Readable: alice/open#1. Escaped: \\#1. Code: `#1`. Commit abcdef1.";
+    // A commit SHA links only when the commit exists.
+    let main = alice.save("main", "README.md", "unborn").await;
+    let body = format!(
+        "See #1, @bob and @nobody. Private: alice/vault#1. Missing: alice/nothing#1. \
+        Readable: alice/open#1. Escaped: \\#1. Code: `#1`. Commit {main}. Unknown abcdef1."
+    );
+    let commit_link = format!(
+        "<a href=\"/alice/proj/commit/{main}\" class=\"markdown-reference markdown-commit\" title=\"{main}\">{}</a>",
+        &main[..7]
+    );
     alice
         .expect(
             "POST",
@@ -105,7 +113,8 @@ async fn references(pg: bool) {
         "<a href=\"/alice/open/issues/1\" class=\"markdown-reference\">alice/open#1</a>",
         "Escaped: #1.",
         "<code class=\"rounded border border-border bg-muted px-1 py-0.5 text-[0.85em] text-foreground\">#1</code>",
-        "<a href=\"/alice/proj/commit/abcdef1\" class=\"markdown-reference markdown-commit\" title=\"abcdef1\">abcdef1</a>",
+        commit_link.as_str(),
+        "Unknown abcdef1.",
     ] {
         assert!(bob_html.contains(expected), "missing {expected}: {bob_html}");
     }
@@ -151,7 +160,6 @@ async fn references(pg: bool) {
     );
 
     // A pull request shares the issue number sequence, so `/issues/N` redirects to it.
-    let main = alice.save("main", "README.md", "unborn").await;
     alice.branch("feature", &main).await;
     alice.save("feature", "feature.txt", &main).await;
     let pull = alice.open_pull("Feature", "feature", "main").await;
