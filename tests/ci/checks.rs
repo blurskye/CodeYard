@@ -452,7 +452,7 @@ async fn contract(pg: bool) {
             name: "Check publisher".into(), description: String::new(),
             homepage: "https://example.com".into(), public_key: String::new(),
             permissions: "{\"checks\":\"write\"}".into(), events: "[]".into(),
-            access_level: 2, created_at: chrono::Utc::now(),
+            access_level: 3, created_at: chrono::Utc::now(),
         },
         "secret-hash",
     )
