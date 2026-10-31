@@ -133,7 +133,7 @@ async fn contract(pg: bool) {
     let cancel = format!("/alice/proj/actions/runs/{job}/cancel");
     let rerun = format!("/alice/proj/actions/runs/{job}/rerun");
 
-    // The run page offers the cancel form to a writer, and nothing to a reader.
+    // The run page offers the cancel form to every writer, and nothing to a reader.
     let (_, page) = alice.page(&format!("/alice/proj/actions?job={job}")).await;
     assert!(page.contains(&format!("action=\"{cancel}\"")), "{page}");
     let page = dave
@@ -141,7 +141,7 @@ async fn contract(pg: bool) {
         .await;
     assert!(!page.contains(&format!("action=\"{cancel}\"")), "{page}");
     let page = bob.page_ok(&format!("/alice/proj/actions?job={job}")).await;
-    assert!(!page.contains(&format!("action=\"{cancel}\"")), "{page}");
+    assert!(page.contains(&format!("action=\"{cancel}\"")), "{page}");
     let logs = db::ci::list_ci_logs(f.pool(), run.id, 10).await.unwrap();
     let incremental = alice
         .expect(
