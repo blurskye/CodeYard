@@ -667,7 +667,7 @@ async fn deprecation(
     headers: HeaderMap,
     Path(p): Path<Params>,
 ) -> Result<Json<Value>> {
-    let (actor, scope) = administered(&s, &headers, &p, false).await?;
+    administered(&s, &headers, &p, false).await?;
     let version = p.get("version").ok_or_else(Error::missing)?;
     if version.len() > 100 || version.chars().any(char::is_control) {
         return Err(Error::validation("Runner", "version", "invalid"));
@@ -681,7 +681,7 @@ async fn downloads(
     headers: HeaderMap,
     Path(p): Path<Params>,
 ) -> Result<Json<Value>> {
-    let (actor, scope) = administered(&s, &headers, &p, false).await?;
+    administered(&s, &headers, &p, false).await?;
     Ok(Json(
         json!([{"os":std::env::consts::OS,"architecture":match std::env::consts::ARCH {"x86_64"=>"x64","aarch64"=>"arm64",arch=>arch},"download_url":format!("{}/api/actions/runners/download",crate::backend::api::http::config::link_origin()),"filename":format!("codeyard-runner-{}-{}",std::env::consts::OS,std::env::consts::ARCH)}]),
     ))
