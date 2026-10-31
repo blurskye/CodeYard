@@ -108,19 +108,21 @@ pub(super) async fn run(
     assert_eq!(values[0]["head"]["repo"]["id"], repo);
     assert_eq!(values[0]["base"]["repo"]["owner"]["login"], "alice");
     assert_eq!(values[0]["author_association"], "OWNER");
-    // Native account names are distinct identities; do not guess a differently cased owner.
-    call(
-        router,
-        "GET",
-        &format!(
-            "{}/commits/{head}/pulls",
-            base.replace("/alice/", "/ALICE/")
+    // Owner names resolve in any ASCII case, as on GitHub, so a differently cased owner names
+    // the same repository.
+    assert_eq!(
+        stable_documents(
+            list(
+                router,
+                &base.replace("/alice/", "/ALICE/"),
+                reader,
+                &head,
+                "?per_page=100"
+            )
+            .await
         ),
-        reader,
-        Value::Null,
-        (OP, 404),
-    )
-    .await;
+        stable_documents(values.clone())
+    );
     call(
         router,
         "POST",
