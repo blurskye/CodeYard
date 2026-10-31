@@ -155,7 +155,7 @@ async fn contract(pg: bool) {
         assert!(node["securityPolicyUrl"]
             .as_str()
             .unwrap()
-            .ends_with("/metadata-alice/proj/blob/main/SECURITY.md"));
+            .ends_with("/metadata-alice/proj/blob/refs/heads/main/SECURITY.md"));
         assert!(node["diskUsage"].is_number());
         assert!(node["viewerDefaultCommitEmail"].is_string());
         assert!(node["viewerPossibleCommitEmails"]
