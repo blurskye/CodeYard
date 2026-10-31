@@ -302,7 +302,11 @@ fn permissions(value: &Value, path: &str) -> Result<()> {
     keys(map, super::PERMISSION_SCOPES, path)?;
     for (k, v) in map {
         let level = text(v, path)?;
-        ensure!(super::permission_level_allowed(k.as_str().unwrap_or(""), &level), "{path}: Unexpected permission level '{level}'");
+        let scope = k.as_str().unwrap_or("");
+        ensure!(["read", "write", "none"].contains(&level.as_str()), "{path}: Unexpected permission level '{level}'");
+        // A known level the scope does not take: name the one it does.
+        let other = if level == "read" { "write" } else { "read" };
+        ensure!(super::permission_level_allowed(scope, &level), "{path}.{scope}: Expected '{other}' or 'none'");
     }
     Ok(())
 }
