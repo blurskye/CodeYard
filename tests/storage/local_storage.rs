@@ -2405,7 +2405,7 @@ async fn uploaded_files_download_as_attachments_except_public_avatar_images() {
     assert_eq!(headers[header::CONTENT_TYPE], "application/octet-stream");
     assert_eq!(
         headers[header::CONTENT_DISPOSITION],
-        "attachment; filename*=UTF-8''evil%22name__.html"
+        "attachment; filename=\"evil_name__.html\"; filename*=UTF-8''evil%22name__.html"
     );
     assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
     assert_eq!(

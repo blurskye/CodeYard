@@ -570,7 +570,7 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
     let query = query_of(&asset.url);
     assert_eq!(
         query["response-content-disposition"],
-        "attachment; filename*=UTF-8''fixture.txt"
+        "attachment; filename=\"fixture.txt\"; filename*=UTF-8''fixture.txt"
     );
     assert_eq!(query["response-content-type"], "application/octet-stream");
 
@@ -598,7 +598,7 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
     };
     assert_eq!(
         query_of(&remote)["response-content-disposition"],
-        "attachment; filename*=UTF-8''fixture.txt"
+        "attachment; filename=\"fixture.txt\"; filename*=UTF-8''fixture.txt"
     );
 
     // A public avatar image is the one thing displayed inline.
@@ -648,7 +648,7 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
     assert_eq!(
         query_of(response.headers()[header::LOCATION].to_str().unwrap())
             ["response-content-disposition"],
-        "attachment; filename*=UTF-8''r%C3%A9sum%C3%A9%20%22final%22__.txt"
+        "attachment; filename=\"r_sum_ _final___.txt\"; filename*=UTF-8''r%C3%A9sum%C3%A9%20%22final%22__.txt"
     );
 }
 
@@ -1879,7 +1879,7 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
     );
     assert_eq!(
         received.headers()["content-disposition"],
-        "attachment; filename*=UTF-8''fixture.txt",
+        "attachment; filename=\"fixture.txt\"; filename*=UTF-8''fixture.txt",
         "uploaded files download, they are not displayed"
     );
     assert_eq!(received.bytes().await.unwrap().as_ref(), data);
