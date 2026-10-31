@@ -97,7 +97,7 @@ fn submodule_url(modules: &str, path: &str) -> Option<String> {
 
 /// A contents entry as GitHub documents it: `url` and `html_url` name the ref the client
 /// asked for, while `git_url` and `download_url` stay on the object and commit read.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Each argument is one field of GitHub's contents entry.")]
 pub(super) fn entry(
     owner: &str,
     repo: &str,

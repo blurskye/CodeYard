@@ -39,7 +39,7 @@ pub(crate) async fn resolve_references(
 }
 
 /// The bounded native resolver with a caller-owned, credential-aware repository audience.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Callers pass their own repository audience next to the resolver's bounded inputs.")]
 pub(crate) async fn resolve_references_with<F, Fut>(
     pool: &db::DbPool,
     cluster: Option<&crate::backend::cluster::NodeContext>,

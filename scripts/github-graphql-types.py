@@ -483,7 +483,7 @@ class Generator:
         return ''.join(out)
 
     def render(self):
-        return {name + '.rs': HEADER + ('#![allow(clippy::too_many_arguments)]\n' if name in ('objects', 'resolvers') else '') + ('// Interface attributes repeat ty/desc keys in distinct field and argument groups.\n#![allow(clippy::duplicated_attributes)]\n' if name == 'abstracts' else '') + getattr(self, name)() for name in ('objects', 'resolvers', 'inputs', 'enums', 'scalars', 'abstracts', 'schema', 'directives')}
+        return {name + '.rs': HEADER + ('#![allow(clippy::too_many_arguments, reason = "A generated resolver takes one argument per GraphQL field argument.")]\n' if name in ('objects', 'resolvers') else '') + ('#![allow(clippy::duplicated_attributes, reason = "Interface attributes repeat ty/desc keys in distinct field and argument groups.")]\n' if name == 'abstracts' else '') + getattr(self, name)() for name in ('objects', 'resolvers', 'inputs', 'enums', 'scalars', 'abstracts', 'schema', 'directives')}
 
 
 def main():

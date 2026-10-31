@@ -521,7 +521,7 @@ async fn append(
     .map_err(Error::db)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Finishing an upload needs the package, the upload session and the request it arrived on.")]
 async fn finish(
     state: &AppState,
     package: &db::packages::Package,

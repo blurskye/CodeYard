@@ -516,7 +516,6 @@ async fn write_item_labels(
 }
 
 /// Caller retains live item-metadata authority until this transaction commits.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn write_item_labels_transaction(
     tx: &mut Transaction<'_, Sqlite>,
     actor: Option<i64>,

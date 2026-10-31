@@ -2223,7 +2223,7 @@ impl Job {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "A step's process takes its command, directory, environment, deadline and output maps one by one.")]
     async fn invoke(
         &mut self,
         program: &str,

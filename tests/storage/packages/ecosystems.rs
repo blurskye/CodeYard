@@ -137,7 +137,7 @@ async fn github(
         json
     }
 }
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "The helper runs one ecosystem's lifecycle with the fixture's accounts and package names.")]
 async fn lifecycle(
     router: &Router,
     f: &Database,

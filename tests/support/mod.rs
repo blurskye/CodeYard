@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, reason = "Each test binary uses its own part of the shared support code.")]
 
 pub mod database;
 pub mod fake_webui_bundle;

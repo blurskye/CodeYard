@@ -18,7 +18,6 @@ mod ecosystems;
 mod pages;
 mod rest;
 
-#[allow(clippy::too_many_arguments)]
 async fn request(
     router: &Router,
     method: &str,

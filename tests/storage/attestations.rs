@@ -47,7 +47,6 @@ async fn oauth_token(f: &Database, router: &Router, actor: i64, scopes: &str) ->
     value
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn call(
     router: &Router,
     operation: &str,

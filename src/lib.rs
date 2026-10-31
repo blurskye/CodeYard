@@ -2,9 +2,10 @@
 // The git hook task future holds the application state, which reaches the network library's
 // types; checking that it is `Send` needs more than the default 128 levels.
 #![recursion_limit = "256"]
-// A page handler's error is the response it returns, which is sent once per request, so the size
-// of the `Err` variant costs nothing worth boxing 100+ signatures for.
-#![allow(clippy::result_large_err)]
+#![allow(
+    clippy::result_large_err,
+    reason = "A page handler's error is the response it returns, sent once per request, so its size is not worth boxing 100+ signatures for."
+)]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod backend;
 pub mod webui;

@@ -317,7 +317,7 @@ impl Job {
         Ok(action)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "An action runs with the caller's inputs, environment, deadline, nesting depth, outputs and stage.")]
     pub(super) async fn uses(
         &mut self,
         reference: &str,
@@ -848,7 +848,7 @@ impl Job {
         Ok(true)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "A step's process takes its command, directory, environment, deadline and output maps one by one.")]
     async fn docker(
         &mut self,
         image: &str,

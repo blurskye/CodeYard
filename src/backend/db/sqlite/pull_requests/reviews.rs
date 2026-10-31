@@ -642,7 +642,7 @@ pub async fn add_pull_request_review(
     save_pull_request_review(pool, pr_id, author_id, credential, state, body, commit_sha, None).await
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Each argument is one field or check of the saved review.")]
 pub async fn save_pull_request_review(
     pool: &SqlitePool,
     pr_id: i64,

@@ -35,7 +35,7 @@ async fn readable_items<'a>(
         .collect())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "The document needs the project, the item and the viewer's readable repositories, which the caller already holds.")]
 async fn item_document(
     state: &AppState,
     headers: &HeaderMap,

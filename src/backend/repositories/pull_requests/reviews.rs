@@ -212,7 +212,7 @@ pub async fn create_pull_request_review_batch(
     create_review(pool, cluster, broadcaster, actor_id, credential, target.into(), batch.review, Some(batch.comments)).await
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Explicit actor and resources keep operations HTTP-free.")]
 async fn create_review(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,

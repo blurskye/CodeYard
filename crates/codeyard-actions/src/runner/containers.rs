@@ -237,7 +237,7 @@ impl Podman {
         command
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "A step's process takes its command, directory, environment, deadline and output maps one by one.")]
     pub async fn docker_action(
         &mut self,
         image: &str,

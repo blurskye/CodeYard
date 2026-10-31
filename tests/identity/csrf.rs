@@ -2,7 +2,6 @@
 //! temporary-password settings. Page navigation admission is tested elsewhere.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
-#[allow(dead_code)]
 use crate::support::fake_webui_bundle;
 use crate::support::native_database as native;
 

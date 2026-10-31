@@ -15,7 +15,6 @@ use codeyard::backend::{
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-#[allow(clippy::too_many_arguments)]
 async fn request(
     router: &Router,
     method: &str,
@@ -545,7 +544,7 @@ async fn native_pages(f: &Database, router: &Router, alice: &Client, actor: i64,
     assert_eq!(alice.page(&path).await.0, StatusCode::NOT_FOUND);
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "The helper walks one project's items with the fixture IDs the test created.")]
 async fn items(
     router: &Router,
     base: &str,

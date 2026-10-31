@@ -631,7 +631,7 @@ async fn pull_conversation(pool: &db::DbPool, repo: i64, path: &str) -> Result<b
 
 /// Checks one repository request against an App's or a fine-grained token's bounds. `None`
 /// means the credential cannot reach the repository at all.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "The check takes the credential, path parameters and access kind as the route has them.")]
 async fn repository_bounds(
     state: &AppState,
     auth: &Authentication,
@@ -679,7 +679,7 @@ async fn repository_bounds(
 
 /// Checks a fine-grained token's request. `Ok(true)` asks to answer it as an anonymous one,
 /// which reads public data only.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "The check takes the credential, grant, path parameters and access kind as the route has them.")]
 async fn personal(
     state: &AppState,
     auth: &Authentication,

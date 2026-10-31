@@ -41,7 +41,7 @@ pub async fn list_entries(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Each argument is one column of the timeline event.")]
 pub async fn record_event(
     pool: &PgPool,
     repo_id: i64,
@@ -58,7 +58,7 @@ pub async fn record_event(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Each argument is one column of the timeline event.")]
 pub(crate) async fn append(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, repo_id: i64, subject: &str, subject_id: i64,
     actor_id: i64, kind: &str, detail: &str, previous: &str,
