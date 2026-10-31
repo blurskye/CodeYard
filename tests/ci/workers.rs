@@ -3654,6 +3654,16 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
         )
         .await
         .unwrap();
+        // A private repository runs workflows from fork pull requests only once its settings allow it.
+        db::action_settings::settings(
+            pool,
+            owner.id,
+            &db::action_settings::Scope::Repository(repo.id),
+            db::action_settings::Setting::ForkWorkflows,
+            Some(&serde_json::json!({"run_workflows_from_fork_pull_requests": true})),
+        )
+        .await
+        .unwrap();
         let queue = RunQueue::Database {
             pool: pool.clone(),
             config: Arc::new(CiConfig {
