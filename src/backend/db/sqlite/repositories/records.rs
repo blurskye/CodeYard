@@ -888,6 +888,9 @@ fn name_conflict_error(error: sqlx::Error) -> anyhow::Error {
                 e.message(),
                 "UNIQUE constraint failed: repositories.owner_user_id, repositories.name"
                     | "UNIQUE constraint failed: repositories.owner_org_id, repositories.name"
+                    // SQLite names an expression index rather than its columns.
+                    | "UNIQUE constraint failed: index 'repo_unique_user_folded'"
+                    | "UNIQUE constraint failed: index 'repo_unique_org_folded'"
             )
     }) {
         anyhow::Error::new(Refusal::NameConflict)
