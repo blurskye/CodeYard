@@ -509,6 +509,7 @@ impl RpcHandler {
                     .map_err(|_| Failure::Repository(unavailable()))?
             };
         }
+        let cached_languages = matches!(request.operation, Operation::PrimaryLanguages { .. });
         let value = match request.operation {
             Operation::Initialize {
                 source,
@@ -897,8 +898,11 @@ impl RpcHandler {
                 .map_err(|_| unavailable())?
                 .ok_or_else(|| invalid("repository unavailable"))?;
                 let default_branch = repository.default_branch.clone();
+                // The cached computation follows the Git default itself, which an adopted
+                // repository may name differently from the stored default.
                 if repository.storage_node_id == Some(self.context.node_id)
-                    && (git_ref == default_branch
+                    && (cached_languages
+                        || git_ref == default_branch
                         || git_ref == format!("refs/heads/{default_branch}"))
                 {
                     json!(crate::backend::repositories::languages::compute_and_store(
