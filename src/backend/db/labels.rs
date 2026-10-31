@@ -107,6 +107,10 @@ native_operation!(crate::backend::db::postgres::labels::update_label,
     description: Option<Option<&str>>,
 ) -> Result<Label>);
 
+/// The label page shows this many characters of a description. Its edit form's snapshot
+/// holds the same prefix, so a longer stored description still compares equal.
+pub(crate) const PAGE_DESCRIPTION_CHARS: usize = 1024;
+
 native_operation!(crate::backend::db::postgres::labels::update_label_checked,
     crate::backend::db::sqlite::labels::update_label_checked,
     fn update_label_checked(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, label_id: i64, fields: (Option<&str>, Option<&str>, Option<Option<&str>>), expected: Option<&str>) -> Result<Label>);

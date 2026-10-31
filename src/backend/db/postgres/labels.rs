@@ -1,5 +1,7 @@
 use super::models::Label;
-use crate::backend::db::labels::{bounded_label_ids, ItemLabel, LabelTarget, LabelWriteRefusal};
+use crate::backend::db::labels::{
+    bounded_label_ids, ItemLabel, LabelTarget, LabelWriteRefusal, PAGE_DESCRIPTION_CHARS,
+};
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -169,7 +171,7 @@ pub async fn list_repo_labels_page(
         "most-used" => "((SELECT COUNT(*) FROM issue_labels il WHERE il.label_id=l.id) + (SELECT COUNT(*) FROM pr_labels pl WHERE pl.label_id=l.id)) DESC, LOWER(l.name COLLATE \"C\"), l.id",
         _ => "LOWER(l.name COLLATE \"C\"), l.id",
     };
-    Ok(sqlx::query_as(&format!(r#"SELECT l.id,l.repo_id,l.name,l.color,substr(l.description,1,1024) AS description,l.created_at,l.updated_at FROM labels l WHERE l.repo_id=$1 AND (l.name ILIKE $2::TEXT ESCAPE '\' OR COALESCE(l.description,'') ILIKE $2::TEXT ESCAPE '\') ORDER BY {order} LIMIT $3 OFFSET $4"#))
+    Ok(sqlx::query_as(&format!(r#"SELECT l.id,l.repo_id,l.name,l.color,substr(l.description,1,{PAGE_DESCRIPTION_CHARS}) AS description,l.created_at,l.updated_at FROM labels l WHERE l.repo_id=$1 AND (l.name ILIKE $2::TEXT ESCAPE '\' OR COALESCE(l.description,'') ILIKE $2::TEXT ESCAPE '\') ORDER BY {order} LIMIT $3 OFFSET $4"#))
         .bind(repo_id).bind(crate::backend::db::discussions::contains_pattern(query.trim())).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
@@ -225,7 +227,8 @@ pub async fn update_label_checked(pool: &PgPool, actor: impl Into<crate::backend
     let mut tx = begin_label_write(pool, &actor, repo_id).await?;
     if let Some(expected) = expected {
         let current: Label = sqlx::query_as("SELECT * FROM labels WHERE repo_id=$1 AND id=$2 FOR UPDATE").bind(repo_id).bind(label_id).fetch_optional(&mut *tx).await?.ok_or(LabelWriteRefusal::InvalidLabels)?;
-        anyhow::ensure!(serde_json::to_string(&(current.name, current.color, current.description.unwrap_or_default()))? == expected, LabelWriteRefusal::Conflict);
+        let shown: String = current.description.unwrap_or_default().chars().take(PAGE_DESCRIPTION_CHARS).collect();
+        anyhow::ensure!(serde_json::to_string(&(current.name, current.color, shown))? == expected, LabelWriteRefusal::Conflict);
     }
     if let Some(name) = name {
         ensure_name_free(&mut tx, repo_id, name, label_id).await?;

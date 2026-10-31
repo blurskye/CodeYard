@@ -278,6 +278,11 @@ async fn contract(pg: bool) {
                 ("color", "#abcdef"),
                 ("description", &"x".repeat(1024)),
                 (
+                    "original",
+                    &serde_json::to_string(&(&labels[0].name, &labels[0].color, "x".repeat(1024)))
+                        .unwrap(),
+                ),
+                (
                     "original_description",
                     &serde_json::to_string(&"x".repeat(1024)).unwrap(),
                 ),
