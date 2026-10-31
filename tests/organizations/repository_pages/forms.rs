@@ -713,6 +713,19 @@ pub async fn stale_settings_forms(f: &Fixture) {
     assert_eq!(rejected.status, StatusCode::BAD_REQUEST);
     let retry = rejected.body.contains(hidden.as_str());
     assert!(retry, "{}", rejected.body);
+    // A reader without admin or write access is refused before the form is checked, so a
+    // wrong repository ID or confirmation tells them nothing.
+    for (action, fields) in [
+        ("delete", vec![("repository_id", "0"), ("confirmation", "personal_owner/settings_new")]),
+        ("delete", vec![("repository_id", id.as_str()), ("confirmation", "wrong")]),
+        ("rename", vec![("repository_id", "0"), ("name", "taken"), ("confirm", "yes")]),
+        ("rename", vec![("repository_id", id.as_str()), ("name", "taken")]),
+        ("delete-branch", vec![("repository_id", "0"), ("branch", "main")]),
+        ("delete-branch", vec![("repository_id", id.as_str()), ("branch", "main")]),
+    ] {
+        let refused = f.form(&f.member, &format!("{new}/_forms/{action}"), &fields, false).await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{action} {fields:?}: {}", refused.body);
+    }
     // The same delete, sent to the original's current address, still deletes the original.
     let delete = [
         ("repository_id", id.as_str()),

@@ -1330,6 +1330,14 @@ pub(super) async fn post_form(
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
+    // Authority comes before every check of the form, so a refused actor learns nothing from
+    // a conflict or a failed confirmation.
+    if row.has(ADMIN) && !loaded.chrome.can_admin {
+        return ctx.repo_error(&loaded.chrome, StatusCode::FORBIDDEN, REPO_ADMIN_REQUIRED);
+    }
+    if row.has(WRITE) && !loaded.chrome.can_write {
+        return ctx.error(StatusCode::FORBIDDEN, "Write access is required.");
+    }
     // A repository form names the repository it was rendered for. After a rename, another
     // repository can take the old owner and name, and the form must not reach that one.
     let repository_id = loaded.repository.id.to_string();
@@ -1388,9 +1396,6 @@ pub(super) async fn post_form(
             "Type the repository name to confirm the transfer.",
         );
     }
-    if row.has(ADMIN) && !loaded.chrome.can_admin {
-        return ctx.repo_error(&loaded.chrome, StatusCode::FORBIDDEN, REPO_ADMIN_REQUIRED);
-    }
     if action.starts_with("repository-property-") {
         return super::properties::form(&ctx, &loaded, action, &form, &pairs).await;
     }
@@ -1411,9 +1416,6 @@ pub(super) async fn post_form(
     }
     if action.starts_with("deploy-key-") {
         return super::deploy_keys::form(&ctx, &loaded, action, &form).await;
-    }
-    if row.has(WRITE) && !loaded.chrome.can_write {
-        return ctx.error(StatusCode::FORBIDDEN, "Write access is required.");
     }
     if action == "settings" && !matches!(field(&form, "visibility").as_str(), "public" | "private")
     {
