@@ -112,7 +112,9 @@ fn AdvisoryView(repo: RepoChrome, page: Page) -> Element {
                     if let Some(url)=&detail.fork_url {NavLink {href:url.clone(),"Private remediation fork"}}
                     if page.can_administer&&!repo.is_archived {
                         form {method:"post",action:repo.action("advisory"),{csrf(&repo.csrf_token)} {repository_id(repo.id)} input {r#type:"hidden",name:"ghsa",value:detail.row.ghsa.clone()}
-                            {fields(&page.draft,false)}
+                            // An advisory with no packages yet takes one through plain fields; once it has
+                            // some, the JSON list edits all of them without dropping any.
+                            {fields(&page.draft,detail.vulnerabilities.is_empty())}
                             button {r#type:"submit",name:"op",value:"save","Save advisory"}
                         }
                         form {method:"post",action:repo.action("advisory"),{csrf(&repo.csrf_token)} {repository_id(repo.id)} input {r#type:"hidden",name:"ghsa",value:detail.row.ghsa.clone()}
