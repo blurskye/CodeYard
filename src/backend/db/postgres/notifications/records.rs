@@ -951,7 +951,7 @@ pub async fn notification_inbox_with_credential(
     user_id: i64,
     action: NotificationInboxAction,
 ) -> Result<Option<NotificationInbox>> {
-    crate::backend::db::postgres::retry_on_deadlock(|| {
+    crate::backend::db::postgres::retry_on_conflict(|| {
         notification_inbox_once(pool, credential, user_id, action.clone())
     })
     .await

@@ -30,7 +30,7 @@ pub async fn create_issue_with_metadata(
     let author_id = authority.user_id;
     let assignees = metadata.unique_assignees()?;
     let metadata = IssueMetadata { assignees: &assignees, ..metadata };
-    super::retry_on_deadlock(|| async {
+    super::retry_on_conflict(|| async {
         let mut tx = pool.begin().await?;
         // A milestone write locks the repository row exclusively, so that lock comes first
         // rather than as an upgrade of the shared lock the other checks take.

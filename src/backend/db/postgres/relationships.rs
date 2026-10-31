@@ -74,7 +74,7 @@ pub async fn change(
     mutation: Mutation,
     token: Option<i64>,
 ) -> Result<()> {
-    super::retry_on_deadlock(|| change_once(pool, actor, repo, root, mutation, token)).await
+    super::retry_on_conflict(|| change_once(pool, actor, repo, root, mutation, token)).await
 }
 async fn change_once(
     pool: &PgPool,

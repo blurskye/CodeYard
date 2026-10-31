@@ -285,6 +285,22 @@ pub async fn repositories(
     limit: i64,
 ) -> Result<(i64, Vec<crate::backend::db::repository_stats::RepositorySnapshot>), ValueError> {
     if offset < 0 || !(1..=10_000).contains(&limit) { return Err(ValueError::Authority(anyhow::anyhow!("Invalid repository page"))); }
+    crate::backend::db::postgres::retry_on_conflict(|| async {
+        repositories_once(pool, actor, org, kind, name, offset, limit).await.map_err(anyhow::Error::from)
+    })
+    .await
+    .map_err(|error| error.downcast::<ValueError>().unwrap_or_else(ValueError::Authority))
+}
+
+async fn repositories_once(
+    pool: &Pool,
+    actor: i64,
+    org: i64,
+    kind: Kind,
+    name: &str,
+    offset: i64,
+    limit: i64,
+) -> Result<(i64, Vec<crate::backend::db::repository_stats::RepositorySnapshot>), ValueError> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
     authorize(&mut tx, actor, org).await?;

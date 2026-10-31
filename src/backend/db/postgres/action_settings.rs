@@ -75,9 +75,19 @@ pub async fn settings(
     update: Option<&Value>,
 ) -> Result<Value> {
     let actor = actor.into();
+    super::retry_on_conflict(|| settings_once(pool, &actor, scope, setting, update)).await
+}
+
+async fn settings_once(
+    pool: &PgPool,
+    actor: &Actor,
+    scope: &Scope,
+    setting: Setting,
+    update: Option<&Value>,
+) -> Result<Value> {
     let mut tx = pool.begin().await?;
     if update.is_none() { sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?; }
-    let (table, column, id) = authority(&mut tx, &actor, scope, update.is_some(), setting.organization_permission()).await?;
+    let (table, column, id) = authority(&mut tx, actor, scope, update.is_some(), setting.organization_permission()).await?;
     let locking = if update.is_some() { " FOR UPDATE" } else { "" };
     let stored: Option<String> = sqlx::query_scalar(&format!(
         "SELECT rest_settings FROM {table} WHERE {column}=$1{locking}"
@@ -120,6 +130,18 @@ pub async fn repositories(
     change: Option<&crate::backend::db::action_settings::SelectionChange>,
     window: (i64, i64),
 ) -> Result<(i64, Vec<crate::backend::db::models::Repository>)> {
+    let actor = actor.into();
+    super::retry_on_conflict(|| repositories_once(pool, &actor, scope, setting, change, window)).await
+}
+
+async fn repositories_once(
+    pool: &PgPool,
+    actor: &Actor,
+    scope: &Scope,
+    setting: Setting,
+    change: Option<&crate::backend::db::action_settings::SelectionChange>,
+    window: (i64, i64),
+) -> Result<(i64, Vec<crate::backend::db::models::Repository>)> {
     let (offset, limit) = window;
     ensure!(matches!(scope, Scope::Organization(_)) && offset >= 0 && (1..=100).contains(&limit), Refusal::Invalid);
     let mut tx = pool.begin().await?;
@@ -128,8 +150,7 @@ pub async fn repositories(
         // locks, which PostgreSQL refuses in a read-only transaction.
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
     }
-    let actor = actor.into();
-    let (_, _, org) = authority(&mut tx, &actor, scope, change.is_some(), setting.organization_permission()).await?;
+    let (_, _, org) = authority(&mut tx, actor, scope, change.is_some(), setting.organization_permission()).await?;
     let stored: Option<String> = sqlx::query_scalar("SELECT rest_settings FROM org_actions_settings WHERE org_id=$1")
         .bind(org).fetch_optional(&mut *tx).await?;
     let mut stored: Value = serde_json::from_str(stored.as_deref().unwrap_or("{}"))?;
@@ -154,11 +175,15 @@ pub async fn repositories(
 }
 
 pub async fn policies_page(pool: &PgPool, actor: impl Into<Actor>, scope: &Scope, has_parents: bool, offset: i64, limit: i64) -> Result<(i64, Vec<ListedPolicy>)> {
+    let actor = actor.into();
+    super::retry_on_conflict(|| policies_page_once(pool, &actor, scope, has_parents, offset, limit)).await
+}
+
+async fn policies_page_once(pool: &PgPool, actor: &Actor, scope: &Scope, has_parents: bool, offset: i64, limit: i64) -> Result<(i64, Vec<ListedPolicy>)> {
     ensure!(offset >= 0 && (1..=100).contains(&limit), Refusal::Invalid);
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
-    let actor = actor.into();
-    let (_, column, scope_id) = authority(&mut tx, &actor, scope, false, "organization_administration").await?;
+    let (_, column, scope_id) = authority(&mut tx, actor, scope, false, "organization_administration").await?;
     let repository = if let Scope::Repository(repo) = scope {
         if has_parents { sqlx::query_as::<_, crate::backend::db::models::Repository>("SELECT r.* FROM repositories r WHERE r.id=$1 AND r.owner_kind='org' AND EXISTS(SELECT 1 FROM actions_policies p WHERE p.org_id=r.owner_org_id)").bind(repo).fetch_optional(&mut *tx).await? } else { None }
     } else { None };

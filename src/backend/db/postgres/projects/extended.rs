@@ -53,6 +53,10 @@ pub async fn by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Projec
 }
 
 pub async fn by_id_at(pool: &PgPool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Project> {
+    super::super::retry_on_conflict(|| by_id_at_once(pool, viewer, id, include_deleted)).await
+}
+
+async fn by_id_at_once(pool: &PgPool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Project> {
     let mut tx = read_snapshot(pool).await?;
     readable_at(&mut tx, viewer, id, include_deleted).await?;
     let project = sqlx::query_as("SELECT * FROM projects WHERE id=$1")
@@ -63,6 +67,10 @@ pub async fn by_id_at(pool: &PgPool, viewer: Option<i64>, id: i64, include_delet
     Ok(project)
 }
 pub async fn field_by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Field> {
+    super::super::retry_on_conflict(|| field_by_id_once(pool, viewer, id)).await
+}
+
+async fn field_by_id_once(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Field> {
     let mut tx = read_snapshot(pool).await?;
     let field: Field = sqlx::query_as("SELECT * FROM project_fields WHERE id=$1")
         .bind(id)
@@ -78,6 +86,10 @@ pub async fn item_by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<I
 }
 
 pub async fn item_by_id_at(pool: &PgPool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Item> {
+    super::super::retry_on_conflict(|| item_by_id_at_once(pool, viewer, id, include_deleted)).await
+}
+
+async fn item_by_id_at_once(pool: &PgPool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Item> {
     let mut tx = read_snapshot(pool).await?;
     let item: Item = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
         .bind(id)

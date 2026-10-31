@@ -10,8 +10,19 @@ pub async fn issue(
     target: Target,
     hash: &str,
 ) -> Result<bool> {
-    use super::repositories::access::{lock_user_repo_access_in_transaction, RepositoryRowLock};
     let actor = actor.into();
+    super::retry_on_conflict(|| issue_once(pool, &actor, repo, resource, target, hash)).await
+}
+
+async fn issue_once(
+    pool: &PgPool,
+    actor: &crate::backend::db::credentials::Actor,
+    repo: i64,
+    resource: &str,
+    target: Target,
+    hash: &str,
+) -> Result<bool> {
+    use super::repositories::access::{lock_user_repo_access_in_transaction, RepositoryRowLock};
     ensure!(
         resource.len() <= 4096
             && hash.len() == 64
@@ -30,7 +41,7 @@ pub async fn issue(
     if !authority.is_some_and(|a| a.access.can_read() || (!a.organization && a.is_admin)) {
         return Ok(false);
     }
-    if !super::credentials::repository(&mut tx, &actor, repo, "actions", false).await? { return Ok(false); }
+    if !super::credentials::repository(&mut tx, actor, repo, "actions", false).await? { return Ok(false); }
     let version: Option<i64> =
         sqlx::query_scalar("SELECT log_version FROM ci_runs WHERE id=$1 AND repo_id=$2 AND (log_expires_at IS NULL OR log_expires_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint)")
             .bind(target.run)

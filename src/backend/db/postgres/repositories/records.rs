@@ -733,7 +733,7 @@ pub async fn transfer_repository(
     target: crate::backend::db::repositories::creation::RepositoryTarget,
 ) -> Result<Repository> {
     let authority = actor_id.into();
-    crate::backend::db::postgres::retry_on_deadlock(|| {
+    crate::backend::db::postgres::retry_on_conflict(|| {
         transfer_repository_once(pool, &authority, repo_id, target, None)
     })
     .await
@@ -748,7 +748,7 @@ pub async fn transfer_repository_checked(
     expected_name: &str,
 ) -> Result<Repository> {
     let authority = actor_id.into();
-    crate::backend::db::postgres::retry_on_deadlock(|| {
+    crate::backend::db::postgres::retry_on_conflict(|| {
         transfer_repository_once(pool, &authority, repo_id, target, Some((expected_owner, expected_name)))
     })
     .await

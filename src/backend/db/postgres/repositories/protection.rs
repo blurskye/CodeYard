@@ -12,6 +12,14 @@ pub async fn read_protection_snapshot(
     repo_id: i64,
 ) -> Result<crate::backend::db::repositories::protection::ProtectionSnapshot> {
     let actor = actor.into();
+    super::super::retry_on_conflict(|| read_protection_snapshot_once(pool, &actor, repo_id)).await
+}
+
+async fn read_protection_snapshot_once(
+    pool: &PgPool,
+    actor: &crate::backend::db::credentials::Actor,
+    repo_id: i64,
+) -> Result<crate::backend::db::repositories::protection::ProtectionSnapshot> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
     anyhow::ensure!(super::super::discussions::lock_settings_read_authority(&mut tx, actor.user_id, repo_id, true).await?, ProtectionWriteRefusal::Denied);
