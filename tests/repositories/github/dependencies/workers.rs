@@ -94,8 +94,9 @@ async fn proposals(pg: bool) {
     let w = setup(pg).await;
     let provider = provider::Provider::new().await;
     let base = seed(&w, &provider);
-    scan(&w).await;
+    // A private repository's dependency graph, and so its scan, is on once Dependabot alerts are.
     enable(&w, &w.writer).await;
+    scan(&w).await;
     run(&w, &provider).await;
     let snapshot = records::snapshot(w.f.pool(), w.owner, w.repo.id)
         .await
@@ -271,11 +272,12 @@ async fn bad_archive(pg: bool) {
     let w = setup(pg).await;
     let provider = provider::Provider::new().await;
     let base = seed(&w, &provider);
-    scan(&w).await;
     provider
         .tamper
         .store(true, std::sync::atomic::Ordering::SeqCst);
+    // A private repository's dependency graph, and so its scan, is on once Dependabot alerts are.
     enable(&w, &w.writer).await;
+    scan(&w).await;
     run(&w, &provider).await;
     let snapshot = records::snapshot(w.f.pool(), w.owner, w.repo.id)
         .await
@@ -376,8 +378,9 @@ async fn default_collision(pg: bool) {
         StatusCode::OK,
     )
     .await;
-    scan(&w).await;
+    // A private repository's dependency graph, and so its scan, is on once Dependabot alerts are.
     enable(&w, &w.writer).await;
+    scan(&w).await;
     run(&w, &provider).await;
     let snapshot = records::snapshot(w.f.pool(), w.owner, w.repo.id)
         .await
