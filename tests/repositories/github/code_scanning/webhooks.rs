@@ -52,7 +52,8 @@ pub(super) async fn fixed_revision(
     .await;
     assert!(code_scanning::process_next(pool).await.unwrap());
     let mut delivered = false;
-    for _ in 0..100 {
+    // The hook's host never resolves, so the delivery is recorded after its retries (7 s).
+    for _ in 0..1500 {
         let deliveries = db::webhooks::list_deliveries(pool, hook).await.unwrap();
         for delivery in deliveries {
             let body: Value = serde_json::from_str(&delivery.request_body).unwrap();

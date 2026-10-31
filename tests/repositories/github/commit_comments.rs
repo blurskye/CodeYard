@@ -11,7 +11,8 @@ use codeyard::backend::{
 use tower::ServiceExt;
 
 async fn delivery(pool: &db::DbPool, hook: i64, comment: i64) -> Value {
-    for _ in 0..250 {
+    // The hook's host never resolves, so the delivery is recorded after its retries (7 s).
+    for _ in 0..1500 {
         for row in db::webhooks::list_deliveries(pool, hook).await.unwrap() {
             let body: Value = serde_json::from_str(&row.request_body).unwrap();
             if row.event == "commit_comment" && body["comment"]["id"] == comment {

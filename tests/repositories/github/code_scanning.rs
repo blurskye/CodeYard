@@ -295,7 +295,8 @@ async fn contract(pg: bool) {
     )
     .await;
     let mut delivered = false;
-    for _ in 0..100 {
+    // The hook's host never resolves, so the delivery is recorded after its retries (7 s).
+    for _ in 0..1500 {
         let deliveries = db::webhooks::list_deliveries(f.pool(), hook).await.unwrap();
         if let Some(delivery) = deliveries.iter().find(|d| {
             d.event == "code_scanning_alert"
