@@ -2,6 +2,17 @@ use super::*;
 use codeyard::backend::webhooks::{self, delivery};
 
 async fn insert_hook(database: &Database, url: &str) -> db::models::Webhook {
+    let (owner, id) = try_insert_hook(database, url).await;
+    db::webhooks::get_webhook(database.pool(), owner, id.unwrap().unwrap())
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+async fn try_insert_hook(
+    database: &Database,
+    url: &str,
+) -> (HookOwner, anyhow::Result<Option<i64>>) {
     let repo = db::repositories::records::get_repository(database.pool(), "alice", "proj")
         .await
         .unwrap()
@@ -23,22 +34,33 @@ async fn insert_hook(database: &Database, url: &str) -> db::models::Webhook {
         },
         None,
     )
-    .await
-    .unwrap()
-    .unwrap();
-    db::webhooks::get_webhook(database.pool(), owner, id)
-        .await
-        .unwrap()
-        .unwrap()
+    .await;
+    (owner, id)
 }
 
 async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
     let (mut database, _root, alice, _) = setup(pg).await;
-    let mut hooks = Vec::new();
     // Each hook has its own URL, since an equivalent second hook is refused as on GitHub.
-    for n in 0..32 {
-        hooks.push(insert_hook(&database, &format!("https://hooks.example/push/{n}")).await);
+    for n in 0..db::webhooks::MAX_HOOKS_PER_OWNER {
+        insert_hook(&database, &format!("https://hooks.example/push/{n}")).await;
     }
+    let (owner, refused) = try_insert_hook(&database, "https://hooks.example/push/over").await;
+    assert!(refused.unwrap_err().is::<db::webhooks::HookLimit>());
+    // The settings panel bounds its page even when an owner holds more hooks than the limit,
+    // so the rest of the paging fixture goes straight into the table.
+    let HookOwner::Repository(repo_id) = owner else {
+        panic!("the fixture hooks belong to a repository")
+    };
+    database
+        .execute(
+            "INSERT INTO webhooks (repo_id, payload_url, content_type, events, active, ssl_verify, created_by_id) \
+             SELECT repo_id, payload_url || '/copy', content_type, events, active, ssl_verify, created_by_id \
+             FROM webhooks WHERE repo_id = $1 ORDER BY id",
+            &[repo_id],
+        )
+        .await;
+    let hooks = db::webhooks::list_webhooks(database.pool(), owner).await.unwrap();
+    assert_eq!(hooks.len(), 32);
     let mut record = db::webhooks::NewDelivery {
         redelivery: false,
         guid: uuid::Uuid::new_v4().to_string(),
