@@ -452,16 +452,15 @@ pub(super) async fn run(
     assert_eq!(values[0]["head"]["repo"]["id"], fork.id);
     assert_eq!(values[0]["head"]["repo"]["private"], true);
     assert_eq!(values[0]["author_association"], "COLLABORATOR");
-    let denied = call(
-        router,
-        "GET",
-        &format!("{base}/commits/{foreign_sha}/pulls"),
-        reader,
-        Value::Null,
-        (OP, 404),
-    )
-    .await;
-    assert!(!denied.to_string().contains("bob"));
+    // The pull request is alice's to see, but its private source repository is not: the head
+    // is redacted as the pulls API does, and nothing names the fork.
+    let redacted = list(router, base, reader, foreign_sha, "").await;
+    assert_eq!(redacted[0]["number"], foreign["number"]);
+    assert_eq!(
+        redacted[0]["head"],
+        json!({"label":"main","ref":"main","sha":foreign_sha,"user":null,"repo":null})
+    );
+    assert!(!redacted.to_string().contains("bob/proj"), "{redacted}");
     assert!(session
         .page_ok(&format!("/alice/proj/commit/{foreign_sha}"))
         .await
