@@ -52,7 +52,8 @@ pub async fn admit_operation(
 
 /// Sign-in pages mint a session row for a cookieless visitor; this bounds those per client.
 pub async fn admit_anonymous_session(pool: &DbPool, client: Option<&str>) -> Result<(), AdmissionError> {
-    admit_operation(pool, None, "anonymous-session", client.unwrap_or_default()).await
+    // A budget key holds at most 80 bytes: the purpose, a colon and 64 hex digits.
+    admit_operation(pool, None, "anon-session", client.unwrap_or_default()).await
 }
 
 /// Every OAuth start counts, including completed flows: callbacks may change client address
