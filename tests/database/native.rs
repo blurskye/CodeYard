@@ -3588,7 +3588,8 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(pool: &db:
         .unwrap();
     assert_eq!(report.len(), 730);
     assert_eq!(report[0].daily_storage_bytes, 10);
-    assert_eq!(report.last().unwrap().cumulative_storage_bytes, 40);
+    // Storage counts confirmed uploads only, so the deleted reservation adds nothing.
+    assert_eq!(report.last().unwrap().cumulative_storage_bytes, 30);
 
     assert_eq!(transfer_row_counts(pool).await, (505, 504));
     assert_eq!(
