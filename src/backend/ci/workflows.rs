@@ -1520,12 +1520,13 @@ on: [push, pull_request]
                 .iter()
                 .map(|workflow| (workflow.name.as_str(), workflow.path.as_str()))
                 .collect::<Vec<_>>(),
+            // A workflow without a name is shown by its path, as on GitHub.
             vec![
+                (".github/workflows/build linux.yml", ".github/workflows/build linux.yml"),
+                (".github/workflows/雪.yaml", ".github/workflows/雪.yaml"),
                 ("Alpha", ".github/workflows/z.yml"),
                 ("Limit", ".github/workflows/limit.yml"),
                 ("Zebra", ".github/workflows/a.yaml"),
-                ("build linux", ".github/workflows/build linux.yml"),
-                ("雪", ".github/workflows/雪.yaml"),
             ]
         );
         let sha = store.commit("main").await.unwrap().sha;
