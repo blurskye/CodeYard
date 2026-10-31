@@ -764,7 +764,7 @@ async fn jit(
     input: std::result::Result<Json<Jit>, JsonRejection>,
 ) -> Result<Response> {
     let (actor, scope) = administered(&s, &headers, &p, true).await?;
-    let Json(input) = input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(|error| super::json_error(error).simple())?;
     if input.labels.is_empty() {
         return Err(Error::invalid_simple("Invalid runner labels"));
     }
