@@ -542,13 +542,17 @@ fn references_render_the_same_after_a_round_trip() {
     assert_eq!(first, super::parse_markdown(source, &back));
 }
 
-/// The HTML inside the paragraph that `text` renders as.
-fn parse_inline(text: &str) -> String {
-    let html = parse_markdown(text);
+/// The HTML inside the one paragraph of `html`.
+fn paragraph(html: String) -> String {
     html.strip_prefix("<p class=\"my-3 leading-7 text-foreground\">")
         .and_then(|html| html.strip_suffix("</p>"))
         .unwrap_or_else(|| panic!("not one paragraph: {html}"))
         .to_owned()
+}
+
+/// The HTML inside the paragraph that `text` renders as.
+fn parse_inline(text: &str) -> String {
+    paragraph(parse_markdown(text))
 }
 
 #[test]
@@ -766,15 +770,16 @@ fn parse_inner(source: &str, document: bool) -> String {
 
 #[test]
 fn large_unclosed_labels_and_urls_stay_literal() {
+    // These sizes are over a comment's output budget, so they render as a file does.
     for count in [4_096, 65_536, 262_144] {
         for prefix in ["[", "![", "[x]("] {
             let source = prefix.repeat(count);
-            assert_eq!(parse_inline(&source), source);
+            assert_eq!(paragraph(parse_document(&source)), source);
         }
     }
     let started = std::time::Instant::now();
     let source = format!("{} [ok](https://example.invalid)", "![".repeat(65_536));
-    let html = parse_inline(&source);
+    let html = paragraph(parse_document(&source));
     assert!(started.elapsed() < std::time::Duration::from_secs(8));
     assert_eq!(html.matches("<a ").count(), 1);
     assert!(html.contains("href=\"https://example.invalid\""));
