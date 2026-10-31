@@ -87,8 +87,10 @@ async fn unavailable_large_path_lists_run_ref_matched_workflows() {
     );
 }
 
+/// The skip check reads every pushed commit's message, so an old revision it cannot find refuses
+/// the push's runs instead of running workflows the push may have asked to skip.
 #[tokio::test]
-async fn branch_excluded_path_filters_do_not_require_a_comparison() {
+async fn an_unknown_old_revision_fails_the_skip_check_closed() {
     let (_root, store, sha) = revision(0);
     let update = RefUpdate {
         reference: "refs/heads/main".into(),
@@ -106,8 +108,6 @@ async fn branch_excluded_path_filters_do_not_require_a_comparison() {
         None,
         &mut WorkflowMatchBudget::new(),
     )
-    .await
-    .unwrap();
-    assert_eq!(matched.len(), 1);
-    assert_eq!(matched[0].path, ".github/workflows/all.yml");
+    .await;
+    assert!(matched.is_err());
 }
