@@ -294,12 +294,12 @@ async fn authority_contract(pg: bool) {
         .await
         .is_ok());
 
-    // Cancelling: the person who started the run and repository admins may;
-    // other writers, outsiders and site admins (without repo access) may not.
+    // Cancelling: the person who started the run and anyone with write access may, as on
+    // GitHub; outsiders and site admins (without repo access) may not.
     for (actor, allowed) in [
         (outsider, false),
         (site, false),
-        (direct, false),
+        (direct, true),
         (admin, true),
         (owner, true),
         (member, true),
