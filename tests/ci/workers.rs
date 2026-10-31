@@ -4316,31 +4316,37 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
 #[tokio::test]
 async fn stalled_ci_replies_keep_their_admission_slots() {
     let fixture = ci_fixture().await;
-    let key = iroh::SecretKey::generate();
-    db::cluster::register_own_node(
-        fixture.pool(),
-        &key.public().to_string(),
-        "slow-worker",
-        &["runner".into()],
-        "test",
-    )
-    .await
-    .unwrap();
-    let slow = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
-        .secret_key(key)
-        .relay_mode(iroh::RelayMode::Disabled)
-        .transport_config(
-            iroh::endpoint::QuicTransportConfig::builder()
-                .stream_receive_window(64u32.into())
-                .build(),
+    // A peer holds at most four requests at once, so four slow workers fill the core's 16 slots.
+    let mut slow = Vec::new();
+    for worker in 0..4 {
+        let key = iroh::SecretKey::generate();
+        db::cluster::register_own_node(
+            fixture.pool(),
+            &key.public().to_string(),
+            &format!("slow-worker-{worker}"),
+            &["runner".into()],
+            "test",
         )
-        .bind()
         .await
         .unwrap();
+        slow.push(
+            iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+                .secret_key(key)
+                .relay_mode(iroh::RelayMode::Disabled)
+                .transport_config(
+                    iroh::endpoint::QuicTransportConfig::builder()
+                        .stream_receive_window(64u32.into())
+                        .build(),
+                )
+                .bind()
+                .await
+                .unwrap(),
+        );
+    }
     let mut held = Vec::new();
     for index in 0..16 {
         let queued = fixture.queue_run().await;
-        let connection = slow
+        let connection = slow[index % slow.len()]
             .connect(fixture.peer.endpoint_addr().unwrap(), cluster::ALPN_EVENTS)
             .await
             .unwrap();
@@ -4397,7 +4403,9 @@ async fn stalled_ci_replies_keep_their_admission_slots() {
         .unwrap()
         .unwrap();
     assert_eq!(claim.run.id, queued.id);
-    slow.close().await;
+    for endpoint in slow {
+        endpoint.close().await;
+    }
     fixture.close().await;
 }
 
