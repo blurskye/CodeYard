@@ -64,11 +64,11 @@ async fn contract(pg: bool) {
             )
             .await;
         assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.text());
-        if invalid.contains("PRIVATE KEY") {
-            assert!(!reply.text().contains("AAAA"));
-        } else {
-            assert!(reply.text().contains("Invalid SSH public key format."));
-        }
+        // Anything that is not one public key may be secret, so it is never echoed back.
+        assert!(reply
+            .text()
+            .contains("Paste one valid OpenSSH public key, never a private key."));
+        assert!(!reply.text().contains("AAAA"));
     }
     assert!(db::users::ssh_keys::list_user_keys(f.pool(), alice_id)
         .await
@@ -84,11 +84,9 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{page}");
-    assert!(page.contains("Invalid SSH public key format."));
-    assert!(
-        page.contains("Failed key title") && page.contains("ssh-ed25519 AAAA"),
-        "draft is retained"
-    );
+    assert!(page.contains("Paste one valid OpenSSH public key"));
+    assert!(page.contains("Failed key title"), "the title draft is retained");
+    assert!(!page.contains("ssh-ed25519 AAAA"));
     let private = "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----";
     let (status, page) = alice
         .form(
