@@ -27,6 +27,7 @@ const MIGRATION_SEEDS: &[(&str, &str, &[&str])] = &[
             "pr_attachment",
             "readme_image",
             "repo_asset",
+            "codeql_database",
             "other",
             "package",
         ],
