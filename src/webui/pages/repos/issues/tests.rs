@@ -1370,7 +1370,7 @@ fn files_html(
     review: Option<&ReviewDraft>,
     pending: usize,
 ) -> String {
-    dioxus_ssr::render_element(diff_page(
+    crate::webui::tests::in_scope(|| dioxus_ssr::render_element(diff_page(
         repo,
         entry,
         &files_diff(),
@@ -1384,7 +1384,7 @@ fn files_html(
         &Default::default(),
         false,
         &[],
-    ))
+    )))
 }
 
 #[test]
@@ -1752,7 +1752,7 @@ fn markdown_preview_does_not_execute_html_or_unsafe_links() {
 fn merged_pull_does_not_offer_reopen_or_a_second_merge() {
     let mut merged = item();
     merged.state = "merged".into();
-    let html = dioxus_ssr::render_element(detail(
+    let html = crate::webui::tests::in_scope(|| dioxus_ssr::render_element(detail(
         &repository(),
         Kind::Pull,
         &merged,
@@ -1762,7 +1762,7 @@ fn merged_pull_does_not_offer_reopen_or_a_second_merge() {
         None,
         &Default::default(),
         &[],
-    ));
+    )));
     assert!(!html.contains("action=\"/alice/repo/pulls/7/state\""));
     assert!(!html.contains("action=\"/alice/repo/pulls/7/merge\""));
     assert!(html.contains("/alice/repo/pulls/7/comments"));

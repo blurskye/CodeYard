@@ -1424,7 +1424,7 @@ fn rendered_settings_and_ref_deletion_require_confirmation() {
         can_admin: true,
         ..Default::default()
     };
-    let settings_html = dioxus_ssr::render_element(settings(&repo, &Settings::default()));
+    let settings_html = crate::webui::tests::in_scope(|| dioxus_ssr::render_element(settings(&repo, &Settings::default())));
     assert!(settings_html.contains("/_forms/settings"));
     assert!(settings_html.contains("name=\"confirm\""));
     assert!(!settings_html.contains("/_forms/transfer"));
@@ -1449,7 +1449,7 @@ fn rendered_settings_and_ref_deletion_require_confirmation() {
         updated: None,
         pull: None,
     }];
-    let refs_html = dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "", "", 0));
+    let refs_html = crate::webui::tests::in_scope(|| dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "", "", 0)));
     assert!(refs_html.contains("/_forms/delete-branch"));
     assert!(refs_html.contains("name=\"confirm\""));
     assert!(refs_html.contains("<details"));
@@ -1898,15 +1898,15 @@ fn releases_are_reachable_from_the_tags_page_and_the_about_column() {
         updated: None,
         pull: None,
     };
-    let tags = dioxus_ssr::render_element(refs(&repo, &[row], true, &[], "", "", 0));
+    let tags = crate::webui::tests::in_scope(|| dioxus_ssr::render_element(refs(&repo, &[row], true, &[], "", "", 0)));
     assert!(tags.contains("href=\"/alice/project/releases\""), "{tags}");
-    let empty = dioxus_ssr::render_element(sidebar(
+    let empty = crate::webui::tests::in_scope(|| dioxus_ssr::render_element(sidebar(
         &repo,
         &ReleasesSummary {
             count: 0,
             latest_tag: None,
         },
-    ));
+    )));
     assert!(
         empty.contains("href=\"/alice/project/releases\""),
         "{empty}"
@@ -1936,7 +1936,7 @@ fn ref_counts_sit_beside_headings_and_deletes_are_outlined() {
         updated: None,
         pull: None,
     };
-    let branches = dioxus_ssr::render_element(refs(
+    let branches = crate::webui::tests::in_scope(|| dioxus_ssr::render_element(refs(
         &repo,
         &[row("main"), row("dev")],
         false,
@@ -1944,14 +1944,14 @@ fn ref_counts_sit_beside_headings_and_deletes_are_outlined() {
         "",
         "",
         0,
-    ));
+    )));
     assert!(branches.contains("2 branches"));
     assert!(branches.contains("title-with-count"));
     assert!(!branches.contains(" total<"));
     assert!(branches.contains("repo-icon-danger"));
     assert!(!branches.contains("btn-destructive"));
     let tags =
-        dioxus_ssr::render_element(refs(&repo, &[row("v1")], true, &[row("main")], "", "", 0));
+        crate::webui::tests::in_scope(|| dioxus_ssr::render_element(refs(&repo, &[row("v1")], true, &[row("main")], "", "", 0)));
     assert!(tags.contains("1 tag<"));
     // The danger zone keeps the filled button.
     let settings_html = settings_tab_html(&repo, "danger");
@@ -2206,15 +2206,15 @@ fn branch_list_searches_by_name_and_shows_divergence_and_delete_icons() {
         row("feature/login", false, Some((2, 1))),
         row("docs", false, Some((0, 0))),
     ];
-    let html = dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "", "", 0));
+    let html = crate::webui::tests::in_scope(|| dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "", "", 0)));
     assert!(html.contains("2 ahead, 1 behind main"), "{html}");
     assert!(html.contains("aria-label=\"Delete branch\""), "{html}");
     assert!(html.contains("name=\"q\""), "{html}");
     // A search keeps the rows whose name contains it, in any case.
-    let found = dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "LOGIN", "", 0));
+    let found = crate::webui::tests::in_scope(|| dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "LOGIN", "", 0)));
     assert!(found.contains("feature/login</a>"), "{found}");
     assert!(!found.contains("docs</a>"), "{found}");
-    let none = dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "zzz", "", 0));
+    let none = crate::webui::tests::in_scope(|| dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "zzz", "", 0)));
     assert!(none.contains("No matches"), "{none}");
 }
 
@@ -3773,7 +3773,7 @@ fn new_branch_form_starts_from_a_branch_with_the_default_first() {
             pull: None,
         },
     ];
-    let html = dioxus_ssr::render_element(refs(&repo, &branches, false, &branches, "", "", 0));
+    let html = crate::webui::tests::in_scope(|| dioxus_ssr::render_element(refs(&repo, &branches, false, &branches, "", "", 0)));
     assert!(!html.contains("Source commit"));
     assert!(html.contains("name=\"sha\""));
     assert!(html.contains("main (aaaaaaa)"));
