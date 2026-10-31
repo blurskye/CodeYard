@@ -3124,7 +3124,28 @@ impl LocalStore {
         mutation.validate()?;
         let (store, pool) = (self.clone(), pool.clone());
         tokio::spawn(async move {
-            let _publication = git::locks::publication(store.path()).await.map_err(RepoError::from)?;
+            let (tag, publishing) = match &mutation {
+                Mutation::Create { tag, fields, .. } => (tag.clone(), !fields.is_draft),
+                Mutation::Update { id, changes } => {
+                    let current = db::releases::get_release(&pool, repo_id, *id)
+                        .await
+                        .map_err(|_| unavailable("Release storage unavailable"))?
+                        .ok_or_else(|| RepoError::new(ErrorKind::NotFound, "Release not found"))?
+                        .release;
+                    let publishing = current.is_draft && changes.is_draft == Some(false);
+                    (changes.tag.clone().unwrap_or(current.tag_name), publishing)
+                }
+            };
+            // Only a write that reads the tag waits for ref publishers. Editing the text of a
+            // published release is a database write and works while Git storage is offline;
+            // its transaction checks the revision the form was rendered with.
+            let reads_tag =
+                matches!(&mutation, Mutation::Create { .. }) || publishing || attestation.is_some();
+            let _publication = if reads_tag {
+                Some(git::locks::publication(store.path()).await.map_err(RepoError::from)?)
+            } else {
+                None
+            };
             let repository = live_write(
                 &pool,
                 repo_id,
@@ -3135,24 +3156,9 @@ impl LocalStore {
                 store.node_id,
             )
             .await?;
-            let tag = match &mutation {
-                Mutation::Create { tag, .. } => tag.clone(),
-                Mutation::Update { id, changes } => {
-                    let current = db::releases::get_release(&pool, repo_id, *id)
-                        .await
-                        .map_err(|_| unavailable("Release storage unavailable"))?
-                        .ok_or_else(|| RepoError::new(ErrorKind::NotFound, "Release not found"))?
-                        .release;
-                    changes.tag.clone().unwrap_or(current.tag_name)
-                }
-            };
             let mut target = String::new();
             let mut tag_oid = String::new();
-            let publishing = match &mutation {
-                Mutation::Create { fields, .. } => !fields.is_draft,
-                Mutation::Update { changes, .. } => changes.is_draft == Some(false),
-            };
-            if matches!(&mutation, Mutation::Create { .. }) || publishing || attestation.is_some() {
+            if reads_tag {
                 let reference = git::tag_ref(&tag).ok_or_else(|| super::invalid_ref("tag"))?;
                 let draft_target = match &mutation {
                     Mutation::Create {
