@@ -2008,7 +2008,9 @@ fn commit_history_groups_by_day_and_pages_with_newer_and_older() {
     assert!(html.contains("name=\"author\""), "{html}");
     // The Author menu lists the people on the page, and the Date menu offers ranges that keep the author.
     assert!(html.contains("Filter by author"), "{html}");
-    assert!(html.contains("/avatars/Ada"), "{html}");
+    // A Git author name is not an account, so the menu shows its first letter, not a picture.
+    assert!(!html.contains("/avatars/Ada"), "{html}");
+    assert!(html.contains(">A</span>"), "{html}");
     assert!(html.contains("since=week"), "{html}");
     assert!(html.contains("Since yesterday"), "{html}");
 }
