@@ -2772,14 +2772,13 @@ async fn commit_and_pull_request_diffs_keep_the_json_shape() {
         let patch = &diff.files[0].patch;
         assert!(patch.contains("+pub fn answer() -> u32 { 42 }\n"));
         let mut value = serde_json::to_value(&diff).unwrap();
-        // The file's blob id and its exact patch bytes are the additions; the rest of the shape
-        // is unchanged.
+        // The file's blob id is the addition; a UTF-8 patch carries no second copy of its bytes,
+        // and the rest of the shape is unchanged.
         assert_eq!(value["files"][0]["blob_sha"].as_str().unwrap().len(), 40);
         value["files"][0]
             .as_object_mut()
             .unwrap()
             .remove("blob_sha");
-        use base64::Engine as _;
         assert_eq!(
             value,
             serde_json::json!({
@@ -2789,7 +2788,6 @@ async fn commit_and_pull_request_diffs_keep_the_json_shape() {
                     "additions": 1,
                     "deletions": 0,
                     "patch": patch,
-                    "patch_bytes": base64::engine::general_purpose::STANDARD.encode(patch),
                 }],
                 "additions": 1,
                 "deletions": 0,

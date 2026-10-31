@@ -2268,7 +2268,8 @@ pub struct DiffFileInfo {
     pub additions: i32,
     pub deletions: i32,
     pub patch: String,
-    /// Exact Git bytes for downloads; the display patch may contain replacement characters.
+    /// Exact Git bytes for downloads when the patch is not UTF-8 and the display patch holds
+    /// replacement characters; empty otherwise, since `patch` is then exact.
     #[serde(default, with = "patch_bytes", skip_serializing_if = "Vec::is_empty")]
     pub patch_bytes: Vec<u8>,
     /// The blob id of the file's new side. A reader's viewed mark is kept against it.
@@ -2758,6 +2759,14 @@ fn diff_info(metadata: Vec<DiffFileMetadata>, patches: Vec<Vec<u8>>) -> Result<D
     let mut deletions = 0i32;
     let mut files = Vec::with_capacity(metadata.len());
     for (metadata, patch) in metadata.into_iter().zip(patches) {
+        // Most patches are UTF-8, and then the text is the exact bytes; only the rest keep a copy.
+        let (patch, patch_bytes) = match String::from_utf8(patch) {
+            Ok(text) => (text, Vec::new()),
+            Err(error) => {
+                let bytes = error.into_bytes();
+                (String::from_utf8_lossy(&bytes).into_owned(), bytes)
+            }
+        };
         additions = additions
             .checked_add(metadata.additions)
             .ok_or(ObjectTooLarge)?;
@@ -2771,8 +2780,8 @@ fn diff_info(metadata: Vec<DiffFileMetadata>, patches: Vec<Vec<u8>>) -> Result<D
             status: metadata.status.to_owned(),
             additions: metadata.additions,
             deletions: metadata.deletions,
-            patch: String::from_utf8_lossy(&patch).into_owned(),
-            patch_bytes: patch,
+            patch,
+            patch_bytes,
             blob_sha: metadata.blob_sha,
         });
     }
