@@ -134,6 +134,10 @@ fn requirements(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
             .collect();
         let exact = requirement.split_once("===").or_else(|| requirement.split_once("=="));
         let Some((name, version)) = exact else { continue; };
+        // A prefix match such as `==7.*` is unresolved, like `>=7`.
+        if version.ends_with(".*") {
+            continue;
+        }
         ensure!(!version.is_empty() && !version.contains(['*', '=', '<', '>', ',']), "Unsupported exact Python requirement");
         add(
             out,
