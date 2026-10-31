@@ -292,7 +292,7 @@ jobs:
     assert_eq!(captured["variants"]["build"]["0"]["result"], "success");
     assert_eq!(captured["variants"]["build"]["1"]["result"], "failure");
     let replay = dir.join("replay.json");
-    std::fs::write(&replay,serde_json::to_vec(&serde_json::json!({"version":1,"state":captured,"selected":{"build":[1],"dependent":null},"matrices":{"build":{"1":{"index":1}}}})).unwrap()).unwrap();
+    std::fs::write(&replay,serde_json::to_vec(&serde_json::json!({"version":1,"state":captured,"selected":{"build":[1],"dependent":null},"matrices":{"build":{"0":{"index":0},"1":{"index":1}}}})).unwrap()).unwrap();
     let next = dir.join("next-state.json");
     let output = command(dir)
         .arg("--replay-file")
@@ -317,7 +317,7 @@ jobs:
         .unwrap();
     assert!(!refused.status.success());
     assert!(
-        log(&refused).contains("Selected matrix context has changed"),
+        log(&refused).contains("Matrix context has changed"),
         "{}",
         log(&refused)
     );
