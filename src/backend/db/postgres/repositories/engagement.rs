@@ -14,7 +14,7 @@ async fn lock_readable(
     repo_id: i64,
 ) -> Result<()> {
     anyhow::ensure!(
-        lock_readable_repository_in_transaction(&mut **tx, user_id, repo_id, RepositoryRowLock::Exclusive)
+        lock_readable_repository_in_transaction(tx, user_id, repo_id, RepositoryRowLock::Exclusive)
             .await?,
         InteractionBlocked
     );

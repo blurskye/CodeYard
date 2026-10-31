@@ -53,7 +53,7 @@ pub(crate) async fn repository(tx: &mut Transaction<'_, Sqlite>, actor: &Actor, 
     let job: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=?1)")
         .bind(id).fetch_one(&mut **tx).await?;
     if job {
-        let Some(job) = super::ci_tokens::get_in_connection(&mut **tx, id).await? else { return Ok(false); };
+        let Some(job) = super::ci_tokens::get_in_connection(tx, id).await? else { return Ok(false); };
         let permissions: crate::backend::ci::tokens::Permissions = serde_json::from_str(&job.permissions)?;
         return Ok(job.repo_id == repo && permissions.allows(&permission.replace('_', "-"), write));
     }

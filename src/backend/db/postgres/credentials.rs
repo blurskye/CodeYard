@@ -55,7 +55,7 @@ pub(crate) async fn repository(tx: &mut Transaction<'_, Postgres>, actor: &Actor
     let job: Option<i64> = sqlx::query_scalar("SELECT g.token_id FROM actions_github_tokens g JOIN ci_runs r ON r.id=g.run_id WHERE g.token_id=$1 FOR SHARE OF g,r")
         .bind(id).fetch_optional(&mut **tx).await?;
     if job.is_some() {
-        let Some(job) = super::ci_tokens::get_in_connection(&mut **tx, id).await? else { return Ok(false); };
+        let Some(job) = super::ci_tokens::get_in_connection(tx, id).await? else { return Ok(false); };
         let permissions: crate::backend::ci::tokens::Permissions = serde_json::from_str(&job.permissions)?;
         return Ok(job.repo_id == repo && permissions.allows(&permission.replace('_', "-"), write));
     }

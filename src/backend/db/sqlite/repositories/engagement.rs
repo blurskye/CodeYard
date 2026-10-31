@@ -10,7 +10,7 @@ use sqlx::{Sqlite, SqlitePool, Transaction};
 /// by now; BEGIN IMMEDIATE keeps the answer valid until commit.
 async fn require_readable(tx: &mut Transaction<'_, Sqlite>, user_id: i64, repo_id: i64) -> Result<()> {
     anyhow::ensure!(
-        lock_readable_repository_in_transaction(&mut **tx, user_id, repo_id).await?,
+        lock_readable_repository_in_transaction(tx, user_id, repo_id).await?,
         InteractionBlocked
     );
     Ok(())

@@ -14,7 +14,7 @@ pub(super) async fn enabled_in(connection: &mut sqlx::SqliteConnection, repo: i6
 async fn authorize_in(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, reader: &Reader, repo: i64) -> Result<(), GraphError> {
     match reader {
         Reader::Viewer(Some(actor)) => {
-            if !super::repositories::access::lock_readable_repository_in_transaction(&mut **tx, actor.user_id, repo).await.map_err(GraphError::Authority)?
+            if !super::repositories::access::lock_readable_repository_in_transaction(tx, actor.user_id, repo).await.map_err(GraphError::Authority)?
                 || !super::credentials::repository(tx, actor, repo, "contents", false).await.map_err(GraphError::Authority)? {
                 return Err(GraphError::Denied);
             }
@@ -30,7 +30,7 @@ async fn authorize_in(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, reader: &Rea
             .bind(repo).bind(generation).fetch_one(&mut **tx).await?;
         if !job { return Err(GraphError::Denied); }
     }
-    if !enabled_in(&mut **tx, repo).await? { return Err(GraphError::Disabled); }
+    if !enabled_in(tx, repo).await? { return Err(GraphError::Disabled); }
     Ok(())
 }
 

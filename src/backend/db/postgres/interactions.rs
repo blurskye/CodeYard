@@ -179,7 +179,7 @@ async fn contribution_exempt(connection: &mut PgConnection, actor: i64, repo: i6
 
 pub async fn proof_required(pool: &PgPool, actor: i64, repo: i64) -> Result<bool> {
     let mut connection = pool.acquire().await?;
-    let Some(restriction) = effective(&mut *connection, repo).await? else {
+    let Some(restriction) = effective(&mut connection, repo).await? else {
         return Ok(false);
     };
     Ok(restriction.limit != "collaborators_only" && !contribution_exempt(&mut connection, actor, repo, &restriction).await?)
