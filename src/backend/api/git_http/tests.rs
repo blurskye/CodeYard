@@ -41,7 +41,7 @@ async fn fixture() -> (tempfile::TempDir, Arc<AppState>, Repository, i64) {
 
 #[tokio::test]
 async fn personal_administrator_git_access_keeps_token_scopes_and_org_restrictions() {
-    let (_root, state, mut repo, _) = fixture().await;
+    let (_root, state, mut repo, owner) = fixture().await;
     let actor = db::users::accounts::create_user(&state.pool, "admin", None)
         .await
         .unwrap();
@@ -59,6 +59,21 @@ async fn personal_administrator_git_access_keeps_token_scopes_and_org_restrictio
         .await
         .unwrap();
     repo.is_private = true;
+    let organization = match db::organizations::create_organization(
+        &state.pool,
+        owner,
+        &db::organizations::NewOrganization::new(
+            "acme",
+            db::organizations::OrganizationProfile::new(None, None).unwrap(),
+        )
+        .unwrap(),
+    )
+    .await
+    .unwrap()
+    {
+        db::organizations::OrganizationOutcome::Applied(organization) => organization,
+        outcome => panic!("organization setup failed: {outcome:?}"),
+    };
     let session = "a".repeat(64);
     db::users::sessions::create_session(
         &state.pool,
@@ -109,12 +124,28 @@ async fn personal_administrator_git_access_keeps_token_scopes_and_org_restrictio
                 .await
                 .is_err());
         }
+        // An administrator's access to personal repositories does not extend to an
+        // organization's; access is read from the stored repository, so move it there.
+        sqlx::query("UPDATE repositories SET owner_kind='org', owner_user_id=NULL, owner_org_id=? WHERE id=?")
+            .bind(organization.id)
+            .bind(repo.id)
+            .execute(raw)
+            .await
+            .unwrap();
         let mut org_repo = repo.clone();
         org_repo.owner_kind = "org".into();
+        org_repo.owner_user_id = None;
+        org_repo.owner_org_id = Some(organization.id);
         assert!(ReceiveCredential::Token(token.id)
             .authorize(&state.pool, &org_repo, false)
             .await
             .is_err());
+        sqlx::query("UPDATE repositories SET owner_kind='user', owner_org_id=NULL, owner_user_id=? WHERE id=?")
+            .bind(owner)
+            .bind(repo.id)
+            .execute(raw)
+            .await
+            .unwrap();
         db::users::tokens::delete_token(&state.pool, actor.id, &session, token.id)
             .await
             .unwrap();
