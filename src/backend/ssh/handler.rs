@@ -64,7 +64,7 @@ pub(super) enum AuthOutcome {
 }
 
 enum KeyIdentity {
-    Account(User, i64),
+    Account(Box<User>, i64),
     Deploy(i64),
 }
 
@@ -167,7 +167,7 @@ impl GitSshHandler {
         let account = get_user_by_key_fingerprint(&self.pool, &fingerprint).await?;
         let deploy = crate::backend::db::deploy_keys::get_deploy_key_by_fingerprint(&self.pool, &fingerprint).await?;
         match (account, deploy) {
-            (Some(account), None) if !account.user.is_banned && !account.user.must_change_password => Ok(Some(KeyIdentity::Account(account.user, account.key.id))),
+            (Some(account), None) if !account.user.is_banned && !account.user.must_change_password => Ok(Some(KeyIdentity::Account(Box::new(account.user), account.key.id))),
             (None, Some(key)) => Ok(crate::backend::db::deploy_keys::usable_deploy_key(&self.pool, key.id).await?.map(|key| KeyIdentity::Deploy(key.id))),
             _ => Ok(None),
         }
@@ -301,7 +301,7 @@ impl russh::server::Handler for GitSshHandler {
             }
         };
         match identity {
-            KeyIdentity::Account(user, id) => { self.user = Some(user); self.key_id = Some(id); }
+            KeyIdentity::Account(user, id) => { self.user = Some(*user); self.key_id = Some(id); }
             KeyIdentity::Deploy(id) => self.deploy_key = Some(id),
         }
         if let Some(signal) = self.authenticated.take() { let _ = signal.send(AuthOutcome::Accepted); }
