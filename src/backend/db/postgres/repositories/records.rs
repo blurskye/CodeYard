@@ -181,9 +181,11 @@ pub async fn list_trending_repositories(
     limit: i64,
 ) -> Result<Vec<Repository>> {
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
+    // A null-safe test: a row with a malformed owner stays in the list, and its card refuses it,
+    // instead of vanishing from Trending as a NULL comparison would make it.
     Ok(sqlx::query_as::<_, Repository>(
         "SELECT * FROM repositories \
-         WHERE is_private = false AND NOT is_gist AND NOT (owner_kind='user' AND owner_user_id=$1) \
+         WHERE is_private = false AND NOT is_gist AND NOT (owner_kind='user' AND owner_user_id IS NOT DISTINCT FROM $1) \
          AND (name ILIKE $2 ESCAPE '\\' OR COALESCE(description,'') ILIKE $2 ESCAPE '\\') \
          ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT $3",
     )

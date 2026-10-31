@@ -6,7 +6,7 @@ const UNAVAILABLE: &str = "This page's data is temporarily unavailable. Please t
 
 async fn sanitized(f: &Fixture, path: &str, authenticated: bool) {
     let reply = f.page(path, authenticated).await;
-    assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
     match reply.envelope.page {
         Page::Error {
             status, message, ..
