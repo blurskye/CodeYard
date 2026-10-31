@@ -2238,7 +2238,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unavailable_cleanup_finishes_the_run_but_quarantines_the_slot() {
+    async fn unavailable_cleanup_keeps_the_run_and_its_lease_until_removal() {
         let root = tempfile::tempdir().unwrap();
         let (mut service, run) = queued_fixture(root.path()).await;
         Arc::make_mut(&mut service.config).podman_socket =
@@ -2274,22 +2274,26 @@ mod tests {
         let RunQueue::Database { pool, .. } = &service.queue else {
             unreachable!()
         };
-        let current = tokio::time::timeout(Duration::from_secs(40), async {
-            loop {
-                let current = db::ci::get_ci_run_by_run_id(pool, run.run_id)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                if current.completed_at.is_some() {
-                    break current;
-                }
+        // The fixture's repository is missing, so the run fails before any job starts.
+        tokio::time::timeout(Duration::from_secs(40), async {
+            while !db::ci::list_ci_logs(pool, run.id, 100)
+                .await
+                .unwrap()
+                .iter()
+                .any(|log| log.line == "CI could not run")
+            {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         })
         .await
         .unwrap();
-        assert_eq!(current.status, "failed");
-        assert!(current.error_message.unwrap().contains("cleanup failed"));
+        // A container may still be running, so the run keeps its lease until removal succeeds.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let current = db::ci::get_ci_run_by_run_id(pool, run.run_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(current.completed_at.is_none());
         assert!(!running.is_finished());
         assert!(service
             .cleanup_dir
@@ -2847,7 +2851,10 @@ jobs:
         let (_directory, socket, mut requests, server) = fake_podman(vec![
             response(503, Vec::new()),
             response(200, list_body(&["workflow", "service"])),
+            // Each container is inspected for act's names before it is removed.
+            response(404, Vec::new()),
             response(204, Vec::new()),
+            response(404, Vec::new()),
             response(204, Vec::new()),
             // Networks, then built images, carry the same run label.
             response(200, list_body(&[])),
@@ -3161,7 +3168,7 @@ jobs:
             github_tokens: Default::default(),
             store: Some(store),
         };
-        let workspace = Workspace::prepare(
+        let mut workspace = Workspace::prepare(
             &queue,
             &claim,
             workspace_parent.path(),
@@ -3191,6 +3198,8 @@ jobs:
             "on: push\n"
         );
         let path = workspace.root().to_owned();
+        // The worker marks a workspace removable once no process or container can use it.
+        workspace.removable = true;
         drop(workspace);
         cleanup.await.unwrap();
         assert!(!path.exists());
