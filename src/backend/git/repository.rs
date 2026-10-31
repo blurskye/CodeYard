@@ -1800,7 +1800,7 @@ async fn read_grep_record(reader: &mut BufReader<ChildStdout>) -> Result<Option<
 }
 
 /// Reads through a delimiter without retaining an unbounded field. Returns bytes consumed too.
-async fn read_delimited(
+pub(super) async fn read_delimited(
     reader: &mut (impl tokio::io::AsyncBufRead + Unpin),
     delimiter: u8,
     keep: usize,

@@ -241,7 +241,6 @@ pub(crate) async fn compute_language_stats(
 
 pub const MAX_CONTRIBUTORS: usize = 10_000;
 const MAX_CONTRIBUTOR_LINE_BYTES: usize = 4 * 1024;
-const MAX_CONTRIBUTOR_OUTPUT_BYTES: usize = 1024 * 1024;
 
 fn check_contributor_count(count: usize) -> Result<()> {
     if count > MAX_CONTRIBUTORS {
@@ -250,44 +249,35 @@ fn check_contributor_count(count: usize) -> Result<()> {
     Ok(())
 }
 
-fn parse_contributors(output: &[u8]) -> Result<Vec<ContributorInfo>> {
-    let mut contributors = std::collections::BTreeMap::<String, ContributorInfo>::new();
-    for line in String::from_utf8_lossy(output).lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if line.len() > MAX_CONTRIBUTOR_LINE_BYTES {
-            return Err(ObjectTooLarge.into());
-        }
-        let (commits, author) = line
-            .split_once('\t')
-            .ok_or_else(|| anyhow::anyhow!("Malformed Git contributor record"))?;
-        let commits = commits
-            .trim()
-            .parse::<u64>()
-            .ok()
-            .and_then(|commits| u32::try_from(commits).ok())
-            .filter(|commits| *commits <= i32::MAX as u32)
-            .ok_or(ObjectTooLarge)?;
-        let author = author.trim();
-        let email_start = author
-            .find('<')
-            .ok_or_else(|| anyhow::anyhow!("Missing Git contributor email"))?;
-        let email_end = author[email_start + 1..]
-            .find('>')
-            .ok_or_else(|| anyhow::anyhow!("Malformed Git contributor email"))?;
-        let email_end = email_start + 1 + email_end;
-        let email = author[email_start + 1..email_end].to_owned();
-        let entry = contributors.entry(email.to_ascii_lowercase()).or_insert_with(|| ContributorInfo {
-            name: author[..email_start].trim().to_owned(), email, commits: 0,
-        });
-        entry.commits = entry.commits.checked_add(commits).filter(|count| *count <= i32::MAX as u32).ok_or(ObjectTooLarge)?;
-        check_contributor_count(contributors.len())?;
+/// Contributors by lowercased email, as GitHub groups commits.
+type Contributors = std::collections::BTreeMap<String, ContributorInfo>;
+
+/// Counts `commits` by one `Name <email>` author. The first name seen for an email is kept.
+fn add_contributor(contributors: &mut Contributors, author: &str, commits: u32) -> Result<()> {
+    let author = author.trim();
+    if author.len() > MAX_CONTRIBUTOR_LINE_BYTES {
+        return Err(ObjectTooLarge.into());
     }
+    let email_start = author
+        .find('<')
+        .ok_or_else(|| anyhow::anyhow!("Missing Git contributor email"))?;
+    let email_end = author[email_start + 1..]
+        .find('>')
+        .ok_or_else(|| anyhow::anyhow!("Malformed Git contributor email"))?;
+    let email_end = email_start + 1 + email_end;
+    let email = author[email_start + 1..email_end].to_owned();
+    let entry = contributors.entry(email.to_ascii_lowercase()).or_insert_with(|| ContributorInfo {
+        name: author[..email_start].trim().to_owned(), email, commits: 0,
+    });
+    entry.commits = entry.commits.checked_add(commits).filter(|count| *count <= i32::MAX as u32).ok_or(ObjectTooLarge)?;
+    check_contributor_count(contributors.len())
+}
+
+/// The contributors with the most commits first.
+fn ranked_contributors(contributors: Contributors) -> Vec<ContributorInfo> {
     let mut contributors = contributors.into_values().collect::<Vec<_>>();
     contributors.sort_by(|a, b| b.commits.cmp(&a.commits).then(a.email.cmp(&b.email)));
-    Ok(contributors)
+    contributors
 }
 
 /// A result read from history, kept until a ref moves. `key` names anything else the result
@@ -418,19 +408,23 @@ async fn contributors_for(repo_path: &Path, branch: Option<&str>) -> Result<Vec<
         }).await?;
         if tips.is_empty() { return Ok(Vec::new()); }
         let input = tips.into_iter().map(|tip| format!("{tip}\n")).collect::<String>();
+        // shortlog takes no --stdin, so log prints each pinned commit's mailmapped author and
+        // the commits are counted here as they stream.
         let mut command = process::git_command()?;
         command.args(["-c", "mailmap.file=/dev/null", "-c", &format!("mailmap.blob={mailmap}")])
-            .args(["shortlog", "-sne", "--stdin"])
+            .args(["log", "--use-mailmap", "--format=%aN <%aE>", "--stdin", "--"])
             .current_dir(repo_path);
-        let (status, output) = process::buffered(
-            command,
-            input.as_bytes(),
-            MAX_CONTRIBUTOR_OUTPUT_BYTES,
-            process::RPC_TIMEOUT,
-        )
+        let (_, contributors) = process::read_stream(command, input.as_bytes(), process::RPC_TIMEOUT, |stdout, _| async move {
+            let mut reader = tokio::io::BufReader::new(stdout);
+            let mut contributors = Contributors::new();
+            while let Some((line, used)) = super::repository::read_delimited(&mut reader, b'\n', MAX_CONTRIBUTOR_LINE_BYTES + 1).await? {
+                ensure!(used == line.len(), ObjectTooLarge);
+                add_contributor(&mut contributors, &String::from_utf8_lossy(&line), 1)?;
+            }
+            Ok(process::ReadEnd::Complete(contributors))
+        })
         .await?;
-        ensure!(status.success(), "Git contributor listing failed");
-        parse_contributors(&output)
+        Ok(ranked_contributors(contributors))
     })
     .await
 }
@@ -997,7 +991,10 @@ mod tests {
         assert_eq!(languages[0].language, "Rust");
         assert_eq!(languages[0].bytes, 12);
 
-        let contributors = parse_contributors(b"  2\tA User <a@example.invalid>\n").unwrap();
+        let mut contributors = Contributors::new();
+        add_contributor(&mut contributors, "A User <a@example.invalid>\n", 1).unwrap();
+        add_contributor(&mut contributors, "Other Name <A@example.invalid>\n", 1).unwrap();
+        let contributors = ranked_contributors(contributors);
         assert_eq!(contributors.len(), 1);
         assert_eq!(contributors[0].name, "A User");
         assert_eq!(contributors[0].commits, 2);
