@@ -18,5 +18,5 @@ pub(crate) fn requested_header(headers: &HeaderMap, name: &str) -> Result<(ByteR
     let mut values = headers.get_all(name).iter();
     let Some(value) = values.next() else { return Ok((ByteRange::Full, false)); };
     if values.next().is_some() { return Err(()); }
-    Ok((ByteRange::parse(value.to_str().map_err(|_| ())?)?, true))
+    Ok((ByteRange::parse(value.to_str().map_err(|_| ())?).map_err(|_| ())?, true))
 }
