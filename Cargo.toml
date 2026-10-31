@@ -122,6 +122,9 @@ tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 jsonschema = { version = "=0.60.0", default-features = false }
 
+[lints]
+workspace = true
+
 # The application binds the full generated schema; its debug graph is similarly large.
 [profile.dev.package.codeyard]
 debug = false
@@ -142,6 +145,12 @@ members = ["crates/codeyard-actions", "crates/codeyard-github-graphql"]
 [workspace.package]
 version = "0.1.5"
 edition = "2021"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+undocumented_unsafe_blocks = "deny"
+allow_attributes_without_reason = "deny"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
