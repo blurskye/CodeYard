@@ -807,11 +807,19 @@ async fn publish_notifies_release_watchers(pg: bool) {
             StatusCode::OK,
         )
         .await;
+    let repo = db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
     let reply = world
         .bob
         .form_reply(
             "/alice/proj/_forms/watch-level",
-            &[("level", "custom"), ("events_releases", "on")],
+            &[
+                ("repository_id", &repo.id.to_string()),
+                ("level", "custom"),
+                ("events_releases", "on"),
+            ],
         )
         .await;
     assert!(
