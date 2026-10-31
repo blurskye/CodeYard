@@ -128,9 +128,19 @@ async fn contract(pg: bool) {
         renamed.downcast_ref::<db::labels::LabelWriteRefusal>(),
         Some(&db::labels::LabelWriteRefusal::DuplicateName)
     );
+    // The edit form carries the label as the page showed it.
+    let original = serde_json::to_string(&(
+        &other.name,
+        &other.color,
+        other.description.clone().unwrap_or_default(),
+    ))
+    .unwrap();
     for (action, extra) in [
         ("label", Vec::new()),
-        ("edit-label", vec![("label_id", other.id.to_string())]),
+        (
+            "edit-label",
+            vec![("label_id", other.id.to_string()), ("original", original)],
+        ),
     ] {
         let mut pairs = vec![
             ("repository_id", rid.as_str()),
