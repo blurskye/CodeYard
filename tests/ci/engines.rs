@@ -39,7 +39,7 @@ fn workflow_commit(path: &str) {
           printf 'credential-hash='
           printf '%s' "$TOKEN" | sha256sum
 "#;
-    let yaml = format!("name: Tokens\non: workflow_dispatch\npermissions: {{contents: write}}\njobs:\n  writer:\n    runs-on: linux\n    steps:\n{step}  reader:\n    permissions: {{contents: read}}\n    runs-on: linux\n    steps:\n{step}");
+    let yaml = format!("name: Tokens\non: workflow_dispatch\npermissions: {{contents: write}}\njobs:\n  writer:\n    runs-on: ubuntu-latest\n    steps:\n{step}  reader:\n    permissions: {{contents: read}}\n    runs-on: ubuntu-latest\n    steps:\n{step}");
     let mut workflows = git.treebuilder(None).unwrap();
     workflows
         .insert("ci.yml", git.blob(yaml.as_bytes()).unwrap(), 0o100644)
@@ -304,7 +304,7 @@ async fn contract(pg: bool) {
                 assert_eq!(job["status"], "completed");
                 assert_eq!(job["conclusion"], "success");
                 assert_eq!(job["workflow_name"], "Tokens");
-                assert_eq!(job["labels"], serde_json::json!(["linux"]));
+                assert_eq!(job["labels"], serde_json::json!(["ubuntu-latest"]));
                 assert_eq!(job["head_sha"], finished.head_sha.as_deref().unwrap());
                 assert!(
                     job["steps"]

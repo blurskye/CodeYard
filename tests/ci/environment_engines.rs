@@ -39,7 +39,7 @@ fn scoped_workflow() -> String {
             "only-environment-private-marker",
         ),
     ] {
-        yaml.push_str(&format!("  {job}:\n    runs-on: linux\n"));
+        yaml.push_str(&format!("  {job}:\n    runs-on: ubuntu-latest\n"));
         if let Some(environment) = environment {
             yaml.push_str(&format!("    environment: '{environment}'\n"));
         }
@@ -278,7 +278,7 @@ async fn fork_claims(pg: bool) {
     )
     .await
     .unwrap();
-    workflow_commit(&repo.disk_path,"on: workflow_dispatch\njobs:\n  deploy:\n    runs-on: linux\n    environment: İ\n    steps: [{run: 'true'}]\n");
+    workflow_commit(&repo.disk_path,"on: workflow_dispatch\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    environment: İ\n    steps: [{run: 'true'}]\n");
     values::create(f.pool(), actor, repo.id, "İ").await.unwrap();
     for (kind, name, value) in [
         (Kind::Secret, "TOKEN", "environment-private-claim-marker"),

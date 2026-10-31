@@ -90,7 +90,7 @@ const LEAF: &str = r#"on:
         value: ${{ jobs.test.outputs.message }}
 jobs:
   test:
-    runs-on: linux
+    runs-on: ubuntu-latest
     permissions: {contents: write, issues: write, id-token: write}
     outputs:
       message: ${{ steps.output.outputs.message }}
@@ -188,7 +188,7 @@ jobs:
       password: ${{ secrets.CALL_PASSWORD }}
   verify:
     needs: call
-    runs-on: linux
+    runs-on: ubuntu-latest
     steps:
       - run: |
           test '${{ needs.call.outputs.message }}' = two
@@ -389,7 +389,7 @@ jobs:
             &remote.disk_path,
             &[(
                 "called.yml",
-                "on: workflow_call\njobs: {broken: {runs-on: linux, steps: [{run: exit 42}]}}",
+                "on: workflow_call\njobs: {broken: {runs-on: ubuntu-latest, steps: [{run: exit 42}]}}",
             )],
         );
         let workers = CiWorkers::new(queue.clone(), config.clone(), true, root.path());

@@ -109,7 +109,7 @@ on: workflow_dispatch
 permissions: {contents: read}
 jobs:
   context:
-    runs-on: linux
+    runs-on: ubuntu-latest
     steps:
       - run: |
           test '${{ github.actor }}' = alice
@@ -399,7 +399,7 @@ async fn partial(
 on: workflow_dispatch
 jobs:
   producer:
-    runs-on: linux
+    runs-on: ubuntu-latest
     outputs:
       safe: ${{ steps.values.outputs.safe }}
     steps:
@@ -407,7 +407,7 @@ jobs:
         run: echo safe=observed >> "$GITHUB_OUTPUT"
   build:
     needs: producer
-    runs-on: linux
+    runs-on: ubuntu-latest
     strategy:
       max-parallel: 1
       matrix:
@@ -431,7 +431,7 @@ jobs:
           fi
   dependent:
     needs: build
-    runs-on: linux
+    runs-on: ubuntu-latest
     steps:
       - run: test '${{ needs.build.outputs.value }}' = one
 "#,
