@@ -457,19 +457,35 @@ mod tests {
             crate::backend::ci::CiConfig::default(),
             None,
         );
-        let mut ctx = PageContext::load(
+        // Only a signed-in reader is shown a refused run's workflows; bob may read the public one.
+        // The page reads him from a live session, as metadata is checked against the cookie.
+        let bob = db::users::accounts::create_user(&pool, "bob", None)
+            .await
+            .unwrap();
+        let session = uuid::Uuid::new_v4().simple().to_string().repeat(2);
+        db::users::sessions::create_session(
+            &pool,
+            &session,
+            bob.id,
+            None,
+            None,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .await
+        .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::COOKIE,
+            format!("session_id={session}").parse().unwrap(),
+        );
+        let ctx = PageContext::load(
             Arc::new(state),
-            HeaderMap::new(),
+            headers,
             &"/alice/project/actions".parse().unwrap(),
         )
         .await
         .unwrap_or_else(|_| panic!("page context"));
-        // Only a signed-in reader is shown a refused run's workflows; bob may read the public one.
-        ctx.user = Some(
-            db::users::accounts::create_user(&pool, "bob", None)
-                .await
-                .unwrap(),
-        );
+        assert_eq!(ctx.user.as_ref().map(|user| user.id), Some(bob.id));
         let loaded = crate::backend::api::repos::chrome::load_metadata(&ctx, "alice", "project")
             .await
             .unwrap_or_else(|_| panic!("public metadata"));
