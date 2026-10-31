@@ -19,6 +19,7 @@ fn spec() -> &'static Value {
             .unwrap();
         let mut spec = serde_json::from_str(&text).unwrap();
         secret_scanning_resolutions(&mut spec);
+        pull_request_head_repositories(&mut spec);
         nullable(&mut spec);
         spec
     })
@@ -36,6 +37,20 @@ fn secret_scanning_resolutions(spec: &mut Value) {
         if !resolutions.iter().any(|known| known == value) {
             resolutions.push(json!(value));
         }
+    }
+}
+
+/// GitHub's description marks a pull request's `head.repo` nullable in its webhook pull request
+/// schemas, for a head repository that is gone or that the reader cannot see, but its REST pull
+/// request schemas leave that out. The REST schemas take the documented null.
+fn pull_request_head_repositories(spec: &mut Value) {
+    for schema in ["pull-request", "pull-request-simple"] {
+        let repo = spec
+            .pointer_mut(&format!(
+                "/components/schemas/{schema}/properties/head/properties/repo"
+            ))
+            .expect("GitHub's description has the pull request head repository");
+        *repo = json!({"anyOf": [repo.take(), {"type": "null"}]});
     }
 }
 
