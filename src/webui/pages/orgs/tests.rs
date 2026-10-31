@@ -545,8 +545,9 @@ fn rejected_submission_reselects_its_choices() {
     ));
     assert!(selected(selects(&granted, "repo_id")[0], "15"));
     let access = selects(&granted, "permission");
-    // The row for repository 7 keeps its own level; the grant form shows the draft.
-    assert!(selected(access[0], "3"));
+    // The row for repository 7 asks for a deliberate direct grant rather than showing its
+    // effective level; the grant form shows the draft.
+    assert!(selected(access[0], ""));
     assert!(selected(access[1], "4"));
 }
 
