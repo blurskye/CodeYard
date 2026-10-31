@@ -128,7 +128,9 @@ async fn source() -> Source {
                 let transfer = transfer.clone();
                 async move {
                     assert_eq!(headers[header::AUTHORIZATION], "Basic dXBzdHJlYW06c2VjcmV0");
-                    assert!(String::from_utf8_lossy(&body).contains("side-band-64k ofs-delta"));
+                    // Imports ask for sideband only, not offset deltas, since 872d32a69.
+                    let request = String::from_utf8_lossy(&body);
+                    assert!(request.contains(" side-band-64k\n") && !request.contains("ofs-delta"));
                     (
                         [(header::CONTENT_TYPE, "application/x-git-upload-pack-result")],
                         transfer,
