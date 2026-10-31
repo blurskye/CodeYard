@@ -738,8 +738,8 @@ pub fn repository_snapshot(snapshot: &crate::backend::db::repository_stats::Repo
     value
 }
 
-/// Unscoped builders cannot expose the cached, private-inclusive fork totals. Readers and
-/// delivery enrichment add only counts projected for their audience.
+/// Replaces the zero fork counts of an unscoped repository document with the count its
+/// audience may see.
 pub fn set_fork_counts(repository: &mut Value, count: i32) {
     if !repository.is_object() { return; }
     for field in ["forks", "forks_count", "network_count"] {
@@ -772,6 +772,9 @@ pub fn repository(repo: &Repository, owner: &str) -> Value {
         "watchers": repo.stars_count, "open_issues": repo.open_issues_count,
         "description": repo.description,
         "fork": repo.is_fork,
+        // The cached total includes private forks, so the builder reports none; readers that
+        // know their audience replace these with set_fork_counts.
+        "forks": 0, "forks_count": 0, "network_count": 0,
         "is_template": repo.is_template,
         "archived": repo.is_archived,
         "default_branch": repo.default_branch,
@@ -2429,7 +2432,7 @@ mod tests {
         );
         assert_eq!(value["repository"]["size"], 12);
         assert_eq!(value["repository"]["stargazers_count"], 2);
-        assert!(value["repository"].get("forks_count").is_none());
+        assert_eq!(value["repository"]["forks_count"], 0);
         // GitHub's historical watchers aliases mean stars; subscriptions are separate.
         assert_eq!(value["repository"]["watchers_count"], 2);
         assert_eq!(value["repository"]["watchers"], 2);
