@@ -92,6 +92,8 @@ async fn cli_escapes_emails_descriptions_and_key_labels() {
     )
     .await
     .unwrap();
+    // `repo info` reads the repository's Git storage, and fails without it.
+    git2::Repository::init_bare(database.installation_directory().join("repo.git")).unwrap();
     sqlx::query("INSERT INTO ssh_keys(user_id, name, fingerprint, public_key, key_type) VALUES (?1, ?2, 'fingerprint', 'fixture', 'ssh-ed25519')")
         .bind(user.id).bind(value).execute(&database.raw).await.unwrap();
     for arguments in [
@@ -104,6 +106,7 @@ async fn cli_escapes_emails_descriptions_and_key_labels() {
             .args(&arguments)
             .env_clear()
             .env("DATABASE_URL", &database.url)
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .current_dir(database.installation_directory())
             .output()
             .unwrap();
