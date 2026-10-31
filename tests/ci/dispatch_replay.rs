@@ -142,8 +142,12 @@ async fn contract(pg: bool) {
     assert!(values
         .values()
         .all(|value| value.as_str().unwrap().len() == 1700));
-    // Per-value validation still refuses a value over the shared bound.
-    let oversized = text.replacen(&"x".repeat(1700), &"x".repeat(2049), 1);
+    // Per-value validation still refuses a value over the shared bound, GitHub's 65,535 characters.
+    let oversized = text.replacen(
+        &"x".repeat(1700),
+        &"x".repeat(codeyard::backend::ci::dispatch_inputs::MAX_VALUE_BYTES + 1),
+        1,
+    );
     let refused = client
         .form_reply(
             "/ci/dispatch",
