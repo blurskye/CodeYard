@@ -1037,8 +1037,13 @@ fn sources_over_the_limit_show_the_preview() {
 
 #[test]
 fn highlighting_stops_at_the_block_and_document_budgets() {
-    // One line of spaces is one token, so the output stays small.
-    let block = |size: usize| format!("```rust\n{}\n```\n\n", " ".repeat(size));
+    // Lines of spaces are one token each, so the output stays small. A line longer than the
+    // highlighter's line limit is never highlighted, so the code is many short lines.
+    let block = |size: usize| {
+        let mut code = format!("{}\n", " ".repeat(1023)).repeat(size / 1024);
+        code.push_str(&" ".repeat(size % 1024));
+        format!("```rust\n{code}\n```\n\n")
+    };
     let count = |html: &str| {
         html.split("<pre ")
             .filter(|b| b.contains("<span style="))
@@ -1053,8 +1058,9 @@ fn highlighting_stops_at_the_block_and_document_budgets() {
         count(&parse_markdown(&block(MAX_HIGHLIGHTED_BLOCK_BYTES + 1))),
         0
     );
+    // The page budget is reached in a file, whose output is not capped like a comment's.
     let many = block(60 * 1024).repeat(5);
-    assert_eq!(count(&parse_markdown(&many)), 4);
+    assert_eq!(count(&parse_document(&many)), 4);
     // A block over budget is still escaped code.
     let html = parse_markdown(&format!(
         "```rust\n{}\n```",
