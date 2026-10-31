@@ -57,7 +57,7 @@ async fn save(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &params["org"]).await?;
-    let Json(input) = input.map_err(super::super::json_error)?;
+    let Json(input) = input.map_err(|error| super::super::json_error(error).simple())?;
     let id = params
         .get("issue_type_id")
         .map(|id| id.parse::<i64>().map_err(|_| Error::missing()))
