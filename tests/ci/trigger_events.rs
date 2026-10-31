@@ -664,9 +664,9 @@ async fn workflow_run_contract(pg: bool) {
     f.finish().await;
 }
 
-/// Runs a contract on its own 32 MiB thread: its deep async state outgrows the default
+/// Runs the contract on its own 32 MiB thread: its deep async state outgrows the default
 /// 2 MiB test stack in debug builds.
-fn on_a_large_stack<F: std::future::Future<Output = ()>>(contract: impl FnOnce() -> F + Send + 'static) {
+fn workflow_run_contract_on_a_large_stack(pg: bool) {
     std::thread::Builder::new()
         .stack_size(32 << 20)
         .spawn(move || {
@@ -674,7 +674,7 @@ fn on_a_large_stack<F: std::future::Future<Output = ()>>(contract: impl FnOnce()
                 .enable_all()
                 .build()
                 .unwrap()
-                .block_on(Box::pin(contract()))
+                .block_on(Box::pin(workflow_run_contract(pg)))
         })
         .unwrap()
         .join()
@@ -683,12 +683,12 @@ fn on_a_large_stack<F: std::future::Future<Output = ()>>(contract: impl FnOnce()
 
 #[test]
 fn sqlite_workflow_run_events() {
-    on_a_large_stack(|| workflow_run_contract(false));
+    workflow_run_contract_on_a_large_stack(false);
 }
 
 #[test]
 fn postgres_workflow_run_events() {
-    on_a_large_stack(|| workflow_run_contract(true));
+    workflow_run_contract_on_a_large_stack(true);
 }
 
 #[tokio::test]
@@ -701,12 +701,14 @@ async fn postgres_repository_dispatch_events() {
     dispatch_contract(true).await;
 }
 
-#[test]
-fn sqlite_pull_request_activity_events() {
-    on_a_large_stack(|| contract(false));
+// `#[tokio::test]` pins its body on the 2 MiB test stack, and this contract's debug-build
+// future is too large for it, so the contract lives on the heap.
+#[tokio::test]
+async fn sqlite_pull_request_activity_events() {
+    Box::pin(contract(false)).await;
 }
 
-#[test]
-fn postgres_pull_request_activity_events() {
-    on_a_large_stack(|| contract(true));
+#[tokio::test]
+async fn postgres_pull_request_activity_events() {
+    Box::pin(contract(true)).await;
 }
