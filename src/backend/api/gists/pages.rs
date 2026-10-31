@@ -6,7 +6,7 @@ async fn cards(ctx: &PageContext, entries: Vec<db::gists::Gist>) -> Result<Vec<v
     use futures_util::{stream, StreamExt};
     let owners = db::users::accounts::get_users_by_ids(&ctx.state.pool, &entries.iter().map(|gist| gist.owner_id).collect::<Vec<_>>()).await?
         .into_iter().map(|user| (user.id, user.username)).collect::<std::collections::HashMap<_, _>>();
-    let repositories = db::repositories::records::get_repositories_by_ids(&ctx.state.pool, &entries.iter().map(|gist| gist.repo_id).collect::<Vec<_>>()).await?
+    let repositories = db::gists::git_repositories(&ctx.state.pool, &entries.iter().map(|gist| gist.repo_id).collect::<Vec<_>>()).await?
         .into_iter().map(|repo| (repo.id, repo)).collect::<std::collections::HashMap<_, _>>();
     let (owners, repositories) = (&owners, &repositories);
     let results = stream::iter(entries).map(|entry| async move {

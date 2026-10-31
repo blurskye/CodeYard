@@ -61,6 +61,16 @@ pub async fn git_repository(pool: &PgPool, id: &str) -> Result<Option<Repository
             .await?,
     )
 }
+/// The repositories of the gists among `repo_ids`, for a page that lists them.
+pub async fn git_repositories(pool: &PgPool, repo_ids: &[i64]) -> Result<Vec<Repository>> {
+    if repo_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as("SELECT * FROM repositories WHERE id = ANY($1) AND is_gist")
+        .bind(repo_ids)
+        .fetch_all(pool)
+        .await?)
+}
 pub async fn list(pool: &PgPool, input: &GistList) -> Result<Vec<Gist>> {
     list_on(&mut *pool.acquire().await?, input).await
 }

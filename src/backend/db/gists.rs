@@ -86,6 +86,8 @@ native_operation!(crate::backend::db::postgres::gists::by_repository,crate::back
     fn by_repository(pool:&DbPool,repo:i64) -> Result<Option<Gist>>);
 native_operation!(crate::backend::db::postgres::gists::git_repository,crate::backend::db::sqlite::gists::git_repository,
     fn git_repository(pool:&DbPool,id:&str) -> Result<Option<Repository>>);
+native_operation!(crate::backend::db::postgres::gists::git_repositories,crate::backend::db::sqlite::gists::git_repositories,
+    fn git_repositories(pool:&DbPool,repo_ids:&[i64]) -> Result<Vec<Repository>>);
 native_operation!(crate::backend::db::postgres::gists::list,crate::backend::db::sqlite::gists::list,
     fn list(pool:&DbPool,input:&GistList) -> Result<Vec<Gist>>);
 native_operation!(crate::backend::db::postgres::gists::list_for_session,crate::backend::db::sqlite::gists::list_for_session,
