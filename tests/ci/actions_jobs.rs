@@ -79,6 +79,7 @@ async fn contract(pg: bool) {
     db::action_objects::issue_token(f.pool(), run.id, run.worker.as_deref().unwrap_or(""), &generation, &run.run_id.to_string())
         .await
         .unwrap();
+    super::actions_objects::job_credentials(&f, &run, &["build"]).await;
     db::action_jobs::save_state(
         f.pool(),
         "jobs",

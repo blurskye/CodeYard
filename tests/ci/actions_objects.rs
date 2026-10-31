@@ -135,6 +135,24 @@ pub(super) async fn pat(f: &Database, router: &Router, actor: i64, scope: &str) 
     .value
 }
 
+/// Issues the job credentials a runner gets for `jobs` of ci.yml, which it must hold before it
+/// reports their progress.
+pub(super) async fn job_credentials(f: &Database, run: &db::models::CiRun, jobs: &[&str]) {
+    let jobs: String = jobs
+        .iter()
+        .map(|job| {
+            format!("  {job}:\n    runs-on: ubuntu-latest\n    steps: [{{run: 'echo ok'}}]\n")
+        })
+        .collect();
+    let definitions = BTreeMap::from([(
+        ".github/workflows/ci.yml".to_owned(),
+        format!("on: workflow_dispatch\njobs:\n{jobs}").into_bytes(),
+    )]);
+    ci::tokens::issue(f.pool(), run, &definitions, false)
+        .await
+        .unwrap();
+}
+
 async fn contract(pg: bool) {
     fake_webui_bundle::install();
     let mut f = Database::new(pg).await;

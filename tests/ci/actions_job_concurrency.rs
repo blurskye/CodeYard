@@ -63,6 +63,7 @@ async fn start(
     db::action_objects::issue_token(f.pool(), run.id, run.worker.as_deref().unwrap_or(""), &generation, &run.run_id.to_string())
         .await
         .unwrap();
+    super::actions_objects::job_credentials(f, &run, &["test"]).await;
     let queued = event(Update::Queued {
         workflow_name: "Build".into(),
         name: "test".into(),

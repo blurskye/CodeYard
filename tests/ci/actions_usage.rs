@@ -68,6 +68,7 @@ async fn contract(pg: bool) {
         db::action_objects::issue_token(f.pool(), run.id, run.worker.as_deref().unwrap_or(""), &generation, &run.run_id.to_string())
             .await
             .unwrap();
+        super::actions_objects::job_credentials(&f, &run, &["build"]).await;
         for (variant, labels, duration) in [
             (0, vec!["ubuntu-latest".into()], 1234),
             (1, vec!["windows-2022".into()], 999),
