@@ -457,13 +457,19 @@ mod tests {
             crate::backend::ci::CiConfig::default(),
             None,
         );
-        let ctx = PageContext::load(
+        let mut ctx = PageContext::load(
             Arc::new(state),
             HeaderMap::new(),
             &"/alice/project/actions".parse().unwrap(),
         )
         .await
         .unwrap_or_else(|_| panic!("page context"));
+        // Only a signed-in reader is shown a refused run's workflows; bob may read the public one.
+        ctx.user = Some(
+            db::users::accounts::create_user(&pool, "bob", None)
+                .await
+                .unwrap(),
+        );
         let loaded = crate::backend::api::repos::chrome::load_metadata(&ctx, "alice", "project")
             .await
             .unwrap_or_else(|_| panic!("public metadata"));
