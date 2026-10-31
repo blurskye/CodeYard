@@ -377,7 +377,8 @@ jobs:
         let error = queue
             .claim("reusable-escalated", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
             .await
-            .unwrap_err();
+            .err()
+            .expect("raised permissions must fail the claim");
         assert!(format!("{error:#}").contains("exceed caller permissions"), "{error:#}");
         let failed = db::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
             .await
