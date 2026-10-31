@@ -374,13 +374,14 @@ async fn contract(pg: bool, source: &Source) {
     )
     .await;
     wait_status(&router, base, reader, "complete").await;
+    // Commit authors map to accounts only through verified addresses, as on GitHub.
     f.execute(
-        "UPDATE users SET email='original@example.test' WHERE id=$1",
+        "UPDATE users SET email='original@example.test',email_verified=TRUE WHERE id=$1",
         &[alice],
     )
     .await;
     f.execute(
-        "UPDATE users SET email='mapped@example.test' WHERE id=$1",
+        "UPDATE users SET email='mapped@example.test',email_verified=TRUE WHERE id=$1",
         &[bob],
     )
     .await;
