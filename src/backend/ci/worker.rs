@@ -868,7 +868,9 @@ fn act_command(
                     return Err(std::io::Error::last_os_error());
                 }
                 if libc::getppid() as u32 != parent {
-                    return Err(std::io::Error::other("CI worker exited before act started"));
+                    // The server is gone, so nothing reads this error; it must not allocate
+                    // in the forked child.
+                    return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
                 }
                 Ok(())
             });
