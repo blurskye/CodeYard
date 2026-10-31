@@ -615,9 +615,15 @@ async fn timeline_records_only_real_unassignments(pg: bool) {
         .unwrap()
         .id;
 
-    // Bob reads the issue but cannot change its assignees, so his removal is refused.
+    // Bob reads the issue but cannot change its assignees, so his removal is refused, even
+    // with the binding a writer's page carries.
+    let repository = proj_id(pool).await.to_string();
+    let item = issue.to_string();
     let (status, _) = bob
-        .form("/alice/proj/issues/1/assignees/alice/remove", &[])
+        .form(
+            "/alice/proj/issues/1/assignees/alice/remove",
+            &[("repository_id", &repository), ("item_id", &item)],
+        )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(unassigned_lines(pool, issue).await, 0);
