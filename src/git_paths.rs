@@ -26,7 +26,7 @@ pub fn bytes(path: &str) -> Vec<u8> {
         if index != 0 { raw.push(b'/'); }
         if let Some(hex) = part.strip_prefix('\0') {
             if hex.len() % 2 == 0 && hex.bytes().all(|byte| nibble(byte).is_some()) {
-                raw.extend(hex.as_bytes().chunks_exact(2).map(|pair| nibble(pair[0]).unwrap() * 16 + nibble(pair[1]).unwrap()));
+                raw.extend(hex.as_bytes().as_chunks::<2>().0.iter().map(|pair| nibble(pair[0]).unwrap() * 16 + nibble(pair[1]).unwrap()));
                 continue;
             }
         }
