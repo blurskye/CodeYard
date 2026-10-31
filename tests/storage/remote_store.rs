@@ -2976,6 +2976,7 @@ async fn remote_web_contract() {
         .unwrap()
         .find_reference("refs/pull/99/head")
         .is_err());
+    // The node answers as for a repository it cannot serve, so a reader tries the next copy.
     let request = Request {
         repository: rpc::repository_uuid(&elsewhere.disk_path).unwrap(),
         operation: Operation::Refs,
@@ -2983,7 +2984,7 @@ async fn remote_web_contract() {
         ci_run: None,
     };
     assert!(
-        matches!(stream_call(&connection, &request).await.result, Err(Failure::Repository(error)) if error.kind == ErrorKind::Invalid)
+        matches!(stream_call(&connection, &request).await.result, Err(Failure::Repository(error)) if error.is_storage_node_unavailable())
     );
     for (repository, source) in [
         (uuid, rpc::repository_uuid(&elsewhere.disk_path).unwrap()),
@@ -3000,7 +3001,7 @@ async fn remote_web_contract() {
             ci_run: None,
         };
         assert!(
-            matches!(stream_call(&connection, &request).await.result, Err(Failure::Repository(error)) if error.kind == ErrorKind::Invalid)
+            matches!(stream_call(&connection, &request).await.result, Err(Failure::Repository(error)) if error.is_storage_node_unavailable())
         );
     }
     let request = Request {
