@@ -60,7 +60,9 @@ pub(super) async fn detail(state: &AppState, loaded: &LoadedGist) -> Result<Valu
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        entries.push(json!({"id":fork.id,"url":super::super::api_url(&format!("/gists/{}",fork.id)),"user":payloads::user(&user),"created_at":fork.created_at,"updated_at":fork.updated_at}));
+        // GitHub lists each fork's owner as a full public profile.
+        let user = super::super::users::document(state, &user, None).await?;
+        entries.push(json!({"id":fork.id,"url":super::super::api_url(&format!("/gists/{}",fork.id)),"user":user,"created_at":fork.created_at,"updated_at":fork.updated_at}));
     }
     value["forks"] = json!(entries);
     value["fork_of"] = Value::Null;
