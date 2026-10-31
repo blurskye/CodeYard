@@ -89,8 +89,12 @@ async fn stalled_object_cleanup_is_concurrent_bounded_and_keeps_queued_work() {
                 let mut bytes = [0; 4096];
                 let count = socket.read(&mut bytes).await.unwrap();
                 assert!(count > 0);
-                if String::from_utf8_lossy(&bytes[..count]).contains("uploads/healthy") {
-                    healthy.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let request = String::from_utf8_lossy(&bytes[..count]);
+                if request.contains("uploads/healthy") {
+                    // A delete looks the object up first; count only the DELETE itself.
+                    if request.starts_with("DELETE ") {
+                        healthy.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
                     socket.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
                 } else {
                     let _ = sent.send(());
