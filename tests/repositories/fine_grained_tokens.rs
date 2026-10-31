@@ -266,13 +266,13 @@ async fn contract(pg: bool) {
         .is_some_and(|errors| !errors.is_empty()));
     let viewer = graphql(&router, &public, "{ viewer { login } }", json!({})).await;
     assert_eq!(viewer["data"]["viewer"]["login"], "alice", "{viewer}");
-    // Only an explicit contents grant may include unpublished releases.
+    // Only an explicit contents grant may include unpublished releases. A selected public
+    // repository keeps public read access, as on GitHub, so a metadata-only token still
+    // reads its published releases.
     db::releases::create_release(f.pool(), alice, repos[2].id, "unpublished", "main", &db::releases::ReleaseFields { is_draft: true, ..Default::default() }).await.unwrap();
     let releases = "{ repository(owner:\"alice\",name:\"open\"){ releases(first:0){totalCount} } }";
     let metadata = token(f.pool(), alice, &session, user, Access::Selected, vec![repos[2].id], json!({})).await;
-    let denied = graphql(&router, &metadata, releases, json!({})).await;
-    assert!(denied["errors"].as_array().is_some_and(|errors| !errors.is_empty()), "{denied}");
-    for (credential, count) in [(&public, 0), (&selected, 0), (&all_read, 1)] {
+    for (credential, count) in [(&metadata, 0), (&public, 0), (&selected, 0), (&all_read, 1)] {
         let result = graphql(&router, credential, releases, json!({})).await;
         assert!(result["errors"].as_array().is_none_or(|errors| errors.is_empty()), "{result}");
         assert_eq!(result["data"]["repository"]["releases"]["totalCount"], count, "{result}");
