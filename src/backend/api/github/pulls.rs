@@ -278,6 +278,13 @@ async fn get_pull(
     Path((owner, name, number)): Path<(String, String, i32)>,
 ) -> Result<Response> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
+    // A head the viewer cannot read hides the whole pull request, as it does for an update.
+    if pull.head_repo_id.is_some() {
+        let viewer = super::auth::authenticate(&state, &headers, false).await?;
+        if readable_head(&state, viewer.as_ref(), &pull).await?.is_none() {
+            return Err(Error::missing());
+        }
+    }
     if let Some(media) = super::diff_media::requested(&headers) {
         return diff_response(&state, &repo, &pull, media).await;
     }
