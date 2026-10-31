@@ -1,6 +1,10 @@
 # https://github.com/docker/setup-buildx-action/tree/8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

@@ -1,6 +1,10 @@
 # https://github.com/dcarbone/install-jq-action/tree/b7ef57d46ece78760b4019dbc4080a1ba2a40b45
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

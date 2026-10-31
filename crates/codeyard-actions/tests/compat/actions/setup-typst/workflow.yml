@@ -1,6 +1,10 @@
 # https://github.com/typst-community/setup-typst/tree/48aeee7543d37f01afd1ffb27307dc277387ba13
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

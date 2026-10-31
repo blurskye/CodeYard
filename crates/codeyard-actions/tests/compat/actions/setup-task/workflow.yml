@@ -1,6 +1,10 @@
 # https://github.com/arduino/setup-task/tree/b91d5d2c96a56797b48ac1e0e89220bf64044611
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

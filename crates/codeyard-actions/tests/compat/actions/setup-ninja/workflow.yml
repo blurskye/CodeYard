@@ -1,6 +1,10 @@
 # https://github.com/ashutoshvarma/setup-ninja/tree/93f8b9763516f1fb9b4d9840b12d844bee17791f
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

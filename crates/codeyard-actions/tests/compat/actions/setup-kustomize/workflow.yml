@@ -1,6 +1,10 @@
 # https://github.com/imranismail/setup-kustomize/tree/2ba527d4d055ab63514ba50a99456fc35684947f
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

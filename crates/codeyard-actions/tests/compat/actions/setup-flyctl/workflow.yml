@@ -1,6 +1,10 @@
 # https://github.com/superfly/flyctl-actions/tree/fc53c09e1bc3be6f54706524e3b82c4f462f77be
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

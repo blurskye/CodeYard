@@ -1,6 +1,10 @@
 # https://github.com/dart-lang/setup-dart/tree/6afc89df92d6eb3834022f73cd65adc8cdfcb92d
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

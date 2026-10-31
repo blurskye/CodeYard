@@ -1,6 +1,10 @@
 # https://github.com/snok/install-poetry/tree/a783c322200f0519c7926aa6faa857c4e23e9263
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

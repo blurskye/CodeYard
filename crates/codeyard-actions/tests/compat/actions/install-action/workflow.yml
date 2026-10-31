@@ -1,6 +1,10 @@
 # https://github.com/taiki-e/install-action/tree/a4d3f3f761dcd95cce1b72cb61cb6d1963438177
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

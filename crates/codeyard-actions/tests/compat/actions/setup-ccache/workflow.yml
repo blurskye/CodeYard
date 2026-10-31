@@ -1,6 +1,10 @@
 # https://github.com/hendrikmuhs/ccache-action/tree/5ebbd400eff9e74630f759d94ddd7b6c26299639
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

@@ -1,6 +1,10 @@
 # https://github.com/bufbuild/buf-setup-action/tree/a47c93e0b1648d5651a065437926377d060baa99
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

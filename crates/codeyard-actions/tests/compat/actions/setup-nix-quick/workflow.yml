@@ -1,6 +1,10 @@
 # https://github.com/nixbuild/nix-quick-install-action/tree/5bb6a3b3abe66fd09bbf250dce8ada94f856a703
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

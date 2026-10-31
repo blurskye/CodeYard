@@ -1,6 +1,10 @@
 # https://github.com/actions/setup-java/tree/cf277c60eb25467037889841efdb72551f06f6c3
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

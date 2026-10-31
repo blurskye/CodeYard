@@ -1,6 +1,10 @@
 # https://github.com/haskell-actions/setup/tree/0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

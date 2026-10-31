@@ -1,6 +1,10 @@
 # https://github.com/astral-sh/ruff-action/tree/4919ec5cf1f49eff0871dbcea0da843445b837e6
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

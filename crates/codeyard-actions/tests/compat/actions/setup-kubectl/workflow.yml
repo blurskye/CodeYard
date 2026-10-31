@@ -1,6 +1,10 @@
 # https://github.com/azure/setup-kubectl/tree/776406bce94f63e41d621b960d78ee25c8b76ede
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

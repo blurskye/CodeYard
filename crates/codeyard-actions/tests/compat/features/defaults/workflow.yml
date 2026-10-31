@@ -1,6 +1,10 @@
 # https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 defaults:
   run:
     shell: bash

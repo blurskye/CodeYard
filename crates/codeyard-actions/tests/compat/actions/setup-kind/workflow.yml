@@ -1,6 +1,10 @@
 # https://github.com/engineerd/setup-kind/tree/ecfad61750951586a9ef973db567df1d28671bdc
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

@@ -1,6 +1,10 @@
 # https://github.com/actions/download-artifact/tree/d3f86a106a0bac45b974a628896c90dbdf5c8093
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

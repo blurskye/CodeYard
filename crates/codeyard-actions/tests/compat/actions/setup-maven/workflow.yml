@@ -1,6 +1,10 @@
 # https://github.com/stCarolas/setup-maven/tree/d6af6abeda15e98926a57b5aa970a96bb37f97d1
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

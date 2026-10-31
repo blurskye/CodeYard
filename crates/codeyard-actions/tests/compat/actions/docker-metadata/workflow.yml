@@ -1,6 +1,10 @@
 # https://github.com/docker/metadata-action/tree/c299e40c65443455700f0fdfc63efafe5b349051
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

@@ -1,6 +1,10 @@
 # https://github.com/jiro4989/setup-nim-action/tree/189b145833368cc92f1e7b3e166a25a3e057a693
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

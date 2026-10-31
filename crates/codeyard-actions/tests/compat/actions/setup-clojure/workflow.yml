@@ -1,6 +1,10 @@
 # https://github.com/DeLaGuardo/setup-clojure/tree/ada62bb3282a01a296659d48378b812b8e097360
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

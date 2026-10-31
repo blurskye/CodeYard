@@ -1,6 +1,10 @@
 # https://github.com/cachix/install-nix-action/tree/448cde739abec1eaf0646249e3d25bb8d9bc7702
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

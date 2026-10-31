@@ -1,6 +1,10 @@
 # https://github.com/prefix-dev/setup-pixi/tree/92815284c57faa15cd896c4d5cfb2d59f32dc43d
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

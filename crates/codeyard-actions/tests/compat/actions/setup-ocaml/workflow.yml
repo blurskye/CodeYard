@@ -1,6 +1,10 @@
 # https://github.com/ocaml/setup-ocaml/tree/93303b622b2522e4411e295f9e77411a24912ac7
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

@@ -1,6 +1,10 @@
 # https://github.com/google-github-actions/setup-gcloud/tree/e427ad8a34f8676edf47cf7d7925499adf3eb74f
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

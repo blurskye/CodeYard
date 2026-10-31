@@ -1,6 +1,10 @@
 # https://github.com/shimataro/ssh-key-action/tree/87a8f067114a8ce263df83e9ed5c849953548bc3
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

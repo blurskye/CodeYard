@@ -1,6 +1,10 @@
 # https://github.com/aquasecurity/setup-trivy/tree/3fb12ec12f41e471780db15c232d5dd185dcb514
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

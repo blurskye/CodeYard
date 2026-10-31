@@ -1,6 +1,10 @@
 # https://github.com/pdm-project/setup-pdm/tree/544d7237314ee09c256785bd360f6b30add38b37
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

@@ -1,6 +1,10 @@
 # https://github.com/juliangruber/read-file-action/tree/271ff311a4947af354c6abcd696a306553b9ec18
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

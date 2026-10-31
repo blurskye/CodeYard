@@ -1,6 +1,10 @@
 # https://github.com/leafo/gh-actions-luarocks/tree/e65774a6386cb4f24e293dca7fc4ff89165b64c5
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

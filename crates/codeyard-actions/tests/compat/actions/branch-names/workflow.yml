@@ -1,6 +1,10 @@
 # https://github.com/tj-actions/branch-names/tree/dde14ac574a8b9b1cedc59a1cf312788af43d8d8
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest
