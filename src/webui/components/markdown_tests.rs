@@ -1787,7 +1787,7 @@ fn html_tables_keep_spans_and_alignment() {
 fn named_anchors_are_targets_for_in_page_links() {
     assert_eq!(
             parse_markdown("<a name=\"top\"></a>\n\n[up](#top)"),
-            "<p class=\"my-3 leading-7 text-foreground\"><a id=\"user-content-top\"></a></p>\n<p class=\"my-3 leading-7 text-foreground\"><a href=\"#user-content-top\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"text-primary hover:underline\">up</a></p>"
+            "<p class=\"my-3 leading-7 text-foreground\"><a id=\"user-content-top\"></a></p>\n<p class=\"my-3 leading-7 text-foreground\"><a href=\"#user-content-top\" class=\"text-primary hover:underline\">up</a></p>"
         );
 }
 
@@ -1796,7 +1796,7 @@ fn raw_ids_with_the_prefix_keep_one_prefix_for_in_page_links() {
     let html = parse_markdown("<a id=\"user-content-top\"></a>\n\n[up](#user-content-top)");
     assert!(html.contains("<a id=\"user-content-top\"></a>"), "{html}");
     assert!(
-        html.contains("<a href=\"#user-content-top\" target=\"_blank\""),
+        html.contains("<a href=\"#user-content-top\" class="),
         "{html}"
     );
     assert!(!html.contains("user-content-user-content-"), "{html}");
