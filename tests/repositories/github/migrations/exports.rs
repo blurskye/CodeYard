@@ -310,12 +310,13 @@ pub(super) async fn run(
             .await
             .is_err()
     );
+    // A page reads at most one row past 100, to tell whether another page follows.
     assert!(db::projects::list_page(
         f.pool(),
         Some(alice),
         db::projects::Owner::User(alice),
         0,
-        101
+        102
     )
     .await
     .is_err());
