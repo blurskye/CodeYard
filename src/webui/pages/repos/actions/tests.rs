@@ -357,10 +357,13 @@ fn repository_chrome_preserves_authorized_visibility_and_settings_controls() {
     for action in ["watch-level", "unstar"] {
         assert!(header.contains(&format!("action=\"/alice/repo/_forms/{action}\"")));
     }
-    assert_eq!(
-        header.matches("<form method=\"post\"").count(),
-        header.matches("name=\"csrf_token\"").count()
-    );
+    // Every form that posts carries the token, whatever order its attributes come in.
+    let posting = header
+        .split("<form")
+        .skip(1)
+        .filter(|form| form[..form.find('>').unwrap_or(form.len())].contains("method=\"post\""))
+        .count();
+    assert_eq!(posting, header.matches("name=\"csrf_token\"").count());
 }
 
 #[test]
