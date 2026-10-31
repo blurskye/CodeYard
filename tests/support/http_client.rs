@@ -336,9 +336,12 @@ impl Client {
             .unwrap();
         let status = response.status();
         assert_eq!(
-            response.headers()[header::CONTENT_TYPE],
-            codeyard::webui::bootstrap::MODEL_CONTENT_TYPE,
-            "{path}"
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&header::HeaderValue::from_static(
+                codeyard::webui::bootstrap::MODEL_CONTENT_TYPE
+            )),
+            "{path}: {status}, location {:?}",
+            response.headers().get(header::LOCATION)
         );
         let body = to_bytes(response.into_body(), 8 * 1024 * 1024)
             .await
