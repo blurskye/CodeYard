@@ -162,8 +162,9 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(conflict["status"], "failed");
-    assert_eq!(async_merge::recover(f.pool(), Some(-99)).await.unwrap(), 0);
-    assert_eq!(async_merge::recover(f.pool(), None).await.unwrap(), 1);
+    // A request without a worker came from a standalone server, so any node's recovery ends it.
+    assert_eq!(async_merge::recover(f.pool(), Some(-99)).await.unwrap(), 1);
+    assert_eq!(async_merge::recover(f.pool(), None).await.unwrap(), 0);
     let recovered = call(
         &router,
         "pulls/get-merge-async-result",
