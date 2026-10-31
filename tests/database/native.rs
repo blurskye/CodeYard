@@ -4075,7 +4075,10 @@ async fn postgres_identity_cleanup_uses_expiry_index_bounds() {
     // Explain the actual sweep statements, not copies that can drift from the operation.
     let source = include_str!("../../src/backend/db/postgres/users/sessions.rs");
     let statements = source
-        .split_once("const STATEMENTS: [&str; 4] = [")
+        .split_once("const STATEMENTS: [&str; ")
+        .unwrap()
+        .1
+        .split_once("] = [")
         .unwrap()
         .1
         .split_once("];")
