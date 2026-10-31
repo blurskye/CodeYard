@@ -377,7 +377,10 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(visitor.status, StatusCode::SEE_OTHER);
-    assert_eq!(visitor.location.as_deref(), Some("/login"));
+    assert_eq!(
+        visitor.location.as_deref(),
+        Some("/login?redirect=%2Fsettings%2Favatar")
+    );
 
     // Pictures far larger than a settings form (but within 2 MB) are accepted.
     for (client, size) in [(&bob, 1536 * 1024), (&dave, 2 * 1024 * 1024)] {
