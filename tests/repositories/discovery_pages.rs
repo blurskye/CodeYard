@@ -453,13 +453,13 @@ async fn explore_contract(pg: bool) {
     );
     assert_eq!(full_names(&all.repositories)[0], "bob/rustacean");
 
-    // Stars and forks put the largest count first.
+    // Stars and forks put the largest count first. Forks are the public forks themselves, so
+    // the stored count, which includes private forks, does not put gopher first.
     let by_stars = full_names(&explore(&visitor, "/explore?sort=stars").await.repositories);
     assert_eq!(by_stars[0], "alice/rustacean");
     assert_eq!(by_stars[1], "alice/gopher");
     let by_forks = full_names(&explore(&visitor, "/explore?sort=forks").await.repositories);
-    assert_eq!(by_forks[0], "alice/gopher");
-    assert_eq!(by_forks[1], "alice/rustacean");
+    assert_eq!(by_forks[0], "alice/rustacean");
     let updated = explore(&visitor, "/explore?sort=updated").await;
     assert_eq!(updated.sort, "updated");
     assert_eq!(updated.repositories.len(), 4);
