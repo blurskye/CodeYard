@@ -375,7 +375,9 @@ impl RunQueue {
         platforms: &[String],
         stop: Option<&mut watch::Receiver<bool>>,
     ) -> Result<Option<ClaimedRun>> {
-        let prepare = self.claim_prepared(worker, mode, platforms, stop);
+        // The preparation's state runs to tens of kilobytes in a debug build. On the heap, the
+        // futures that await a claim stay small, and so do the stack frames that poll them.
+        let prepare = Box::pin(self.claim_prepared(worker, mode, platforms, stop));
         match self {
             Self::Database { pool, .. } => db::ci::prepare_claim(pool, worker, prepare).await,
             Self::Remote { .. } => prepare.await,
