@@ -2814,9 +2814,10 @@ fn diff_places_threads_under_their_line_and_gutters_open_the_composer() {
         html.find(needle)
             .unwrap_or_else(|| panic!("{needle} in the page"))
     };
-    // The composer sits under its row, and the thread under the row it answers.
+    // The composer sits under its row. The thread is outdated, so its line no longer marks a
+    // place in the patch and it shows above the patch.
     assert!(at("keep") < at("draft words"));
-    assert!(at("draft words") < at("id=\"thread-5\""));
+    assert!(at("id=\"thread-5\"") < at("keep"));
     assert!(html.contains("Outdated"));
     assert!(html.contains("Rename this"));
     assert!(html.contains("Reply"));
