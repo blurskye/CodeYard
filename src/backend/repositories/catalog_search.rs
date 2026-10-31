@@ -59,7 +59,7 @@ pub async fn git_facts(
         }
         let blob = store
             .blob_range(
-                &revision,
+                revision,
                 &entry.path,
                 BlobRange::Window {
                     offset: 0,

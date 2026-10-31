@@ -431,7 +431,7 @@ async fn create_view(
                 &view,
                 &project_url(&project, &name),
                 &html,
-                payloads::user(&actor),
+                payloads::user(actor),
             )
             .map_err(Error::unavailable)?,
         ),

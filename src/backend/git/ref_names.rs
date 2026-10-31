@@ -47,11 +47,11 @@ mod tests {
 
     #[test]
     fn a_full_commit_id_is_exactly_forty_hex_digits() {
-        assert!(is_full_commit_id(&"a".repeat(40)));
-        assert!(is_full_commit_id(&"A1".repeat(20)));
-        assert!(!is_full_commit_id(&"a".repeat(39)));
-        assert!(!is_full_commit_id(&"a".repeat(41)));
-        assert!(!is_full_commit_id(&format!("{}g", "a".repeat(39))));
+        assert!(is_full_commit_id("a".repeat(40)));
+        assert!(is_full_commit_id("A1".repeat(20)));
+        assert!(!is_full_commit_id("a".repeat(39)));
+        assert!(!is_full_commit_id("a".repeat(41)));
+        assert!(!is_full_commit_id(format!("{}g", "a".repeat(39))));
     }
 
     #[test]

@@ -131,7 +131,7 @@ async fn model(ctx: &PageContext, params: &Params) -> Result<view::Page, Respons
         let owner = &row.owner_name;
         let repository_href = format!(
             "/{}/{}",
-            encode_component(&owner),
+            encode_component(owner),
             encode_component(&row.repository)
         );
         let mut subjects: Vec<String> =
@@ -149,7 +149,7 @@ async fn model(ctx: &PageContext, params: &Params) -> Result<view::Page, Respons
             delete_action: row.can_delete.then(|| ctx.location.clone()),
             inventory_base: row
                 .owner_org_id
-                .map(|_| format!("/orgs/{}/artifacts", encode_component(&owner))),
+                .map(|_| format!("/orgs/{}/artifacts", encode_component(owner))),
         });
     }
     let next = if more {

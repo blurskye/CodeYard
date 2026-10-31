@@ -585,7 +585,7 @@ pub(super) async fn prepare_comment(
             }
             let anchor = commit_sha.as_deref().unwrap_or(&pull_request.head_sha);
             if !anchor.eq_ignore_ascii_case(&pull_request.head_sha)
-                && !is_pull_request_commit(cluster, &repository, &pull_request, anchor).await?
+                && !is_pull_request_commit(cluster, repository, pull_request, anchor).await?
             {
                 return Err(OperationError::Conflict {
                     code: "revision_conflict",
@@ -594,8 +594,8 @@ pub(super) async fn prepare_comment(
             }
             let inferred = check_diff_anchor(
                 cluster,
-                &repository,
-                &pull_request,
+                repository,
+                pull_request,
                 anchor,
                 path,
                 line,
@@ -652,7 +652,7 @@ async fn save_comment(
     }
 
     // Public comments notify each real recipient once; pending reviews returned above.
-    let link = pull_request_comment_link(&owner, &repo, &pull_request, &comment);
+    let link = pull_request_comment_link(&owner, &repo, pull_request, &comment);
     let title = format!(
         "{} commented on pull request #{}",
         user.username, pull_request.number
@@ -690,8 +690,8 @@ async fn save_comment(
         pool,
         broadcaster,
         MentionSource {
-            actor: &user,
-            repository: &repository,
+            actor: user,
+            repository,
             owner: &owner,
             repo: &repo,
             number: pull_request.number,
@@ -712,8 +712,8 @@ async fn save_comment(
 
     emit_comment_webhook(
         pool,
-        &repository,
-        &pull_request,
+        repository,
+        pull_request,
         &comment,
         "created",
         user.id,

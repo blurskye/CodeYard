@@ -203,7 +203,7 @@ async fn document(
         repository,
         head_repository,
         head_commit,
-        &metadata,
+        metadata,
         pull_requests,
     );
     let mut workflow_name = crate::backend::ci::workflow_name_from_path(&run.workflow_path);

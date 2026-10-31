@@ -875,7 +875,7 @@ async fn create(
         None
     };
     let body = text(&input, "body")?;
-    let metadata = metadata(&state.pool, &repo, &actor, &input).await?;
+    let metadata = metadata(&state.pool, &repo, actor, &input).await?;
     let issue = crate::backend::issues::mutations::create_issue_with_metadata(
         &state.pool,
         &state.notification_broadcaster,
@@ -914,7 +914,7 @@ async fn update(
     let body = text(&input, "body")?;
     let requested_state = text(&input, "state")?;
     let reason = text(&input, "state_reason")?.filter(|reason| !reason.is_empty());
-    let metadata = metadata(&state.pool, &repo, &actor, &input).await?;
+    let metadata = metadata(&state.pool, &repo, actor, &input).await?;
     if matches!(item, AssignedItem::PullRequest(_)) && metadata.issue_type.is_some() {
         return Err(Error::invalid("Pull requests do not support issue types"));
     }
@@ -999,7 +999,7 @@ async fn change_assignees(
         .as_str()
         .ok_or_else(|| Error::unavailable(()))?;
     use crate::backend::issues::assignments;
-    let target = assignments::Target { actor: &actor, repository: &repo, owner: &p["owner"], item, number, title };
+    let target = assignments::Target { actor, repository: &repo, owner: &p["owner"], item, number, title };
     if remove {
         assignments::unassign(&state.pool, &target, authentication.database_actor(), &names).await.map_err(assignment_error)?;
     } else {

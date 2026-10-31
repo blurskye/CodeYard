@@ -317,7 +317,7 @@ async fn attributes(pg: bool) {
                 ("action", "configure"),
                 ("kind", "field"),
                 ("repository_id", &repository_id), ("item_id", &item_id), ("owner_key", &owner_key),
-                ("expected_revision", &db::issue_attributes::revision(&single).unwrap()),
+                ("expected_revision", &db::issue_attributes::revision(single).unwrap()),
                 ("attribute_id", &single.id.to_string()),
                 ("expected_updated", &single.updated_at.to_rfc3339()),
                 ("name", "single_select"),
