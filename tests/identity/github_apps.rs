@@ -302,7 +302,7 @@ async fn contract(pg: bool) {
         "/api/v3/repos/alice/excluded",
         Some(&access),
         Value::Null,
-        403,
+        404,
     )
     .await;
     request(
@@ -395,7 +395,7 @@ async fn contract(pg: bool) {
         "/api/v3/repos/alice/proj",
         Some(&access),
         Value::Null,
-        403,
+        404,
     )
     .await;
     request(
