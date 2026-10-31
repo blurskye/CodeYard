@@ -513,7 +513,20 @@ async fn contract(pg: bool) {
         prefs["preferences"]["auto_trigger_checks"][0]["setting"], false,
         "Invalid batches must roll back"
     );
-    // The publisher is derived from the OAuth credential, never a supplied app_id.
+    // The publisher is derived from the OAuth credential, never a supplied app_id. An App's
+    // user token reaches only repositories the App is installed on, as on GitHub.
+    db::github_apps::install(
+        f.pool(),
+        alice,
+        &owner.session,
+        app.id,
+        Some(alice),
+        None,
+        Some(&[repo.id]),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     f.execute(
         &format!(
             "INSERT INTO oauth_app_tokens(token_id,client_id,scopes) VALUES($1,'{}','repo')",
