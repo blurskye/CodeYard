@@ -4991,6 +4991,25 @@ async fn the_merge_policy_check_holds_nothing_and_refuses_a_moved_policy_on_both
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn postgres_package_collection_lock_is_per_installation() {
+    let first = PostgresDatabase::new().await;
+    let second = PostgresDatabase::new().await;
+    let held = db::packages::collector_lock(&first.pool).await.unwrap();
+    assert!(held.is_some());
+    assert!(
+        db::packages::collector_lock(&first.pool).await.unwrap().is_none(),
+        "one collector per installation"
+    );
+    assert!(
+        db::packages::collector_lock(&second.pool).await.unwrap().is_some(),
+        "another installation in the same database collects on its own"
+    );
+    drop(held);
+    first.pool.close().await;
+    second.pool.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_merge_policy_writes_take_the_epoch_row_only_at_commit() {
     let fixture = PostgresDatabase::new().await;
     let owner = setup(&fixture.pool, "public").await;
