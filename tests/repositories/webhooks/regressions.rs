@@ -35,8 +35,9 @@ async fn insert_hook(database: &Database, url: &str) -> db::models::Webhook {
 async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
     let (mut database, _root, alice, _) = setup(pg).await;
     let mut hooks = Vec::new();
-    for _ in 0..32 {
-        hooks.push(insert_hook(&database, "https://hooks.example/push").await);
+    // Each hook has its own URL, since an equivalent second hook is refused as on GitHub.
+    for n in 0..32 {
+        hooks.push(insert_hook(&database, &format!("https://hooks.example/push/{n}")).await);
     }
     let mut record = db::webhooks::NewDelivery {
         redelivery: false,
