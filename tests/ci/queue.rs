@@ -183,6 +183,19 @@ async fn world(db: &Database, prefix: &str) -> World {
     }
 }
 
+/// Private repositories run workflows from fork pull requests only once their settings allow it.
+async fn allow_fork_workflows(db: &Database, owner: i64, repo: i64) {
+    db::action_settings::settings(
+        db.pool(),
+        owner,
+        &db::action_settings::Scope::Repository(repo),
+        db::action_settings::Setting::ForkWorkflows,
+        Some(&serde_json::json!({"run_workflows_from_fork_pull_requests": true})),
+    )
+    .await
+    .unwrap();
+}
+
 fn assert_cancelled(run: &CiRun, message: &str) {
     assert_eq!(run.status, "cancelled", "{run:?}");
     assert_eq!(run.error_message.as_deref(), Some(message), "{run:?}");
@@ -1591,6 +1604,7 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
     .await
     .unwrap()
     .id;
+    allow_fork_workflows(db, w.owner, w.repo).await;
     let sha = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
     let same_repo = db::pull_requests::records::create_pull_request(
         db.pool(),
@@ -1919,6 +1933,7 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
     .await
     .unwrap()
     .id;
+    allow_fork_workflows(db, w.owner, w.repo).await;
     let fork_sha = "bcdefbcdefbcdefbcdefbcdefbcdefbcdefbcdef";
     let fork = db::pull_requests::records::create_pull_request(
         db.pool(),
