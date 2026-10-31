@@ -268,6 +268,16 @@ async fn fork_claims(pg: bool) {
     )
     .await
     .unwrap();
+    // The claims below include a fork run, which a private repository runs only once allowed.
+    db::action_settings::settings(
+        f.pool(),
+        actor,
+        &db::action_settings::Scope::Repository(repo.id),
+        db::action_settings::Setting::ForkWorkflows,
+        Some(&serde_json::json!({"run_workflows_from_fork_pull_requests": true})),
+    )
+    .await
+    .unwrap();
     workflow_commit(&repo.disk_path,"on: workflow_dispatch\njobs:\n  deploy:\n    runs-on: linux\n    environment: İ\n    steps: [{run: 'true'}]\n");
     values::create(f.pool(), actor, repo.id, "İ").await.unwrap();
     for (kind, name, value) in [
