@@ -557,3 +557,27 @@ async fn merge_verifies_an_explicit_branch_even_when_its_name_looks_like_a_pull_
     .unwrap();
     assert_eq!(repo.refname_to_id("refs/heads/main").unwrap(), head);
 }
+
+#[test]
+fn only_a_patch_that_is_not_utf8_keeps_a_copy_of_its_bytes() {
+    let metadata = |filename: &str| DiffFileMetadata {
+        old_path: filename.as_bytes().to_vec(),
+        new_path: filename.as_bytes().to_vec(),
+        filename: filename.to_owned(),
+        status: "modified",
+        blob_sha: "0".repeat(40),
+        additions: 1,
+        deletions: 1,
+    };
+    let text = b"@@ -1 +1 @@\n-old\n+new\n".to_vec();
+    let latin1 = b"@@ -1 +1 @@\n-caf\xe9\n+cafe\n".to_vec();
+    let diff = diff_info(vec![metadata("a.txt"), metadata("b.txt")], vec![text.clone(), latin1.clone()]).unwrap();
+    assert_eq!(diff.files[0].patch.as_bytes(), text);
+    assert!(diff.files[0].patch_bytes.is_empty());
+    assert_eq!(diff.files[1].patch_bytes, latin1);
+    assert!(diff.files[1].patch.contains('\u{fffd}'));
+    let json = serde_json::to_value(&diff).unwrap();
+    assert!(json["files"][0].get("patch_bytes").is_none());
+    let back: DiffInfo = serde_json::from_value(json).unwrap();
+    assert_eq!(back.files[1].patch_bytes, latin1);
+}
