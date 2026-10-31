@@ -29,7 +29,9 @@ fn window_end(bytes: &[u8], eof: bool) -> Option<usize> {
     }
     let mut lines = 0;
     let mut line_limited = false;
-    for index in 0..end {
+    // The scan covers the byte window; a line limit only shortens `end` as it stops.
+    let window = end;
+    for index in 0..window {
         let byte = bytes[index];
         if byte == b'\r' && index + 1 == bytes.len() && !eof {
             return None;
