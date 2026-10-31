@@ -647,7 +647,9 @@ async fn oci(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, index);
-    let (status, _, _) = request(
+    // An anonymous exchange carries no identity, so a push asks the client to sign in,
+    // as Docker Distribution and ghcr.io answer an anonymous push.
+    let (status, headers, _) = request(
         &router,
         "PUT",
         &path,
@@ -657,7 +659,11 @@ async fn oci(pg: bool) {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(headers["www-authenticate"]
+        .to_str()
+        .unwrap()
+        .starts_with("Bearer realm="));
     f.execute("UPDATE package_registry_tokens SET expires_at=1", &[])
         .await;
     let (status, _, _) = request(
