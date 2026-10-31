@@ -49,14 +49,14 @@ pub struct MentionSource<'a> {
     pub notified: &'a [i64],
 }
 
-/// Notifies the users that `source.text` newly mentions. The write has already been saved, so a
-/// failure here never fails the request. A failed lookup is logged; a failed notification is
-/// dropped, as the other notification kinds drop theirs.
+/// Notifies the users that `source.text` newly mentions, and returns the ones it notified. The
+/// write has already been saved, so a failure here never fails the request. A failed lookup is
+/// logged; a failed notification is dropped, as the other notification kinds drop theirs.
 pub async fn notify_mentions(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
     source: MentionSource<'_>,
-) {
+) -> Vec<i64> {
     // Names the old text mentions are not new, however many names either text holds. They are
     // subtracted before the cap, so an edit that keeps a long list still notifies its new name.
     let before: HashSet<String> = source
@@ -71,13 +71,13 @@ pub async fn notify_mentions(
         .take(MAX_LOOKUP)
         .collect();
     if names.is_empty() {
-        return;
+        return Vec::new();
     }
     let users = match db::users::accounts::get_users_by_usernames(pool, &names).await {
         Ok(users) => users,
         Err(error) => {
             tracing::warn!(%error, "Mention notifications were not sent: user lookup failed");
-            return;
+            return Vec::new();
         }
     };
     let title = match source.comment_id {
@@ -90,9 +90,9 @@ pub async fn notify_mentions(
             source.actor.username, source.owner, source.repo, source.number
         ),
     };
-    let mut sent = 0;
+    let mut sent = Vec::new();
     for name in &names {
-        if sent == MAX_NOTIFIED {
+        if sent.len() == MAX_NOTIFIED {
             break;
         }
         let Some(user) = users.iter().find(|user| user.username == *name) else {
@@ -138,7 +138,8 @@ pub async fn notify_mentions(
         .await;
         // Only a notification that was created counts toward the budget.
         if created.is_ok() {
-            sent += 1;
+            sent.push(user.id);
         }
     }
+    sent
 }

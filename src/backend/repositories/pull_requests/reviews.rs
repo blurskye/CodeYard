@@ -398,16 +398,9 @@ async fn create_review(
     {
         notified.push(pull_request.author_id);
     }
-    let subscribers = crate::backend::notifications::create::notify_subscribers(
-        pool,
-        broadcaster,
-        notice,
-        &notified,
-    )
-    .await;
-    notified.extend(subscribers);
 
-    notify_mentions(
+    // Mentions come before the subscriber notice, so a mentioned subscriber hears them as such.
+    let mut mentioned = notify_mentions(
         pool,
         broadcaster,
         MentionSource {
@@ -443,7 +436,7 @@ async fn create_review(
         .filter(|entry| published_ids.contains(&entry.comment.id))
     {
         let comment_link = format!("{base}?comment={0}#comment-{0}", entry.comment.id);
-        notify_mentions(
+        let comment_mentioned = notify_mentions(
             pool,
             broadcaster,
             MentionSource {
@@ -465,6 +458,7 @@ async fn create_review(
             },
         )
         .await;
+        mentioned.extend(comment_mentioned);
         super::comments::emit_comment_webhook(
             pool,
             &repository,
@@ -475,6 +469,9 @@ async fn create_review(
         )
         .await;
     }
+    notified.extend(mentioned);
+    crate::backend::notifications::create::notify_subscribers(pool, broadcaster, notice, &notified)
+        .await;
 
     if review.state != "pending" {
         emit_review_webhook(

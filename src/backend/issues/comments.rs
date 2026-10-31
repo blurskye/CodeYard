@@ -144,15 +144,8 @@ pub async fn create_issue_comment(
     {
         notified.push(issue.author_id);
     }
-    let subscribers = crate::backend::notifications::create::notify_subscribers(
-        pool,
-        broadcaster,
-        notice,
-        &notified,
-    )
-    .await;
-    notified.extend(subscribers);
-    notify_mentions(
+    // A mention comes before the subscriber notice, so a mentioned subscriber hears it as one.
+    let mentioned = notify_mentions(
         pool,
         broadcaster,
         MentionSource {
@@ -170,6 +163,9 @@ pub async fn create_issue_comment(
         },
     )
     .await;
+    notified.extend(mentioned);
+    crate::backend::notifications::create::notify_subscribers(pool, broadcaster, notice, &notified)
+        .await;
 
     // The comment moved the issue's revision, so the hook names the issue as it is now.
     let commented = match db::issues::get_issue_by_id(pool, issue.id).await {

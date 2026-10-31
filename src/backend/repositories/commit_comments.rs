@@ -266,7 +266,13 @@ async fn notify(
     previous: Option<&str>,
 ) {
     let link = comment_link(owner, &repo.name, comment);
+    let title = format!(
+        "{} commented on commit {}",
+        user.username,
+        crate::webui::components::short_sha(&comment.sha)
+    );
     let mut notified = Vec::new();
+    let mut subscriber_notice = None;
     // Creation notifies a known commit author who can still read the repository.
     if previous.is_none() {
         let recipient = async {
@@ -288,11 +294,6 @@ async fn notify(
             Some(author.id)
         }
         .await;
-        let title = format!(
-            "{} commented on commit {}",
-            user.username,
-            crate::webui::components::short_sha(&comment.sha)
-        );
         let notice = NotificationRequest {
             user_id: user.id, actor_id: Some(user.id), repo_id: Some(repo.id), kind: "commit_comment", title: &title, body: Some(&comment.body), link: Some(&link),
             metadata: json!({"repo_owner":owner,"repo_name":repo.name,"commit_sha":comment.sha,"commit_comment_id":comment.id,"subject":comment.sha}),
@@ -305,13 +306,10 @@ async fn notify(
                 notified.push(recipient);
             }
         }
-        // Explicit thread subscribers hear about every new comment on the commit.
-        let subscribers = crate::backend::notifications::create::notify_subscribers(
-            pool, broadcaster, notice, &notified,
-        ).await;
-        notified.extend(subscribers);
+        subscriber_notice = Some(notice);
     }
-    notify_mentions(
+    // A mention comes before the subscriber notice, so a mentioned subscriber hears it as one.
+    let mentioned = notify_mentions(
         pool,
         broadcaster,
         MentionSource {
@@ -329,6 +327,17 @@ async fn notify(
         },
     )
     .await;
+    // Thread subscribers hear about every new comment on the commit.
+    if let Some(notice) = subscriber_notice {
+        notified.extend(mentioned);
+        crate::backend::notifications::create::notify_subscribers(
+            pool,
+            broadcaster,
+            notice,
+            &notified,
+        )
+        .await;
+    }
 }
 
 pub async fn create(

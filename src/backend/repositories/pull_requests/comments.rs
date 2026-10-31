@@ -685,15 +685,8 @@ async fn save_comment(
             metadata:json!({"repo_owner":owner,"repo_name":repo,"pull_number":pull_request.number,"subject":pull_request.title,"comment_id":comment.id,"parent_comment_id":parent_id}),
         }).await.is_ok() {notified.push(parent_author);}
     }
-    let subscribers = crate::backend::notifications::create::notify_subscribers(
-        pool,
-        broadcaster,
-        notice,
-        &notified,
-    )
-    .await;
-    notified.extend(subscribers);
-    notify_mentions(
+    // A mention comes before the subscriber notice, so a mentioned subscriber hears it as one.
+    let mentioned = notify_mentions(
         pool,
         broadcaster,
         MentionSource {
@@ -713,6 +706,9 @@ async fn save_comment(
         },
     )
     .await;
+    notified.extend(mentioned);
+    crate::backend::notifications::create::notify_subscribers(pool, broadcaster, notice, &notified)
+        .await;
 
     emit_comment_webhook(
         pool,
