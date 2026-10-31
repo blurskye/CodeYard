@@ -624,9 +624,13 @@ async fn resolve_at(
             .map_err(operation)?))
         }
         ("ProjectV2", "fields" | "field") => {
-            let fields = store::fields_at(pool, viewer, parent["_project"].as_i64().ok_or_else(missing)?, parent["_deleted"] == true).await.map_err(operation)?;
-            charge_fields(&fields, request)?;
-            let mut values = project_fields(parent, &fields)?;
+            let mut values = if let Some(Value::Array(removed)) = parent.get("_fields") {
+                removed.clone()
+            } else {
+                let fields = store::fields_at(pool, viewer, parent["_project"].as_i64().ok_or_else(missing)?, parent["_deleted"] == true).await.map_err(operation)?;
+                charge_fields(&fields, request)?;
+                project_fields(parent, &fields)?
+            };
             if field == "field" {
                 let name = arg(ctx, "name")?;
                 return Ok(values
@@ -840,8 +844,11 @@ pub(super) async fn mutation(
             );
         }
         "deleteProjectV2" => {
-            store::delete(pool, actor, &request.auth.credential(), project.id).await.map_err(operation)?;
+            let fields = store::delete(pool, actor, &request.auth.credential(), project.id).await.map_err(operation)?;
+            charge_fields(&fields, request)?;
             let mut object = project_object(&project);
+            // Deletion purges the fields, so the answer keeps the ones it removed.
+            object["_fields"] = Value::Array(project_fields(&object, &fields)?);
             object["_deleted"] = json!(true);
             payload["projectV2"] = object;
         }
