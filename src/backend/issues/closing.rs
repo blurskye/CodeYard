@@ -119,12 +119,12 @@ pub async fn references(
                 if !links(&pull.body, pull.repo_id == issue.repo_id, owner, name, issue.number, base) {
                     continue;
                 }
-                if !visible.contains_key(&pull.repo_id) {
+                if let std::collections::hash_map::Entry::Vacant(slot) = visible.entry(pull.repo_id) {
                     let allowed = match db::repositories::records::get_repository_by_id(pool, pull.repo_id).await? {
                         Some(repo) => crate::backend::repositories::access::can_read(pool, viewer, &repo).await?,
                         None => false,
                     };
-                    visible.insert(pull.repo_id, allowed);
+                    slot.insert(allowed);
                 }
                 if visible[&pull.repo_id] {
                     result.push(pull);

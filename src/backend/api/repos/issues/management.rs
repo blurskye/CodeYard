@@ -209,12 +209,12 @@ pub(crate) async fn load(
         let Some((target, owner)) = cached_target(ctx, branch.repo_id, &mut targets).await? else {
             continue;
         };
-        if !references.contains_key(&target.id) {
+        if let std::collections::hash_map::Entry::Vacant(slot) = references.entry(target.id) {
             let refs = crate::backend::repositories::store::repo_store(target, ctx.state.cluster.as_ref())
                 .refs().await.map_err(|_| unavailable(ctx))?;
             let wanted = wanted.remove(&target.id).unwrap_or_default();
             let available: HashSet<_> = refs.into_keys().filter(|reference| wanted.contains(reference)).collect();
-            references.insert(target.id, available);
+            slot.insert(available);
         }
         if !references[&target.id].contains(&format!("refs/heads/{}", branch.name)) {
             continue;
@@ -280,13 +280,13 @@ pub(crate) async fn load(
 type TargetCache = HashMap<i64, Option<(db::models::Repository, String)>>;
 
 async fn cached_target<'a>(ctx: &PageContext, id: i64, targets: &'a mut TargetCache) -> ResultPage<Option<&'a (db::models::Repository, String)>> {
-    if !targets.contains_key(&id) {
+    if let std::collections::hash_map::Entry::Vacant(slot) = targets.entry(id) {
         let target = if let Some(target) = readable_target(ctx, id).await? {
             let owner = db::repositories::records::repository_owner_name(&ctx.state.pool, id)
                 .await.map_err(|_| unavailable(ctx))?.ok_or_else(|| unavailable(ctx))?;
             Some((target, owner))
         } else { None };
-        targets.insert(id, target);
+        slot.insert(target);
     }
     Ok(targets.get(&id).and_then(Option::as_ref))
 }
