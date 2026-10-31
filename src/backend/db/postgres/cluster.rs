@@ -346,7 +346,9 @@ pub async fn set_node_status(
 pub async fn serving_lock(pool: &PgPool, identity: &str) -> Result<sqlx::PgConnection> {
     let mut connection = pool.acquire().await?;
     connection.close_on_drop();
-    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(723947121,hashtext($1))")
+    // Advisory locks are per database, and the installation's tables live in its schema, so
+    // two installations in different schemas of one database do not exclude each other.
+    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(723947121,hashtext(COALESCE(current_schema(),'')||'/'||$1))")
         .bind(identity).fetch_one(&mut *connection).await?;
     ensure!(locked, "another server is using this installation or node identity");
     Ok(connection.detach())
