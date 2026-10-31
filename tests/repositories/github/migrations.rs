@@ -449,7 +449,9 @@ async fn contract(pg: bool, source: &Source) {
     assert_eq!(after, json!([]));
     let store = repo_store(&repo, None);
     let refs = store.mirror_refs().await.unwrap();
-    assert_eq!(refs.len(), 4); // Three imported refs and one locally attested branch proof.
+    // The trunk branch and v1 tag, and one locally attested branch proof. A source's pull
+    // request refs are not imported, since pull refs belong to this repository's own pulls.
+    assert_eq!(refs.len(), 3);
     assert!(!refs.contains_key("refs/codeyard"));
     assert!(!refs.contains_key("refs/codeyard/publications/untrusted"));
     let proof = store
@@ -465,7 +467,7 @@ async fn contract(pg: bool, source: &Source) {
     assert!(refs.values().any(|oid| oid == &proof.object_id));
     assert_eq!(refs["refs/heads/trunk"], source.tip);
     assert_eq!(refs["refs/tags/v1"], source.tag);
-    assert_eq!(refs["refs/pull/7/head"], source.tip);
+    assert!(!refs.contains_key("refs/pull/7/head"));
     assert_eq!(
         store.git_tag(&source.tag).await.unwrap().message,
         "Original tag"
