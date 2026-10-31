@@ -228,7 +228,8 @@ async fn authority(pg: bool) {
         gists::load(&state, id, None).await.unwrap().snapshot.sha,
         before
     );
-    let unchanged = gists::update(
+    // As on GitHub, a file object with neither content nor filename deletes the file.
+    let deleted = gists::update(
         state.clone(),
         alice,
         ca.clone(),
@@ -240,11 +241,8 @@ async fn authority(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(unchanged
-        .snapshot
-        .files
-        .iter()
-        .any(|file| file.path == "a.txt"));
+    let paths: Vec<_> = deleted.snapshot.files.iter().map(|file| file.path.as_str()).collect();
+    assert_eq!(paths, ["recovered.txt"]);
     let comment = db::gists::create_comment(
         f.pool(),
         bob,
