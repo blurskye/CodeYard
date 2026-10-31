@@ -1869,9 +1869,9 @@ async fn a_stalled_upload_is_cut_off_when_its_window_ends() {
     .await
     .expect("a stalled upload must not outlast its window");
     assert_eq!(result.unwrap_err(), LocalUploadError::Rejected);
-    assert!(fixture.stored_names().is_empty());
     drop(writer);
-    // The partial file is removed off the async workers, and the slot comes back once it is.
+    // The partial file is removed off the async workers, and the slot comes back once it is,
+    // so the stored files are checked after the slot.
     let returned = tokio::time::timeout(Duration::from_secs(5), async {
         while free_slots(&fixture.storage) != slots {
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1879,6 +1879,7 @@ async fn a_stalled_upload_is_cut_off_when_its_window_ends() {
     })
     .await;
     assert!(returned.is_ok(), "the upload must give its storage slot back");
+    assert!(fixture.stored_names().is_empty());
 }
 
 #[tokio::test]
