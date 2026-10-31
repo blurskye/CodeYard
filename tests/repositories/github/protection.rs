@@ -109,10 +109,11 @@ async fn branch_operations_contract(pg: bool) {
     f.execute("INSERT INTO check_suites(repo_id,publisher,app_id,head_sha,created_at,updated_at) SELECT $1,'app:protection',o.id,'0000000000000000000000000000000000000000',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP FROM oauth_applications o WHERE o.client_id='protection-app-client'", &[repo.id]).await;
     let check = f.scalar("INSERT INTO check_run_identities DEFAULT VALUES RETURNING id", &[]).await;
     f.execute("INSERT INTO check_runs(id,repo_id,suite_id,name,data,created_at,updated_at) SELECT $2,repo_id,id,'security-scan','{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP FROM check_suites WHERE repo_id=$1 AND publisher='app:protection'", &[repo.id,check]).await;
+    // branch_admission renamed main to trunk.
     let saved = call(
         &router,
         "PUT",
-        &format!("{base}/branches/main/protection"),
+        &format!("{base}/branches/trunk/protection"),
         &tokens[0],
         json!({
             "required_status_checks":{"strict":false,"contexts":["security-scan"],
