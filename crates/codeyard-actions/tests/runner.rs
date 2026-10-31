@@ -1440,14 +1440,18 @@ fn sigterm_stops_the_running_process_group() {
 
 #[test]
 fn independent_jobs_run_together_and_dependents_wait_for_them() {
+    // Parallel jobs each get their own copy of the workspace, so they meet in a shared directory.
+    let shared = tempfile::tempdir().unwrap();
     let output = run(
-        r#"
+        &format!(
+            r#"
 on: push
 jobs:
   first:
     runs-on: self-hosted
     steps:
       - run: |
+          cd '{shared}'
           touch first-started
           for i in $(seq 200); do test -f second-started && break; sleep 0.05; done
           test -f second-started
@@ -1456,6 +1460,7 @@ jobs:
     runs-on: self-hosted
     steps:
       - run: |
+          cd '{shared}'
           touch second-started
           for i in $(seq 200); do test -f first-started && break; sleep 0.05; done
           test -f first-started
@@ -1464,8 +1469,10 @@ jobs:
     needs: [first, second]
     runs-on: self-hosted
     steps:
-      - run: test -f first-done && test -f second-done && echo dependents-$(echo waited)
+      - run: cd '{shared}' && test -f first-done && test -f second-done && echo dependents-$(echo waited)
 "#,
+            shared = shared.path().display()
+        ),
         &[],
         &["--concurrent-jobs", "2"],
     );
@@ -1497,8 +1504,11 @@ jobs:
         &["--concurrent-jobs", "1"],
     );
     success(&output);
+    // Parallel jobs each get their own copy of the workspace, so they meet in a shared directory.
+    let shared = tempfile::tempdir().unwrap();
     let output = run(
-        r#"
+        &format!(
+            r#"
 on: push
 jobs:
   matrix:
@@ -1509,6 +1519,7 @@ jobs:
         leg: [a, b]
     steps:
       - run: |
+          cd '{shared}'
           mkdir matrix-running
           touch leg-started
           for i in $(seq 200); do test -f other-started && break; sleep 0.05; done
@@ -1518,10 +1529,13 @@ jobs:
     runs-on: self-hosted
     steps:
       - run: |
+          cd '{shared}'
           touch other-started
           for i in $(seq 200); do test -f leg-started && break; sleep 0.05; done
           test -f leg-started
 "#,
+            shared = shared.path().display()
+        ),
         &[],
         &["--concurrent-jobs", "4"],
     );
@@ -1532,15 +1546,19 @@ jobs:
 #[test]
 fn sigterm_stops_every_running_job() {
     let workspace = tempfile::tempdir().unwrap();
+    // Parallel jobs each get their own copy of the workspace, so they write to a shared directory.
+    let shared = tempfile::tempdir().unwrap();
     std::fs::write(
         workspace.path().join("workflow.yml"),
-        r#"
+        format!(
+            r#"
 on: push
 jobs:
   first:
     runs-on: self-hosted
     steps:
       - run: |
+          cd '{shared}'
           echo ready > first-ready
           (sleep 2; echo leaked > first-leaked) &
           wait
@@ -1548,10 +1566,13 @@ jobs:
     runs-on: self-hosted
     steps:
       - run: |
+          cd '{shared}'
           echo ready > second-ready
           (sleep 2; echo leaked > second-leaked) &
           wait
 "#,
+            shared = shared.path().display()
+        ),
     )
     .unwrap();
     let mut child = command(workspace.path())
@@ -1563,7 +1584,7 @@ jobs:
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while !["first-ready", "second-ready"]
         .iter()
-        .all(|name| workspace.path().join(name).exists())
+        .all(|name| shared.path().join(name).exists())
     {
         if std::time::Instant::now() > deadline || child.try_wait().unwrap().is_some() {
             let _ = child.kill();
@@ -1578,8 +1599,8 @@ jobs:
     let output = child.wait_with_output().unwrap();
     assert!(!output.status.success(), "{}", log(&output));
     std::thread::sleep(std::time::Duration::from_secs(3));
-    assert!(!workspace.path().join("first-leaked").exists());
-    assert!(!workspace.path().join("second-leaked").exists());
+    assert!(!shared.path().join("first-leaked").exists());
+    assert!(!shared.path().join("second-leaked").exists());
 }
 
 #[test]
