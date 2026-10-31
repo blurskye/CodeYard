@@ -87,7 +87,7 @@ fn login_has_compact_brand_heading_labeled_native_form_and_quiet_signup() {
     assert!(output.contains("for=\"password\""));
     assert!(output.contains("autocomplete=\"current-password\""));
     assert!(output.contains("maxlength=\"4096\""));
-    assert!(output.contains("role=\"status\""));
+    assert!(output.contains("role=\"alert\""));
     assert!(output.contains("identity-auth-notice-error"));
     assert!(output.contains("Invalid username or password."));
     assert!(
