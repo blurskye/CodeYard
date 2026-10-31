@@ -28,7 +28,11 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for GitPathParams {
     type Rejection = axum::http::StatusCode;
     async fn from_request_parts(parts: &mut axum::http::request::Parts, _: &S) -> Result<Self, Self::Rejection> {
         let uri = parts.extensions.get::<axum::extract::OriginalUri>().map(|uri| &uri.0).unwrap_or(&parts.uri);
-        let mut pieces = uri.path().trim_start_matches('/').splitn(4, '/');
+        // A legacy `gists` account's repositories are served under the alias prefix.
+        let path = uri.path().strip_prefix(crate::backend::api::repos::LEGACY_PREFIX)
+            .filter(|rest| rest.starts_with('/'))
+            .unwrap_or(uri.path());
+        let mut pieces = path.trim_start_matches('/').splitn(4, '/');
         let bad = axum::http::StatusCode::BAD_REQUEST;
         let owner = crate::git_paths::from_url(pieces.next().ok_or(bad)?).ok_or(bad)?;
         let repo = crate::git_paths::from_url(pieces.next().ok_or(bad)?).ok_or(bad)?;
