@@ -356,8 +356,9 @@ async fn comment_tasks_check_scope_and_original_body(pg: bool) {
             StatusCode::CREATED,
         )
         .await;
+    // A reader may tick the tasks of an issue they wrote, as they may edit its body.
     let page = bob.page_ok("/alice/proj/issues/1").await;
-    assert!(!page.contains("form=\"task-body\""));
+    assert!(page.contains("form=\"task-body\""), "{page}");
     let tip = alice.save("main", "README.md", "unborn").await;
     alice.branch("topic", &tip).await;
     alice.save("topic", "change.txt", &tip).await;
