@@ -477,7 +477,13 @@ async fn postgres_cancellation_rechecks_admin_after_waiting() {
         "is_admin=FALSE",
     ] {
         let name = format!("recheck_{}", restriction.split('=').next().unwrap());
-        let (owner, admin, repo) = repository_with_writer(&fixture.pool, &name).await;
+        let (owner, _, repo) = repository_with_writer(&fixture.pool, &name).await;
+        // Any writer may cancel, so the admin is not a collaborator: being an
+        // administrator is this account's only authority over the run.
+        let admin = db::users::accounts::create_user(&fixture.pool, &format!("{name}_admin"), None)
+            .await
+            .unwrap()
+            .id;
         sqlx::query("UPDATE users SET is_admin=TRUE WHERE id=$1")
             .bind(admin)
             .execute(raw)
