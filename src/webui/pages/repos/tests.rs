@@ -4056,7 +4056,8 @@ fn go_to_file_filters_the_listing_and_marks_the_first_match() {
     assert!(html.contains("href=\"/alice/project/blob/refs/heads/main/docs/guide.md\""));
     assert!(!html.contains("src/lib.rs"));
     assert!(html.contains("class=\"repo-find-first\""));
-    assert!(html.contains("Showing the first 10000 files."));
+    // A cut listing says that only part of the matching paths is loaded.
+    assert!(html.contains("Only a bounded set of matching paths is loaded."));
     let unfiltered = FindPage {
         query: String::new(),
         truncated: false,
@@ -4065,7 +4066,7 @@ fn go_to_file_filters_the_listing_and_marks_the_first_match() {
     let html = dioxus_ssr::render_element(find(&repo, &unfiltered));
     assert!(html.contains("src/lib.rs"));
     assert!(!html.contains("class=\"repo-find-first\""));
-    assert!(!html.contains("Showing the first"));
+    assert!(!html.contains("Only a bounded set"));
 }
 
 #[test]
