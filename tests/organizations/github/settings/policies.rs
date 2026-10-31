@@ -200,18 +200,7 @@ pub(super) async fn contract(
         creating: true,
         deleting: false,
     };
-    let mut prepared = store
-        .prepare_file(
-            &input,
-            b"Policy content",
-            &actor.username,
-            &actor.commit_email(),
-        )
-        .await
-        .unwrap();
-    prepared.web_commit = true;
-    let mut prepared: codeyard::backend::repositories::store::PreparedFile =
-        serde_json::from_value(serde_json::to_value(prepared).unwrap()).unwrap();
+    let prepared = prepare(&store, &input, &actor).await;
     request(
         router,
         UPDATE,
@@ -232,15 +221,21 @@ pub(super) async fn contract(
     );
     assert!(error.message.contains("Signed-off-by"));
     assert_eq!(store.commit("refs/heads/main").await.unwrap().sha, head.sha);
-    prepared.branch = "prepared-policy".into();
-    prepared.reference = "refs/heads/prepared-policy".into();
-    prepared.expected = None;
-    prepared.new_branch = true;
+    // A refused publication consumes its prepared objects, so each later try prepares again.
+    let new_branch = |mut prepared: codeyard::backend::repositories::store::PreparedFile| {
+        prepared.branch = "prepared-policy".into();
+        prepared.reference = "refs/heads/prepared-policy".into();
+        prepared.expected = None;
+        prepared.new_branch = true;
+        prepared
+    };
+    let prepared = new_branch(prepare(&store, &input, &actor).await);
     assert!(store
         .publish_file_as(f.pool(), second.id, owner, &prepared)
         .await
         .is_err());
     assert!(store.commit("refs/heads/prepared-policy").await.is_err());
+    let mut prepared = new_branch(prepare(&store, &input, &actor).await);
     prepared.web_commit = false;
     store
         .publish_file_as(f.pool(), second.id, owner, &prepared)
@@ -254,4 +249,23 @@ pub(super) async fn contract(
             .parents,
         vec![head.sha]
     );
+}
+
+/// A web editor commit prepared on `main`, after the round trip it takes between nodes.
+async fn prepare(
+    store: &codeyard::backend::repositories::store::RepoStore,
+    input: &codeyard::backend::repositories::store::FileWrite,
+    actor: &db::models::User,
+) -> codeyard::backend::repositories::store::PreparedFile {
+    let mut prepared = store
+        .prepare_file(
+            input,
+            b"Policy content",
+            &actor.username,
+            &actor.commit_email(),
+        )
+        .await
+        .unwrap();
+    prepared.web_commit = true;
+    serde_json::from_value(serde_json::to_value(prepared).unwrap()).unwrap()
 }
