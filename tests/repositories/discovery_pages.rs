@@ -549,7 +549,7 @@ async fn stars_contract(pg: bool) {
         .exchange("GET", "/stars", "text/html", Vec::new())
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER);
-    assert_eq!(reply.location.as_deref(), Some("/login"));
+    assert_eq!(reply.location.as_deref(), Some("/login?redirect=%2Fstars"));
 
     let (status, html) = bob.page("/stars").await;
     assert_eq!(status, StatusCode::OK);

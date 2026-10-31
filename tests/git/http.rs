@@ -827,7 +827,10 @@ async fn exercise(pool: &DbPool, url: &str) {
         .await
         .unwrap();
     assert_eq!(unauthenticated.status(), StatusCode::SEE_OTHER);
-    assert_eq!(unauthenticated.headers()["location"], "/login");
+    assert_eq!(
+        unauthenticated.headers()["location"],
+        "/login?redirect=%2Fsettings%3Ftab%3Dtokens"
+    );
     for (method, path, status) in [
         (
             reqwest::Method::GET,
