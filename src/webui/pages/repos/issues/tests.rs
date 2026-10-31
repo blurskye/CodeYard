@@ -1705,10 +1705,10 @@ fn compare_page_offers_a_pull_request_only_for_changes_between_different_branche
     let unchanged = render("main", "topic/a", Some(&empty));
     assert!(unchanged.contains("No file changes."));
     assert!(!unchanged.contains("Create pull request"));
-    // A branch name from the address is text in the form, never markup.
+    // A ref name from the address is offered as text in the form, never markup.
     let unknown = render("main", "<b>topic", None);
     assert!(!unknown.contains("<b>topic"));
-    assert!(unknown.contains("(unavailable)"));
+    assert!(unknown.contains("value=\"&#60;b&#62;topic\""), "{unknown}");
 }
 
 #[test]
