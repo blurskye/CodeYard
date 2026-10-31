@@ -63,7 +63,8 @@ pub fn compare(
                             if let Some(pull) = open_pull {
                                 NavLink { class: "btn btn-secondary", href: format!("{}/{}", repo.family_url(Kind::Pull), pull.number), "View pull request #{pull.number}" }
                                 span { class: "collaboration-compare-title", "{pull.title}" }
-                            } else if can_open_pull {
+                            } else if can_open_pull && !diff.files.is_empty() {
+                                // Branches with no file changes between them have nothing to propose.
                                 NavLink { class: "btn btn-primary", href: new_pull, "Create pull request" }
                             }
                         }
