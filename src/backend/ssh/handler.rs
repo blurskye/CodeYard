@@ -809,13 +809,13 @@ mod tests {
         let limiter = RateLimiter::new();
         let ip: IpAddr = "192.0.2.7".parse().unwrap();
 
-        // A client with several keys: the unknown ones are rejected and the
+        // A client with several keys offers each one: the unknown ones are rejected and the
         // registered key on the same connection still authenticates.
         let mut handler = GitSshHandler::new(pool.clone(), limiter.clone(), ci.clone());
         handler.set_client_ip(ip);
         for _ in 0..6 {
             assert!(matches!(
-                handler.auth_publickey("git", &unknown).await.unwrap(),
+                handler.auth_publickey_offered("git", &unknown).await.unwrap(),
                 Auth::Reject { .. }
             ));
         }
@@ -830,7 +830,7 @@ mod tests {
             let mut failed = GitSshHandler::new(pool.clone(), limiter.clone(), ci.clone());
             failed.set_client_ip(ip);
             assert!(matches!(
-                failed.auth_publickey("git", &unknown).await.unwrap(),
+                failed.auth_publickey_offered("git", &unknown).await.unwrap(),
                 Auth::Reject { .. }
             ));
         }
