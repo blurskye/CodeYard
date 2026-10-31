@@ -4991,6 +4991,44 @@ async fn the_merge_policy_check_holds_nothing_and_refuses_a_moved_policy_on_both
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn postgres_merge_policy_writes_take_the_epoch_row_only_at_commit() {
+    let fixture = PostgresDatabase::new().await;
+    let owner = setup(&fixture.pool, "public").await;
+    let repo = repository(&fixture.pool, owner.id, "epoch").await;
+    let first = new_pr(&fixture.pool, repo.id, owner.id, "first").await;
+    let second = new_pr(&fixture.pool, repo.id, owner.id, "second").await;
+    let before = db::pull_requests::merge_policy::revision(&fixture.pool, repo.id)
+        .await
+        .unwrap();
+    // A transaction that changed one pull request and is still open does not hold the
+    // repository's epoch row, so a write to another pull request there does not wait for it.
+    let mut connection = PgConnection::connect(&fixture.connection_url())
+        .await
+        .unwrap();
+    let mut open = connection.begin().await.unwrap();
+    sqlx::query("UPDATE pull_requests SET is_draft=TRUE WHERE id=$1")
+        .bind(first.id)
+        .execute(&mut *open)
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        execute_sql(
+            &fixture.pool,
+            &format!("UPDATE pull_requests SET is_draft=TRUE WHERE id={}", second.id),
+        ),
+    )
+    .await
+    .expect("a policy write waited for another transaction's epoch row");
+    open.commit().await.unwrap();
+    let after = db::pull_requests::merge_policy::revision(&fixture.pool, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(after, before + 2);
+    fixture.pool.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn only_columns_that_can_decide_a_merge_move_the_merge_policy_on_both_engines() {
     // Every other column of these tables moves the policy revision, including any added later.
     const IGNORED: [(&str, &[&str]); 3] = [

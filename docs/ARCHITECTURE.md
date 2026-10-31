@@ -304,6 +304,9 @@ schema/                     SQL applied by db/{postgres,sqlite}/migrations.rs
   are locked before the fork, lowest id first, in every path that locks both: authority
   checks, notification reads and fork deletion (`lock_fork_ancestors`). Reads take the
   sources FOR SHARE; deletions and privacy changes take them FOR NO KEY UPDATE.
+- `repository_merge_epochs` is one hot row per repository, bumped by every write that can
+  change a merge decision; on PostgreSQL its triggers are deferred, so a transaction takes
+  it only at commit and never holds it across Git, network or file waits.
 - Uploads live in `<state_dir>/objects` or the S3 bucket from `S3_*`.
 
 ## 2. Clustering

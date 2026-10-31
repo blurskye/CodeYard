@@ -1242,28 +1242,21 @@ async fn postgres_join_refuses_a_replacement_parent_merged_meanwhile() {
         .fetch_one(&mut *merging_second)
         .await
         .unwrap();
-    // The second merge holds its pull request row, then waits for the repository's merge-policy
-    // epoch row, which the first merge holds until it commits.
-    let marking_second = tokio::spawn(async move {
-        sqlx::query(
-            "UPDATE pull_requests SET state = 'merged', merged = TRUE, merged_at = NOW(), closed_at = NOW(), updated_at = NOW() WHERE id = $1",
-        )
-        .bind(second_id)
-        .execute(&mut *merging_second)
-        .await
-        .unwrap();
-        merging_second
-    });
-    wait_until_blocked(&raw, first_pid, 1).await;
+    sqlx::query(
+        "UPDATE pull_requests SET state = 'merged', merged = TRUE, merged_at = NOW(), closed_at = NOW(), updated_at = NOW() WHERE id = $1",
+    )
+    .bind(second_id)
+    .execute(&mut *merging_second)
+    .await
+    .unwrap();
 
     let pool = f.pool().clone();
     let joining = tokio::spawn(async move {
         db::pull_requests::records::join_pull_request_stack(&pool, alice_id, child_id).await
     });
-    // The join decides on the first parent and waits for its row, beside the second merge.
-    wait_until_blocked(&raw, first_pid, 2).await;
+    // The join decides on the first parent and waits for its row.
+    wait_until_blocked(&raw, first_pid, 1).await;
     merging_first.commit().await.unwrap();
-    let merging_second = marking_second.await.unwrap();
     // It decides again on the second parent, locks that row, and waits for it.
     wait_until_blocked(&raw, second_pid, 1).await;
     merging_second.commit().await.unwrap();
