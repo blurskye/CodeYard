@@ -152,7 +152,7 @@ async fn contract(pg: bool) {
     assert!(everything.iter().any(|item| item["kind"] == "push"
         && item["branch"] == "main"
         && item["commits"] == 3
-        && item["url"] == "/alice/pub/commits?ref=main"));
+        && item["url"] == "/alice/pub/commits?ref=refs%2Fheads%2Fmain"));
     assert!(everything
         .iter()
         .any(|item| item["kind"] == "repository_created"));
