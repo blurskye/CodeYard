@@ -44,16 +44,22 @@ pub(super) async fn resolve(
                 .await
                 .map_err(unavailable)?;
             let page = connection::Page::new(ctx, total)?;
-            let order = ctx.args.try_get("orderBy")?.object()?;
-            let order = match (
-                order.try_get("field")?.enum_name()?,
-                order.try_get("direction")?.enum_name()?,
-            ) {
-                ("CREATED_AT", "ASC") => db::releases::ReleaseOrder::CreatedAsc,
-                ("CREATED_AT", "DESC") => db::releases::ReleaseOrder::CreatedDesc,
-                ("NAME", "ASC") => db::releases::ReleaseOrder::NameAsc,
-                ("NAME", "DESC") => db::releases::ReleaseOrder::NameDesc,
-                _ => return Err(missing()),
+            // The schema gives `orderBy` no default; without one, releases come newest first.
+            let order = match ctx.args.get("orderBy").filter(|order| !order.is_null()) {
+                None => db::releases::ReleaseOrder::CreatedDesc,
+                Some(order) => {
+                    let order = order.object()?;
+                    match (
+                        order.try_get("field")?.enum_name()?,
+                        order.try_get("direction")?.enum_name()?,
+                    ) {
+                        ("CREATED_AT", "ASC") => db::releases::ReleaseOrder::CreatedAsc,
+                        ("CREATED_AT", "DESC") => db::releases::ReleaseOrder::CreatedDesc,
+                        ("NAME", "ASC") => db::releases::ReleaseOrder::NameAsc,
+                        ("NAME", "DESC") => db::releases::ReleaseOrder::NameDesc,
+                        _ => return Err(missing()),
+                    }
+                }
             };
             let rows = db::releases::list_releases_ordered(
                 pool,
