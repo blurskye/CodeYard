@@ -552,7 +552,8 @@ async fn contract(pg: bool) {
         422,
     )
     .await;
-    call(
+    // The receipt names the upload; reading it from the queue would claim it.
+    let receipt = call(
         &router,
         "POST",
         &format!("{base}/sarifs"),
@@ -562,12 +563,11 @@ async fn contract(pg: bool) {
         202,
     )
     .await;
-    let upload = db::code_scanning::pending(f.pool()).await.unwrap().unwrap();
     assert!(code_scanning::process_next(f.pool()).await.unwrap());
     let status = call(
         &router,
         "GET",
-        &format!("{base}/sarifs/{}", upload.id),
+        &format!("{base}/sarifs/{}", receipt["id"].as_str().unwrap()),
         reader,
         Value::Null,
         "code-scanning/get-sarif",
