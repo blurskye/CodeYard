@@ -434,7 +434,8 @@ pub fn ProfileStarList(path: String, stars: ProfileStars, own: bool) -> Element 
             })}
             if stars.repositories.is_empty() {
                 p { class: "identity-profile-empty",
-                    if stars.page > 1 || stars.count > 0 { "No starred repositories on this page. " NavLink { href: stars_href(&path, &stars, 1), "First page" } } else if !query.is_empty() { "No starred repositories match “{query}”." } else if own { "You have not starred any repository you can read yet." } else { "No starred repositories visible to you." }
+                    // A search's first page holds its first matches, so an empty one means none match.
+                    if !query.is_empty() && stars.page <= 1 { "No starred repositories match “{query}”." } else if stars.page > 1 || stars.count > 0 { "No starred repositories on this page. " NavLink { href: stars_href(&path, &stars, 1), "First page" } } else if !query.is_empty() { "No starred repositories match “{query}”." } else if own { "You have not starred any repository you can read yet." } else { "No starred repositories visible to you." }
                 }
             }
             for repo in &stars.repositories { {repository_card(repo)} }
