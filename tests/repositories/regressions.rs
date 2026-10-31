@@ -434,7 +434,9 @@ async fn contract(pg: bool) {
         "{}",
         save.text()
     );
-    let star = client.form_reply("/alice/proj/_forms/star", &[]).await;
+    let star = client
+        .form_reply("/alice/proj/_forms/star", &[("repository_id", &rid)])
+        .await;
     assert_eq!(star.status, StatusCode::SEE_OTHER, "{}", star.text());
     std::fs::rename(&offline, &repository.disk_path).unwrap();
 
