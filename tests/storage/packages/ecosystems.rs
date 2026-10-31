@@ -773,24 +773,29 @@ async fn ecosystems(pg: bool) {
     .await
     .1;
     assert!(String::from_utf8(xml).unwrap().contains("Base.Library"));
-    let registration = serde_json::from_slice::<Value>(
-        &expect(
-            &router,
-            "GET",
-            &format!("{nuget}/registration/example.library/index.json"),
-            &read_headers,
-            vec![],
-            200,
+    // The SemVer 1 hub leaves out 1.0.0-rc.1, whose dotted label needs SemVer 2.
+    for (hub, index) in [("registration", 0), ("registration-semver2", 1)] {
+        let registration = serde_json::from_slice::<Value>(
+            &expect(
+                &router,
+                "GET",
+                &format!("{nuget}/{hub}/example.library/index.json"),
+                &read_headers,
+                vec![],
+                200,
+            )
+            .await
+            .1,
         )
-        .await
-        .1,
-    )
-    .unwrap();
-    assert_eq!(
-        registration["items"][0]["items"][1]["catalogEntry"]["dependencyGroups"][0]["dependencies"]
-            [0]["range"],
-        "[1.0.0,2.0.0)"
-    );
+        .unwrap();
+        assert_eq!(registration["items"][0]["count"], index + 1, "{hub}");
+        assert_eq!(
+            registration["items"][0]["items"][index]["catalogEntry"]["dependencyGroups"][0]
+                ["dependencies"][0]["range"],
+            "[1.0.0,2.0.0)",
+            "{hub}"
+        );
+    }
     let leaf = serde_json::from_slice::<Value>(
         &expect(
             &router,
