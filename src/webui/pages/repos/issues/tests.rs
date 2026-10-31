@@ -1265,6 +1265,30 @@ fn merge_box_shows_blockers_to_writers_and_a_status_to_everyone_else() {
         assert!(html.contains("This pull request was merged."));
         merged.comparison.as_mut().unwrap().merged_commit = Some("0123456789abcdef".into());
         let html = render(&merged, &writer);
+        assert!(html.contains("This pull request was merged as"));
+        // The branch it landed on comes from the merge event, since a stacked layer keeps its
+        // own base.
+        let landed = CommentPage {
+            events: vec![super::Event {
+                actor: "alice".into(),
+                kind: "merged".into(),
+                detail: "main".into(),
+                previous: String::new(),
+                created: "today".into(),
+            }],
+            ..CommentPage::default()
+        };
+        let html = dioxus_ssr::render_element(detail(
+            &writer,
+            Kind::Pull,
+            &merged,
+            &landed,
+            &[],
+            &DetailDraft::default(),
+            None,
+            &Default::default(),
+            &[],
+        ));
         assert!(html.contains("This pull request was merged into main as"));
         assert!(html.contains("class=\"collaboration-merge-sha\""), "{html}");
         assert!(html.contains("/alice/repo/commit/0123456789abcdef"));
