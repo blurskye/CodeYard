@@ -414,6 +414,8 @@ pub struct PullRequestCommentEntry {
 pub struct PullRequestInlineComments {
     pub comments: Vec<PullRequestCommentEntry>,
     pub truncated: bool,
+    /// How many comments match, up to the read's cap, when the byte budget lists fewer.
+    pub count: usize,
 }
 
 #[derive(Debug, Clone)]

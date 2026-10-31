@@ -231,9 +231,10 @@ pub async fn list_pull_request_inline_comments(
         .bind(pr_id).bind((MAX_INLINE_COMMENTS+1) as i64).fetch_all(&mut *tx).await?;
     let ids = budgeted_comment_ids(&rows, MAX_INLINE_COMMENTS)?;
     let truncated = ids.len() < rows.len();
+    let count = rows.len().min(MAX_INLINE_COMMENTS);
     let comments = comments_in(&mut *tx, "i.id", &ids).await?;
     tx.commit().await?;
-    Ok(PullRequestInlineComments { comments, truncated })
+    Ok(PullRequestInlineComments { comments, truncated, count })
 }
 
 /// The inline comments of the author's pending review, oldest first.
@@ -248,9 +249,10 @@ pub async fn list_pending_review_comments(
         .bind(pr_id).bind(author_id).bind(MAX_REVIEW_COMMENTS+1).fetch_all(&mut *tx).await?;
     let ids = budgeted_comment_ids(&rows, MAX_REVIEW_COMMENTS as usize)?;
     let truncated = ids.len() < rows.len();
+    let count = rows.len().min(MAX_REVIEW_COMMENTS as usize);
     let comments = comments_in(&mut *tx, "i.id", &ids).await?;
     tx.commit().await?;
-    Ok(PullRequestInlineComments { comments, truncated })
+    Ok(PullRequestInlineComments { comments, truncated, count })
 }
 
 /// Every comment filed in one of `review_ids`, oldest first.
