@@ -3440,7 +3440,8 @@ fn files_list_each_file_and_offer_viewed_marks_to_signed_in_viewers() {
         assert!(html.contains("form=\"viewed-form-1\""));
         assert!(html.contains("action=\"/acme/widgets/pulls/7/viewed\""));
         assert!(html.contains("value=\"csrf-sentinel\""));
-        assert!(html.contains("value=\"docs/new.md\""));
+        // The path goes as a JSON string, so the server reads back exactly the name it showed.
+        assert!(html.contains("name=\"path_json\" value=\"&#34;docs/new.md&#34;\""));
         // The viewed file is drawn collapsed and checked; the other one is open and unchecked.
         assert!(!tag_with(&html, "id=\"diff-file-1\"").contains(" open"));
         assert!(tag_with(&html, "id=\"diff-file-0\"").contains(" open"));
