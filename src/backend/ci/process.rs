@@ -368,7 +368,7 @@ pub(super) mod tests {
             tokio::time::timeout(Duration::from_secs(5), async {
                 while numbers.iter().any(|&pid| {
                     // SAFETY: signal zero only checks whether the process exists; kill takes no pointers.
-                    unsafe { libc::kill(pid, 0) } == 0
+                    unsafe { libc::kill(pid, 0) == 0 }
                 }) {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
