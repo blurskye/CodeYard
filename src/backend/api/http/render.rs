@@ -319,10 +319,23 @@ pub(crate) fn error_model_response(
 }
 
 pub(crate) fn public_error(status: StatusCode, message: &str) -> Response {
+    public_error_returning_to(status, message, String::new())
+}
+
+/// A public error page whose appearance switch returns to `return_to`, a page the handler
+/// chose because the failing address itself may accept only POST.
+pub(crate) fn public_error_returning_to(
+    status: StatusCode,
+    message: &str,
+    return_to: String,
+) -> Response {
     html_response(
         status,
         status.canonical_reason().unwrap_or("Request failed"),
-        Chrome::default(),
+        Chrome {
+            return_to,
+            ..Chrome::default()
+        },
         None,
         crate::webui::pages::error::render(status.as_u16(), message, None, false),
     )

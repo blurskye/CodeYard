@@ -1,6 +1,6 @@
 //! Verified browser request context, setup admission and form protection.
 use super::origin::same_origin_submission;
-use super::render::{public_error, redirect_response};
+use super::render::{public_error, public_error_returning_to, redirect_response};
 use super::session;
 use crate::{
     backend::{
@@ -280,9 +280,12 @@ impl PageContext {
             || !csrf_matches(&self.csrf_token, form.get("csrf_token").map(String::as_str))
             || !same_origin_submission(&self.headers)
         {
-            return Err(public_error(
+            // No session cookie or account chrome for a forged form, but the appearance switch
+            // still returns to the page the handler named.
+            return Err(public_error_returning_to(
                 StatusCode::FORBIDDEN,
                 "The form expired or came from another site. Reload the page and try again.",
+                self.return_to.clone().unwrap_or_default(),
             ));
         }
         Ok(())
