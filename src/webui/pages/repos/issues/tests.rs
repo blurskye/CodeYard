@@ -2443,8 +2443,13 @@ fn comment_controls_show_only_the_rights_the_viewer_has() {
             &[],
         ))
     });
+    // The edit keeps the conversation page and the review comment page it was opened from.
+    let unescaped = html
+        .replace("&#38;", "&")
+        .replace("&#x26;", "&")
+        .replace("&amp;", "&");
     assert!(
-        html.contains("action=\"/alice/repo/issues/7/comments/31/edit?page=1\""),
+        unescaped.contains("action=\"/alice/repo/issues/7/comments/31/edit?page=1&review_comments=0\""),
         "{html}"
     );
     assert!(
