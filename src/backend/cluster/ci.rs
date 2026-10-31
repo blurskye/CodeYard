@@ -109,7 +109,7 @@ mod tests {
             std::io::Cursor::new(frame),
             tokio::io::sink(),
         );
-        let slot = handler.slots.clone().try_acquire_owned().unwrap();
+        let slot = Arc::new(handler.slots.clone().try_acquire_owned().unwrap());
         assert_eq!(
             handler.answer(&mut link, slot).await.unwrap(),
             Err(CORE_UNAVAILABLE.into())
