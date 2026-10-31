@@ -58,6 +58,21 @@ pub fn field_value(html: &str, name: &str) -> Option<String> {
     Some(tag[value..].split('"').next()?.to_owned())
 }
 
+/// The issue or pull request page whose assignee, label, milestone, field or reviewer form
+/// posts to `path`.
+fn metadata_item_page(path: &str) -> Option<&str> {
+    let (item, action) = ["/issues/", "/pulls/"].iter().find_map(|kind| {
+        let number = path.find(kind)? + kind.len();
+        let end = number + path[number..].find('/')?;
+        Some((&path[..end], &path[end + 1..]))
+    })?;
+    matches!(
+        action.split('/').next()?,
+        "assignees" | "labels" | "milestone" | "attributes" | "requested_reviewers"
+    )
+    .then_some(item)
+}
+
 /// The value of the form field called `name`; the page has to have it.
 pub fn hidden_value(html: &str, name: &str) -> String {
     field_value(html, name).unwrap_or_else(|| panic!("no {name} field with a value: {html}"))
@@ -370,15 +385,17 @@ impl Client {
             }
         }
         let path_only = path.split('?').next().unwrap();
-        // Review forms carry the repository identity rendered on the Files changed page.
-        if path_only.contains("/pulls/")
-            && path_only.ends_with("/reviews")
-            && !pairs.iter().any(|(key, _)| *key == "repository_id")
-        {
+        // Review forms carry the repository identity and the pending review rendered on the
+        // Files changed page.
+        if path_only.contains("/pulls/") && path_only.ends_with("/reviews") {
             let page_path = format!("{}/diff", path_only.strip_suffix("/reviews").unwrap());
             let (_, page) = self.page(&page_path).await;
-            if let Some(value) = field_value(&page, "repository_id") {
-                body.append_pair("repository_id", &value);
+            for name in ["repository_id", "pending_review"] {
+                if !pairs.iter().any(|(key, _)| *key == name) {
+                    if let Some(value) = field_value(&page, name) {
+                        body.append_pair(name, &value);
+                    }
+                }
             }
         }
         if path_only.ends_with("/milestones/new")
@@ -387,6 +404,17 @@ impl Client {
             let page_path = path_only.strip_suffix("/comments").unwrap_or(path_only);
             let (_, page) = self.page(page_path).await;
             for name in ["repository_id", "issue_id"] {
+                if !pairs.iter().any(|(key, _)| *key == name) {
+                    if let Some(value) = field_value(&page, name) {
+                        body.append_pair(name, &value);
+                    }
+                }
+            }
+        }
+        // Metadata forms carry the repository and the issue or pull request the page showed.
+        if let Some(page_path) = metadata_item_page(path_only) {
+            let (_, page) = self.page(page_path).await;
+            for name in ["repository_id", "item_id"] {
                 if !pairs.iter().any(|(key, _)| *key == name) {
                     if let Some(value) = field_value(&page, name) {
                         body.append_pair(name, &value);
