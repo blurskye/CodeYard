@@ -124,7 +124,9 @@ pub async fn repositories(
     ensure!(matches!(scope, Scope::Organization(_)) && offset >= 0 && (1..=100).contains(&limit), Refusal::Invalid);
     let mut tx = pool.begin().await?;
     if change.is_none() {
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+        // One snapshot for the count and the page. Not READ ONLY: the token check takes share
+        // locks, which PostgreSQL refuses in a read-only transaction.
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
     }
     let actor = actor.into();
     let (_, _, org) = authority(&mut tx, &actor, scope, change.is_some(), setting.organization_permission()).await?;
