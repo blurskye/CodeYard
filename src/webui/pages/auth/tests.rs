@@ -483,7 +483,8 @@ fn the_code_step_takes_the_address_code_and_new_password_in_one_form() {
     assert!(page.contains("name=\"new_password\""));
     assert!(page.contains("name=\"confirm_password\""));
     assert!(page.contains("Check your inbox."));
-    assert!(page.contains("href=\"/forgot-password\""));
+    // Asking for a new code keeps the page to return to.
+    assert!(page.contains("href=\"/forgot-password?redirect=%2F\""));
 }
 
 #[test]
