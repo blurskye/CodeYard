@@ -448,6 +448,13 @@ async fn contract(pg: bool) {
         202,
     )
     .await;
+    let causes: Vec<&Value> = no_op["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| &error["cause"])
+        .collect();
+    assert_eq!(causes, [&json!("not_found"), &json!("not_found")], "{no_op}");
     let (_, no_op) = call(
         &router,
         "orgs/get-cluster-deployment-records-job",
