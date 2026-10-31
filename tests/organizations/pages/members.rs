@@ -296,8 +296,8 @@ pub async fn access_management(f: &Fixture) {
         .iter_mut()
         .find(|(name, _)| name == "permission")
         .unwrap();
-    // The access select posts one of the five levels.
-    assert!(["1", "2", "3", "4", "5"].contains(&access.1.as_str()));
+    // The access select starts on no level, so a direct grant is always chosen on purpose.
+    assert_eq!(access.1, "");
     access.1 = "1".into();
     submit_row(f, &path, &grant).await;
     let grants = f
