@@ -411,7 +411,7 @@ async fn contract(pg: bool) {
     assert_eq!(exported["sbom"]["packages"].as_array().unwrap().len(), 3);
     let html = session.page_ok("/alice/proj/insights/dependencies").await;
     assert!(html.contains("example"), "{html}");
-    assert!(html.contains("Export SPDX SBOM"), "{html}");
+    assert!(html.contains("Export current branch SPDX SBOM"), "{html}");
     assert!(!html.contains("pkg:cargo/hidden"), "{html}");
     let (status, _) = Client::anonymous(&router)
         .send(
