@@ -89,6 +89,11 @@ async fn contract(pg: bool) {
         .unwrap();
     assert_eq!(runs.len(), 2);
     let again = runs.iter().find(|run| run.id != first.id).unwrap();
+    // The run list leaves out workflow snapshots, so read the whole run.
+    let again = db::ci::get_ci_run(f.pool(), again.id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(again.workflow_path, first.workflow_path);
     assert_eq!(again.head_sha, first.head_sha);
     assert_eq!(again.workflow_blobs, first.workflow_blobs);
