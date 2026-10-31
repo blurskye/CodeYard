@@ -417,13 +417,18 @@ async fn milestone_sort_contract(pg: bool) {
             .unwrap();
     }
     for issue in [&alpha_closed].into_iter().chain(delta.iter()) {
+        // Setting the milestone moved the issue's update time.
+        let current = db::issues::get_issue_by_id(pool, issue.id)
+            .await
+            .unwrap()
+            .unwrap();
         db::issues::update_issue(
             pool,
             issue.id,
             DiscussionEdit {
                 actor_id: alice_id,
                 expected_state: "open",
-                expected_updated: issue.updated_at,
+                expected_updated: current.updated_at,
                 title: None,
                 body: None,
                 state: Some("closed"),
