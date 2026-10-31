@@ -2897,7 +2897,6 @@ impl LocalStore {
             .arg("--git-dir")
             .arg(self.path())
             .args(["pack-objects", "--revs", "--stdout"]);
-        process::limit_memory(&mut command);
         process::stream(command, &mut input, streams.output, streams.errors, false).await
     }
 
@@ -2912,7 +2911,6 @@ impl LocalStore {
             .arg("--git-dir")
             .arg(self.path())
             .args(["index-pack", "--stdin"]);
-        process::limit_memory(&mut command);
         if strict {
             // Imported history must be complete. Strict indexing refuses objects that link to
             // missing ones, which would otherwise be published as refs.
@@ -3469,7 +3467,6 @@ impl LocalStore {
         if session.allow_unreachable {
             command.args(["-c", "uploadpack.allowAnySHA1InWant=true"]);
         }
-        process::limit_memory(&mut command);
         command.arg("upload-pack");
         if session.stateless {
             command.arg("--stateless-rpc");

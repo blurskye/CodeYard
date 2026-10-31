@@ -53,7 +53,6 @@ impl LocalStore {
                 .arg("--git-dir")
                 .arg(self.path())
                 .args(["pack-objects", "--revs", "--stdout"]);
-            process::limit_memory(&mut command);
             let (status, pack) = process::buffered(
                 command,
                 input.as_bytes(),

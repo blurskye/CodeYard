@@ -94,7 +94,7 @@ pub(crate) fn executable() -> Result<PathBuf> {
 
 /// A `git` command that ignores user/system config and repository hooks.
 pub(crate) fn std_command(executable: &Path) -> std::process::Command {
-    let mut command = std::process::Command::new(executable);
+    let mut command = memory_limited(executable);
     command
         .env_clear()
         .env("PATH", executable.parent().unwrap_or(Path::new("/usr/bin")))
@@ -138,7 +138,6 @@ pub(crate) fn command(executable: &Path) -> Result<Command> {
     let mut command = Command::from(std_command(executable));
     // Own process group so a timeout can kill git and anything it started.
     command.process_group(0).kill_on_drop(true);
-    limit_memory(&mut command);
     Ok(command)
 }
 
@@ -157,37 +156,33 @@ static COMMAND_MEMORY: LazyLock<u64> = LazyLock::new(|| {
         .unwrap_or(DEFAULT_COMMAND_MEMORY_MIB)
 });
 
-/// Historical blobs may be much larger than their compressed objects or command output.
-pub(crate) fn limit_memory(command: &mut Command) {
+/// Historical blobs may be much larger than their compressed objects or command output, so
+/// every Git child starts with its address space capped. The shell's `ulimit` sets the cap
+/// before Git runs: a `pre_exec` hook would make the standard library fork the whole server
+/// for each command instead of using `posix_spawn`, and copying a large process stalls its
+/// other threads.
+fn memory_limited(executable: &Path) -> std::process::Command {
     let bytes = COMMAND_MEMORY.saturating_mul(1024 * 1024);
     if bytes == 0 {
-        return;
+        return std::process::Command::new(executable);
     }
-    // SAFETY: pre_exec only makes the async-signal-safe getrlimit and setrlimit syscalls.
-    unsafe {
-        command.pre_exec(move || {
-            // An unprivileged process cannot raise the hard limit it inherited, so the
-            // limit only ever lowers it.
-            let mut inherited = libc::rlimit {
-                rlim_cur: 0,
-                rlim_max: 0,
-            };
-            if libc::getrlimit(libc::RLIMIT_AS, &mut inherited) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            let cap = (bytes as libc::rlim_t)
-                .min(inherited.rlim_cur)
-                .min(inherited.rlim_max);
-            let limit = libc::rlimit {
-                rlim_cur: cap,
-                rlim_max: cap,
-            };
-            if libc::setrlimit(libc::RLIMIT_AS, &limit) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+    // An unprivileged process cannot raise the hard limit it inherited, so the cap only ever
+    // lowers it.
+    let mut inherited = libc::rlimit {
+        rlim_cur: libc::RLIM_INFINITY,
+        rlim_max: libc::RLIM_INFINITY,
+    };
+    // SAFETY: getrlimit only writes the struct it is given.
+    unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut inherited) };
+    let cap = (bytes as libc::rlim_t)
+        .min(inherited.rlim_cur)
+        .min(inherited.rlim_max);
+    let mut command = std::process::Command::new("/bin/sh");
+    command
+        .args(["-c", r#"ulimit -v "$1" && shift && exec "$0" "$@""#])
+        .arg(executable)
+        .arg((cap / 1024).to_string());
+    command
 }
 
 #[derive(Debug, thiserror::Error)]

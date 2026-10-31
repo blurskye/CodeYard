@@ -57,7 +57,6 @@ pub(super) async fn command(
     let mut command = process::git_command()?;
     command.arg("--git-dir").arg(path).args(args);
     if args.first() == Some(&"merge-tree") {
-        process::limit_memory(&mut command);
     }
     if let Some((author, committer)) = people {
         command
@@ -1247,14 +1246,12 @@ pub(crate) async fn materialize_checkout(
     validate_merge_revision("main", sha)?;
     tokio::fs::create_dir(destination).await?;
     let mut init = process::git_command()?;
-    process::limit_memory(&mut init);
     init.arg("-C")
         .arg(destination)
         .args(["init", "--template="]);
     let (status, _) = process::buffered(init, b"", MAX_OUTPUT, CHECKOUT_TIMEOUT).await?;
     ensure!(status.success(), "git init failed");
     let mut origin = process::git_command()?;
-    process::limit_memory(&mut origin);
     origin
         .arg("-C")
         .arg(destination)
@@ -1262,7 +1259,6 @@ pub(crate) async fn materialize_checkout(
     let (status, _) = process::buffered(origin, b"", MAX_OUTPUT, CHECKOUT_TIMEOUT).await?;
     ensure!(status.success(), "git remote add failed");
     let mut fetch = process::git_command()?;
-    process::limit_memory(&mut fetch);
     fetch.arg("-C").arg(destination);
     let status = if let Some(pack) = pack {
         fetch.args(["index-pack", "--stdin", "--fix-thin"]);
@@ -1273,7 +1269,6 @@ pub(crate) async fn materialize_checkout(
     };
     ensure!(status.success(), "git fetch of CI commit failed");
     let mut switch = process::git_command()?;
-    process::limit_memory(&mut switch);
     switch
         .arg("-C")
         .arg(destination)

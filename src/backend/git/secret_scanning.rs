@@ -80,7 +80,6 @@ pub(crate) async fn added_secrets(
         "--diff-merges=first-parent",
         "--no-abbrev",
     ]);
-    process::limit_memory(&mut command);
     let input: String = commits.iter().map(|id| format!("{id}\n")).collect();
     let (status, listing) = process::buffered(
         command,

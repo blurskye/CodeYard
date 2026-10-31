@@ -310,7 +310,6 @@ pub(crate) async fn archive(
         .args(["-c", "tar.tar.gz.command=git archive gzip"])
         .args(["archive", git_format, &prefix_arg, &revision])
         .current_dir(repo_path);
-    process::limit_memory(&mut command);
     let (status, output) = process::buffered(command, b"", limit, process::RPC_TIMEOUT).await?;
     anyhow::ensure!(status.success(), "Git archive failed");
     Ok(output)
@@ -461,7 +460,6 @@ pub(crate) async fn read_blob_range(
     command
         .args(["cat-file", "blob", &oid.to_string()])
         .current_dir(repo_path);
-    process::limit_memory(&mut command);
     let (_, result) = process::read_stream(command, b"", process::RPC_TIMEOUT, |mut stdout, _| async move {
         let mut bytes = Vec::with_capacity(length);
         let mut binary = false;
@@ -858,7 +856,6 @@ pub(crate) async fn list_file_paths(
     command
         .args(["ls-tree", "-r", "-z", &revision, "--"])
         .current_dir(repo_path);
-    process::limit_memory(&mut command);
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1065,7 +1062,6 @@ pub(crate) async fn list_tree_with_history(
             command.arg(OsString::from_vec(crate::git_paths::bytes(&entry.path)));
         }
         command.current_dir(repo_path);
-        process::limit_memory(&mut command);
         // History is optional enrichment: exhausted budgets leave unresolved entries
         // empty, while Git failures and malformed output still fail the read.
         let entries_mut = &mut entries;
@@ -1227,7 +1223,6 @@ pub(crate) async fn blame_file(repo_path: &Path, git_ref: &str, path: &str) -> R
         .args(["blame", "--incremental", &revision, "--"])
         .arg(OsString::from_vec(crate::git_paths::bytes(path)))
         .current_dir(repo_path);
-    process::limit_memory(&mut command);
     let (status, output) = process::buffered(
         command,
         b"",
@@ -1766,7 +1761,6 @@ pub(crate) async fn search_code(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    process::limit_memory(&mut command);
     let prefix = format!("{tip}:");
     let needle = text.to_lowercase();
     let (_, matches) = process::read_stream(command, b"", CODE_SEARCH_TIMEOUT, |stdout, _| async move {
@@ -2497,7 +2491,6 @@ pub(crate) async fn changed_paths(
     }
     command.arg("--").current_dir(repo_path);
     // Rename detection inflates the blobs it compares, so bound the child's memory too.
-    process::limit_memory(&mut command);
     let output_limit = MAX_CI_CHANGED_PATH_TOTAL_BYTES + MAX_CI_CHANGED_PATHS;
     let (status, output) =
         process::buffered(command, b"", output_limit, process::RPC_TIMEOUT).await?;
@@ -2697,7 +2690,6 @@ fn diff_command(repo_path: &Path, revision: &str, root: bool, pathspecs: &[OsStr
     let mut command = process::git_command()?;
     if root { command.args(["diff-tree", "--root", "--no-commit-id", "-r"]); } else { command.arg("diff"); }
     command.args(["--no-ext-diff", "--no-textconv", "--find-renames"]).args(output).arg(revision).arg("--").args(pathspecs).current_dir(repo_path);
-    process::limit_memory(&mut command);
     Ok(command)
 }
 

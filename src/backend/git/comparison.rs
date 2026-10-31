@@ -40,7 +40,6 @@ pub(crate) async fn compare_commits(
             "--",
         ])
         .current_dir(path);
-    process::limit_memory(&mut command);
     let (status, output) = process::buffered(command, b"", 64, COMMIT_WALK_TIMEOUT).await?;
     ensure!(status.success(), "Git comparison count failed");
     let counts = std::str::from_utf8(&output)?
@@ -53,7 +52,6 @@ pub(crate) async fn compare_commits(
     command
         .args(["merge-base", &base.to_string(), &head.to_string()])
         .current_dir(path);
-    process::limit_memory(&mut command);
     let (status, output) = process::buffered(
         command,
         b"",
@@ -90,7 +88,6 @@ pub(crate) async fn compare_commits(
                 "--",
             ])
             .current_dir(path);
-        process::limit_memory(&mut command);
         let remaining = deadline
             .checked_duration_since(Instant::now())
             .ok_or_else(|| anyhow::anyhow!("Git comparison timed out"))?;

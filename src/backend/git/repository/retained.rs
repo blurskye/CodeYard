@@ -41,7 +41,6 @@ pub(crate) async fn reachable(
     let mut command = process::git_command()?;
     command.args(["rev-list", "--objects", "--no-object-names", "--branches", "--tags", "--glob=refs/pull/*"])
         .current_dir(path);
-    process::limit_memory(&mut command);
     let mut child = command.spawn().context("start retained-object reachability walk")?;
     let mut group = process::ProcessGroup::new(child.id(), std::time::Duration::ZERO);
     let mut lines = BufReader::new(child.stdout.take().context("git reachability stdout")?).lines();
@@ -79,7 +78,6 @@ pub(crate) async fn delete(path: &Path, refs: &[(String, String)]) -> Result<()>
     input.push_str("prepare\ncommit\n");
     let mut command = process::git_command()?;
     command.args(["update-ref", "--stdin"]).current_dir(path);
-    process::limit_memory(&mut command);
     let result = process::run(command, input.as_bytes(), 1024, Duration::from_secs(30)).await?;
     ensure!(result.status.success(), "Retention cleanup failed: {}", String::from_utf8_lossy(&result.stderr));
     Ok(())

@@ -519,7 +519,6 @@ pub(crate) async fn get_code_frequency(repo_path: &Path, branch: &str) -> Result
             .arg(tip)
             .arg("--")
             .current_dir(repo_path);
-        process::limit_memory(&mut command);
         let (status, output) = process::buffered(
             command,
             b"",
@@ -649,7 +648,6 @@ pub(crate) async fn get_commit_statistics(
                 .arg(id)
                 .arg("--")
                 .current_dir(repo_path);
-            process::limit_memory(&mut command);
             let (status, output) = process::buffered(
                 command,
                 b"",

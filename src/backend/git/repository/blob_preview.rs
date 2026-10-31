@@ -103,7 +103,6 @@ pub(crate) async fn read_blob_preview(
     let oid = git2::Oid::from_str(id)?;
     let mut command = process::git_command()?;
     command.args(["cat-file", "blob", &oid.to_string()]).current_dir(path);
-    process::limit_memory(&mut command);
     let mut child = command.spawn().context("start git cat-file preview")?;
     let mut group = process::ProcessGroup::new(child.id(), std::time::Duration::ZERO);
     let mut stdout = child.stdout.take().context("git cat-file stdout")?;

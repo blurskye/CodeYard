@@ -140,7 +140,6 @@ async fn refuse_unreadable_objects() -> Result<()> {
     };
     // Receive-pack owns the group, including this hook and its nested inspection child.
     let mut command = tokio::process::Command::from(process::std_command(&process::executable()?));
-    process::limit_memory(&mut command);
     command
         .env("GIT_DIR", std::env::var_os("GIT_DIR").unwrap_or(".".into()))
         .env("GIT_OBJECT_DIRECTORY", quarantine)

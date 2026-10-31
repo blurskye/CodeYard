@@ -1952,7 +1952,6 @@ async fn rev_list<'a>(
         input.push_str(id);
         input.push('\n');
     }
-    process::limit_memory(&mut command);
     let (status, output) = process::buffered(
         command,
         input.as_bytes(),
@@ -2006,7 +2005,6 @@ pub fn pushed_commits(
         command
             .current_dir(path)
             .args(["merge-base", "--is-ancestor", before, after]);
-        process::limit_memory(&mut command);
         let (status, _) =
             process::buffered(command, b"", 64, std::time::Duration::from_secs(2)).await?;
         match status.code() {
