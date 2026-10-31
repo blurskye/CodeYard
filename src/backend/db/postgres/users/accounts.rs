@@ -257,8 +257,9 @@ pub async fn set_user_avatar(
 
     let mut tx = pool.begin().await?;
     // The account and the requesting session must still be live when the picture changes,
-    // which happens after the upload's storage work.
-    super::transitions::require_account(&mut tx, user_id, credential).await?;
+    // which happens after the upload's storage work. The user row is written below, so the
+    // lock is exclusive: two shared holders that both upgrade it would deadlock.
+    super::transitions::require_account_exclusive(&mut tx, user_id, credential).await?;
     let previous: Option<uuid::Uuid> = sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id=$1")
         .bind(user_id)
         .fetch_one(&mut *tx)
