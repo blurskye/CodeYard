@@ -276,7 +276,10 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::FORBIDDEN);
     let (status, location, _) = send(&router, "", "GET", page, "", Vec::new()).await;
     assert!(status.is_redirection(), "{status}");
-    assert_eq!(location.as_deref(), Some("/login"));
+    assert_eq!(
+        location.as_deref(),
+        Some("/login?redirect=%2Fupload_owner%2Fsite%2Fupload%2Fmain")
+    );
 
     // Two files land in one commit on a branch that does not exist yet.
     let (content_type, body) = form(
@@ -506,7 +509,10 @@ async fn contract(pg: bool) {
     );
     let (status, location, _) = send(&router, "", "POST", page, &content_type, body).await;
     assert!(status.is_redirection(), "{status}");
-    assert_eq!(location.as_deref(), Some("/login"));
+    assert_eq!(
+        location.as_deref(),
+        Some("/login?redirect=%2Fupload_owner%2Fsite%2Fupload%2Fmain")
+    );
     assert_eq!(head(&disk), third);
 
     // A protected branch refuses direct commits, even from its owner.
