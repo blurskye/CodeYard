@@ -539,7 +539,7 @@ pub(super) async fn run(
     assert!(mismatch.text().contains("target mismatch draft"));
     let mismatch_html = mismatch.text();
     let composer = mismatch_html
-        .split(&format!("action=\"{native}/comments\""))
+        .split(&format!("action=\"{native}/comments?comments_page="))
         .nth(1)
         .unwrap();
     assert_eq!(
