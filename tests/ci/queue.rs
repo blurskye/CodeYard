@@ -1780,6 +1780,7 @@ async fn queued_pull_request_inputs_survive_base_and_title_changes(db: &Database
         claimed.pull_request_event,
         Some(serde_json::json!({
             "number": pull.number, "title": "Original title", "head_ref": "topic",
+            "head_sha": "a".repeat(40), "head_repo_id": w.repo,
             "base_ref": "main", "base_sha": "1".repeat(40),
         }))
     );
