@@ -606,24 +606,34 @@ pub(crate) fn write(path: &Path, input: ObjectWrite, bytes: &[u8]) -> Result<Str
             if actual != kind(&target_kind)? {
                 return Err(invalid("Tag target type does not match").into());
             }
-            // The same text that `tag_annotation_create` writes.
-            let tagger = tagger.git()?;
-            let when = tagger.when();
-            let offset = when.offset_minutes();
-            let annotation = format!(
-                "object {id}\ntype {}\ntag {tag}\ntagger {} <{}> {} {}{:02}{:02}\n\n{message}",
-                actual.str(),
-                tagger.name().unwrap_or_default(),
-                tagger.email().unwrap_or_default(),
-                when.seconds(),
-                if offset < 0 { '-' } else { '+' },
-                offset.abs() / 60,
-                offset.abs() % 60,
-            );
-            repo.odb()?.write(ObjectType::Tag, annotation.as_bytes())?
+            let text = annotation(id, actual, &tag, &tagger.git()?, &message);
+            repo.odb()?.write(ObjectType::Tag, text.as_bytes())?
         }
     };
     Ok(id.to_string())
+}
+
+/// The text of an annotated tag object, as `tag_annotation_create` writes it: the message is
+/// kept exactly as given, so it reads back unchanged, as GitHub returns it.
+pub(crate) fn annotation(
+    target: Oid,
+    kind: ObjectType,
+    tag: &str,
+    tagger: &git2::Signature<'_>,
+    message: &str,
+) -> String {
+    let when = tagger.when();
+    let offset = when.offset_minutes();
+    format!(
+        "object {target}\ntype {}\ntag {tag}\ntagger {} <{}> {} {}{:02}{:02}\n\n{message}",
+        kind.str(),
+        tagger.name().unwrap_or_default(),
+        tagger.email().unwrap_or_default(),
+        when.seconds(),
+        if offset < 0 { '-' } else { '+' },
+        offset.abs() / 60,
+        offset.abs() % 60,
+    )
 }
 
 #[cfg(test)]

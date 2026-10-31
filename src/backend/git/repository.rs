@@ -2208,14 +2208,10 @@ pub(crate) fn prepare_create_tag(
     };
     let (target, date) = if let Some(message) = message {
         let signature = git2::Signature::now(tagger_name, tagger_email)?;
-        let time = signature.when();
-        let zone = time.offset_minutes();
-        let sign = if zone < 0 { '-' } else { '+' };
-        let mut raw = format!("object {oid}\ntype {}\ntag {tag_name}\ntagger {} <{}> {} {sign}{:02}{:02}\n\n{message}", target_kind.str(), signature.name().unwrap_or_default(), signature.email().unwrap_or_default(), time.seconds(), zone.abs() / 60, zone.abs() % 60);
-        if !raw.ends_with('\n') { raw.push('\n'); }
+        let raw = super::objects::annotation(oid, target_kind, tag_name, &signature, message);
         if raw.len() > MAX_TAG_OBJECT_BYTES { return Err(ObjectTooLarge.into()); }
         let target = repo.odb()?.write(ObjectType::Tag, raw.as_bytes())?;
-        (target, Some(time.seconds()))
+        (target, Some(signature.when().seconds()))
     } else {
         (oid, commit.as_ref().map(|commit| commit.time().seconds()))
     };
