@@ -488,11 +488,12 @@ mod fixture {
                 _ => unreachable!(),
             }
             release.send(()).unwrap();
+            // Git accepted the push, so its bookkeeping finishes for the admitted actor.
             assert!(timeout(std::time::Duration::from_secs(15), task)
                 .await
                 .unwrap()
                 .unwrap()
-                .is_err());
+                .is_ok());
             let refreshed =
                 db::pull_requests::records::get_pull_request_by_id(&fixture.pool, pull.id)
                     .await
@@ -766,12 +767,13 @@ mod fixture {
                 .unwrap()
         );
         release.send(()).unwrap();
+        // Git accepted the push, so its bookkeeping finishes for the admitted actor.
         assert!(
             tokio::time::timeout(std::time::Duration::from_secs(15), task)
                 .await
                 .unwrap()
                 .unwrap()
-                .is_err()
+                .is_ok()
         );
         assert_eq!(
             bare.find_reference("HEAD").unwrap().symbolic_target(),
@@ -1211,16 +1213,22 @@ mod fixture {
                     rule.push_allowances = vec![allowed];
                 })
                 .await;
+            // Push restrictions limit updates; creating a branch is limited only when the rule
+            // blocks creations, as on GitHub.
+            git2::Repository::open_bare(&fixture.path)
+                .unwrap()
+                .reference("refs/heads/topic", fixture.oid, false, "fixture")
+                .unwrap();
             let commit = scratch.commit(&[fixture.oid], "topic");
             let output = fixture
-                .push(&scratch, "refs/heads/topic", ZERO_SHA, &commit.to_string())
+                .push(&scratch, "refs/heads/topic", &fixture.oid.to_string(), &commit.to_string())
                 .await;
             if listed {
                 assert!(output.contains("ok refs/heads/topic"), "{output}");
                 assert_eq!(fixture.tip("refs/heads/topic"), Some(commit));
             } else {
                 assert!(output.contains("ng refs/heads/topic"), "{output}");
-                assert_eq!(fixture.tip("refs/heads/topic"), None);
+                assert_eq!(fixture.tip("refs/heads/topic"), Some(fixture.oid));
             }
             fixture.pool.close().await;
         }
@@ -2024,11 +2032,11 @@ mod fixture {
             .unwrap()
             .find_reference("refs/heads/spare")
             .is_err());
-        assert!(
-            db::users::ssh_keys::delete_ssh_key(&fixture.pool, fixture.key_id)
-                .await
-                .unwrap()
-        );
+        // The deletion's activity record fails after Git accepted it.
+        sqlx::query("CREATE TRIGGER refuse_activity BEFORE INSERT ON repository_ref_activities BEGIN SELECT RAISE(ABORT, 'activity unavailable'); END")
+            .execute(&fixture.native)
+            .await
+            .unwrap();
         release.send(()).unwrap();
         let error = timeout(std::time::Duration::from_secs(15), task)
             .await
