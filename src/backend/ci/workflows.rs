@@ -1623,50 +1623,49 @@ on: [push, pull_request]
 
     #[test]
     fn workflow_parser_enforces_semantic_limits() {
-        for parse in [parse_workflow_definition] {
-            let name = "n".repeat(MAX_WORKFLOW_NAME_BYTES);
-            assert!(parse(
-                ".github/workflows/ci.yml",
-                &format!("name: '{name}'\non: push")
-            )
-            .is_ok());
-            let name = "n".repeat(MAX_WORKFLOW_NAME_BYTES + 1);
-            assert!(parse(
-                ".github/workflows/ci.yml",
-                &format!("name: '{name}'\non: push")
-            )
-            .is_err());
+        let parse = parse_workflow_definition;
+        let name = "n".repeat(MAX_WORKFLOW_NAME_BYTES);
+        assert!(parse(
+            ".github/workflows/ci.yml",
+            &format!("name: '{name}'\non: push")
+        )
+        .is_ok());
+        let name = "n".repeat(MAX_WORKFLOW_NAME_BYTES + 1);
+        assert!(parse(
+            ".github/workflows/ci.yml",
+            &format!("name: '{name}'\non: push")
+        )
+        .is_err());
 
-            let patterns = std::iter::repeat_n("'src/**'", MAX_WORKFLOW_FILTER_PATTERNS)
-                .collect::<Vec<_>>()
-                .join(", ");
-            assert!(parse(
-                ".github/workflows/ci.yml",
-                &format!("on:\n  push:\n    paths: [{patterns}]")
-            )
-            .is_ok());
-            let patterns = std::iter::repeat_n("'src/**'", MAX_WORKFLOW_FILTER_PATTERNS + 1)
-                .collect::<Vec<_>>()
-                .join(", ");
-            assert!(parse(
-                ".github/workflows/ci.yml",
-                &format!("on:\n  push:\n    paths: [{patterns}]")
-            )
-            .is_err());
+        let patterns = std::iter::repeat_n("'src/**'", MAX_WORKFLOW_FILTER_PATTERNS)
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(parse(
+            ".github/workflows/ci.yml",
+            &format!("on:\n  push:\n    paths: [{patterns}]")
+        )
+        .is_ok());
+        let patterns = std::iter::repeat_n("'src/**'", MAX_WORKFLOW_FILTER_PATTERNS + 1)
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(parse(
+            ".github/workflows/ci.yml",
+            &format!("on:\n  push:\n    paths: [{patterns}]")
+        )
+        .is_err());
 
-            let pattern = "p".repeat(MAX_WORKFLOW_PATTERN_BYTES);
-            assert!(parse(
-                ".github/workflows/ci.yml",
-                &format!("on:\n  push:\n    paths: ['{pattern}']")
-            )
-            .is_ok());
-            let pattern = "p".repeat(MAX_WORKFLOW_PATTERN_BYTES + 1);
-            assert!(parse(
-                ".github/workflows/ci.yml",
-                &format!("on:\n  push:\n    paths: ['{pattern}']")
-            )
-            .is_err());
-        }
+        let pattern = "p".repeat(MAX_WORKFLOW_PATTERN_BYTES);
+        assert!(parse(
+            ".github/workflows/ci.yml",
+            &format!("on:\n  push:\n    paths: ['{pattern}']")
+        )
+        .is_ok());
+        let pattern = "p".repeat(MAX_WORKFLOW_PATTERN_BYTES + 1);
+        assert!(parse(
+            ".github/workflows/ci.yml",
+            &format!("on:\n  push:\n    paths: ['{pattern}']")
+        )
+        .is_err());
     }
 
     #[tokio::test]
@@ -1716,14 +1715,13 @@ on: [push, pull_request]
         assert_eq!(exact.len(), MAX_CI_WORKFLOW_BYTES);
         let oversized = format!("{exact} ");
 
-        for parse in [parse_workflow_definition] {
-            assert!(parse(".github/workflows/ci.yml", &exact).is_ok());
-            let error = parse(".github/workflows/ci.yml", &oversized).unwrap_err();
-            assert!(
-                format!("{error:#}").contains("CI workflow exceeds size limit"),
-                "{error:#}"
-            );
-        }
+        let parse = parse_workflow_definition;
+        assert!(parse(".github/workflows/ci.yml", &exact).is_ok());
+        let error = parse(".github/workflows/ci.yml", &oversized).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("CI workflow exceeds size limit"),
+            "{error:#}"
+        );
     }
 
     #[test]

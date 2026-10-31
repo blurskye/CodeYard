@@ -108,7 +108,6 @@ pub(crate) fn raw_response(
         is_binary,
         size,
         offset,
-        mode: _,
         ..
     } = blob;
     let length = if head { size } else { bytes.len() as u64 };

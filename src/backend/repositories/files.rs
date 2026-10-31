@@ -609,10 +609,6 @@ async fn save_file(
 /// Moves the branch to a prepared commit, or with `new_branch` creates that branch at it. Pull
 /// requests that use the branch follow it, and push workflows are queued for the paths that
 /// changed.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Explicit actor and resources keep operations HTTP-free."
-)]
 async fn publish_commit(
     pool: &db::DbPool,
     store: &RepoStore,

@@ -879,10 +879,6 @@ pub async fn delete_asset(
 
 /// Opens an asset for a reader of the repository. Drafts stay hidden from everyone but writers.
 /// Only requests that send the body (`count`) add to the download count.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Explicit actor and resources keep operations HTTP-free."
-)]
 pub async fn download(
     pool: &db::DbPool,
     store: &ObjectStore,

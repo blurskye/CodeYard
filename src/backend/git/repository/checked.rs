@@ -56,8 +56,6 @@ pub(super) async fn command(
 ) -> Result<(std::process::ExitStatus, Vec<u8>)> {
     let mut command = process::git_command()?;
     command.arg("--git-dir").arg(path).args(args);
-    if args.first() == Some(&"merge-tree") {
-    }
     if let Some((author, committer)) = people {
         command
             .env("GIT_AUTHOR_NAME", author.name)

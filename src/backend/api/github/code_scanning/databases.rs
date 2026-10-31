@@ -23,8 +23,6 @@ use tokio_util::io::ReaderStream;
 /// of thousands.
 const MAX_DATABASE_ENTRIES: usize = 200_000;
 
-/// The upload quota (`file_reason_limits.reason`) that CodeQL database uploads count against.
-
 pub(crate) const UPLOAD_ROUTE: &str =
     "/api/uploads/repos/:owner/:repo/code-scanning/codeql/databases/:language";
 pub(crate) const API_UPLOAD_ROUTE: &str =
