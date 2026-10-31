@@ -77,7 +77,8 @@ async fn organization_assignees_require_scoped_grants_not_public_visibility() {
             .await
             .unwrap()
             .contains(&"assignment_writer".to_owned()));
-        assert!(assignees::assign_user(
+        // An existing assignment survives the lost grant, but a new one is refused.
+        assert!(!assignees::assign_user(
             f.pool(),
             owner,
             r.id,
@@ -85,7 +86,24 @@ async fn organization_assignees_require_scoped_grants_not_public_visibility() {
             writer
         )
         .await
-        .is_err());
+        .unwrap());
+        assert!(assignees::unassign_user(
+            f.pool(),
+            owner,
+            r.id,
+            AssignedItem::Issue(issue.id),
+            "assignment_writer"
+        )
+        .await
+        .unwrap());
+        let error =
+            assignees::assign_user(f.pool(), owner, r.id, AssignedItem::Issue(issue.id), writer)
+                .await
+                .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<AssignmentRefusal>(),
+            Some(&AssignmentRefusal::Unassignable)
+        );
         f.finish().await;
     }
 }
