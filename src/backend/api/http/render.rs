@@ -183,6 +183,8 @@ struct ModelRender {
 }
 
 static MODEL_RENDERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+/// How long a page waits for a render slot before the server answers that it is busy.
+const RENDER_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub(crate) async fn render_page(
     request: axum::extract::Request,
@@ -191,8 +193,13 @@ pub(crate) async fn render_page(
     let head = request.method() == Method::HEAD;
     let mut response = next.run(request).await;
     if let Some(render) = response.extensions_mut().remove::<ModelRender>() {
-        let Ok(permit) = MODEL_RENDERS.try_acquire() else {
-            return public_error(StatusCode::SERVICE_UNAVAILABLE, "Page rendering busy. Please try again.");
+        // A burst of page loads waits its turn; only a slot that stays taken answers busy.
+        let Ok(Ok(permit)) = tokio::time::timeout(RENDER_WAIT, MODEL_RENDERS.acquire()).await
+        else {
+            return public_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Page rendering busy. Please try again.",
+            );
         };
         let html = tokio::task::spawn_blocking(move || {
             let _permit = permit;
