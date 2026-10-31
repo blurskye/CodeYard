@@ -11,10 +11,12 @@ pub(crate) const SBOM_REPORTS_PER_REPOSITORY: i64 = 100;
 /// Callers bind the repository as $1; all detectors contributing alerts must use this SHA.
 pub(crate) const DEFAULT_SNAPSHOT_SHA_SQL: &str = "(SELECT d.sha FROM dependency_snapshots d JOIN repositories r ON r.id=d.repo_id WHERE d.repo_id=$1 AND d.reference='refs/heads/'||r.default_branch ORDER BY d.id DESC LIMIT 1)";
 
-/// Unspecified settings retain the existing enabled default; applied disables win.
+/// Whether the dependency graph is on, as on GitHub: an applied setting decides; without one it
+/// is on for a public repository, and on for a private one only once Dependabot alerts are
+/// enabled for it with the owner's consent to read its private dependencies.
 pub(crate) fn enabled_sql(pg: bool, repo: &str) -> String {
     let status = if pg { "(g.security_and_analysis::jsonb)->'dependency_graph'->>'status'" } else { "json_extract(g.security_and_analysis,'$.dependency_graph.status')" };
-    format!("NOT EXISTS(SELECT 1 FROM repository_security_settings g WHERE g.repo_id={repo} AND {status}='disabled')")
+    format!("CASE (SELECT {status} FROM repository_security_settings g WHERE g.repo_id={repo}) WHEN 'disabled' THEN FALSE WHEN 'enabled' THEN TRUE ELSE EXISTS(SELECT 1 FROM repositories p WHERE p.id={repo} AND (NOT p.is_private OR EXISTS(SELECT 1 FROM repository_dependency_security d WHERE d.repo_id=p.id AND d.alerts_enabled AND d.private_consent))) END")
 }
 
 pub(crate) const MAX_SNAPSHOT_SOURCES: usize = 100;

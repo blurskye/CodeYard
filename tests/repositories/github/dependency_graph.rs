@@ -83,6 +83,18 @@ async fn contract(pg: bool) {
         credentials.push(format!("Bearer {}", token.value));
     }
     let (writer, reader, outsider) = (&credentials[0], &credentials[1], &credentials[2]);
+    // As on GitHub, a private repository's graph is off until Dependabot alerts are enabled.
+    let (status, _, body) = request(&router, "GET", &format!("{BASE}/sbom"), Some(writer), Value::Null).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (status, _, body) = request(
+        &router,
+        "PUT",
+        "/api/v3/repos/alice/proj/vulnerability-alerts",
+        Some(writer),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
     let (status, _, created) = request(
         &router,
         "PUT",

@@ -68,6 +68,16 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{repo}");
     let base = "/api/v3/repos/graph-owner/graph";
+    // A private repository's graph is on once Dependabot alerts are, as on GitHub.
+    let (status, _, body) = request(
+        &router,
+        "PUT",
+        &format!("{base}/vulnerability-alerts"),
+        Some(&writer),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
     let (status,_,manifest) = request(&router,"PUT",&format!("{base}/contents/package.json"),Some(&writer),json!({"message":"Declare dependency","content":STANDARD.encode(br#"{"dependencies":{"example":"^1.0.0"}}"#)})).await;
     assert_eq!(status, StatusCode::CREATED, "{manifest}");
     let lock = |version: &str| json!({"lockfileVersion":3,"packages":{"":{"dependencies":{"example":"^1.0.0"}},"node_modules/example":{"version":version,"resolved":format!("https://registry.npmjs.org/example/-/example-{version}.tgz")}}});
