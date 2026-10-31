@@ -113,6 +113,21 @@ async fn push_blob(router: &Router, writer: &str, name: &str, bytes: &[u8]) -> S
     )
     .await;
     assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+    if mid > 0 && mid < bytes.len() {
+        // Only the last chunk may be under the advertised minimum.
+        let (status, _, body) = request(
+            router,
+            "PATCH",
+            location,
+            Some(writer),
+            "application/octet-stream",
+            bytes[mid..mid + 1].to_vec(),
+            Some(&format!("{mid}-{mid}")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(String::from_utf8_lossy(&body).contains("SIZE_INVALID"));
+    }
     let (status, _, _) = request(
         router,
         "PUT",

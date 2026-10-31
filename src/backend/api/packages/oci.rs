@@ -58,6 +58,9 @@ fn response(status: StatusCode, location: Option<&str>, digest: Option<&str>) ->
     Ok(response)
 }
 
+/// The smallest chunk an upload accepts before its last one.
+const MIN_CHUNK_BYTES: i64 = 1024 * 1024;
+
 fn upload_response(status: StatusCode, name: &str, upload: &Upload) -> Result<Response> {
     let location = format!("/v2/{name}/blobs/uploads/{}", upload.id);
     let mut response = response(status, Some(&location), None)?;
@@ -69,10 +72,9 @@ fn upload_response(status: StatusCode, name: &str, upload: &Upload) -> Result<Re
         header::RANGE,
         format!("0-{}", (upload.offset - 1).max(0)).parse().unwrap(),
     );
-    response.headers_mut().insert(
-        "oci-chunk-min-length",
-        "1048576".parse().unwrap(),
-    );
+    response
+        .headers_mut()
+        .insert("oci-chunk-min-length", MIN_CHUNK_BYTES.into());
     Ok(response)
 }
 
@@ -484,8 +486,15 @@ async fn append(
             "Layer exceeds 100 MiB",
         ));
     }
-    if !final_chunk && bytes.len() < 1024 * 1024 {
-        return Err(Error(StatusCode::BAD_REQUEST, "SIZE_INVALID", "Upload chunks must be at least 1 MiB"));
+    // Only the last chunk may be shorter than the advertised minimum, which bounds the chunks one
+    // upload stores. Docker sends a small blob as one PATCH and an empty PUT, so the short chunk
+    // is refused only once another chunk follows it.
+    if !final_chunk && !bytes.is_empty() {
+        let chunks: Vec<Blob> =
+            serde_json::from_str(&upload.chunks).map_err(|_| Error::unavailable())?;
+        if chunks.last().is_some_and(|chunk| chunk.size < MIN_CHUNK_BYTES) {
+            return Err(Error(StatusCode::BAD_REQUEST, "SIZE_INVALID", "Upload chunks must be at least 1 MiB"));
+        }
     }
     if bytes.is_empty() {
         return Ok(upload);
