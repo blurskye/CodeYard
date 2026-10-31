@@ -1487,7 +1487,8 @@ fn resolve_revision(repo: &Repository, revision: &str) -> Result<git2::Oid> {
     };
     match reference {
         Ok(reference) => return reference.resolve()?.target().ok_or_else(|| anyhow!("Reference has no direct target")),
-        Err(error) if error.code() == git2::ErrorCode::NotFound => {}
+        // An expression is not a valid ref name, and is unknown like a missing one.
+        Err(error) if matches!(error.code(), git2::ErrorCode::NotFound | git2::ErrorCode::InvalidSpec) => {}
         Err(error) => return Err(error.into()),
     }
     let abbreviated = (4..40).contains(&revision.len());
