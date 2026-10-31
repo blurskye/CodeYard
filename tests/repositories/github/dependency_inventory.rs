@@ -68,9 +68,9 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{repo}");
     let base = "/api/v3/repos/graph-owner/graph";
-    let (status,_,manifest) = request(&router,"PUT",&format!("{base}/contents/package.json"),Some(&writer),json!({"message":"Declare dependency","content":STANDARD.encode(br#"{"dependencies":{"example":"1.0.0"}}"#)})).await;
+    let (status,_,manifest) = request(&router,"PUT",&format!("{base}/contents/package.json"),Some(&writer),json!({"message":"Declare dependency","content":STANDARD.encode(br#"{"dependencies":{"example":"^1.0.0"}}"#)})).await;
     assert_eq!(status, StatusCode::CREATED, "{manifest}");
-    let lock = |version: &str| json!({"lockfileVersion":3,"packages":{"":{},"node_modules/example":{"version":version,"resolved":format!("https://registry.npmjs.org/example/-/example-{version}.tgz")}}});
+    let lock = |version: &str| json!({"lockfileVersion":3,"packages":{"":{"dependencies":{"example":"^1.0.0"}},"node_modules/example":{"version":version,"resolved":format!("https://registry.npmjs.org/example/-/example-{version}.tgz")}}});
     let (status, _, old) = request(
         &router,
         "PUT",
