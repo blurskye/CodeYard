@@ -516,19 +516,20 @@ fn reference_links_stop_at_the_document_budget() {
     );
 }
 
-/// A run of 100,000 references links up to the budget and keeps every other token as text.
+/// A run of 10,000 references links up to the budget and keeps every other token as text, and
+/// the whole comment stays under the output cap.
 #[test]
 fn a_long_run_of_references_links_only_the_budget() {
     let references = References {
         last_number: 1,
         ..page_references()
     };
-    let html = super::parse_markdown(&"#1 ".repeat(100_000), &references);
+    let html = super::parse_markdown(&"#1 ".repeat(10_000), &references);
     assert_eq!(
         html.matches("class=\"markdown-reference\"").count(),
         MAX_REFERENCE_LINKS
     );
-    assert_eq!(html.matches("#1").count(), 100_000);
+    assert_eq!(html.matches("#1").count(), 10_000);
 }
 
 #[test]
@@ -642,10 +643,11 @@ fn dropped_images_and_sources_do_not_reserve_their_ids() {
         }
 }
 
+// A repository document has no output cap, so it keeps the size that would show slow id checks.
 #[test]
 fn many_identical_headings_render_quickly_with_unique_ids() {
     let started = std::time::Instant::now();
-    let html = parse_markdown(&"# x\n".repeat(20_000));
+    let html = parse_document(&"# x\n".repeat(20_000));
     assert!(started.elapsed() < std::time::Duration::from_secs(1));
     assert!(html.contains("<h1 id=\"user-content-x\""));
     assert!(html.contains("<h1 id=\"user-content-x-19999\""));
@@ -785,6 +787,7 @@ fn large_unclosed_labels_and_urls_stay_literal() {
     assert!(html.contains("href=\"https://example.invalid\""));
 }
 
+// A repository document has no output cap, so it keeps the size that would show a rescan.
 #[test]
 fn overlapping_rejected_urls_do_not_rescan_their_shared_suffix() {
     let prefix = "[label](".repeat(65_536);
@@ -795,12 +798,13 @@ fn overlapping_rejected_urls_do_not_rescan_their_shared_suffix() {
         "java&#115;cript:bad)",
     ] {
         let started = std::time::Instant::now();
-        let html = parse_markdown(&format!("{prefix}{suffix}"));
+        let html = parse_document(&format!("{prefix}{suffix}"));
         assert!(started.elapsed() < std::time::Duration::from_secs(8));
         assert!(!html.contains("href="), "{suffix}");
+        assert!(!html.contains("showing a plain-text preview"), "{suffix}");
     }
     let started = std::time::Instant::now();
-    let html = parse_inline(&format!("{prefix}HtTpS://example.invalid)"));
+    let html = paragraph(parse_document(&format!("{prefix}HtTpS://example.invalid)")));
     assert!(started.elapsed() < std::time::Duration::from_secs(8));
     assert!(html.starts_with(&"[label](".repeat(65_535)));
     assert_eq!(html.matches("<a ").count(), 1);
