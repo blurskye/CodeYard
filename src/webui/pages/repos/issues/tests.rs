@@ -758,12 +758,13 @@ fn serialized_repository_contains_only_public_presentation_and_form_fields() {
     })
     .unwrap();
     let repo = json["List"]["repository"].as_object().unwrap();
-    assert_eq!(repo.len(), 8);
+    assert_eq!(repo.len(), 9);
     for name in [
         "owner",
         "name",
         "signed_in",
         "can_write",
+        "can_triage",
         "can_admin",
         "csrf",
         "viewer",
