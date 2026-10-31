@@ -192,7 +192,8 @@ async fn contract(pg: bool) {
         .unwrap()
         .ends_with("/api/v3/user"));
     assert_eq!(poll(&router, &code).await["error"], "incorrect_device_code");
-    // A deployment's automatic merge may publish workflow files, so it needs that scope too.
+    // A deployment's automatic merge needs the workflow scope only when it publishes a
+    // workflow file that no branch has, so this merge of a plain file goes through.
     let setup = codeyard::backend::identity::tokens::create(
         f.pool(),
         actor,
@@ -255,7 +256,7 @@ async fn contract(pg: bool) {
         &format!("{base}/deployments"),
         Some(&authorization),
         json!({"ref":"topic"}),
-        403,
+        202,
     )
     .await;
 
