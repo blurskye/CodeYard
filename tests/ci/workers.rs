@@ -83,6 +83,7 @@ async fn core_sigterm_during_container_recovery_withdraws_its_heartbeat() {
         .unwrap()
         .unwrap();
     assert_eq!(
+        // SAFETY: kill takes no pointers, and the child is not yet waited on, so its PID is its own.
         unsafe { libc::kill(child.id().unwrap() as i32, libc::SIGTERM) },
         0
     );
@@ -382,6 +383,8 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
             .arg("database_free_worker_claims_runs_and_core_enforces_membership_and_ownership")
             .arg("--nocapture")
             .env(CHILD, "1");
+        // SAFETY: the hook runs in the forked child before exec and only calls umask, which is
+        // async-signal-safe.
         unsafe {
             command.pre_exec(|| {
                 libc::umask(0o022);
@@ -1425,6 +1428,7 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
     let live_claim = std::fs::File::open(records.join(format!("{live}.json"))).unwrap();
     use std::os::fd::AsRawFd;
     assert_eq!(
+        // SAFETY: the claim file stays open for the call, and flock keeps no pointers.
         unsafe { libc::flock(live_claim.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
         0
     );
@@ -1557,6 +1561,8 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
         assert!(!root.path().join("state/gitserv.db").exists());
         assert!(!root.path().join("repos").exists());
         assert_eq!(
+            // SAFETY: kill takes no pointers, and the child is not yet waited on, so its PID is
+            // its own.
             unsafe { libc::kill(child.id().unwrap() as i32, libc::SIGTERM) },
             0
         );
@@ -2628,6 +2634,7 @@ async fn shutdown_with_blocked_workspace_cleanup(pool: &db::DbPool) {
         .split_whitespace()
         .map(|pid| pid.parse::<i32>().unwrap())
     {
+        // SAFETY: signal zero only checks whether the process exists; kill takes no pointers.
         assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
     }
     tokio::time::sleep(Duration::from_millis(200)).await;

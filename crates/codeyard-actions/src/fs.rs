@@ -32,6 +32,7 @@ pub fn snapshot_tree(source: &Path, links: SnapshotLinks) -> anyhow::Result<temp
             // SAFETY: directory and name remain valid through this descriptor-relative open.
             let fd = unsafe { libc::openat(directory.as_raw_fd(), c_name.as_ptr(), libc::O_PATH | libc::O_CLOEXEC | libc::O_NOFOLLOW) };
             if fd < 0 { return Err(std::io::Error::last_os_error().into()); }
+            // SAFETY: openat succeeded, so `fd` is a new descriptor with no other owner.
             let input = unsafe { File::from_raw_fd(fd) };
             let metadata = input.metadata()?;
             let path = destination.join(&name);

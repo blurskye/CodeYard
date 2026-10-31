@@ -439,7 +439,10 @@ where F: FnOnce(tokio::process::ChildStdout, ReadAdmission) -> Fut,
             let result = read(stdout, ReadAdmission { permit: permit.clone(), deadline }).await?;
             if matches!(&result, ReadEnd::Prefix(_)) {
                 // Keep the leader unreaped until stderr is drained and group cleanup is done.
-                if let Some(pid) = pid { unsafe { libc::kill(if own_group { -(pid as i32) } else { pid as i32 }, libc::SIGTERM); } }
+                if let Some(pid) = pid {
+                    // SAFETY: kill takes no pointers, and the unreaped leader keeps its PID and group.
+                    unsafe { libc::kill(if own_group { -(pid as i32) } else { pid as i32 }, libc::SIGTERM); }
+                }
             }
             Ok::<_, anyhow::Error>(result)
         };
@@ -519,6 +522,8 @@ async fn run_admitted(mut command: Command, input: &[u8], output_limit: usize, r
         Err(_) => {
             if let Some(pid) = child.id() {
                 // Give Git's signal handler a chance to remove its lockfiles.
+                // SAFETY: kill takes no pointers, and `child.id()` is set only while the child is
+                // unreaped, so the ID cannot name a reused process.
                 unsafe { libc::kill(-(pid as i32), libc::SIGTERM); }
             }
             if tokio::time::timeout(Duration::from_secs(2), child.wait()).await.is_err() {

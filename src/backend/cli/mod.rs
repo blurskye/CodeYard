@@ -31,6 +31,7 @@ fn load_dotenv() -> Result<()> {
 fn set_private_umask() {
     // This is the native process boundary, before any normal application files or
     // listeners are created. OpenSSH helpers return above and keep their host policy.
+    // SAFETY: umask takes no pointers and cannot fail.
     unsafe {
         libc::umask(0o077);
     }

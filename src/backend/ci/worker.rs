@@ -862,6 +862,8 @@ fn act_command(
         // A dead server must not leave act submitting new containers during recovery. The
         // native runner gets SIGTERM instead, so its cancellation stops the job's commands.
         let death = if native { libc::SIGTERM } else { libc::SIGKILL };
+        // SAFETY: the hook runs in the forked child before exec and only calls the
+        // async-signal-safe prctl and getppid.
         unsafe {
             command.pre_exec(move || {
                 if libc::prctl(libc::PR_SET_PDEATHSIG, death) != 0 {
@@ -1176,6 +1178,7 @@ impl Drop for ContainerOwnership {
         use std::os::fd::AsRawFd;
         // A concurrent fork can hold a duplicate until exec. Release our finished lock
         // explicitly rather than waiting for every inherited descriptor to close.
+        // SAFETY: the lock file stays open while `self` lives, and flock keeps no pointers.
         unsafe {
             libc::flock(self._lock.as_raw_fd(), libc::LOCK_UN);
         }
@@ -2845,6 +2848,7 @@ jobs:
             let workspace = directory.join(format!("{run}.workspace"));
             std::fs::create_dir(&workspace).unwrap();
             std::fs::write(workspace.join("secrets.env"), "TOKEN=private").unwrap();
+            // SAFETY: kill and getpid take no pointers; this disposable child kills itself.
             unsafe { libc::kill(libc::getpid(), libc::SIGKILL) };
             unreachable!("SIGKILL does not return");
         }
@@ -3070,6 +3074,8 @@ jobs:
                 .arg("workspace_holds_the_runs_commit_and_the_workflow_files_queued_with_it")
                 .arg("--nocapture")
                 .env(CHILD, "1");
+            // SAFETY: the hook runs in the forked child before exec and only calls umask, which is
+            // async-signal-safe.
             unsafe {
                 command.pre_exec(|| {
                     libc::umask(0o022);

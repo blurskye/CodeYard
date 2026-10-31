@@ -343,6 +343,7 @@ pub(super) mod tests {
             if matches!(reason, "cancel" | "abort") {
                 for &pid in &numbers {
                     assert_eq!(
+                        // SAFETY: signal zero only checks whether the process exists; kill takes no pointers.
                         unsafe { libc::kill(pid, 0) },
                         0,
                         "positive liveness control"
@@ -365,10 +366,10 @@ pub(super) mod tests {
                 }
             }
             tokio::time::timeout(Duration::from_secs(5), async {
-                while numbers
-                    .iter()
-                    .any(|&pid| unsafe { libc::kill(pid, 0) } == 0)
-                {
+                while numbers.iter().any(|&pid| {
+                    // SAFETY: signal zero only checks whether the process exists; kill takes no pointers.
+                    unsafe { libc::kill(pid, 0) } == 0
+                }) {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             })
@@ -405,6 +406,7 @@ pub(super) mod tests {
             .trim()
             .parse()
             .unwrap();
+        // SAFETY: signal zero only checks whether the process exists; kill takes no pointers.
         assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(
@@ -476,6 +478,7 @@ pub(super) mod tests {
             .split_whitespace()
             .map(|pid| pid.parse::<i32>().unwrap())
         {
+            // SAFETY: signal zero only checks whether the process exists; kill takes no pointers.
             assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
         }
     }

@@ -208,15 +208,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn dropped_read_keeps_its_io_slot_until_the_read_returns() {
-        use std::os::fd::FromRawFd;
-        let mut descriptors = [-1; 2];
         // A pipe gives a read that blocks until the writer closes.
-        assert_eq!(
-            unsafe { libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) },
-            0
-        );
-        let reader = unsafe { std::fs::File::from_raw_fd(descriptors[0]) };
-        let writer = unsafe { std::fs::File::from_raw_fd(descriptors[1]) };
+        let (reader, writer) = std::io::pipe().unwrap();
+        let reader = std::fs::File::from(std::os::fd::OwnedFd::from(reader));
         let capacity = Arc::new(tokio::sync::Semaphore::new(1));
         let io_guard = Arc::new(capacity.clone().acquire_owned().await.unwrap());
         drop(download_read(reader, 1, io_guard)); // the client went away

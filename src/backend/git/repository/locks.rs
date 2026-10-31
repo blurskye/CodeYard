@@ -267,8 +267,8 @@ mod tests {
         // Closing the earlier child's independent description cannot release this new lease.
         drop(lease);
         let probe = open_publication(&path).await.unwrap();
-        // SAFETY: the probe owns a separate live description of this same lock file.
         assert_eq!(
+            // SAFETY: the probe owns a separate live description of this same lock file.
             unsafe { libc::flock(probe.file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
             -1
         );

@@ -157,6 +157,7 @@ fn check_root(path: &Path) -> Result<()> {
         let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
         // SAFETY: statfs writes to initialized-size output; directory owns a valid fd.
         ensure!(unsafe { libc::fstatfs(directory.as_raw_fd(), stat.as_mut_ptr()) } == 0, "Unable to inspect cgroup filesystem");
+        // SAFETY: fstatfs succeeded, so it filled `stat`.
         ensure!(unsafe { stat.assume_init() }.f_type as u64 == 0x6367_7270, "Execution containment requires cgroup v2");
         return Ok(());
     }

@@ -276,6 +276,7 @@ fn stdio(fd: BorrowedFd<'_>) -> Result<StandardIo> {
     let file = match reopened {
         Ok(file) => file,
         Err(_) => {
+            // SAFETY: the owned fd is live; F_SETFL takes a scalar argument.
             if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
             {
                 return Err(std::io::Error::last_os_error().into());

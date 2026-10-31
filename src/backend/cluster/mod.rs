@@ -604,9 +604,11 @@ fn disk_free(path: &Path) -> Result<i64> {
     let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
     // statvfs reads the filesystem containing the repository root.
     let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `path` is NUL-terminated and outlives the call, and statvfs writes only `stats`.
     if unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
         return Err(std::io::Error::last_os_error().into());
     }
+    // SAFETY: statvfs succeeded, so it filled `stats`.
     let stats = unsafe { stats.assume_init() };
     Ok(i64::try_from(
         stats.f_bavail.saturating_mul(stats.f_frsize),

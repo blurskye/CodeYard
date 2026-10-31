@@ -343,6 +343,8 @@ mod tests {
             let png = b"\x89PNG\r\n\x1a\nrest";
             let sha = hex::encode(Sha256::digest(png));
             // Isolated child: force the final asynchronous file write to fail.
+            // SAFETY: this test body runs alone in its own child process, so the signal
+            // disposition and file size limit reach no other test; setrlimit only reads `limit`.
             unsafe {
                 libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
                 let limit = libc::rlimit {

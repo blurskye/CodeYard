@@ -78,19 +78,18 @@ enum Stdout {
 #[cfg(unix)]
 impl Stdout {
     fn open() -> Result<Self> {
-        use std::os::fd::{AsRawFd, FromRawFd};
-        // SAFETY: duplicate stdout with independent descriptor ownership.
-        let raw = unsafe { libc::fcntl(libc::STDOUT_FILENO, libc::F_DUPFD_CLOEXEC, 3) };
-        if raw < 0 { return Err(std::io::Error::last_os_error().into()); }
-        let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(raw) };
-        let mut metadata: libc::stat = unsafe { std::mem::zeroed() };
-        if unsafe { libc::fstat(fd.as_raw_fd(), &mut metadata) } != 0 {
-            return Err(std::io::Error::last_os_error().into());
+        use std::os::fd::{AsFd, AsRawFd};
+        use std::os::unix::fs::FileTypeExt;
+        // A close-on-exec duplicate with its own owner, so dropping it never closes stdout.
+        let file = std::fs::File::from(std::io::stdout().as_fd().try_clone_to_owned()?);
+        let kind = file.metadata()?.file_type();
+        if !(kind.is_fifo() || kind.is_socket()) {
+            return Ok(Self::File(tokio::fs::File::from_std(file)));
         }
-        if !matches!(metadata.st_mode & libc::S_IFMT, libc::S_IFIFO | libc::S_IFSOCK) {
-            return Ok(Self::File(tokio::fs::File::from_std(std::fs::File::from(fd))));
-        }
+        let fd = std::os::fd::OwnedFd::from(file);
+        // SAFETY: `fd` is a live owned descriptor, and F_GETFL takes no argument.
         let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
+        // SAFETY: `fd` is still live, and F_SETFL takes a scalar argument.
         if flags < 0 || unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
             return Err(std::io::Error::last_os_error().into());
         }

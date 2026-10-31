@@ -1432,6 +1432,7 @@ fn sigterm_stops_the_running_process_group() {
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    // SAFETY: kill takes no pointers, and the child is not yet waited on, so its PID is its own.
     assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
     let output = child.wait_with_output().unwrap();
     assert!(!output.status.success(), "{}", log(&output));
@@ -1596,6 +1597,7 @@ jobs:
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    // SAFETY: kill takes no pointers, and the child is not yet waited on, so its PID is its own.
     assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
     let output = child.wait_with_output().unwrap();
     assert!(!output.status.success(), "{}", log(&output));
