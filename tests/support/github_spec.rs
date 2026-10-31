@@ -18,9 +18,25 @@ fn spec() -> &'static Value {
             .read_to_string(&mut text)
             .unwrap();
         let mut spec = serde_json::from_str(&text).unwrap();
+        secret_scanning_resolutions(&mut spec);
         nullable(&mut spec);
         spec
     })
+}
+
+/// GitHub's description names `pattern_edited` and `pattern_deleted` as resolutions an alert can
+/// have, in the alert list's `resolution` filter and in the webhook alert schema, but the REST
+/// alert schema's enum leaves them out. The alert schema takes the documented values.
+fn secret_scanning_resolutions(spec: &mut Value) {
+    let resolutions = spec
+        .pointer_mut("/components/schemas/secret-scanning-alert-resolution/enum")
+        .and_then(Value::as_array_mut)
+        .expect("GitHub's description has the secret scanning resolution enum");
+    for value in ["pattern_edited", "pattern_deleted"] {
+        if !resolutions.iter().any(|known| known == value) {
+            resolutions.push(json!(value));
+        }
+    }
 }
 
 /// OpenAPI 3.0 marks nullable schemas with `nullable: true`; JSON Schema spells it with types.
