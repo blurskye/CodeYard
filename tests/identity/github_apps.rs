@@ -702,13 +702,25 @@ async fn contract(pg: bool) {
         404,
     )
     .await;
-    // Removing the bot identity must not reclassify its user credentials as classic OAuth.
+    // Removing the bot identity must not reclassify its user credentials as classic OAuth: the
+    // client row stays an App's, and the App's client no longer resolves without its bot.
     f.execute("DELETE FROM users WHERE id=$1", &[app.bot_id])
         .await;
+    assert_eq!(
+        f.scalar(
+            &format!(
+                "SELECT COUNT(*) FROM oauth_applications WHERE client_id='{}' AND is_github_app",
+                app.client_id
+            ),
+            &[]
+        )
+        .await,
+        1
+    );
     assert!(db::oauth_apps::application(f.pool(), &app.client_id)
         .await
         .unwrap()
-        .is_some());
+        .is_none());
     request(
         &router,
         "users/get-authenticated",
