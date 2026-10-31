@@ -56,9 +56,7 @@ pub(super) async fn lookup(
 
 pub(in crate::backend::api::github) fn admission_error(error: AdmissionError) -> Error {
     match error {
-        AdmissionError::WorkflowDisabled => {
-            Error::new(StatusCode::CONFLICT, "Workflow is disabled")
-        }
+        AdmissionError::WorkflowDisabled(message) => Error::new(StatusCode::CONFLICT, message),
         AdmissionError::Missing(_) => Error::missing(),
         AdmissionError::Denied(message) => Error::new(StatusCode::FORBIDDEN, message),
         AdmissionError::Conflict("CI ref unavailable") => {

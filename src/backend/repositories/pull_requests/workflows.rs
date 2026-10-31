@@ -322,7 +322,7 @@ async fn queue_pull_request_workflow_event(
             )
             .await
         {
-            if !manual && matches!(error, AdmissionError::WorkflowDisabled) {
+            if !manual && matches!(error, AdmissionError::WorkflowDisabled(_)) {
                 continue;
             }
             tracing::warn!(

@@ -9,8 +9,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AdmissionError {
-    #[error("Workflow is disabled")]
-    WorkflowDisabled,
+    /// The workflow, or Actions for the repository, is turned off: nothing runs, and event
+    /// paths skip it quietly.
+    #[error("{0}")]
+    WorkflowDisabled(&'static str),
     #[error("{0}")]
     Missing(&'static str),
     #[error("{0}")]
@@ -32,7 +34,7 @@ impl From<anyhow::Error> for AdmissionError {
             Err(error) => error,
         };
         match error.downcast::<db::ci::CiAdmissionRefusal>() {
-            Ok(db::ci::CiAdmissionRefusal::WorkflowDisabled) => Self::WorkflowDisabled,
+            Ok(db::ci::CiAdmissionRefusal::WorkflowDisabled) => Self::WorkflowDisabled("Workflow is disabled"),
             Ok(db::ci::CiAdmissionRefusal::Missing(message)) => Self::Missing(message),
             Ok(db::ci::CiAdmissionRefusal::Denied(message)) => Self::Denied(message),
             Ok(db::ci::CiAdmissionRefusal::Conflict(message)) => Self::Conflict(message),
@@ -223,7 +225,9 @@ pub(super) async fn resolve(
     )
     .await??;
     if !enabled {
-        return Err(AdmissionError::WorkflowDisabled);
+        return Err(AdmissionError::WorkflowDisabled(
+            "Actions are turned off for this repository",
+        ));
     }
     // Never trust the caller's repository name.
     request.repo_name = repo.name.clone();

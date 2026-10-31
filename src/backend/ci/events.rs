@@ -317,7 +317,7 @@ impl CiRuns {
                 )
                 .await
             {
-                Ok(_) | Err(AdmissionError::WorkflowDisabled) => {}
+                Ok(_) | Err(AdmissionError::WorkflowDisabled(_)) => {}
                 // One refused listener must not stop the other workflows listening for this event.
                 // A storage failure is still reported once the others are queued.
                 Err(error) => {

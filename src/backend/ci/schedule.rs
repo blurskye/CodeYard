@@ -177,7 +177,7 @@ impl CiRuns {
                     )
                     .await
                 {
-                    Ok(_) | Err(AdmissionError::WorkflowDisabled) => {}
+                    Ok(_) | Err(AdmissionError::WorkflowDisabled(_)) => {}
                     // One refused workflow must not stop the other workflows due at this minute.
                     Err(error) => {
                         tracing::warn!(repo_id = repo.id, workflow = %definition.path, %error, "scheduled workflow was not queued");

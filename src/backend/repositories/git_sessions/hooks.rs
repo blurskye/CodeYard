@@ -739,7 +739,7 @@ impl Gateway {
                         None,
                     )
                     .await;
-                if matches!(result, Err(ci::admission::AdmissionError::WorkflowDisabled)) {
+                if matches!(result, Err(ci::admission::AdmissionError::WorkflowDisabled(_))) {
                     continue;
                 }
                 if let Err(error) = result {

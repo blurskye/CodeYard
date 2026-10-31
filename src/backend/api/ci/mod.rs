@@ -78,7 +78,7 @@ pub(super) fn admission_error(error: AdmissionError) -> (StatusCode, Json<ApiErr
     let status = match &error {
         AdmissionError::Missing(_) => StatusCode::NOT_FOUND,
         AdmissionError::Denied(_) => StatusCode::FORBIDDEN,
-        AdmissionError::Conflict(_) | AdmissionError::WorkflowDisabled => StatusCode::CONFLICT,
+        AdmissionError::Conflict(_) | AdmissionError::WorkflowDisabled(_) => StatusCode::CONFLICT,
         AdmissionError::Invalid(_) | AdmissionError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
         AdmissionError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
     };
