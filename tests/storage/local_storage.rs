@@ -1296,7 +1296,8 @@ async fn paused_http_put_serializes_delete_confirm_and_expiry_per_file() {
     assert!(!sweep.is_finished(), "expiry must wait for this file's PUT");
     writer.write_all(b"ired").await.unwrap();
     writer.shutdown().await.unwrap();
-    put.await.unwrap().unwrap();
+    // The window ended during the PUT, so the checked bytes are not published.
+    assert_eq!(put.await.unwrap(), Err(LocalUploadError::Rejected));
     assert_eq!(sweep.await.unwrap().unwrap(), 1);
     assert!(files_db::get_file_by_id(&fixture.pool, expired.file_id)
         .await
@@ -1866,11 +1867,14 @@ async fn a_stalled_upload_is_cut_off_when_its_window_ends() {
     assert_eq!(result.unwrap_err(), LocalUploadError::Rejected);
     assert!(fixture.stored_names().is_empty());
     drop(writer);
-    assert_eq!(
-        free_slots(&fixture.storage),
-        slots,
-        "the upload must give its storage slot back"
-    );
+    // The partial file is removed off the async workers, and the slot comes back once it is.
+    let returned = tokio::time::timeout(Duration::from_secs(5), async {
+        while free_slots(&fixture.storage) != slots {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(returned.is_ok(), "the upload must give its storage slot back");
 }
 
 #[tokio::test]
