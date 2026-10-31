@@ -71,7 +71,7 @@ const CALLED: &str = r#"on:
     outputs:
       message:
         value: ${{ jobs.nested.outputs.message }}
-permissions: {contents: write, issues: write, id-token: write}
+permissions: {contents: read}
 jobs:
   nested:
     uses: ./.github/workflows/leaf.yml
@@ -91,7 +91,7 @@ const LEAF: &str = r#"on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    permissions: {contents: write, issues: write, id-token: write}
+    permissions: {contents: read}
     outputs:
       message: ${{ steps.output.outputs.message }}
     steps:
@@ -361,6 +361,41 @@ jobs:
         &[remote.id],
     )
     .await;
+    // A called workflow or job may only lower the caller's token permissions. Asking for more
+    // fails the run, as GitHub reports "The nested job is requesting ... but is only allowed".
+    let escalated = "permissions: {contents: write, issues: write, id-token: write}";
+    for (called, leaf) in [
+        (CALLED.replace("permissions: {contents: read}", escalated), LEAF.to_owned()),
+        (CALLED.to_owned(), LEAF.replace("permissions: {contents: read}", escalated)),
+    ] {
+        commit(&remote.disk_path, &[("called.yml", &called), ("leaf.yml", &leaf)]);
+        let run = state
+            .ci_runs
+            .trigger_run(request(caller.id, actor))
+            .await
+            .unwrap();
+        let error = queue
+            .claim("reusable-escalated", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("exceed caller permissions"), "{error:#}");
+        let failed = db::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(failed.status, "failed");
+        let tokens = f
+            .scalar(
+                "SELECT COUNT(*) FROM actions_github_tokens WHERE run_id=$1",
+                &[run.id],
+            )
+            .await;
+        assert_eq!(tokens, 0);
+    }
+    commit(
+        &remote.disk_path,
+        &[("called.yml", CALLED), ("leaf.yml", LEAF)],
+    );
     drop(admitted);
     for (engine, nested) in [("codeyard-actions", true), ("act", false), ("act", true)] {
         let source = if !nested {
