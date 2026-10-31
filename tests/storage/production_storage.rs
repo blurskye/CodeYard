@@ -988,20 +988,26 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
         0
     );
 
-    // Deleting a still-pending upload works the same way.
+    // Deleting a still-pending upload works the same way. Nothing was uploaded yet, so the sweep
+    // finds no object, and the kept tombstone removes one that a late PUT stores.
     let pending = reserve(&db, 7).await.unwrap();
     file_operations::delete_owned_file(&db.pool, &s3.store, db.user, pending.id)
         .await
         .unwrap();
     assert!(!s3.deleted().contains(&s3.path(&pending.object_key)));
-    sqlx::query("UPDATE pending_object_deletions SET delete_after=NOW()-INTERVAL '1 second'")
-        .execute(&db.raw)
-        .await
-        .unwrap();
-    file_operations::remove_expired_uploads(&db.pool, &s3.store)
-        .await
-        .unwrap();
-    assert!(s3.deleted().contains(&s3.path(&pending.object_key)));
+    for late in [false, true] {
+        if late {
+            s3.put(&pending.object_key, b"late-put");
+        }
+        sqlx::query("UPDATE pending_object_deletions SET delete_after=NOW()-INTERVAL '1 second'")
+            .execute(&db.raw)
+            .await
+            .unwrap();
+        file_operations::remove_expired_uploads(&db.pool, &s3.store)
+            .await
+            .unwrap();
+        assert_eq!(s3.deleted().contains(&s3.path(&pending.object_key)), late);
+    }
     assert!(files::get_file_by_id(&db.pool, pending.id)
         .await
         .unwrap()
