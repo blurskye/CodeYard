@@ -392,7 +392,8 @@ async fn contributors_for(repo_path: &Path, branch: Option<&str>) -> Result<Vec<
             let deadline = std::time::Instant::now() + process::RPC_TIMEOUT;
             for oid in refs.values() {
                 ensure!(std::time::Instant::now() < deadline, "Git contributor snapshot timed out");
-                let (id, kind) = super::repository::peel_revision(&repo, oid)?;
+                // Git walks the history, so a tip commit too large for libgit2 still counts.
+                let (id, kind) = super::repository::peel_revision_id(&repo, oid)?;
                 if kind == git2::ObjectType::Commit { tips.insert(id.to_string()); }
             }
             let mailmap = if let Some(head) = refs.get(&mailmap_ref) {
@@ -884,6 +885,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(get_contributors(root.path()).await.unwrap()[0].commits, 2);
+    }
+
+    #[tokio::test]
+    async fn contributors_count_a_tip_commit_too_large_to_load() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init_bare(root.path()).unwrap();
+        let signature = git2::Signature::now("Test", "test@example.invalid").unwrap();
+        let tree = repo
+            .find_tree(repo.treebuilder(None).unwrap().write().unwrap())
+            .unwrap();
+        repo.commit(
+            Some("refs/heads/main"),
+            &signature,
+            &signature,
+            &"x".repeat(super::super::repository::MAX_COMMIT_OBJECT_BYTES),
+            &tree,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(get_contributors(root.path()).await.unwrap()[0].commits, 1);
     }
 
     #[tokio::test]

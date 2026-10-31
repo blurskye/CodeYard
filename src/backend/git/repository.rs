@@ -1509,15 +1509,27 @@ fn resolve_revision(repo: &Repository, revision: &str) -> Result<git2::Oid> {
 }
 
 /// Peels a revision through annotated tags to the object it names, returned with its
-/// type. Tag depth and total bytes are bounded before libgit2 reads each tag.
+/// type. Tag depth and total bytes are bounded before libgit2 reads each tag, and an
+/// oversized commit is refused so the caller may load it.
 pub(crate) fn peel_revision(repo: &Repository, revision: &str) -> Result<(git2::Oid, ObjectType)> {
+    peel(repo, revision, true)
+}
+
+/// Peels like `peel_revision` but accepts a commit of any size, for callers that only hand
+/// the ID to Git and never load the commit with libgit2.
+pub(crate) fn peel_revision_id(repo: &Repository, revision: &str) -> Result<(git2::Oid, ObjectType)> {
+    peel(repo, revision, false)
+}
+
+fn peel(repo: &Repository, revision: &str, bound_commit: bool) -> Result<(git2::Oid, ObjectType)> {
     let mut oid = resolve_revision(repo, revision)?;
     let mut depth = 0usize;
     let mut tag_bytes = 0usize;
     loop {
-        match check_object_size(repo, oid)? {
-            (size, ObjectType::Tag) => {
-                if depth >= MAX_TAG_DEPTH {
+        let (size, kind) = repo.odb()?.read_header(oid)?;
+        match kind {
+            ObjectType::Tag => {
+                if size > MAX_TAG_OBJECT_BYTES || depth >= MAX_TAG_DEPTH {
                     return Err(ObjectTooLarge.into());
                 }
                 tag_bytes = tag_bytes
@@ -1527,7 +1539,10 @@ pub(crate) fn peel_revision(repo: &Repository, revision: &str) -> Result<(git2::
                 depth += 1;
                 oid = repo.find_tag(oid)?.target_id();
             }
-            (_, kind) => return Ok((oid, kind)),
+            ObjectType::Commit if bound_commit && size > MAX_COMMIT_OBJECT_BYTES => {
+                return Err(ObjectTooLarge.into());
+            }
+            kind => return Ok((oid, kind)),
         }
     }
 }
