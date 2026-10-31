@@ -663,7 +663,7 @@ pub async fn bounded_queries(f: &Fixture) {
             .is_err()
     );
 
-    // Private candidates consume page slots, not unbounded scanning or refilling.
+    // Forks the viewer cannot read are left out before paging, so they take no page slots.
     for n in 0..105 {
         let id = f
             .database
@@ -675,25 +675,28 @@ pub async fn bounded_queries(f: &Fixture) {
     let path = format!("/api/repos/{USER}/paged_base/forks");
     let ((status, rows), queries) = count_queries(f.api(&format!("{path}?per_page=100"))).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(rows.as_array().unwrap().is_empty());
+    let ids = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["id"].as_i64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ordered_forks[..100]);
     assert!(queries <= 12, "anonymous private candidates: {queries}");
     let (status, rows) = f.api(&format!("{path}?per_page=100&page=2")).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(rows.as_array().unwrap().len(), 95);
-    assert_eq!(rows[0]["id"], ordered_forks[0]);
+    assert_eq!(rows.as_array().unwrap().len(), 25);
+    assert_eq!(rows[0]["id"], ordered_forks[100]);
 
     let private = f
         .database
         .insert_repository_row("user", "paged_own_private", true)
         .await;
     f.database.execute("UPDATE repositories SET forked_from_id=$1,is_fork=TRUE,created_at='2027-01-01T00:00:00.000000Z' WHERE id=$2", &[base, private]).await;
-    assert!(f
-        .api(&format!("{path}?per_page=1"))
-        .await
-        .1
-        .as_array()
-        .unwrap()
-        .is_empty());
+    assert_eq!(
+        f.api(&format!("{path}?per_page=1")).await.1[0]["id"],
+        ordered_forks[0]
+    );
     assert_eq!(
         f.api_as(&format!("{path}?per_page=1"), true).await.1[0]["id"],
         private
@@ -704,13 +707,10 @@ pub async fn bounded_queries(f: &Fixture) {
         .await;
     f.database.distinct_fork_organization(private_org).await;
     f.database.execute("UPDATE repositories SET forked_from_id=$1,is_fork=TRUE,created_at='2028-01-01T00:00:00.000000Z' WHERE id=$2", &[base, private_org]).await;
-    assert!(f
-        .api_as(&format!("{path}?per_page=1"), true)
-        .await
-        .1
-        .as_array()
-        .unwrap()
-        .is_empty());
+    assert_eq!(
+        f.api_as(&format!("{path}?per_page=1"), true).await.1[0]["id"],
+        private
+    );
     db::repositories::access::grant_repo_access(
         f.database.pool(),
         COLLISION,
@@ -729,13 +729,10 @@ pub async fn bounded_queries(f: &Fixture) {
             &[private_org, COLLISION],
         )
         .await;
-    assert!(f
-        .api_as(&format!("{path}?per_page=1"), true)
-        .await
-        .1
-        .as_array()
-        .unwrap()
-        .is_empty());
+    assert_eq!(
+        f.api_as(&format!("{path}?per_page=1"), true).await.1[0]["id"],
+        private
+    );
     for endpoint in ["forks", "stargazers"] {
         assert_eq!(
             f.api(&format!("/api/repos/{USER}/paged_own_private/{endpoint}"))
