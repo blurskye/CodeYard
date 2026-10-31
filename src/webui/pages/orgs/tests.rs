@@ -1161,9 +1161,11 @@ fn admins_change_plain_members_but_not_owners() {
     page.can_manage = true;
     page.is_owner = false;
     let output = html(page);
-    // The DAO refuses an admin's change to an owner, so the owner row shows no controls.
+    // The DAO refuses an admin's change to an owner, so the owner row shows no controls. An
+    // admin may assign only the member role, which a plain member already has, so no row offers
+    // a role change.
     assert_eq!(output.matches("value=\"remove-member\"").count(), 1);
-    assert_eq!(output.matches("value=\"member-role\"").count(), 1);
+    assert_eq!(output.matches("value=\"member-role\"").count(), 0);
     assert!(output.contains("Send invitation"));
 }
 
