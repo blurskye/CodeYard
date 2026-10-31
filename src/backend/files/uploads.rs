@@ -143,9 +143,11 @@ pub async fn store_upload(
     bytes: Vec<u8>,
 ) -> Result<Uuid, UploadError> {
     // Taken before the reservation, so a busy node refuses without charging the quota.
-    let io = store
-        .try_acquire_io()
-        .map_err(|_| UploadError::StorageUnavailable)?;
+    let io = std::sync::Arc::new(
+        store
+            .try_acquire_io()
+            .map_err(|_| UploadError::StorageUnavailable)?,
+    );
     let file = reserve(pool, actor_id, &input).await?;
     let stored = async {
         let _file_lock = store
@@ -153,7 +155,7 @@ pub async fn store_upload(
             .await
             .map_err(|_| UploadError::StorageUnavailable)?;
         store
-            .put_bytes(&upload(&file), bytes)
+            .put_bytes(&upload(&file), bytes, io.clone())
             .await
             .map_err(|_| UploadError::StorageUnavailable)?;
         verify_upload(store, &file)

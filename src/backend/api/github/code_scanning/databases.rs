@@ -199,7 +199,7 @@ pub(in crate::backend::api::github) async fn upload(
         .clone()
         .try_acquire_owned()
         .map_err(Error::unavailable)?;
-    let _io = state.storage.try_acquire_io().map_err(Error::unavailable)?;
+    let io = Arc::new(state.storage.try_acquire_io().map_err(Error::unavailable)?);
     let bytes = tokio::time::timeout(
         Duration::from_secs(30),
         to_bytes(request.into_body(), MAX_OBJECT_BYTES as usize),
@@ -249,6 +249,7 @@ pub(in crate::backend::api::github) async fn upload(
                 sha256_hex: &sha256,
             },
             bytes,
+            io,
         )
         .await
         .map_err(Error::unavailable)?;

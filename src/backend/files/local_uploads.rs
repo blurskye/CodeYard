@@ -50,9 +50,11 @@ pub async fn put_local_upload(
             .lock_file(&key)
             .await
             .map_err(|_| LocalUploadError::StorageUnavailable)?;
-        let _io = store
-            .try_acquire_io()
-            .map_err(|_| LocalUploadError::StorageUnavailable)?;
+        let io = std::sync::Arc::new(
+            store
+                .try_acquire_io()
+                .map_err(|_| LocalUploadError::StorageUnavailable)?,
+        );
         let file = files_db::get_owned_file(pool, file_id, actor_id)
             .await
             .map_err(|_| LocalUploadError::MetadataUnavailable)?
@@ -63,7 +65,7 @@ pub async fn put_local_upload(
         if file.content_type != content_type {
             return Err(LocalUploadError::Invalid);
         }
-        let staged = store.stage_local(&upload(&file), reader).await.map_err(|error| match error {
+        let staged = store.stage_local(&upload(&file), reader, io.clone()).await.map_err(|error| match error {
             StorageError::Unavailable => LocalUploadError::StorageUnavailable,
             _ => LocalUploadError::Rejected,
         })?;

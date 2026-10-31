@@ -704,6 +704,7 @@ async fn packages_reject_truncated_or_corrupt_chunks() {
                 sha256_hex: &blob.digest[7..],
             },
             bytes.to_vec(),
+            std::sync::Arc::new(storage.try_acquire_io().unwrap()),
         )
         .await
         .unwrap();

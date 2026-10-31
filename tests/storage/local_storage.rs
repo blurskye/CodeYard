@@ -1587,7 +1587,11 @@ async fn object_names_cannot_leave_the_object_directory() {
         assert!(local.verify(&upload).await.is_err(), "verify {key:?}");
         assert!(
             objects
-                .put_bytes(&upload, b"do not change".to_vec())
+                .put_bytes(
+                    &upload,
+                    b"do not change".to_vec(),
+                    std::sync::Arc::new(objects.try_acquire_io().unwrap()),
+                )
                 .await
                 .is_err(),
             "put {key:?}"

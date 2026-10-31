@@ -179,26 +179,34 @@ impl ObjectStore {
     }
 
     /// Stores bytes sent to this server (local storage only), checking size,
-    /// checksum and file signature on the way in.
+    /// checksum and file signature on the way in. `io` is the slot the caller was
+    /// admitted with; the blocking work keeps it until that work ends.
     pub(crate) async fn stage_local(
         &self,
         upload: &Upload<'_>,
         reader: impl AsyncRead + Unpin,
+        io: Arc<OwnedSemaphorePermit>,
     ) -> Result<local::StagedUpload, StorageError> {
         match &self.backend {
-            Backend::Local(store) => store.stage(upload, reader, Arc::new(self.try_acquire_io()?)).await,
+            Backend::Local(store) => store.stage(upload, reader, io).await,
             Backend::S3(_) => Err(StorageError::Rejected),
         }
     }
 
     /// Stores bytes this server already holds, such as a picture from a form. Size,
     /// checksum and file signature are checked before anything is written, whichever
-    /// storage is in use.
-    pub async fn put_bytes(&self, upload: &Upload<'_>, bytes: Vec<u8>) -> Result<(), StorageError> {
+    /// storage is in use. `io` is the slot the caller was admitted with, so an admitted
+    /// upload never competes for a second one.
+    pub async fn put_bytes(
+        &self,
+        upload: &Upload<'_>,
+        bytes: Vec<u8>,
+        io: Arc<OwnedSemaphorePermit>,
+    ) -> Result<(), StorageError> {
         match &self.backend {
-            Backend::Local(store) => store.put(upload, bytes.as_slice(), Arc::new(self.try_acquire_io()?)).await,
+            Backend::Local(store) => store.put(upload, bytes.as_slice(), io).await,
             Backend::S3(store) => store
-                .put_object(upload, bytes, Arc::new(self.try_acquire_io()?))
+                .put_object(upload, bytes, io)
                 .await
                 .map_err(|_| StorageError::Unavailable),
         }

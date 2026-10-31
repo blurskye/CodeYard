@@ -362,7 +362,7 @@ async fn put_blob(
 ) -> Result<Response, Error> {
     let object = capability(&state, id, &query, true).await?;
     let grant_hash = runtime::token_hash(query.get("sig").ok_or_else(denied)?);
-    let _io = state.storage.try_acquire_io()?;
+    let io = Arc::new(state.storage.try_acquire_io()?);
     let _memory = state
         .upload_reads
         .clone()
@@ -463,7 +463,7 @@ async fn put_blob(
             };
             tokio::time::timeout(
                 Duration::from_secs(300),
-                state.storage.put_bytes(&upload, bytes.to_vec()),
+                state.storage.put_bytes(&upload, bytes.to_vec(), io.clone()),
             )
             .await
             .map_err(|_| {

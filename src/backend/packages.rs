@@ -94,7 +94,7 @@ pub async fn store(
         };
         // A cancelled request may have stored the immutable object before marking it ready.
         if storage.verify(&upload).await.is_err() {
-            if let Err(error) = storage.put_bytes(&upload, bytes).await {
+            if let Err(error) = storage.put_bytes(&upload, bytes, io.clone()).await {
                 // Another node can win S3's create-only PUT while this request is in flight.
                 storage.verify(&upload).await.map_err(|_| error)?;
             }

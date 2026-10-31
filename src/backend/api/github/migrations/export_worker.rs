@@ -31,7 +31,8 @@ pub(super) fn spawn(state: Arc<AppState>, headers: HeaderMap, row: RepositoryExp
             if Some(actor.user.id) != row.actor_id || exports::by_guid(&state.pool, actor.user.id, &row.guid).await.map_err(Error::unavailable)?.is_none() { return Err(Error::missing()); }
             let key = row.object_key();
             let digest = format!("{:x}", Sha256::digest(&bytes));
-            state.storage.put_bytes(&Upload { key: &key, bytes: bytes.len() as i64, content_type: "application/gzip", sha256_hex: &digest }, bytes).await.map_err(Error::unavailable)?;
+            let io = Arc::new(state.storage.try_acquire_io().map_err(Error::unavailable)?);
+            state.storage.put_bytes(&Upload { key: &key, bytes: bytes.len() as i64, content_type: "application/gzip", sha256_hex: &digest }, bytes, io).await.map_err(Error::unavailable)?;
             exports::finish(&state.pool, row.id, "exported").await.map_err(Error::unavailable)
         }).await;
         if !matches!(result, Ok(Ok(()))) {
