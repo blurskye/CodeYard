@@ -538,6 +538,9 @@ async fn contract(pg: bool, source: &Source) {
     .await
     .unwrap();
     let base = "/api/v3/repos/import-owner/cancelled/import";
+    // The test runs on one thread, so this log also hears the import worker it starts.
+    let log = crate::support::logs::Log::capture();
+    let logging = tracing::dispatcher::set_default(&log.dispatch);
     source.blocked.store(true, Ordering::SeqCst);
     let seen = source.requests.load(Ordering::SeqCst);
     let input = json!({"vcs_url":source.url, "vcs_username":"upstream", "vcs_password":"secret"});
@@ -551,7 +554,8 @@ async fn contract(pg: bool, source: &Source) {
         StatusCode::CREATED,
     )
     .await;
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    // The cap leaves a loaded runner room to start the import; the wait ends at its request.
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
         while source.requests.load(Ordering::SeqCst) == seen {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
@@ -579,7 +583,15 @@ async fn contract(pg: bool, source: &Source) {
     )
     .await;
     source.blocked.store(false, Ordering::SeqCst);
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Check the refs only once the cancelled worker has given up, so a late worker cannot
+    // publish after the check.
+    let failed = format!("repo_id={}", empty.id);
+    log.wait_for(
+        |line| line.contains("source import failed") && line.split(' ').any(|word| word == failed),
+        "the cancelled import never failed, so its worker may have published",
+    )
+    .await;
+    drop(logging);
     assert!(repo_store(&empty, None)
         .mirror_refs()
         .await
@@ -633,7 +645,8 @@ async fn contract(pg: bool, source: &Source) {
         StatusCode::CREATED,
     )
     .await;
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    // The cap leaves a loaded runner room to start the import; the wait ends at its request.
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
         while source.requests.load(Ordering::SeqCst) == seen {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
