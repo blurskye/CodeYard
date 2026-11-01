@@ -1018,7 +1018,7 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
             };
             let wrapper = root.path().join("git");
             std::fs::write(&wrapper, format!(
-                "#!/bin/sh\ncase \" $* \" in *' gc --auto '*)\n  : > '{root}/packing'\n  while test ! -e '{root}/release'; do '{sleep}' 0.01; done\n;; esac\nexec '{git}' \"$@\"\n",
+                "#!/bin/sh\ncase \" $* \" in *' gc --no-prune '*)\n  : > '{root}/packing'\n  while test ! -e '{root}/release'; do '{sleep}' 0.01; done\n;; esac\nexec '{git}' \"$@\"\n",
                 root = root.path().display(), sleep = executable("sleep").display(),
                 git = executable("git").display(),
             )).unwrap();
@@ -1090,6 +1090,8 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
     assert!(cluster_cli::run(&command, pool, &root, &root)
         .await
         .is_err());
+    // Reads keep working while the copy's maintenance runs: the incomplete copy refuses, and
+    // the reader goes on to the primary.
     let (reply, body) = web
         .context
         .call(
@@ -1105,7 +1107,7 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
         )
         .await
         .unwrap();
-    assert!(reply.result.is_ok());
+    assert!(reply.result.is_ok(), "{:?}", reply.result);
     assert_eq!(body, b"readable");
     std::fs::write(root.join("release"), b"").unwrap();
     tokio::time::timeout(Duration::from_secs(30), async {
