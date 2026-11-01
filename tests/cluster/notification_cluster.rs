@@ -6,6 +6,34 @@ use codeyard::backend::{
     notifications::{broadcast::MAX_SOCKETS_PER_USER, NotificationBroadcaster, NotificationEvent},
 };
 use std::time::Duration;
+use tokio::sync::broadcast;
+
+/// Sends from `from` until `to` hears it, and returns what `to` heard. A listener that connects
+/// closes the subscriptions made before it, as after any gap, so a closed one is made again, as
+/// a browser reconnects.
+async fn hear(
+    from: &NotificationBroadcaster,
+    to: &NotificationBroadcaster,
+    user_id: i64,
+) -> NotificationEvent {
+    let event = NotificationEvent::ReadAll {
+        user_id,
+        unread_count: 3,
+    };
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let mut receiver = to.subscribe(user_id);
+        loop {
+            from.send(event.clone()).await;
+            match tokio::time::timeout(Duration::from_millis(200), receiver.recv()).await {
+                Ok(Ok(heard)) => return heard,
+                Ok(Err(broadcast::error::RecvError::Closed)) => receiver = to.subscribe(user_id),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("the other node never heard the event")
+}
 
 #[tokio::test]
 async fn an_event_reaches_the_other_node_and_is_not_echoed_back() {
@@ -18,36 +46,28 @@ async fn an_event_reaches_the_other_node_and_is_not_echoed_back() {
     );
     a.start().await;
     b.start().await;
-    // An id no other test uses: every test database node hears the same channel.
+    // Ids no other test uses: every test database node hears the same channel.
     let user_id = 9_000_000_001;
-    let (mut on_a, mut on_b) = (a.subscribe(user_id), b.subscribe(user_id));
-    let event = || NotificationEvent::ReadAll {
-        user_id,
-        unread_count: 3,
-    };
-
-    // The listeners connect in the background: send until node b hears one.
-    let mut sent = 0;
-    let heard = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            a.send(event()).await;
-            sent += 1;
-            if let Ok(Ok(heard)) =
-                tokio::time::timeout(Duration::from_millis(200), on_b.recv()).await
-            {
-                break heard;
-            }
-        }
-    })
-    .await
-    .expect("node b never heard node a");
+    let heard = hear(&a, &b, user_id).await;
     // Other nodes get a hint; they read the content and the count from the database.
     assert!(matches!(
         heard,
         NotificationEvent::ReadAll { user_id: id, unread_count: 0 } if id == user_id
     ));
+    // Node a's listener is connected once it hears node b, so later subscriptions stay open.
+    // Another account keeps node b's extra sends away from the count below.
+    hear(&b, &a, 9_000_000_002).await;
 
-    // Node a's own subscribers got each event once, not again from the announcement.
+    // Node a's own subscribers get each event once, not again from the announcement.
+    let mut on_a = a.subscribe(user_id);
+    let sent = 3;
+    for _ in 0..sent {
+        a.send(NotificationEvent::ReadAll {
+            user_id,
+            unread_count: 3,
+        })
+        .await;
+    }
     tokio::time::sleep(Duration::from_millis(300)).await;
     let mut local = 0;
     while let Ok(event) = on_a.try_recv() {
