@@ -3054,8 +3054,8 @@ async fn storage_node(pool: &db::DbPool, name: &str) -> i64 {
         .await
         .unwrap()
         .id;
-    // A promotion needs its target to be reporting in.
-    db::cluster::record_node_heartbeat(pool, &key, "test", "{}", None)
+    // A promotion needs its target to be reporting in, free space included.
+    db::cluster::record_node_heartbeat(pool, &key, "test", "{}", Some(1 << 40))
         .await
         .unwrap();
     id
