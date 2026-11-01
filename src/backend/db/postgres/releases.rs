@@ -182,6 +182,10 @@ pub async fn update_release_with_publication(
         );
     }
     anyhow::ensure!(
+        fields.expected_draft.is_none_or(|draft| draft == current.is_draft),
+        ReleaseRefusal::Conflict
+    );
+    anyhow::ensure!(
         !current.is_immutable || fields.is_draft != Some(true),
         ReleaseRefusal::Immutable
     );

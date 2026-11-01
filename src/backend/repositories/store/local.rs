@@ -3118,14 +3118,14 @@ impl LocalStore {
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
-        mutation: crate::backend::repositories::releases::immutable::Mutation,
+        mut mutation: crate::backend::repositories::releases::immutable::Mutation,
         attestation: Option<crate::backend::repositories::releases::integrity::Attestation>,
     ) -> Result<(db::models::Release, bool), RepoError> {
         use crate::backend::repositories::releases::immutable::Mutation;
         mutation.validate()?;
         let (store, pool) = (self.clone(), pool.clone());
         tokio::spawn(async move {
-            let (tag, publishing) = match &mutation {
+            let (tag, publishing) = match &mut mutation {
                 Mutation::Create { tag, fields, .. } => (tag.clone(), !fields.is_draft),
                 Mutation::Update { id, changes } => {
                     let current = db::releases::get_release(&pool, repo_id, *id)
@@ -3133,13 +3133,15 @@ impl LocalStore {
                         .map_err(|_| unavailable("Release storage unavailable"))?
                         .ok_or_else(|| RepoError::new(ErrorKind::NotFound, "Release not found"))?
                         .release;
-                    let publishing = current.is_draft && changes.is_draft == Some(false);
+                    let seen = *changes.expected_draft.get_or_insert(current.is_draft);
+                    let publishing = seen && changes.is_draft == Some(false);
                     (changes.tag.clone().unwrap_or(current.tag_name), publishing)
                 }
             };
             // Only a write that reads the tag waits for ref publishers. Editing the text of a
             // published release is a database write and works while Git storage is offline;
-            // its transaction checks the revision the form was rendered with.
+            // its transaction checks the revision the form was rendered with, and refuses the
+            // edit if the release became a draft meanwhile, so nothing publishes unchecked.
             let reads_tag =
                 matches!(&mutation, Mutation::Create { .. }) || publishing || attestation.is_some();
             let _publication = if reads_tag {

@@ -122,6 +122,10 @@ pub struct ReleaseChanges {
     pub is_draft: Option<bool>,
     pub is_prerelease: Option<bool>,
     pub make_latest: Option<LatestSelection>,
+    /// The draft state the edit was prepared for. Publishing runs tag checks that a text edit
+    /// skips, so the write refuses the edit when the stored state no longer matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_draft: Option<bool>,
     /// Publishing a draft whose tag is missing creates the tag, which this refuses. It is the
     /// caller's capability, so it is never stored.
     #[serde(skip)]
@@ -139,6 +143,7 @@ impl From<&ReleaseFields> for ReleaseChanges {
             is_draft: Some(fields.is_draft),
             is_prerelease: Some(fields.is_prerelease),
             make_latest: Some(fields.make_latest),
+            expected_draft: None,
             new_tag_denied: false,
         }
     }

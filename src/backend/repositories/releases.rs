@@ -566,6 +566,8 @@ pub async fn update(
         return Err(ReleaseError::Conflict);
     }
     let mut fields = fields.clone();
+    // Whether this edit publishes, and so which checks run, is decided from this state.
+    fields.expected_draft = Some(current.is_draft);
     let tag = fields.tag.as_deref().unwrap_or(&current.tag_name).to_owned();
     validate_tag(&tag)?;
     if current.is_immutable && tag != current.tag_name {

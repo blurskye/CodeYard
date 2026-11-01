@@ -328,6 +328,7 @@ pub(super) async fn update(
         is_draft: request.draft,
         is_prerelease: request.prerelease,
         make_latest: request.make_latest.map(Into::into),
+        expected_draft: None,
         new_tag_denied: false,
     };
     let release = releases::update(
