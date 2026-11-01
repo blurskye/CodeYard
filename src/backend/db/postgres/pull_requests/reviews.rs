@@ -225,11 +225,13 @@ pub async fn list_pull_request_inline_comments(
     pool: &PgPool,
     pr_id: i64,
 ) -> Result<PullRequestInlineComments> {
-    use crate::backend::db::pull_requests::reviews::{budgeted_comment_ids, MAX_INLINE_COMMENTS};
+    use crate::backend::db::pull_requests::reviews::{
+        budgeted_comment_ids, MAX_INLINE_COMMENTS, MAX_INLINE_COMMENT_BYTES,
+    };
     let mut tx = pool.begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ").await?;
     let rows: Vec<(i64, i64)> = sqlx::query_as("SELECT i.id,6::bigint*(octet_length(i.body)+COALESCE(LEAST(octet_length(i.path),4096),0))+4096 FROM pr_comments i WHERE i.pull_request_id=$1 AND i.path IS NOT NULL AND NOT EXISTS(SELECT 1 FROM pr_reviews v WHERE v.id=i.review_id AND v.state='pending') ORDER BY i.created_at,i.id LIMIT $2")
         .bind(pr_id).bind((MAX_INLINE_COMMENTS+1) as i64).fetch_all(&mut *tx).await?;
-    let ids = budgeted_comment_ids(&rows, MAX_INLINE_COMMENTS)?;
+    let ids = budgeted_comment_ids(&rows, MAX_INLINE_COMMENTS, MAX_INLINE_COMMENT_BYTES)?;
     let truncated = ids.len() < rows.len();
     let count = rows.len().min(MAX_INLINE_COMMENTS);
     let comments = comments_in(&mut *tx, "i.id", &ids).await?;
@@ -243,11 +245,17 @@ pub async fn list_pending_review_comments(
     pr_id: i64,
     author_id: i64,
 ) -> Result<PullRequestInlineComments> {
-    use crate::backend::db::pull_requests::reviews::budgeted_comment_ids;
+    use crate::backend::db::pull_requests::reviews::{
+        budgeted_comment_ids, MAX_REVIEW_COMMENT_PAGE_BYTES,
+    };
     let mut tx = pool.begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ").await?;
     let rows: Vec<(i64, i64)> = sqlx::query_as("SELECT i.id,6::bigint*(octet_length(i.body)+COALESCE(LEAST(octet_length(i.path),4096),0))+4096 FROM pr_comments i JOIN pr_reviews v ON v.id=i.review_id WHERE i.pull_request_id=$1 AND v.state='pending' AND v.author_id=$2 ORDER BY i.created_at,i.id LIMIT $3")
         .bind(pr_id).bind(author_id).bind(MAX_REVIEW_COMMENTS+1).fetch_all(&mut *tx).await?;
-    let ids = budgeted_comment_ids(&rows, MAX_REVIEW_COMMENTS as usize)?;
+    let ids = budgeted_comment_ids(
+        &rows,
+        MAX_REVIEW_COMMENTS as usize,
+        MAX_REVIEW_COMMENT_PAGE_BYTES,
+    )?;
     let truncated = ids.len() < rows.len();
     let count = rows.len().min(MAX_REVIEW_COMMENTS as usize);
     let comments = comments_in(&mut *tx, "i.id", &ids).await?;
@@ -281,12 +289,17 @@ pub async fn list_review_comments_page(
 ) -> Result<crate::backend::db::pull_requests::reviews::ReviewCommentPage> {
     use crate::backend::db::pull_requests::reviews::{
         budgeted_comment_ids, ReviewCommentPage, MAX_REVIEW_COMMENTS_PAGE,
+        MAX_REVIEW_COMMENT_PAGE_BYTES,
     };
     let mut tx = pool.begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ").await?;
     let rows: Vec<(i64, i64)> = sqlx::query_as("SELECT id, (6::bigint * (octet_length(body) + COALESCE(LEAST(octet_length(path), 4096), 0)) + 4096) FROM pr_comments WHERE review_id = ANY($1) ORDER BY created_at, id LIMIT $2 OFFSET $3")
         .bind(review_ids).bind((MAX_REVIEW_COMMENTS_PAGE + 1) as i64).bind(offset).fetch_all(&mut *tx).await?;
     let total = rows.len();
-    let ids = budgeted_comment_ids(&rows, MAX_REVIEW_COMMENTS_PAGE)?;
+    let ids = budgeted_comment_ids(
+        &rows,
+        MAX_REVIEW_COMMENTS_PAGE,
+        MAX_REVIEW_COMMENT_PAGE_BYTES,
+    )?;
     let has_more = ids.len() < total;
     let comments = comments_in(&mut *tx, "i.id", &ids).await?;
     tx.commit().await?;

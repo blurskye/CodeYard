@@ -87,13 +87,20 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pul
 pub const MAX_INLINE_COMMENTS: usize = 500;
 pub const MAX_REVIEW_COMMENTS_PAGE: usize = 100;
 pub const MAX_REVIEW_COMMENT_PAGE_BYTES: usize = 1024 * 1024;
+/// Each comment is costed at 4 KiB plus its text, so 500 short inline comments need about
+/// 2 MiB; the inline listing gets room for all of them.
+pub const MAX_INLINE_COMMENT_BYTES: usize = 4 * 1024 * 1024;
 
-pub(crate) fn budgeted_comment_ids(rows: &[(i64, i64)], limit: usize) -> Result<Vec<i64>> {
+pub(crate) fn budgeted_comment_ids(
+    rows: &[(i64, i64)],
+    limit: usize,
+    budget: usize,
+) -> Result<Vec<i64>> {
     let mut bytes = 0usize;
     let mut ids = Vec::new();
     for &(id, size) in rows.iter().take(limit) {
         bytes = bytes.saturating_add(usize::try_from(size)?);
-        if bytes > MAX_REVIEW_COMMENT_PAGE_BYTES { break; }
+        if bytes > budget { break; }
         ids.push(id);
     }
     anyhow::ensure!(rows.is_empty() || !ids.is_empty(), "Review comment exceeds its page limit");
