@@ -1315,10 +1315,12 @@ async fn postgres_private_fork_previews_do_not_publish_objects() {
 }
 
 #[tokio::test]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn sqlite_fork_pull_requests() {
     contract(false).await;
 }
 #[tokio::test]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn postgres_fork_pull_requests() {
     contract(true).await;
 }

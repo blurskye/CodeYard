@@ -414,10 +414,12 @@ async fn postgres_environment_values_fork_claims() {
 }
 
 #[tokio::test]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn sqlite_environment_values_real_engines() {
     real_engines(false).await;
 }
 #[tokio::test]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn postgres_environment_values_real_engines() {
     real_engines(true).await;
 }

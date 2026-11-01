@@ -624,10 +624,12 @@ jobs:
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn sqlite_real_actions_reruns() {
     contract(false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn postgres_real_actions_reruns() {
     contract(true).await;
 }

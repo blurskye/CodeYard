@@ -476,10 +476,12 @@ jobs:
 }
 
 #[tokio::test]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn sqlite_reusable_workflows() {
     contract(false).await;
 }
 #[tokio::test]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn postgres_reusable_workflows() {
     contract(true).await;
 }
