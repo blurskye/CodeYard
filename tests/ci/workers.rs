@@ -3125,7 +3125,9 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
     })
     .await
     .unwrap();
-    db::ci::fail_stale_ci_runs(fixture.pool(), 600).await.unwrap();
+    db::ci::fail_stale_ci_runs(fixture.pool(), 600)
+        .await
+        .unwrap();
     assert_eq!(
         db::ci::get_ci_run_by_run_id(fixture.pool(), first.run_id)
             .await
