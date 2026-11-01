@@ -640,8 +640,9 @@ mod fixture {
             fixture.request = receive_requests(&fixture.path, &updates);
             tasks.push(fixture.receive());
         }
+        // The three receives take about 11 s alone on the builder; a shared CI runner is slower.
         for task in tasks {
-            tokio::time::timeout(std::time::Duration::from_secs(30), task)
+            tokio::time::timeout(std::time::Duration::from_secs(120), task)
                 .await
                 .unwrap()
                 .unwrap()
