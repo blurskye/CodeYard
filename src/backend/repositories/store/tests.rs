@@ -290,20 +290,32 @@ async fn cancelling_a_default_branch_request_does_not_cancel_head_synchronizatio
         .reference("refs/heads/topic", f.second, false, "topic")
         .unwrap();
     let lock = crate::backend::git::locks::lock(f.store.local_dir().unwrap()).await;
-    let store = f.store.clone();
-    let pool = a.pool.clone();
-    let (repo_id, actor) = (a.repo_id, a.actor);
-    let request = tokio::spawn(async move {
-        store
-            .set_default_branch_as(&pool, repo_id, actor, "topic")
-            .await
-    });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    request.abort();
-    assert!(request.await.unwrap_err().is_cancelled());
+    let mut request = Box::pin(
+        f.store
+            .set_default_branch_as(&a.pool, a.repo_id, a.actor, "topic"),
+    );
+    // One poll hands the update to its own task, which waits for the held lock. Dropping the
+    // request after that is the client going away.
+    assert!(futures_util::FutureExt::now_or_never(&mut request).is_none());
+    drop(request);
     drop(lock);
+    // The update must still finish. Its task may reach the lock after this test does, so wait
+    // for the row it writes rather than for the lock alone.
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        while db::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .default_branch
+            != "topic"
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("cancelling the request cancelled the default branch update");
     let _lock = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(120),
         crate::backend::git::locks::lock(f.store.local_dir().unwrap()),
     )
     .await
