@@ -400,9 +400,10 @@ pub async fn enqueue(
     credential(&mut tx, actor).await?;
     let mut admission = Admission::new(actor);
     let (accepted, errors) = prepare(&mut tx, &mut admission, org, cluster, &input).await?;
-    // A job whose every record was refused is recorded as done; the response lists each
-    // refused record with its cause.
+    // A batch whose every record was refused is refused as a whole, as on GitHub, so a write
+    // token without access records no job. An empty batch is recorded as done.
     let noop = accepted.is_empty();
+    anyhow::ensure!(!noop || input.deployments.is_empty(), Refusal::Denied);
     if !noop {
         let busy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM artifact_metadata_jobs WHERE org_id=$1 AND cluster=$2 AND status IN ('pending','processing'))").bind(org).bind(cluster).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!busy, Refusal::Busy);

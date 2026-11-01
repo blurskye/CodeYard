@@ -438,35 +438,23 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(retained["total_count"], 1);
     let no_op_jobs = format!("{cluster_path}/jobs");
-    let (_, no_op) = call(
-        &router,
-        "orgs/create-cluster-deployment-records-job",
-        "POST",
-        &no_op_jobs,
-        Some(&writer),
-        rejected,
-        202,
-    )
-    .await;
-    let causes: Vec<&Value> = no_op["errors"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|error| &error["cause"])
-        .collect();
-    assert_eq!(causes, [&json!("not_found"), &json!("not_found")], "{no_op}");
-    let (_, no_op) = call(
-        &router,
-        "orgs/get-cluster-deployment-records-job",
-        "GET",
-        &format!("{no_op_jobs}/{}", no_op["job_id"]),
-        Some(&reader),
-        Value::Null,
-        200,
-    )
-    .await;
-    assert_eq!(no_op["status"], "completed");
-    assert_eq!(no_op["total_count"], 0);
+    // A job whose every record is refused is refused as a whole, so a stranger's write token
+    // records no job for this organization either.
+    let count_jobs = "SELECT COUNT(*) FROM artifact_metadata_jobs";
+    let before = f.scalar(count_jobs, &[]).await;
+    for (credential, body) in [(&writer, &rejected), (&outsider, &rejected), (&outsider, &mixed)] {
+        call(
+            &router,
+            "orgs/create-cluster-deployment-records-job",
+            "POST",
+            &no_op_jobs,
+            Some(credential),
+            body.clone(),
+            403,
+        )
+        .await;
+    }
+    assert_eq!(f.scalar(count_jobs, &[]).await, before);
     let (_, empty) = call(
         &router,
         "orgs/set-cluster-deployment-records",
