@@ -1691,8 +1691,8 @@ async fn push_rechecks_access_after_waiting_for_a_slot(pool: &DbPool, url: &str)
     .await
     .unwrap();
 
-    // One slot, and a request waits up to 30 seconds for it.
-    let server = Server::start_with_session_slots(root.path(), url, 1, 30).await;
+    // One slot, and a request waits up to 120 seconds for it, room for a loaded runner.
+    let server = Server::start_with_session_slots(root.path(), url, 1, 120).await;
     let address = server
         .base
         .strip_prefix("http://")
@@ -1711,13 +1711,27 @@ async fn push_rechecks_access_after_waiting_for_a_slot(pool: &DbPool, url: &str)
             .body("0000")
             .send(),
     );
-    // The push has passed its first check and is queued behind the holder.
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    // The server records the token's first use while it authenticates the push, just before the
+    // first access check; the push then queues behind the holder. Archive only after that.
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        while tokens::find_token(pool, &hash(&value))
+            .await
+            .unwrap()
+            .unwrap()
+            .last_used_at
+            .is_none()
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the push never reached the server");
+    assert!(!push.is_finished(), "the push must wait for the held slot");
     db::repositories::records::set_repository_archived(pool, repo.owner_id(), repo.id, true)
         .await
         .unwrap();
     drop(holder);
-    let response = tokio::time::timeout(std::time::Duration::from_secs(30), push)
+    let response = tokio::time::timeout(std::time::Duration::from_secs(120), push)
         .await
         .unwrap()
         .unwrap()
