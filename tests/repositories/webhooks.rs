@@ -57,6 +57,8 @@ struct Receiver {
     /// Statuses for the next requests; 200 once this runs out.
     replies: Arc<Mutex<VecDeque<u16>>>,
     response_body: Arc<Mutex<Option<Vec<u8>>>>,
+    /// A test that holds the write lock keeps the default 200 replies back until it lets go.
+    hold: Arc<tokio::sync::RwLock<()>>,
 }
 
 impl Receiver {
@@ -111,7 +113,11 @@ impl Receiver {
                         .lock()
                         .unwrap()
                         .push(Received { headers, body });
-                    let status = state.replies.lock().unwrap().pop_front().unwrap_or(200);
+                    let queued = state.replies.lock().unwrap().pop_front();
+                    if queued.is_none() {
+                        drop(state.hold.read().await);
+                    }
+                    let status = queued.unwrap_or(200);
                     let body = state
                         .response_body
                         .lock()

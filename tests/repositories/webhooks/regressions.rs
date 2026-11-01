@@ -155,10 +155,17 @@ async fn postgres_webhook_settings_batch_statuses_and_paginate() {
     webhook_settings_batch_statuses_and_paginate(true).await;
 }
 
+/// Four sends get a 500 and back off while a fifth, healthy send goes out. Replies after the
+/// 500s are held at the receiver until the healthy request has arrived. If a send kept its global
+/// slot across its retries and backoffs, the four held sends would keep every slot and the
+/// healthy request could not arrive until all their attempts had timed out, more than 30 seconds
+/// later. A correct server lets it through at once, or after one held round of retries times out
+/// on a very slow runner, so the 30-second wait leaves room.
 pub(super) async fn retry_backoff_frees_send_slots(pg: bool) {
     let (mut database, _root, _, _) = setup(pg).await;
     let receiver = Receiver::default();
     receiver.replies.lock().unwrap().extend([500; 4]);
+    let held = receiver.hold.clone().write_owned().await;
     let url = receiver.start().await;
     let hook = insert_hook(&database, &url).await;
     let mut sends = Vec::new();
@@ -178,16 +185,27 @@ pub(super) async fn retry_backoff_frees_send_slots(pg: bool) {
     .await
     .unwrap();
     assert!(sends.iter().all(|send| !send.is_finished()));
-    tokio::time::timeout(
-        Duration::from_millis(500),
-        delivery::send(
-            database.pool(),
-            &hook,
-            &webhooks::outgoing("push", None, &hook, "{\"healthy\":true}"),
-        ),
-    )
+    let healthy = {
+        let pool = database.pool().clone();
+        let hook = hook.clone();
+        tokio::spawn(async move {
+            let body = "{\"healthy\":true}";
+            delivery::send(&pool, &hook, &webhooks::outgoing("push", None, &hook, body)).await;
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while !receiver
+            .received()
+            .iter()
+            .any(|request| request.body.contains("healthy"))
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
     .await
     .expect("backoff must not retain global send slots");
+    drop(held);
+    healthy.await.unwrap();
     for send in sends {
         send.await.unwrap();
     }
@@ -212,12 +230,23 @@ pub(super) async fn queued_delivery_recovers_from_database_failure(pg: bool) {
             &[],
         )
         .await;
+    use tracing::instrument::WithSubscriber;
+    let log = crate::support::logs::Log::capture();
     let pool = database.pool().clone();
     let id = hook.id;
-    let send = tokio::spawn(async move {
-        delivery::send(&pool, &hook, &webhooks::outgoing("push", None, &hook, "{}")).await;
-    });
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let send = tokio::spawn(
+        async move {
+            delivery::send(&pool, &hook, &webhooks::outgoing("push", None, &hook, "{}")).await;
+        }
+        .with_subscriber(log.dispatch.clone()),
+    );
+    // Restore the table only once the send has met the failure, so the test cannot pass by
+    // running the send after the table is back.
+    log.wait_for(
+        |line| line.contains("could not recheck a queued webhook"),
+        "the send never met the missing table",
+    )
+    .await;
     assert!(
         !send.is_finished(),
         "a database error must not look like a deleted hook"
